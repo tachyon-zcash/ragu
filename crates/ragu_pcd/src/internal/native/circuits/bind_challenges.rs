@@ -69,7 +69,7 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::nested;
+use crate::{internal::nested, profile::ProfiledCycle};
 
 /// The number of binding circuits: two challenges each over the ten the
 /// challenge stage holds.
@@ -115,7 +115,7 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, const K: usiz
     _marker: PhantomData<R>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
     Circuit<'params, C, R, HEADER_SIZE, K>
 {
     /// Creates a new multi-stage circuit.
@@ -145,7 +145,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub eval_witness: &'a native_eval::Witness<C>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, K>
 {
     type Last = native_eval::Stage<C, R, HEADER_SIZE>;
@@ -174,7 +174,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
     where
         Self: 'dr,
     {
-        let builder = builder.skip_stage::<BindingStage<C::NestedCurve>>()?;
+        let builder = builder.skip_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;

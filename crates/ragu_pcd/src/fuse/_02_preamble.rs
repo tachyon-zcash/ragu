@@ -9,17 +9,18 @@
 //! points are fixed before $w$ is squeezed.
 
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
-use ragu_core::{Cycle, Result};
+use ragu_core::Result;
 use rand::CryptoRng;
 use udon::field::Field;
 
 use crate::{
     Application, Proof,
     internal::{native, nested},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Commits the native and bridge preamble stages, returning both
@@ -33,7 +34,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
-        nested::stages::preamble::Witness<C::HostCurve>,
+        nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
     )> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.commit_native_points_children(rng, left, right, builder)?;
@@ -71,7 +72,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<nested::stages::preamble::Witness<C::HostCurve>> {
+    ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
         let bridge_witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
@@ -79,7 +80,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };
-        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &bridge_witness,
         )?;

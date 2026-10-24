@@ -9,8 +9,9 @@
 //! Because this step skips its children's claims and outputs the data-less unit
 //! header, its proof attests nothing and any prover can mint one. Confining the
 //! base case here rests on every other circuit's declared input suffixes being
-//! unable to equal `Dummy` — constants for application steps, and a wire
-//! constrained away from it for rerandomization. An ordinary step consuming
+//! unable to equal `Dummy` — constants for application steps and the
+//! decompression step, and a wire constrained away from it for
+//! rerandomization. An ordinary step consuming
 //! the resulting `Pcd<()>` still verifies its child claim.
 //!
 //! [`dummy_pcd`]: crate::Application::dummy_pcd

@@ -1,6 +1,8 @@
 //! The native endoscaling steps: the Horner walk over the nested-curve
 //! commitments the nested batch folds into $P_n$,
-//! [`ENDOSCALINGS_PER_STEP`] points per step.
+//! the profile's endoscalings per step
+//! ([`NATIVE_ENDOSCALINGS_PER_STEP`](crate::profile::Profile::NATIVE_ENDOSCALINGS_PER_STEP))
+//! points per step.
 //!
 //! The mirror of the nested [`EndoscalingStep`] for the split points layout
 //! of [`stages::points`]: step $k$ starts from the previous interstitial (or
@@ -40,14 +42,14 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
 
-use super::super::{
-    ENDOSCALINGS_PER_STEP,
-    stages::points::{
-        AbStage, BindingStage, ChildrenStage, FStage, Inputs, NumInputs, NumSteps, RegistryWxStage,
-        WalkInputs, WalkStage, WalkWitness,
-    },
+use super::super::stages::points::{
+    AbStage, BindingStage, ChildrenStage, FStage, Inputs, NumInputs, NumSteps, RegistryWxStage,
+    WalkInputs, WalkStage, WalkWitness,
 };
-use crate::internal::endoscalar::input_range;
+use crate::{
+    internal::endoscalar::input_range,
+    profile::{Profile, ProfiledCycle},
+};
 
 /// One step of the native endoscaling walk.
 #[derive(Clone)]
@@ -56,14 +58,14 @@ pub struct Circuit<C: Cycle, R: Rank> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank> Circuit<C, R> {
+impl<C: ProfiledCycle, R: Rank> Circuit<C, R> {
     /// Creates step `step`.
     ///
     /// # Panics
     ///
     /// Panics if `step` is not a step of the walk.
     pub fn new(step: usize) -> MultiStage<C::CircuitField, R, Self> {
-        let num_steps = NumSteps::len();
+        let num_steps = NumSteps::<C::Profile>::len();
         assert!(
             step < num_steps,
             "step {step} exceeds available steps ({num_steps})"
@@ -76,13 +78,13 @@ impl<C: Cycle, R: Rank> Circuit<C, R> {
 }
 
 /// Witness for one step: every points stage.
-pub struct Witness<'a, C: Cycle> {
-    pub inputs: &'a Inputs<C::NestedCurve>,
-    pub walk: &'a WalkWitness<C::NestedCurve>,
+pub struct Witness<'a, C: ProfiledCycle> {
+    pub inputs: &'a Inputs<C::NestedCurve, C::Profile>,
+    pub walk: &'a WalkWitness<C::NestedCurve, C::Profile>,
 }
 
-impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
-    type Last = WalkStage<C::NestedCurve>;
+impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
+    type Last = WalkStage<C::NestedCurve, C::Profile>;
     type Instance<'source> = ();
     type Witness<'source> = Witness<'source, C>;
     type Output = Kind![C::CircuitField; WithSuffix<'_, _, ()>];
@@ -101,12 +103,12 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
         dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve>>()?;
-        let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve>>()?;
-        let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve>>()?;
-        let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve>>()?;
-        let (f, dr) = dr.add_stage::<FStage<C::NestedCurve>>()?;
-        let (walk, dr) = dr.add_stage::<WalkStage<C::NestedCurve>>()?;
+        let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
+        let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve, C::Profile>>()?;
+        let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve, C::Profile>>()?;
+        let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve, C::Profile>>()?;
+        let (f, dr) = dr.add_stage::<FStage<C::NestedCurve, C::Profile>>()?;
+        let (walk, dr) = dr.add_stage::<WalkStage<C::NestedCurve, C::Profile>>()?;
         let dr = dr.finish();
 
         let inputs = witness.as_ref().map(|w| w.inputs);
@@ -133,7 +135,11 @@ impl<C: Cycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> 
             .unwrap_or(walk.initial())
             .clone();
 
-        let range = input_range::<ENDOSCALINGS_PER_STEP>(self.step, NumInputs::len());
+        let range = input_range(
+            C::Profile::NATIVE_ENDOSCALINGS_PER_STEP,
+            self.step,
+            NumInputs::<C::Profile>::len(),
+        );
         assert!(!range.is_empty());
 
         let acc = NonzeroBank::scope(dr, |dr, bank| {

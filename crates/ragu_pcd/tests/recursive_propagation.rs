@@ -443,13 +443,16 @@ pub(crate) mod support {
         child: &Proof<C, R>,
         side: Side,
     ) -> Result<()> {
-        let native = stage_wire_indices::<_, R, preamble::Stage<EqAffine, R>>(|stage| {
-            let child = match side {
-                Side::Left => &stage.left,
-                Side::Right => &stage.right,
-            };
-            wires_of(&child.stashed_p)
-        })?;
+        let native =
+            stage_wire_indices::<_, R, preamble::Stage<EqAffine, R, crate::profile::Standard>>(
+                |stage| {
+                    let child = match side {
+                        Side::Left => &stage.left,
+                        Side::Right => &stage.right,
+                    };
+                    wires_of(&child.stashed_p)
+                },
+            )?;
         let reader = StageReader::new(&parent[nested::RxIndex::BridgePreamble]);
         assert_eq!(
             native
@@ -459,26 +462,28 @@ pub(crate) mod support {
             coordinates(child.native_p_commitment()),
             "{side:?}: copied native endpoint"
         );
-        let nested = stage_wire_indices::<_, R, BindingStage<EpAffine>>(|stage| {
-            let child = match side {
-                Side::Left => &stage.left,
-                Side::Right => &stage.right,
-            };
-            let mut wires = Vec::new();
-            for point in [
-                &child.p,
-                &child.a,
-                &child.b,
-                &child.registry_xy,
-                &child.challenges,
-            ]
-            .into_iter()
-            .chain(child.bridges.iter())
-            {
-                wires.extend(wires_of(point)?);
-            }
-            Ok(wires)
-        })?;
+        let nested = stage_wire_indices::<_, R, BindingStage<EpAffine, crate::profile::Standard>>(
+            |stage| {
+                let child = match side {
+                    Side::Left => &stage.left,
+                    Side::Right => &stage.right,
+                };
+                let mut wires = Vec::new();
+                for point in [
+                    &child.p,
+                    &child.a,
+                    &child.b,
+                    &child.registry_xy,
+                    &child.challenges,
+                ]
+                .into_iter()
+                .chain(child.bridges.iter())
+                {
+                    wires.extend(wires_of(point)?);
+                }
+                Ok(wires)
+            },
+        )?;
         let reader = StageReader::new(&parent.native_points_binding_rx);
         let expected: Vec<_> = [
             child.nested_p_commitment(),
@@ -547,13 +552,16 @@ pub(crate) mod support {
             expected,
             "{side:?}: copied native claim and challenge binding"
         );
-        let nested_claim = stage_wire_indices::<_, R, preamble::Stage<EqAffine, R>>(|stage| {
-            let child = match side {
-                Side::Left => &stage.left,
-                Side::Right => &stage.right,
-            };
-            wires_of(&child.nested.c)
-        })?;
+        let nested_claim =
+            stage_wire_indices::<_, R, preamble::Stage<EqAffine, R, crate::profile::Standard>>(
+                |stage| {
+                    let child = match side {
+                        Side::Left => &stage.left,
+                        Side::Right => &stage.right,
+                    };
+                    wires_of(&child.nested.c)
+                },
+            )?;
         assert_eq!(nested_claim.len(), 1);
         assert_eq!(
             StageReader::new(&parent[nested::RxIndex::BridgePreamble]).read(nested_claim[0]),
@@ -749,9 +757,10 @@ pub(crate) mod support {
     /// is the transcript: `w` was squeezed over the old bridge commitment.
     pub(crate) fn repair_bridge_preamble_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Preamble));
-        let wires = stage_wire_indices::<Fq, R, preamble::Stage<EqAffine, R>>(|out| {
-            wires_of(&out.native_preamble)
-        })?;
+        let wires =
+            stage_wire_indices::<Fq, R, preamble::Stage<EqAffine, R, crate::profile::Standard>>(
+                |out| wires_of(&out.native_preamble),
+            )?;
         set_wires(
             Arc::make_mut(&mut proof.bridge_preamble_rx),
             &wires,
@@ -768,9 +777,10 @@ pub(crate) mod support {
     /// bridge commitment.
     pub(crate) fn repair_bridge_eval_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Eval));
-        let wires = stage_wire_indices::<Fq, R, nested_eval::Stage<EqAffine, R>>(|out| {
-            wires_of(&out.native_eval)
-        })?;
+        let wires =
+            stage_wire_indices::<Fq, R, nested_eval::Stage<EqAffine, R, crate::profile::Standard>>(
+                |out| wires_of(&out.native_eval),
+            )?;
         set_wires(Arc::make_mut(&mut proof.bridge_eval_rx), &wires, &[x, y]);
         recommit(app, proof, Cache::BridgeEval);
         Ok(())
@@ -958,11 +968,14 @@ mod endpoints {
         assert!(app.verify(&honest, inputs.verifier_rng())?);
         assert!(app.verify(&sibling, inputs.verifier_rng())?);
 
-        let native_endpoint = stage_wire_indices::<_, R, nested::PointsStage<EqAffine>>(|stage| {
-            wires_of(stage.interstitials.last().unwrap())
-        })?;
+        let native_endpoint =
+            stage_wire_indices::<_, R, nested::PointsStage<EqAffine, crate::profile::Standard>>(
+                |stage| wires_of(stage.interstitials.last().unwrap()),
+            )?;
         let nested_endpoint =
-            stage_wire_indices::<_, R, WalkStage<EpAffine>>(|stage| wires_of(stage.p()))?;
+            stage_wire_indices::<_, R, WalkStage<EpAffine, crate::profile::Standard>>(|stage| {
+                wires_of(stage.p())
+            })?;
 
         for (native, nested) in [(false, false), (true, false), (false, true), (true, true)] {
             let (mut changed, data) = honest.clone().into_parts();
@@ -1184,9 +1197,10 @@ mod timing {
             let (mut changed, data) = honest.clone().into_parts();
             match case {
                 "ab_after_x" => {
-                    let wires = stage_wire_indices::<_, R, AbStage<EpAffine>>(|stage| {
-                        wires_of(&stage.registry_wy)
-                    })?;
+                    let wires =
+                        stage_wire_indices::<_, R, AbStage<EpAffine, crate::profile::Standard>>(
+                            |stage| wires_of(&stage.registry_wy),
+                        )?;
                     let reader = StageReader::new(&changed.native_points_ab_rx);
                     let old = EpAffine::from_xy(reader.read(wires[0]), reader.read(wires[1]))
                         .expect("the stored registry point is on the curve");
@@ -1208,7 +1222,7 @@ mod timing {
 
                     // Rebuild the deterministic AB bridge around the changed stage,
                     // including its original blinding, rather than leave a stale copy.
-                    let bridge = ab::Stage::<EqAffine, R>::rx(
+                    let bridge = ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
                         bridge_alpha_power(changed.bridge_alpha, nested::RxIndex::BridgeAB),
                         &ab::Witness {
                             a: changed.native_commitment(native::RxComponent::AbA),
@@ -1272,9 +1286,10 @@ mod timing {
                     changed.nested_registry_xy_commitment.0 = point;
                     assert_ne!(point, honest.proof().nested_registry_xy_commitment());
 
-                    let wires = stage_wire_indices::<_, R, FStage<EpAffine>>(|stage| {
-                        wires_of(&stage.registry_xy)
-                    })?;
+                    let wires =
+                        stage_wire_indices::<_, R, FStage<EpAffine, crate::profile::Standard>>(
+                            |stage| wires_of(&stage.registry_xy),
+                        )?;
                     support::set_wires(
                         &mut changed.native_points_f_rx,
                         &wires,
@@ -1285,9 +1300,11 @@ mod timing {
                         C::host_generators(app.params),
                     );
                     changed.native_points_f_commitment.0 = new_f;
-                    let copy = stage_wire_indices::<_, R, f::Stage<EqAffine, R>>(|stage| {
-                        wires_of(&stage.native_points_f)
-                    })?;
+                    let copy = stage_wire_indices::<
+                        _,
+                        R,
+                        f::Stage<EqAffine, R, crate::profile::Standard>,
+                    >(|stage| wires_of(&stage.native_points_f))?;
                     support::set_wires(
                         Arc::make_mut(&mut changed.bridge_f_rx),
                         &copy,
@@ -1368,7 +1385,7 @@ mod commitments {
     };
 
     use super::support::{self, C, HEADER_SIZE, R};
-    use crate::{Pcd, Proof, header::Header, internal::nested};
+    use crate::{Pcd, Proof, header::Header, internal::nested, profile::ProfiledCycle};
 
     fn check_coefficients<H: Header<ragu_core::pasta::Fp>>(
         app: &support::App,
@@ -1376,7 +1393,11 @@ mod commitments {
         inputs: &support::Inputs,
         delta: Fq,
     ) -> Result<()> {
-        type ChallengeStage = nested::stages::challenges::Stage<<C as Cycle>::HostCurve, R>;
+        type ChallengeStage = nested::stages::challenges::Stage<
+            <C as Cycle>::HostCurve,
+            R,
+            <C as ProfiledCycle>::Profile,
+        >;
 
         let parent = pcd.proof();
         let verify = |proof: Proof<C, R>| {
@@ -1459,10 +1480,11 @@ mod commitments {
             beta_lift[0],
         );
         assert_eq!(challenges.base_case_sign, sign);
-        let expected = nested::stages::challenges::Stage::<ragu_core::pasta::EqAffine, R>::rx(
-            Fq::ZERO,
-            &challenges,
-        )?;
+        let expected = nested::stages::challenges::Stage::<
+            ragu_core::pasta::EqAffine,
+            R,
+            crate::profile::Standard,
+        >::rx(Fq::ZERO, &challenges)?;
         assert!(
             parent
                 .nested_challenges_rx()
@@ -1550,7 +1572,10 @@ mod commitments {
 
         // The root stage, wire by wire, against the children's caches.
         let binding = StageReader::<ragu_core::pasta::Fp, R>::new(&parent[RxIndex::PointsBinding]);
-        let wires = stage_wire_indices::<_, R, BindingStage<Nested>>(|stage| wires_of(&stage))?;
+        let wires =
+            stage_wire_indices::<_, R, BindingStage<Nested, crate::profile::Standard>>(|stage| {
+                wires_of(&stage)
+            })?;
         let held: alloc::vec::Vec<ragu_core::pasta::Fp> =
             wires.iter().map(|&i| binding.read(i)).collect();
         let expected: alloc::vec::Vec<ragu_core::pasta::Fp> = [left, right]
@@ -1581,7 +1606,10 @@ mod commitments {
 
         // The walk's last interstitial, against this step's cache.
         let walk = StageReader::<ragu_core::pasta::Fp, R>::new(&parent[RxIndex::PointsWalk]);
-        let wires = stage_wire_indices::<_, R, WalkStage<Nested>>(|stage| wires_of(stage.p()))?;
+        let wires =
+            stage_wire_indices::<_, R, WalkStage<Nested, crate::profile::Standard>>(|stage| {
+                wires_of(stage.p())
+            })?;
         let last: alloc::vec::Vec<ragu_core::pasta::Fp> =
             wires.iter().map(|&i| walk.read(i)).collect();
         assert_eq!(

@@ -67,6 +67,8 @@ use ragu_primitives::{
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
+use crate::profile::Profile;
+
 /// The native challenges this stage holds the lifts of before the sign and
 /// $\beta$, in order: `w, y, z, mu, nu, mu_prime, nu_prime, x, alpha, u`.
 pub const NUM: usize = 10;
@@ -164,12 +166,12 @@ pub struct Pair<'dr, D: Driver<'dr>> {
 }
 
 #[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, P> {
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::eval::Stage<C, R>;
+impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
+    type Parent = super::eval::Stage<C, R, P>;
     type Witness<'source> = &'source Witness<C::Base>;
     type OutputKind = Kind![C::Base; Output<'_, _>];
 
@@ -216,11 +218,14 @@ mod tests {
     use ragu_core::pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, assert_stage_values};
+    use crate::{
+        internal::tests::{R, assert_stage_values},
+        profile::Standard,
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
     }
 
     /// The challenge stage's lifts read back off its rx polynomial are the
@@ -233,10 +238,10 @@ mod tests {
         let beta = F::from(99);
         let header = [ragu_core::pasta::Fp::from(crate::header::Suffix::new(0).get()); 4];
         let witness = Witness::new::<_, 4>(lifts, &header, &header, beta);
-        let rx = <Stage<EqAffine, R> as StageExt<F, R>>::rx(F::from(11), &witness)?;
+        let rx = <Stage<EqAffine, R, Standard> as StageExt<F, R>>::rx(F::from(11), &witness)?;
         let reader = StageReader::<F, R>::new(&rx);
 
-        let indices = stage_wire_indices::<F, R, Stage<EqAffine, R>>(|out| {
+        let indices = stage_wire_indices::<F, R, Stage<EqAffine, R, Standard>>(|out| {
             let mut wires = Vec::new();
             for pair in out.pairs.iter() {
                 wires.extend(wires_of(&pair.lift)?);

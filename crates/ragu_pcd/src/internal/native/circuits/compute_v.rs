@@ -70,11 +70,14 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::{
-    claims::Source,
-    fold_revdot::{Parameters, fold_two_layer},
-    inverter::Inverter,
-    native::RevdotParameters,
+use crate::{
+    internal::{
+        claims::Source,
+        fold_revdot::{Parameters, fold_two_layer},
+        inverter::Inverter,
+        native::RevdotParameters,
+    },
+    profile::{Profile, ProfiledCycle},
 };
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
@@ -88,7 +91,7 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -115,7 +118,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub eval_witness: &'a native_eval::Witness<C>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
     for Circuit<C, R, HEADER_SIZE>
 {
     type Last = native_eval::Stage<C, R, HEADER_SIZE>;
@@ -146,8 +149,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let builder =
-            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
+        let builder = builder
+            .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
+            )?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
@@ -202,7 +206,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                 let munu = mu.mul(dr, &nu)?;
                 let mu_prime_nu_prime = mu_prime.mul(dr, &nu_prime)?;
 
-                compute_axbx::<_, RevdotParameters>(
+                compute_axbx::<_, C::Profile, RevdotParameters<C::Profile>>(
                     dr,
                     &query,
                     z.element(),
@@ -290,7 +294,7 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+    fn new<C: Cycle<CircuitField = D::F> + ProfiledCycle, const HEADER_SIZE: usize>(
         dr: &mut D,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
@@ -316,8 +320,9 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let challenges_y = inverter.add(dr, y)?;
         let challenges_xz = inverter.add(dr, &xz)?;
 
-        let circuit_indices =
-            InternalCircuitValues::try_from_fn(|id| inverter.add_circuit(dr, id.circuit_index()))?;
+        let circuit_indices = InternalCircuitValues::try_from_fn::<C::Profile, _>(|id| {
+            inverter.add_circuit(dr, id.circuit_index::<C::Profile>())
+        })?;
 
         let inverted = inverter.invert(dr)?;
 
@@ -340,7 +345,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[challenges_y].clone(),
                 xz: inverted[challenges_xz].clone(),
             },
-            internal: InternalCircuitValues::from_fn(|id| {
+            internal: InternalCircuitValues::from_fn::<C::Profile>(|id| {
                 inverted[*circuit_indices.get(id)].clone()
             }),
         })
@@ -427,7 +432,7 @@ impl<'a, 'dr, D: Driver<'dr>> EvaluationProcessor<'a, 'dr, D> {
     }
 }
 
-impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>>
+impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a Element<'dr, D>>
     for EvaluationProcessor<'a, 'dr, D>
 {
     fn raw_claim(&mut self, a: &'a Element<'dr, D>, b: &'a Element<'dr, D>) {
@@ -511,7 +516,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
 /// The two-layer folding uses:
 /// - Layer 1: $\mu^{-1}$, $\mu'^{-1}$ for `ax`; $\mu\nu$, $\mu'\nu'$ for `bx`
 /// - Layer 2: internal folding within each layer
-fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
+fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     dr: &mut D,
     query: &native_query::Output<'dr, D>,
     z: &Element<'dr, D>,
@@ -528,7 +533,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
         right: &query.right,
     };
     let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_registry);
-    claims::build(&source, &mut processor)?;
+    claims::build::<Pf, _, _>(&source, &mut processor)?;
 
     let (ax_sources, bx_sources) = processor.build();
     let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu_inv, mu_prime_inv)?;
@@ -567,7 +572,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
     eval: &'a native_eval::Evaluations<'dr, D>,
     query: &'a native_query::Output<'dr, D>,
     preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
@@ -655,10 +660,10 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]
         .into_iter()
         .flat_map(move |(eval, query)|
-            RxIndex::ALL.iter().map(move |&id|
+            RxIndex::all::<C::Profile>().into_iter().map(move |id|
                 (eval.rx.get(id), query.rx.get(id), &d.challenges.xz))))
     // m(\omega^j, x, y) evaluations for each internal index j
-    .chain(InternalCircuitIndex::ALL.iter().map(|&id| {
+    .chain(InternalCircuitIndex::all::<C::Profile>().into_iter().map(move |id| {
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
     }))
 }

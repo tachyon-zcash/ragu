@@ -114,7 +114,8 @@ mod challenge_binding {
         let partials = native::stages::eval::BindingPartials::compute::<C, R, ReferenceBackend>(
             app.params, changed,
         );
-        proof.nested_challenges_rx = challenges::Stage::<EqAffine, R>::rx(Fq::ZERO, changed)?;
+        proof.nested_challenges_rx =
+            challenges::Stage::<EqAffine, R, crate::profile::Standard>::rx(Fq::ZERO, changed)?;
         proof.nested_challenges_commitment.0 = nested_commit(app, &proof.nested_challenges_rx);
         proof.nested_challenges_partial = partials.binding;
         let wires =
@@ -128,9 +129,11 @@ mod challenge_binding {
             .collect();
         support::set_wires(&mut proof.native_eval_rx, &wires, &values);
         proof.native_eval_commitment.0 = native_commit(app, &proof.native_eval_rx);
-        let copy = stage_wire_indices::<_, R, nested::stages::eval::Stage<EqAffine, R>>(|stage| {
-            wires_of(&stage.native_eval)
-        })?;
+        let copy = stage_wire_indices::<
+            _,
+            R,
+            nested::stages::eval::Stage<EqAffine, R, crate::profile::Standard>,
+        >(|stage| wires_of(&stage.native_eval))?;
         support::set_wires(
             Arc::make_mut(&mut proof.bridge_eval_rx),
             &copy,
@@ -327,11 +330,16 @@ fn walk_inputs(
     proof: &Proof<C, R>,
     left: &Proof<C, R>,
     right: &Proof<C, R>,
-) -> Result<points::Inputs<EpAffine>> {
-    let f = stage_points::<points::FStage<EpAffine>>(&proof.native_points_f_rx)?;
-    let wx =
-        stage_points::<points::RegistryWxStage<EpAffine>>(&proof.native_points_registry_wx_rx)?;
-    let ab = stage_points::<points::AbStage<EpAffine>>(&proof.native_points_ab_rx)?;
+) -> Result<points::Inputs<EpAffine, crate::profile::Standard>> {
+    let f = stage_points::<points::FStage<EpAffine, crate::profile::Standard>>(
+        &proof.native_points_f_rx,
+    )?;
+    let wx = stage_points::<points::RegistryWxStage<EpAffine, crate::profile::Standard>>(
+        &proof.native_points_registry_wx_rx,
+    )?;
+    let ab = stage_points::<points::AbStage<EpAffine, crate::profile::Standard>>(
+        &proof.native_points_ab_rx,
+    )?;
     let mut points = alloc::vec![f[1]];
     points.extend(nested::pcs::child_commitments(left));
     points.extend(nested::pcs::child_commitments(right));
@@ -390,8 +398,9 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
 /// polynomial itself rather than from the cached `P_n` commitment, which no
 /// mutation here writes.
 fn walked_endpoint(proof: &Proof<C, R>) -> Result<Vec<Fp>> {
-    let wires =
-        stage_wire_indices::<_, R, points::WalkStage<EpAffine>>(|stage| wires_of(stage.p()))?;
+    let wires = stage_wire_indices::<_, R, points::WalkStage<EpAffine, crate::profile::Standard>>(
+        |stage| wires_of(stage.p()),
+    )?;
     let reader = StageReader::new(&proof.native_points_walk_rx);
     Ok(wires.iter().map(|&wire| reader.read(wire)).collect())
 }
@@ -399,36 +408,40 @@ fn walked_endpoint(proof: &Proof<C, R>) -> Result<Vec<Fp>> {
 fn install_walk(
     app: &support::App,
     proof: &mut Proof<C, R>,
-    inputs: &points::Inputs<EpAffine>,
+    inputs: &points::Inputs<EpAffine, crate::profile::Standard>,
     rng: &mut StdRng,
 ) -> Result<()> {
     fn alpha(poly: &sparse::Polynomial<Fp, R>) -> Fp {
         poly.iter_coeffs().nth(2 * R::n() - 1).unwrap()
     }
-    proof.native_points_binding_rx = <points::BindingStage<EpAffine> as StageExt<Fp, R>>::rx(
-        alpha(&proof.native_points_binding_rx),
-        &inputs.binding,
-    )?;
+    proof.native_points_binding_rx =
+        <points::BindingStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
+            alpha(&proof.native_points_binding_rx),
+            &inputs.binding,
+        )?;
     proof.native_points_binding_commitment.0 = native_commit(app, &proof.native_points_binding_rx);
-    proof.native_points_f_rx = <points::FStage<EpAffine> as StageExt<Fp, R>>::rx(
-        alpha(&proof.native_points_f_rx),
-        &inputs.f,
-    )?;
+    proof.native_points_f_rx = <points::FStage<EpAffine, crate::profile::Standard> as StageExt<
+        Fp,
+        R,
+    >>::rx(alpha(&proof.native_points_f_rx), &inputs.f)?;
     proof.native_points_f_commitment.0 = native_commit(app, &proof.native_points_f_rx);
 
-    let binding_copy =
-        stage_wire_indices::<_, R, nested::stages::preamble::Stage<EqAffine, R>>(|stage| {
-            wires_of(&stage.native_points_binding)
-        })?;
+    let binding_copy = stage_wire_indices::<
+        _,
+        R,
+        nested::stages::preamble::Stage<EqAffine, R, crate::profile::Standard>,
+    >(|stage| wires_of(&stage.native_points_binding))?;
     support::set_wires(
         Arc::make_mut(&mut proof.bridge_preamble_rx),
         &binding_copy,
         &support::coordinates(proof.native_points_binding_commitment.0),
     );
     proof.bridge_preamble_commitment = nested_commit(app, &proof.bridge_preamble_rx);
-    let f_copy = stage_wire_indices::<_, R, nested::stages::f::Stage<EqAffine, R>>(|stage| {
-        wires_of(&stage.native_points_f)
-    })?;
+    let f_copy = stage_wire_indices::<
+        _,
+        R,
+        nested::stages::f::Stage<EqAffine, R, crate::profile::Standard>,
+    >(|stage| wires_of(&stage.native_points_f))?;
     support::set_wires(
         Arc::make_mut(&mut proof.bridge_f_rx),
         &f_copy,
@@ -442,8 +455,8 @@ fn install_walk(
         bits,
         PointsWitness::<
             EpAffine,
-            { native::NUM_ENDOSCALING_POINTS },
-            { native::ENDOSCALINGS_PER_STEP },
+            native::NumPoints<crate::profile::Standard>,
+            native::Endoscalings<crate::profile::Standard>,
         >::new(bits, &walked),
     );
     assert_eq!(walk.p(), proof.nested_p_commitment());
@@ -451,10 +464,11 @@ fn install_walk(
         horner(&walked, nested::challenge::<C>(proof.pre_beta())?),
         walk.p()
     );
-    proof.native_points_walk_rx = <points::WalkStage<EpAffine> as StageExt<Fp, R>>::rx(
-        alpha(&proof.native_points_walk_rx),
-        &walk,
-    )?;
+    proof.native_points_walk_rx =
+        <points::WalkStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
+            alpha(&proof.native_points_walk_rx),
+            &walk,
+        )?;
     proof.native_points_walk_commitment.0 = native_commit(app, &proof.native_points_walk_rx);
     for step in 0..native::NUM_ENDOSCALING_STEPS {
         let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
@@ -465,7 +479,8 @@ fn install_walk(
             .into_output();
         proof.native_endoscaling_step_rxs[step] = app.native_registry.assemble(
             &trace,
-            native::InternalCircuitIndex::EndoscalingStep(step as u32).circuit_index(),
+            native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                .circuit_index::<crate::profile::Standard>(),
             &mut *rng,
         )?;
         proof.native_endoscaling_step_commitments[step].0 =
@@ -480,7 +495,8 @@ fn install_walk(
         .into_output();
     proof.native_bind_endoscalar_rx = app.native_registry.assemble(
         &trace,
-        native::InternalCircuitIndex::BindEndoscalarCircuit.circuit_index(),
+        native::InternalCircuitIndex::BindEndoscalarCircuit
+            .circuit_index::<crate::profile::Standard>(),
         rng,
     )?;
     proof.native_bind_endoscalar_commitment.0 =
@@ -519,10 +535,17 @@ mod walk_binding {
         let original = original_inputs.walk();
         let beta = nested::challenge::<C>(honest.proof().pre_beta())?;
         let change = Ep::generator() * delta;
-        let offset = 1 + usize::from(right_side) * points::NUM_CHILD_POINTS;
+        let offset =
+            1 + usize::from(right_side) * points::num_child_points::<crate::profile::Standard>();
         let cases = [
-            ("bridge", nested::RxIndex::BRIDGES[bridge].position()),
-            ("challenge", nested::RxIndex::ChallengeStage.position()),
+            (
+                "bridge",
+                nested::RxIndex::BRIDGES[bridge].position::<crate::profile::Standard>(),
+            ),
+            (
+                "challenge",
+                nested::RxIndex::ChallengeStage.position::<crate::profile::Standard>(),
+            ),
             ("A_n", nested::RxIndex::NUM),
             ("B_n", nested::RxIndex::NUM + 1),
             ("registry_xy", nested::RxIndex::NUM + 2),
@@ -732,7 +755,9 @@ mod claim_values {
             );
             proof.nested_a_commitment.0 = nested_commit(app, &proof.nested_a_poly);
             let wires =
-                stage_wire_indices::<_, R, points::AbStage<EpAffine>>(|stage| wires_of(&stage.a))?;
+                stage_wire_indices::<_, R, points::AbStage<EpAffine, crate::profile::Standard>>(
+                    |stage| wires_of(&stage.a),
+                )?;
             support::set_wires(
                 &mut proof.native_points_ab_rx,
                 &wires,
@@ -742,7 +767,7 @@ mod claim_values {
         }
         // Repair the deterministic AB bridge too, so this is not a mismatch
         // between a newly committed A and an old cached AB bridge.
-        let bridge = nested::stages::ab::Stage::<EqAffine, R>::rx(
+        let bridge = nested::stages::ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
             crate::proof::bridge_alpha_power(proof.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested::stages::ab::Witness {
                 a: proof.native_a_commitment.0,
@@ -867,9 +892,10 @@ mod claim_values {
         let mut rng = inputs.prover_rng();
         let sibling = support::sibling(app, &honest, &mut rng)?;
         assert!(app.verify(&sibling, inputs.verifier_rng())?);
-        let sign = stage_wire_indices::<_, R, challenges::Stage<EqAffine, R>>(|stage| {
-            wires_of(&stage.base_case.lift)
-        })?[0];
+        let sign =
+            stage_wire_indices::<_, R, challenges::Stage<EqAffine, R, crate::profile::Standard>>(
+                |stage| wires_of(&stage.base_case.lift),
+            )?[0];
         assert_eq!(
             StageReader::new(&honest.proof().nested_challenges_rx).read(sign),
             -Fq::ONE

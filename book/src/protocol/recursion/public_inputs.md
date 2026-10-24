@@ -110,3 +110,10 @@ two.
 
 No valid application $k(Y)$ can equal a valid internal $k(Y)$, and substitution
 in either direction fails the verifier's check.
+
+A profile's extension circuits are internal circuits too, registered through a
+slot that appends the same zero to their outputs, so the barrier holds in every
+profile. The zero is needed even for an extension circuit with no output of its
+own: without it, the circuit's first constraint would occupy the linear row, and
+a trace meeting that constraint at the suffix's value instead of zero would pass
+as an application instance.

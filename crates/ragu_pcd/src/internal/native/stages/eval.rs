@@ -49,6 +49,7 @@ use crate::{
         native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
         nested,
     },
+    profile::{Profile, ProfiledCycle},
 };
 
 /// Length type for the binding partial sums: one per `bind_challenges`
@@ -71,7 +72,7 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
     /// Computes the partial sums and binding from the nested challenge
     /// witness's ten lifts and base-case sign. The beta field is not used:
     /// its term is added by the parent's binding circuit.
-    pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::Scalar>, R: Rank, B>(
+    pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::Scalar> + ProfiledCycle, R: Rank, B>(
         params: &C::Params,
         challenges: &nested::stages::challenges::Witness<C::ScalarField>,
     ) -> Self
@@ -110,8 +111,11 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
 
 /// The nested-curve generator index the challenge stage commits its `i`-th
 /// lift with (see [`StageExt::generator_index_for_a`]).
-pub fn generator_index<C: Cycle, R: Rank>(i: usize) -> usize {
-    <nested::stages::challenges::Stage<C::HostCurve, R> as StageExt<C::ScalarField, R>>::generator_index_for_a(i)
+pub fn generator_index<C: ProfiledCycle, R: Rank>(i: usize) -> usize {
+    <nested::stages::challenges::Stage<C::HostCurve, R, C::Profile> as StageExt<
+        C::ScalarField,
+        R,
+    >>::generator_index_for_a(i)
 }
 
 /// Polynomial evaluations at $u$ (from the parent fuse operation) for a child
@@ -141,12 +145,16 @@ pub struct ChildEvaluationsWitness<F> {
 
 impl<F: Field> ChildEvaluationsWitness<F> {
     /// Create child evaluations witness from a proof evaluated at point u.
-    pub fn from_proof<C: Cycle<CircuitField = F>, R: Rank, B: ragu_backend::Backend>(
+    pub fn from_proof<
+        C: Cycle<CircuitField = F> + ProfiledCycle,
+        R: Rank,
+        B: ragu_backend::Backend,
+    >(
         proof: &Proof<C, R>,
         u: F,
     ) -> Self {
         ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|id| B::sparse_eval(&proof[id], u)),
+            rx: RxValues::from_fn::<C::Profile>(|id| B::sparse_eval(&proof[id], u)),
             a_poly: B::sparse_eval(&proof[RxComponent::AbA], u),
             b_poly: B::sparse_eval(&proof[RxComponent::AbB], u),
             registry_xy_poly: B::sparse_eval(proof.native_registry_xy_poly(), u),
@@ -205,13 +213,13 @@ pub struct Witness<C: Cycle> {
     pub partials: BindingPartials<C::NestedCurve>,
 }
 
-impl<C: Cycle> Witness<C> {
+impl<C: ProfiledCycle> Witness<C> {
     /// The all-zero evaluations of a proof that opens nothing, with the
     /// given binding partials.
     pub fn trivial(partials: BindingPartials<C::NestedCurve>) -> Self {
         use udon::field::Field;
         let child = || ChildEvaluationsWitness {
-            rx: RxValues::from_fn(|_| C::CircuitField::ZERO),
+            rx: RxValues::from_fn::<C::Profile>(|_| C::CircuitField::ZERO),
             a_poly: C::CircuitField::ZERO,
             b_poly: C::CircuitField::ZERO,
             registry_xy_poly: C::CircuitField::ZERO,
@@ -256,12 +264,12 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> ChildEvaluations<'dr, D> {
     /// Allocates child evaluations from pre-computed witness input values.
-    pub fn alloc<A: Allocator<'dr, D>>(
+    pub fn alloc<A: Allocator<'dr, D>, P: Profile>(
         dr: &mut D,
         allocator: &mut A,
         witness: DriverValue<D, &ChildEvaluationsWitness<D::F>>,
     ) -> Result<Self> {
-        let rx = RxValues::try_from_fn(|id| {
+        let rx = RxValues::try_from_fn::<P, _>(|id| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| *w.rx.get(id)))
         })?;
         Ok(ChildEvaluations {
@@ -322,7 +330,7 @@ pub struct Stage<C: Cycle, R, const HEADER_SIZE: usize> {
     _marker: PhantomData<(C, R)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField, R>
     for Stage<C, R, HEADER_SIZE>
 {
     type Parent = super::query::Stage<C, R, HEADER_SIZE>;
@@ -332,7 +340,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
     fn values() -> usize {
         // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
         // + (x, y) per binding partial
-        2 * (RxIndex::NUM + 4) + 6 + 2 * (NUM_BINDERS - 1)
+        2 * (RxIndex::num::<C::Profile>() + 4) + 6 + 2 * (NUM_BINDERS - 1)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -344,8 +352,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::CircuitField
         Self: 'dr,
     {
         let allocator = &mut ();
-        let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
-        let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
+        let left = ChildEvaluations::alloc::<_, C::Profile>(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| &w.left),
+        )?;
+        let right = ChildEvaluations::alloc::<_, C::Profile>(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| &w.right),
+        )?;
         let registry_wx0 = Element::alloc(
             dr,
             allocator,

@@ -18,16 +18,19 @@ use core::iter::once;
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver};
-use ragu_primitives::Element;
+use ragu_primitives::{Element, vec::Len};
 use udon::field::Field;
 
 use super::{InternalCircuitIndex, NUM_INSTANCE_CIRCUITS, RxComponent, RxIndex};
-use crate::internal::claims::{Builder, Source, sum_polynomials};
+use crate::{
+    internal::claims::{Builder, Source, sum_polynomials},
+    profile::Profile,
+};
 
 /// Trait for processing nested claim values into accumulated outputs.
 ///
 /// This trait defines how to process rx values from a [`Source`].
-pub trait Processor<Rx> {
+pub trait Processor<P: Profile, Rx> {
     /// Processes a raw claim with `a` and `b` traces provided directly
     /// ($k(y) = c$).
     fn raw_claim(&mut self, a: Rx, b: Rx);
@@ -62,7 +65,8 @@ pub trait Processor<Rx> {
     ) -> Result<()>;
 }
 
-impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend> Processor<&'rx sparse::Polynomial<F, R>>
+impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
+    Processor<P, &'rx sparse::Polynomial<F, R>>
     for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>
 {
     fn raw_claim(&mut self, a: &'rx sparse::Polynomial<F, R>, b: &'rx sparse::Polynomial<F, R>) {
@@ -75,7 +79,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend> Processor<&'rx sparse
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index::<P>();
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
@@ -85,7 +89,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend> Processor<&'rx sparse
         id: InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
     ) -> Result<()> {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index::<P>();
         let folded = self.fold_bonding_groups(groups);
         self.bonding_impl(circuit_id, folded);
         Ok(())
@@ -104,10 +108,10 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend> Processor<&'rx sparse
 ///    and the loading circuit, each folded across proofs
 ///
 /// This ordering must match the ky_elements ordering from [`ky_values`].
-pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
+pub fn build<P: Profile, S, Pr>(source: &S, processor: &mut Pr) -> Result<()>
 where
     S: Source<RxComponent = RxComponent>,
-    P: Processor<S::Rx>,
+    Pr: Processor<P, S::Rx>,
 {
     use RxComponent::{AbA, AbB, Rx};
 
@@ -116,7 +120,7 @@ where
         processor.raw_claim(a, b);
     }
 
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all::<P>() {
         use InternalCircuitIndex::*;
         match id {
             EndoscalingStep(step) => {
@@ -162,6 +166,43 @@ where
                     processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
+            // An extension circuit: its rx and the extension stages it loads
+            // (k(y) = 1).
+            ExtensionCircuit(k) => {
+                let extension = P::nested_extension();
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
+                    extension.circuits[k as usize]
+                        .iter()
+                        .map(|&stage| RxIndex::ExtensionStage(stage)),
+                ) {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+            // An extension bonding: a stage's mask over its rx, or a final
+            // mask over its circuits' rxs.
+            ExtensionBonding(j) => {
+                let extension = P::nested_extension();
+                if (j as usize) < extension.stages {
+                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                } else {
+                    processor.bonding_claim(
+                        id,
+                        extension
+                            .final_mask(j as usize)
+                            .iter()
+                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k)))),
+                    )?;
+                }
+            }
             EndoscalarStage => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::EndoscalarStage)))?;
             }
@@ -169,7 +210,7 @@ where
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::PointsStage)))?;
             }
             PointsFinalStaged => {
-                let num_steps = super::NUM_ENDOSCALING_STEPS;
+                let num_steps = super::NumSteps::<P>::len();
                 let final_rxs = (0..num_steps)
                     .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step as u32))));
                 processor.bonding_claim(id, final_rxs)?;
@@ -247,6 +288,12 @@ pub trait KySource {
     /// bound is required for `repeat_n`.
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the binding circuit of the profile's nested
+    /// extension: the $k(y)$ of the native extension stage commitments it
+    /// recomputes, as [`binding_ky`](crate::internal::ky::binding_ky)
+    /// computes it, and none for a profile without one.
+    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
     /// Returns 0 for stage checks.
     fn zero(&self) -> Self::Ky;
 }
@@ -259,45 +306,73 @@ pub trait KySource {
 ///   checks, interleaved across proofs exactly as [`build`] emits them)
 /// - `NUM_INSTANCE_CIRCUITS` copies of the per-proof unified $k(y)$ values
 ///   (for the instance circuit checks, interleaved the same way)
+/// - One copy of the per-proof ones per extension circuit of profile `P`
+///   but its binding circuit, which takes the per-proof binding values
 /// - Infinite zeros (for stage checks)
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
-    let num_steps = super::NUM_ENDOSCALING_STEPS;
+pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
+    let num_steps = super::NumSteps::<P>::len();
 
     source
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
         .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
+        .chain({
+            let extension = P::nested_extension();
+            let ones: Vec<S::Ky> = source.ones().collect();
+            let binding: Vec<S::Ky> = source.binding_ky().collect();
+            assert!(
+                extension.binding.is_none() || binding.len() == ones.len(),
+                "a profile with a binding circuit takes one binding value per proof"
+            );
+            let bound = extension.binding.as_ref().map(|binding| binding.circuit);
+            (0..extension.circuits.len() as u32).flat_map(move |circuit| {
+                if bound == Some(circuit) {
+                    binding.clone()
+                } else {
+                    ones.clone()
+                }
+            })
+        })
         .chain(core::iter::repeat(source.zero()))
 }
 
 /// [`KySource`] for the two child proofs of a fuse step, inside a driver.
 ///
-/// Carries each child's raw accumulator value $c$ and nested unified $k(y)$
-/// as elements, and the constant one and zero the other checks take.
+/// Carries each child's raw accumulator value $c$, nested unified $k(y)$
+/// and binding circuit's $k(y)$ as elements, and the constant one and
+/// zero the other checks take.
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub left_raw_c: Element<'dr, D>,
     pub right_raw_c: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_binding: Option<Element<'dr, D>>,
+    pub right_binding: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
-    /// Create a [`TwoProofKySource`] from the children's raw `c` values and
-    /// unified $k(y)$ values.
+    /// Create a [`TwoProofKySource`] from the children's raw `c` values,
+    /// unified $k(y)$ values and binding circuit's $k(y)$ values, `None`
+    /// for a profile without one.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
         right_raw_c: Element<'dr, D>,
         left_unified: Element<'dr, D>,
         right_unified: Element<'dr, D>,
+        left_binding: Option<Element<'dr, D>>,
+        right_binding: Option<Element<'dr, D>>,
     ) -> Self {
         Self {
             left_raw_c,
             right_raw_c,
             left_unified,
             right_unified,
+            left_binding,
+            right_binding,
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -317,6 +392,13 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn binding_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.left_binding
+            .iter()
+            .chain(self.right_binding.iter())
+            .cloned()
     }
 
     fn zero(&self) -> Element<'dr, D> {

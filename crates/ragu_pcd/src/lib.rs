@@ -12,6 +12,8 @@
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
+//! - [`profile`] — the proof shapes: the standard profile wallets prove in,
+//!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
 
@@ -41,15 +43,17 @@ mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
+pub mod profile;
 mod proof;
 pub mod step;
 mod verify;
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
+use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
@@ -68,6 +72,11 @@ use step::{Step, internal::adapter::Adapter};
 ///
 /// The prover and all verifier paths must agree on this tag. Changing it breaks
 /// compatibility with existing proofs.
+///
+/// TODO: if adding explicit profile domains, retain this tag for Standard and
+/// select the outer proof's tag consistently in proving and verification.
+/// Decompression must replay an inner Standard proof with Standard's tag;
+/// see [`profile`]'s isolation follow-up, including the compression domain.
 pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
 
 pub use backend::SelectableBackend;
@@ -79,6 +88,12 @@ pub use backend::SelectableBackend;
 /// supply them through [`ApplicationBuilder::with_registry_tags`], satisfying
 /// [`Tag`]'s [sampling requirement](Tag#sampling-requirement) for the complete
 /// setup of both registries. Production consumers must not use a fixed test key.
+///
+/// The profile is part of the setup the tags are sampled for (see
+/// [`Profile`]): an application in another profile is another setup, with
+/// its own manifest digest and its own tags, even over the same curves and
+/// steps. [`Self::from_beacon`] names the profile in its labels, so one
+/// beacon output and manifest digest give each profile its own tags.
 ///
 /// To supply the final field elements from your setup procedure, wrap each
 /// value with [`Tag::new`] and set [`Self::native`] and [`Self::nested`].
@@ -92,16 +107,41 @@ pub struct RegistryTags<C: Cycle> {
     pub nested: Tag<C::ScalarField>,
 }
 
-impl<C: Cycle> RegistryTags<C> {
+impl<C: ProfiledCycle> RegistryTags<C> {
     /// Derives both tags from a public randomness beacon and a manifest digest,
-    /// with distinct labels for the two registries. `manifest_digest` covers
-    /// the complete setup of both registries. Both inputs are raw bytes, not
-    /// hex strings. See [`Tag::from_beacon`].
+    /// with distinct labels for the two registries, which name every profile
+    /// but the standard one: the standard profile's labels are
+    /// `ragu_pcd native registry` and `ragu_pcd nested registry`, the ones
+    /// its ceremony fixed, and another profile's labels follow those with
+    /// the profile's [`NAME`](Profile::NAME) in parentheses.
+    /// `manifest_digest` covers the complete setup of both registries. Both
+    /// inputs are raw bytes, not hex strings. See [`Tag::from_beacon`].
     pub fn from_beacon(beacon: &[u8], manifest_digest: &[u8]) -> Self {
         Self {
-            native: Tag::from_beacon(beacon, manifest_digest, b"ragu_pcd native registry"),
-            nested: Tag::from_beacon(beacon, manifest_digest, b"ragu_pcd nested registry"),
+            native: Tag::from_beacon(
+                beacon,
+                manifest_digest,
+                &Self::label(b"ragu_pcd native registry"),
+            ),
+            nested: Tag::from_beacon(
+                beacon,
+                manifest_digest,
+                &Self::label(b"ragu_pcd nested registry"),
+            ),
         }
+    }
+
+    /// The label a registry's tag is derived under: `registry` alone in the
+    /// standard profile, and `registry` followed by the profile's name in
+    /// parentheses otherwise.
+    fn label(registry: &[u8]) -> Vec<u8> {
+        let mut label = registry.to_vec();
+        if TypeId::of::<C::Profile>() != TypeId::of::<Standard>() {
+            label.extend_from_slice(b" (");
+            label.extend_from_slice(C::Profile::NAME.as_bytes());
+            label.push(b')');
+        }
+        label
     }
 }
 
@@ -120,7 +160,7 @@ pub struct ApplicationBuilder<
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
     for ApplicationBuilder<'_, C, R, HEADER_SIZE, B>
 {
     fn default() -> Self {
@@ -128,7 +168,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
@@ -149,6 +189,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// application, including the public parameters supplied to [`Self::finalize`].
     /// This method stores the final values without validating their origin.
     /// Production callers must not use a test key.
+    ///
+    /// TODO: enforce the selected profile's association with its versioned setup
+    /// and registry tags; see [`profile`]'s isolation follow-up.
     pub fn with_registry_tags(mut self, tags: RegistryTags<C>) -> Self {
         self.native_registry = self.native_registry.with_tag(tags.native);
         self.nested_registry = self.nested_registry.with_tag(tags.nested);
@@ -242,15 +285,33 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// Returns an error if internal circuit registration, registry
     /// finalization, or the bootstrap fuse fails.
     pub fn finalize(
+        self,
+        params: &'params C::Params,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>>
+    where
+        <C::Profile as Profile>::Context<'params, C::Base, R, B>: Default,
+    {
+        self.finalize_with(params, Default::default())
+    }
+
+    /// Like [`finalize`](Self::finalize), with the profile's prover
+    /// context: what its prover holds across proofs beyond the proof under
+    /// construction (see [`Profile::Context`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`finalize`](Self::finalize).
+    pub fn finalize_with(
         mut self,
         params: &'params C::Params,
+        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts(self.num_application_steps);
+            internal::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
 
         // First, register internal circuits and masks
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
@@ -269,6 +330,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::bootstrap::Bootstrap::new(),
                 ))?;
+        // The decompression step, for a profile whose extension verifies a
+        // compressed proof: the one step whose output header is that
+        // proof's statement (see `step::internal::decompress`).
+        if C::Profile::native_extension().statement.is_some() {
+            self =
+                self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
+        }
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -282,7 +350,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = internal::nested::register_all::<C, R>(self.nested_registry)?;
+        self.nested_registry =
+            internal::nested::register_all::<C, R>(self.nested_registry, params)?;
 
         let mut app = Application {
             native_registry: self.native_registry.finalize()?,
@@ -291,6 +360,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             num_application_steps: self.num_application_steps,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
+            context,
             _marker: PhantomData,
         };
 
@@ -382,7 +452,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 /// The recursion context that is used to create and verify proof-carrying data.
 pub struct Application<
     'params,
-    C: Cycle,
+    C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
     B: SelectableBackend = ReferenceBackend,
@@ -391,6 +461,9 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// The profile's prover context: what its prover holds across proofs
+    /// (see [`Profile::Context`]).
+    context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     /// The proof that bootstraps the recursion: a genuine, verifying
     /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
     ///
@@ -404,9 +477,15 @@ pub struct Application<
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
+    /// The profile's prover context, as given to
+    /// [`finalize_with`](ApplicationBuilder::finalize_with).
+    pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
+        &self.context
+    }
+
     /// Seed a new computation by running a [`Step`] declaring `()` for both of
     /// its inputs.
     ///

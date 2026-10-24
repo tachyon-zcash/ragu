@@ -11,7 +11,7 @@ use ragu_core::{
 };
 
 use super::header::Header;
-use crate::internal::native::InternalCircuitIndex;
+use crate::{internal::native::InternalCircuitIndex, profile::Profile};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]
@@ -20,6 +20,10 @@ pub(crate) enum InternalStepIndex {
     Rerandomize = 0,
     /// Internal step that bootstraps the recursion; see [`internal::bootstrap`].
     Bootstrap = 1,
+    /// Internal step that decompresses a compressed proof; see
+    /// [`internal::decompress`]. Registered only by a profile whose native
+    /// extension has a statement circuit.
+    Decompress = 2,
 }
 
 /// Internal representation of a [`Step`] index distinguishing internal vs.
@@ -29,9 +33,36 @@ enum StepIndex {
     Application(usize),
 }
 
-/// The number of internal steps used by Ragu for things like rerandomization or
-/// proof decompression.
+/// The internal steps every profile registers: rerandomization and the
+/// bootstrap.
 pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
+
+/// The internal steps profile `P` registers: every profile's, and the
+/// decompression step for a profile whose native extension has a statement
+/// circuit.
+pub(crate) fn num_internal_steps<P: Profile>() -> usize {
+    NUM_INTERNAL_STEPS + usize::from(P::native_extension().statement.is_some())
+}
+
+impl InternalStepIndex {
+    /// The circuit index of this internal step in profile `P`: after the
+    /// internal circuits, in declaration order.
+    ///
+    /// # Errors
+    ///
+    /// Fails for a step the profile does not register, the decompression
+    /// step of a profile without a statement circuit, whose index would
+    /// otherwise be an application step's.
+    pub(crate) fn circuit_index<P: Profile>(self) -> Result<CircuitIndex> {
+        let step = self as usize;
+        if step >= num_internal_steps::<P>() {
+            return Err(ragu_core::Error::Initialization(
+                "attempted to use an internal step the profile does not register".into(),
+            ));
+        }
+        Ok(CircuitIndex::new(InternalCircuitIndex::num::<P>() + step))
+    }
+}
 
 /// The index of a [`Step`] in an application.
 ///
@@ -57,15 +88,14 @@ impl Index {
     ///
     /// Pass the known number of application steps to validate and compute the
     /// final index of this step. Returns an error if an application step index
-    /// exceeds the number of registered steps.
-    pub(crate) fn circuit_index(&self, num_application_steps: usize) -> Result<CircuitIndex> {
+    /// exceeds the number of registered steps, or if an internal step is one
+    /// the profile does not register.
+    pub(crate) fn circuit_index<P: Profile>(
+        &self,
+        num_application_steps: usize,
+    ) -> Result<CircuitIndex> {
         match self.index {
-            StepIndex::Internal(i) => {
-                // Internal steps come after internal circuits
-                Ok(CircuitIndex::from_u32(
-                    InternalCircuitIndex::NUM as u32 + i as u32,
-                ))
-            }
+            StepIndex::Internal(i) => i.circuit_index::<P>(),
             StepIndex::Application(i) => {
                 if i >= num_application_steps {
                     return Err(ragu_core::Error::Initialization(
@@ -74,7 +104,7 @@ impl Index {
                 }
 
                 Ok(CircuitIndex::new(
-                    NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM + i,
+                    num_internal_steps::<P>() + InternalCircuitIndex::num::<P>() + i,
                 ))
             }
         }
@@ -165,31 +195,81 @@ mod tests {
 
     #[test]
     fn test_index_map() -> Result<()> {
+        use crate::profile::Standard;
         let num_application_steps = 10;
         let app_offset = NUM_INTERNAL_STEPS + InternalCircuitIndex::NUM;
 
         // Internal steps come after internal circuits
         assert_eq!(
-            Index::internal(InternalStepIndex::Rerandomize).circuit_index(num_application_steps)?,
+            Index::internal(InternalStepIndex::Rerandomize)
+                .circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(InternalCircuitIndex::NUM)
         );
         assert_eq!(
-            Index::internal(InternalStepIndex::Bootstrap).circuit_index(num_application_steps)?,
+            Index::internal(InternalStepIndex::Bootstrap)
+                .circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(InternalCircuitIndex::NUM + 1)
         );
 
         // Application steps occupy indices (InternalCircuitIndex::NUM + NUM_INTERNAL_STEPS)..
         assert_eq!(
-            Index::new(0).circuit_index(num_application_steps)?,
+            Index::new(0).circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(app_offset)
         );
         assert_eq!(
-            Index::new(1).circuit_index(num_application_steps)?,
+            Index::new(1).circuit_index::<Standard>(num_application_steps)?,
             CircuitIndex::new(app_offset + 1)
         );
         Index::new(999).assert_index(999)?;
-        assert!(Index::new(10).circuit_index(num_application_steps).is_err());
+        assert!(
+            Index::new(10)
+                .circuit_index::<Standard>(num_application_steps)
+                .is_err()
+        );
 
+        Ok(())
+    }
+
+    /// A profile with a statement circuit registers the statement step
+    /// after the two every profile has, and its application steps after
+    /// it.
+    #[test]
+    fn test_a_statement_registers_its_step() -> Result<()> {
+        use crate::profile::{Standard, testing::Stated};
+        assert_eq!(num_internal_steps::<Standard>(), NUM_INTERNAL_STEPS);
+        assert_eq!(num_internal_steps::<Stated>(), NUM_INTERNAL_STEPS + 1);
+        let internal = InternalCircuitIndex::num::<Stated>();
+        assert_eq!(
+            Index::internal(InternalStepIndex::Decompress).circuit_index::<Stated>(1)?,
+            CircuitIndex::new(internal + 2)
+        );
+        assert_eq!(
+            Index::new(0).circuit_index::<Stated>(1)?,
+            CircuitIndex::new(internal + 3)
+        );
+        Ok(())
+    }
+
+    /// An internal step a profile does not register has no circuit index
+    /// in it: resolving the decompression step for the standard profile
+    /// fails rather than naming its first application step.
+    #[test]
+    fn test_an_unregistered_internal_step_is_refused() -> Result<()> {
+        use crate::profile::{Standard, testing::Stated};
+        assert!(
+            InternalStepIndex::Decompress
+                .circuit_index::<Standard>()
+                .is_err()
+        );
+        assert!(
+            Index::internal(InternalStepIndex::Decompress)
+                .circuit_index::<Standard>(1)
+                .is_err()
+        );
+        assert_eq!(
+            InternalStepIndex::Decompress.circuit_index::<Stated>()?,
+            CircuitIndex::new(InternalCircuitIndex::num::<Stated>() + 2)
+        );
         Ok(())
     }
 }

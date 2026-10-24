@@ -104,6 +104,9 @@ name = "nontrivial"
 name = "pasta_parameters"
 
 [[test]]
+name = "profiles"
+
+[[test]]
 name = "registration_errors"
 
 [[test]]

@@ -27,11 +27,19 @@
 //!   final revdot claims).
 //! - Application and unified $k(y)$ evaluations from [`outer_error`] (computed and
 //!   verified in [`outer_collapse`]).
+//! - The statement circuit's $k(y)$, from the preamble's headers, and the
+//!   binding circuit's, from the children's nested extension stage
+//!   commitments the [`points::BindingStage`] walks, for a profile whose
+//!   native extension has them.
 //!
 //! ## Staging
 //!
 //! This circuit uses [`inner_error`] as its final stage, which inherits in the
 //! following chain:
+//! - [`points::BindingStage`] (unenforced, for a profile whose native
+//!   extension binds, which puts the stage in the circuit's claim; its
+//!   curve membership is `bind_endoscalar`'s. Skipped otherwise, as the
+//!   standard profile's circuit always has.)
 //! - [`preamble`] (unenforced)
 //! - [`outer_error`] (enforced)
 //! - [`inner_error`] (enforced)
@@ -49,6 +57,7 @@
 //! [`inner_error`]: super::super::stages::inner_error
 //! [`outer_error`]: super::super::stages::outer_error
 //! [`preamble`]: super::super::stages::preamble
+//! [`points::BindingStage`]: super::super::stages::points::BindingStage
 //! [`ClaimFolder::fold_inner`]: fold_revdot::ClaimFolder::fold_inner
 //! [`TwoProofKySource`]: crate::internal::native::claims::TwoProofKySource
 
@@ -75,7 +84,10 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::fold_revdot;
+use crate::{
+    internal::{fold_revdot, ky},
+    profile::{Profile, ProfiledCycle},
+};
 
 /// Circuit that verifies layer 1 of the two-layer revdot reduction.
 ///
@@ -87,7 +99,7 @@ pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, FP: fold_revdot::Param
     _marker: PhantomData<(C, R, FP)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit for layer 1 revdot verification.
@@ -99,7 +111,16 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
 }
 
 /// Witness for the inner collapse circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<
+    'a,
+    C: ProfiledCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    FP: fold_revdot::Parameters,
+> {
+    /// The binding stage: the children's walked commitments, for the
+    /// nested extension stages the binding circuit's k(y) is over.
+    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (contains child unified instances with c values).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
     /// The unified instance containing challenges and accumulated coverage.
@@ -110,7 +131,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, FP>
 {
     type Last = native_inner_error::Stage<C, R, HEADER_SIZE, FP>;
@@ -139,8 +160,20 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let builder =
-            builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
+        type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
+        // The binding stage is loaded, and so in the circuit's claim, only
+        // for a profile whose native extension binds: the circuit reads
+        // its extension points for the binding k(y) and nothing else.
+        let extension = C::Profile::native_extension();
+        let (binding, builder) = if extension.binding.is_some() {
+            let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
+            (Some(binding), builder)
+        } else {
+            (
+                None,
+                builder.skip_stage::<Binding<C::NestedCurve, C::Profile>>()?,
+            )
+        };
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =
@@ -148,6 +181,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         let (inner_error, builder) =
             builder.add_stage::<native_inner_error::Stage<C, R, HEADER_SIZE, FP>>()?;
         let dr = builder.finish();
+        let binding = match binding {
+            Some(binding) => Some(binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?),
+            None => None,
+        };
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
         let outer_error =
             outer_error.enforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
@@ -167,14 +204,48 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
         // Sources include:
         // - Child c values from preamble (the children's final revdot claims)
         // - Application and unified k(y) evaluations from outer_error
+        // The statement circuit's k(y) values come straight from the
+        // preamble, as the application ones do in `outer_collapse`, and the
+        // binding circuit's from the children's nested extension stage
+        // commitments the binding stage walks. A profile without either
+        // computes nothing here, and reads nothing: its circuit is the one
+        // it had.
+        let y = if extension.statement.is_some() || extension.binding.is_some() {
+            Some(unified_output.y.read(dr, allocator)?)
+        } else {
+            None
+        };
+        let (left_statement, right_statement) = match (&y, extension.statement) {
+            (Some(y), Some(_)) => (
+                preamble.left.statement_ky::<C::Profile>(dr, y)?,
+                preamble.right.statement_ky::<C::Profile>(dr, y)?,
+            ),
+            _ => (None, None),
+        };
+        let (left_binding, right_binding) = match (&y, &extension.binding, &binding) {
+            (Some(y), Some(declared), Some(binding)) => {
+                let bound = |child: &super::super::stages::points::ChildBinding<'dr, D, _, _>| {
+                    ky::bound(Some(declared), |j| child.extension[j as usize].clone())
+                };
+                (
+                    ky::binding_ky(dr, y, &bound(&binding.left))?,
+                    ky::binding_ky(dr, y, &bound(&binding.right))?,
+                )
+            }
+            _ => (None, None),
+        };
         let ky = TwoProofKySource::new(
             dr,
             preamble.left.unified.c.clone(),
             preamble.right.unified.c.clone(),
             &outer_error.left,
             &outer_error.right,
+            left_statement,
+            right_statement,
+            left_binding,
+            right_binding,
         );
-        let mut ky = ky_values(&ky);
+        let mut ky = ky_values::<C::Profile, _>(&ky);
 
         // Verify each group's layer 1 reduction. For each group, fold the
         // inner error terms with the corresponding k(y) values and enforce the

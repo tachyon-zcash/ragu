@@ -18,7 +18,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::Result;
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -27,10 +27,11 @@ use crate::{
     Application, Proof,
     internal::{native, nested},
     multicore::par_join,
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     pub(super) fn compute_eval(
@@ -45,7 +46,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         builder: &ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::eval::Witness<C>,
-        nested::stages::eval::Evaluations<C::ScalarField>,
+        nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
         nested::stages::challenges::Witness<C::ScalarField>,
     )> {
         // The binding partials over the lifts of the challenges squeezed so
@@ -138,7 +139,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
-        nested_eval: &nested::stages::eval::Evaluations<C::ScalarField>,
+        nested_eval: &nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
@@ -151,7 +152,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let native_eval_commitment =
             B::sparse_commit_to_affine(&eval_rx, C::host_generators(self.params));
 
-        let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::eval::Witness {
                 native_eval: native_eval_commitment,

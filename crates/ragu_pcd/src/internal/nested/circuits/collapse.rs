@@ -24,7 +24,10 @@
 //! its nested unified instance, both read off the `preamble` bridge stage's
 //! copies (the instance's through [`ChildOutput::nested_instance`]), at the
 //! current step's $y_n$ from the challenge stage; one for each endoscaling
-//! step; zero for each bonding claim. Export separately equates the current
+//! step; for a profile whose nested extension has a binding circuit, the
+//! $k(y_n)$ of the child's native extension stages it names, read off the
+//! same stage's copies (see [`Binding`](crate::profile::Binding)); zero
+//! for each bonding claim. Export separately equates the current
 //! instance's $y_n$ with that stage value.
 //!
 //! ## Base case
@@ -64,22 +67,25 @@ use ragu_primitives::{Element, GadgetExt as _, allocator::Standard, vec::FixedVe
 use udon::curve::EndomorphismAffine as Affine;
 
 use super::common;
-use crate::internal::{
-    fold_revdot,
-    nested::{
-        RevdotParameters,
-        claims::{TwoProofKySource, ky_values},
-        stages::{self, challenges},
-        unified,
+use crate::{
+    internal::{
+        fold_revdot, ky,
+        nested::{
+            RevdotParameters,
+            claims::{TwoProofKySource, ky_values},
+            stages::{self, challenges},
+            unified,
+        },
     },
+    profile::Profile,
 };
 
 /// Collapse circuit verifying the nested fold.
-pub struct Circuit<C: Affine, R: Rank> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Affine, R: Rank, P: Profile> {
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<C: Affine, R: Rank> Circuit<C, R> {
+impl<C: Affine, R: Rank, P: Profile> Circuit<C, R, P> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
@@ -87,10 +93,10 @@ impl<C: Affine, R: Rank> Circuit<C, R> {
     }
 }
 
-impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
-    type Last = stages::challenges::Stage<C, R>;
+impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C, R, P> {
+    type Last = stages::challenges::Stage<C, R, P>;
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = common::Witness<'source, C>;
+    type Witness<'source> = common::Witness<'source, C, P>;
     type Output = unified::OutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -118,14 +124,34 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
         let y = &lifts[challenges::Y].lift;
         let left_unified = stages.preamble.left.nested_instance().ky(dr, y)?;
         let right_unified = stages.preamble.right.nested_instance().ky(dr, y)?;
+        // The binding circuit's k(y): the k(y) of the children's native
+        // extension stages it names, as the bridge preamble holds them. A
+        // profile without a binding computes nothing here.
+        let binding = P::nested_extension().binding;
+        let left_binding = ky::binding_ky(
+            dr,
+            y,
+            &ky::bound(binding.as_ref(), |j| {
+                stages.preamble.left.extension_stages[j as usize].clone()
+            }),
+        )?;
+        let right_binding = ky::binding_ky(
+            dr,
+            y,
+            &ky::bound(binding.as_ref(), |j| {
+                stages.preamble.right.extension_stages[j as usize].clone()
+            }),
+        )?;
         let ky = TwoProofKySource::new(
             dr,
             stages.preamble.left.nested.c.clone(),
             stages.preamble.right.nested.c.clone(),
             left_unified,
             right_unified,
+            left_binding,
+            right_binding,
         );
-        let mut ky = ky_values(&ky);
+        let mut ky = ky_values::<P, _>(&ky);
 
         // Layer 1: each group's fold must be the collapsed value witnessed.
         let fold = fold_revdot::ClaimFolder::new(
@@ -140,7 +166,7 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             .zip(stages.outer_error.collapsed.iter())
         {
             let ky = FixedVec::from_fn(|_| ky.next().expect("ky_values is infinite"));
-            fold.fold_inner::<RevdotParameters>(dr, error_terms, &ky)?
+            fold.fold_inner::<RevdotParameters<P>>(dr, error_terms, &ky)?
                 .enforce_equal(dr, collapsed)?;
         }
 
@@ -151,7 +177,7 @@ impl<C: Affine, R: Rank> MultiStageCircuit<C::Base, R> for Circuit<C, R> {
             &lifts[challenges::MU_PRIME].lift,
             &lifts[challenges::NU_PRIME].lift,
         )?;
-        let computed_c = fold.fold_outer::<RevdotParameters>(
+        let computed_c = fold.fold_outer::<RevdotParameters<P>>(
             dr,
             &stages.outer_error.error_terms,
             &stages.outer_error.collapsed,

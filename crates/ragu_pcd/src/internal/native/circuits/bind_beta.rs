@@ -82,14 +82,18 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::internal::{fold_revdot, nested};
+use crate::{
+    internal::{fold_revdot, nested},
+    profile::ProfiledCycle,
+};
 
 /// The nested-curve generator index the challenge stage commits the lift of
 /// `pre_beta` with.
-pub fn generator_index<C: Cycle, R: Rank>() -> usize {
-    <nested::stages::challenges::Stage<C::HostCurve, R> as StageExt<C::ScalarField, R>>::generator_index_for_a(
-        nested::stages::challenges::BETA_INDEX,
-    )
+pub fn generator_index<C: ProfiledCycle, R: Rank>() -> usize {
+    <nested::stages::challenges::Stage<C::HostCurve, R, C::Profile> as StageExt<
+        C::ScalarField,
+        R,
+    >>::generator_index_for_a(nested::stages::challenges::BETA_INDEX)
 }
 
 /// Native circuit binding both children's transcript and persistent commitments.
@@ -102,7 +106,7 @@ pub struct Circuit<'params, C: Cycle, R, const HEADER_SIZE: usize, FP> {
     _marker: PhantomData<(R, FP)>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     Circuit<'params, C, R, HEADER_SIZE, FP>
 {
     /// Creates a new multi-stage circuit.
@@ -118,12 +122,18 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Para
 }
 
 /// Witness for the beta binding circuit.
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters> {
+pub struct Witness<
+    'a,
+    C: ProfiledCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    FP: fold_revdot::Parameters,
+> {
     /// The unified instance, for the instance and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// The binding stage: the children's walked commitments that must
     /// match their unified instances.
-    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve>,
+    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides the children's `pre_beta`
     /// and exported bindings).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
@@ -131,7 +141,7 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     pub outer_error_witness: &'a native_outer_error::Witness<C, FP>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     MultiStageCircuit<C::CircuitField, R> for Circuit<'_, C, R, HEADER_SIZE, FP>
 {
     type Last = native_outer_error::Stage<C, R, HEADER_SIZE, FP>;
@@ -160,7 +170,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Parameters>
     where
         Self: 'dr,
     {
-        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve>>()?;
+        let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (outer_error, builder) =

@@ -62,6 +62,7 @@ use crate::{
         },
         transcript::Transcript,
     },
+    profile::ProfiledCycle,
 };
 
 /// The backend whose kernels [`Application::verify`] consults for the selected
@@ -70,7 +71,7 @@ use crate::{
 /// fixed by the sealed [`SelectableBackend::Verifier`] mapping.
 type Verifier<B> = <B as SelectableBackend>::Verifier;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Verifies some [`Pcd`] for the provided [`Header`].
@@ -138,11 +139,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let source = native::SingleProofSource { proof: pcd.proof() };
         let mut builder =
             claims::Builder::<_, C::CircuitField, R, Verifier<B>>::new(&self.native_registry, y, z);
-        native_claims::build(&source, &mut builder)?;
+        native_claims::build::<C::Profile, _, _>(&source, &mut builder)?;
 
         // Check all native revdot claims.
         let native_revdot_claims = {
-            native::ky_values(&native_ky)
+            native::ky_values::<C::Profile, _>(&native_ky)
                 .zip(builder.a.iter().zip(builder.b.iter()))
                 .all(|(ky, (a, b))| Verifier::<B>::sparse_revdot(a, b) == ky)
         };
@@ -157,13 +158,15 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 y_nested,
                 z_nested,
             );
-            nested_claims::build(&nested_source, &mut nested_builder)?;
+            nested_claims::build::<C::Profile, _, _>(&nested_source, &mut nested_builder)?;
 
             // The nested unified instance's k(y), at the sampled nested y,
             // for the instance circuits' claims: the instance is read off
             // the proof (c_n and v_n derived from its polynomials), and the
             // claims bind it to those circuits' traces.
             let nested_ky = ky::nested_ky(pcd.proof(), y_nested)?;
+            let native_bound =
+                ky::nested_bound::<C::Profile, _>(|index| pcd.proof().native_rx_commitment(index));
             let ky_source = ky::NestedKy {
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
@@ -174,8 +177,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     &pcd.proof()[NestedRxComponent::AbB],
                 ),
                 unified: nested_ky,
+                // The nested binding circuit's claim holds its recomputation
+                // of the native extension stages it names to their
+                // commitments.
+                binding: ky::binding_ky_of(&native_bound, y_nested)?,
             };
-            nested::ky_values(&ky_source)
+            nested::ky_values::<C::Profile, _>(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
                 .all(|(ky, (a, b))| Verifier::<B>::sparse_revdot(a, b) == ky)
         };
@@ -209,7 +216,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // parent, so the decider holds the root's stage to its headers here.
         let nested_challenges_claim = {
             let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
-            let expected_challenges = nested_challenges::Stage::<C::HostCurve, R>::rx(
+            let expected_challenges = nested_challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ZERO,
                 &nested_challenges::Witness::new::<_, HEADER_SIZE>(
                     challenge_lifts.try_into().expect("NUM challenge lifts"),
@@ -235,7 +242,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let native = {
                 let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> = Vec::new();
                 let mut points: Vec<C::HostCurve> = Vec::new();
-                for &id in &native_internal::RxIndex::ALL {
+                for id in native_internal::RxIndex::all::<C::Profile>() {
                     polys.push(&proof[id]);
                     points.push(proof.native_rx_commitment(id));
                 }
@@ -257,7 +264,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let nested = {
                 let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> = Vec::new();
                 let mut points: Vec<C::NestedCurve> = Vec::new();
-                for &id in &nested_internal::RxIndex::ALL {
+                for id in nested_internal::RxIndex::all::<C::Profile>() {
                     polys.push(&proof[id]);
                     points.push(proof.nested_rx_commitment(id));
                 }
@@ -343,7 +350,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // the proof's bridge blinding: rederive and compare.
         let ab_bridge_claim = {
             let proof = pcd.proof();
-            let expected = nested_ab::Stage::<C::HostCurve, R>::rx(
+            let expected = nested_ab::Stage::<C::HostCurve, R, C::Profile>::rx(
                 crate::proof::bridge_alpha_power(
                     proof.bridge_alpha,
                     nested_internal::RxIndex::BridgeAB,
@@ -427,11 +434,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         })?;
         let evals = Verifier::<B>::registry_wxy_over_domain(registry, x, y);
         let log2_n = registry.log2_domain();
-        let fixed_registry_claim = InternalCircuitIndex::ALL
+        let fixed_registry_claim = InternalCircuitIndex::all::<C::Profile>()
             .iter()
             .zip(&fixed)
             .all(|(id, &i)| {
-                let j = usize::from(id.circuit_index()) as u32;
+                let j = usize::from(id.circuit_index::<C::Profile>()) as u32;
                 query.read(i) == evals[bit_reverse(j as usize, log2_n)]
             });
         let claimed: Vec<C::CircuitField> = claimed.iter().map(|&i| query.read(i)).collect();
@@ -480,9 +487,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// The nested mesh claim: see [`verify`](Self::verify).
     fn nested_mesh_claim(&self, proof: &Proof<C, R>) -> Result<bool> {
         use nested_internal::{InternalCircuitIndex, RxIndex, stages};
-        type Preamble<C, R> = stages::preamble::Stage<C, R>;
-        type Query<C, R> = stages::query::Stage<C, R>;
-        type Eval<C, R> = stages::eval::Stage<C, R>;
+        type Preamble<C, R, P> = stages::preamble::Stage<C, R, P>;
+        type Query<C, R, P> = stages::query::Stage<C, R, P>;
+        type Eval<C, R, P> = stages::eval::Stage<C, R, P>;
 
         let registry = &self.nested_registry;
         let w = nested_challenge::<C>(proof.w())?;
@@ -493,7 +500,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // The children's lifted challenges, off the preamble.
         let preamble = StageReader::<C::ScalarField, R>::new(&proof[RxIndex::BridgePreamble]);
-        let child = stage_wire_indices::<_, R, Preamble<C::HostCurve, R>>(|out| {
+        let child = stage_wire_indices::<_, R, Preamble<C::HostCurve, R, C::Profile>>(|out| {
             let mut wires = Vec::new();
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.nested.x)?);
@@ -507,7 +514,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // The query stage's registry values.
         let query = StageReader::<C::ScalarField, R>::new(&proof[RxIndex::BridgeQuery]);
         let mut fixed = Vec::new();
-        let claimed = stage_wire_indices::<_, R, Query<C::HostCurve, R>>(|out| {
+        let claimed = stage_wire_indices::<_, R, Query<C::HostCurve, R, C::Profile>>(|out| {
             let q = &out.nested;
             fixed = wires_of(&q.fixed_registry)?;
             let mut wires = wires_of(&q.registry_wxy)?;
@@ -519,11 +526,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         })?;
         let evals = Verifier::<B>::registry_wxy_over_domain(registry, x, y);
         let log2_n = registry.log2_domain();
-        let fixed_registry_claim = InternalCircuitIndex::ALL
+        let fixed_registry_claim = InternalCircuitIndex::all::<C::Profile>()
             .iter()
             .zip(&fixed)
             .all(|(id, &i)| {
-                let j = usize::from(id.circuit_index()) as u32;
+                let j = usize::from(id.circuit_index::<C::Profile>()) as u32;
                 query.read(i) == evals[bit_reverse(j as usize, log2_n)]
             });
         let claimed: Vec<C::ScalarField> = claimed.iter().map(|&i| query.read(i)).collect();
@@ -538,7 +545,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // The eval stage's current-step evaluations at u_n.
         let eval = StageReader::<C::ScalarField, R>::new(&proof[RxIndex::BridgeEval]);
-        let current = stage_wire_indices::<_, R, Eval<C::HostCurve, R>>(|out| {
+        let current = stage_wire_indices::<_, R, Eval<C::HostCurve, R, C::Profile>>(|out| {
             let e = &out.nested;
             let mut wires = Vec::new();
             for element in [
@@ -572,19 +579,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 /// the proof's polynomial commitments. `verify` separately recomputes the
 /// caches; the recursive counterpart is `bind_endoscalar`'s exports and the
 /// parent's `bind_beta` checks.
-pub(crate) fn nested_points_match<C: Cycle, R: Rank>(proof: &Proof<C, R>) -> Result<bool> {
+pub(crate) fn nested_points_match<C: ProfiledCycle, R: Rank>(proof: &Proof<C, R>) -> Result<bool> {
     use native_internal::{RxIndex, stages::points};
 
     let ab = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::PointsAb]);
-    let ab_wires = stage_wire_indices::<_, R, points::AbStage<C::NestedCurve>>(|stage| {
-        let mut wires = wires_of(&stage.a)?;
-        wires.extend(wires_of(&stage.b)?);
-        Ok(wires)
-    })?;
+    let ab_wires =
+        stage_wire_indices::<_, R, points::AbStage<C::NestedCurve, C::Profile>>(|stage| {
+            let mut wires = wires_of(&stage.a)?;
+            wires.extend(wires_of(&stage.b)?);
+            Ok(wires)
+        })?;
     let f = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::PointsF]);
-    let registry_wires = stage_wire_indices::<_, R, points::FStage<C::NestedCurve>>(|stage| {
-        wires_of(&stage.registry_xy)
-    })?;
+    let registry_wires =
+        stage_wire_indices::<_, R, points::FStage<C::NestedCurve, C::Profile>>(|stage| {
+            wires_of(&stage.registry_xy)
+        })?;
     let held = ab_wires
         .iter()
         .map(|&i| ab.read(i))

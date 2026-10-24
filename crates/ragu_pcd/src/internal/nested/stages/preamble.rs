@@ -21,16 +21,19 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::{
     Proof,
     internal::{
-        native::{NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxIndex},
+        native::{self, NUM_BINDERS, RxIndex},
         nested::{PointsStage, unified},
     },
+    profile::{Profile, ProfiledCycle},
 };
 
-/// Number of curve points in this stage: the native preamble's commitment
-/// and those of the two native points stages committed before $w$, then for
-/// each child every native rx commitment and its $a$, $b$, `registry_xy`
-/// and $P$.
-pub const NUM_POINTS: usize = 3 + 2 * (RxIndex::NUM + 4);
+/// Number of curve points in this stage in profile `P`: the native
+/// preamble's commitment and those of the two native points stages committed
+/// before $w$, then for each child every native rx commitment and its $a$,
+/// $b$, `registry_xy` and $P$.
+pub fn num_points<P: Profile>() -> usize {
+    3 + 2 * (RxIndex::num::<P>() + 4)
+}
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -43,7 +46,7 @@ pub const NUM_POINTS: usize = 3 + 2 * (RxIndex::NUM + 4);
 /// the copies to the child's export circuit: it folds the child's
 /// instance-circuit claims with that expected value, outside the base case.
 #[derive(Clone)]
-pub struct ChildWitness<C: Affine> {
+pub struct ChildWitness<C: Affine, P: Profile> {
     // Field order matches the `_10_p` accumulation order.
     /// Commitment from the child's application circuit.
     pub application: C,
@@ -64,7 +67,11 @@ pub struct ChildWitness<C: Affine> {
     /// Commitment from the child's endoscalar binding circuit.
     pub bind_endoscalar: C,
     /// Commitments from the child's native endoscaling steps.
-    pub endoscaling_steps: [C; NUM_ENDOSCALING_STEPS],
+    pub endoscaling_steps: FixedVec<C, native::NumSteps<P>>,
+    /// Commitments from the circuits of the child's native extension.
+    pub extension_circuits: FixedVec<C, native::NumExtensionCircuits<P>>,
+    /// Commitments from the stages of the child's native extension.
+    pub extension_stages: FixedVec<C, native::NumExtensionStages<P>>,
     /// Commitment from the child's native walk stage.
     pub points_walk: C,
 
@@ -115,14 +122,16 @@ pub struct NestedValues<F> {
     pub u: F,
 }
 
-impl<C: Affine> ChildWitness<C> {
+impl<C: Affine, P: Profile> ChildWitness<C, P> {
     /// Construct from a child proof's commitments and nested instance.
     ///
     /// # Errors
     ///
     /// Fails if a challenge of the child lies outside the endoscalar range,
     /// which an honest transcript output does with negligible probability.
-    pub fn from_proof<CC: Cycle<HostCurve = C>, R: Rank>(proof: &Proof<CC, R>) -> Result<Self> {
+    pub fn from_proof<CC: Cycle<HostCurve = C> + ProfiledCycle<Profile = P>, R: Rank>(
+        proof: &Proof<CC, R>,
+    ) -> Result<Self> {
         use crate::internal::native::RxComponent;
         let instance = proof.nested_instance()?;
         Ok(Self {
@@ -137,8 +146,14 @@ impl<C: Affine> ChildWitness<C> {
             }),
             bind_beta: proof.native_rx_commitment(RxIndex::BindBeta),
             bind_endoscalar: proof.native_rx_commitment(RxIndex::BindEndoscalar),
-            endoscaling_steps: core::array::from_fn(|step| {
+            endoscaling_steps: FixedVec::from_fn(|step| {
                 proof.native_rx_commitment(RxIndex::EndoscalingStep(step as u32))
+            }),
+            extension_circuits: FixedVec::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::ExtensionCircuit(k as u32))
+            }),
+            extension_stages: FixedVec::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::ExtensionStage(k as u32))
             }),
             points_walk: proof.native_rx_commitment(RxIndex::PointsWalk),
             stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
@@ -167,7 +182,7 @@ impl<C: Affine> ChildWitness<C> {
 }
 
 /// Witness data for the preamble bridge stage.
-pub struct Witness<C: Affine> {
+pub struct Witness<C: Affine, P: Profile> {
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
     /// Commitment of the native points binding stage, fixed here before
@@ -177,14 +192,14 @@ pub struct Witness<C: Affine> {
     /// $w$ is squeezed.
     pub native_points_children: C,
     /// Witness data from the left child proof.
-    pub left: ChildWitness<C>,
+    pub left: ChildWitness<C, P>,
     /// Witness data from the right child proof.
-    pub right: ChildWitness<C>,
+    pub right: ChildWitness<C, P>,
 }
 
 /// Output gadget for a single child proof in the preamble bridge stage.
 #[derive(Gadget, Write)]
-pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     // Field order matches `_10_p` accumulation order.
     /// Point commitment from the child's application circuit.
     #[ragu(gadget)]
@@ -215,7 +230,13 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub bind_endoscalar: Point<'dr, D, C>,
     /// Point commitments from the child's native endoscaling steps.
     #[ragu(gadget)]
-    pub endoscaling_steps: FixedVec<Point<'dr, D, C>, ConstLen<NUM_ENDOSCALING_STEPS>>,
+    pub endoscaling_steps: FixedVec<Point<'dr, D, C>, native::NumSteps<P>>,
+    /// Point commitments from the circuits of the child's native extension.
+    #[ragu(gadget)]
+    pub extension_circuits: FixedVec<Point<'dr, D, C>, native::NumExtensionCircuits<P>>,
+    /// Point commitments from the stages of the child's native extension.
+    #[ragu(gadget)]
+    pub extension_stages: FixedVec<Point<'dr, D, C>, native::NumExtensionStages<P>>,
     /// Point commitment from the child's native walk stage.
     #[ragu(gadget)]
     pub points_walk: Point<'dr, D, C>,
@@ -283,7 +304,7 @@ pub struct NestedValuesOutput<'dr, D: Driver<'dr>> {
     pub u: Element<'dr, D>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
     /// The child's nested unified instance, assembled from the values this
     /// stage holds, in the order the child's circuits serialize it.
     pub fn nested_instance(&self) -> unified::Output<'dr, D, C> {
@@ -314,8 +335,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
     }
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> core::ops::Index<RxIndex>
-    for ChildOutput<'dr, D, C>
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<RxIndex>
+    for ChildOutput<'dr, D, C, P>
 {
     type Output = Point<'dr, D, C>;
 
@@ -332,6 +353,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> core::ops::Index<RxIndex>
             BindBeta => &self.bind_beta,
             BindEndoscalar => &self.bind_endoscalar,
             EndoscalingStep(step) => &self.endoscaling_steps[step as usize],
+            ExtensionCircuit(k) => &self.extension_circuits[k as usize],
+            ExtensionStage(k) => &self.extension_stages[k as usize],
             Preamble => &self.stashed_preamble,
             InnerError => &self.stashed_inner_error,
             OuterError => &self.stashed_outer_error,
@@ -347,8 +370,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> core::ops::Index<RxIndex>
     }
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, P>>) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
@@ -363,6 +386,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
             bind_endoscalar: Point::alloc(dr, witness.as_ref().map(|w| w.bind_endoscalar))?,
             endoscaling_steps: FixedVec::try_from_fn(|step| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.endoscaling_steps[step]))
+            })?,
+            extension_circuits: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension_circuits[k]))
+            })?,
+            extension_stages: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension_stages[k]))
             })?,
             points_walk: Point::alloc(dr, witness.as_ref().map(|w| w.points_walk))?,
             stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
@@ -408,7 +437,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
@@ -420,25 +449,25 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub native_points_children: Point<'dr, D, C>,
     /// Output gadget for the left child proof.
     #[ragu(gadget)]
-    pub left: ChildOutput<'dr, D, C>,
+    pub left: ChildOutput<'dr, D, C, P>,
     /// Output gadget for the right child proof.
     #[ragu(gadget)]
-    pub right: ChildOutput<'dr, D, C>,
+    pub right: ChildOutput<'dr, D, C, P>,
 }
 
 #[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, P> {
+    _marker: PhantomData<(C, R, P)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = PointsStage<C>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
+    type Parent = PointsStage<C, P>;
+    type Witness<'source> = &'source Witness<C, P>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
         // (x, y) per point, then the five nested scalars of each child.
-        NUM_POINTS * 2 + 2 * 5
+        num_points::<P>() * 2 + 2 * 5
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -470,10 +499,13 @@ mod tests {
     use ragu_core::pasta::EqAffine;
 
     use super::*;
-    use crate::internal::tests::{R, assert_stage_values};
+    use crate::{
+        internal::tests::{R, assert_stage_values},
+        profile::Standard,
+    };
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
     }
 }

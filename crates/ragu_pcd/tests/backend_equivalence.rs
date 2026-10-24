@@ -1015,6 +1015,18 @@ mod proof_equivalence {
         left.iter_coeffs().eq(right.iter_coeffs())
     }
 
+    /// Whether two extension polynomial lists agree, by length and content.
+    fn extension_eq<F: Field, R: Rank>(
+        ours: &[Polynomial<F, R>],
+        theirs: &[Polynomial<F, R>],
+    ) -> bool {
+        ours.len() == theirs.len()
+            && ours
+                .iter()
+                .zip(theirs)
+                .all(|(ours, theirs)| polynomial_eq(ours, theirs))
+    }
+
     impl<C: Cycle, R: Rank> Proof<C, R> {
         /// Returns the first category in which two proofs differ semantically.
         ///
@@ -1046,6 +1058,8 @@ mod proof_equivalence {
                 native_bind_beta_rx: _,
                 native_bind_endoscalar_rx: _,
                 native_endoscaling_step_rxs: _,
+                native_extension_circuit_rxs: _,
+                native_extension_stage_rxs: _,
                 native_points_binding_rx: _,
                 native_points_children_rx: _,
                 native_points_registry_wx_rx: _,
@@ -1061,6 +1075,8 @@ mod proof_equivalence {
                 bridge_query_rx: _,
                 bridge_eval_rx: _,
                 nested_endoscaling_step_rxs: _,
+                nested_extension_circuit_rxs: _,
+                nested_extension_stage_rxs: _,
                 nested_endoscalar_rx: _,
                 nested_points_rx: _,
                 nested_a_poly: _,
@@ -1073,6 +1089,8 @@ mod proof_equivalence {
                 nested_collapse_rx: _,
                 nested_compute_v_rx: _,
                 nested_endoscaling_step_commitments: _,
+                nested_extension_circuit_commitments: _,
+                nested_extension_stage_commitments: _,
                 nested_endoscalar_commitment: _,
                 nested_points_commitment: _,
                 nested_a_commitment: _,
@@ -1113,6 +1131,8 @@ mod proof_equivalence {
                 native_bind_beta_commitment: _,
                 native_bind_endoscalar_commitment: _,
                 native_endoscaling_step_commitments: _,
+                native_extension_circuit_commitments: _,
+                native_extension_stage_commitments: _,
                 native_points_binding_commitment: _,
                 native_points_children_commitment: _,
                 native_points_registry_wx_commitment: _,
@@ -1144,6 +1164,24 @@ mod proof_equivalence {
                 .any(|index| !polynomial_eq(&self[index], &other[index]))
             {
                 return Some("native rx polynomials");
+            }
+            if !extension_eq(
+                &self.native_extension_circuit_rxs,
+                &other.native_extension_circuit_rxs,
+            ) || !extension_eq(
+                &self.native_extension_stage_rxs,
+                &other.native_extension_stage_rxs,
+            ) {
+                return Some("native extension polynomials");
+            }
+            if !extension_eq(
+                &self.nested_extension_circuit_rxs,
+                &other.nested_extension_circuit_rxs,
+            ) || !extension_eq(
+                &self.nested_extension_stage_rxs,
+                &other.nested_extension_stage_rxs,
+            ) {
+                return Some("nested extension polynomials");
             }
             if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
                 || !polynomial_eq(&self.native_b_poly, &other.native_b_poly)
@@ -1228,6 +1266,17 @@ mod proof_equivalence {
                 || self.nested_points_commitment != other.nested_points_commitment
             {
                 return Some("nested commitments");
+            }
+            if self.native_extension_circuit_commitments
+                != other.native_extension_circuit_commitments
+                || self.native_extension_stage_commitments
+                    != other.native_extension_stage_commitments
+                || self.nested_extension_circuit_commitments
+                    != other.nested_extension_circuit_commitments
+                || self.nested_extension_stage_commitments
+                    != other.nested_extension_stage_commitments
+            {
+                return Some("extension commitments");
             }
             if self.nested_a_commitment != other.nested_a_commitment
                 || self.nested_b_commitment != other.nested_b_commitment

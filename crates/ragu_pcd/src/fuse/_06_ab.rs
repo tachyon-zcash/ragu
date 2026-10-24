@@ -40,7 +40,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use udon::{curve::Affine, field::Field};
 
@@ -51,23 +51,27 @@ use super::{
 use crate::{
     Application,
     internal::{fold_revdot, native, nested},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
-type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
-type NestedNumGroups = <nested::RevdotParameters as fold_revdot::Parameters>::NumGroups;
+type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
+type NestedNumGroups<P> = <nested::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_ab<'dr, D, RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        native_a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
-        native_b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
-        nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        native_a: FixedVec<
+            TrackedPoly<'_, FoldKey, C::CircuitField, R>,
+            NativeNumGroups<C::Profile>,
+        >,
+        native_b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
+        nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
@@ -104,8 +108,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// the bridge carrying the layer-2 error terms is absorbed.
     fn compute_nested_ab<'dr, D>(
         &self,
-        a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         native_mu_prime: &Element<'dr, D>,
         native_nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
@@ -120,10 +124,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .expect("nested mu_prime must be non-zero");
         let nested_mu_prime_nu_prime = nested_mu_prime * nested_nu_prime;
 
-        let a_poly =
-            fold_revdot::fold_outer::<_, _, nested::RevdotParameters>(a, nested_mu_prime_inv);
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, nested::RevdotParameters>(b, nested_mu_prime_nu_prime);
+        let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
+            a,
+            nested_mu_prime_inv,
+        );
+        let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
+            b,
+            nested_mu_prime_nu_prime,
+        );
 
         builder.set_nested_a_poly(a_poly);
         builder.set_nested_b_poly(b_poly);
@@ -133,8 +141,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
     fn compute_native_ab<'dr, D>(
         &self,
-        a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
-        b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
+        a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups<C::Profile>>,
+        b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
@@ -151,11 +159,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let TrackedPoly {
             poly: a_poly,
             decomp: a_decomp,
-        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters>(a, mu_prime_inv);
+        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime_inv);
         let a_poly = a_poly.into_owned();
 
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, native::RevdotParameters>(b, mu_prime_nu_prime);
+        let b_poly = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(
+            b,
+            mu_prime_nu_prime,
+        );
         let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known

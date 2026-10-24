@@ -337,7 +337,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
 
     use super::*;
-    use crate::internal::native::RevdotParameters;
+    use crate::{internal::native::RevdotParameters, profile::Standard as StandardProfile};
 
     /// Test parameters with configurable N and M.
     #[derive(Clone, Copy, Default)]
@@ -993,11 +993,11 @@ mod tests {
 
     #[test]
     fn test_native_parameters_correctness() -> Result<()> {
-        // Test with actual RevdotParameters (M=6, N=18)
+        // Test with actual RevdotParameters<StandardProfile> (M=7, N=19)
 
         let mut rng = rand::rng();
-        let m = <RevdotParameters as Parameters>::GroupSize::len();
-        let _n = <RevdotParameters as Parameters>::NumGroups::len();
+        let m = <RevdotParameters<StandardProfile> as Parameters>::GroupSize::len();
+        let _n = <RevdotParameters<StandardProfile> as Parameters>::NumGroups::len();
 
         // Use a subset of the full capacity to keep test fast
         let count: usize = 20; // Less than M*N=108
@@ -1014,9 +1014,9 @@ mod tests {
         let mu_inv = mu.invert().unwrap();
         let munu = mu * nu;
 
-        // Fold with RevdotParameters
-        let folded_lhs = fold_inner::<_, Fp, RevdotParameters>(&lhs, mu_inv);
-        let folded_rhs = fold_inner::<_, Fp, RevdotParameters>(&rhs, munu);
+        // Fold with RevdotParameters<StandardProfile>
+        let folded_lhs = fold_inner::<_, Fp, RevdotParameters<StandardProfile>>(&lhs, mu_inv);
+        let folded_rhs = fold_inner::<_, Fp, RevdotParameters<StandardProfile>>(&rhs, munu);
 
         // Verify at least the first few groups
         let dr = &mut Emulator::execute();
@@ -1025,7 +1025,8 @@ mod tests {
         let fold_products = ClaimFolder::new(dr, &mu_elem, &nu_elem)?;
 
         let ky_values: Vec<Fp> = lhs.iter().zip(&rhs).map(|(l, r)| l.revdot(r)).collect();
-        let inner_error = inner_error_terms::<Fp, TestRank, RevdotParameters>(&lhs, &rhs);
+        let inner_error =
+            inner_error_terms::<Fp, TestRank, RevdotParameters<StandardProfile>>(&lhs, &rhs);
 
         // Check first 4 groups (those with actual data)
         let num_groups = count.div_ceil(m);
@@ -1045,8 +1046,11 @@ mod tests {
             let error_group: FixedVec<Element<'_, _>, _> =
                 FixedVec::from_fn(|i| Element::constant(dr, inner_error[g][i]));
 
-            let computed =
-                fold_products.fold_inner::<RevdotParameters>(dr, &error_group, &ky_group)?;
+            let computed = fold_products.fold_inner::<RevdotParameters<StandardProfile>>(
+                dr,
+                &error_group,
+                &ky_group,
+            )?;
             let computed_val = *computed.value().take();
 
             assert_eq!(

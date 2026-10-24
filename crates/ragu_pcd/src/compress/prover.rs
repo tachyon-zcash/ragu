@@ -19,6 +19,7 @@ use crate::{
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, IpaCycle, IpaProof, IpaTranscript, Params},
+    profile::ProfiledCycle,
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the
@@ -38,7 +39,7 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
     Ok((batch, opening))
 }
 
-impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
     /// Compresses `pcd` into a [`CompressedPcd`] over the same data.

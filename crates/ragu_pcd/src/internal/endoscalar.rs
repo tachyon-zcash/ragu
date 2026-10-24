@@ -6,7 +6,7 @@
 //!
 //! The structure separates points into:
 //! - `initial`: The base case accumulator for step 0
-//! - `inputs`: Additional points to endoscale (length = NUM_POINTS - 1)
+//! - `inputs`: Additional points to endoscale (length = `N::len() - 1`)
 //! - `interstitials`: Output points, one per step
 //!
 //! All steps are uniform: step N initializes from `interstitials[N-1]` (or
@@ -15,7 +15,9 @@
 //! The step counting and points layout serve both walks of the curve cycle,
 //! which differ in their number of points and in how many endoscalings a
 //! step can afford beside the stages it reserves, so they are generic over
-//! the curve type, the number of points and the endoscalings per step `E`.
+//! the curve type, the number of points `N` and the endoscalings per step
+//! `E`, both as [`Len`] types: a profile sets the endoscalings per step to
+//! what its rank's budget fits (see [`Profile`](crate::profile::Profile)).
 //! The step circuit here is the nested walk's, reading the endoscalar and
 //! points stages; the native walk reads its points from several stages and
 //! has its own step in [`native::circuits::endoscaling_step`].
@@ -42,46 +44,48 @@ use ragu_primitives::{
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
-/// The range of input indices step `step` walks, out of `num_inputs`, at `E`
-/// endoscalings per step.
-pub(crate) fn input_range<const E: usize>(
+/// The range of input indices step `step` walks, out of `num_inputs`, at
+/// `endoscalings` per step.
+pub(crate) fn input_range(
+    endoscalings: usize,
     step: usize,
     num_inputs: usize,
 ) -> core::ops::Range<usize> {
-    let start = step * E;
-    let end = (start + E).min(num_inputs);
+    let start = step * endoscalings;
+    let end = (start + endoscalings).min(num_inputs);
     start..end
 }
 
-/// Number of inputs (excluding initial) for `NUM_POINTS`.
-pub struct InputsLen<const NUM_POINTS: usize>;
+/// Number of inputs (excluding initial) for a walk over `N` points.
+pub struct InputsLen<N: Len>(core::marker::PhantomData<N>);
 
-impl<const NUM_POINTS: usize> Len for InputsLen<NUM_POINTS> {
+impl<N: Len> Len for InputsLen<N> {
     fn len() -> usize {
-        const { assert!(NUM_POINTS > 0) };
-        NUM_POINTS - 1
+        let num_points = N::len();
+        assert!(num_points > 0);
+        num_points - 1
     }
 }
 
 /// Compute the number of endoscaling steps for `num_points` curve points at
-/// `E` endoscalings per step.
+/// `endoscalings` per step.
 ///
-/// This is `ceil((num_points - 1) / E).max(1)`.
-pub(crate) const fn num_steps<const E: usize>(num_points: usize) -> usize {
+/// This is `ceil((num_points - 1) / endoscalings).max(1)`.
+pub(crate) const fn num_steps(endoscalings: usize, num_points: usize) -> usize {
     assert!(num_points > 0);
-    assert!(E > 0);
+    assert!(endoscalings > 0);
     let inputs = num_points - 1;
-    let steps = inputs.div_ceil(E);
+    let steps = inputs.div_ceil(endoscalings);
     if steps > 1 { steps } else { 1 }
 }
 
-/// Number of steps (= interstitials) for `NUM_POINTS` at `E` endoscalings
-/// per step.
-pub struct NumStepsLen<const NUM_POINTS: usize, const E: usize>;
+/// Number of steps (= interstitials) for a walk over `N` points at `E`
+/// endoscalings per step.
+pub struct NumStepsLen<N: Len, E: Len>(core::marker::PhantomData<(N, E)>);
 
-impl<const NUM_POINTS: usize, const E: usize> Len for NumStepsLen<NUM_POINTS, E> {
+impl<N: Len, E: Len> Len for NumStepsLen<N, E> {
     fn len() -> usize {
-        num_steps::<E>(NUM_POINTS)
+        num_steps(E::len(), N::len())
     }
 }
 
@@ -113,16 +117,16 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
 
 /// Witness for the points stage: initial, inputs, and interstitials.
 #[derive(Clone)]
-pub struct PointsWitness<C: Affine, const NUM_POINTS: usize, const E: usize> {
+pub struct PointsWitness<C: Affine, N: Len, E: Len> {
     /// Initial accumulator (base case for step 0).
     pub initial: C,
-    /// Inputs (length = NUM_POINTS - 1).
-    pub inputs: FixedVec<C, InputsLen<NUM_POINTS>>,
+    /// Inputs (length = `N::len() - 1`).
+    pub inputs: FixedVec<C, InputsLen<N>>,
     /// Interstitial outputs, one per step.
-    pub interstitials: FixedVec<C, NumStepsLen<NUM_POINTS, E>>,
+    pub interstitials: FixedVec<C, NumStepsLen<N, E>>,
 }
 
-impl<C: Affine, const NUM_POINTS: usize, const E: usize> PointsWitness<C, NUM_POINTS, E> {
+impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
     /// Creates a new `PointsWitness` from points and an endoscalar.
     ///
     /// The first point becomes `initial`, remaining points become `inputs`,
@@ -130,9 +134,10 @@ impl<C: Affine, const NUM_POINTS: usize, const E: usize> PointsWitness<C, NUM_PO
     ///
     /// # Panics
     ///
-    /// Panics if `points.len() != NUM_POINTS`.
+    /// Panics if `points.len() != N::len()`.
     pub fn new(endoscalar: u128, points: &[C]) -> Self {
-        assert_eq!(points.len(), NUM_POINTS, "expected {NUM_POINTS} points");
+        let num_points = N::len();
+        assert_eq!(points.len(), num_points, "expected {num_points} points");
 
         let initial = points[0];
         let points = &points[1..];
@@ -141,13 +146,13 @@ impl<C: Affine, const NUM_POINTS: usize, const E: usize> PointsWitness<C, NUM_PO
         let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
 
         // Compute interstitials using chunked Horner iteration
-        let mut interstitials = vec::Vec::with_capacity(NumStepsLen::<NUM_POINTS, E>::len());
+        let mut interstitials = vec::Vec::with_capacity(NumStepsLen::<N, E>::len());
         let mut acc = initial.to_projective();
 
         if points.is_empty() {
             interstitials.push(acc);
         } else {
-            for chunk in points.chunks(E) {
+            for chunk in points.chunks(E::len()) {
                 for input in chunk {
                     acc = acc * endoscalar + input.to_projective();
                 }
@@ -172,39 +177,34 @@ impl<C: Affine, const NUM_POINTS: usize, const E: usize> PointsWitness<C, NUM_PO
 
 /// Output gadget containing initial, inputs, and interstitials. See [`PointsWitness`].
 #[derive(Gadget, Consistent)]
-pub struct Points<
-    'dr,
-    D: Driver<'dr>,
-    C: Affine<Base = D::F>,
-    const NUM_POINTS: usize,
-    const E: usize,
-> {
+pub struct Points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> {
     #[ragu(gadget)]
     pub initial: Point<'dr, D, C>,
     #[ragu(gadget)]
-    pub inputs: FixedVec<Point<'dr, D, C>, InputsLen<NUM_POINTS>>,
+    pub inputs: FixedVec<Point<'dr, D, C>, InputsLen<N>>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<NUM_POINTS, E>>,
+    pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<N, E>>,
 }
 
 /// Stage for allocating all point witnesses (inputs and interstitials).
-#[derive(Default)]
-pub struct PointsStage<C: Affine, const NUM_POINTS: usize, const E: usize>(
-    core::marker::PhantomData<C>,
-);
+pub struct PointsStage<C: Affine, N: Len, E: Len>(core::marker::PhantomData<(C, N, E)>);
 
-impl<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize> Stage<C::Base, R>
-    for PointsStage<C, NUM_POINTS, E>
-{
+impl<C: Affine, N: Len, E: Len> Default for PointsStage<C, N, E> {
+    fn default() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
+
+impl<C: Affine, R: Rank, N: Len, E: Len> Stage<C::Base, R> for PointsStage<C, N, E> {
     type Parent = EndoscalarStage;
 
     fn values() -> usize {
         // (x, y) coordinates for initial + inputs + interstitials.
-        2 * (1 + InputsLen::<NUM_POINTS>::len() + NumStepsLen::<NUM_POINTS, E>::len())
+        2 * (1 + InputsLen::<N>::len() + NumStepsLen::<N, E>::len())
     }
 
-    type Witness<'source> = &'source PointsWitness<C, NUM_POINTS, E>;
-    type OutputKind = Kind![C::Base; Points<'_, _, C, NUM_POINTS, E>];
+    type Witness<'source> = &'source PointsWitness<C, N, E>;
+    type OutputKind = Kind![C::Base; Points<'_, _, C, N, E>];
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
         &self,
@@ -236,20 +236,26 @@ impl<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize> Stage<C::Base,
 ///   `inputs[N*E..(N+1)*E]` (clamped to bounds)
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner result.
-#[derive(Clone)]
-pub struct EndoscalingStep<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize> {
+pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len> {
     step: usize,
-    _marker: core::marker::PhantomData<(C, R)>,
+    _marker: core::marker::PhantomData<(C, R, N, E)>,
 }
 
-impl<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize>
-    EndoscalingStep<C, R, NUM_POINTS, E>
-{
+impl<C: Affine, R: Rank, N: Len, E: Len> Clone for EndoscalingStep<C, R, N, E> {
+    fn clone(&self) -> Self {
+        Self {
+            step: self.step,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, R: Rank, N: Len, E: Len> EndoscalingStep<C, R, N, E> {
     /// Creates a new endoscaling step.
     ///
-    /// Panics if `step >= NumStepsLen::<NUM_POINTS, E>::len()`.
+    /// Panics if `step >= NumStepsLen::<N, E>::len()`.
     pub fn new(step: usize) -> Self {
-        let num_steps = NumStepsLen::<NUM_POINTS, E>::len();
+        let num_steps = NumStepsLen::<N, E>::len();
         assert!(
             step < num_steps,
             "step {} exceeds available steps (num_steps = {})",
@@ -264,24 +270,24 @@ impl<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize>
 
     /// Range of input indices to iterate over in the Horner loop.
     fn input_range(&self) -> core::ops::Range<usize> {
-        input_range::<E>(self.step, InputsLen::<NUM_POINTS>::len())
+        input_range(E::len(), self.step, InputsLen::<N>::len())
     }
 }
 
 /// Witness for an endoscaling step.
-pub struct EndoscalingStepWitness<'source, C: Affine, const NUM_POINTS: usize, const E: usize> {
+pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len> {
     /// The endoscalar value.
     pub endoscalar: u128,
     /// Point witnesses (inputs and interstitials).
-    pub points: &'source PointsWitness<C, NUM_POINTS, E>,
+    pub points: &'source PointsWitness<C, N, E>,
 }
 
-impl<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize> MultiStageCircuit<C::Base, R>
-    for EndoscalingStep<C, R, NUM_POINTS, E>
+impl<C: Affine, R: Rank, N: Len, E: Len> MultiStageCircuit<C::Base, R>
+    for EndoscalingStep<C, R, N, E>
 {
-    type Last = PointsStage<C, NUM_POINTS, E>;
+    type Last = PointsStage<C, N, E>;
     type Instance<'source> = ();
-    type Witness<'source> = EndoscalingStepWitness<'source, C, NUM_POINTS, E>;
+    type Witness<'source> = EndoscalingStepWitness<'source, C, N, E>;
     type Output = Kind![C::Base; ()];
     type Aux<'source> = ();
 
@@ -299,7 +305,7 @@ impl<C: Affine, R: Rank, const NUM_POINTS: usize, const E: usize> MultiStageCirc
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C, NUM_POINTS, E>>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, N, E>>()?;
         let dr = dr.finish();
 
         // Stages are loaded unenforced here: the export circuit enforces the
@@ -352,7 +358,10 @@ mod tests {
         maybe::Maybe,
         pasta::{Ep, EpAffine, EqAffine, Fp, Fq},
     };
-    use ragu_primitives::{Endoscalar, vec::Len};
+    use ragu_primitives::{
+        Endoscalar,
+        vec::{ConstLen, Len},
+    };
     use ragu_testing::registry::TestRegistryBuilder;
     use rand::{Rng, RngExt};
     use udon::{
@@ -361,13 +370,16 @@ mod tests {
     };
 
     /// The endoscalings per step these tests lay the walk out with.
-    const E: usize = 4;
+    type E = ConstLen<4>;
 
     use super::{
         EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, InputsLen, NumStepsLen,
         PointsStage, PointsWitness,
     };
-    use crate::internal::{nested, tests::assert_stage_values};
+    use crate::{
+        internal::{nested, tests::assert_stage_values},
+        profile::Standard,
+    };
 
     type R = polynomials::ProductionRank;
 
@@ -406,14 +418,14 @@ mod tests {
         initial: EpAffine,
         inputs: &[EpAffine],
     ) -> Vec<EpAffine> {
-        let num_steps = NumStepsLen::<NUM_POINTS, E>::len();
-        let inputs_len = InputsLen::<NUM_POINTS>::len();
+        let num_steps = NumStepsLen::<ConstLen<NUM_POINTS>, E>::len();
+        let inputs_len = InputsLen::<ConstLen<NUM_POINTS>>::len();
         let mut interstitials = Vec::with_capacity(num_steps);
 
         for step in 0..num_steps {
             // Compute input range for this step (uniform across all steps)
-            let start = step * E;
-            let end = (start + E).min(inputs_len);
+            let start = step * E::len();
+            let end = (start + E::len()).min(inputs_len);
 
             // Gather inputs for Horner computation
             let mut step_inputs = Vec::new();
@@ -440,7 +452,7 @@ mod tests {
     fn test_endoscaling_steps() -> Result<()> {
         // Test with 13 total points (1 initial + 12 inputs = 3 steps of 4)
         const NUM_POINTS: usize = 13;
-        let num_steps = NumStepsLen::<NUM_POINTS, E>::len();
+        let num_steps = NumStepsLen::<ConstLen<NUM_POINTS>, E>::len();
 
         // Generate random endoscalar and base input points.
         let endoscalar: u128 = rand::rng().random();
@@ -454,28 +466,34 @@ mod tests {
         let expected = compute_horner_native(endoscalar, &base_inputs);
 
         // Construct witness using the constructor
-        let points = PointsWitness::<EpAffine, NUM_POINTS, E>::new(endoscalar, &base_inputs);
+        let points =
+            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &base_inputs);
 
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
         // Run each step through the multi-stage circuit and verify correctness.
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<EpAffine, R, NUM_POINTS, E>::new(step);
+            let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
             let endo_mask_h = builder.register_bonding(EndoscalarStage::mask()?);
             let pts_mask_h =
-                builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::mask()?);
+                builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
             let final_mask_h =
-                builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::final_mask()?);
+                builder.register_bonding(
+                    PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?,
+                );
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
             let points_rx =
-                <PointsStage<EpAffine, NUM_POINTS, E> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
+                <PointsStage<EpAffine, ConstLen<NUM_POINTS>, E> as StageExt<Fp, R>>::rx(
+                    Fp::ZERO,
+                    &points,
+                )?;
             let final_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar,
@@ -508,13 +526,13 @@ mod tests {
         // Step 1: interstitial[0] + inputs[4..8], output interstitial[1]
         // Step 2: interstitial[1] + inputs[8..10], output interstitial[2]
         const NUM_POINTS: usize = 11;
-        let num_steps = NumStepsLen::<NUM_POINTS, E>::len();
+        let num_steps = NumStepsLen::<ConstLen<NUM_POINTS>, E>::len();
 
         // Verify computed constants match expectations
         // With 10 inputs, we need ceil(10/4) = 3 steps
         assert_eq!(num_steps, 3);
-        assert_eq!(NumStepsLen::<NUM_POINTS, E>::len(), 3);
-        assert_eq!(InputsLen::<NUM_POINTS>::len(), 10);
+        assert_eq!(NumStepsLen::<ConstLen<NUM_POINTS>, E>::len(), 3);
+        assert_eq!(InputsLen::<ConstLen<NUM_POINTS>>::len(), 10);
 
         // Generate random endoscalar and base input points.
         let endoscalar: u128 = rand::rng().random();
@@ -528,19 +546,21 @@ mod tests {
         let expected = compute_horner_native(endoscalar, &base_inputs);
 
         // Construct witness using the constructor
-        let points = PointsWitness::<EpAffine, NUM_POINTS, E>::new(endoscalar, &base_inputs);
+        let points =
+            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &base_inputs);
 
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
 
         // Run each step through the multi-stage circuit.
         for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<EpAffine, R, NUM_POINTS, E>::new(step);
+            let step_circuit = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step);
             let mut builder = TestRegistryBuilder::new();
             let staged_h = builder.register_circuit(MultiStage::new(step_circuit.clone()))?;
             builder.register_bonding(EndoscalarStage::mask()?);
-            builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::mask()?);
-            builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::final_mask()?);
+            builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+            builder
+                .register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
             let registry = builder.finalize()?;
 
             let staged = MultiStage::new(step_circuit);
@@ -557,7 +577,10 @@ mod tests {
 
             let endoscalar_rx = <EndoscalarStage as StageExt<Fp, R>>::rx(Fp::ZERO, endoscalar)?;
             let points_rx =
-                <PointsStage<EpAffine, NUM_POINTS, E> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
+                <PointsStage<EpAffine, ConstLen<NUM_POINTS>, E> as StageExt<Fp, R>>::rx(
+                    Fp::ZERO,
+                    &points,
+                )?;
 
             // Verify combined circuit identity.
             let mut lhs = final_rx.clone();
@@ -574,14 +597,15 @@ mod tests {
         const NUM_POINTS: usize = 1;
         let endoscalar = 7;
         let initial = Ep::generator().to_affine();
-        let mut points = PointsWitness::<EpAffine, NUM_POINTS, E>::new(endoscalar, &[initial]);
-        let step = EndoscalingStep::<EpAffine, R, NUM_POINTS, E>::new(0);
+        let mut points =
+            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &[initial]);
+        let step = EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(0);
 
         let mut builder = TestRegistryBuilder::new();
         let staged_h = builder.register_circuit(MultiStage::new(step.clone()))?;
         builder.register_bonding(EndoscalarStage::mask()?);
-        builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::mask()?);
-        builder.register_bonding(PointsStage::<EpAffine, NUM_POINTS, E>::final_mask()?);
+        builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::mask()?);
+        builder.register_bonding(PointsStage::<EpAffine, ConstLen<NUM_POINTS>, E>::final_mask()?);
         let registry = builder.finalize()?;
         let staged = MultiStage::new(step);
         let y = Fp::from(7);
@@ -601,7 +625,10 @@ mod tests {
                 .into_output();
             let mut rx = registry.assemble(&trace, staged_h, Fp::ZERO)?;
             let points_rx =
-                <PointsStage<EpAffine, NUM_POINTS, E> as StageExt<Fp, R>>::rx(Fp::ZERO, &points)?;
+                <PointsStage<EpAffine, ConstLen<NUM_POINTS>, E> as StageExt<Fp, R>>::rx(
+                    Fp::ZERO,
+                    &points,
+                )?;
             rx.add_assign(&endoscalar_rx);
             rx.add_assign(&points_rx);
             assert_eq!(rx.revdot(&sy) == ky, valid);
@@ -617,44 +644,44 @@ mod tests {
         // Assumes NUM_POINTS > 0.
 
         // 1 total point = 0 inputs = 1 step (base case)
-        assert_eq!(NumStepsLen::<1, E>::len(), 1);
+        assert_eq!(NumStepsLen::<ConstLen<1>, E>::len(), 1);
 
         // 2-5 total points = 1-4 inputs = 1 step
-        assert_eq!(NumStepsLen::<2, E>::len(), 1);
-        assert_eq!(NumStepsLen::<3, E>::len(), 1);
-        assert_eq!(NumStepsLen::<4, E>::len(), 1);
-        assert_eq!(NumStepsLen::<5, E>::len(), 1);
+        assert_eq!(NumStepsLen::<ConstLen<2>, E>::len(), 1);
+        assert_eq!(NumStepsLen::<ConstLen<3>, E>::len(), 1);
+        assert_eq!(NumStepsLen::<ConstLen<4>, E>::len(), 1);
+        assert_eq!(NumStepsLen::<ConstLen<5>, E>::len(), 1);
 
         // 6-9 total points = 5-8 inputs = 2 steps
-        assert_eq!(NumStepsLen::<6, E>::len(), 2);
-        assert_eq!(NumStepsLen::<7, E>::len(), 2);
-        assert_eq!(NumStepsLen::<8, E>::len(), 2);
-        assert_eq!(NumStepsLen::<9, E>::len(), 2);
+        assert_eq!(NumStepsLen::<ConstLen<6>, E>::len(), 2);
+        assert_eq!(NumStepsLen::<ConstLen<7>, E>::len(), 2);
+        assert_eq!(NumStepsLen::<ConstLen<8>, E>::len(), 2);
+        assert_eq!(NumStepsLen::<ConstLen<9>, E>::len(), 2);
 
         // 10-13 total points = 9-12 inputs = 3 steps
-        assert_eq!(NumStepsLen::<10, E>::len(), 3);
-        assert_eq!(NumStepsLen::<11, E>::len(), 3);
-        assert_eq!(NumStepsLen::<12, E>::len(), 3);
-        assert_eq!(NumStepsLen::<13, E>::len(), 3);
+        assert_eq!(NumStepsLen::<ConstLen<10>, E>::len(), 3);
+        assert_eq!(NumStepsLen::<ConstLen<11>, E>::len(), 3);
+        assert_eq!(NumStepsLen::<ConstLen<12>, E>::len(), 3);
+        assert_eq!(NumStepsLen::<ConstLen<13>, E>::len(), 3);
 
         // 14-17 total points = 13-16 inputs = 4 steps
-        assert_eq!(NumStepsLen::<14, E>::len(), 4);
-        assert_eq!(NumStepsLen::<15, E>::len(), 4);
-        assert_eq!(NumStepsLen::<16, E>::len(), 4);
-        assert_eq!(NumStepsLen::<17, E>::len(), 4);
+        assert_eq!(NumStepsLen::<ConstLen<14>, E>::len(), 4);
+        assert_eq!(NumStepsLen::<ConstLen<15>, E>::len(), 4);
+        assert_eq!(NumStepsLen::<ConstLen<16>, E>::len(), 4);
+        assert_eq!(NumStepsLen::<ConstLen<17>, E>::len(), 4);
 
         // 18-21 total points = 17-20 inputs = 5 steps
-        assert_eq!(NumStepsLen::<18, E>::len(), 5);
-        assert_eq!(NumStepsLen::<19, E>::len(), 5);
-        assert_eq!(NumStepsLen::<20, E>::len(), 5);
-        assert_eq!(NumStepsLen::<21, E>::len(), 5);
+        assert_eq!(NumStepsLen::<ConstLen<18>, E>::len(), 5);
+        assert_eq!(NumStepsLen::<ConstLen<19>, E>::len(), 5);
+        assert_eq!(NumStepsLen::<ConstLen<20>, E>::len(), 5);
+        assert_eq!(NumStepsLen::<ConstLen<21>, E>::len(), 5);
     }
 
     #[test]
     fn test_input_range() {
         // Helper to get input_range for a given NUM_POINTS and step
         fn range<const NUM_POINTS: usize>(step: usize) -> core::ops::Range<usize> {
-            EndoscalingStep::<EpAffine, R, NUM_POINTS, E>::new(step).input_range()
+            EndoscalingStep::<EpAffine, R, ConstLen<NUM_POINTS>, E>::new(step).input_range()
         }
 
         // NUM_POINTS = 1: 0 inputs, 1 step
@@ -710,7 +737,8 @@ mod tests {
             });
 
             // Compute via PointsWitness::new
-            let from_new = PointsWitness::<EpAffine, NUM_POINTS, E>::new(endoscalar, &base_inputs);
+            let from_new =
+                PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &base_inputs);
 
             // Compute manually using test helper
             let initial = base_inputs[0];
@@ -754,9 +782,9 @@ mod tests {
         assert_stage_values::<Fq, R, _>(&EndoscalarStage);
         // The nested walk's points stage as registered, then the layouts the
         // tests above use: a single point, whole steps, a partial last step.
-        assert_stage_values::<_, R, _>(&nested::PointsStage::<EqAffine>::default());
-        assert_stage_values::<_, R, _>(&PointsStage::<EpAffine, 1, E>::default());
-        assert_stage_values::<_, R, _>(&PointsStage::<EpAffine, 13, E>::default());
-        assert_stage_values::<_, R, _>(&PointsStage::<EpAffine, 14, E>::default());
+        assert_stage_values::<_, R, _>(&nested::PointsStage::<EqAffine, Standard>::default());
+        assert_stage_values::<_, R, _>(&PointsStage::<EpAffine, ConstLen<1>, E>::default());
+        assert_stage_values::<_, R, _>(&PointsStage::<EpAffine, ConstLen<13>, E>::default());
+        assert_stage_values::<_, R, _>(&PointsStage::<EpAffine, ConstLen<14>, E>::default());
     }
 }

@@ -260,6 +260,7 @@ fn nested_reduction_verifies() {
     let targets = NestedKy {
         c: proof.nested_c(),
         unified: ky::nested_ky(proof, y).unwrap(),
+        binding: None,
     };
     let commitment = |component| match component {
         nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -330,7 +331,7 @@ fn point_restriction_matches_the_materialized_one() {
         &app.native_registry,
         native::InternalCircuitIndex::ALL
             .iter()
-            .map(|id| id.circuit_index())
+            .map(|id| id.circuit_index::<crate::profile::Standard>())
             .chain([circuit_id]),
         &mut rng,
     );
@@ -338,7 +339,7 @@ fn point_restriction_matches_the_materialized_one() {
         &app.nested_registry,
         nested::InternalCircuitIndex::ALL
             .iter()
-            .map(|id| id.circuit_index()),
+            .map(|id| id.circuit_index::<crate::profile::Standard>()),
         &mut rng,
     );
 }
