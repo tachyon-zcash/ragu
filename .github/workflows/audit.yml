@@ -1,0 +1,235 @@
+name: Ragu audit
+
+on: # zizmor: ignore[dangerous-triggers]
+  # Privileged jobs use only default-branch controller code. PR commands run
+  # in Claude's required sandbox, with no publisher token or model key in env.
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Pull request number to review
+        required: true
+        type: string
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/audit.yml, 'qa/audit/**', '.claude/skills/**']
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  RAGU_AUDIT_MODEL: ${{ vars.RAGU_AUDIT_MODEL }}
+  RAGU_AUDIT_EFFORT: ${{ vars.RAGU_AUDIT_EFFORT }}
+  RAGU_AUDIT_APP_ID: ${{ vars.RAGU_AUDIT_APP_ID }}
+
+jobs:
+  tests:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned CLI and sandbox for the local API test
+        run: bash qa/audit/install.sh
+      - run: python3 -m unittest discover -s qa/audit -p 'test_*.py' -v
+        env:
+          RAGU_AUDIT_NATIVE_TEST: '1'
+
+  request:
+    # Authorization precedes both model access and cancellation of older runs.
+    if: >-
+      github.repository == 'tachyon-zcash/ragu' &&
+      vars.RAGU_AUDIT_ENABLED == 'true' && github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.pull_request && contains(github.event.comment.body, '/ragu-audit')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      pr: ${{ steps.request.outputs.pr }}
+      prs: ${{ steps.request.outputs.prs }}
+      execute: ${{ steps.request.outputs.execute }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 qa/audit/github.py request
+
+  queue:
+    needs: request
+    if: needs.request.outputs.prs != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.request.outputs.prs) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ragu-audit-publisher
+    concurrency:
+      group: ragu-audit-publisher-${{ matrix.pr }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app
+        with:
+          app-id: ${{ vars.RAGU_AUDIT_APP_ID }}
+          private-key: ${{ secrets.RAGU_AUDIT_APP_PRIVATE_KEY }}
+          owner: tachyon-zcash
+          repositories: ragu
+          permission-checks: write
+          permission-pull-requests: write
+      - id: queue
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR_NUMBER: ${{ matrix.pr }}
+          EXECUTE: ${{ needs.request.outputs.execute }}
+        run: |
+          args=()
+          if [[ "$EXECUTE" == true ]]; then args+=(--execute); fi
+          python3 qa/audit/github.py queue --pr "$PR_NUMBER" "${args[@]}" \
+            --run "$RUNNER_TEMP/audit-work/control/run.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.queue.outputs.head != ''
+        with:
+          name: ragu-audit-control-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.pr }}
+          path: ${{ runner.temp }}/audit-work/control/run.json
+          if-no-files-found: error
+          retention-days: 30
+
+  cancel-stale-review:
+    needs: [request, queue]
+    if: needs.request.outputs.prs != '' && needs.request.outputs.execute != 'true'
+    strategy:
+      matrix:
+        pr: ${{ fromJSON(needs.request.outputs.prs) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    concurrency:
+      group: ragu-audit-review-${{ matrix.pr }}
+      cancel-in-progress: true
+    steps:
+      - run: echo 'A new revision requires a fresh /ragu-audit review.'
+
+  review:
+    needs: [request, queue]
+    if: needs.request.outputs.execute == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    environment: ragu-audit-model
+    concurrency:
+      group: ragu-audit-review-${{ needs.request.outputs.pr }}
+      cancel-in-progress: true
+    env:
+      # Each job has a fresh runner; no audit dependencies are cached afterward.
+      CARGO_HOME: /tmp/ragu-audit-cargo
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ragu-audit-control-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.request.outputs.pr }}
+          path: ${{ runner.temp }}/audit-work/control
+      - name: Install the pinned Claude Code and Linux sandbox dependencies
+        run: bash qa/audit/install.sh
+      - id: toolchain
+        name: Read the trusted Rust toolchain
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          with open('rust-toolchain.toml', 'rb') as source:
+              channel = tomllib.load(source)['toolchain']['channel']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'channel={channel}\n')
+          PY
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-23
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy,rustfmt
+      - uses: ./.github/actions/rust-nightly-setup
+        with:
+          components: rustfmt
+      - name: Store the model key outside the review sandbox
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 qa/audit/runner.py store-key --private "$RUNNER_TEMP/audit-private"
+      - name: Run the four review skills
+        run: |
+          python3 qa/audit/runner.py run --root "$GITHUB_WORKSPACE" \
+            --private "$RUNNER_TEMP/audit-private" \
+            --work "$RUNNER_TEMP/audit-work" \
+            --run "$RUNNER_TEMP/audit-work/control/run.json" \
+            --out "$RUNNER_TEMP/audit-reports"
+      - name: Remove model credentials
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/audit-private"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ragu-audit-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/audit-reports
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    needs: [request, queue, review]
+    if: always() && needs.queue.result == 'success' && needs.request.outputs.execute == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: ragu-audit-publisher
+    concurrency:
+      group: ragu-audit-publisher-${{ needs.request.outputs.pr }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ragu-audit-control-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.request.outputs.pr }}
+          path: ${{ runner.temp }}/audit-control
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: ragu-audit-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/audit-reports
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app
+        with:
+          app-id: ${{ vars.RAGU_AUDIT_APP_ID }}
+          private-key: ${{ secrets.RAGU_AUDIT_APP_PRIVATE_KEY }}
+          owner: tachyon-zcash
+          repositories: ragu
+          permission-checks: write
+          permission-pull-requests: write
+      - name: Verify reports and publish the summary and completion check
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+        run: |
+          python3 qa/audit/github.py publish --run "$RUNNER_TEMP/audit-control/run.json" \
+            --out "$RUNNER_TEMP/audit-reports" --review-result "$REVIEW_RESULT"
