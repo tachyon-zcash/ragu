@@ -63,6 +63,10 @@ impl ApplicationBuilder {
 
     /// Finalizes the application with the generators used for polynomial
     /// commitments and Poseidon challenges.
+    ///
+    /// Keep `params` alive for the returned application's lifetime. Polynomial
+    /// witnessing assumes that its canonical Pasta generator sequence contains
+    /// at least the coefficient count for the selected polynomial rank.
     pub fn finalize<'params>(self, params: &'params PastaParams) -> Result<Application<'params>> {
         Ok(Application {
             params,

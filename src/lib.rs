@@ -8,6 +8,46 @@
 //! (e.g. Zebra) against the eventual interface ahead of the real
 //! implementation. See the [Ragu Book](https://tachyon.z.cash/ragu/) for more
 //! information.
+//!
+//! ## Mock feature boundaries and migration
+//!
+//! The `mock` feature uses real `ragu_core` drivers and gadgets,
+//! `ragu_primitives` gadgets, and the real polynomial APIs re-exported as
+//! `ragu::polynomials`. Application steps run with `Simulator<Fp>`, which
+//! checks assigned multiplication gates and linear constraints locally. This
+//! is not proof soundness: registration does not synthesize circuit shape or
+//! enforce rank and gate bounds, `fuse` does not verify child proofs, and
+//! hook-capacity checks are absent. Polynomial openings are checked natively
+//! against retained coefficients rather than proved cryptographically. Proof
+//! bytes, verification binding, rerandomization, and recursion remain mock
+//! machinery.
+//!
+//! For migration, keep the `PastaParams` passed to `ApplicationBuilder::finalize`
+//! alive for the application lifetime, and supply canonical generators
+//! compatible with every polynomial rank and commitment. Steps use
+//! `StepCtx<'a, 'dr, D>` with public `ctx.dr`; unlike the recursive reference,
+//! this Pasta-specialized context omits the cycle type parameter. Convert
+//! `Step::witness`'s native witness, child, and return values to
+//! `DriverValue<D, _>` with the corresponding `'dr`, `'source: 'dr`, and
+//! `Self: 'dr` bounds. Replace native polynomial commits and scalar queries
+//! with `witness_polynomial`, then use its commitment-keyed handle with
+//! `evaluate` for prover values and `enforce_poly_query` for locally checked
+//! openings. `derive_challenge` accepts writable gadgets and returns an
+//! `Element`; callers must pin the complete absorbed sequence. The mock hashes
+//! only supplied inputs, while the recursive reference uses fixed-width
+//! padding, so output and cost parity requires matching the full absorbed
+//! sequence and parameters.
+//!
+//! Legacy Pasta field, curve, rank, and arithmetic-trait imports must move to
+//! matching real Ragu types and APIs. Native arithmetic and comparisons in
+//! downstream relations need driver-generic gadgets that emit constraints.
+//! Re-witnessing a polynomial does not bind it to a commitment stored in a
+//! header: write the handle into a `Vec<Element>` with `GadgetExt::write` and
+//! enforce element equality against the header's commitment elements. If
+//! headers carry native points, their encoding, allocation, and binding must
+//! also move to gadgets; native point comparison alone is insufficient.
+//! Downstream dependency alignment is a separate change; static applications
+//! need compatible parameters with a `'static` lifetime.
 // The lints below apply to the `mock` surface, which mirrors an external API.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]

@@ -38,10 +38,17 @@ where
     /// Witnesses a polynomial, commits to it with the caller-supplied canonical
     /// generators, and returns the gadget handle naming that commitment.
     ///
-    /// # Errors
+    /// The parameters supplied to [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize)
+    /// must provide at least `R::num_coeffs()` canonical generators. The real
+    /// sparse commitment routine assumes this and panics if the sequence is too
+    /// short.
     ///
     /// Identity polynomial commitments are valid and are represented by their
     /// compressed encoding in the handle.
+    ///
+    /// # Errors
+    ///
+    /// Propagates witness-generation errors from the underlying driver.
     pub fn witness_polynomial<R: Rank>(
         &mut self,
         polynomial: DriverValue<D, sparse::Polynomial<Fp, R>>,
