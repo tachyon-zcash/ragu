@@ -231,6 +231,18 @@ fn poly_query_checks_the_committed_polynomial() {
     ctx.enforce_poly_query(&handle, x_gadget, y_gadget)
         .expect("the correct opening should be accepted");
 
+    let repeated_x = Element::constant(ctx.dr, x);
+    let repeated_y = Element::constant(ctx.dr, y);
+    ctx.enforce_poly_query(&handle, repeated_x, repeated_y)
+        .expect("a repeated valid opening should remain a separate query");
+
+    let later_x = Fp::from(3u64);
+    let later_y = Fp::from(42u64);
+    let later_x_gadget = Element::constant(ctx.dr, later_x);
+    let later_y_gadget = Element::constant(ctx.dr, later_y);
+    ctx.enforce_poly_query(&handle, later_x_gadget, later_y_gadget)
+        .expect("a later valid opening should be accepted");
+
     let x_gadget = Element::constant(ctx.dr, x);
     let wrong_y = Element::constant(ctx.dr, y + Fp::ONE);
     let error = ctx
@@ -243,9 +255,123 @@ fn poly_query_checks_the_committed_polynomial() {
 
     assert_eq!(
         hooks.into_outputs().take(),
-        vec![(expected_commitment.to_projective(), x, y)],
-        "only the valid opening should be recorded"
+        vec![
+            (expected_commitment.to_projective(), x, y),
+            (expected_commitment.to_projective(), x, y),
+            (
+                expected_commitment.to_projective(),
+                later_x,
+                later_y,
+            ),
+        ],
+        "valid repeated queries should remain in invocation order and the bad query should not append"
     );
+}
+
+#[test]
+fn distinct_commitments_keep_independent_polynomial_evaluations() {
+    let mut dr = Simulator::<Fp>::new();
+    let mut hooks = FrameworkHooks::new(test_params());
+    let mut ctx = StepCtx::new(&mut dr, &mut hooks);
+    let first_polynomial = sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![
+        Fp::from(1u64),
+        Fp::from(2u64),
+        Fp::from(3u64),
+    ]);
+    let second_polynomial = sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![
+        Fp::from(2u64),
+        Fp::from(3u64),
+        Fp::from(4u64),
+    ]);
+    let first = ctx
+        .witness_polynomial(Simulator::<Fp>::just(|| first_polynomial))
+        .expect("the first polynomial should be witnessed");
+    let second = ctx
+        .witness_polynomial(Simulator::<Fp>::just(|| second_polynomial))
+        .expect("the second polynomial should be witnessed");
+    assert_ne!(
+        first.value().take(),
+        second.value().take(),
+        "different commitments should name distinct oracle entries"
+    );
+
+    let x = Fp::from(2u64);
+    let first_evaluation = ctx
+        .evaluate(&first, Simulator::<Fp>::just(|| x))
+        .expect("the first commitment should retain its polynomial");
+    let second_evaluation = ctx
+        .evaluate(&second, Simulator::<Fp>::just(|| x))
+        .expect("the second commitment should retain its polynomial");
+    assert_eq!(first_evaluation.take(), Fp::from(17u64));
+    assert_eq!(second_evaluation.take(), Fp::from(24u64));
+}
+
+#[test]
+fn polynomial_handles_are_lookup_keys_across_contexts() {
+    let mut dr = Simulator::<Fp>::new();
+    let mut source_hooks = FrameworkHooks::new(test_params());
+    let source_handle = {
+        let mut source_ctx = StepCtx::new(&mut dr, &mut source_hooks);
+        source_ctx
+            .witness_polynomial(Simulator::<Fp>::just(|| {
+                sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![
+                    Fp::from(3u64),
+                    Fp::from(1u64),
+                    Fp::from(4u64),
+                ])
+            }))
+            .expect("the source context should witness its polynomial")
+    };
+    drop(source_hooks);
+
+    let mut local_hooks = FrameworkHooks::new(test_params());
+    let mut local_ctx = StepCtx::new(&mut dr, &mut local_hooks);
+    let x = Fp::from(2u64);
+    let unknown_evaluation = match local_ctx.evaluate(&source_handle, Simulator::<Fp>::just(|| x)) {
+        Ok(_) => panic!("a foreign handle should not resolve before local witnessing"),
+        Err(error) => error,
+    };
+    assert_invalid_witness(
+        unknown_evaluation,
+        "evaluation rejected: the handle names no polynomial this step witnessed",
+    );
+
+    let query_x = Element::constant(local_ctx.dr, x);
+    let query_y = Element::constant(local_ctx.dr, Fp::from(21u64));
+    let unknown_query = local_ctx
+        .enforce_poly_query(&source_handle, query_x, query_y)
+        .expect_err("a query using a foreign handle should fail before local witnessing");
+    assert_invalid_witness(
+        unknown_query,
+        "evaluation rejected: the handle names no polynomial this step witnessed",
+    );
+
+    let local_handle = local_ctx
+        .witness_polynomial(Simulator::<Fp>::just(|| {
+            sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![
+                Fp::from(3u64),
+                Fp::from(1u64),
+                Fp::from(4u64),
+                Fp::ZERO,
+                Fp::ZERO,
+            ])
+        }))
+        .expect("the locally witnessed trailing-zero-equivalent polynomial should succeed");
+    assert_eq!(
+        source_handle.value().take(),
+        local_handle.value().take(),
+        "independent trailing-zero-equivalent polynomials should have equal commitment handles"
+    );
+
+    let evaluation = local_ctx
+        .evaluate(&source_handle, Simulator::<Fp>::just(|| x))
+        .expect("the foreign handle should resolve by its locally witnessed commitment");
+    assert_eq!(evaluation.take(), Fp::from(21u64));
+    let query_x = Element::constant(local_ctx.dr, x);
+    let query_y = Element::constant(local_ctx.dr, Fp::from(21u64));
+    local_ctx
+        .enforce_poly_query(&source_handle, query_x, query_y)
+        .expect("a cross-context equal-commitment handle should be queryable");
 }
 
 #[test]
