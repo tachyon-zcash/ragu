@@ -249,7 +249,7 @@ fn native_verifier(
 ) -> (CycleTranscript<'static, Pasta>, Openings<EqAffine>) {
     let mut t = transcript();
     let openings = revdot::verify_native::<Pasta, TestR, ReferenceBackend>(
-        proof.circuit_id(),
+        proof.circuit_ids(),
         |component| proof.native_commitment(component),
         &app.native_registry,
         y,

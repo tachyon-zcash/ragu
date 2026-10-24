@@ -21,7 +21,10 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxComponent, RxIndex};
+use super::{
+    APPLICATION_SLOTS, InternalCircuitIndex, NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxComponent,
+    RxIndex,
+};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
 /// Number of circuits using unified $k(y)$ in [`build`].
@@ -73,7 +76,7 @@ pub trait Processor<Rx, AppCircuitId> {
     fn raw_claim(&mut self, a: Rx, b: Rx);
 
     /// Process an application circuit claim whose trace is the sum of the
-    /// given rxs: the step's own polynomial and the application stage's
+    /// given rxs: the slot's own polynomial and the shared stage's
     /// ($k(y) = \text{application\_ky}$).
     fn circuit_claim(&mut self, app_id: AppCircuitId, rxs: impl Iterator<Item = Rx>);
 
@@ -154,9 +157,9 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
 ///
 /// The ordering is: for each claim type, add claims for all proofs before
 /// moving to the next claim type. This produces an interleaved order:
-/// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
-/// Each application claim's trace is the step's own polynomial plus the
-/// application stage's.
+/// `[L_raw, R_raw, L_app0, R_app0, L_app1, R_app1, L_h1, R_h1, ...]` for
+/// two-proof sources, the application slots in order. Each application
+/// claim's trace is the slot's own polynomial plus the shared stage's.
 ///
 /// This ordering must match the $k(y)$ ordering in
 /// [`inner_collapse`](crate::internal::native::circuits::inner_collapse)
@@ -174,13 +177,15 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof), each over the step's own
-    // polynomial and the proof's application stage.
-    let rxs = source
-        .rx(Rx(Application))
-        .zip(source.rx(Rx(ApplicationStage)));
-    for (app_id, (own, stage)) in source.app_circuits().zip(rxs) {
-        processor.circuit_claim(app_id, [own, stage].into_iter());
+    // App circuits: slot by slot, interleaved per proof, each over the
+    // slot's own polynomial and the proof's shared stage.
+    for slot in 0..APPLICATION_SLOTS {
+        let rxs = source
+            .rx(Rx(Application(slot as u32)))
+            .zip(source.rx(Rx(ApplicationStage)));
+        for (app_id, (own, stage)) in source.app_circuits(slot).zip(rxs) {
+            processor.circuit_claim(app_id, [own, stage].into_iter());
+        }
     }
 
     // Internal circuits and stages in canonical order.
@@ -373,14 +378,17 @@ where
                 )?;
             }
 
-            // The application stage stays in its block, and the step's own
-            // polynomial outside it, so the stage commitment binds exactly
-            // the step's shared gadget.
+            // Application lanes: the stage stays in its block, and every
+            // slot's own polynomial outside it, so the stage commitment binds
+            // exactly the step's shared gadget.
             ApplicationStage => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::ApplicationStage)))?;
             }
             ApplicationFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(Application)))?;
+                processor.bonding_claim(
+                    id,
+                    (0..APPLICATION_SLOTS as u32).flat_map(|slot| source.rx(Rx(Application(slot)))),
+                )?;
             }
         }
     }
@@ -396,8 +404,12 @@ pub trait KySource {
     /// Iterator over raw_c values (the c from AB proof / preamble unified).
     fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// Iterator over application circuit $k(y)$ values.
-    fn application_ky(&self) -> impl Iterator<Item = Self::Ky>;
+    /// Iterator over application circuit $k(y)$ values, one per proof.
+    ///
+    /// Repeated [`APPLICATION_SLOTS`] times, since every slot of a proof
+    /// shares its headers; the `+ Clone` bound is required for `repeat_n`
+    /// in [`ky_values`].
+    fn application_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
     /// Iterator over unified bridge $k(y)$ values.
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
@@ -431,7 +443,7 @@ pub trait KySource {
 pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
-        .chain(source.application_ky())
+        .chain(repeat_n(source.application_ky(), APPLICATION_SLOTS).flatten())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
         .chain(repeat_n(source.ones(), NUM_ENDOSCALING_STEPS).flatten())
@@ -482,7 +494,7 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
         once(self.left_raw_c.clone()).chain(once(self.right_raw_c.clone()))
     }
 
-    fn application_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+    fn application_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_app.clone()).chain(once(self.right_app.clone()))
     }
 

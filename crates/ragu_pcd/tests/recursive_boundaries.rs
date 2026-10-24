@@ -293,7 +293,7 @@ mod registry {
             );
         for (name, id) in cases {
             let (mut proof, data) = child.clone().into_parts();
-            proof.circuit_id = id;
+            proof.circuit_ids[0] = id;
             assert!(
                 !app.verify(&proof.carry::<Value>(data), inputs.verifier_rng())?,
                 "{name}"
@@ -308,7 +308,7 @@ mod registry {
             unassigned[selector % unassigned.len()],
         ] {
             let (mut proof, data) = child.clone().into_parts();
-            proof.circuit_id = id;
+            proof.circuit_ids[0] = id;
             let changed = proof.carry::<Value>(data);
             for (position, descendant) in support::descendants(&app, &changed, &sibling, &mut rng)?
             {

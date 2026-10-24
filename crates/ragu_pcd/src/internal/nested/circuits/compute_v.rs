@@ -303,7 +303,7 @@ impl<'a, 'dr, D: Driver<'dr>> Source for EvaluationSource<'a, 'dr, D> {
         [left, right].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn app_circuits(&self, _: usize) -> impl Iterator<Item = Self::AppCircuitId> {
         core::iter::empty()
     }
 }

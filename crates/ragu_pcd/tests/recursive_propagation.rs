@@ -519,14 +519,16 @@ pub(crate) mod support {
                 Side::Left => &stage.left,
                 Side::Right => &stage.right,
             };
-            wires_of(&child.circuit_id)
+            wires_of(&child.circuit_ids)
         })?;
-        assert_eq!(circuit_id.len(), 1);
-        assert_eq!(
-            StageReader::new(&parent.native_preamble_rx).read(circuit_id[0]),
-            child.circuit_id().omega_j(),
-            "{side:?}: copied circuit id"
-        );
+        assert_eq!(circuit_id.len(), crate::APPLICATION_SLOTS);
+        for (wire, id) in circuit_id.iter().zip(child.circuit_ids()) {
+            assert_eq!(
+                StageReader::new(&parent.native_preamble_rx).read(*wire),
+                id.omega_j(),
+                "{side:?}: copied circuit id"
+            );
+        }
         let native_claims = stage_wire_indices::<
             _,
             R,

@@ -8,7 +8,7 @@
 //!   [`verify`](Application::verify) proofs, or
 //!   [`compress`](Application::compress) them and
 //!   [`verify_compressed`](Application::verify_compressed) the result.
-//! - [`step::Step`] — the trait that defines computation nodes (transitions).
+//! - [`step::Step`] — application circuit steps, registered alone or in bundles.
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
@@ -50,11 +50,12 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
+pub use internal::native::APPLICATION_SLOTS;
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{CircuitIndex, Registry, RegistryBuilder, Tag},
     staging,
 };
 use ragu_core::{Cycle, Error, Result};
@@ -70,7 +71,7 @@ use step::{Step, internal::adapter::Adapter};
 ///
 /// The prover and all verifier paths must agree on this tag. Changing it breaks
 /// compatibility with existing proofs.
-pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v2";
+pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v3";
 
 pub use backend::SelectableBackend;
 
@@ -131,6 +132,7 @@ pub struct ApplicationBuilder<
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     application_circuits: Vec<ApplicationRegistration<'params, C, R>>,
     num_application_steps: usize,
+    application_bundles: Vec<[CircuitIndex; APPLICATION_SLOTS]>,
     /// The largest shared gadget size among the registered steps.
     shared_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
@@ -155,6 +157,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: RegistryBuilder::new(),
             application_circuits: Vec::new(),
             num_application_steps: 0,
+            application_bundles: Vec::new(),
             shared_size: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
@@ -189,15 +192,20 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: self.nested_registry,
             application_circuits: self.application_circuits,
             num_application_steps: self.num_application_steps,
+            application_bundles: self.application_bundles,
             shared_size: self.shared_size,
             header_map: self.header_map,
             _marker: PhantomData,
         }
     }
 
-    /// Register a new application-defined [`Step`] in this context. The
-    /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
-    /// index that has not been inserted yet.
+    /// Register a standalone application-defined [`Step`] as the fixed bundle
+    /// `[S, S]`: [`Application::seed`] and [`Application::fuse`] take it
+    /// alone, and its one claim fills every application slot of the proof. The
+    /// step must establish its output invariant by itself. The provided
+    /// [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential index
+    /// that has not been inserted yet. Standalone steps declare `Shared = ()`;
+    /// a nonempty shared gadget requires [`Self::register_bundle`].
     ///
     /// The step's [`Shared`](Step::Shared) gadget sizes the proof's
     /// application stage: every proof carries one stage of the largest
@@ -220,7 +228,85 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// step's header suffixes conflict with an already-registered header type,
     /// or if the shared gadget does not fit the rank's gates. Circuit
     /// construction errors are returned by [`Self::finalize`].
-    pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
+    pub fn register<S: Step<C> + 'params>(self, step: S) -> Result<Self> {
+        S::INDEX.assert_index(self.num_application_steps)?;
+        let circuit = S::INDEX.circuit_index(self.num_application_steps + 1)?;
+        self.register_fragment(step, [circuit; APPLICATION_SLOTS])
+    }
+
+    /// Register two [`Step`]s as one fixed, ordered application bundle,
+    /// with one step in each application slot.
+    ///
+    /// Both must be supplied when proving this bundle, through
+    /// [`Application::seed_bundle`] or [`Application::fuse_bundle`]. Neither
+    /// is registered as a standalone step. Their indices must be the next two
+    /// sequential indices, and they must use the same left, right and output
+    /// header types. Each step's circuit binds the complete tuple of
+    /// circuit IDs as public inputs, enforced by both recursive and terminal
+    /// verification.
+    ///
+    /// Both steps return the same [`Step::Shared`]
+    /// gadget type. Ragu derives its size and layout, then automatically
+    /// binds all corresponding wires to one common committed stage. The
+    /// application does not supply the stage's size or values. Every bundle
+    /// reserves the largest shared layout registered in the application.
+    ///
+    /// Different connection types cannot be bundled, even if their fields
+    /// have identical shapes:
+    ///
+    /// ```compile_fail,E0271
+    /// use ragu_core::{drivers::Driver, gadgets::{Gadget, Kind}, pasta::{Fp, Pasta}};
+    /// use ragu_circuits::polynomials::ProductionRank;
+    /// use ragu_pcd::{ApplicationBuilder, step::Step};
+    /// use ragu_primitives::{Element, shared::Shared};
+    ///
+    /// #[derive(Gadget, Shared)]
+    /// struct ConnectionA<'dr, D: Driver<'dr>> { value: Element<'dr, D> }
+    /// #[derive(Gadget, Shared)]
+    /// struct ConnectionB<'dr, D: Driver<'dr>> { value: Element<'dr, D> }
+    ///
+    /// fn mismatched<A, B>(builder: ApplicationBuilder<'static, Pasta, ProductionRank, 4>, steps: (A, B))
+    /// where
+    ///     A: Step<Pasta, Shared = Kind![Fp; ConnectionA<'_, _>]> + 'static,
+    ///     B: Step<Pasta, Shared = Kind![Fp; ConnectionB<'_, _>],
+    ///         Left = A::Left, Right = A::Right, Output = A::Output> + 'static,
+    /// {
+    ///     let _ = builder.register_bundle(steps); // The shared types must match.
+    /// }
+    /// ```
+    ///
+    /// # Cost
+    ///
+    /// Every step reserves `ceil(n / 2)` gates, where `n` is the
+    /// application's largest shared wire count, and adds one connecting
+    /// equality constraint per wire in its own shared gadget; see
+    /// [`Self::register`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same registration errors as [`Self::register`].
+    pub fn register_bundle<S, T>(self, steps: (S, T)) -> Result<Self>
+    where
+        S: step::Step<C> + 'params,
+        T: step::Step<C, Left = S::Left, Right = S::Right, Output = S::Output, Shared = S::Shared>
+            + 'params,
+    {
+        S::INDEX.assert_index(self.num_application_steps)?;
+        T::INDEX.assert_index(self.num_application_steps + 1)?;
+        let count = self.num_application_steps + APPLICATION_SLOTS;
+        let bundle = [
+            S::INDEX.circuit_index(count)?,
+            T::INDEX.circuit_index(count)?,
+        ];
+        self.register_fragment(steps.0, bundle)?
+            .register_fragment(steps.1, bundle)
+    }
+
+    fn register_fragment<S: step::Step<C> + 'params>(
+        mut self,
+        step: S,
+        bundle: [CircuitIndex; APPLICATION_SLOTS],
+    ) -> Result<Self> {
         const {
             assert!(
                 <S::Left as Header<C::CircuitField>>::SUFFIX.get()
@@ -252,8 +338,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         self.application_circuits
             .push(Box::new(move |registry, shared_size| {
-                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, shared_size)?)
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(
+                    step,
+                    bundle,
+                    shared_size,
+                )?)
             }));
+        self.application_bundles.push(bundle);
         self.num_application_steps += 1;
 
         Ok(self)
@@ -270,6 +361,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         for _ in 0..count {
             self.application_circuits
                 .push(Box::new(|registry, _| registry.register_circuit(())));
+            let circuit = step::Index::new(self.num_application_steps)
+                .circuit_index(self.num_application_steps + 1)?;
+            self.application_bundles.push([circuit; APPLICATION_SLOTS]);
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -324,6 +418,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::bootstrap::Bootstrap::new(),
+                    <step::internal::bootstrap::Bootstrap as Step<C>>::INDEX
+                        .bundle(&self.application_bundles)?,
                     self.shared_size,
                 )?)?;
 
@@ -346,6 +442,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            application_bundles: self.application_bundles,
             shared_size: self.shared_size,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
@@ -411,6 +508,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry
                 .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(
                     step,
+                    S::INDEX.bundle(&self.application_bundles)?,
                     self.shared_size,
                 )?)?;
 
@@ -455,6 +553,7 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    application_bundles: Vec<[CircuitIndex; APPLICATION_SLOTS]>,
     /// The application stage's size, in field elements.
     shared_size: usize,
     /// The proof that bootstraps the recursion: a genuine, verifying
@@ -479,7 +578,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// This is the entry point for creating leaf nodes in a PCD tree. The step
     /// is fused against the bootstrap proof built by
     /// [`ApplicationBuilder::finalize`] as both children, so this is an
-    /// ordinary fuse whose child claims are enforced, not a base case.
+    /// ordinary fuse whose child claims are enforced, not a base case. Like
+    /// [`Self::fuse`], it takes a step registered on its own; a bundle is
+    /// seeded with [`Self::seed_bundle`].
     pub fn seed<'source, RNG: CryptoRng, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
@@ -490,6 +591,28 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             rng,
             step,
             witness,
+            self.bootstrap_pcd(),
+            self.bootstrap_pcd(),
+        )
+    }
+
+    /// Seed a new computation with both steps of a bundle whose steps
+    /// declare `()` for both inputs; see [`Self::fuse_bundle`].
+    pub fn seed_bundle<'source, RNG, S, T>(
+        &self,
+        rng: &mut RNG,
+        steps: (S, T),
+        witnesses: (S::Witness<'source>, T::Witness<'source>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)>
+    where
+        RNG: CryptoRng,
+        S: step::Step<C, Left = (), Right = ()>,
+        T: step::Step<C, Left = (), Right = (), Output = S::Output, Shared = S::Shared>,
+    {
+        self.fuse_bundle(
+            rng,
+            steps,
+            witnesses,
             self.bootstrap_pcd(),
             self.bootstrap_pcd(),
         )

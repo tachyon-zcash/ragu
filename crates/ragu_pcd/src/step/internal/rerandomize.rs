@@ -155,15 +155,18 @@ mod tests {
             }
         }
 
-        let circuit_single =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-                0,
-            )
-            .unwrap();
+        let bundle = <Rerandomize<()> as Step<Pasta>>::INDEX.bundle(&[]).unwrap();
+        let circuit_single = super::super::adapter::Adapter::<
+            Pasta,
+            Rerandomize<Single>,
+            R,
+            HEADER_SIZE,
+        >::new(Rerandomize::new(), bundle, 0)
+        .unwrap();
         let circuit_pair =
             super::super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
+                bundle,
                 0,
             )
             .unwrap();
@@ -172,6 +175,7 @@ mod tests {
         let circuit_unit =
             super::super::adapter::Adapter::<Pasta, Rerandomize<()>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
+                bundle,
                 0,
             )
             .unwrap();
@@ -218,9 +222,10 @@ mod tests {
                 ))
             }
         }
-        let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight, 0)
-                .unwrap();
+        let circuit_twin = super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(
+            UnitRight, bundle, 0,
+        )
+        .unwrap();
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

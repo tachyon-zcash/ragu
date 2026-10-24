@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank, staging};
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank, registry::CircuitIndex, staging};
 use ragu_core::{
     Coeff, Cycle, Error, Result,
     convert::WireMap,
@@ -17,19 +17,20 @@ use ragu_primitives::{
 };
 
 use super::super::Step;
-use crate::Header;
+use crate::{APPLICATION_SLOTS, Header};
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// The fixed bundle IDs followed by three padded headers.
+pub struct InstanceLen<const N: usize>;
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<const N: usize> Len for InstanceLen<N> {
     fn len() -> usize {
-        N * 3
+        APPLICATION_SLOTS + N * 3
     }
 }
 
 /// The circuit of an application [`Step`]: the step's constraints over the
-/// proof's application stage, with the three headers as its public inputs.
+/// proof's application stage, with the registered bundle's IDs and the three
+/// headers as its public inputs.
 ///
 /// The application stage occupies the first gates of every step circuit,
 /// reserved by [`reserve_shared_stage`]: the step's own trace is zero there
@@ -40,21 +41,33 @@ impl<const N: usize> Len for TripleConstLen<N> {
 /// stage.
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
+    bundle: [CircuitIndex; APPLICATION_SLOTS],
     /// The application stage size, in field elements.
     shared_size: usize,
     _marker: PhantomData<(C, R)>,
 }
 
+/// The witness of an [`Adapter`]: child data and the fragment's own witness.
+pub(crate) type AdapterWitness<'source, C, S> = (
+    <<S as Step<C>>::Left as Header<<C as Cycle>::CircuitField>>::Data,
+    <<S as Step<C>>::Right as Header<<C as Cycle>::CircuitField>>::Data,
+    <S as Step<C>>::Witness<'source>,
+);
+
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
-    /// The circuit of `step` over an application stage of `shared_size`
-    /// elements.
+    /// The circuit of `step` within `bundle`, over an application stage of
+    /// `shared_size` elements.
     ///
     /// # Errors
     ///
     /// Returns an initialization error if the step's [`Step::Shared`] gadget
     /// has more wires than the stage holds; registration sizes the stage from
     /// every step, so this guards the prover's own calls.
-    pub fn new(step: S, shared_size: usize) -> Result<Self> {
+    pub fn new(
+        step: S,
+        bundle: [CircuitIndex; APPLICATION_SLOTS],
+        shared_size: usize,
+    ) -> Result<Self> {
         if S::Shared::num_values()? > shared_size {
             return Err(Error::Initialization(
                 "the step's shared gadget has more wires than the application stage holds".into(),
@@ -62,6 +75,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, H
         }
         Ok(Adapter {
             step,
+            bundle,
             shared_size,
             _marker: PhantomData,
         })
@@ -145,12 +159,8 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         <S::Output as Header<C::CircuitField>>::Data,
     );
-    type Witness<'source> = (
-        <S::Left as Header<C::CircuitField>>::Data,
-        <S::Right as Header<C::CircuitField>>::Data,
-        S::Witness<'source>,
-    );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
+    type Witness<'source> = AdapterWitness<'source, C, S>;
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
     type Aux<'source> = (
         (
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -221,7 +231,17 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             ))
         })?;
 
-        Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
+        // These are circuit constants, fixed at registration. Every fragment
+        // attests the entire ordered bundle, so selecting or repeating just
+        // one fragment cannot prove the registered step. The verifier derives
+        // these public inputs from the proof's actual circuit selectors.
+        let instance = self
+            .bundle
+            .map(|id| Element::constant(dr, id.omega_j()))
+            .into_iter()
+            .chain(elements)
+            .collect_fixed()?;
+        Ok(WithAux::new(instance, adapter_aux))
     }
 }
 
@@ -362,10 +382,10 @@ mod tests {
     }
 
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
+    fn instance_len_includes_bundle_and_headers() {
+        assert_eq!(InstanceLen::<1>::len(), APPLICATION_SLOTS + 3);
+        assert_eq!(InstanceLen::<4>::len(), APPLICATION_SLOTS + 12);
+        assert_eq!(InstanceLen::<10>::len(), APPLICATION_SLOTS + 30);
     }
 
     #[test]
@@ -373,8 +393,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, SHARED_SIZE).unwrap();
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            [CircuitIndex::new(0); APPLICATION_SLOTS],
+            SHARED_SIZE,
+        )
+        .unwrap();
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -382,8 +406,8 @@ mod tests {
             .expect("witness should succeed")
             .into_output();
 
-        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3);
+        // The fixed bundle precedes the left, right and output headers.
+        assert_eq!(output.len(), APPLICATION_SLOTS + HEADER_SIZE * 3);
     }
 
     #[test]
@@ -391,8 +415,12 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, SHARED_SIZE).unwrap();
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+            TestStep,
+            [CircuitIndex::new(0); APPLICATION_SLOTS],
+            SHARED_SIZE,
+        )
+        .unwrap();
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -415,8 +443,12 @@ mod tests {
     /// values and binds those wires to the stage's reserved wires.
     #[test]
     fn step_exports_its_shared_gadget() {
-        let adapter =
-            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(SharedSum, SHARED_SIZE).unwrap();
+        let adapter = Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(
+            SharedSum,
+            [CircuitIndex::new(1); APPLICATION_SLOTS],
+            SHARED_SIZE,
+        )
+        .unwrap();
         let values = [Fp::from(3u64), Fp::from(4u64)];
         let (_, aux) = adapter
             .trace((Fp::from(10u64), Fp::from(20u64), values))
@@ -428,8 +460,12 @@ mod tests {
 
         // A stage smaller than the step's gadget is refused.
         assert!(
-            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(SharedSum, SHARED_SIZE - 1)
-                .is_err()
+            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(
+                SharedSum,
+                [CircuitIndex::new(1); APPLICATION_SLOTS],
+                SHARED_SIZE - 1
+            )
+            .is_err()
         );
     }
 
@@ -502,6 +538,7 @@ mod tests {
         fn trace<const SIZE: usize, const EXPORTS: usize>() -> Result<()> {
             Adapter::<Pasta, MalformedStep<SIZE, EXPORTS>, TestR, HEADER_SIZE>::new(
                 MalformedStep,
+                [CircuitIndex::new(1); APPLICATION_SLOTS],
                 3,
             )?
             .trace((Fp::from(10), Fp::from(20), [Fp::from(3), Fp::from(4)]))?;
@@ -525,7 +562,12 @@ mod tests {
     fn steps_reserve_the_stage_gates() {
         let counts = |size| {
             ragu_circuits::testing::synthesis_counts(
-                &Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, size).unwrap(),
+                &Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+                    TestStep,
+                    [CircuitIndex::new(0); APPLICATION_SLOTS],
+                    size,
+                )
+                .unwrap(),
             )
             .unwrap()
         };
