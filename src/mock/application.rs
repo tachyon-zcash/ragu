@@ -17,43 +17,40 @@ use super::{
 /// Mocks `ragu_pcd::ApplicationBuilder`.
 #[derive(Clone, Debug, Default)]
 pub struct ApplicationBuilder {
-    num_application_steps: usize,
+    registered_outputs: Vec<Suffix>,
     header_map: BTreeMap<Suffix, TypeId>,
 }
 
 /// Mocks `ragu_pcd::Application`.
 #[derive(Clone, Debug)]
 pub struct Application {
-    num_application_steps: usize,
+    registered_outputs: Vec<Suffix>,
 }
 
 impl ApplicationBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            num_application_steps: 0,
+            registered_outputs: Vec::new(),
             header_map: BTreeMap::new(),
         }
     }
 
     /// Mirrors `ragu_pcd::ApplicationBuilder::register`.
     pub fn register<S: Step>(mut self, _step: S) -> Result<Self> {
-        S::INDEX.assert_sequential(self.num_application_steps)?;
+        S::INDEX.assert_sequential(self.registered_outputs.len())?;
 
         self.prevent_duplicate_suffix::<S::Output>()?;
         self.prevent_duplicate_suffix::<S::Left>()?;
         self.prevent_duplicate_suffix::<S::Right>()?;
 
-        self.num_application_steps = self
-            .num_application_steps
-            .checked_add(1)
-            .ok_or_else(|| Error::Initialization("registered step count overflow".into()))?;
+        self.registered_outputs.push(S::Output::SUFFIX);
         Ok(self)
     }
 
     pub fn finalize(self) -> Result<Application> {
         Ok(Application {
-            num_application_steps: self.num_application_steps,
+            registered_outputs: self.registered_outputs,
         })
     }
 
@@ -121,9 +118,12 @@ impl Application {
     }
 
     pub fn verify<RNG: CryptoRng, H: Header>(&self, pcd: &Pcd<H>, _rng: RNG) -> Result<bool> {
-        match pcd.proof.step_index.application() {
-            Some(application_index) if application_index < self.num_application_steps => {}
-            _ => return Ok(false),
+        let Some(application_index) = pcd.proof.step_index.application() else {
+            return Ok(false);
+        };
+        // The header must match the output registered for the proof's step.
+        if self.registered_outputs.get(application_index) != Some(&H::SUFFIX) {
+            return Ok(false);
         }
 
         let encoded = H::encode(&pcd.data);

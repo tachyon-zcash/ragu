@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Common (`zakura-udon`); baked Pasta parameters from `zakura-bento`.
 - The `legacy-deps`, `modern-deps` and `native-msm` features.
 
+### Fixed
+
+- The mock verifier rejects proofs whose header suffix does not match the
+  registered output for their application step.
+
 ### Migrating from the in-tree arithmetic crates
 
 | Before | After |

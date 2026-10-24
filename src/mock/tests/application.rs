@@ -795,3 +795,80 @@ fn identity_point_in_carried_data_errors_verify() {
         Err(Error::InvalidWitness(_))
     ));
 }
+
+#[test]
+fn verify_rejects_unregistered_output_header() {
+    let mut rng = StdRng::seed_from_u64(0);
+    let app = point_app();
+    let data = TestHeaderData { value: 42 };
+    // Recompute both hashes for the forged header: merely swapping the carried
+    // header on an honest proof would only exercise the existing hash check.
+    let proof = Proof::new(
+        TestHeader::SUFFIX,
+        Index::new(0),
+        &TestHeader::encode(&data),
+        b"forged-witness",
+    )
+    .expect("proof");
+    assert!(
+        !app.verify(&proof.carry::<TestHeader>(data), &mut rng)
+            .expect("verify")
+    );
+}
+
+#[test]
+fn verify_rejects_header_registered_for_another_step() {
+    let mut rng = StdRng::seed_from_u64(0);
+    let app = ApplicationBuilder::new()
+        .register(PointSeedStep)
+        .expect("register point output")
+        .register(PointConsumeStep)
+        .expect("register scalar output")
+        .finalize()
+        .expect("finalize");
+    let (point, ()) = app
+        .seed(&mut rng, PointSeedStep, Eq::generator())
+        .expect("seed");
+    assert!(app.verify(&point, &mut rng).expect("verify point output"));
+    let (scalar, ()) = app
+        .fuse(
+            &mut rng,
+            PointConsumeStep,
+            (),
+            point,
+            Proof::bootstrap().carry::<()>(()),
+        )
+        .expect("fuse");
+    assert!(app.verify(&scalar, &mut rng).expect("verify scalar output"));
+
+    let data = TestHeaderData { value: 1 };
+    let proof = Proof::new(
+        TestHeader::SUFFIX,
+        Index::new(0),
+        &TestHeader::encode(&data),
+        b"forged-witness",
+    )
+    .expect("proof");
+    assert!(
+        !app.verify(&proof.carry::<TestHeader>(data), &mut rng)
+            .expect("verify")
+    );
+}
+
+#[test]
+fn verify_rejects_input_only_header_as_output() {
+    let mut rng = StdRng::seed_from_u64(0);
+    let app = point_app();
+    // Unit is registered as an input to PointSeedStep, but not as its output.
+    let proof = Proof::new(
+        <()>::SUFFIX,
+        Index::new(0),
+        &<()>::encode(&()),
+        b"forged-witness",
+    )
+    .expect("proof");
+    assert!(
+        !app.verify(&proof.carry::<()>(()), &mut rng)
+            .expect("verify")
+    );
+}
