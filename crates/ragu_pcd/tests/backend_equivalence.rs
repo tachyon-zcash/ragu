@@ -1,7 +1,10 @@
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use proptest::{prelude::*, test_runner::TestCaseResult};
+use proptest::{
+    prelude::*,
+    test_runner::{FileFailurePersistence, TestCaseResult},
+};
 use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
@@ -372,7 +375,13 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
 /// Two cases by default: each case builds three applications and runs the
 /// protocol end to end. `PROPTEST_CASES` raises it (CI sets a floor).
 fn config() -> ProptestConfig {
-    let mut config = ProptestConfig::with_cases(2);
+    // Keep seeds beside this source despite its #[path] mount under src/proof.
+    let mut config = ProptestConfig {
+        cases: 2,
+        ..ProptestConfig::with_failure_persistence(FileFailurePersistence::WithSource(
+            "proptest-regressions",
+        ))
+    };
     if let Some(cases) = std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|value| value.parse().ok())

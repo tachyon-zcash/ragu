@@ -37,7 +37,7 @@ this part.
 
 ## What is verified today
 
-Verification currently covers the gadget layer: 53 concrete circuit instances,
+Verification currently covers the gadget layer: 65 concrete circuit instances,
 each one a specific instantiation at a fixed prime field with all compile-time
 parameters made concrete.
 
@@ -50,7 +50,17 @@ parameters made concrete.
   conditional endomorphism application and negation.
 - **Booleans** — allocation, conjunction, conditional selection, conditional
   equality enforcement, and contract re-establishment.
-- **Endoscalars** — allocation, extraction, lifting, and group scaling.
+- **Endoscalars** — allocation, extraction, lifting, and radix-3 group
+  scaling, in both the plain form and the hoisted form that reads its digit
+  products from stage wires, plus the contract that pins those product wires.
+  All eight extraction instances are enrolled over both Pasta fields.
+  The integer non-collision bounds are connected to the complete curve group
+  and the affine walk. Concrete soundness and completeness endpoints on both
+  Pasta curves derive walk success from the certified prime group orders.
+  Lift injectivity is connected to the verified circuit outputs, with the
+  bounds instantiated for both fields. The deployed endomorphism roots are
+  matched to their scalar-field eigenvalues, and the plain and hoisted
+  walks are proved to compute multiplication by the corresponding lift.
 - **Poseidon** — the permutation at the deployed Pasta parameters on both
   fields, and the sponge in several distinct control-flow shapes:
   single-block hashing on each field, uniform blocks across a rate boundary,
@@ -59,6 +69,11 @@ parameters made concrete.
 - **Horner evaluation** at three arities, plus the trailing-constant $k(Y)$
   form.
 - **Nonzero banks** at three arities, and the core multiplication gate.
+
+Normalization, denormalization, initialization, digit selectors, and unchecked
+triple-and-add are subcircuits of the registered endoscalar instances. Their
+traces are checked through those parent instances; they have no standalone
+extraction instances.
 
 Every one of these is proved without `sorry`, and the Lean build runs with
 `--wfail` so that an admitted goal fails CI rather than passing quietly. The
@@ -70,6 +85,12 @@ assumptions chapter records which ones appear and what trusting them costs.
 Everything above the gadget layer. The internal recursion circuits, the
 accumulation scheme, the staging system, and the protocol as a whole have no
 Lean theorems about them.
+
+The [open endoscalar stage-binding contract](circuits/contracts.md#endoscalar-stage-binding)
+specifies how the product owners, consuming walks and lifts, transcript,
+parent checks, and terminal verifier must be connected. The gadget results
+do not assume this contract as an axiom; proving it is work for the broader
+recursive formalization.
 
 Some of the gadget layer has nothing to verify rather than something unproved,
 and the distinction matters when reading the list above as a coverage claim.

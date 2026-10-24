@@ -38,6 +38,7 @@ jobs:
           filters: |
             rust:
               - '**/*.rs'
+              - '**/*.proptest-regressions'
               - '**/Cargo.toml'
               - '**/Cargo.lock'
               - 'rust-toolchain.toml'
@@ -144,6 +145,18 @@ jobs:
       # runs here, including the rejection sweeps and controls.
       - name: Run exhaustive corruption coverage
         run: cargo test --release -p ragu_pcd --locked --all-features --test corruption -- --include-ignored
+      # Replay the saved recursion failures on PRs as well as in heavy-tests.
+      # One fresh case follows the committed seeds in each property. Backend
+      # equivalence replays its saved seeds in backend.yml.
+      - name: Replay recursive regression seeds
+        env:
+          PROPTEST_CASES: "1"
+        run: >-
+          cargo test --release -p ragu_pcd --locked --all-features --lib
+          -- --ignored --test-threads=1
+          proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations
+          proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations
+          proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
 
   test-default-feature:
     name: default-feature (ubuntu-latest)

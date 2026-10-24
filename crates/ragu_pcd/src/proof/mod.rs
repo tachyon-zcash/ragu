@@ -13,8 +13,9 @@ pub(crate) mod builder;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
-// `#[ignore]`d: the PR gate compiles and skips them, and the scheduled
-// heavy-tests run picks them up with `cargo test -- --ignored`.
+// `#[ignore]`d in the platform matrix. Rust CI explicitly replays the two
+// properties with saved recursion failures, and the scheduled heavy-tests
+// run picks up the full suites with `cargo test -- --ignored`.
 #[cfg(test)]
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
@@ -59,7 +60,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
-    extract_endoscalar, lift_endoscalar,
+    Uendo, extract_endoscalar, lift_endoscalar,
     vec::{FixedVec, Len},
 };
 use udon::field::Field;
@@ -729,7 +730,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(crate) fn compute_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
@@ -916,7 +917,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     pub(crate) fn compute_native_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         inputs: &Inputs<C::NestedCurve>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(C::NestedCurve, native_points::WalkWitness<C::NestedCurve>)> {

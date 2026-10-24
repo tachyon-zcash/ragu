@@ -403,10 +403,10 @@ mod tests {
             type Parent = ();
 
             fn values() -> usize {
-                u128::BITS as usize
+                ragu_primitives::ENDOSCALAR_BITS
             }
 
-            type Witness<'source> = u128;
+            type Witness<'source> = ragu_primitives::Uendo;
             type OutputKind = Endoscalar<'static, core::marker::PhantomData<Fp>>;
 
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
@@ -449,8 +449,8 @@ mod tests {
             }
         }
 
-        let endoscalar_a: u128 = rand::rng().random();
-        let endoscalar_b: u128 = rand::rng().random();
+        let endoscalar_a = ragu_primitives::Uendo::random(|| rand::rng().random());
+        let endoscalar_b = ragu_primitives::Uendo::random(|| rand::rng().random());
         let p1 = (EpAffine::generator() * Fq::random(|bytes| rand::rng().fill_bytes(bytes))).into();
         let p2 = (EpAffine::generator() * Fq::random(|bytes| rand::rng().fill_bytes(bytes))).into();
 

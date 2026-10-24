@@ -38,7 +38,8 @@ pub mod vec;
 pub use boolean::{Boolean, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::{
-    Endoscalar, EndoscalarChallenge, EndoscalarRangeError, extract_endoscalar, lift_endoscalar,
+    ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Endoscalar, EndoscalarChallenge,
+    EndoscalarRangeError, HoistedEndoscalar, Uendo, extract_endoscalar, lift_endoscalar,
 };
 pub use invertible::{Invertible, Nonzero, NonzeroBank};
 use io::{Buffer, Write};

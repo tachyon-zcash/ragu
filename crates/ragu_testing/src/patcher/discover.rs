@@ -293,10 +293,10 @@ mod tests {
     /// constraint and nothing else, so discovery (which reaches a wire only
     /// through a rule that determines it alone) leaves every bit free, while
     /// `forced_by` from the value alone recognises the decomposition and
-    /// reaches all 128 of them and the lifted scalar.
+    /// reaches every one of them and the lifted scalar.
     #[test]
     fn forced_by_decides_endoscalar_bits() -> ragu_core::Result<()> {
-        use ragu_primitives::{Endoscalar, EndoscalarChallenge};
+        use ragu_primitives::{ENDOSCALAR_BITS, Endoscalar, EndoscalarChallenge};
 
         let mut rec = Recorder::<Fp>::new();
         let mut alloc = TrackingAllocator::default();
@@ -311,7 +311,7 @@ mod tests {
         assert!(constraints_hold(&rec.events, &rec.values));
 
         let bits: Vec<usize> = endoscalar.bits().map(|bit| *bit.wire()).collect();
-        assert_eq!(bits.len(), 128);
+        assert_eq!(bits.len(), ENDOSCALAR_BITS);
         let free = discover_free_advice(&rec.events, &rec.values);
         assert!(
             bits.iter().all(|bit| free.binary_search(bit).is_ok()),

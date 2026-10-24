@@ -105,8 +105,8 @@ impl<F: Field> Poly<F> {
 ///
 /// Expressions are DAGs (see [`Expr`]); memoizing by pointer makes
 /// normalization linear in the number of distinct nodes, so a gadget that
-/// feeds its symbolic output back into itself 64 times (`Endoscalar::lift`)
-/// normalizes in 64 steps rather than 2⁶⁴. Every [`Arc`] stays alive for the
+/// feeds its symbolic output back into itself 47 times (`Endoscalar::lift`)
+/// normalizes in 47 steps rather than 2⁴⁷. Every [`Arc`] stays alive for the
 /// duration of the memo's use (the trace owns them), so addresses are stable.
 type Memo<F> = HashMap<*const Expr<F>, Arc<Poly<F>>>;
 
@@ -387,6 +387,8 @@ mod tests {
 
     #[test]
     fn encoding_roundtrips_for_every_instance() {
+        use ragu_core::pasta::{EqAffine, Fq};
+
         use crate::instances::{
             boolean_alloc::BooleanAllocInstance,
             boolean_and::BooleanAndInstance,
@@ -419,6 +421,10 @@ mod tests {
             endoscalar_extract::EndoscalarExtractInstance,
             endoscalar_group_scale::EndoscalarGroupScaleInstance,
             endoscalar_lift::EndoscalarLiftInstance,
+            hoisted_endoscalar_alloc::HoistedEndoscalarAllocInstance,
+            hoisted_endoscalar_enforce_products::HoistedEndoscalarEnforceProductsInstance,
+            hoisted_endoscalar_group_scale::HoistedEndoscalarGroupScaleInstance,
+            hoisted_endoscalar_lift::HoistedEndoscalarLiftInstance,
             horner::{HornerInstanceN3, HornerInstanceN7, HornerInstanceN19, HornerKyInstanceN3},
             nonzero_bank_scope::{
                 NonzeroBankScopeInstanceK0, NonzeroBankScopeInstanceK1, NonzeroBankScopeInstanceK2,
@@ -484,9 +490,21 @@ mod tests {
             "Ragu.Instances.Boolean.Consistent" => BooleanConsistentInstance,
             "Ragu.Instances.Boolean.ConditionalEnforceEqual" => BooleanConditionalEnforceEqualInstance,
             "Ragu.Instances.Endoscalar.Alloc" => EndoscalarAllocInstance,
+            "Ragu.Instances.Endoscalar.AllocFq" => EndoscalarAllocInstance<Fq>,
             "Ragu.Instances.Endoscalar.Extract" => EndoscalarExtractInstance,
+            "Ragu.Instances.Endoscalar.ExtractFq" => EndoscalarExtractInstance<Fq>,
             "Ragu.Instances.Endoscalar.GroupScale" => EndoscalarGroupScaleInstance,
+            "Ragu.Instances.Endoscalar.GroupScaleFq" => EndoscalarGroupScaleInstance<EqAffine>,
             "Ragu.Instances.Endoscalar.Lift" => EndoscalarLiftInstance,
+            "Ragu.Instances.Endoscalar.LiftFq" => EndoscalarLiftInstance<Fq>,
+            "Ragu.Instances.Endoscalar.HoistedAlloc" => HoistedEndoscalarAllocInstance,
+            "Ragu.Instances.Endoscalar.HoistedAllocFq" => HoistedEndoscalarAllocInstance<Fq>,
+            "Ragu.Instances.Endoscalar.HoistedGroupScale" => HoistedEndoscalarGroupScaleInstance,
+            "Ragu.Instances.Endoscalar.HoistedGroupScaleFq" => HoistedEndoscalarGroupScaleInstance<EqAffine>,
+            "Ragu.Instances.Endoscalar.HoistedLift" => HoistedEndoscalarLiftInstance,
+            "Ragu.Instances.Endoscalar.HoistedLiftFq" => HoistedEndoscalarLiftInstance<Fq>,
+            "Ragu.Instances.Endoscalar.EnforceProducts" => HoistedEndoscalarEnforceProductsInstance,
+            "Ragu.Instances.Endoscalar.EnforceProductsFq" => HoistedEndoscalarEnforceProductsInstance<Fq>,
             "Ragu.Instances.Horner.N3" => HornerInstanceN3,
             "Ragu.Instances.Horner.N7" => HornerInstanceN7,
             "Ragu.Instances.Horner.N19" => HornerInstanceN19,
