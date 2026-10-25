@@ -16,27 +16,37 @@
 //! `ragu::polynomials`. Application steps run with `Simulator<Fp>`, which
 //! checks assigned multiplication gates and linear constraints locally. This
 //! is not proof soundness: registration does not synthesize circuit shape or
-//! enforce rank and gate bounds, `fuse` does not verify child proofs, and
+//! enforce rank and gate bounds, `fuse` checks child header bindings but does
+//! not verify child proofs, and
 //! hook-capacity checks are absent. Polynomial openings are checked natively
 //! against retained coefficients rather than proved cryptographically. Proof
 //! bytes, verification binding, rerandomization, and recursion remain mock
 //! machinery.
 //!
-//! For migration, keep the `PastaParams` passed to `ApplicationBuilder::finalize`
+//! For migration, keep the `PastaParams` passed to `ApplicationBuilder::new`
 //! alive for the application lifetime, and supply canonical generators
-//! compatible with every polynomial rank and commitment. Steps use
+//! compatible with every polynomial rank and commitment. Construct an
+//! `ApplicationBuilder::<HEADER_SIZE>::new(params)` and call `finalize()`;
+//! the application width includes zero padding and the final suffix slot.
+//! Oversized header encodings fail just as in the reference. Steps use
 //! `StepCtx<'a, 'dr, D>` with public `ctx.dr`; unlike the recursive reference,
 //! this Pasta-specialized context omits the cycle type parameter. Convert
-//! `Step::witness`'s native witness, child, and return values to
-//! `DriverValue<D, _>` with the corresponding `'dr`, `'source: 'dr`, and
-//! `Self: 'dr` bounds. Replace native polynomial commits and scalar queries
+//! headers to allocator-generic `Header::encode` implementations returning a
+//! `Bound` gadget of `Header::Output: Write<Fp>`. `Step::witness` is generic
+//! over `const HEADER_SIZE: usize` and returns the three `Encoded` headers,
+//! the `Bound` shared gadget, carried output `DriverValue` data, and auxiliary
+//! `DriverValue` data. Return computed wires through `Encoded::from_gadget`;
+//! native carried data never substitutes for that output encoding. Declare
+//! `Shared = ()` if no application-stage gadget is needed. The real `Shared`
+//! trait and derive are available, but separate recursive stage commitments
+//! and their wire-binding constraints are deliberately omitted by the mock.
+//! Replace native polynomial commits and scalar queries
 //! with `witness_polynomial`, then use its commitment-keyed handle with
 //! `evaluate` for prover values and `enforce_poly_query` for locally checked
 //! openings. `derive_challenge` accepts writable gadgets and returns an
-//! `Element`; callers must pin the complete absorbed sequence. The mock hashes
-//! only supplied inputs, while the recursive reference uses fixed-width
-//! padding, so output and cost parity requires matching the full absorbed
-//! sequence and parameters.
+//! `Element`; callers must pin the complete absorbed sequence. It is a mock
+//! extension absent from the ea0bf839 reference's `StepCtx`; its variable-width
+//! sponge does not promise reference transcript output or recursive cost parity.
 //!
 //! Legacy Pasta field, curve, rank, and arithmetic-trait imports must move to
 //! matching real Ragu types and APIs. Native arithmetic and comparisons in
