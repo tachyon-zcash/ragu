@@ -38,7 +38,7 @@ where
     /// Witnesses a polynomial, commits to it with the caller-supplied canonical
     /// generators, and returns the gadget handle naming that commitment.
     ///
-    /// The parameters supplied to [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize)
+    /// The parameters supplied to [`ApplicationBuilder::new`](crate::ApplicationBuilder::new)
     /// must provide at least `R::num_coeffs()` canonical generators. The real
     /// sparse commitment routine assumes this and panics if the sequence is too
     /// short.
@@ -93,6 +93,9 @@ where
 
     /// Derives a domain-separated Fiat–Shamir challenge from the field elements
     /// emitted by `input`'s ordinary [`Write`] implementation.
+    ///
+    /// This is a mock extension: the ea0bf839 reference's `StepCtx` has no
+    /// challenge hook. Migration must use the reference's eventual challenge API.
     ///
     /// This accepts any writable gadget, including field elements, points,
     /// polynomial commitment handles, and compositions of those gadgets.

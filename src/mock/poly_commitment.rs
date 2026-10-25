@@ -13,7 +13,7 @@ use ragu_primitives::{Element, consistent::Consistent, io::Write};
 use udon::{curve::Affine as _, field::Field};
 
 /// Circuit-field elements occupied by a polynomial commitment handle.
-const HANDLE_WIRES: usize = 2;
+pub const HANDLE_WIRES: usize = 2;
 
 /// Encodes a host-curve commitment as two circuit-field elements.
 fn commitment_limbs<C: Cycle>(commitment: C::HostCurve) -> Result<[C::CircuitField; HANDLE_WIRES]> {

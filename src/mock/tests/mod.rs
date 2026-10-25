@@ -9,6 +9,7 @@ use udon::curve::{AffineAdapter, Projective as _};
 
 mod application;
 mod ctx;
+mod parity;
 mod proof;
 
 /// Deterministic test parameters with distinct generators at every test-rank

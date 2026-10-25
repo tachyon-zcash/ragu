@@ -4,17 +4,18 @@ use ragu_circuits::polynomials::{TestRank, sparse};
 use ragu_core::{
     Coeff, Error, Result,
     drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
     maybe::Maybe as _,
-    pasta::{Ep, Eq, Fp, Fq},
+    pasta::{EpAffine, Fp},
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, Point, allocator::Allocator};
 use rand::{SeedableRng as _, rngs::StdRng};
-use udon::curve::Projective;
+use udon::curve::Affine;
 
 use super::{assert_invalid_witness, test_params};
 use crate::{
-    Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
-    StepCtx, Suffix,
+    Application, ApplicationBuilder, Encoded, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof,
+    Step, StepCtx, Suffix,
 };
 
 struct TestHeader;
@@ -24,24 +25,64 @@ struct TestHeaderData {
     value: u64,
 }
 
+// Boilerplate for tests concerned with application plumbing rather than
+// arithmetic. Circuit tests below return their actual computed gadgets.
+fn encode_result<
+    'dr,
+    'source: 'dr,
+    S: Step<Shared = ()>,
+    D: Driver<'dr, F = Fp>,
+    const HS: usize,
+>(
+    ctx: &mut StepCtx<'_, 'dr, D>,
+    left: DriverValue<D, <S::Left as Header>::Data>,
+    right: DriverValue<D, <S::Right as Header>::Data>,
+    result: (
+        DriverValue<D, <S::Output as Header>::Data>,
+        DriverValue<D, S::Aux<'source>>,
+    ),
+) -> Result<(
+    (
+        Encoded<'dr, D, S::Left, HS>,
+        Encoded<'dr, D, S::Right, HS>,
+        Encoded<'dr, D, S::Output, HS>,
+    ),
+    (),
+    DriverValue<D, <S::Output as Header>::Data>,
+    DriverValue<D, S::Aux<'source>>,
+)> {
+    let (output, aux) = result;
+    Ok((
+        (
+            Encoded::new(ctx.dr, &mut (), left)?,
+            Encoded::new(ctx.dr, &mut (), right)?,
+            Encoded::new(ctx.dr, &mut (), output.clone())?,
+        ),
+        (),
+        output,
+        aux,
+    ))
+}
+
 impl Header for TestHeader {
     type Data = TestHeaderData;
+    type Output = Kind![Fp; Element<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            alloc::vec![Fp::from(data.value)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness.map(|data| Fp::from(data.value)))
     }
 }
 
 struct SeedStep;
 
 impl Step for SeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = TestHeader;
@@ -50,20 +91,36 @@ impl Step for SeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(witness.map(|value| (TestHeaderData { value }, ())).cast())
+        let output = witness.map(|value| TestHeaderData { value });
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::new(ctx.dr, &mut (), output.clone())?,
+            ),
+            (),
+            output,
+            D::unit(),
+        ))
     }
 }
 
@@ -71,17 +128,23 @@ struct EvaluationHeader;
 
 impl Header for EvaluationHeader {
     type Data = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(2);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (alloc::vec![*data], Vec::new(), Vec::new(), Vec::new())
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness)
     }
 }
 
 struct PolynomialSeedStep;
 
 impl Step for PolynomialSeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = EvaluationHeader;
@@ -90,13 +153,19 @@ impl Step for PolynomialSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -108,14 +177,24 @@ impl Step for PolynomialSeedStep {
         let evaluation = ctx.evaluate(&handle, D::just(|| x))?;
         let x_gadget = Element::constant(ctx.dr, x);
         let y_gadget = Element::alloc(ctx.dr, &mut (), evaluation.clone())?;
-        ctx.enforce_poly_query(&handle, x_gadget, y_gadget)?;
-        Ok((evaluation, D::unit()))
+        ctx.enforce_poly_query(&handle, x_gadget, y_gadget.clone())?;
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(y_gadget),
+            ),
+            (),
+            evaluation,
+            D::unit(),
+        ))
     }
 }
 
 struct ConstrainedSeedStep;
 
 impl Step for ConstrainedSeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = TestHeader;
@@ -124,13 +203,19 @@ impl Step for ConstrainedSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -139,13 +224,23 @@ impl Step for ConstrainedSeedStep {
     {
         let value = Element::alloc(ctx.dr, &mut (), witness)?;
         value.enforce_zero(ctx.dr)?;
-        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(value),
+            ),
+            (),
+            D::just(|| TestHeaderData { value: 0 }),
+            D::unit(),
+        ))
     }
 }
 
 struct GateCheckSeedStep;
 
 impl Step for GateCheckSeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = TestHeader;
@@ -154,13 +249,19 @@ impl Step for GateCheckSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -168,13 +269,19 @@ impl Step for GateCheckSeedStep {
         Self: 'dr,
     {
         ctx.dr.mul(|| Ok((Coeff::One, Coeff::One, Coeff::Zero)))?;
-        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            D::unit(),
+            D::unit(),
+            (D::just(|| TestHeaderData { value: 0 }), D::unit()),
+        )
     }
 }
 
 struct BadPolynomialQuerySeedStep;
 
 impl Step for BadPolynomialQuerySeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = TestHeader;
@@ -183,13 +290,19 @@ impl Step for BadPolynomialQuerySeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
@@ -200,13 +313,19 @@ impl Step for BadPolynomialQuerySeedStep {
         let x_gadget = Element::constant(ctx.dr, Fp::from(2u64));
         let incorrect_y = Element::constant(ctx.dr, Fp::from(22u64));
         ctx.enforce_poly_query(&handle, x_gadget, incorrect_y)?;
-        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            D::unit(),
+            D::unit(),
+            (D::just(|| TestHeaderData { value: 0 }), D::unit()),
+        )
     }
 }
 
 struct MergeStep;
 
 impl Step for MergeStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = TestHeader;
     type Output = TestHeader;
@@ -215,38 +334,49 @@ impl Step for MergeStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header>::Data>,
         right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(D::just(|| {
-            (
-                TestHeaderData {
-                    value: left.take().value + right.take().value,
-                },
-                (),
-            )
-        })
-        .cast())
+        let left_header = Encoded::<_, Self::Left, HS>::new(ctx.dr, &mut (), left.clone())?;
+        let right_header = Encoded::<_, Self::Right, HS>::new(ctx.dr, &mut (), right.clone())?;
+        let sum = left_header
+            .as_gadget()
+            .add(ctx.dr, right_header.as_gadget());
+        let output = D::just(|| TestHeaderData {
+            value: left.take().value + right.take().value,
+        });
+        Ok((
+            (left_header, right_header, Encoded::from_gadget(sum)),
+            (),
+            output,
+            D::unit(),
+        ))
     }
 }
 
 #[test]
 fn seed_then_verify() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -260,10 +390,10 @@ fn seed_then_verify() {
 #[test]
 fn seed_executes_polynomial_hooks() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(PolynomialSeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
     let polynomial = sparse::Polynomial::<Fp, TestRank>::from_coeffs(alloc::vec![
         Fp::from(3u64),
@@ -282,10 +412,10 @@ fn seed_executes_polynomial_hooks() {
 #[test]
 fn application_execution_checks_constraints_and_polynomial_queries() {
     let mut rng = StdRng::seed_from_u64(0);
-    let constrained_app = ApplicationBuilder::new()
+    let constrained_app = ApplicationBuilder::<4>::new(test_params())
         .register(ConstrainedSeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
     constrained_app
         .seed(&mut rng, ConstrainedSeedStep, Fp::from(0u64))
@@ -296,10 +426,10 @@ fn application_execution_checks_constraints_and_polynomial_queries() {
     };
     assert_invalid_witness(error, "constraint failed");
 
-    let gate_app = ApplicationBuilder::new()
+    let gate_app = ApplicationBuilder::<4>::new(test_params())
         .register(GateCheckSeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
     let error = match gate_app.seed(&mut rng, GateCheckSeedStep, ()) {
         Ok(_) => panic!("a gate assigned (1, 1, 0) should fail"),
@@ -307,10 +437,10 @@ fn application_execution_checks_constraints_and_polynomial_queries() {
     };
     assert_invalid_witness(error, "gate check failed");
 
-    let polynomial_app = ApplicationBuilder::new()
+    let polynomial_app = ApplicationBuilder::<4>::new(test_params())
         .register(BadPolynomialQuerySeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
     let polynomial = sparse::Polynomial::<Fp, TestRank>::from_coeffs(alloc::vec![
         Fp::from(3u64),
@@ -330,10 +460,10 @@ fn application_execution_checks_constraints_and_polynomial_queries() {
 #[test]
 fn verify_rejects_wrong_data() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -350,12 +480,12 @@ fn verify_rejects_wrong_data() {
 #[test]
 fn fuse_then_verify() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
         .register(MergeStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd_a, ()) = app.seed(&mut rng, SeedStep, 10u64).expect("seed a");
@@ -374,12 +504,12 @@ fn fuse_then_verify() {
 #[test]
 fn fuse_rejects_wrong_sum() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register")
         .register(MergeStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize");
 
     let (pcd_a, ()) = app.seed(&mut rng, SeedStep, 10u64).expect("seed a");
@@ -399,12 +529,12 @@ fn fuse_rejects_wrong_sum() {
 #[test]
 fn deep_fuse_chain() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register")
         .register(MergeStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize");
 
     let mut pcds = Vec::new();
@@ -446,12 +576,12 @@ fn deep_fuse_chain() {
 #[test]
 fn different_merge_trees_same_header() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register")
         .register(MergeStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize");
 
     let (pa, ()) = app.seed(&mut rng, SeedStep, 1u64).expect("seed a");
@@ -485,6 +615,7 @@ fn different_merge_trees_same_header() {
 struct AuxSeedStep;
 
 impl Step for AuxSeedStep {
+    type Shared = ();
     type Aux<'source> = Vec<u64>;
     type Left = ();
     type Output = TestHeader;
@@ -493,31 +624,43 @@ impl Step for AuxSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(witness
-            .map(|witness| {
-                let squared = witness * witness;
-                (TestHeaderData { value: squared }, alloc::vec![squared])
-            })
-            .cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            D::unit(),
+            D::unit(),
+            witness
+                .map(|witness| {
+                    let squared = witness * witness;
+                    (TestHeaderData { value: squared }, alloc::vec![squared])
+                })
+                .cast(),
+        )
     }
 }
 
 struct AuxMergeStep;
 
 impl Step for AuxMergeStep {
+    type Shared = ();
     type Aux<'source> = Vec<u64>;
     type Left = TestHeader;
     type Output = TestHeader;
@@ -526,43 +669,54 @@ impl Step for AuxMergeStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header>::Data>,
         right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(D::just(|| {
-            let (left_aux, right_aux) = witness.take();
-            let mut combined = left_aux;
-            combined.extend(right_aux);
-            (
-                TestHeaderData {
-                    value: left.take().value + right.take().value,
-                },
-                combined,
-            )
-        })
-        .cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            left.clone(),
+            right.clone(),
+            D::just(|| {
+                let (left_aux, right_aux) = witness.take();
+                let mut combined = left_aux;
+                combined.extend(right_aux);
+                (
+                    TestHeaderData {
+                        value: left.take().value + right.take().value,
+                    },
+                    combined,
+                )
+            })
+            .cast(),
+        )
     }
 }
 
 #[test]
 fn aux_data_flows_through_seed_and_fuse() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(AuxSeedStep)
         .expect("register")
         .register(AuxMergeStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize");
 
     let (pcd_a, aux_a) = app.seed(&mut rng, AuxSeedStep, 3u64).expect("seed a");
@@ -585,10 +739,10 @@ fn aux_data_flows_through_seed_and_fuse() {
 #[test]
 fn serialized_proof_still_verifies() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -609,10 +763,10 @@ fn serialized_proof_still_verifies() {
 #[test]
 fn serialized_proof_rejects_mismatched_header_data() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -635,10 +789,10 @@ fn serialized_proof_rejects_mismatched_header_data() {
 #[test]
 fn tampered_serialized_proof_fails_to_deserialize() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -656,10 +810,10 @@ fn tampered_serialized_proof_fails_to_deserialize() {
 #[test]
 fn rerandomize_preserves_validity() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -686,16 +840,16 @@ struct ConflictingHeader;
 
 impl Header for ConflictingHeader {
     type Data = TestHeaderData;
+    type Output = Kind![Fp; Element<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            alloc::vec![Fp::from(data.value)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness.map(|data| Fp::from(data.value)))
     }
 }
 
@@ -703,6 +857,7 @@ impl Header for ConflictingHeader {
 struct DuplicateIndexStep;
 
 impl Step for DuplicateIndexStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = TestHeader;
@@ -711,20 +866,31 @@ impl Step for DuplicateIndexStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            D::unit(),
+            D::unit(),
+            D::just(|| (TestHeaderData { value: 0 }, ())).cast(),
+        )
     }
 }
 
@@ -733,6 +899,7 @@ impl Step for DuplicateIndexStep {
 struct SuffixCollisionStep;
 
 impl Step for SuffixCollisionStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = ConflictingHeader;
@@ -741,26 +908,37 @@ impl Step for SuffixCollisionStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            D::unit(),
+            D::unit(),
+            D::just(|| (TestHeaderData { value: 0 }, ())).cast(),
+        )
     }
 }
 
 #[test]
 fn duplicate_index_rejects_registration() {
-    let result = ApplicationBuilder::new()
+    let result = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register first step should succeed")
         .register(DuplicateIndexStep);
@@ -769,7 +947,7 @@ fn duplicate_index_rejects_registration() {
 
 #[test]
 fn non_sequential_index_rejects_registration() {
-    let result = ApplicationBuilder::new().register(MergeStep);
+    let result = ApplicationBuilder::<4>::new(test_params()).register(MergeStep);
     assert!(
         result.is_err(),
         "non-sequential INDEX (1 before 0) must be rejected"
@@ -778,7 +956,7 @@ fn non_sequential_index_rejects_registration() {
 
 #[test]
 fn duplicate_suffix_distinct_types_rejects_registration() {
-    let result = ApplicationBuilder::new()
+    let result = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register first step should succeed")
         .register(SuffixCollisionStep);
@@ -790,7 +968,7 @@ fn duplicate_suffix_distinct_types_rejects_registration() {
 
 #[test]
 fn same_suffix_same_type_succeeds_registration() {
-    let result = ApplicationBuilder::new()
+    let result = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register SeedStep should succeed")
         .register(MergeStep);
@@ -804,6 +982,7 @@ fn same_suffix_same_type_succeeds_registration() {
 fn internal_step_index_rejects_registration() {
     struct InternalIndexStep;
     impl Step for InternalIndexStep {
+        type Shared = ();
         type Aux<'source> = ();
         type Left = ();
         type Output = TestHeader;
@@ -812,24 +991,35 @@ fn internal_step_index_rejects_registration() {
 
         const INDEX: Index = Index::internal(0);
 
-        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            _ctx: &mut StepCtx<'_, 'dr, D>,
+            ctx: &mut StepCtx<'_, 'dr, D>,
             _witness: DriverValue<D, Self::Witness<'source>>,
             _left: DriverValue<D, <Self::Left as Header>::Data>,
             _right: DriverValue<D, <Self::Right as Header>::Data>,
         ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            (),
             DriverValue<D, <Self::Output as Header>::Data>,
             DriverValue<D, Self::Aux<'source>>,
         )>
         where
             Self: 'dr,
         {
-            Ok(D::just(|| (TestHeaderData { value: 0 }, ())).cast())
+            encode_result::<Self, D, HS>(
+                ctx,
+                D::unit(),
+                D::unit(),
+                D::just(|| (TestHeaderData { value: 0 }, ())).cast(),
+            )
         }
     }
 
-    let result = ApplicationBuilder::new().register(InternalIndexStep);
+    let result = ApplicationBuilder::<4>::new(test_params()).register(InternalIndexStep);
     assert!(
         result.is_err(),
         "application-defined steps must not use Index::Internal"
@@ -839,13 +1029,13 @@ fn internal_step_index_rejects_registration() {
 #[test]
 fn verify_rejects_unregistered_step_index() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
-    let encoded = TestHeader::encode(&TestHeaderData { value: 42 });
+    let encoded = alloc::vec![Fp::from(42u64), Fp::from(TestHeader::SUFFIX.get())];
     let forged_proof = Proof::new(
         TestHeader::SUFFIX,
         Index::new(999),
@@ -870,24 +1060,24 @@ fn verify_rejects_swapped_header_type() {
     struct SwappedHeader;
     impl Header for SwappedHeader {
         type Data = TestHeaderData;
+        type Output = Kind![Fp; Element<'_, _>];
 
         const SUFFIX: Suffix = Suffix::new(99);
 
-        fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-            (
-                alloc::vec![Fp::from(data.value)],
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            )
+        fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+            dr: &mut D,
+            allocator: &mut A,
+            witness: DriverValue<D, Self::Data>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Element::alloc(dr, allocator, witness.map(|data| Fp::from(data.value)))
         }
     }
 
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(SeedStep)
         .expect("register should succeed")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize should succeed");
 
     let (pcd, ()) = app
@@ -907,26 +1097,26 @@ fn verify_rejects_swapped_header_type() {
     );
 }
 
-/// Header carrying a Vesta commitment point.
+/// Header carrying a Pallas point, whose base field is the circuit field.
 struct PointHeader;
 
 #[derive(Clone, Debug)]
 struct PointHeaderData {
-    commitment: Eq,
+    commitment: EpAffine,
 }
 
 impl Header for PointHeader {
     type Data = PointHeaderData;
+    type Output = Kind![Fp; Point<'_, _, EpAffine>];
 
     const SUFFIX: Suffix = Suffix::new(1);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            alloc::vec![data.commitment],
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        _allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Point::alloc(dr, witness.map(|data| data.commitment))
     }
 }
 
@@ -934,30 +1124,42 @@ impl Header for PointHeader {
 struct PointSeedStep;
 
 impl Step for PointSeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = PointHeader;
     type Right = ();
-    type Witness<'source> = Eq;
+    type Witness<'source> = EpAffine;
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(witness
-            .map(|commitment| (PointHeaderData { commitment }, ()))
-            .cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            D::unit(),
+            D::unit(),
+            witness
+                .map(|commitment| (PointHeaderData { commitment }, ()))
+                .cast(),
+        )
     }
 }
 
@@ -965,6 +1167,7 @@ impl Step for PointSeedStep {
 struct PointConsumeStep;
 
 impl Step for PointConsumeStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = PointHeader;
     type Output = TestHeader;
@@ -973,29 +1176,40 @@ impl Step for PointConsumeStep {
 
     const INDEX: Index = Index::new(1);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         _witness: DriverValue<D, Self::Witness<'source>>,
-        _left: DriverValue<D, <Self::Left as Header>::Data>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok(D::just(|| (TestHeaderData { value: 1 }, ())).cast())
+        encode_result::<Self, D, HS>(
+            ctx,
+            left,
+            D::unit(),
+            D::just(|| (TestHeaderData { value: 1 }, ())).cast(),
+        )
     }
 }
 
 /// Application with [`PointSeedStep`] registered.
-fn point_app() -> Application<'static> {
-    ApplicationBuilder::new()
+fn point_app() -> Application<'static, 4> {
+    ApplicationBuilder::new(test_params())
         .register(PointSeedStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize")
 }
 
@@ -1005,7 +1219,7 @@ fn header_with_point_round_trips() {
     let app = point_app();
 
     let (pcd, ()) = app
-        .seed(&mut rng, PointSeedStep, Eq::generator())
+        .seed(&mut rng, PointSeedStep, EpAffine::generator())
         .expect("seed with a non-identity point");
     assert!(app.verify(&pcd, &mut rng).expect("verify"));
 }
@@ -1017,7 +1231,7 @@ fn identity_point_in_output_header_fails_fuse() {
 
     assert!(
         matches!(
-            app.seed(&mut rng, PointSeedStep, Eq::identity()),
+            app.seed(&mut rng, PointSeedStep, EpAffine::identity()),
             Err(Error::InvalidWitness(_))
         ),
         "identity point in output header must fail"
@@ -1027,18 +1241,18 @@ fn identity_point_in_output_header_fails_fuse() {
 #[test]
 fn identity_point_in_input_header_fails_fuse() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = ApplicationBuilder::<4>::new(test_params())
         .register(PointSeedStep)
         .expect("register")
         .register(PointConsumeStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize");
 
-    let bad_left = Proof::bootstrap().carry::<PointHeader>(PointHeaderData {
-        commitment: Eq::identity(),
+    let bad_left = Proof::bootstrap::<4>().carry::<PointHeader>(PointHeaderData {
+        commitment: EpAffine::identity(),
     });
-    let right = Proof::bootstrap().carry::<()>(());
+    let right = Proof::bootstrap::<4>().carry::<()>(());
 
     assert!(
         matches!(
@@ -1055,10 +1269,10 @@ fn identity_point_in_carried_data_errors_verify() {
     let app = point_app();
 
     let (pcd, ()) = app
-        .seed(&mut rng, PointSeedStep, Eq::generator())
+        .seed(&mut rng, PointSeedStep, EpAffine::generator())
         .expect("seed with a non-identity point");
     let bad_pcd = pcd.proof.carry::<PointHeader>(PointHeaderData {
-        commitment: Eq::identity(),
+        commitment: EpAffine::identity(),
     });
 
     // Errs rather than returning `Ok(false)`: re-encoding such a header

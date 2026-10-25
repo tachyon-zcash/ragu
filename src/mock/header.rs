@@ -1,8 +1,14 @@
 //! Mock PCD header — mirrors `ragu_pcd::Header`.
 
-use alloc::vec::Vec;
+use core::any::Any;
 
-use ragu_core::pasta::{Ep, Eq, Fp, Fq};
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Bound,
+    pasta::Fp,
+};
+use ragu_primitives::{allocator::Allocator, io::Write};
 
 /// Number of internal header suffixes reserved by mock_ragu.
 ///
@@ -91,15 +97,20 @@ fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
 }
 
 /// Mirrors `ragu_pcd::Header`.
-pub trait Header: Send + Sync + 'static {
+pub trait Header: Send + Sync + Any {
     const SUFFIX: Suffix;
     type Data: Send + Clone;
+    /// The gadget kind encoding this header on the Pasta circuit field.
+    type Output: Write<Fp>;
 
-    /// Decomposes header data into the in-circuit values it would carry, as
-    /// `(Fp elements, Fq elements, Pallas points, Vesta points)`. Pass points
-    /// as points, not coordinates: like real ragu's in-circuit `encode`, the
-    /// identity is rejected when these are hashed.
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>);
+    /// Encodes witness data on the supplied driver. Pass `allocator` through
+    /// to every allocation; its state and the output's serialization determine
+    /// the emitted constraints, just as in real ragu.
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>>;
 }
 
 /// Header that encodes no data.
@@ -109,11 +120,16 @@ pub trait Header: Send + Sync + 'static {
 /// case.
 impl Header for () {
     type Data = ();
+    type Output = ();
 
     const SUFFIX: Suffix = Suffix::internal(1);
 
-    fn encode(_data: &()) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        _: &mut D,
+        _: &mut A,
+        _: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
     }
 }
 

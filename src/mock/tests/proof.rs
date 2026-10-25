@@ -1,16 +1,17 @@
-use alloc::vec::Vec;
-
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    pasta::{Ep, Eq, Fp, Fq},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
+    pasta::Fp,
 };
+use ragu_primitives::{Element, allocator::Allocator};
 use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::test_params;
 use crate::{
-    Application, ApplicationBuilder, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof, Step,
-    StepCtx, Suffix,
+    Application, ApplicationBuilder, Encoded, Header, Index, PROOF_SIZE_COMPRESSED, Pcd, Proof,
+    Step, StepCtx, Suffix,
 };
 
 /// Header carrying one field element, as an application header would.
@@ -18,16 +19,16 @@ struct ValueHeader;
 
 impl Header for ValueHeader {
     type Data = u64;
+    type Output = Kind![Fp; Element<'_, _>];
 
     const SUFFIX: Suffix = Suffix::new(0);
 
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (
-            alloc::vec![Fp::from(*data)],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness.map(Fp::from))
     }
 }
 
@@ -35,6 +36,7 @@ impl Header for ValueHeader {
 struct ValueSeedStep;
 
 impl Step for ValueSeedStep {
+    type Shared = ();
     type Aux<'source> = ();
     type Left = ();
     type Output = ValueHeader;
@@ -43,29 +45,41 @@ impl Step for ValueSeedStep {
 
     const INDEX: Index = Index::new(0);
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _ctx: &mut StepCtx<'_, 'dr, D>,
+        ctx: &mut StepCtx<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header>::Data>,
         _right: DriverValue<D, <Self::Right as Header>::Data>,
     ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HS>,
+            Encoded<'dr, D, Self::Right, HS>,
+            Encoded<'dr, D, Self::Output, HS>,
+        ),
+        (),
         DriverValue<D, <Self::Output as Header>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>
     where
         Self: 'dr,
     {
-        Ok((witness, D::unit()))
+        let output = Encoded::new(ctx.dr, &mut (), witness.clone())?;
+        Ok((
+            (Encoded::from_gadget(()), Encoded::from_gadget(()), output),
+            (),
+            witness,
+            D::unit(),
+        ))
     }
 }
 
 /// Application with [`ValueSeedStep`] registered.
-fn value_app() -> Application<'static> {
-    ApplicationBuilder::new()
+fn value_app() -> Application<'static, 4> {
+    ApplicationBuilder::new(test_params())
         .register(ValueSeedStep)
         .expect("register")
-        .finalize(test_params())
+        .finalize()
         .expect("finalize")
 }
 
