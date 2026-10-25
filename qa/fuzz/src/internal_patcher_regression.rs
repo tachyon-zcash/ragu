@@ -359,60 +359,61 @@ impl<C: Cycle> InternalCircuitVisitor<C> for CaptureChecker {
 /// tallies and `cheatable` are judged at the witness, so they are pinned per
 /// capture point; the rest is structural. The endoscaling tallies depend on
 /// transcript-derived bit patterns, so they also depend on the fixed test tag.
+/// These pins use the default quotient fold, including its four challenge binders.
 fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
-        "hashes_1" => (528, 6160, 48, 12, 0, 12, 278),
-        "hashes_2" => (528, 8716, 40, 6, 2, 6, 267),
-        "inner_collapse" => (1326, 6453, 40, 19, 0, 19, 689),
-        "outer_collapse" if point == "bootstrap" => (528, 2763, 40, 2, 0, 2, 272),
-        "outer_collapse" => (528, 2763, 40, 3, 0, 3, 270),
-        "compute_v" => (438, 7032, 40, 1, 0, 1, 473),
-        "bind_challenges_0" => (438, 7493, 40, 2, 0, 2, 726),
-        "bind_challenges_4" if point == "bootstrap" => (438, 7563, 40, 2, 0, 2, 728),
-        "bind_challenges_4" => (438, 7563, 40, 2, 0, 2, 726),
-        bind if bind.starts_with("bind_challenges_") => (438, 7514, 40, 2, 0, 2, 726),
-        "bind_beta" => (528, 7692, 40, 52, 0, 52, 794),
-        "bind_endoscalar" => (376, 2540, 40, 136, 0, 136, 442),
+        "hashes_1" => (176, 5436, 46, 12, 0, 12, 101),
+        "hashes_2" => (176, 8012, 38, 5, 1, 5, 91),
+        "inner_collapse" => (268, 1595, 38, 7, 0, 7, 147),
+        "outer_collapse" if point == "bootstrap" => (176, 731, 38, 2, 0, 2, 95),
+        "outer_collapse" => (176, 731, 38, 3, 0, 3, 94),
+        "compute_v" => (426, 7357, 38, 1, 0, 1, 467),
+        "bind_challenges_0" => (426, 7467, 38, 2, 0, 2, 720),
+        "bind_challenges_3" if point == "bootstrap" => (426, 7537, 38, 2, 0, 2, 722),
+        "bind_challenges_3" => (426, 7537, 38, 2, 0, 2, 720),
+        bind if bind.starts_with("bind_challenges_") => (426, 7488, 38, 2, 0, 2, 720),
+        "bind_beta" => (176, 6986, 38, 52, 0, 52, 618),
+        "bind_endoscalar" => (376, 2538, 38, 136, 0, 136, 442),
         // The native steps end their output in the internal suffix, a constant
         // zero element, which adds one wire and one instance wire.
         "native_endoscaling_step_24" => (376, 5725, 1, 2, 0, 2, 187),
         step if step.starts_with("native_endoscaling_step_") => (376, 10693, 1, 2, 0, 2, 187),
-        step if step.starts_with("endoscaling_step_") => (410, 10760, 0, 2, 0, 2, 204),
-        "nested_export" => (1574, 4939, 33, 31, 0, 31, 789),
-        "nested_collapse" if point == "bootstrap" => (1574, 6448, 33, 12, 0, 12, 801),
-        "nested_collapse" => (1574, 6448, 33, 13, 0, 13, 800),
-        "nested_compute_v" => (1574, 7586, 33, 1, 0, 1, 789),
+        "endoscaling_step_27" => (406, 5784, 0, 2, 0, 2, 202),
+        step if step.starts_with("endoscaling_step_") => (406, 10752, 0, 2, 0, 2, 202),
+        "nested_export" => (1002, 3777, 33, 31, 0, 31, 503),
+        "nested_collapse" if point == "bootstrap" => (1002, 3279, 33, 8, 0, 8, 512),
+        "nested_collapse" => (1002, 3279, 33, 9, 0, 9, 511),
+        "nested_compute_v" => (1002, 6842, 33, 1, 0, 1, 503),
         other => panic!("no census pinned for {other}"),
     };
     let (pinned, rejected) = match (name, point) {
-        ("hashes_1", _) => (102, 176),
-        ("hashes_2", _) => (103, 164),
-        ("inner_collapse", "bootstrap") => (231, 458),
-        ("inner_collapse", _) => (234, 455),
-        ("outer_collapse", "bootstrap") => (104, 168),
-        ("outer_collapse", _) => (102, 168),
-        ("compute_v", _) => (14, 459),
-        ("bind_challenges_4", "bootstrap") => (16, 712),
-        (bind, _) if bind.starts_with("bind_challenges_") => (14, 712),
-        ("bind_beta", _) => (102, 692),
+        ("hashes_1", _) => (12, 89),
+        ("hashes_2", _) => (13, 78),
+        ("inner_collapse", _) => (14, 133),
+        ("outer_collapse", "bootstrap") => (14, 81),
+        ("outer_collapse", _) => (12, 82),
+        ("compute_v", _) => (13, 454),
+        ("bind_challenges_3", "bootstrap") => (15, 707),
+        (bind, _) if bind.starts_with("bind_challenges_") => (13, 707),
+        ("bind_beta", _) => (12, 606),
         ("bind_endoscalar", "bootstrap") => (48, 394),
-        ("bind_endoscalar", "leaves") => (51, 391),
-        ("bind_endoscalar", "nodes") => (44, 398),
+        ("bind_endoscalar", "leaves") => (53, 389),
+        ("bind_endoscalar", "nodes") => (50, 392),
         (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (47, 140),
-        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (50, 137),
-        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (43, 144),
-        ("nested_export", "bootstrap") => (85, 704),
-        ("nested_export", "leaves") => (91, 698),
-        ("nested_export", "nodes") => (84, 705),
-        ("nested_collapse", "bootstrap") => (86, 715),
-        ("nested_collapse", "leaves") => (91, 709),
-        ("nested_collapse", "nodes") => (84, 716),
-        ("nested_compute_v", "bootstrap") => (84, 705),
-        ("nested_compute_v", "leaves") => (90, 699),
-        ("nested_compute_v", "nodes") => (83, 706),
-        (_, "bootstrap") => (47, 157),
-        (_, "leaves") => (50, 154),
-        (_, "nodes") => (43, 161),
+        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (52, 135),
+        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (49, 138),
+        ("nested_export", "bootstrap") => (59, 444),
+        ("nested_export", "leaves") => (64, 439),
+        ("nested_export", "nodes") => (61, 442),
+        ("nested_collapse", "bootstrap") => (60, 452),
+        ("nested_collapse", "leaves") => (64, 447),
+        ("nested_collapse", "nodes") => (61, 450),
+        ("nested_compute_v", "bootstrap") => (58, 445),
+        ("nested_compute_v", "leaves") => (63, 440),
+        ("nested_compute_v", "nodes") => (60, 443),
+        (_, "bootstrap") => (47, 155),
+        (_, "leaves") => (52, 150),
+        (_, "nodes") => (49, 153),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {
@@ -495,7 +496,6 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         "bind_challenges_1",
         "bind_challenges_2",
         "bind_challenges_3",
-        "bind_challenges_4",
         "bind_beta",
         "bind_endoscalar",
     ];
@@ -578,7 +578,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         }
     }
 
-    // Only hashes_2 has demoted slots (mu and nu, the resumed sponge state);
+    // Only hashes_2 has a demoted slot (mu, from the resumed sponge state);
     // every output is forced by the inputs alone; and the pinned census.
     // The sweep tallies follow the captured witness values, so a circuit
     // change upstream moves several pins at once: report every drift
@@ -589,7 +589,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
             assert!(census.outputs > 0, "{}: watched outputs", census.name);
             assert_eq!(
                 census.demoted,
-                if census.name == "hashes_2" { 2 } else { 0 },
+                if census.name == "hashes_2" { 1 } else { 0 },
                 "{}: demoted covered slots",
                 census.name,
             );
