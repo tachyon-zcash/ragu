@@ -77,6 +77,23 @@ impl<L: Len> Len for NumErrorTerms<L> {
     }
 }
 
+/// Selects the Horner scales for the two vector sides of a fold.
+pub fn fold_scales<F: Field>(mu: F, nu: F) -> (F, F) {
+    (
+        mu.invert().expect("fold challenge must be nonzero"),
+        mu * nu,
+    )
+}
+
+/// Circuit counterpart of [`fold_scales`].
+pub fn fold_scale_elements<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    mu: &Element<'dr, D>,
+    nu: &Element<'dr, D>,
+) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
+    Ok((mu.invert(dr)?, mu.mul(dr, nu)?))
+}
+
 /// Returns an iterator over off-diagonal (i, j) pairs where i != j.
 fn off_diagonal_pairs(n: usize) -> impl Iterator<Item = (usize, usize)> {
     (0..n).flat_map(move |i| (0..n).filter_map(move |j| (i != j).then_some((i, j))))

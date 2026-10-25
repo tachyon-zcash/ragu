@@ -432,9 +432,11 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
         z: proof.z(),
         bridge_inner_error_commitment: proof.bridge_inner_error_commitment(),
         mu: proof.mu(),
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         nu: proof.nu(),
         bridge_outer_error_commitment: proof.bridge_outer_error_commitment(),
         mu_prime: proof.mu_prime(),
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         nu_prime: proof.nu_prime(),
         c: proof.native_c(),
         bridge_ab_commitment: proof.bridge_ab_commitment(),

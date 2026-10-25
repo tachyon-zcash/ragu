@@ -6,8 +6,7 @@
 //!
 //! The children's nested claims are folded here as well: their layer-1 error
 //! terms ride inside the `inner_error` bridge stage, so they are committed
-//! before $\mu$ and $\nu$ are squeezed without any change to the transcript
-//! schedule.
+//! before the first-layer folding challenges are squeezed.
 //!
 //! This phase of the fuse operation is also used to commit to the $m(w, X, y)$
 //! restriction; its nested counterpart's commitment enters the native

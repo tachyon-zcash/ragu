@@ -44,7 +44,7 @@
 //!
 //! Everything else — the remaining instance wires and the remaining stage
 //! wires — is an input the oracle pins. A covered slot a circuit reads
-//! straight from a stage (`hashes_2`'s $\mu$ and $\nu$ are the resumed sponge
+//! straight from a stage (the first-layer folding challenges are the resumed sponge
 //! state) resolves to a stage wire and is demoted to an input by
 //! [`CircuitSpec::resolve`]: the circuit derives nothing there, and the
 //! binding lives with `hashes_1`, which checks that state.
@@ -500,6 +500,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .collect_fixed()?;
 
         let mu = transcript.challenge(&mut dr)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu = transcript.challenge(&mut dr)?;
 
         let (
@@ -520,6 +521,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_preamble,
             &y,
             &mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             &nu,
             saved_transcript_state,
             &mut builder,
@@ -528,6 +530,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu_prime = transcript.challenge(&mut dr)?;
 
         self.compute_ab(
@@ -539,6 +542,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &native_source,
             &mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             &nu_prime,
             &mut builder,
         )?;
@@ -581,8 +585,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
-        let bound_challenges = [&w, &y, &z, &mu, &nu, &mu_prime, &nu_prime, &x, &alpha, &u]
-            .map(|challenge| *challenge.value().take());
+        let bound_challenges = [
+            &w,
+            &y,
+            &z,
+            &mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            &nu,
+            &mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            &nu_prime,
+            &x,
+            &alpha,
+            &u,
+        ]
+        .map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
             &bound_challenges,
             &left,
@@ -637,8 +654,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_y(*y.value().take());
         builder.set_z(*z.value().take());
         builder.set_mu(*mu.value().take());
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         builder.set_nu(*nu.value().take());
         builder.set_mu_prime(*mu_prime.value().take());
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         builder.set_nu_prime(*nu_prime.value().take());
         builder.set_x(*x.value().take());
         builder.set_alpha(*alpha.value().take());
@@ -660,9 +679,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     z: builder.z(),
                     bridge_inner_error_commitment: builder.bridge_inner_error_commitment(),
                     mu: builder.mu(),
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
                     nu: builder.nu(),
                     bridge_outer_error_commitment: builder.bridge_outer_error_commitment(),
                     mu_prime: builder.mu_prime(),
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
                     nu_prime: builder.nu_prime(),
                     c: builder.native_c(),
                     bridge_ab_commitment: builder.bridge_ab_commitment()?,
@@ -787,7 +808,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         // hashes_2 resumes from that sponge state and squeezes the rest of
-        // the challenges; mu and nu are the resumed state itself and resolve
+        // the challenges; the first-layer challenges are the resumed state and resolve
         // to stage wires, so `resolve` demotes them to inputs.
         let hashes_2 = native::circuits::hashes_2::Circuit::<
             C,

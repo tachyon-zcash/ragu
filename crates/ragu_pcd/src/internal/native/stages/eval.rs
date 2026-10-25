@@ -59,7 +59,7 @@ pub type PartialsLen = ConstLen<{ NUM_BINDERS - 1 }>;
 /// The running sums of the nested challenge binding: partial $k$ is the sum
 /// of the first $2(k+1)$ terms of the nested challenge stage's commitment,
 /// $\sum_{i < 2(k+1)} \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$.
-/// The binding is the sum of all ten terms and the base-case sign's: the
+/// The binding is the sum of all challenge terms and the base-case sign's: the
 /// stage's commitment without its $\beta$ term, which the last binding
 /// circuit pins to the unified instance.
 #[derive(Clone)]
@@ -70,7 +70,7 @@ pub struct BindingPartials<P> {
 
 impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
     /// Computes the partial sums and binding from the nested challenge
-    /// witness's ten lifts and base-case sign. The beta field is not used:
+    /// witness's lifts and base-case sign. The beta field is not used:
     /// its term is added by the parent's binding circuit.
     pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::Scalar> + ProfiledCycle, R: Rank, B>(
         params: &C::Params,

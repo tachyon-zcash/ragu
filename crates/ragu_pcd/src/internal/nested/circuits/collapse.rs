@@ -157,6 +157,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let fold = fold_revdot::ClaimFolder::new(
             dr,
             &lifts[challenges::MU].lift,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             &lifts[challenges::NU].lift,
         )?;
         for (error_terms, collapsed) in stages
@@ -175,6 +176,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let fold = fold_revdot::ClaimFolder::new(
             dr,
             &lifts[challenges::MU_PRIME].lift,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             &lifts[challenges::NU_PRIME].lift,
         )?;
         let computed_c = fold.fold_outer::<RevdotParameters<P>>(

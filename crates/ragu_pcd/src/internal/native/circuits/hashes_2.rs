@@ -10,9 +10,9 @@
 //!   the state witnessed in [`outer_error`]. (This state was computed by `hashes_1`
 //!   after absorbing [`bridge_inner_error_commitment`] and applying the permutation
 //!   to move into squeeze mode.)
-//! - Squeeze [$\mu$] and [$\nu$] challenges.
+//! - Squeeze [$\mu$] (and `nu` in the original fold).
 //! - Absorb [`bridge_outer_error_commitment`].
-//! - Squeeze [$\mu'$] and [$\nu'$] challenges.
+//! - Squeeze [$\mu'$] (and `nu_prime` in the original fold).
 //! - Absorb [`bridge_ab_commitment`].
 //! - Squeeze [$x$] challenge.
 //! - Absorb [`bridge_query_commitment`].
@@ -22,8 +22,9 @@
 //! - Absorb [`bridge_eval_commitment`].
 //! - Squeeze [$\beta$] challenge.
 //!
-//! The squeezed $\mu, \nu, \mu', \nu', x, \alpha, u, \beta$ challenges are set
-//! in the unified instance by this circuit.
+//! The squeezed challenges are set in the unified instance. Quotient folding
+//! uses one challenge per layer; the original fold also squeezes `nu` and
+//! `nu_prime`.
 //!
 //! ## Staging
 //!
@@ -42,10 +43,8 @@
 //!
 //! [`bridge_inner_error_commitment`]: unified::Output::bridge_inner_error_commitment
 //! [$\mu$]: unified::Output::mu
-//! [$\nu$]: unified::Output::nu
 //! [`bridge_outer_error_commitment`]: unified::Output::bridge_outer_error_commitment
 //! [$\mu'$]: unified::Output::mu_prime
-//! [$\nu'$]: unified::Output::nu_prime
 //! [`bridge_ab_commitment`]: unified::Output::bridge_ab_commitment
 //! [$x$]: unified::Output::x
 //! [`bridge_query_commitment`]: unified::Output::bridge_query_commitment
@@ -170,7 +169,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Resume transcript from saved state (inner_error already absorbed in hashes_1)
-        // and squeeze mu, nu (challenges from inner_error absorption)
+        // and squeeze the first-layer folding challenge(s).
         let mut resumed = Transcript::resume_from_state(
             outer_error.sponge_state,
             C::circuit_poseidon(self.params),
@@ -178,23 +177,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let mu = resumed.challenge(dr)?;
         unified_output.mu.provide(mu);
 
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu = resumed.challenge(dr)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         unified_output.nu.provide(nu);
 
         // Transition back to absorb mode for the rest of the transcript
         let mut transcript = resumed.into_transcript();
 
-        // Derive (mu_prime, nu_prime) by absorbing bridge_outer_error_commitment
-        let (mu_prime, nu_prime) = {
-            let bridge_outer_error_commitment = unified_output
-                .bridge_outer_error_commitment
-                .receive(dr, allocator)?;
-            bridge_outer_error_commitment.write(dr, &mut transcript)?;
-            let mu_prime = transcript.challenge(dr)?;
-            let nu_prime = transcript.challenge(dr)?;
-            (mu_prime, nu_prime)
-        };
+        // Derive the second-layer challenge after the outer-error commitment.
+        let bridge_outer_error_commitment = unified_output
+            .bridge_outer_error_commitment
+            .receive(dr, allocator)?;
+        bridge_outer_error_commitment.write(dr, &mut transcript)?;
+        let mu_prime = transcript.challenge(dr)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
+        let nu_prime = transcript.challenge(dr)?;
         unified_output.mu_prime.provide(mu_prime);
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         unified_output.nu_prime.provide(nu_prime);
 
         // Derive x by absorbing bridge_ab_commitment and squeezing

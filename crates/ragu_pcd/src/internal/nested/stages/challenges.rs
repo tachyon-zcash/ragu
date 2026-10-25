@@ -14,7 +14,7 @@
 //! can recompute exactly that point from the transcript challenges by
 //! endoscaling each generator by the challenge's bits.
 //! That recomputation is split between the proof's own `bind_challenges`
-//! circuits, which cover the ten challenges squeezed before `pre_beta` and
+//! circuits, which cover the challenges squeezed before `pre_beta` and
 //! the sign and export their sum through the unified instance, and the
 //! parent's `bind_beta`, which adds `pre_beta`'s term and holds the result
 //! against the commitment it walks: `pre_beta` is squeezed after the native
@@ -70,8 +70,14 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 use crate::profile::Profile;
 
 /// The native challenges this stage holds the lifts of before the sign and
-/// $\beta$, in order: `w, y, z, mu, nu, mu_prime, nu_prime, x, alpha, u`.
-pub const NUM: usize = 10;
+/// $\beta$, in order: `w, y, z, mu, mu_prime, x, alpha, u` for the quotient
+/// fold. The original fold also includes `nu` after `mu` and `nu_prime`
+/// after `mu_prime`.
+pub const NUM: usize = if cfg!(feature = "experimental-quotient-fold") {
+    8
+} else {
+    10
+};
 
 /// The position of the lift of $w$.
 pub const W: usize = 0;
@@ -82,17 +88,29 @@ pub const Z: usize = 2;
 /// The position of the lift of $\mu$.
 pub const MU: usize = 3;
 /// The position of the lift of $\nu$.
-pub const NU: usize = 4;
+#[cfg(not(feature = "experimental-quotient-fold"))]
+pub const NU: usize = MU + 1;
 /// The position of the lift of $\mu'$.
-pub const MU_PRIME: usize = 5;
+pub const MU_PRIME: usize = MU
+    + if cfg!(feature = "experimental-quotient-fold") {
+        1
+    } else {
+        2
+    };
 /// The position of the lift of $\nu'$.
-pub const NU_PRIME: usize = 6;
+#[cfg(not(feature = "experimental-quotient-fold"))]
+pub const NU_PRIME: usize = MU_PRIME + 1;
 /// The position of the lift of $x$.
-pub const X: usize = 7;
+pub const X: usize = MU_PRIME
+    + if cfg!(feature = "experimental-quotient-fold") {
+        1
+    } else {
+        2
+    };
 /// The position of the lift of $\alpha$.
-pub const ALPHA: usize = 8;
+pub const ALPHA: usize = X + 1;
 /// The position of the lift of $u$.
-pub const U: usize = 9;
+pub const U: usize = ALPHA + 1;
 /// The position of the base-case sign.
 pub const SIGN_INDEX: usize = NUM;
 /// The position of the lift of `pre_beta`, $\beta$.

@@ -33,7 +33,8 @@ alloc = []
 baked = ["alloc", "dep:bento", "dep:lazy_static"]
 # Additional, separately loaded generators for Aggregator extensions above R<13>.
 baked-aggregator = ["baked"]
-default = ["alloc"]
+default = ["alloc", "experimental-quotient-fold"]
+experimental-quotient-fold = ["alloc"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
 # Exposes `Application::verify_uncompressed` as a test oracle for the crate's

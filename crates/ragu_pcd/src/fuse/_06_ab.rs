@@ -1,5 +1,9 @@
 //! Commits to the collapsed revdot claim polynomials $A$ and $B$.
 //!
+//! The equations below describe the original Horner fold. Quotient folding
+//! uses the same Lagrange weights for both vector sides, with one challenge
+//! per layer.
+//!
 //! This sets the $A$ and $B$ polynomial fields on the [`ProofBuilder`],
 //! which contain the claimed (folded) revdot polynomials.
 //!
@@ -42,7 +46,7 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
-use udon::{curve::Affine, field::Field};
+use udon::curve::Affine;
 
 use super::{
     NestedRegistryWy,
@@ -75,7 +79,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
-        nu_prime: &Element<'dr, D>,
+        #[cfg(not(feature = "experimental-quotient-fold"))] nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
@@ -86,10 +90,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_b,
             native_source,
             mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             nu_prime,
             builder,
         )?;
-        self.compute_nested_ab(nested_a, nested_b, mu_prime, nu_prime, builder)?;
+        self.compute_nested_ab(
+            nested_a,
+            nested_b,
+            mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nu_prime,
+            builder,
+        )?;
         self.commit_native_points_ab(
             rng,
             nested_registry_wy.commitment,
@@ -111,18 +123,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         native_mu_prime: &Element<'dr, D>,
-        native_nu_prime: &Element<'dr, D>,
+        #[cfg(not(feature = "experimental-quotient-fold"))] native_nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nested_nu_prime = nested::challenge::<C>(*native_nu_prime.value().take())?;
-        let nested_mu_prime_inv = nested_mu_prime
-            .invert()
-            .expect("nested mu_prime must be non-zero");
-        let nested_mu_prime_nu_prime = nested_mu_prime * nested_nu_prime;
+        let (nested_mu_prime_inv, nested_mu_prime_nu_prime) = fold_revdot::fold_scales(
+            nested_mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nested_nu_prime,
+        );
 
         let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
             a,
@@ -145,16 +159,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
-        nu_prime: &Element<'dr, D>,
+        #[cfg(not(feature = "experimental-quotient-fold"))] nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let mu_prime = *mu_prime.value().take();
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu_prime = *nu_prime.value().take();
-        let mu_prime_inv = mu_prime.invert().expect("mu_prime must be non-zero");
-        let mu_prime_nu_prime = mu_prime * nu_prime;
+        let (mu_prime_inv, mu_prime_nu_prime) = fold_revdot::fold_scales(
+            mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nu_prime,
+        );
 
         let TrackedPoly {
             poly: a_poly,

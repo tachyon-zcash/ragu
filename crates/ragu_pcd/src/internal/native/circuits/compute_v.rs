@@ -1,12 +1,15 @@
 //! Circuit for computing and verifying the claimed evaluation value [$v$].
 //!
+//! Quotient folding uses only $\mu$ and $\mu'$; `nu` and `nu_prime`
+//! below apply to the original Horner fold.
+//!
 //! ## Operations
 //!
 //! This circuit computes the claimed output value [$v$] and verifies it matches
 //! the unified instance.
 //!
 //! ### Revdot folding
-//! - Retrieve layer 1 challenges [$\mu$], [$\nu$] and layer 2 challenges [$\mu'$], [$\nu'$]
+//! - Retrieve layer 1 challenges [$\mu$], `nu` and layer 2 challenges [$\mu'$], `nu_prime`
 //! - Compute $a(xz)$ and $b(x)$ via two-layer revdot folding of evaluation claims
 //!
 //! ### $f(u)$ computation
@@ -39,9 +42,7 @@
 //! [$\alpha$]: unified::Output::alpha
 //! [$\beta$]: unified::Output::pre_beta
 //! [$\mu$]: unified::Output::mu
-//! [$\nu$]: unified::Output::nu
 //! [$\mu'$]: unified::Output::mu_prime
-//! [$\nu'$]: unified::Output::nu_prime
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -73,7 +74,7 @@ use super::super::{
 use crate::{
     internal::{
         claims::Source,
-        fold_revdot::{Parameters, fold_two_layer},
+        fold_revdot::{Parameters, fold_scale_elements, fold_two_layer},
         inverter::Inverter,
         native::RevdotParameters,
     },
@@ -198,13 +199,23 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             // These aggregate all evaluation claims into a single pair.
             let (computed_ax, computed_bx) = {
                 let mu = unified_output.mu.read(dr, allocator)?;
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let nu = unified_output.nu.read(dr, allocator)?;
                 let mu_prime = unified_output.mu_prime.read(dr, allocator)?;
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let nu_prime = unified_output.nu_prime.read(dr, allocator)?;
-                let mu_inv = mu.invert(dr)?;
-                let mu_prime_inv = mu_prime.invert(dr)?;
-                let munu = mu.mul(dr, &nu)?;
-                let mu_prime_nu_prime = mu_prime.mul(dr, &nu_prime)?;
+                let (mu_inv, munu) = fold_scale_elements(
+                    dr,
+                    &mu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    &nu,
+                )?;
+                let (mu_prime_inv, mu_prime_nu_prime) = fold_scale_elements(
+                    dr,
+                    &mu_prime,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    &nu_prime,
+                )?;
 
                 compute_axbx::<_, C::Profile, RevdotParameters<C::Profile>>(
                     dr,

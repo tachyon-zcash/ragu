@@ -355,7 +355,7 @@ impl Binding {
     }
 }
 
-/// One of the eleven verifier challenges the unified instance carries.
+/// One of the verifier challenges the unified instance carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Challenge {
     /// The `w` challenge.
@@ -367,10 +367,12 @@ pub enum Challenge {
     /// The `mu` challenge.
     Mu,
     /// The `nu` challenge.
+    #[cfg(not(feature = "experimental-quotient-fold"))]
     Nu,
     /// The `mu'` challenge.
     MuPrime,
     /// The `nu'` challenge.
+    #[cfg(not(feature = "experimental-quotient-fold"))]
     NuPrime,
     /// The `x` challenge, which also feeds the `registry_xy` check.
     X,
@@ -384,13 +386,15 @@ pub enum Challenge {
 
 impl Challenge {
     /// All variants, in the order the unified instance writes them.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; crate::internal::nested::stages::challenges::NUM + 1] = [
         Self::W,
         Self::Y,
         Self::Z,
         Self::Mu,
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         Self::Nu,
         Self::MuPrime,
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         Self::NuPrime,
         Self::X,
         Self::Alpha,
@@ -760,8 +764,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     Challenge::Y => &mut self.y,
                     Challenge::Z => &mut self.z,
                     Challenge::Mu => &mut self.mu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
                     Challenge::Nu => &mut self.nu,
                     Challenge::MuPrime => &mut self.mu_prime,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
                     Challenge::NuPrime => &mut self.nu_prime,
                     Challenge::X => &mut self.x,
                     Challenge::Alpha => &mut self.alpha,

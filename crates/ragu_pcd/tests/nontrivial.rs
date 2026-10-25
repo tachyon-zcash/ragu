@@ -4,7 +4,7 @@ use ragu_core::{
     pasta::{Fp, Pasta},
 };
 use ragu_pcd::ApplicationBuilder;
-use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
+use ragu_testing::pcd::nontrivial::{Hash2, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
 
 #[test]
@@ -15,6 +15,9 @@ fn various_merging_operations() -> Result<()> {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .register(Hash2 {
+            poseidon_params: Pasta::circuit_poseidon(pasta),
+        })?
+        .register(Merge2 {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
         .finalize(pasta)?;
@@ -49,6 +52,20 @@ fn various_merging_operations() -> Result<()> {
         leaf2,
     )?;
     assert!(app.verify_uncompressed(&node1, &mut rng)?);
+
+    // Consume the first fold in another generation before compressing it.
+    let (node2, _) = app.fuse(
+        &mut rng,
+        Merge2 {
+            poseidon_params: Pasta::circuit_poseidon(pasta),
+        },
+        (),
+        node1.clone(),
+        node1,
+    )?;
+    assert!(app.verify(&node2, &mut rng)?);
+    let compressed = app.compress(&node2, &mut rng)?;
+    assert!(app.verify_compressed(&compressed)?);
 
     Ok(())
 }

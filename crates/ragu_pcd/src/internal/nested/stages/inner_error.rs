@@ -4,7 +4,7 @@
 //! the layer-1 error terms of the nested revdot fold: for each group of the
 //! children's nested claims, the off-diagonal revdot products of that group.
 //! They are committed here, inside the bridge stage whose commitment the
-//! transcript absorbs before squeezing $\mu$ and $\nu$. This preserves the
+//! transcript absorbs before squeezing the first-layer folding challenge(s). This preserves the
 //! commit-before-challenge order without changing the transcript schedule.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.

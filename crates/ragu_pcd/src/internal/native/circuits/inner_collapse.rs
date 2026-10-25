@@ -1,5 +1,8 @@
 //! Circuit for verifying layer 1 of the two-layer revdot reduction.
 //!
+//! Quotient folding uses only $\mu$ and $\mu'$; `nu` and `nu_prime`
+//! below apply to the original Horner fold.
+//!
 //! ## Operations
 //!
 //! ### Two-layer revdot folding
@@ -13,7 +16,7 @@
 //! ### Layer 1 verification
 //!
 //! This circuit verifies layer 1 of the two-layer reduction:
-//! - Retrieves [$\mu$] and [$\nu$] challenges from the unified instance.
+//! - Retrieves [$\mu$] and `nu` challenges from the unified instance.
 //! - For each group of claims, folds the [`inner_error`] terms with the $k(y)$
 //!   values using [`ClaimFolder::fold_inner`].
 //! - Enforces that each computed result equals the corresponding collapsed
@@ -53,7 +56,6 @@
 //! [`outer_collapse`]: super::outer_collapse
 //! [$c$]: unified::Output::c
 //! [$\mu$]: unified::Output::mu
-//! [$\nu$]: unified::Output::nu
 //! [`inner_error`]: super::super::stages::inner_error
 //! [`outer_error`]: super::super::stages::outer_error
 //! [`preamble`]: super::super::stages::preamble
@@ -196,8 +198,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
 
         // Get layer 1 folding challenges from the unified instance.
         let mu = unified_output.mu.read(dr, allocator)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu = unified_output.nu.read(dr, allocator)?;
-        let fold_products = fold_revdot::ClaimFolder::new(dr, &mu, &nu)?;
+        let fold_products = fold_revdot::ClaimFolder::new(
+            dr,
+            &mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            &nu,
+        )?;
 
         // Assemble k(y) values from multiple sources. The ordering must match
         // claims's iteration order for correct folding correspondence.

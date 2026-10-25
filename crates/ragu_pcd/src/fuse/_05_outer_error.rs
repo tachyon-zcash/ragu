@@ -8,7 +8,7 @@
 //!
 //! The second layer of the nested fold is committed here as well: its error
 //! terms and its layer-1 folded claim values ride inside the `outer_error`
-//! bridge stage, so they are committed before $\mu'$ and $\nu'$ are squeezed.
+//! bridge stage, so they are committed before the second-layer folding challenges are squeezed.
 
 use ragu_circuits::{
     polynomials::{Rank, sparse},
@@ -60,7 +60,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
-        nu: &Element<'dr, D>,
+        #[cfg(not(feature = "experimental-quotient-fold"))] nu: &Element<'dr, D>,
         sponge_state_elements: FixedVec<
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
@@ -79,9 +79,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     {
         let y = *y.value().take();
         let mu = *mu.value().take();
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu = *nu.value().take();
-        let mu_inv = mu.invert().expect("mu must be non-zero");
-        let mu_nu = mu * nu;
+        let (mu_inv, mu_nu) = fold_revdot::fold_scales(
+            mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nu,
+        );
         let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
             &native_claims.a,
             mu_inv,
@@ -98,10 +102,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 &native_inner_error_witness.error_terms,
                 y,
                 mu,
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 nu,
             ),
             |dr, witness| {
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
+                #[cfg(feature = "experimental-quotient-fold")]
+                let (preamble_witness, inner_error_terms, y, mu) = witness.cast();
                 let allocator = &mut ();
 
                 let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
@@ -125,6 +133,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 };
 
                 let mu = Element::alloc(dr, allocator, mu)?;
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let nu = Element::alloc(dr, allocator, nu)?;
 
                 // Build k(y) values in claim order.
@@ -160,7 +169,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
-                let fold_products = fold_revdot::ClaimFolder::new(dr, &mu, &nu)?;
+                let fold_products = fold_revdot::ClaimFolder::new(
+                    dr,
+                    &mu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    &nu,
+                )?;
 
                 let collapsed = FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
@@ -216,6 +230,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_preamble,
             y,
             mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             nu,
             builder,
         )?;
@@ -276,7 +291,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         native_y: C::CircuitField,
         native_mu: C::CircuitField,
-        native_nu: C::CircuitField,
+        #[cfg(not(feature = "experimental-quotient-fold"))] native_nu: C::CircuitField,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
@@ -285,9 +300,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     )> {
         let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nested_nu = nested::challenge::<C>(native_nu)?;
-        let nested_mu_inv = nested_mu.invert().expect("nested mu must be non-zero");
-        let nested_mu_nu = nested_mu * nested_nu;
+        let (nested_mu_inv, nested_mu_nu) = fold_revdot::fold_scales(
+            nested_mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nested_nu,
+        );
 
         let a = fold_revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
@@ -307,6 +326,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     &nested_inner_error_witness.error_terms,
                     nested_y,
                     nested_mu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
                     nested_nu,
                 ),
                 (
@@ -317,7 +337,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ),
             |dr, witness| {
                 let (challenges, cs, nested_preamble) = witness.cast();
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let (inner_error_terms, nested_y, nested_mu, nested_nu) = challenges.cast();
+                #[cfg(feature = "experimental-quotient-fold")]
+                let (inner_error_terms, nested_y, nested_mu) = challenges.cast();
                 let (left_c, right_c) = cs.cast();
                 let allocator = &mut ();
 
@@ -327,6 +350,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
                 let nested_y = Element::alloc(dr, allocator, nested_y)?;
                 let nested_mu = Element::alloc(dr, allocator, nested_mu)?;
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let nested_nu = Element::alloc(dr, allocator, nested_nu)?;
                 let left_c = Element::alloc(dr, allocator, left_c)?;
                 let right_c = Element::alloc(dr, allocator, right_c)?;
@@ -367,7 +391,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 );
                 let mut ky = nested::claims::ky_values::<C::Profile, _>(&ky_source);
 
-                let fold_products = fold_revdot::ClaimFolder::new(dr, &nested_mu, &nested_nu)?;
+                let fold_products = fold_revdot::ClaimFolder::new(
+                    dr,
+                    &nested_mu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    &nested_nu,
+                )?;
 
                 FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {

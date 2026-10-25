@@ -461,8 +461,10 @@ mod folding {
         let y = nested::challenge::<C>(parent.y())?;
         let z = nested::challenge::<C>(parent.z())?;
         let mu = nested::challenge::<C>(parent.mu())?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu = nested::challenge::<C>(parent.nu())?;
         let mu_prime = nested::challenge::<C>(parent.mu_prime())?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu_prime = nested::challenge::<C>(parent.nu_prime())?;
 
         let (nested_claims, children) = child_claims(app, left, right, y, z)?;
@@ -487,14 +489,22 @@ mod folding {
         }
 
         // 2. The accumulator is the two-layer fold of those claims.
+        let (a_scale, b_scale) = fold_revdot::fold_scales(
+            mu,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nu,
+        );
+        let (a_outer_scale, b_outer_scale) = fold_revdot::fold_scales(
+            mu_prime,
+            #[cfg(not(feature = "experimental-quotient-fold"))]
+            nu_prime,
+        );
         let inner_errors =
             fold_revdot::inner_error_terms::<_, R, P>(&nested_claims.a, &nested_claims.b);
-        let a_folded = fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(
-            &nested_claims.a,
-            mu.invert().unwrap(),
-        );
+        let a_folded =
+            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.a, a_scale);
         let b_folded =
-            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.b, mu * nu);
+            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.b, b_scale);
         let outer_errors = fold_revdot::outer_error_terms::<_, R, P>(&a_folded, &b_folded);
         let collapsed: Vec<_> = a_folded
             .iter()
@@ -578,8 +588,8 @@ mod folding {
             );
         }
 
-        let a_final = fold_revdot::fold_outer::<_, _, P>(a_folded, mu_prime.invert().unwrap());
-        let b_final = fold_revdot::fold_outer::<_, _, P>(b_folded, mu_prime * nu_prime);
+        let a_final = fold_revdot::fold_outer::<_, _, P>(a_folded, a_outer_scale);
+        let b_final = fold_revdot::fold_outer::<_, _, P>(b_folded, b_outer_scale);
         assert!(
             a_final.iter_coeffs().eq(parent.nested_a_poly.iter_coeffs()),
             "nested a is not the fold of the children's claims"
@@ -594,26 +604,36 @@ mod folding {
         let expected_c = NestedFuseEmulator::<C>::emulate_wireless(
             (
                 (&inner_errors, &outer_errors),
-                (mu, nu),
-                (mu_prime, nu_prime),
+                (
+                    mu,
+                    mu_prime,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    nu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    nu_prime,
+                ),
                 (
                     (children.left_c, children.right_c),
                     (children.left_unified, children.right_unified),
                 ),
             ),
             |dr, witness| {
-                let (errors, layer1, layer2, kys) = witness.cast();
+                let (errors, layers, kys) = witness.cast();
                 let (inner_errors, outer_errors) = errors.cast();
-                let (mu, nu) = layer1.cast();
-                let (mu_prime, nu_prime) = layer2.cast();
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                let (mu, mu_prime, nu, nu_prime) = layers.cast();
+                #[cfg(feature = "experimental-quotient-fold")]
+                let (mu, mu_prime) = layers.cast();
                 let (cs, unifieds) = kys.cast();
                 let (left_c, right_c) = cs.cast();
                 let (left_unified, right_unified) = unifieds.cast();
                 let allocator = &mut ();
 
                 let mu = Element::alloc(dr, allocator, mu)?;
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let nu = Element::alloc(dr, allocator, nu)?;
                 let mu_prime = Element::alloc(dr, allocator, mu_prime)?;
+                #[cfg(not(feature = "experimental-quotient-fold"))]
                 let nu_prime = Element::alloc(dr, allocator, nu_prime)?;
                 let left_c = Element::alloc(dr, allocator, left_c)?;
                 let right_c = Element::alloc(dr, allocator, right_c)?;
@@ -631,7 +651,12 @@ mod folding {
                 );
                 let mut ky = nested::claims::ky_values::<crate::profile::Standard, _>(&ky_source);
 
-                let layer1 = ClaimFolder::new(dr, &mu, &nu)?;
+                let layer1 = ClaimFolder::new(
+                    dr,
+                    &mu,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    &nu,
+                )?;
                 let collapsed = FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
                         Element::alloc(dr, allocator, inner_errors.as_ref().map(|et| et[i][j]))
@@ -643,7 +668,12 @@ mod folding {
                 let outer_errors = FixedVec::try_from_fn(|i| {
                     Element::alloc(dr, allocator, outer_errors.as_ref().map(|et| et[i]))
                 })?;
-                let layer2 = ClaimFolder::new(dr, &mu_prime, &nu_prime)?;
+                let layer2 = ClaimFolder::new(
+                    dr,
+                    &mu_prime,
+                    #[cfg(not(feature = "experimental-quotient-fold"))]
+                    &nu_prime,
+                )?;
                 let c = layer2.fold_outer::<P>(dr, &outer_errors, &collapsed)?;
                 Ok(*c.value().take())
             },

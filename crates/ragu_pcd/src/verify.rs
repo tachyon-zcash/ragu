@@ -333,9 +333,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let z = squeeze!();
             absorb!(proof.bridge_inner_error_commitment());
             let mu = squeeze!();
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             let nu = squeeze!();
             absorb!(proof.bridge_outer_error_commitment());
             let mu_prime = squeeze!();
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             let nu_prime = squeeze!();
             absorb!(proof.bridge_ab_commitment());
             let x = squeeze!();
@@ -346,21 +348,35 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             absorb!(proof.bridge_eval_commitment());
             let pre_beta = squeeze!();
 
-            [w, y, z, mu, nu, mu_prime, nu_prime, x, alpha, u, pre_beta]
-                == [
-                    proof.w(),
-                    proof.y(),
-                    proof.z(),
-                    proof.mu(),
-                    proof.nu(),
-                    proof.mu_prime(),
-                    proof.nu_prime(),
-                    proof.x(),
-                    proof.alpha(),
-                    proof.u(),
-                    proof.pre_beta(),
-                ]
-                && extract_endoscalar(proof.pre_beta()).is_ok()
+            [
+                w,
+                y,
+                z,
+                mu,
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                nu,
+                mu_prime,
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                nu_prime,
+                x,
+                alpha,
+                u,
+                pre_beta,
+            ] == [
+                proof.w(),
+                proof.y(),
+                proof.z(),
+                proof.mu(),
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                proof.nu(),
+                proof.mu_prime(),
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                proof.nu_prime(),
+                proof.x(),
+                proof.alpha(),
+                proof.u(),
+                proof.pre_beta(),
+            ] && extract_endoscalar(proof.pre_beta()).is_ok()
         };
 
         // The `ab` bridge stage is a function of the native a and b

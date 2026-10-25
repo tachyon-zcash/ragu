@@ -245,18 +245,33 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1992, lin = 3095);
-    check_constraints!(Hashes2Circuit,              mul = 2044, lin = 2986);
-    check_constraints!(InnerCollapseCircuit,        mul = 1921, lin = 1953);
-    check_constraints!(OuterCollapseCircuit,        mul = 1592, lin = 2081);
-    check_constraints!(ComputeVCircuit,             mul = 1834, lin = 2687);
-    check_constraints!(BindChallengesCircuit(0),    mul = 1980, lin = 2956);
-    check_constraints!(BindChallengesCircuit(1),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(2),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(3),    mul = 1985, lin = 2966);
-    check_constraints!(BindChallengesCircuit(4),    mul = 1996, lin = 2988);
-    check_constraints!(BindBetaCircuit,             mul = 2029, lin = 3016);
-    check_constraints!(BindEndoscalarCircuit,       mul = 780,  lin = 1444);
+    if cfg!(feature = "experimental-quotient-fold") {
+        check_constraints!(Hashes1Circuit, mul = 1811, lin = 3085);
+        check_constraints!(Hashes2Circuit, mul = 1868, lin = 2984);
+        check_constraints!(InnerCollapseCircuit, mul = 703, lin = 563);
+        check_constraints!(OuterCollapseCircuit, mul = 1082, lin = 1413);
+        check_constraints!(ComputeVCircuit, mul = 1911, lin = 2851);
+        check_constraints!(BindBetaCircuit, mul = 1853, lin = 3014);
+
+        check_constraints!(BindChallengesCircuit(0), mul = 1974, lin = 2954);
+        check_constraints!(BindChallengesCircuit(1), mul = 1979, lin = 2964);
+        check_constraints!(BindChallengesCircuit(2), mul = 1979, lin = 2964);
+        check_constraints!(BindChallengesCircuit(3), mul = 1990, lin = 2986);
+        check_constraints!(BindEndoscalarCircuit, mul = 780, lin = 1442);
+    } else {
+        check_constraints!(Hashes1Circuit,              mul = 1992, lin = 3095);
+        check_constraints!(Hashes2Circuit,              mul = 2044, lin = 2986);
+        check_constraints!(InnerCollapseCircuit,        mul = 1921, lin = 1953);
+        check_constraints!(OuterCollapseCircuit,        mul = 1592, lin = 2081);
+        check_constraints!(ComputeVCircuit,             mul = 1834, lin = 2687);
+        check_constraints!(BindChallengesCircuit(0),    mul = 1980, lin = 2956);
+        check_constraints!(BindChallengesCircuit(1),    mul = 1985, lin = 2966);
+        check_constraints!(BindChallengesCircuit(2),    mul = 1985, lin = 2966);
+        check_constraints!(BindChallengesCircuit(3),    mul = 1985, lin = 2966);
+        check_constraints!(BindChallengesCircuit(4),    mul = 1996, lin = 2988);
+        check_constraints!(BindBetaCircuit,             mul = 2029, lin = 3016);
+        check_constraints!(BindEndoscalarCircuit,       mul = 780,  lin = 1444);
+    }
     // Every native endoscaling step but the last walks four points and lays
     // out the same; the last walks the two that remain.
     let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
@@ -276,17 +291,31 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(PointsBinding,    skip =   1, num =  26);
-    check_stage!(Preamble,         skip =  27, num = 349);
-    check_stage!(OuterError,       skip = 376, num = 186);
-    check_stage!(InnerError,       skip = 562, num = 399);
-    check_stage!(Query,            skip = 376, num =  81);
-    check_stage!(Eval,             skip = 457, num =  60);
-    check_stage!(PointsChildren,   skip =  27, num =  66);
-    check_stage!(PointsRegistryWx, skip =  93, num =   2);
-    check_stage!(PointsAb,         skip =  95, num =   3);
-    check_stage!(PointsF,          skip =  98, num =   2);
-    check_stage!(PointsWalk,       skip = 100, num =  89);
+    if cfg!(feature = "experimental-quotient-fold") {
+        check_stage!(PointsBinding, skip = 1, num = 26);
+        check_stage!(Preamble, skip = 27, num = 347);
+        check_stage!(OuterError, skip = 374, num = 12);
+        check_stage!(InnerError, skip = 386, num = 46);
+        check_stage!(Query, skip = 374, num = 79);
+        check_stage!(Eval, skip = 453, num = 58);
+        check_stage!(PointsChildren, skip = 27, num = 66);
+        check_stage!(PointsRegistryWx, skip = 93, num = 2);
+        check_stage!(PointsAb, skip = 95, num = 3);
+        check_stage!(PointsF, skip = 98, num = 2);
+        check_stage!(PointsWalk, skip = 100, num = 89);
+    } else {
+        check_stage!(PointsBinding,    skip =   1, num =  26);
+        check_stage!(Preamble,         skip =  27, num = 349);
+        check_stage!(OuterError,       skip = 376, num = 186);
+        check_stage!(InnerError,       skip = 562, num = 399);
+        check_stage!(Query,            skip = 376, num =  81);
+        check_stage!(Eval,             skip = 457, num =  60);
+        check_stage!(PointsChildren,   skip =  27, num =  66);
+        check_stage!(PointsRegistryWx, skip =  93, num =   2);
+        check_stage!(PointsAb,         skip =  95, num =   3);
+        check_stage!(PointsF,          skip =  98, num =   2);
+        check_stage!(PointsWalk,       skip = 100, num =  89);
+    }
 }
 
 /// Helper test to print current constraint counts in copy-pasteable format.
@@ -447,12 +476,24 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2043, 3677)));
+        let counts = if cfg!(feature = "experimental-quotient-fold") {
+            if step + 1 == steps { (1123, 1841) } else { (2041, 3677) }
+        } else {
+            (2043, 3677)
+        };
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), counts));
     }
-    expected.push((nested::InternalCircuitIndex::Export,   (1384, 1506)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1624, 1701)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1661, 1763)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (776,  227)));
+    if cfg!(feature = "experimental-quotient-fold") {
+        expected.push((nested::InternalCircuitIndex::Export, (1092, 1492)));
+        expected.push((nested::InternalCircuitIndex::Collapse, (826, 673)));
+        expected.push((nested::InternalCircuitIndex::ComputeV, (1465, 1943)));
+        expected.push((nested::InternalCircuitIndex::Loading, (492, 223)));
+    } else {
+        expected.push((nested::InternalCircuitIndex::Export,   (1384, 1506)));
+        expected.push((nested::InternalCircuitIndex::Collapse, (1624, 1701)));
+        expected.push((nested::InternalCircuitIndex::ComputeV, (1661, 1763)));
+        expected.push((nested::InternalCircuitIndex::Loading,  (776,  227)));
+    }
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))

@@ -62,7 +62,7 @@ use super::common;
 use crate::{
     internal::{
         claims::Source,
-        fold_revdot::fold_two_layer,
+        fold_revdot::{fold_scale_elements, fold_two_layer},
         inverter::Inverter,
         nested::{
             InternalCircuitIndex, RevdotParameters, RxComponent, RxIndex,
@@ -125,13 +125,23 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // evaluations.
         let (computed_ax, computed_bx) = {
             let mu = lift(challenges::MU);
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             let nu = lift(challenges::NU);
             let mu_prime = lift(challenges::MU_PRIME);
+            #[cfg(not(feature = "experimental-quotient-fold"))]
             let nu_prime = lift(challenges::NU_PRIME);
-            let mu_inv = mu.invert(dr)?;
-            let mu_prime_inv = mu_prime.invert(dr)?;
-            let mu_nu = mu.mul(dr, nu)?;
-            let mu_prime_nu_prime = mu_prime.mul(dr, nu_prime)?;
+            let (mu_inv, mu_nu) = fold_scale_elements(
+                dr,
+                mu,
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                nu,
+            )?;
+            let (mu_prime_inv, mu_prime_nu_prime) = fold_scale_elements(
+                dr,
+                mu_prime,
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                nu_prime,
+            )?;
 
             let source = EvaluationSource {
                 left: &query.left,

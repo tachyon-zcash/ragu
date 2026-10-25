@@ -1,13 +1,16 @@
 //! Circuit for verifying layer 2 of the two-layer revdot reduction.
 //!
+//! Quotient folding uses only $\mu$ and $\mu'$; `nu` and `nu_prime`
+//! below apply to the original Horner fold.
+//!
 //! ## Operations
 //!
 //! ### Layer 2 verification
 //!
 //! This circuit verifies layer 2 of the two-layer reduction, completing the
 //! folding process started by [`inner_collapse`]:
-//! - Retrieves [$\mu'$] and [$\nu'$] challenges from the unified instance.
-//!   These are distinct from the layer 1 challenges ([$\mu$], [$\nu$]) used in
+//! - Retrieves [$\mu'$] and `nu_prime` challenges from the unified instance.
+//!   These are distinct from the layer 1 challenges ([$\mu$], `nu`) used in
 //!   [`inner_collapse`].
 //! - Uses the collapsed values from layer 1 (verified by [`inner_collapse`])
 //!   as the $k(y)$ inputs.
@@ -63,9 +66,7 @@
 //!
 //! [`inner_collapse`]: super::inner_collapse
 //! [$\mu'$]: unified::Output::mu_prime
-//! [$\nu'$]: unified::Output::nu_prime
 //! [$\mu$]: unified::Output::mu
-//! [$\nu$]: unified::Output::nu
 //! [$c$]: unified::Output::c
 //! [`outer_error`]: super::super::stages::outer_error
 //! [`preamble`]: super::super::stages::preamble
@@ -197,15 +198,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         }
 
         // Get layer 2 folding challenges. These are distinct from the layer 1
-        // challenges (mu, nu) used in inner_collapse.
+        // first-layer challenges used in inner_collapse.
         let mu_prime = unified_output.mu_prime.read(dr, allocator)?;
+        #[cfg(not(feature = "experimental-quotient-fold"))]
         let nu_prime = unified_output.nu_prime.read(dr, allocator)?;
 
         // Compute the final folded revdot claim c via layer 2 reduction.
         // The collapsed values from layer 1 (verified by inner_collapse) serve
         // as the k(y) inputs for this final fold.
         {
-            let fold_products = fold_revdot::ClaimFolder::new(dr, &mu_prime, &nu_prime)?;
+            let fold_products = fold_revdot::ClaimFolder::new(
+                dr,
+                &mu_prime,
+                #[cfg(not(feature = "experimental-quotient-fold"))]
+                &nu_prime,
+            )?;
             let computed_c = fold_products.fold_outer::<FP>(
                 dr,
                 &outer_error.error_terms,

@@ -23,7 +23,15 @@
 pub mod claims;
 pub mod const_fns;
 pub mod endoscalar;
+#[cfg(not(feature = "experimental-quotient-fold"))]
 pub mod fold_revdot;
+#[cfg(feature = "experimental-quotient-fold")]
+#[path = "quotient_fold.rs"]
+pub mod fold_revdot;
+#[cfg(feature = "experimental-quotient-fold")]
+#[path = "fold_revdot.rs"]
+#[allow(dead_code)]
+mod horner_fold;
 pub mod inverter;
 pub mod ky;
 pub mod native;

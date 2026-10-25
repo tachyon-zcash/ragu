@@ -3,7 +3,7 @@
 //! Alongside the host-curve commitment it bridges, this stage carries the
 //! layer-2 data of the nested revdot fold: the off-diagonal revdot products
 //! of the layer-1 folded claims, and the layer-1 folded claim values
-//! themselves. It is committed before $\mu'$ and $\nu'$ are squeezed,
+//! themselves. It is committed before the second-layer folding challenge(s),
 //! preserving the commit-before-challenge order for the second layer.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.
