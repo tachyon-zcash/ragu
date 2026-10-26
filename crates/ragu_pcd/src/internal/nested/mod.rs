@@ -167,13 +167,12 @@ pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 11;
 /// loading circuit.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 3;
 
-/// The groups the standard profile's nested claims fold into. Two children
-/// contribute one raw accumulator claim each, one circuit claim each per
-/// endoscaling step and per instance circuit, and one bonding claim per
-/// bonding kind (each bonding kind is $z$-folded across both children): 78
-/// claims, over twenty-eight steps, three instance circuits and fourteen
-/// bonding kinds, in 12 groups of 7, which leaves a little room.
-pub const NUM_FOLD_GROUPS: usize = 12;
+/// The minimum groups for the nested quotient fold: ten groups of eight
+/// provide room for 80 claims. Larger profiles grow the group count.
+pub const NUM_FOLD_GROUPS: usize = 10;
+
+/// The claims in a nested fold group.
+pub const FOLD_GROUP_SIZE: usize = 8;
 
 /// The nested revdot claims of profile `P` the fuse folds: two children's
 /// raw claims, each internal circuit's claim per child, and each bonding's
@@ -194,19 +193,19 @@ pub fn num_claims<P: Profile>() -> usize {
 
 /// Length type for the nested fold's groups in profile `P`: the standard
 /// profile's [`NUM_FOLD_GROUPS`], or as many groups of
-/// [`FOLD_GROUP_SIZE`](super::native::FOLD_GROUP_SIZE) as the profile's
+/// [`FOLD_GROUP_SIZE`](FOLD_GROUP_SIZE) as the profile's
 /// [`num_claims`] need, whichever is more.
 pub struct NumFoldGroups<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumFoldGroups<P> {
     fn len() -> usize {
-        NUM_FOLD_GROUPS.max(num_claims::<P>().div_ceil(super::native::FOLD_GROUP_SIZE))
+        NUM_FOLD_GROUPS.max(num_claims::<P>().div_ceil(FOLD_GROUP_SIZE))
     }
 }
 
 /// Parameters for folding the children's nested revdot claims in profile
 /// `P`: [`NumFoldGroups`] groups of
-/// [`FOLD_GROUP_SIZE`](super::native::FOLD_GROUP_SIZE).
+/// [`FOLD_GROUP_SIZE`](FOLD_GROUP_SIZE).
 pub struct RevdotParameters<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Clone for RevdotParameters<P> {
@@ -225,7 +224,7 @@ impl<P: Profile> Default for RevdotParameters<P> {
 
 impl<P: Profile> Parameters for RevdotParameters<P> {
     type NumGroups = NumFoldGroups<P>;
-    type GroupSize = ConstLen<{ super::native::FOLD_GROUP_SIZE }>;
+    type GroupSize = ConstLen<FOLD_GROUP_SIZE>;
 }
 
 /// Derives the nested-field counterpart of a native Fiat-Shamir challenge.

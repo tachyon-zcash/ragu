@@ -141,13 +141,11 @@ pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
 /// final stage masks.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 4;
 
-/// The groups the standard profile's native claims fold into: two raw and
-/// two application claims, two per internal circuit and one per bonding,
-/// 93 claims in 19 groups of 7. Fourteen would hold them; the count is
-/// pinned at the layout's own, so the standard proof is unchanged.
-pub const NUM_FOLD_GROUPS: usize = 19;
+/// The minimum groups for the native quotient fold: fourteen groups of
+/// seven provide room for 98 claims. Larger profiles grow the group count.
+pub const NUM_FOLD_GROUPS: usize = 14;
 
-/// The claims in a fold group on either side.
+/// The claims in a native fold group.
 pub const FOLD_GROUP_SIZE: usize = 7;
 
 /// The native revdot claims of profile `P` the fuse folds: two children's

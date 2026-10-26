@@ -245,12 +245,12 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit, mul = 1811, lin = 3085);
-    check_constraints!(Hashes2Circuit, mul = 1868, lin = 2984);
-    check_constraints!(InnerCollapseCircuit, mul = 703, lin = 563);
-    check_constraints!(OuterCollapseCircuit, mul = 1082, lin = 1413);
-    check_constraints!(ComputeVCircuit, mul = 1858, lin = 2745);
-    check_constraints!(BindBetaCircuit, mul = 1853, lin = 3014);
+    check_constraints!(Hashes1Circuit, mul = 1818, lin = 3085);
+    check_constraints!(Hashes2Circuit, mul = 1875, lin = 2984);
+    check_constraints!(InnerCollapseCircuit, mul = 678, lin = 514);
+    check_constraints!(OuterCollapseCircuit, mul = 1124, lin = 1483);
+    check_constraints!(ComputeVCircuit, mul = 1870, lin = 2769);
+    check_constraints!(BindBetaCircuit, mul = 1860, lin = 3014);
 
     check_constraints!(BindChallengesCircuit(0), mul = 1974, lin = 2954);
     check_constraints!(BindChallengesCircuit(1), mul = 1979, lin = 2964);
@@ -278,8 +278,8 @@ fn test_internal_stage_parameters() {
 
     check_stage!(PointsBinding, skip = 1, num = 26);
     check_stage!(Preamble, skip = 27, num = 347);
-    check_stage!(OuterError, skip = 374, num = 12);
-    check_stage!(InnerError, skip = 386, num = 46);
+    check_stage!(OuterError, skip = 374, num = 19);
+    check_stage!(InnerError, skip = 393, num = 42);
     check_stage!(Query, skip = 374, num = 79);
     check_stage!(Eval, skip = 453, num = 58);
     check_stage!(PointsChildren, skip = 27, num = 66);
@@ -450,10 +450,10 @@ fn test_nested_circuit_constraint_counts() {
         let counts = if step + 1 == steps { (1123, 1841) } else { (2041, 3677) };
         expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), counts));
     }
-    expected.push((nested::InternalCircuitIndex::Export, (1092, 1492)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (826, 673)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1421, 1855)));
-    expected.push((nested::InternalCircuitIndex::Loading, (492, 223)));
+    expected.push((nested::InternalCircuitIndex::Export, (1093, 1492)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (829, 679)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1426, 1863)));
+    expected.push((nested::InternalCircuitIndex::Loading, (493, 223)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -474,17 +474,17 @@ fn test_nested_stage_parameters() {
         }};
     }
 
-    check_stage!(endoscalar::EndoscalarStage,                          skip =   1, num =  64);
-    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>,                        skip =  65, num = 141);
-    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>,                 skip = 206, num = 114);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>,                  skip = 320, num =   3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>,              skip = 323, num = 254);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>,              skip = 577, num =  73);
-    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>,                       skip = 650, num =   3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>,                    skip = 653, num =  71);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>,                        skip = 724, num =   2);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>,                     skip = 726, num =  50);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>,               skip = 776, num =  12);
+    check_stage!(endoscalar::EndoscalarStage, skip = 1, num = 64);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 65, num = 139);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 204, num = 112);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 316, num = 3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 319, num = 37);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 356, num = 11);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 367, num = 3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 370, num = 71);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 441, num = 2);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 443, num = 50);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 493, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
