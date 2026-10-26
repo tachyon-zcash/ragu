@@ -359,7 +359,7 @@ impl<C: Cycle> InternalCircuitVisitor<C> for CaptureChecker {
 /// tallies and `cheatable` are judged at the witness, so they are pinned per
 /// capture point; the rest is structural. The endoscaling tallies depend on
 /// transcript-derived bit patterns, so they also depend on the fixed test tag.
-/// These pins use the default quotient fold, including its four challenge binders.
+/// These pins cover quotient folding and its four challenge binders.
 fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
         "hashes_1" => (176, 5436, 46, 12, 0, 12, 101),

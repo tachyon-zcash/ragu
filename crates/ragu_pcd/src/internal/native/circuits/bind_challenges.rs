@@ -96,11 +96,7 @@ fn read_challenge<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Cycle<CircuitFie
         &mut unified.y,
         &mut unified.z,
         &mut unified.mu,
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        &mut unified.nu,
         &mut unified.mu_prime,
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        &mut unified.nu_prime,
         &mut unified.x,
         &mut unified.alpha,
         &mut unified.u,
@@ -262,11 +258,6 @@ macro_rules! with_binder {
             }
             3 => {
                 let $circuit = Circuit::<$C, $R, $H, 3>::new($params);
-                $body
-            }
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            4 => {
-                let $circuit = Circuit::<$C, $R, $H, 4>::new($params);
                 $body
             }
             _ => panic!("no binding circuit {}", $k),

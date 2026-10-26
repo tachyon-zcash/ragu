@@ -10,9 +10,9 @@
 //!   the state witnessed in [`outer_error`]. (This state was computed by `hashes_1`
 //!   after absorbing [`bridge_inner_error_commitment`] and applying the permutation
 //!   to move into squeeze mode.)
-//! - Squeeze [$\mu$] (and `nu` in the original fold).
+//! - Squeeze [$\mu$].
 //! - Absorb [`bridge_outer_error_commitment`].
-//! - Squeeze [$\mu'$] (and `nu_prime` in the original fold).
+//! - Squeeze [$\mu'$].
 //! - Absorb [`bridge_ab_commitment`].
 //! - Squeeze [$x$] challenge.
 //! - Absorb [`bridge_query_commitment`].
@@ -23,8 +23,7 @@
 //! - Squeeze [$\beta$] challenge.
 //!
 //! The squeezed challenges are set in the unified instance. Quotient folding
-//! uses one challenge per layer; the original fold also squeezes `nu` and
-//! `nu_prime`.
+//! uses one challenge per layer.
 //!
 //! ## Staging
 //!
@@ -169,18 +168,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Resume transcript from saved state (inner_error already absorbed in hashes_1)
-        // and squeeze the first-layer folding challenge(s).
+        // and squeeze the first-layer folding challenge.
         let mut resumed = Transcript::resume_from_state(
             outer_error.sponge_state,
             C::circuit_poseidon(self.params),
         );
         let mu = resumed.challenge(dr)?;
         unified_output.mu.provide(mu);
-
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nu = resumed.challenge(dr)?;
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        unified_output.nu.provide(nu);
 
         // Transition back to absorb mode for the rest of the transcript
         let mut transcript = resumed.into_transcript();
@@ -191,11 +185,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             .receive(dr, allocator)?;
         bridge_outer_error_commitment.write(dr, &mut transcript)?;
         let mu_prime = transcript.challenge(dr)?;
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nu_prime = transcript.challenge(dr)?;
         unified_output.mu_prime.provide(mu_prime);
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        unified_output.nu_prime.provide(nu_prime);
 
         // Derive x by absorbing bridge_ab_commitment and squeezing
         let x = {

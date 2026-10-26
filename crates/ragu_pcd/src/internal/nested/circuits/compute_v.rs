@@ -10,7 +10,7 @@
 //! ## Operations
 //!
 //! ### Revdot folding
-//! - Takes the lifted $\mu$, $\nu$, $\mu'$, $\nu'$ from the challenge stage.
+//! - Takes the lifted $\mu$ and $\mu'$ from the challenge stage.
 //! - Computes $a_n(x_n z_n)$ and $b_n(x_n)$ by the two-layer fold of the
 //!   children's claim evaluations, in [`build`] order, exactly as the
 //!   prover folded the polynomials.
@@ -62,7 +62,7 @@ use super::common;
 use crate::{
     internal::{
         claims::Source,
-        fold_revdot::{fold_scale_elements, fold_two_layer},
+        fold_revdot::fold_two_layer,
         inverter::Inverter,
         nested::{
             InternalCircuitIndex, RevdotParameters, RxComponent, RxIndex,
@@ -125,23 +125,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // evaluations.
         let (computed_ax, computed_bx) = {
             let mu = lift(challenges::MU);
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            let nu = lift(challenges::NU);
             let mu_prime = lift(challenges::MU_PRIME);
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            let nu_prime = lift(challenges::NU_PRIME);
-            let (mu_inv, mu_nu) = fold_scale_elements(
-                dr,
-                mu,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                nu,
-            )?;
-            let (mu_prime_inv, mu_prime_nu_prime) = fold_scale_elements(
-                dr,
-                mu_prime,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                nu_prime,
-            )?;
 
             let source = EvaluationSource {
                 left: &query.left,
@@ -152,8 +136,8 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             claims::build::<P, _, _>(&source, &mut processor)?;
             let (ax, bx) = processor.build();
             (
-                fold_two_layer::<_, RevdotParameters<P>>(dr, &ax, &mu_inv, &mu_prime_inv)?,
-                fold_two_layer::<_, RevdotParameters<P>>(dr, &bx, &mu_nu, &mu_prime_nu_prime)?,
+                fold_two_layer::<_, RevdotParameters<P>>(dr, &ax, mu, mu_prime)?,
+                fold_two_layer::<_, RevdotParameters<P>>(dr, &bx, mu, mu_prime)?,
             )
         };
 

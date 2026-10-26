@@ -323,11 +323,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     y: Option<C::CircuitField>,
     z: Option<C::CircuitField>,
     mu: Option<C::CircuitField>,
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    nu: Option<C::CircuitField>,
     mu_prime: Option<C::CircuitField>,
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    nu_prime: Option<C::CircuitField>,
     x: Option<C::CircuitField>,
     alpha: Option<C::CircuitField>,
     u: Option<C::CircuitField>,
@@ -450,11 +446,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             y: None,
             z: None,
             mu: None,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu: None,
             mu_prime: None,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime: None,
             x: None,
             alpha: None,
             u: None,
@@ -1030,11 +1022,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     setter!(set_y, y, C::CircuitField);
     setter!(set_z, z, C::CircuitField);
     setter!(set_mu, mu, C::CircuitField);
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    setter!(set_nu, nu, C::CircuitField);
     setter!(set_mu_prime, mu_prime, C::CircuitField);
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    setter!(set_nu_prime, nu_prime, C::CircuitField);
     setter!(set_x, x, C::CircuitField);
     setter!(set_alpha, alpha, C::CircuitField);
     setter!(set_u, u, C::CircuitField);
@@ -1044,11 +1032,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     getter!(y, y, C::CircuitField);
     getter!(z, z, C::CircuitField);
     getter!(mu, mu, C::CircuitField);
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    getter!(nu, nu, C::CircuitField);
     getter!(mu_prime, mu_prime, C::CircuitField);
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    getter!(nu_prime, nu_prime, C::CircuitField);
     getter!(x, x, C::CircuitField);
     getter!(alpha, alpha, C::CircuitField);
     getter!(u, u, C::CircuitField);
@@ -1250,11 +1234,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             y: take!(y),
             z: take!(z),
             mu: take!(mu),
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu: take!(nu),
             mu_prime: take!(mu_prime),
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime: take!(nu_prime),
             x: take!(x),
             alpha: take!(alpha),
             u: take!(u),

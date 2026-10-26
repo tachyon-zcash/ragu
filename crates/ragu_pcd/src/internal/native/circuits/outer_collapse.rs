@@ -1,17 +1,13 @@
 //! Circuit for verifying layer 2 of the two-layer revdot reduction.
 //!
-//! Quotient folding uses only $\mu$ and $\mu'$; `nu` and `nu_prime`
-//! below apply to the original Horner fold.
-//!
 //! ## Operations
 //!
 //! ### Layer 2 verification
 //!
 //! This circuit verifies layer 2 of the two-layer reduction, completing the
 //! folding process started by [`inner_collapse`]:
-//! - Retrieves [$\mu'$] and `nu_prime` challenges from the unified instance.
-//!   These are distinct from the layer 1 challenges ([$\mu$], `nu`) used in
-//!   [`inner_collapse`].
+//! - Retrieves the [$\mu'$] challenge from the unified instance, distinct
+//!   from the layer 1 challenge [$\mu$] used in [`inner_collapse`].
 //! - Uses the collapsed values from layer 1 (verified by [`inner_collapse`])
 //!   as the $k(y)$ inputs.
 //! - Computes the final folded revdot claim [$c$] using
@@ -200,19 +196,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // Get layer 2 folding challenges. These are distinct from the layer 1
         // first-layer challenges used in inner_collapse.
         let mu_prime = unified_output.mu_prime.read(dr, allocator)?;
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nu_prime = unified_output.nu_prime.read(dr, allocator)?;
 
         // Compute the final folded revdot claim c via layer 2 reduction.
         // The collapsed values from layer 1 (verified by inner_collapse) serve
         // as the k(y) inputs for this final fold.
         {
-            let fold_products = fold_revdot::ClaimFolder::new(
-                dr,
-                &mu_prime,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                &nu_prime,
-            )?;
+            let fold_products = fold_revdot::ClaimFolder::new(&mu_prime);
             let computed_c = fold_products.fold_outer::<FP>(
                 dr,
                 &outer_error.error_terms,

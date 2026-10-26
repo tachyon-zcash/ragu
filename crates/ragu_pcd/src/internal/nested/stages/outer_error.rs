@@ -1,10 +1,8 @@
 //! Outer error stage for nested fuse operations.
 //!
 //! Alongside the host-curve commitment it bridges, this stage carries the
-//! layer-2 data of the nested revdot fold: the off-diagonal revdot products
-//! of the layer-1 folded claims, and the layer-1 folded claim values
-//! themselves. It is committed before the second-layer folding challenge(s),
-//! preserving the commit-before-challenge order for the second layer.
+//! layer-2 quotient coefficients and the layer-1 folded claim values of the
+//! nested revdot fold. It is committed before the second-layer folding challenge.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.
 //! The [`collapse`] circuit checks both layers.
@@ -43,8 +41,7 @@ type NumGroups<P> = <RevdotParameters<P> as Parameters>::NumGroups;
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
     pub native_outer_error: C,
-    /// Layer-2 error terms of the nested revdot fold: the off-diagonal revdot
-    /// products of the layer-1 folded claims.
+    /// Layer-2 quotient coefficients in ascending power order.
     pub error_terms: FixedVec<C::Base, NumErrorTerms<NumGroups<P>>>,
     /// The layer-1 folded claim values, one per group.
     pub collapsed: FixedVec<C::Base, NumGroups<P>>,
@@ -77,7 +74,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point + N² - N error terms + N collapsed values
+        // (x, y) per point + N - 1 quotient coefficients + N collapsed values
         NUM * 2 + NumErrorTerms::<NumGroups<P>>::len() + NumGroups::<P>::len()
     }
 

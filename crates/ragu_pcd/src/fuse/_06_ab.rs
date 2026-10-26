@@ -1,8 +1,8 @@
 //! Commits to the collapsed revdot claim polynomials $A$ and $B$.
 //!
-//! The equations below describe the original Horner fold. Quotient folding
-//! uses the same Lagrange weights for both vector sides, with one challenge
-//! per layer.
+//! Both vector sides use the same two-layer Lagrange weights. Each weight
+//! $\lambda_i$ is the product of the claim's weight within its group at $\mu$
+//! and its group's weight at $\mu'$. Missing claims are zero-padded.
 //!
 //! This sets the $A$ and $B$ polynomial fields on the [`ProofBuilder`],
 //! which contain the claimed (folded) revdot polynomials.
@@ -12,8 +12,8 @@
 //! $A(X)$ and $B(X)$ are folded linear combinations of the individual circuit
 //! and stage `rx` polynomials:
 //!
-//! - $A(X) = \text{fold}\_{\mu}(r\_i(X))$
-//! - $B(X) = \text{fold}\_{\mu\nu}(b\_i(X))$ where
+//! - $A(X) = \sum_i \lambda_i r_i(X)$
+//! - $B(X) = \sum_i \lambda_i b_i(X)$ where
 //!   $b\_i(X) = r\_i(XZ) + s\_{y,i}(X) + t\_z(X)$
 //!
 //! ### Evaluation point and dilation
@@ -21,13 +21,13 @@
 //! During verification, the verifier recomputes $A$ and $B$ at specific points
 //! from individual $r\_i$ evaluations witnessed in the query stage.
 //!
-//! $A$'s terms don't involve $Z$-dilation: $A(p) = \text{fold}\_{\mu}(r\_i(p))$
+//! $A$'s terms don't involve $Z$-dilation: $A(p) = \sum_i \lambda_i r_i(p)$
 //! for any point $p$, requiring only $\{r\_i(p)\}$ evaluations. $B$'s terms
 //! involve $Z$-dilation: $b\_i(p) = r\_i(pZ) + s\_y(p) + t\_z(p)$, so $B(p)$
 //! requires $\{r\_i(pZ)\}$ evaluations.
 //!
 //! $A$ is checked at $xz$ and $B$ at $x$. Since $A$ has no dilation,
-//! $A(xz) = \text{fold}(r\_i(xz))$ reuses the same $\{r\_i(xz)\}$
+//! $A(xz) = \sum_i \lambda_i r_i(xz)$ reuses the same $\{r\_i(xz)\}$
 //! evaluations that $B(x)$ already needs, eliminating separate
 //! $r\_i(x)$ queries.
 //!
@@ -79,29 +79,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
-        #[cfg(not(feature = "experimental-quotient-fold"))] nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        self.compute_native_ab(
-            native_a,
-            native_b,
-            native_source,
-            mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime,
-            builder,
-        )?;
-        self.compute_nested_ab(
-            nested_a,
-            nested_b,
-            mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime,
-            builder,
-        )?;
+        self.compute_native_ab(native_a, native_b, native_source, mu_prime, builder)?;
+        self.compute_nested_ab(nested_a, nested_b, mu_prime, builder)?;
         self.commit_native_points_ab(
             rng,
             nested_registry_wy.commitment,
@@ -115,7 +99,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// Applies the second layer of the nested fold, producing the nested
     /// accumulator polynomials.
     ///
-    /// The nested $\mu'$ and $\nu'$ are derived from the native challenges
+    /// The nested $\mu'$ is derived from the native challenge
     /// (see [`nested::challenge`]), which the transcript squeezes only after
     /// the bridge carrying the layer-2 error terms is absorbed.
     fn compute_nested_ab<'dr, D>(
@@ -123,28 +107,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         native_mu_prime: &Element<'dr, D>,
-        #[cfg(not(feature = "experimental-quotient-fold"))] native_nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nested_nu_prime = nested::challenge::<C>(*native_nu_prime.value().take())?;
-        let (nested_mu_prime_inv, nested_mu_prime_nu_prime) = fold_revdot::fold_scales(
-            nested_mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nested_nu_prime,
-        );
 
         let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
             a,
-            nested_mu_prime_inv,
+            nested_mu_prime,
         );
         let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
             b,
-            nested_mu_prime_nu_prime,
+            nested_mu_prime,
         );
 
         builder.set_nested_a_poly(a_poly);
@@ -159,30 +135,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
-        #[cfg(not(feature = "experimental-quotient-fold"))] nu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let mu_prime = *mu_prime.value().take();
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nu_prime = *nu_prime.value().take();
-        let (mu_prime_inv, mu_prime_nu_prime) = fold_revdot::fold_scales(
-            mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime,
-        );
 
         let TrackedPoly {
             poly: a_poly,
             decomp: a_decomp,
-        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime_inv);
+        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
         let a_poly = a_poly.into_owned();
 
         let b_poly = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(
             b,
-            mu_prime_nu_prime,
+            mu_prime,
         );
         let host_gen = C::host_generators(self.params);
 

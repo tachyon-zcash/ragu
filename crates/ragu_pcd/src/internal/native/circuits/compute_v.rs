@@ -1,15 +1,12 @@
 //! Circuit for computing and verifying the claimed evaluation value [$v$].
 //!
-//! Quotient folding uses only $\mu$ and $\mu'$; `nu` and `nu_prime`
-//! below apply to the original Horner fold.
-//!
 //! ## Operations
 //!
 //! This circuit computes the claimed output value [$v$] and verifies it matches
 //! the unified instance.
 //!
 //! ### Revdot folding
-//! - Retrieve layer 1 challenges [$\mu$], `nu` and layer 2 challenges [$\mu'$], `nu_prime`
+//! - Retrieve the layer 1 challenge [$\mu$] and layer 2 challenge [$\mu'$]
 //! - Compute $a(xz)$ and $b(x)$ via two-layer revdot folding of evaluation claims
 //!
 //! ### $f(u)$ computation
@@ -74,7 +71,7 @@ use super::super::{
 use crate::{
     internal::{
         claims::Source,
-        fold_revdot::{Parameters, fold_scale_elements, fold_two_layer},
+        fold_revdot::{Parameters, fold_two_layer},
         inverter::Inverter,
         native::RevdotParameters,
     },
@@ -199,33 +196,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             // These aggregate all evaluation claims into a single pair.
             let (computed_ax, computed_bx) = {
                 let mu = unified_output.mu.read(dr, allocator)?;
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                let nu = unified_output.nu.read(dr, allocator)?;
                 let mu_prime = unified_output.mu_prime.read(dr, allocator)?;
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                let nu_prime = unified_output.nu_prime.read(dr, allocator)?;
-                let (mu_inv, munu) = fold_scale_elements(
-                    dr,
-                    &mu,
-                    #[cfg(not(feature = "experimental-quotient-fold"))]
-                    &nu,
-                )?;
-                let (mu_prime_inv, mu_prime_nu_prime) = fold_scale_elements(
-                    dr,
-                    &mu_prime,
-                    #[cfg(not(feature = "experimental-quotient-fold"))]
-                    &nu_prime,
-                )?;
 
                 compute_axbx::<_, C::Profile, RevdotParameters<C::Profile>>(
                     dr,
                     &query,
                     z.element(),
                     &txz,
-                    &mu_inv,
-                    &mu_prime_inv,
-                    &munu,
-                    &mu_prime_nu_prime,
+                    &mu,
+                    &mu_prime,
                 )?
             };
 
@@ -524,18 +503,15 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
 /// the same $\{r\_i(xz)\}$ evaluations, eliminating the need for separate
 /// $r\_i(x)$ queries.
 ///
-/// The two-layer folding uses:
-/// - Layer 1: $\mu^{-1}$, $\mu'^{-1}$ for `ax`; $\mu\nu$, $\mu'\nu'$ for `bx`
-/// - Layer 2: internal folding within each layer
+/// Both vectors use the same Lagrange weights: evaluate each group at $\mu$,
+/// then evaluate the resulting group values at $\mu'$.
 fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     dr: &mut D,
     query: &native_query::Output<'dr, D, Pf>,
     z: &Element<'dr, D>,
     txz: &Element<'dr, D>,
-    mu_inv: &Element<'dr, D>,
-    mu_prime_inv: &Element<'dr, D>,
-    munu: &Element<'dr, D>,
-    mu_prime_nu_prime: &Element<'dr, D>,
+    mu: &Element<'dr, D>,
+    mu_prime: &Element<'dr, D>,
 ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
     // Build ax/bx evaluation vectors using the unified claim building abstraction.
     // This ensures the ordering matches claims::build() exactly.
@@ -547,8 +523,8 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     claims::build::<Pf, _, _>(&source, &mut processor)?;
 
     let (ax_sources, bx_sources) = processor.build();
-    let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu_inv, mu_prime_inv)?;
-    let bx = fold_two_layer::<_, P>(dr, &bx_sources, munu, mu_prime_nu_prime)?;
+    let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu, mu_prime)?;
+    let bx = fold_two_layer::<_, P>(dr, &bx_sources, mu, mu_prime)?;
     Ok((ax, bx))
 }
 

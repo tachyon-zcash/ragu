@@ -1,12 +1,11 @@
-//! Commit to the error (off-diagonal) terms of the first revdot folding
-//! reductions.
+//! Commit to the quotient error terms of the first revdot folding layer.
 //!
 //! This sets the inner-error fields on the [`ProofBuilder`], which commits to
 //! the `inner_error` stage.
 //!
 //! The children's nested claims are folded here as well: their layer-1 error
 //! terms ride inside the `inner_error` bridge stage, so they are committed
-//! before the first-layer folding challenges are squeezed.
+//! before the first-layer folding challenge is squeezed.
 //!
 //! This phase of the fuse operation is also used to commit to the $m(w, X, y)$
 //! restriction; its nested counterpart's commitment enters the native

@@ -96,9 +96,6 @@ use step::{Step, internal::adapter::Adapter};
 /// Profiles share this protocol domain. Their setup separation is carried by
 /// the tagged native and nested registry polynomials committed in the fuse
 /// and checked by the verifiers; see [`profile`].
-#[cfg(not(feature = "experimental-quotient-fold"))]
-pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
-#[cfg(feature = "experimental-quotient-fold")]
 pub(crate) const RAGU_TAG: &[u8] = b"ragu-qfold-v3";
 
 pub use backend::SelectableBackend;

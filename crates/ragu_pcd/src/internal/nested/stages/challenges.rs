@@ -70,14 +70,8 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 use crate::profile::Profile;
 
 /// The native challenges this stage holds the lifts of before the sign and
-/// $\beta$, in order: `w, y, z, mu, mu_prime, x, alpha, u` for the quotient
-/// fold. The original fold also includes `nu` after `mu` and `nu_prime`
-/// after `mu_prime`.
-pub const NUM: usize = if cfg!(feature = "experimental-quotient-fold") {
-    8
-} else {
-    10
-};
+/// $\beta$, in order: `w, y, z, mu, mu_prime, x, alpha, u`.
+pub const NUM: usize = 8;
 
 /// The position of the lift of $w$.
 pub const W: usize = 0;
@@ -87,26 +81,10 @@ pub const Y: usize = 1;
 pub const Z: usize = 2;
 /// The position of the lift of $\mu$.
 pub const MU: usize = 3;
-/// The position of the lift of $\nu$.
-#[cfg(not(feature = "experimental-quotient-fold"))]
-pub const NU: usize = MU + 1;
 /// The position of the lift of $\mu'$.
-pub const MU_PRIME: usize = MU
-    + if cfg!(feature = "experimental-quotient-fold") {
-        1
-    } else {
-        2
-    };
-/// The position of the lift of $\nu'$.
-#[cfg(not(feature = "experimental-quotient-fold"))]
-pub const NU_PRIME: usize = MU_PRIME + 1;
+pub const MU_PRIME: usize = MU + 1;
 /// The position of the lift of $x$.
-pub const X: usize = MU_PRIME
-    + if cfg!(feature = "experimental-quotient-fold") {
-        1
-    } else {
-        2
-    };
+pub const X: usize = MU_PRIME + 1;
 /// The position of the lift of $\alpha$.
 pub const ALPHA: usize = X + 1;
 /// The position of the lift of $u$.

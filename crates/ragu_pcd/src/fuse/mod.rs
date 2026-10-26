@@ -294,8 +294,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .collect_fixed()?;
 
         let mu = transcript.challenge(&mut dr)?;
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nu = transcript.challenge(&mut dr)?;
 
         let (
             native_outer_error_witness,
@@ -315,8 +313,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_preamble,
             &y,
             &mu,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            &nu,
             saved_transcript_state,
             &mut builder,
         )?;
@@ -324,8 +320,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        let nu_prime = transcript.challenge(&mut dr)?;
 
         self.compute_ab(
             rng,
@@ -336,8 +330,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &native_source,
             &mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            &nu_prime,
             &mut builder,
         )?;
         let bridge_ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
@@ -379,21 +371,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
-        let bound_challenges = [
-            &w,
-            &y,
-            &z,
-            &mu,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            &nu,
-            &mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            &nu_prime,
-            &x,
-            &alpha,
-            &u,
-        ]
-        .map(|challenge| *challenge.value().take());
+        let bound_challenges =
+            [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
             &bound_challenges,
             &left,
@@ -463,11 +442,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_y(*y.value().take());
         builder.set_z(*z.value().take());
         builder.set_mu(*mu.value().take());
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        builder.set_nu(*nu.value().take());
         builder.set_mu_prime(*mu_prime.value().take());
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        builder.set_nu_prime(*nu_prime.value().take());
         builder.set_x(*x.value().take());
         builder.set_alpha(*alpha.value().take());
         builder.set_u(*u.value().take());

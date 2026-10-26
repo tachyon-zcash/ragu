@@ -260,11 +260,7 @@ pub struct Challenges<F> {
     pub y: F,
     pub z: F,
     pub mu: F,
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    pub nu: F,
     pub mu_prime: F,
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    pub nu_prime: F,
     pub x: F,
     pub alpha: F,
     pub u: F,
@@ -279,11 +275,7 @@ impl<F: Copy> Challenges<F> {
             self.y,
             self.z,
             self.mu,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            self.nu,
             self.mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            self.nu_prime,
             self.x,
             self.alpha,
             self.u,

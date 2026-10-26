@@ -288,11 +288,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) y: C::CircuitField,
     pub(crate) z: C::CircuitField,
     pub(crate) mu: C::CircuitField,
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    pub(crate) nu: C::CircuitField,
     pub(crate) mu_prime: C::CircuitField,
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    pub(crate) nu_prime: C::CircuitField,
     pub(crate) x: C::CircuitField,
     pub(crate) alpha: C::CircuitField,
     pub(crate) u: C::CircuitField,
@@ -567,11 +563,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             y: self.y,
             z: self.z,
             mu: self.mu,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu: self.nu,
             mu_prime: self.mu_prime,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime: self.nu_prime,
             x: self.x,
             alpha: self.alpha,
             u: self.u,
@@ -615,18 +607,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.mu
     }
 
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    pub(crate) fn nu(&self) -> C::CircuitField {
-        self.nu
-    }
-
     pub(crate) fn mu_prime(&self) -> C::CircuitField {
         self.mu_prime
-    }
-
-    #[cfg(not(feature = "experimental-quotient-fold"))]
-    pub(crate) fn nu_prime(&self) -> C::CircuitField {
-        self.nu_prime
     }
 
     pub(crate) fn x(&self) -> C::CircuitField {
@@ -1089,11 +1071,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             y: C::CircuitField::ONE,
             z: C::CircuitField::ONE,
             mu: C::CircuitField::ONE,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu: C::CircuitField::ONE,
             mu_prime: C::CircuitField::ONE,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime: C::CircuitField::ONE,
             x: C::CircuitField::ONE,
             alpha: C::CircuitField::ONE,
             u: C::CircuitField::ONE,
@@ -1444,11 +1422,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_y(C::CircuitField::ONE);
         builder.set_z(C::CircuitField::ONE);
         builder.set_mu(C::CircuitField::ONE);
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        builder.set_nu(C::CircuitField::ONE);
         builder.set_mu_prime(C::CircuitField::ONE);
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        builder.set_nu_prime(C::CircuitField::ONE);
         builder.set_x(C::CircuitField::ONE);
         builder.set_alpha(C::CircuitField::ONE);
         builder.set_u(C::CircuitField::ONE);

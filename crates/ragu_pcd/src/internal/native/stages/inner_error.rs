@@ -24,10 +24,10 @@ use crate::{
 
 /// Witness data for the inner error stage (layer 1).
 ///
-/// Contains N sets of M-sized error terms for the first layer of reduction.
+/// Contains N groups of M-1 quotient coefficients for the first layer.
 pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.
-    /// Outer: N claims, Inner: M²-M error terms per claim.
+    /// Outer: N groups. Inner: M-1 quotient coefficients in ascending power order.
     pub error_terms:
         FixedVec<FixedVec<C::CircuitField, NumErrorTerms<FP::GroupSize>>, FP::NumGroups>,
 }
@@ -38,7 +38,7 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
 #[derive(Gadget, Consistent)]
 pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
     /// Error term elements for layer 1.
-    /// Outer: N claims, Inner: M²-M error terms per claim.
+    /// Outer: N groups. Inner: M-1 quotient coefficients in ascending power order.
     #[ragu(gadget)]
     pub error_terms:
         FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<FP::GroupSize>>, FP::NumGroups>,
@@ -58,9 +58,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
     fn values() -> usize {
-        // N * (M² - M) error terms
-        let error_terms_per_claim = NumErrorTerms::<FP::GroupSize>::len();
-        FP::NumGroups::len() * error_terms_per_claim
+        // N * (M - 1) quotient coefficients
+        let error_terms_per_group = NumErrorTerms::<FP::GroupSize>::len();
+        FP::NumGroups::len() * error_terms_per_group
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

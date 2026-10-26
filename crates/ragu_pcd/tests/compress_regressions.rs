@@ -208,11 +208,7 @@ fn decider_rejects_malformed_inputs_and_propagates_header_errors() {
         bump!(y, Fp::ONE);
         bump!(z, Fp::ONE);
         bump!(mu, Fp::ONE);
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        bump!(nu, Fp::ONE);
         bump!(mu_prime, Fp::ONE);
-        #[cfg(not(feature = "experimental-quotient-fold"))]
-        bump!(nu_prime, Fp::ONE);
         bump!(x, Fp::ONE);
         bump!(alpha, Fp::ONE);
         bump!(u, Fp::ONE);
@@ -320,11 +316,7 @@ fn output_header_preserves_padding_capacity_and_errors() {
 /// Each bridge commitment and the number of Fuse challenges drawn after it.
 fn fuse_schedule() -> [(nested::RxIndex, usize); 8] {
     use nested::RxIndex::*;
-    let folding_challenges = if cfg!(feature = "experimental-quotient-fold") {
-        1
-    } else {
-        2
-    };
+    let folding_challenges = 1;
     [
         (BridgePreamble, 1),
         (BridgeSPrime, 2),

@@ -1371,11 +1371,7 @@ mod proof_equivalence {
                 y: _,
                 z: _,
                 mu: _,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                    nu: _,
                 mu_prime: _,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                    nu_prime: _,
                 x: _,
                 alpha: _,
                 u: _,
@@ -1487,11 +1483,7 @@ mod proof_equivalence {
                 self.y,
                 self.z,
                 self.mu,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                self.nu,
                 self.mu_prime,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                self.nu_prime,
                 self.x,
                 self.alpha,
                 self.u,
@@ -1501,11 +1493,7 @@ mod proof_equivalence {
                 other.y,
                 other.z,
                 other.mu,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                other.nu,
                 other.mu_prime,
-                #[cfg(not(feature = "experimental-quotient-fold"))]
-                other.nu_prime,
                 other.x,
                 other.alpha,
                 other.u,

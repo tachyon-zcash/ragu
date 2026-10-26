@@ -2,10 +2,9 @@
 //!
 //! Alongside the two host-curve commitments it bridges, this stage carries
 //! the layer-1 error terms of the nested revdot fold: for each group of the
-//! children's nested claims, the off-diagonal revdot products of that group.
+//! children's nested claims, the coefficients of that group's quotient.
 //! They are committed here, inside the bridge stage whose commitment the
-//! transcript absorbs before squeezing the first-layer folding challenge(s). This preserves the
-//! commit-before-challenge order without changing the transcript schedule.
+//! transcript absorbs before squeezing the first-layer folding challenge.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.
 //! The [`collapse`] circuit checks the fold.
@@ -48,8 +47,8 @@ pub struct Witness<C: Affine, P: Profile> {
     pub registry_wy: C,
     /// Layer-1 error terms of the nested revdot fold.
     ///
-    /// Outer: one entry per group. Inner: the group's off-diagonal revdot
-    /// products, in [`inner_error_terms_with_backend`] order.
+    /// Outer: one entry per group. Inner: the group's quotient coefficients
+    /// in ascending power order, as returned by [`inner_error_terms_with_backend`].
     ///
     /// [`inner_error_terms_with_backend`]: crate::internal::fold_revdot::inner_error_terms_with_backend
     pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize<P>>>, NumGroups<P>>,
@@ -81,7 +80,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point + N * (M² - M) error terms
+        // (x, y) per point + N * (M - 1) quotient coefficients
         NUM * 2 + NumGroups::<P>::len() * NumErrorTerms::<GroupSize<P>>::len()
     }
 

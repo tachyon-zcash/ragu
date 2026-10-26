@@ -43,11 +43,11 @@ pub struct KyValues<F> {
 
 /// Witness data for the outer error stage (layer 2).
 ///
-/// Contains $N^2 - N$ error terms for the second layer of reduction, plus the
+/// Contains $N - 1$ quotient coefficients for the second layer of reduction, plus the
 /// $N$ collapsed values from layer 1 folding, and the saved sponge state for
 /// bridging the transcript between hashes_1 and hashes_2.
 pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
-    /// Error term elements for layer 2.
+    /// Layer-2 quotient coefficients in ascending power order.
     pub error_terms: FixedVec<C::CircuitField, NumErrorTerms<FP::NumGroups>>,
 
     /// Collapsed values from layer 1 folding ($N$ values). These are the
@@ -87,7 +87,7 @@ pub struct Output<
     FP: fold_revdot::Parameters,
     Poseidon: ragu_core::PoseidonPermutation<D::F>,
 > {
-    /// Error term elements for layer 2.
+    /// Layer-2 quotient coefficients in ascending power order.
     #[ragu(gadget)]
     pub error_terms: FixedVec<Element<'dr, D>, NumErrorTerms<FP::NumGroups>>,
     /// Collapsed values from layer 1 folding (N values).
@@ -119,7 +119,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
     fn values() -> usize {
-        // N² - N error terms + N collapsed values + 6 ky values + sponge state elements
+        // N - 1 quotient coefficients + N collapsed values + 6 ky values + sponge state elements
         NumErrorTerms::<FP::NumGroups>::len()
             + FP::NumGroups::len()
             + 6

@@ -47,12 +47,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             z: builder.z(),
             bridge_inner_error_commitment: builder.bridge_inner_error_commitment(),
             mu: builder.mu(),
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu: builder.nu(),
             bridge_outer_error_commitment: builder.bridge_outer_error_commitment(),
             mu_prime: builder.mu_prime(),
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            nu_prime: builder.nu_prime(),
             c: builder.native_c(),
             bridge_ab_commitment: builder.bridge_ab_commitment()?,
             x: builder.x(),

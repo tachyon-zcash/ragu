@@ -12,7 +12,7 @@
 //!   (scalar) field, including endoscaling verification
 //! - [`claims`] — generic [`claims::Builder`] for assembling revdot
 //!   claims, shared by both fields
-//! - [`fold_revdot`] — two-layer Horner-style folding that batch-reduces
+//! - [`fold_revdot`] — two-layer quotient folding that batch-reduces
 //!   revdot claims
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
@@ -23,15 +23,7 @@
 pub mod claims;
 pub mod const_fns;
 pub mod endoscalar;
-#[cfg(not(feature = "experimental-quotient-fold"))]
 pub mod fold_revdot;
-#[cfg(feature = "experimental-quotient-fold")]
-#[path = "quotient_fold.rs"]
-pub mod fold_revdot;
-#[cfg(feature = "experimental-quotient-fold")]
-#[path = "fold_revdot.rs"]
-#[allow(dead_code)]
-mod horner_fold;
 pub mod inverter;
 pub mod ky;
 pub mod native;

@@ -9,11 +9,11 @@
 //!
 //! - **Layer 1.** For each group of the children's nested claims, folds the
 //!   `inner_error` stage's error terms with the group's $k(y_n)$ values under
-//!   the lifted $\mu$ and $\nu$ ([`ClaimFolder::fold_inner`]) and enforces
+//!   the lifted $\mu$ ([`ClaimFolder::fold_inner`]) and enforces
 //!   the result equal to the collapsed value the `outer_error` stage
 //!   witnessed.
 //! - **Layer 2.** Folds the collapsed values with the `outer_error` stage's
-//!   error terms under the lifted $\mu'$ and $\nu'$
+//!   error terms under the lifted $\mu'$
 //!   ([`ClaimFolder::fold_outer`]) and enforces the result equal to the
 //!   instance's $c_n$, outside the base case.
 //!
@@ -154,12 +154,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let mut ky = ky_values::<P, _>(&ky);
 
         // Layer 1: each group's fold must be the collapsed value witnessed.
-        let fold = fold_revdot::ClaimFolder::new(
-            dr,
-            &lifts[challenges::MU].lift,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            &lifts[challenges::NU].lift,
-        )?;
+        let fold = fold_revdot::ClaimFolder::new(&lifts[challenges::MU].lift);
         for (error_terms, collapsed) in stages
             .inner_error
             .error_terms
@@ -173,12 +168,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
 
         // Layer 2: the fold of the collapsed values is c_n, outside the base
         // case.
-        let fold = fold_revdot::ClaimFolder::new(
-            dr,
-            &lifts[challenges::MU_PRIME].lift,
-            #[cfg(not(feature = "experimental-quotient-fold"))]
-            &lifts[challenges::NU_PRIME].lift,
-        )?;
+        let fold = fold_revdot::ClaimFolder::new(&lifts[challenges::MU_PRIME].lift);
         let computed_c = fold.fold_outer::<RevdotParameters<P>>(
             dr,
             &stages.outer_error.error_terms,
