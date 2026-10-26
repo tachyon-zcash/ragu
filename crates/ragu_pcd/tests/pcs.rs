@@ -19,7 +19,6 @@ use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Fq},
 };
-use ragu_primitives::vec::Len;
 use udon::field::Field;
 
 use crate::{
@@ -37,7 +36,7 @@ type Evaluation<'a> = (String, &'a Poly, Commitment);
 fn expected_rx_order() -> Vec<RxIndex> {
     use RxIndex::*;
 
-    (0..nested::NumStepsLen::len())
+    (0..nested::num_endoscaling_steps(0))
         .map(|step| EndoscalingStep(step.try_into().unwrap()))
         .chain([
             Export,
@@ -61,7 +60,7 @@ fn expected_rx_order() -> Vec<RxIndex> {
 fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
     use InternalCircuitIndex::*;
 
-    (0..nested::NumStepsLen::len())
+    (0..nested::num_endoscaling_steps(0))
         .map(|step| EndoscalingStep(step.try_into().unwrap()))
         .chain([
             Export,
@@ -118,6 +117,7 @@ fn check_batch<H: Header<Fp>>(
         "nested registry_xy is not m_n(W, x_n, y_n)"
     );
     let batch = pcs::Batch {
+        polys: 0,
         left,
         right,
         registry_wx0: &registry_wx0,
@@ -167,8 +167,8 @@ fn check_batch<H: Header<Fp>>(
 
     let rx = expected_rx_order();
     let circuits = expected_circuit_order();
-    assert_eq!(rx.len(), RxIndex::NUM);
-    assert_eq!(circuits.len(), InternalCircuitIndex::NUM);
+    assert_eq!(rx.len(), RxIndex::num(0));
+    assert_eq!(circuits.len(), InternalCircuitIndex::num(0));
     let mut evaluated: Vec<Evaluation<'_>> = Vec::new();
     for (side, child) in [("left", left), ("right", right)] {
         for &id in &rx {
@@ -195,7 +195,7 @@ fn check_batch<H: Header<Fp>>(
     for (index, id) in circuits.into_iter().enumerate() {
         // Derive each expected domain point from its position in the test's
         // circuit list, so a reordered production table cannot relabel it.
-        assert_eq!(usize::from(id.circuit_index()), index, "{id:?}");
+        assert_eq!(usize::from(id.circuit_index(0)), index, "{id:?}");
         queries.push((
             format!("xy@{id:?}"),
             batch.registry_xy,
@@ -228,7 +228,7 @@ fn check_batch<H: Header<Fp>>(
     let actual_commitments: Vec<_> = batch.commitments(current).collect();
     assert_eq!(actual_evaluated.len(), evaluated.len());
     assert_eq!(actual_commitments.len(), evaluated.len());
-    assert_eq!(1 + evaluated.len(), pcs::NUM_BATCHED_POINTS);
+    assert_eq!(1 + evaluated.len(), pcs::num_batched_points(0));
     for ((poly, commitment), (tag, expected_poly, expected_commitment)) in actual_evaluated
         .into_iter()
         .zip(actual_commitments)
@@ -243,9 +243,9 @@ fn check_batch<H: Header<Fp>>(
 
     // Check the production eval bridge's stored wires against direct
     // polynomial evaluations. The first two values hold native_eval.
-    let values = stage_values::<nested::stages::eval::Stage<<C as Cycle>::HostCurve, R>>(
-        &parent.bridge_eval_rx,
-    );
+    let values = stage_values::<
+        nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, ragu_primitives::vec::ConstLen<0>>,
+    >(&parent.bridge_eval_rx);
     assert_eq!(values.len(), 2 + evaluated.len());
     for (value, (tag, poly, _)) in values[2..].iter().zip(&evaluated) {
         assert_eq!(*value, poly.eval(u), "eval bridge: {tag}");
@@ -355,7 +355,7 @@ mod folding {
         },
     };
 
-    type P = nested::RevdotParameters;
+    type P = nested::RevdotParameters<ragu_primitives::vec::ConstLen<0>>;
 
     /// The two children's `k(y)` values as plain scalars.
     struct ChildValues {
@@ -397,19 +397,23 @@ mod folding {
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
-        let mut nested_claims = claims::Builder::new(&app.nested_registry, y, z);
-        nested::claims::build(&NestedFuseProofSource { left, right }, &mut nested_claims)?;
+        let mut nested_claims = claims::Builder::new(&app.nested_registry, y, z, 0);
+        nested::claims::build(
+            &NestedFuseProofSource { left, right },
+            &mut nested_claims,
+            0,
+        )?;
         let unified_ky = |proof: &Proof<C, R>| -> Result<Fq> {
             NestedFuseEmulator::<C>::emulate_wireless(
                 (proof.nested_instance()?, y),
                 |dr, witness| {
                     let (instance, y) = witness.cast();
                     let y = Element::alloc(dr, &mut (), y)?;
-                    let output = nested::unified::Output::<_, ragu_core::pasta::EqAffine>::alloc(
-                        dr,
-                        &mut (),
-                        instance.as_ref(),
-                    )?;
+                    let output = nested::unified::Output::<
+                        _,
+                        ragu_core::pasta::EqAffine,
+                        ragu_primitives::vec::ConstLen<0>,
+                    >::alloc(dr, &mut (), instance.as_ref())?;
                     Ok(*output.ky(dr, &y)?.value().take())
                 },
             )
@@ -432,7 +436,7 @@ mod folding {
         z: Fq,
     ) -> Result<bool> {
         let (nested_claims, children) = child_claims(app, left, right, y, z)?;
-        Ok(nested::claims::ky_values(&children)
+        Ok(nested::claims::ky_values(&children, 0)
             .zip(nested_claims.a.iter().zip(nested_claims.b.iter()))
             .all(|(ky, (a, b))| a.revdot(b) == ky))
     }
@@ -456,14 +460,14 @@ mod folding {
         // instance circuit per child, and one bonding claim per bonding kind
         // folded across both children.
         let steps = crate::internal::endoscalar::num_steps::<{ nested::ENDOSCALINGS_PER_STEP }>(
-            nested::NUM_ENDOSCALING_POINTS,
+            nested::num_endoscaling_points(0),
         );
         let circuits = steps + nested::NUM_INSTANCE_CIRCUITS;
-        let bonding_kinds = nested::InternalCircuitIndex::NUM - circuits;
+        let bonding_kinds = nested::InternalCircuitIndex::num(0) - circuits;
         assert_eq!(nested_claims.a.len(), 2 + 2 * circuits + bonding_kinds);
 
         // 1. Every nested claim of the children holds at the derived challenges.
-        for (i, (ky, (a, b))) in nested::claims::ky_values(&children)
+        for (i, (ky, (a, b))) in nested::claims::ky_values(&children, 0)
             .zip(nested_claims.a.iter().zip(nested_claims.b.iter()))
             .enumerate()
         {
@@ -508,7 +512,11 @@ mod folding {
         // The inner stage starts with two curve points (four coordinates),
         // followed by the error terms in group-major order.
         let inner_values = stage_values::<
-            nested::stages::inner_error::Stage<<C as Cycle>::HostCurve, R>,
+            nested::stages::inner_error::Stage<
+                <C as Cycle>::HostCurve,
+                R,
+                ragu_primitives::vec::ConstLen<0>,
+            >,
         >(&parent.bridge_inner_error_rx);
         assert!(
             inner_values[4..]
@@ -520,7 +528,11 @@ mod folding {
         // The outer stage starts with one curve point, followed by the outer
         // error terms and then one collapsed value per group.
         let outer_values = stage_values::<
-            nested::stages::outer_error::Stage<<C as Cycle>::HostCurve, R>,
+            nested::stages::outer_error::Stage<
+                <C as Cycle>::HostCurve,
+                R,
+                ragu_primitives::vec::ConstLen<0>,
+            >,
         >(&parent.bridge_outer_error_rx);
         let (stored_outer_errors, stored_collapsed) =
             outer_values[2..].split_at(outer_errors.len());
@@ -603,7 +615,7 @@ mod folding {
                     left_unified,
                     right_unified,
                 );
-                let mut ky = nested::claims::ky_values(&ky_source);
+                let mut ky = nested::claims::ky_values(&ky_source, 0);
 
                 let layer1 = ClaimFolder::new(dr, &mu, &nu)?;
                 let collapsed = FixedVec::try_from_fn(|i| {
@@ -899,9 +911,11 @@ mod challenge_stage {
             );
         }
 
-        let pad = stage_wire_indices::<_, R, challenges::Stage<EqAffine, R>>(|stage| {
-            wires_of(&stage.base_case.zero)
-        })?[0];
+        let pad = stage_wire_indices::<
+            _,
+            R,
+            challenges::Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>,
+        >(|stage| wires_of(&stage.base_case.zero))?[0];
         let mut stale = child.proof().clone();
         assert_eq!(
             StageReader::new(&stale.nested_challenges_rx).read(pad),

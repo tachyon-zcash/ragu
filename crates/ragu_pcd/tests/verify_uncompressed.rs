@@ -13,7 +13,7 @@ use udon::field::Field;
 use super::*;
 use crate::{
     ApplicationBuilder,
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 type TestR = ProductionRank;
@@ -21,8 +21,8 @@ const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
     let pasta = ragu_pcd::pasta::baked();
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .finalize(pasta)
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(pasta)
+        .finalize()
         .expect("failed to create test application")
 }
 
@@ -60,7 +60,7 @@ impl Step<Pasta> for UnitSeed {
         const HS: usize,
     >(
         &self,
-        _: &mut D,
+        _: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -107,7 +107,7 @@ impl Step<Pasta> for UnitStep {
         const HS: usize,
     >(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -126,8 +126,8 @@ impl Step<Pasta> for UnitStep {
         let allocator = &mut Standard::new();
         Ok((
             (
-                Encoded::new(dr, allocator, left)?,
-                Encoded::new(dr, allocator, right)?,
+                Encoded::new(ctx.dr, allocator, left)?,
+                Encoded::new(ctx.dr, allocator, right)?,
                 Encoded::from_gadget(()),
             ),
             D::unit(),
@@ -184,12 +184,12 @@ fn verify_rejects_wrong_right_header_size() {
 /// Builds an application with a unit seed step to seed and a unit step
 /// fusing two `Pcd<()>` children.
 fn unit_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(ragu_pcd::pasta::baked())
         .register(UnitSeed)
         .expect("register seed step")
         .register(UnitStep)
         .expect("register fuse step")
-        .finalize(ragu_pcd::pasta::baked())
+        .finalize()
         .expect("failed to create test application")
 }
 
@@ -341,10 +341,10 @@ fn rerandomize_unit_proof_still_verifies() {
     // an honest rerandomize takes the normal claim-enforcing path — and
     // must still preserve verification.
     let pasta = ragu_pcd::pasta::baked();
-    let app = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(pasta)
         .register(UnitSeed)
         .expect("register seed step")
-        .finalize(pasta)
+        .finalize()
         .expect("failed to create test application");
 
     let mut rng = StdRng::seed_from_u64(7);

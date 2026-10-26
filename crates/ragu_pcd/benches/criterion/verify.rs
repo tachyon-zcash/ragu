@@ -15,12 +15,12 @@ use rand::{SeedableRng, rngs::StdRng};
 fn verify_bench(c: &mut Criterion) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
 
     // Build real proofs once, outside the timed verification loop.

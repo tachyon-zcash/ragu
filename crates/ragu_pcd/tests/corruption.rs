@@ -69,8 +69,8 @@ impl Fixture {
 /// circuit id zero — which every dummy proof carries — names no application
 /// circuit.
 fn empty_app() -> Application<'static, C, R, HEADER_SIZE> {
-    ApplicationBuilder::<C, R, HEADER_SIZE>::new()
-        .finalize(ragu_pcd::pasta::baked())
+    ApplicationBuilder::<C, R, HEADER_SIZE>::new(ragu_pcd::pasta::baked())
+        .finalize()
         .expect("the empty application must build")
 }
 

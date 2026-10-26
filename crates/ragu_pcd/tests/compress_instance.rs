@@ -28,8 +28,8 @@ type TestR = ProductionRank;
 const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(crate::pasta::baked())
+        .finalize()
         .expect("failed to create test application")
 }
 
@@ -74,7 +74,7 @@ fn targets_match_the_decider() {
     let (native, nested) = instance
         .targets::<HEADER_SIZE>(&challenges, &header, y, nested_y)
         .unwrap();
-    let expected = ky::native_ky::<Pasta, TestR, (), HEADER_SIZE>(&pcd, y).unwrap();
+    let expected = ky::native_ky::<Pasta, TestR, (), HEADER_SIZE, crate::NoHooks>(&pcd, y).unwrap();
     assert_eq!(native.c, Some(pcd.proof().native_c()));
     assert_eq!(native.application, expected.application);
     assert_eq!(native.unified_bridge, expected.unified_bridge);
@@ -82,7 +82,7 @@ fn targets_match_the_decider() {
     assert_eq!(nested.c, pcd.proof().nested_c());
     assert_eq!(
         nested.unified,
-        ky::nested_ky(pcd.proof(), nested_y).unwrap()
+        ky::nested_ky::<_, _, ragu_primitives::vec::ConstLen<0>>(pcd.proof(), nested_y).unwrap()
     );
 }
 

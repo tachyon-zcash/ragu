@@ -11,7 +11,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, NoHooks, Pcd};
 use ragu_testing::pcd::nontrivial;
 use rand::rngs::StdRng;
 use setup::{
@@ -28,7 +28,7 @@ fn register(
     ),
 ) {
     black_box(
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        ApplicationBuilder::<Pasta, ProductionRank, 4>::new(ragu_pcd::pasta::baked())
             .register(leaf)
             .unwrap()
             .register(hash)
@@ -39,12 +39,12 @@ fn register(
 #[library_benchmark(setup = setup_finalize)]
 #[bench::finalize()]
 fn finalize(
-    (app, pasta): (
+    (app, _pasta): (
         ApplicationBuilder<'static, Pasta, ProductionRank, 4>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {
-    black_box(app.finalize(pasta)).unwrap();
+    black_box(app.finalize()).unwrap();
 }
 
 library_benchmark_group!(
@@ -101,7 +101,7 @@ library_benchmark_group!(
 #[bench::fuse_accelerated()]
 fn fuse_accelerated(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
+        Application<'static, Pasta, ProductionRank, 4, NoHooks, AcceleratedBackend>,
         Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
         Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
         &'static <Pasta as Cycle>::CircuitPoseidon,

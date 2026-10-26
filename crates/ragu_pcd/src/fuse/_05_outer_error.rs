@@ -19,7 +19,10 @@ use ragu_core::{
     drivers::{Driver, emulator::Emulator},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, vec::FixedVec};
+use ragu_primitives::{
+    Element,
+    vec::{FixedVec, Len},
+};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -39,10 +42,17 @@ use crate::{
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
-type NestedNumGroups = <nested::RevdotParameters as Parameters>::NumGroups;
+type NestedNumGroups<J> = <nested::RevdotParameters<
+    <J as crate::framework_hooks::HookConfig>::PolyWitnesses,
+> as Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     pub(super) fn outer_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
         &self,
@@ -53,10 +63,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             native::RevdotParameters,
         >,
         native_claims: NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
-        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
+        nested_inner_error_witness: &nested::stages::inner_error::Witness<
+            C::HostCurve,
+            J::PolyWitnesses,
+        >,
         nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
-        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve>,
+        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, J::PolyWitnesses>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
         nu: &Element<'dr, D>,
@@ -64,14 +77,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C::CircuitField,
             ragu_primitives::poseidon::PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>,
         >,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<(
         native::stages::outer_error::Witness<C, native::RevdotParameters>,
         FixedVec<TrackedPoly<'rx, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
-        nested::stages::outer_error::Witness<C::HostCurve>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested::stages::outer_error::Witness<C::HostCurve, J::PolyWitnesses>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -99,8 +112,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 let (preamble_witness, inner_error_terms, y, mu, nu) = witness.cast();
                 let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
+                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE, J>::default()
                     .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                // The derived challenges are their own stage, so the k(Y) fold
+                // reads them from there rather than from the preamble.
+                let challenges = native::stages::challenges::Stage::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                    J,
+                    native::RevdotParameters,
+                >::default()
+                .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
                 let y = Element::alloc(dr, allocator, y)?;
                 let (left_unified_ky, left_unified_bridge_ky) =
@@ -109,12 +132,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     preamble.right.unified_ky_values(dr, &y)?;
 
                 let left_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.left.application_ky(dr, &y)?,
+                    application: preamble.left.application_ky(dr, &y, &challenges.left)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.right.application_ky(dr, &y)?,
+                    application: preamble.right.application_ky(dr, &y, &challenges.right)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
                 };
@@ -130,7 +153,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     &left_ky,
                     &right_ky,
                 );
-                let mut ky = native::claims::ky_values(&ky_source);
+                let mut ky = native::claims::ky_values(&ky_source, J::PolyWitnesses::len());
 
                 let fold_products = fold_revdot::ClaimFolder::new(dr, &mu, &nu)?;
 
@@ -207,13 +230,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             native::RevdotParameters,
         >,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()> {
-        let rx =
-            native::stages::outer_error::Stage::<C, R, HEADER_SIZE, native::RevdotParameters>::rx(
-                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-                native_outer_error_witness,
-            )?;
+        let rx = native::stages::outer_error::Stage::<
+            C,
+            R,
+            HEADER_SIZE,
+            J,
+            native::RevdotParameters,
+        >::rx(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            native_outer_error_witness,
+        )?;
 
         builder.set_native_outer_error_rx(rx);
 
@@ -236,18 +264,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     fn compute_nested_outer_error<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve>,
+        nested_inner_error_witness: &nested::stages::inner_error::Witness<
+            C::HostCurve,
+            J::PolyWitnesses,
+        >,
         nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
-        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve>,
+        nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, J::PolyWitnesses>,
         native_y: C::CircuitField,
         native_mu: C::CircuitField,
         native_nu: C::CircuitField,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<(
-        nested::stages::outer_error::Witness<C::HostCurve>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested::stages::outer_error::Witness<C::HostCurve, J::PolyWitnesses>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
+        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
     )> {
         let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
@@ -258,12 +289,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let a = fold_revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
             _,
-            nested::RevdotParameters,
+            nested::RevdotParameters<J::PolyWitnesses>,
         >(&nested_claims.a, nested_mu_inv);
         let b = fold_revdot::fold_inner::<
             sparse::Polynomial<C::ScalarField, R>,
             _,
-            nested::RevdotParameters,
+            nested::RevdotParameters<J::PolyWitnesses>,
         >(&nested_claims.b, nested_mu_nu);
         drop(nested_claims);
 
@@ -287,8 +318,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 let (left_c, right_c) = cs.cast();
                 let allocator = &mut ();
 
-                let preamble = nested::stages::preamble::Stage::<C::HostCurve, R>::default()
-                    .witness(dr, nested_preamble.as_ref().map(|w| *w))?;
+                let preamble =
+                    nested::stages::preamble::Stage::<C::HostCurve, R, J::PolyWitnesses>::default()
+                        .witness(dr, nested_preamble.as_ref().map(|w| *w))?;
 
                 let nested_y = Element::alloc(dr, allocator, nested_y)?;
                 let nested_mu = Element::alloc(dr, allocator, nested_mu)?;
@@ -310,7 +342,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     left_unified,
                     right_unified,
                 );
-                let mut ky = nested::claims::ky_values(&ky_source);
+                let mut ky = nested::claims::ky_values(&ky_source, J::PolyWitnesses::len());
 
                 let fold_products = fold_revdot::ClaimFolder::new(dr, &nested_mu, &nested_nu)?;
 
@@ -320,27 +352,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     })?;
                     let ky = FixedVec::from_fn(|_| ky.next().unwrap());
 
-                    let v =
-                        fold_products.fold_inner::<nested::RevdotParameters>(dr, &errors, &ky)?;
+                    let v = fold_products
+                        .fold_inner::<nested::RevdotParameters<J::PolyWitnesses>>(
+                            dr, &errors, &ky,
+                        )?;
                     Ok(*v.value().take())
                 })
             },
         )?;
 
-        let error_terms =
-            fold_revdot::outer_error_terms_with_backend::<B, _, R, nested::RevdotParameters>(
-                &a, &b,
-            );
+        let error_terms = fold_revdot::outer_error_terms_with_backend::<
+            B,
+            _,
+            R,
+            nested::RevdotParameters<J::PolyWitnesses>,
+        >(&a, &b);
 
         let bridge = nested::stages::outer_error::Witness {
             native_outer_error: builder.native_outer_error_commitment(),
             error_terms,
             collapsed,
         };
-        let bridge_rx = nested::stages::outer_error::Stage::<C::HostCurve, R>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
-            &bridge,
-        )?;
+        let bridge_rx =
+            nested::stages::outer_error::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
+                C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+                &bridge,
+            )?;
         let bridge_commitment =
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_outer_error_rx(bridge_rx, bridge_commitment);

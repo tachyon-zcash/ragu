@@ -11,18 +11,26 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe},
 };
-use ragu_primitives::Element;
+use ragu_primitives::{Element, vec::Len};
 use udon::field::Field;
 
 use super::{
     native::{
         self,
-        stages::preamble::{ProofInputs, encode_output_header},
+        stages::{
+            challenges::{alloc_challenges, alloc_derived},
+            preamble::{ProofInputs, encode_output_header},
+        },
         unified as native_unified,
     },
     nested::{self, unified as nested_unified},
 };
-use crate::{Pcd, Proof, header::Header};
+use crate::{
+    Pcd, Proof,
+    framework_hooks::HookConfig,
+    header::Header,
+    proof::{DerivedChallenge, PolyQuery},
+};
 
 /// The targets of one proof's native revdot claims at one $y$.
 ///
@@ -107,18 +115,29 @@ impl<F: Field> nested::claims::KySource for NestedKy<F> {
 
 /// The native $k(y)$ values of `pcd` at `y`, read off the proof's public
 /// data and the header data.
-pub fn native_ky<C: Cycle, R: Rank, H: Header<C::CircuitField>, const HEADER_SIZE: usize>(
+pub fn native_ky<
+    C: Cycle,
+    R: Rank,
+    H: Header<C::CircuitField>,
+    const HEADER_SIZE: usize,
+    J: HookConfig,
+>(
     pcd: &Pcd<C, R, H>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
     Emulator::emulate_wireless((pcd.proof(), pcd.data().clone(), y), |dr, witness| {
         let (proof, data, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
-        let proof_inputs =
-            ProofInputs::<_, C, HEADER_SIZE>::alloc_for_verify::<R, H>(dr, proof, data)?;
+        let proof_inputs = ProofInputs::<_, C, HEADER_SIZE, J>::alloc_for_verify::<R, H>(
+            dr,
+            Maybe::clone(&proof),
+            data,
+        )?;
+        // Allocated through the same helper the challenge stage uses.
+        let challenges = alloc_challenges::<_, C, R, J>(dr, proof)?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let application = proof_inputs.application_ky(dr, &y)?;
+        let application = proof_inputs.application_ky(dr, &y, &challenges)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
@@ -129,8 +148,9 @@ pub fn native_ky<C: Cycle, R: Rank, H: Header<C::CircuitField>, const HEADER_SIZ
 }
 
 /// The nested unified instance's $k(y)$ of `proof` at the nested `y`, with
-/// $c_n$ and $v_n$ derived from the proof's polynomials.
-pub fn nested_ky<C: Cycle, R: Rank>(
+/// $c_n$ and $v_n$ derived from the proof's polynomials, for an application
+/// witnessing `L` polynomials per step.
+pub fn nested_ky<C: Cycle, R: Rank, L: Len>(
     proof: &Proof<C, R>,
     y: C::ScalarField,
 ) -> Result<C::ScalarField> {
@@ -138,7 +158,7 @@ pub fn nested_ky<C: Cycle, R: Rank>(
         let (instance, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
         let output =
-            nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance.as_ref())?;
+            nested_unified::Output::<_, C::HostCurve, L>::alloc(dr, &mut (), instance.as_ref())?;
         Ok(*output.ky(dr, &y)?.value().take())
     })
 }
@@ -165,30 +185,39 @@ pub struct NativeParts<'a, C: Cycle> {
     pub left_header: &'a [C::CircuitField],
     pub right_header: &'a [C::CircuitField],
     pub output_header: &'a [C::CircuitField],
+    /// The step's witnessed polynomials' commitments.
+    pub witness_polys: &'a [C::HostCurve],
+    /// The step's poly-queries.
+    pub poly_queries: &'a [PolyQuery<C::HostCurve>],
+    /// The step's derived challenges.
+    pub challenges: &'a [DerivedChallenge<C::CircuitField>],
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
 }
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
 /// [`native_ky`] computes them from a proof.
-pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize>(
+pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize, J: HookConfig>(
     parts: NativeParts<'_, C>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
     Emulator::emulate_wireless((parts, y), |dr, witness| {
         let (parts, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
-        let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc_from_parts(
+        let proof_inputs = ProofInputs::<_, C, HEADER_SIZE, J>::alloc_from_parts(
             dr,
             parts.as_ref().map(|p| p.left_header),
             parts.as_ref().map(|p| p.right_header),
             parts.as_ref().map(|p| p.output_header),
+            parts.as_ref().map(|p| p.witness_polys),
+            parts.as_ref().map(|p| p.poly_queries),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
         )?;
+        let challenges = alloc_derived::<_, J>(dr, parts.as_ref().map(|p| p.challenges))?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let application = proof_inputs.application_ky(dr, &y)?;
+        let application = proof_inputs.application_ky(dr, &y, &challenges)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
@@ -200,14 +229,14 @@ pub fn native_ky_of<C: Cycle, const HEADER_SIZE: usize>(
 
 /// The nested unified instance's $k(y)$ at the nested `y` from the
 /// instance's values, as [`nested_ky`] computes it from a proof.
-pub fn nested_ky_of<C: Cycle>(
+pub fn nested_ky_of<C: Cycle, L: Len>(
     instance: &nested_unified::Instance<C::HostCurve>,
     y: C::ScalarField,
 ) -> Result<C::ScalarField> {
     Emulator::emulate_wireless((instance, y), |dr, witness| {
         let (instance, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
-        let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
+        let output = nested_unified::Output::<_, C::HostCurve, L>::alloc(dr, &mut (), instance)?;
         Ok(*output.ky(dr, &y)?.value().take())
     })
 }

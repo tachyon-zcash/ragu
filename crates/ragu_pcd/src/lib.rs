@@ -14,6 +14,15 @@
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//!
+//! # The hook layout is declared per application
+//!
+//! How many polynomials a step may witness, how many openings it may enforce,
+//! and how many challenges it may derive (and how wide) are parameters of
+//! [`ApplicationBuilder`]. They are declared rather than folded from the
+//! registered steps because handing a circuit to the registry freezes its
+//! shape, which a maximum over steps would not settle until the last one
+//! arrives. One layout serves every step; steps that use less are padded up.
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -31,32 +40,40 @@ extern crate std;
 
 mod backend;
 mod compress;
+mod framework_hooks;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
 // here.
 pub mod fuzzing;
 pub mod header;
+pub(crate) mod instance;
 mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
+mod poly_commitment;
 mod proof;
 pub mod step;
+#[cfg(test)]
+mod tests;
 mod verify;
 
 use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
+pub use framework_hooks::{HookConfig, HookLayout};
 use header::Header;
+pub use poly_commitment::{HANDLE_WIRES, PolyHandle};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::Rank,
+    polynomials::{Rank, sparse},
     registry::{Registry, RegistryBuilder, Tag},
 };
 use ragu_core::{Cycle, Error, Result};
+use ragu_primitives::vec::{ConstLen, Len};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -105,37 +122,72 @@ impl<C: Cycle> RegistryTags<C> {
     }
 }
 
+/// The usual way to write an application's [`HookLayout`]:
+///
+/// ```rust
+/// use ragu_circuits::polynomials::ProductionRank;
+/// use ragu_core::pasta::Pasta;
+/// use ragu_pcd::{AppHooks, Application};
+///
+/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3, 3, 1, 6>>;
+/// ```
+pub struct AppHooks<
+    const POLYS: usize,
+    const QUERIES: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+>;
+
+/// Convenience alias for an application that does not use hooks.
+pub type NoHooks = AppHooks<0, 0, 0, 0>;
+
+impl<
+    const POLYS: usize,
+    const QUERIES: usize,
+    const CHALLENGES: usize,
+    const CHALLENGE_WIDTH: usize,
+> HookConfig for AppHooks<POLYS, QUERIES, CHALLENGES, CHALLENGE_WIDTH>
+{
+    type PolyWitnesses = ConstLen<POLYS>;
+    type PolyQueries = ConstLen<QUERIES>;
+    type ChallengeDerivations = ConstLen<CHALLENGES>;
+    type ChallengeWidth = ConstLen<CHALLENGE_WIDTH>;
+}
+
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// `HEADER_SIZE` is the width of one encoded header and `J` the hook layout —
+/// usually written inline as [`AppHooks`]. Together they are an application
+/// circuit's instance width: three headers plus what [`HookLayout`] prices.
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
     B: SelectableBackend = ReferenceBackend,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    params: &'params C::Params,
     num_application_steps: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
-    _marker: PhantomData<([(); HEADER_SIZE], B)>,
+    _marker: PhantomData<([(); HEADER_SIZE], J, B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE, B>
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: SelectableBackend>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, J, B>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
-    pub fn new() -> Self {
+    ///
+    /// The cycle parameters are held from here on: committing a witnessed
+    /// polynomial and hashing a derived challenge are the framework's work, so
+    /// a [`Step`] never sees them.
+    pub fn new(params: &'params C::Params) -> Self {
         ApplicationBuilder {
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
+            params,
             num_application_steps: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
@@ -146,7 +198,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// The caller's setup procedure must satisfy the
     /// [sampling requirement](Tag#sampling-requirement) for the complete
-    /// application, including the public parameters supplied to [`Self::finalize`].
+    /// application, including the public parameters supplied to [`Self::new`].
     /// This method stores the final values without validating their origin.
     /// Production callers must not use a test key.
     pub fn with_registry_tags(mut self, tags: RegistryTags<C>) -> Self {
@@ -164,10 +216,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// select a Ragu implementation but cannot provide one.
     pub fn with_backend<SelectedBackend: SelectableBackend>(
         self,
-    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, SelectedBackend> {
+    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, J, SelectedBackend> {
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
+            params: self.params,
             num_application_steps: self.num_application_steps,
             header_map: self.header_map,
             _marker: PhantomData,
@@ -201,9 +254,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
+        // Building the adapter needs no cycle parameters, so registration
+        // happens here, before `finalize` supplies them.
         self.native_registry =
             self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+                .register_circuit(Adapter::<C, S, R, HEADER_SIZE, J>::new(step, self.params))?;
         self.num_application_steps += 1;
 
         Ok(self)
@@ -241,19 +296,30 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// Returns an error if internal circuit registration, registry
     /// finalization, or the bootstrap fuse fails.
-    pub fn finalize(
-        mut self,
-        params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
+    pub fn finalize(mut self) -> Result<Application<'params, C, R, HEADER_SIZE, J, B>> {
+        // A derivation that absorbs nothing hashes the same constant in every
+        // proof, so it binds nothing and cannot be what an author meant. The
+        // sponge would produce one — the domain tag alone is enough to squeeze
+        // from — which is exactly why the refusal has to be written down.
+        if J::ChallengeDerivations::len() > 0 && J::ChallengeWidth::len() == 0 {
+            return Err(Error::Initialization(
+                "a challenge layout with derivations needs a nonzero width: one absorbing no inputs would bind nothing"
+                    .into(),
+            ));
+        }
+
+        let params = self.params;
+        let polys = J::PolyWitnesses::len();
+
         // Build the native registry:
         // 1. Application circuits (already registered)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts(self.num_application_steps);
+            internal::native::total_circuit_counts(self.num_application_steps, polys);
 
         // First, register internal circuits and masks
-        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
+        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE, J>(
             self.native_registry,
             params,
             log2_circuits,
@@ -265,10 +331,12 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // which rejects them.
         self = self.register_internal_step(step::internal::rerandomize::Rerandomize::<()>::new())?;
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE, J>::new(
                     step::internal::bootstrap::Bootstrap::new(),
-                ))?;
+                    params,
+                ),
+            )?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -282,7 +350,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = internal::nested::register_all::<C, R>(self.nested_registry)?;
+        self.nested_registry =
+            internal::nested::register_all::<C, R, J::PolyWitnesses>(self.nested_registry)?;
 
         let mut app = Application {
             native_registry: self.native_registry.finalize()?,
@@ -347,8 +416,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
 
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+            self.native_registry.register_internal_step(
+                Adapter::<C, S, R, HEADER_SIZE, J>::new(step, self.params),
+            )?;
 
         Ok(self)
     }
@@ -385,6 +455,7 @@ pub struct Application<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
     B: SelectableBackend = ReferenceBackend,
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
@@ -401,12 +472,16 @@ pub struct Application<
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
     seeded_trivial: OnceCell<Proof<C, R>>,
-    _marker: PhantomData<([(); HEADER_SIZE], B)>,
+    _marker: PhantomData<([(); HEADER_SIZE], J, B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: SelectableBackend>
+    Application<'_, C, R, HEADER_SIZE, J, B>
 {
+    pub(crate) fn hook_layout(&self) -> HookLayout {
+        J::layout()
+    }
+
     /// Seed a new computation by running a [`Step`] declaring `()` for both of
     /// its inputs.
     ///
@@ -514,5 +589,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
+    }
+
+    /// Commits a polynomial and returns the handle
+    /// [`StepCtx::witness_polynomial`](step::StepCtx::witness_polynomial)
+    /// would produce for it.
+    ///
+    /// For callers outside the circuit — checking a carried header against a
+    /// polynomial they already have. A step is handed its handles.
+    pub fn commit_polynomial<R2: Rank>(
+        &self,
+        polynomial: &sparse::Polynomial<C::CircuitField, R2>,
+    ) -> Result<[C::CircuitField; HANDLE_WIRES]> {
+        poly_commitment::handle::<C>(polynomial.commit_to_affine(C::host_generators(self.params)))
     }
 }

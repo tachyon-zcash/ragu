@@ -33,8 +33,8 @@ const HEADER_SIZE: usize = 4;
 const TAG: &[u8] = b"ragu-test-batch";
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(crate::pasta::baked())
+        .finalize()
         .expect("failed to create test application")
 }
 
@@ -276,7 +276,7 @@ fn native_batch_opens_through_the_ipa() {
     let proof = pcd.proof();
     let targets = NativeKy {
         c: Some(proof.native_c()),
-        ..ky::native_ky::<Pasta, TestR, (), HEADER_SIZE>(&pcd, y).unwrap()
+        ..ky::native_ky::<Pasta, TestR, (), HEADER_SIZE, crate::NoHooks>(&pcd, y).unwrap()
     };
     let generators = Pasta::host_generators(crate::pasta::baked());
 
@@ -392,7 +392,7 @@ fn nested_batch_opens_through_the_ipa() {
     );
     let targets = NestedKy {
         c: proof.nested_c(),
-        unified: ky::nested_ky(proof, y).unwrap(),
+        unified: ky::nested_ky::<_, _, ragu_primitives::vec::ConstLen<0>>(proof, y).unwrap(),
     };
     let generators = Pasta::nested_generators(crate::pasta::baked());
     let commitment = |component| match component {

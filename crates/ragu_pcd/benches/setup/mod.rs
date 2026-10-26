@@ -4,7 +4,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, NoHooks, Pcd};
 use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -26,7 +26,7 @@ pub fn setup_finalize() -> (
 ) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
@@ -41,12 +41,12 @@ pub fn setup_seed() -> (
 ) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
     (app, poseidon_params, StdRng::seed_from_u64(1234))
 }
@@ -82,7 +82,7 @@ pub fn setup_fuse() -> (
 /// Mirrors [`setup_fuse`], but selects the accelerated backend so the tracked
 /// baselines isolate the cost of the overridden operations.
 pub fn setup_fuse_accelerated() -> (
-    Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
+    Application<'static, Pasta, ProductionRank, 4, NoHooks, AcceleratedBackend>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
@@ -90,13 +90,13 @@ pub fn setup_fuse_accelerated() -> (
 ) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new(pasta)
         .with_backend::<AcceleratedBackend>()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
         .unwrap()
-        .finalize(pasta)
+        .finalize()
         .unwrap();
     let mut rng = StdRng::seed_from_u64(1234);
 

@@ -21,15 +21,15 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, NUM_BINDERS, RxComponent, RxIndex, num_endoscaling_steps};
 use crate::internal::claims::{Builder, Source, sum_polynomials};
 
 /// Number of circuits using unified $k(y)$ in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`], the
-/// [`NUM_BINDERS`] `bind_challenges` circuits, `bind_beta` and
-/// `bind_endoscalar`.
+/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`],
+/// [`challenge_binding`], the [`NUM_BINDERS`] `bind_challenges` circuits,
+/// `bind_beta` and `bind_endoscalar`.
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
 /// inputs include child proof headers (see [`hashes_1::Output`]).
@@ -40,8 +40,9 @@ use crate::internal::claims::{Builder, Source, sum_polynomials};
 /// [`inner_collapse`]: crate::internal::native::circuits::inner_collapse
 /// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
+/// [`challenge_binding`]: crate::internal::native::circuits::challenge_binding
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 6 + NUM_BINDERS;
+const NUM_UNIFIED_CIRCUITS: usize = 7 + NUM_BINDERS;
 
 /// The points stages the walk's inputs are committed in, in chain order.
 const POINTS_INPUT_STAGES: [RxIndex; 5] = [
@@ -128,7 +129,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         id: InternalCircuitIndex,
         rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
     ) {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index(self.witness_polys);
         let rx = sum_polynomials(rxs);
         self.circuit_impl(circuit_id, rx);
     }
@@ -138,7 +139,7 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
         id: InternalCircuitIndex,
         groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
     ) -> Result<()> {
-        let circuit_id = id.circuit_index();
+        let circuit_id = id.circuit_index(self.witness_polys);
         let folded = self.fold_bonding_groups(groups);
         self.bonding_impl(circuit_id, folded);
         Ok(())
@@ -153,8 +154,10 @@ impl<'m, 'rx, F: Field, R: Rank, B: ragu_backend::Backend>
 ///
 /// This ordering must match the $k(y)$ ordering in
 /// [`inner_collapse`](crate::internal::native::circuits::inner_collapse)
-/// and `compute_outer_error` in the fuse implementation.
-pub fn build<S, P>(source: &S, processor: &mut P) -> Result<()>
+/// and `compute_outer_error` in the fuse implementation. `polys` is the
+/// polynomial count of the application the proofs belong to, which fixes
+/// the native walk's steps.
+pub fn build<S, P>(source: &S, processor: &mut P, polys: usize) -> Result<()>
 where
     S: Source<RxComponent = RxComponent>,
     P: Processor<S::Rx, S::AppCircuitId>,
@@ -173,7 +176,7 @@ where
     }
 
     // Internal circuits and stages in canonical order.
-    for &id in &InternalCircuitIndex::ALL {
+    for id in InternalCircuitIndex::all(polys) {
         use InternalCircuitIndex::*;
         match id {
             // hashes_1: Hashes1 + Preamble + OuterError
@@ -206,14 +209,15 @@ where
                 }
             }
 
-            // outer_collapse: OuterCollapse + Preamble + OuterError
+            // outer_collapse: OuterCollapse + Preamble + OuterError + Challenges
             OuterCollapseCircuit => {
-                for ((fc, pre), en) in source
+                for (((fc, pre), en), ch) in source
                     .rx(Rx(OuterCollapse))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(OuterError)))
+                    .zip(source.rx(Rx(Challenges)))
                 {
-                    processor.internal_circuit_claim(id, [fc, pre, en].into_iter());
+                    processor.internal_circuit_claim(id, [fc, pre, en, ch].into_iter());
                 }
             }
 
@@ -226,6 +230,19 @@ where
                     .zip(source.rx(Rx(Eval)))
                 {
                     processor.internal_circuit_claim(id, [cv, pre, q, e].into_iter());
+                }
+            }
+
+            // challenge_binding: ChallengeBinding + Preamble + OuterError +
+            // Challenges (the trace spans the skipped stages)
+            ChallengeBindingCircuit => {
+                for (((cb, pre), en), ch) in source
+                    .rx(Rx(ChallengeBinding))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(OuterError)))
+                    .zip(source.rx(Rx(Challenges)))
+                {
+                    processor.internal_circuit_claim(id, [cb, pre, en, ch].into_iter());
                 }
             }
 
@@ -311,6 +328,9 @@ where
             EvalStage => {
                 processor.bonding_claim(id, source.rx(Rx(Eval)))?;
             }
+            ChallengesStage => {
+                processor.bonding_claim(id, source.rx(Rx(Challenges)))?;
+            }
             PointsBindingStage => {
                 processor.bonding_claim(id, source.rx(Rx(PointsBinding)))?;
             }
@@ -340,7 +360,6 @@ where
                     source
                         .rx(Rx(Hashes1))
                         .chain(source.rx(Rx(Hashes2)))
-                        .chain(source.rx(Rx(OuterCollapse)))
                         .chain(source.rx(Rx(BindBeta))),
                 )?;
             }
@@ -352,11 +371,19 @@ where
                     ),
                 )?;
             }
+            ChallengesFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    source
+                        .rx(Rx(ChallengeBinding))
+                        .chain(source.rx(Rx(OuterCollapse))),
+                )?;
+            }
             PointsWalkFinalStaged => {
                 processor.bonding_claim(
                     id,
                     source.rx(Rx(BindEndoscalar)).chain(
-                        (0..NUM_ENDOSCALING_STEPS as u32)
+                        (0..num_endoscaling_steps(polys) as u32)
                             .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
                     ),
                 )?;
@@ -389,8 +416,8 @@ pub trait KySource {
 
     /// One value of $1$ per proof, for the endoscaling step checks.
     ///
-    /// Repeated [`NUM_ENDOSCALING_STEPS`] times; the `+ Clone` bound is
-    /// required for `repeat_n` in [`ky_values`].
+    /// Repeated once per endoscaling step; the `+ Clone` bound is required
+    /// for `repeat_n` in [`ky_values`].
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
     /// The zero value for stage claims.
@@ -400,20 +427,20 @@ pub trait KySource {
 /// Build an iterator over $k(y)$ values in claim order.
 ///
 /// Chains the $k(y)$ sources in the order required by [`build`],
-/// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times and `ones`
-/// [`NUM_ENDOSCALING_STEPS`] times, followed by infinite zeros for stage
-/// claims.
+/// with `unified_ky` repeated [`NUM_UNIFIED_CIRCUITS`] times and `ones` once
+/// per endoscaling step of an application witnessing `polys` polynomials per
+/// step, followed by infinite zeros for stage claims.
 ///
 /// The `unified_ky` and `unified_bridge_ky` values are computed by
 /// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values)
 /// via Horner evaluation of the circuit instance polynomial.
-pub fn ky_values<S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
+pub fn ky_values<S: KySource>(source: &S, polys: usize) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
-        .chain(repeat_n(source.ones(), NUM_ENDOSCALING_STEPS).flatten())
+        .chain(repeat_n(source.ones(), num_endoscaling_steps(polys)).flatten())
         .chain(core::iter::repeat(source.zero()))
 }
 

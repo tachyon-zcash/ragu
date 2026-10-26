@@ -27,8 +27,8 @@ type TestR = ProductionRank;
 const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
-    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new(crate::pasta::baked())
+        .finalize()
         .expect("failed to create test application")
 }
 
@@ -100,8 +100,8 @@ fn native_shapes_match_the_decider() {
         Fp::random(|bytes| rng.fill_bytes(bytes)),
     );
 
-    let mut builder = Builder::<_, Fp, TestR, ReferenceBackend>::new(&app.native_registry, y, z);
-    native::claims::build(&NativePolys(proof), &mut builder).unwrap();
+    let mut builder = Builder::<_, Fp, TestR, ReferenceBackend>::new(&app.native_registry, y, z, 0);
+    native::claims::build(&NativePolys(proof), &mut builder, 0).unwrap();
 
     let shapes = super::native_shapes(proof.circuit_id(), z, &[]).unwrap();
     assert_eq!(shapes[0].kind, Kind::Raw);
@@ -128,8 +128,8 @@ fn nested_shapes_match_the_decider() {
         Fq::random(|bytes| rng.fill_bytes(bytes)),
     );
 
-    let mut builder = Builder::<_, Fq, TestR, ReferenceBackend>::new(&app.nested_registry, y, z);
-    nested::claims::build(&NestedPolys(proof), &mut builder).unwrap();
+    let mut builder = Builder::<_, Fq, TestR, ReferenceBackend>::new(&app.nested_registry, y, z, 0);
+    nested::claims::build(&NestedPolys(proof), &mut builder, 0).unwrap();
 
     let shapes = super::nested_shapes(z, &[]).unwrap();
     assert_eq!(shapes[0].kind, Kind::Raw);

@@ -11,7 +11,7 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{Point, io::Write, vec::Len};
 use udon::curve::EndomorphismAffine as Affine;
 
 /// Number of curve points in this stage.
@@ -40,13 +40,20 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub native_points_registry_wx: Point<'dr, D, C>,
 }
 
-#[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, L> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::preamble::Stage<C, R>;
+impl<C: Affine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
+    type Parent = super::preamble::Stage<C, R, L>;
     type Witness<'source> = &'source Witness<C>;
     type OutputKind = Kind![C::Base; Output<'_, _, C>];
 
@@ -82,6 +89,6 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ragu_primitives::vec::ConstLen<0>>::default());
     }
 }
