@@ -110,31 +110,65 @@ impl Index {
             StepIndex::Internal(_) => panic!("step should be application-defined"),
         }
     }
+
+    /// The fixed bundle containing this step. Internal steps are standalone.
+    pub(crate) fn bundle(
+        &self,
+        application_bundles: &[[CircuitIndex; crate::APPLICATION_SLOTS]],
+    ) -> Result<[CircuitIndex; crate::APPLICATION_SLOTS]> {
+        let circuit = self.circuit_index(application_bundles.len())?;
+        Ok(match self.index {
+            StepIndex::Internal(_) => [circuit; crate::APPLICATION_SLOTS],
+            StepIndex::Application(i) => application_bundles[i],
+        })
+    }
 }
 
-/// Represents a node in the computational graph (or the proof-carrying data
-/// tree) that represents the merging of two pieces of proof-carrying data.
+/// Defines an application circuit step evaluated while building proof-carrying data.
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
+///
+/// A step registered with [`ApplicationBuilder::register`](crate::ApplicationBuilder::register)
+/// must establish its output header's invariant by itself. Steps registered
+/// together with
+/// [`ApplicationBuilder::register_bundle`](crate::ApplicationBuilder::register_bundle)
+/// and proved together with [`Application::fuse_bundle`](crate::Application::fuse_bundle)
+/// establish that invariant jointly over the same children and with identical
+/// headers. They can only be proved in that complete, ordered bundle.
 ///
 /// A step may stage part of its witness. The gadget it returns as
 /// [`Shared`](Self::Shared) is bound wire by wire to a stage polynomial that
 /// the proof commits to separately from the step's own trace, as the internal
 /// recursion circuits stage their inputs. Ragu derives the stage's layout from
 /// the gadget type and adds the connecting equality constraints; the step
-/// still constrains the staged values itself. A step that stages nothing
-/// declares `Shared = ()` and returns an empty gadget.
+/// still constrains the staged values itself. Both steps of a bundle return
+/// the same [`Shared`](Self::Shared) gadget type, containing the circuit
+/// values they compute or use in common, and are bound to one common stage;
+/// applications do not supply a shared size, positional inputs, or connecting
+/// equality constraints.
+///
+/// The shared gadget designates no producer or consumer: each step binds
+/// its own wires to the stage, so a prover may evaluate the steps' witnesses
+/// in either order when the computation allows it;
+/// [`fuse_bundle`](crate::Application::fuse_bundle) evaluates both. The
+/// registered slot order is fixed either way.
+///
+/// A step that stages nothing declares `Shared = ()` and returns an empty
+/// gadget. Registration determines whether a step fills the proof's
+/// application slots on its own or alongside another step.
 pub trait Step<C: Cycle>: Sized + Send + Sync {
-    /// Each unique [`Step`] implementation within a provided context must have
-    /// a unique index.
+    /// Each unique [`Step`] implementation within a provided context must
+    /// have a unique index.
     const INDEX: Index;
 
-    /// The gadget this step commits to the proof's application stage.
+    /// The gadget this step commits to the proof's application stage, and
+    /// the typed connection to the other step in its bundle.
     ///
-    /// Derive [`Shared`] together with [`Gadget`](ragu_core::gadgets::Gadget)
-    /// on a named struct of elements, fixed vectors or other shared gadgets.
-    /// Use `()` for a step that stages nothing.
+    /// Both steps of a bundle must use the exact same type. Derive [`Shared`]
+    /// together with [`Gadget`](ragu_core::gadgets::Gadget) on a named struct
+    /// of elements, fixed vectors or other shared gadgets. Use `()` for a step
+    /// that stages nothing.
     type Shared: Shared<C::CircuitField>;
 
     /// The witness input needed to construct a proof for this step.
@@ -149,16 +183,17 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// The header produced during this step.
     type Output: Header<C::CircuitField>;
 
-    /// Auxiliary information produced during witness generation that may be
-    /// used to pipeline witness input to later steps.
+    /// Auxiliary information produced during witness generation.
     type Aux<'source>: Send;
 
-    /// Emits the constraints that check the validity of this merging step.
+    /// Emits this step's constraints and returns its shared connection.
     ///
     /// Returns the encoded headers (left, right, output), the actual
     /// [`Shared`](Self::Shared) gadget whose wires Ragu binds to the
-    /// application stage, the data to be carried in the resulting PCD, and
-    /// any auxiliary witness data.
+    /// application stage, and to the corresponding wires of the other step in
+    /// a bundle, the data to be carried in the resulting PCD, and any
+    /// auxiliary witness data. The step still must constrain its own
+    /// mathematical relation.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,

@@ -68,8 +68,9 @@ pub trait Source {
     /// Get an iterator over rx values for all proofs for the given component.
     fn rx(&self, component: Self::RxComponent) -> impl Iterator<Item = Self::Rx>;
 
-    /// Get an iterator over application circuit info for all proofs.
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId>;
+    /// Get an iterator over application circuit info for all proofs, for
+    /// the application slot `slot`.
+    fn app_circuits(&self, slot: usize) -> impl Iterator<Item = Self::AppCircuitId>;
 }
 
 /// Processor that builds polynomial vectors for revdot claims.

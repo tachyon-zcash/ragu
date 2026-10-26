@@ -33,7 +33,7 @@ use crate::{
     Proof, SelectableBackend,
     internal::{
         ky::{self, NativeKy, NestedKy},
-        native::{self, stages as native_stages, unified as native_unified},
+        native::{self, APPLICATION_SLOTS, stages as native_stages, unified as native_unified},
         nested::{
             self, challenge as nested_challenge, stages as nested_stages, unified as nested_unified,
         },
@@ -42,12 +42,13 @@ use crate::{
 };
 
 /// A child's values the current step's query and eval stages are checked
-/// against: its $x$, $y$ and circuit id as the preamble stage holds them.
+/// against: its $x$, $y$ and each application slot's circuit id as the
+/// preamble stage holds them.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Child<F> {
     pub x: F,
     pub y: F,
-    pub id: F,
+    pub ids: [F; APPLICATION_SLOTS],
 }
 
 /// A child's nested $x$ and $y$ as the preamble bridge stage holds them.
@@ -65,7 +66,8 @@ pub(crate) const OPENED: usize = 4;
 /// the decider would derive or read off polynomials.
 #[derive(Clone, Debug)]
 pub(crate) struct Instance<C: Cycle> {
-    pub circuit_id: CircuitIndex,
+    /// The circuit of each application slot.
+    pub circuit_ids: [CircuitIndex; APPLICATION_SLOTS],
     pub left_header: Vec<C::CircuitField>,
     pub right_header: Vec<C::CircuitField>,
 
@@ -137,12 +139,19 @@ impl<C: Cycle> Instance<C> {
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
+                wires.extend(wires_of(&child.circuit_ids)?);
             }
             Ok(wires)
         })?;
         let child: Vec<_> = child.iter().map(|&i| preamble.read(i)).collect();
-        let [lx, ly, lid, rx, ry, rid] = child.try_into().expect("six child values");
+        // Per child: x, y, then one circuit id per application slot.
+        let read_child = |values: &[C::CircuitField]| Child {
+            x: values[0],
+            y: values[1],
+            ids: values[2..].try_into().expect("one id per slot"),
+        };
+        let (left, right) = child.split_at(2 + APPLICATION_SLOTS);
+        let (left, right) = (read_child(left), read_child(right));
 
         let eval = StageReader::<C::CircuitField, R>::new(&proof[native::RxIndex::Eval]);
         let ab = stage_wire_indices::<_, R, NativeEval<C, R, HEADER_SIZE>>(|out| {
@@ -182,7 +191,7 @@ impl<C: Cycle> Instance<C> {
         ];
 
         Ok(Instance {
-            circuit_id: proof.circuit_id(),
+            circuit_ids: proof.circuit_ids(),
             left_header: proof.left_header().to_vec(),
             right_header: proof.right_header().to_vec(),
             native: native_components()
@@ -205,16 +214,8 @@ impl<C: Cycle> Instance<C> {
             v: proof.v(),
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
-            left: Child {
-                x: lx,
-                y: ly,
-                id: lid,
-            },
-            right: Child {
-                x: rx,
-                y: ry,
-                id: rid,
-            },
+            left,
+            right,
             a_at_u,
             b_at_u,
             nested_left: NestedChild {
@@ -253,7 +254,9 @@ impl<C: Cycle> Instance<C> {
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
         let mut host = transcript.host();
-        host.write_scalar(self.circuit_id.omega_j())?;
+        for id in self.circuit_ids {
+            host.write_scalar(id.omega_j())?;
+        }
         for &element in self.left_header.iter().chain(&self.right_header) {
             host.write_scalar(element)?;
         }
@@ -265,18 +268,13 @@ impl<C: Cycle> Instance<C> {
             host.write_point(point)?;
         }
         let (l, r) = (self.left, self.right);
-        for scalar in [
-            self.c,
-            self.v,
-            l.x,
-            l.y,
-            l.id,
-            r.x,
-            r.y,
-            r.id,
-            self.a_at_u,
-            self.b_at_u,
-        ] {
+        for scalar in [self.c, self.v, l.x, l.y]
+            .into_iter()
+            .chain(l.ids)
+            .chain([r.x, r.y])
+            .chain(r.ids)
+            .chain([self.a_at_u, self.b_at_u])
+        {
             host.write_scalar(scalar)?;
         }
 
@@ -449,7 +447,7 @@ impl<C: Cycle> Instance<C> {
                     left_header: &self.left_header,
                     right_header: &self.right_header,
                     output_header,
-                    circuit_id: self.circuit_id,
+                    circuit_ids: self.circuit_ids,
                     unified: &unified,
                 },
                 y,
@@ -523,18 +521,23 @@ impl<C: Cycle> Instance<C> {
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
+                wires.extend(wires_of(&child.circuit_ids)?);
             }
             Ok(wires)
         })?;
-        let preamble = claim(Rx(Preamble), preamble, vec![l.x, l.y, l.id, r.x, r.y, r.id]);
+        let child_values = |child: Child<F<C>>| [child.x, child.y].into_iter().chain(child.ids);
+        let preamble = claim(
+            Rx(Preamble),
+            preamble,
+            child_values(l).chain(child_values(r)).collect(),
+        );
 
         let query = degrees::<_, R, NativeQuery<C, R, HEADER_SIZE>>(|out| {
             let mut wires = wires_of(&out.fixed_registry)?;
             wires.extend(wires_of(&out.registry_wxy)?);
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
+                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_ids)?);
                 wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
             }
             Ok(wires)
@@ -548,15 +551,12 @@ impl<C: Cycle> Instance<C> {
                 evals[bit_reverse(j as usize, log2_n)]
             })
             .collect();
-        values.extend([
-            m(w, x, y),
-            m(w, l.x, l.y),
-            m(l.id, x, y),
-            m(w, l.x, y),
-            m(w, r.x, r.y),
-            m(r.id, x, y),
-            m(w, r.x, y),
-        ]);
+        values.push(m(w, x, y));
+        for child in [l, r] {
+            values.push(m(w, child.x, child.y));
+            values.extend(child.ids.iter().map(|&id| m(id, x, y)));
+            values.push(m(w, child.x, y));
+        }
         let query = claim(Rx(Query), query, values);
 
         let eval = degrees::<_, R, NativeEval<C, R, HEADER_SIZE>>(|out| {

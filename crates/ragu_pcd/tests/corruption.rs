@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 use nontrivial_support::{C, HEADER_SIZE, R, app};
 use ragu_core::pasta::{Fp, Fq};
 use ragu_pcd::{
-    Application, ApplicationBuilder, Proof,
+    APPLICATION_SLOTS, Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
         Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
         NestedAccumulator, NestedCommitment, NestedRx, RxComponent, Side,
@@ -106,12 +106,13 @@ fn vocabulary() -> Vec<Corruption<C>> {
     let delta = Fp::from(7u64);
     let nested_delta = Fq::from(7u64);
 
-    let mut out = vec![
+    let mut out = vec![Corruption::SwapHeaders];
+    for slot in 0..APPLICATION_SLOTS {
         // Out of the registry's domain, and in it but not the honest id.
-        Corruption::CircuitId(u32::MAX),
-        Corruption::CircuitId(1),
-        Corruption::SwapHeaders,
-    ];
+        for id in [u32::MAX, 1] {
+            out.push(Corruption::CircuitId { slot, id });
+        }
+    }
 
     for side in [Side::Left, Side::Right] {
         for index in 0..HEADER_SIZE {
@@ -206,7 +207,7 @@ impl CorruptionGroup {
     /// Every vocabulary entry belongs to exactly one independently run group.
     fn of(corruption: &Corruption<C>) -> Self {
         match corruption {
-            Corruption::CircuitId(_)
+            Corruption::CircuitId { .. }
             | Corruption::HeaderElement { .. }
             | Corruption::HeaderLen { .. }
             | Corruption::SwapHeaders
@@ -293,16 +294,32 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
     );
 }
 
-/// Zero deltas and out-of-range coefficient edits must leave a valid proof.
+/// Zero deltas, unchanged IDs and out-of-range edits must leave a valid proof.
 fn check_no_op_edits(shape: Shape) {
     let app = app();
     let fixture = fixture(&app, shape);
     assert!(fixture.clone().verify(&app, 1234));
 
+    let mut no_op_ids = fixture
+        .proof
+        .test_circuit_ids()
+        .into_iter()
+        .enumerate()
+        .map(|(slot, id)| Corruption::CircuitId { slot, id })
+        .collect::<Vec<_>>();
+    for slot in [APPLICATION_SLOTS, usize::MAX] {
+        no_op_ids.push(Corruption::CircuitId { slot, id: u32::MAX });
+    }
+    for corruption in no_op_ids {
+        let mut unchanged = fixture.clone();
+        assert_eq!(unchanged.proof.corrupt(corruption), Binding::Unbound);
+        assert!(unchanged.verify(&app, 1234));
+    }
+
     for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
         for corruption in [
             Corruption::NativeCoeff {
-                component: RxComponent::Rx(NativeRx::Application),
+                component: RxComponent::Rx(NativeRx::Application(0)),
                 coeff,
                 delta: Fp::from(delta),
             },
@@ -442,7 +459,7 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
 /// elements from the cycle), so the sweep rebuilds each one it re-applies.
 fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
     match *corruption {
-        Corruption::CircuitId(id) => Corruption::CircuitId(id),
+        Corruption::CircuitId { slot, id } => Corruption::CircuitId { slot, id },
         Corruption::HeaderElement { side, index, delta } => {
             Corruption::HeaderElement { side, index, delta }
         }
