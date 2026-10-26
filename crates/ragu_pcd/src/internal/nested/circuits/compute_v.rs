@@ -62,7 +62,7 @@ use super::common;
 use crate::{
     internal::{
         claims::Source,
-        fold_revdot::fold_two_layer,
+        fold_revdot::EvaluationFolder,
         inverter::Inverter,
         nested::{
             InternalCircuitIndex, RevdotParameters, RxComponent, RxIndex,
@@ -135,10 +135,8 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 EvaluationProcessor::new(dr, z.element(), &txz, &query.fixed_registry);
             claims::build::<P, _, _>(&source, &mut processor)?;
             let (ax, bx) = processor.build();
-            (
-                fold_two_layer::<_, RevdotParameters<P>>(dr, &ax, mu, mu_prime)?,
-                fold_two_layer::<_, RevdotParameters<P>>(dr, &bx, mu, mu_prime)?,
-            )
+            let folder = EvaluationFolder::<_, RevdotParameters<P>>::new(dr, mu, mu_prime)?;
+            (folder.fold(dr, &ax)?, folder.fold(dr, &bx)?)
         };
 
         // f_n(u_n), from the quotients of every opening.

@@ -71,7 +71,7 @@ use super::super::{
 use crate::{
     internal::{
         claims::Source,
-        fold_revdot::{Parameters, fold_two_layer},
+        fold_revdot::{EvaluationFolder, Parameters},
         inverter::Inverter,
         native::RevdotParameters,
     },
@@ -504,7 +504,8 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>, &'a 
 /// $r\_i(x)$ queries.
 ///
 /// Both vectors use the same Lagrange weights: evaluate each group at $\mu$,
-/// then evaluate the resulting group values at $\mu'$.
+/// then evaluate the resulting group values at $\mu'$. One basis per layer
+/// serves both vectors.
 fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     dr: &mut D,
     query: &native_query::Output<'dr, D, Pf>,
@@ -523,8 +524,9 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     claims::build::<Pf, _, _>(&source, &mut processor)?;
 
     let (ax_sources, bx_sources) = processor.build();
-    let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu, mu_prime)?;
-    let bx = fold_two_layer::<_, P>(dr, &bx_sources, mu, mu_prime)?;
+    let folder = EvaluationFolder::<_, P>::new(dr, mu, mu_prime)?;
+    let ax = folder.fold(dr, &ax_sources)?;
+    let bx = folder.fold(dr, &bx_sources)?;
     Ok((ax, bx))
 }
 

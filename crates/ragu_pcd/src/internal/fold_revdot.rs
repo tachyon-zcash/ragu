@@ -8,6 +8,19 @@
 //!
 //! This specializes the Lagrange/vanishing-polynomial identity used by
 //! [ProtoGalaxy](https://eprint.iacr.org/2023/1106) to scalar revdot claims.
+//!
+//! The saving is in what is carried and checked: a reduction of m claims
+//! commits m-1 quotient coefficients, and the collapse circuits fold those
+//! with the claims' targets. The prover still forms every revdot product of
+//! each group, the diagonal included, to assemble revdot(A, B) - K before
+//! dividing by Z, so its product count grows with the square of the group
+//! size while the carried count depends only on the slot budget.
+//!
+//! A challenge equal to one of the nodes 0..m makes Z vanish and the weights
+//! select that node's claim alone, so the fold then checks one claim. A
+//! transcript challenge lands there with probability m/|F|. The dummy proof's
+//! all-one challenges sit on node 1 by construction; see `dummy_proof` in
+//! `proof/mod.rs`.
 
 use alloc::{vec, vec::Vec};
 use core::{borrow::Borrow, cell::RefCell, marker::PhantomData};
@@ -52,6 +65,11 @@ pub(crate) fn fold<T: Foldable<F>, F: Field>(
 /// The first layer reduces `NumGroups` groups of up to `GroupSize` claims;
 /// the second layer reduces the resulting group claims to one. Each reduction
 /// uses one quotient coefficient fewer than its input count.
+///
+/// For a fixed slot budget `NumGroups * GroupSize`, the carried coefficient
+/// count `NumGroups * (GroupSize - 1) + NumGroups - 1` is the budget less one
+/// whatever the split, while the prover's revdot product count
+/// `NumGroups * GroupSize^2 + NumGroups^2` favours small groups.
 pub trait Parameters: 'static + Send + Sync + Copy + Default {
     type NumGroups: Len;
     type GroupSize: Len;
@@ -152,6 +170,11 @@ fn bases<F: Field>(m: usize) -> (Vec<Vec<F>>, Vec<F>) {
     (basis, z)
 }
 
+/// Divides each group's revdot(A, B) - K by Z, one quotient per group.
+///
+/// Every revdot product of a group is formed, the diagonal included, so the
+/// prover's product count is quadratic in the group size; only the quotient
+/// coefficients are committed.
 fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
@@ -376,21 +399,32 @@ impl<'dr, D: Driver<'dr>> ClaimFolder<'dr, D> {
     }
 }
 
-/// Reconstructs a trace evaluation using the same two interpolation layers.
-pub fn fold_two_layer<'dr, D: Driver<'dr>, P: Parameters>(
-    dr: &mut D,
-    sources: &[Element<'dr, D>],
-    first: &Element<'dr, D>,
-    second: &Element<'dr, D>,
-) -> Result<Element<'dr, D>> {
-    assert!(sources.len() <= P::GroupSize::len() * P::NumGroups::len());
-    let inner = Basis::new(dr, first, P::GroupSize::len())?;
-    let outer = Basis::new(dr, second, P::NumGroups::len())?;
-    let groups = sources
-        .chunks(P::GroupSize::len())
-        .map(|chunk| inner.linear(dr, chunk))
-        .collect::<Result<Vec<_>>>()?;
-    outer.linear(dr, &groups)
+/// Two-layer interpolation of trace evaluations, with one basis per layer
+/// shared by every vector folded through it.
+pub struct EvaluationFolder<'dr, D: Driver<'dr>, P: Parameters> {
+    inner: Basis<'dr, D>,
+    outer: Basis<'dr, D>,
+    _parameters: PhantomData<P>,
+}
+impl<'dr, D: Driver<'dr>, P: Parameters> EvaluationFolder<'dr, D, P> {
+    /// Builds both layers' bases at the layer challenges.
+    pub fn new(dr: &mut D, first: &Element<'dr, D>, second: &Element<'dr, D>) -> Result<Self> {
+        Ok(Self {
+            inner: Basis::new(dr, first, P::GroupSize::len())?,
+            outer: Basis::new(dr, second, P::NumGroups::len())?,
+            _parameters: PhantomData,
+        })
+    }
+    /// Reconstructs a trace evaluation from its per-claim sources, taking
+    /// missing claims and groups as zero.
+    pub fn fold(&self, dr: &mut D, sources: &[Element<'dr, D>]) -> Result<Element<'dr, D>> {
+        assert!(sources.len() <= P::GroupSize::len() * P::NumGroups::len());
+        let groups = sources
+            .chunks(P::GroupSize::len())
+            .map(|chunk| self.inner.linear(dr, chunk))
+            .collect::<Result<Vec<_>>>()?;
+        self.outer.linear(dr, &groups)
+    }
 }
 
 #[cfg(test)]

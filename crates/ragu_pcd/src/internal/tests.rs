@@ -249,7 +249,7 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes2Circuit, mul = 1868, lin = 2984);
     check_constraints!(InnerCollapseCircuit, mul = 703, lin = 563);
     check_constraints!(OuterCollapseCircuit, mul = 1082, lin = 1413);
-    check_constraints!(ComputeVCircuit, mul = 1911, lin = 2851);
+    check_constraints!(ComputeVCircuit, mul = 1858, lin = 2745);
     check_constraints!(BindBetaCircuit, mul = 1853, lin = 3014);
 
     check_constraints!(BindChallengesCircuit(0), mul = 1974, lin = 2954);
@@ -452,7 +452,7 @@ fn test_nested_circuit_constraint_counts() {
     }
     expected.push((nested::InternalCircuitIndex::Export, (1092, 1492)));
     expected.push((nested::InternalCircuitIndex::Collapse, (826, 673)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1465, 1943)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1421, 1855)));
     expected.push((nested::InternalCircuitIndex::Loading, (492, 223)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()

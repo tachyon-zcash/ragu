@@ -45,10 +45,10 @@ impl CircuitInstance for ElementFoldInstanceN7 {
     where
         D: InstanceDriver<'dr, F = Fp>,
     {
-        // n = 7: matches `RevdotParameters::GroupSize` in
-        // `crates/ragu_pcd/src/internal/native/mod.rs`. This is the inner-fold
-        // length used by `fold_revdot.rs::fold_two_layer` for each chunk of
-        // group sources.
+        // n = 7: the former native `RevdotParameters::GroupSize`, kept as a
+        // production-sized Horner shape. The two-layer evaluation fold is now
+        // the Lagrange `EvaluationFolder` in `fold_revdot.rs`; `Element::fold`
+        // remains the $z$-fold of bonding groups.
         fold_at_length::<D, 7>(dr)
     }
 }
@@ -62,9 +62,8 @@ impl CircuitInstance for ElementFoldInstanceN19 {
     where
         D: InstanceDriver<'dr, F = Fp>,
     {
-        // n = 19: matches `RevdotParameters::NumGroups` in
-        // `crates/ragu_pcd/src/internal/native/mod.rs`. This is the outer-fold
-        // length `fold_revdot.rs::fold_two_layer` uses over the group results.
+        // n = 19: the former native `RevdotParameters::NumGroups`, kept as a
+        // large Horner shape; see N7.
         fold_at_length::<D, 19>(dr)
     }
 }

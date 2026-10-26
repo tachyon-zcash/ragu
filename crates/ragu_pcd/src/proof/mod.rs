@@ -1065,7 +1065,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_one = nested::challenge::<C>(C::CircuitField::ONE)
             .expect("one is in the endoscalar challenge range");
         let nested_registry_xy_poly = B::registry_xy(&self.nested_registry, nested_one, nested_one);
-        // The all-one challenges, and their lifts on the nested side.
+        // The all-one challenges, and their lifts on the nested side. One is
+        // an interpolation node of the quotient fold, so a fold at these
+        // challenges selects claim 1 alone. That is harmless: a dummy is never
+        // verified on its own, and the bootstrap step that consumes it leaves
+        // its c unconstrained.
         let challenges = nested::Challenges {
             w: C::CircuitField::ONE,
             y: C::CircuitField::ONE,
