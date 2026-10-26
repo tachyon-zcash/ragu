@@ -222,6 +222,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Native rx polynomials
     native_application_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_application_stage_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_inner_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -327,6 +328,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Native commitment caches (lazily computed from polynomials)
     native_application_commitment: OnceCell<C::HostCurve>,
+    native_application_stage_commitment: OnceCell<C::HostCurve>,
     native_preamble_commitment: OnceCell<C::HostCurve>,
     native_inner_error_commitment: OnceCell<C::HostCurve>,
     native_outer_error_commitment: OnceCell<C::HostCurve>,
@@ -368,6 +370,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             left_header: None,
             right_header: None,
             native_application_rx: None,
+            native_application_stage_rx: None,
             native_preamble_rx: None,
             native_inner_error_rx: None,
             native_outer_error_rx: None,
@@ -442,6 +445,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             u: None,
             pre_beta: None,
             native_application_commitment: OnceCell::new(),
+            native_application_stage_commitment: OnceCell::new(),
             native_preamble_commitment: OnceCell::new(),
             native_inner_error_commitment: OnceCell::new(),
             native_outer_error_commitment: OnceCell::new(),
@@ -483,6 +487,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
     slice_getter!(right_header, right_header, C::CircuitField);
 
     native_setter!(set_native_application_rx, native_application_rx);
+    native_setter!(set_native_application_stage_rx, native_application_stage_rx);
     native_setter!(set_native_preamble_rx, native_preamble_rx);
     native_setter!(set_native_inner_error_rx, native_inner_error_rx);
     native_setter!(set_native_outer_error_rx, native_outer_error_rx);
@@ -624,6 +629,12 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         native_application_commitment,
         native_application_commitment,
         native_application_rx
+    );
+    lazy_commitment!(
+        native,
+        native_application_stage_commitment,
+        native_application_stage_commitment,
+        native_application_stage_rx
     );
     lazy_commitment!(
         native,
@@ -985,6 +996,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
         self.native_application_commitment();
+        self.native_application_stage_commitment();
         self.native_preamble_commitment();
         self.native_inner_error_commitment();
         self.native_outer_error_commitment();
@@ -1049,6 +1061,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             right_header: take!(right_header),
 
             native_application_rx: take!(native_application_rx),
+            native_application_stage_rx: take!(native_application_stage_rx),
             native_preamble_rx: take!(native_preamble_rx),
             native_inner_error_rx: take!(native_inner_error_rx),
             native_outer_error_rx: take!(native_outer_error_rx),
@@ -1136,6 +1149,7 @@ impl<'params, C: Cycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
             pre_beta: take!(pre_beta),
 
             native_application_commitment: cached!(native_application_commitment),
+            native_application_stage_commitment: cached!(native_application_stage_commitment),
             native_preamble_commitment: cached!(native_preamble_commitment),
             native_inner_error_commitment: cached!(native_inner_error_commitment),
             native_outer_error_commitment: cached!(native_outer_error_commitment),

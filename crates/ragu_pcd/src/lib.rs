@@ -45,7 +45,7 @@ mod proof;
 pub mod step;
 mod verify;
 
-use alloc::collections::BTreeMap;
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
@@ -55,8 +55,10 @@ use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder, Tag},
+    staging,
 };
 use ragu_core::{Cycle, Error, Result};
+use ragu_primitives::shared::Shared;
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -68,7 +70,7 @@ use step::{Step, internal::adapter::Adapter};
 ///
 /// The prover and all verifier paths must agree on this tag. Changing it breaks
 /// compatibility with existing proofs.
-pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
+pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v2";
 
 pub use backend::SelectableBackend;
 
@@ -105,6 +107,18 @@ impl<C: Cycle> RegistryTags<C> {
     }
 }
 
+/// A circuit registration held until every step's shared gadget size is
+/// known, so all step circuits reserve the same application stage layout.
+type ApplicationRegistration<'params, C, R> = Box<
+    dyn FnOnce(
+            RegistryBuilder<'params, <C as Cycle>::CircuitField, R>,
+            usize,
+        ) -> Result<RegistryBuilder<'params, <C as Cycle>::CircuitField, R>>
+        + Send
+        + Sync
+        + 'params,
+>;
+
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<
     'params,
@@ -115,7 +129,10 @@ pub struct ApplicationBuilder<
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    application_circuits: Vec<ApplicationRegistration<'params, C, R>>,
     num_application_steps: usize,
+    /// The largest shared gadget size among the registered steps.
+    shared_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
@@ -136,7 +153,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         ApplicationBuilder {
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
+            application_circuits: Vec::new(),
             num_application_steps: 0,
+            shared_size: 0,
             header_map: BTreeMap::new(),
             _marker: PhantomData,
         }
@@ -168,7 +187,9 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
+            application_circuits: self.application_circuits,
             num_application_steps: self.num_application_steps,
+            shared_size: self.shared_size,
             header_map: self.header_map,
             _marker: PhantomData,
         }
@@ -178,11 +199,27 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
     /// index that has not been inserted yet.
     ///
+    /// The step's [`Shared`](Step::Shared) gadget sizes the proof's
+    /// application stage: every proof carries one stage of the largest
+    /// registered layout, so the circuits are constructed by
+    /// [`Self::finalize`] once every step is known.
+    ///
+    /// # Cost
+    ///
+    /// Every step circuit, including the internal bootstrap and
+    /// rerandomization steps, reserves `ceil(n / 2)` gates for the stage,
+    /// where `n` is the application's largest shared wire count, and a step
+    /// adds one connecting equality constraint per wire in its own shared
+    /// gadget. An application whose steps all declare `Shared = ()` reserves
+    /// nothing.
+    ///
     /// # Errors
     ///
     /// Returns an error if the step's index is not the next sequential index,
-    /// if a non-unit header uses a reserved internal suffix, or if any of the
-    /// step's header suffixes conflict with an already-registered header type.
+    /// if a non-unit header uses a reserved internal suffix, if any of the
+    /// step's header suffixes conflict with an already-registered header type,
+    /// or if the shared gadget does not fit the rank's gates. Circuit
+    /// construction errors are returned by [`Self::finalize`].
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
         const {
             assert!(
@@ -201,9 +238,22 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
-        self.native_registry =
-            self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+        let shared_size = self.shared_size.max(S::Shared::num_values()?);
+        // Leave room after the SYSTEM gate and the stage.
+        if 1usize
+            .checked_add(staging::stage_gates(shared_size))
+            .is_none_or(|end| end >= R::n())
+        {
+            return Err(Error::Initialization(
+                "the shared gadget does not fit the rank's gates".into(),
+            ));
+        }
+        self.shared_size = shared_size;
+
+        self.application_circuits
+            .push(Box::new(move |registry, shared_size| {
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, shared_size)?)
+            }));
         self.num_application_steps += 1;
 
         Ok(self)
@@ -218,7 +268,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     #[cfg(test)]
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
-            self.native_registry = self.native_registry.register_circuit(())?;
+            self.application_circuits
+                .push(Box::new(|registry, _| registry.register_circuit(())));
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -239,24 +290,29 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// # Errors
     ///
-    /// Returns an error if internal circuit registration, registry
-    /// finalization, or the bootstrap fuse fails.
+    /// Returns an error if application or internal circuit construction,
+    /// registry finalization, or the bootstrap fuse fails.
     pub fn finalize(
         mut self,
         params: &'params C::Params,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         // Build the native registry:
-        // 1. Application circuits (already registered)
+        // 1. Application circuits (using the final stage size)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts(self.num_application_steps);
 
-        // First, register internal circuits and masks
+        for register in self.application_circuits.drain(..) {
+            self.native_registry = register(self.native_registry, self.shared_size)?;
+        }
+
+        // Then, register internal circuits and masks.
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,
             params,
             log2_circuits,
+            self.shared_size,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -268,7 +324,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             self.native_registry
                 .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
                     step::internal::bootstrap::Bootstrap::new(),
-                ))?;
+                    self.shared_size,
+                )?)?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -289,6 +346,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            shared_size: self.shared_size,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
             _marker: PhantomData,
@@ -335,7 +393,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// circuits end in a zero suffix that no application header can use, and
     /// only `Bootstrap` declares `Dummy` inputs. An internal step with a
     /// witnessed suffix must preserve these restrictions.
-    fn register_internal_step<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
+    fn register_internal_step<S: Step<C, Shared = ()> + 'params>(
+        mut self,
+        step: S,
+    ) -> Result<Self> {
         const {
             assert!(
                 <S::Left as Header<C::CircuitField>>::SUFFIX.get()
@@ -348,7 +409,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         self.native_registry =
             self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(
+                    step,
+                    self.shared_size,
+                )?)?;
 
         Ok(self)
     }
@@ -391,6 +455,8 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// The application stage's size, in field elements.
+    shared_size: usize,
     /// The proof that bootstraps the recursion: a genuine, verifying
     /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
     ///

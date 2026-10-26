@@ -47,6 +47,8 @@ pub struct ChildWitness<C: Affine> {
     // Field order matches the `_10_p` accumulation order.
     /// Commitment from the child's application circuit.
     pub application: C,
+    /// Commitment from the child's application stage.
+    pub application_stage: C,
     /// Commitment from the child's first hashes circuit.
     pub hashes_1: C,
     /// Commitment from the child's second hashes circuit.
@@ -127,6 +129,7 @@ impl<C: Affine> ChildWitness<C> {
         let instance = proof.nested_instance()?;
         Ok(Self {
             application: proof.native_rx_commitment(RxIndex::Application),
+            application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
             hashes_1: proof.native_rx_commitment(RxIndex::Hashes1),
             hashes_2: proof.native_rx_commitment(RxIndex::Hashes2),
             inner_collapse: proof.native_rx_commitment(RxIndex::InnerCollapse),
@@ -189,6 +192,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     /// Point commitment from the child's application circuit.
     #[ragu(gadget)]
     pub application: Point<'dr, D, C>,
+    /// Point commitment from the child's application stage.
+    #[ragu(gadget)]
+    pub application_stage: Point<'dr, D, C>,
     /// Point commitment from the child's first hashes circuit.
     #[ragu(gadget)]
     pub hashes_1: Point<'dr, D, C>,
@@ -323,6 +329,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> core::ops::Index<RxIndex>
         use RxIndex::*;
         match idx {
             Application => &self.application,
+            ApplicationStage => &self.application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
             InnerCollapse => &self.inner_collapse,
@@ -351,6 +358,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
     fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
+            application_stage: Point::alloc(dr, witness.as_ref().map(|w| w.application_stage))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
             hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
             inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,

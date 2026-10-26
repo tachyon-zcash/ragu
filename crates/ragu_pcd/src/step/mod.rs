@@ -8,7 +8,9 @@ use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
+    gadgets::Bound,
 };
+use ragu_primitives::shared::Shared;
 
 use super::header::Header;
 use crate::internal::native::InternalCircuitIndex;
@@ -115,10 +117,25 @@ impl Index {
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
+///
+/// A step may stage part of its witness. The gadget it returns as
+/// [`Shared`](Self::Shared) is bound wire by wire to a stage polynomial that
+/// the proof commits to separately from the step's own trace, as the internal
+/// recursion circuits stage their inputs. Ragu derives the stage's layout from
+/// the gadget type and adds the connecting equality constraints; the step
+/// still constrains the staged values itself. A step that stages nothing
+/// declares `Shared = ()` and returns an empty gadget.
 pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Each unique [`Step`] implementation within a provided context must have
     /// a unique index.
     const INDEX: Index;
+
+    /// The gadget this step commits to the proof's application stage.
+    ///
+    /// Derive [`Shared`] together with [`Gadget`](ragu_core::gadgets::Gadget)
+    /// on a named struct of elements, fixed vectors or other shared gadgets.
+    /// Use `()` for a step that stages nothing.
+    type Shared: Shared<C::CircuitField>;
 
     /// The witness input needed to construct a proof for this step.
     type Witness<'source>: Send;
@@ -138,8 +155,10 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
 
     /// Emits the constraints that check the validity of this merging step.
     ///
-    /// Returns the encoded headers (left, right, output), the data to be
-    /// carried in the resulting PCD, and any auxiliary witness data.
+    /// Returns the encoded headers (left, right, output), the actual
+    /// [`Shared`](Self::Shared) gadget whose wires Ragu binds to the
+    /// application stage, the data to be carried in the resulting PCD, and
+    /// any auxiliary witness data.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
@@ -152,6 +171,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        Bound<'dr, D, Self::Shared>,
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )>

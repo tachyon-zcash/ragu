@@ -39,6 +39,7 @@ impl Bootstrap {
 impl<C: Cycle> Step<C> for Bootstrap {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
+    type Shared = ();
     type Witness<'source> = ();
     type Aux<'source> = ();
 
@@ -58,6 +59,7 @@ impl<C: Cycle> Step<C> for Bootstrap {
             Encoded<'dr, D, Self::Right, HEADER_SIZE>,
             Encoded<'dr, D, Self::Output, HEADER_SIZE>,
         ),
+        (),
         DriverValue<D, <Self::Output as Header<C::CircuitField>>::Data>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
@@ -66,6 +68,6 @@ impl<C: Cycle> Step<C> for Bootstrap {
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
 
-        Ok(((left, right, output), D::unit(), D::unit()))
+        Ok(((left, right, output), (), D::unit(), D::unit()))
     }
 }
