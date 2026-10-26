@@ -41,7 +41,7 @@ evidence from different snapshots.
 
 Review every applicable policy area, including its required shared policies.
 
-1. Use Glob to find all `.claude/code-review/*.md` files.
+1. Find all `.claude/code-review/*.md` files with Glob, or the Bash fallback below.
 2. Read `.claude/code-review/standards.md` and every applicable policy.
 3. For documentation reviews, also read `.claude/review-shared/writing.md`,
    `.claude/review-shared/math.md`, and
@@ -60,10 +60,10 @@ Review every applicable policy area, including its required shared policies.
 
 **Tool usage rules:**
 
-- Use the Grep tool for searching file contents — do NOT run `grep` or `rg`
-  as a Bash command.
+- Prefer Grep for content searches and Glob for file discovery when available.
+  In minimal runtimes without them, use Bash `rg` for searches and
+  `rg --files --hidden` for discovery, including the review policy directory.
 - Use the Read tool to read files — do NOT use `cat`, `head`, or `tail`.
-- Use the Glob tool to find files — do NOT use `find` or `ls`.
 - When you do use Bash, the command must be a clean shell command with NO
   comment lines (`#`) prepended. Put your reasoning in the `description`
   parameter, not in the command itself.

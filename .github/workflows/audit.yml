@@ -1,0 +1,295 @@
+name: Ragu audit
+
+on: # zizmor: ignore[dangerous-triggers]
+  # Privileged jobs use only default-branch controller code. PR commands run
+  # in Claude's required sandbox, with no publisher token or model key in env.
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  RAGU_AUDIT_MODEL: ${{ vars.RAGU_AUDIT_MODEL }}
+  RAGU_AUDIT_EFFORT: ${{ vars.RAGU_AUDIT_EFFORT }}
+  RAGU_AUDIT_APP_ID: ${{ vars.RAGU_AUDIT_APP_ID }}
+
+jobs:
+  request:
+    # Authorization precedes both model access and cancellation of older runs.
+    if: >-
+      github.repository == 'tachyon-zcash/ragu' &&
+      vars.RAGU_AUDIT_ENABLED == 'true' && github.ref == 'refs/heads/main' &&
+      github.event.issue.pull_request && github.event.comment.body == '/ragu-audit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      pr: ${{ steps.request.outputs.pr }}
+      head: ${{ steps.request.outputs.head }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 qa/audit/github.py request
+
+  queue:
+    outputs:
+      control: ${{ steps.queue.outputs.control }}
+    needs: request
+    if: needs.request.outputs.pr != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ragu-audit-publisher
+    concurrency:
+      # Checks can share a head across PRs; one PR comment spans different
+      # heads. Serialize brief App writes across both without cancelling any.
+      group: ragu-audit-publisher
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app
+        with:
+          app-id: ${{ vars.RAGU_AUDIT_APP_ID }}
+          private-key: ${{ secrets.RAGU_AUDIT_APP_PRIVATE_KEY }}
+          owner: tachyon-zcash
+          repositories: ragu
+          permission-checks: write
+          permission-contents: read
+          permission-pull-requests: write
+      - id: queue
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR_NUMBER: ${{ needs.request.outputs.pr }}
+          PR_HEAD: ${{ needs.request.outputs.head }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          python3 qa/audit/github.py queue --pr "$PR_NUMBER" --head "$PR_HEAD" --comment-id "$COMMENT_ID" \
+            --run "$RUNNER_TEMP/audit-work/control/run.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.queue.outputs.head != ''
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-control-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.request.outputs.pr }}
+          path: ${{ runner.temp }}/audit-work/control/run.json
+          if-no-files-found: error
+          retention-days: 30
+
+  review:
+    needs: [request, queue]
+    if: needs.request.outputs.pr != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      pull-requests: read
+    environment: ragu-audit-model
+    outputs:
+      code-report: ${{ steps.code-report.outputs.artifact-url }}
+      sean-report: ${{ steps.sean-report.outputs.artifact-url }}
+      tal-report: ${{ steps.tal-report.outputs.artifact-url }}
+      alex-report: ${{ steps.alex-report.outputs.artifact-url }}
+    concurrency:
+      group: ragu-audit-review-${{ needs.request.outputs.pr }}
+      cancel-in-progress: true
+    env:
+      # Each job has a fresh runner; no audit dependencies are cached afterward.
+      CARGO_HOME: /tmp/ragu-audit-cargo
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Restore the authorized request from job output
+        id: control
+        continue-on-error: true
+        env:
+          RAGU_AUDIT_CONTROL: ${{ needs.queue.outputs.control }}
+        run: python3 qa/audit/github.py restore --run "$RUNNER_TEMP/audit-work/control/run.json"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.control.outcome != 'success'
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-control-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.request.outputs.pr }}
+          path: ${{ runner.temp }}/audit-work/control
+      - name: Verify the restored request identity
+        run: python3 qa/audit/github.py restore --run "$RUNNER_TEMP/audit-work/control/run.json"
+      - name: Install the pinned Claude Code and Linux sandbox dependencies
+        run: bash qa/audit/install.sh
+      - id: toolchain
+        name: Read the trusted Rust toolchain
+        run: |
+          python3 - <<'PY'
+          import os, tomllib
+          with open('rust-toolchain.toml', 'rb') as source:
+              channel = tomllib.load(source)['toolchain']['channel']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'channel={channel}\n')
+          PY
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-23
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy,rustfmt
+      - uses: ./.github/actions/rust-nightly-setup
+        with:
+          components: rustfmt
+      - name: Store the model key outside the review sandbox
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 qa/audit/runner.py store-key --private "$RUNNER_TEMP/audit-private"
+      - name: Review, then reconcile findings against the pinned code
+        env:
+          # The trusted parent polls the invoking comment. The CLI's explicit
+          # environment allowlist excludes this read-only token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 qa/audit/runner.py run --root "$GITHUB_WORKSPACE" \
+            --private "$RUNNER_TEMP/audit-private" \
+            --work "$RUNNER_TEMP/audit-work" \
+            --run "$RUNNER_TEMP/audit-work/control/run.json" \
+            --out "$RUNNER_TEMP/audit-reports"
+      - name: Remove model credentials
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/audit-private"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/audit-reports
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: code-report
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-code-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/audit-reports/code-review.md
+            ${{ runner.temp }}/audit-reports/code-review.json
+            ${{ runner.temp }}/audit-reports/receipt.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: sean-report
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-sean-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/audit-reports/sean-review.md
+            ${{ runner.temp }}/audit-reports/sean-review.json
+            ${{ runner.temp }}/audit-reports/receipt.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: tal-report
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-tal-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/audit-reports/tal-review.md
+            ${{ runner.temp }}/audit-reports/tal-review.json
+            ${{ runner.temp }}/audit-reports/receipt.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: alex-report
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-alex-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/audit-reports/alex-review.md
+            ${{ runner.temp }}/audit-reports/alex-review.json
+            ${{ runner.temp }}/audit-reports/receipt.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  publish:
+    needs: [request, queue, review]
+    # A queued check still needs a terminal status if later queue cleanup fails.
+    if: >-
+      always() && needs.request.outputs.pr != '' &&
+      (needs.queue.result == 'success' || needs.queue.outputs.control != '')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ragu-audit-publisher
+    concurrency:
+      group: ragu-audit-publisher
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Restore the authorized request from job output
+        id: control
+        continue-on-error: true
+        env:
+          RAGU_AUDIT_CONTROL: ${{ needs.queue.outputs.control }}
+        run: python3 qa/audit/github.py restore --run "$RUNNER_TEMP/audit-control/run.json"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.control.outcome != 'success'
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-control-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.request.outputs.pr }}
+          path: ${{ runner.temp }}/audit-control
+      - name: Verify the restored request identity
+        run: python3 qa/audit/github.py restore --run "$RUNNER_TEMP/audit-control/run.json"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        id: reports
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          name: ragu-audit-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/audit-reports
+      - name: Recover reports from individual reviewer archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: steps.reports.outcome != 'success'
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          pattern: ragu-audit-*-review-${{ github.run_id }}-${{ github.run_attempt }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/audit-reports
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app
+        with:
+          app-id: ${{ vars.RAGU_AUDIT_APP_ID }}
+          private-key: ${{ secrets.RAGU_AUDIT_APP_PRIVATE_KEY }}
+          owner: tachyon-zcash
+          repositories: ragu
+          permission-checks: write
+          permission-contents: read
+          permission-pull-requests: write
+      - name: Verify reports and publish the summary and completion check
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          RAGU_AUDIT_REPORT_CODE_REVIEW: ${{ needs.review.outputs.code-report }}
+          RAGU_AUDIT_REPORT_SEAN_REVIEW: ${{ needs.review.outputs.sean-report }}
+          RAGU_AUDIT_REPORT_TAL_REVIEW: ${{ needs.review.outputs.tal-report }}
+          RAGU_AUDIT_REPORT_ALEX_REVIEW: ${{ needs.review.outputs.alex-report }}
+        run: |
+          python3 qa/audit/github.py publish --run "$RUNNER_TEMP/audit-control/run.json" \
+            --out "$RUNNER_TEMP/audit-reports" --review-result "$REVIEW_RESULT"

@@ -6,10 +6,14 @@ on:
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - 'qa/audit/**'
+      - '.claude/**'
   pull_request:
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - 'qa/audit/**'
+      - '.claude/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -19,6 +23,19 @@ permissions:
   contents: read
 
 jobs:
+  audit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned CLI and sandbox for the local API test
+        run: bash qa/audit/install.sh
+      - run: python3 -m unittest discover -s qa/audit -p 'test_*.py' -v
+        env:
+          RAGU_AUDIT_NATIVE_TEST: '1'
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-latest

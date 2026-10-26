@@ -24,7 +24,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct ApplicationBuilder<'params, const HEADER_SIZE: usize> {
     params: &'params PastaParams,
-    num_application_steps: usize,
+    registered_outputs: Vec<Suffix>,
     shared_size: usize,
     header_map: BTreeMap<Suffix, TypeId>,
 }
@@ -33,7 +33,7 @@ pub struct ApplicationBuilder<'params, const HEADER_SIZE: usize> {
 #[derive(Clone, Debug)]
 pub struct Application<'params, const HEADER_SIZE: usize> {
     params: &'params PastaParams,
-    num_application_steps: usize,
+    registered_outputs: Vec<Suffix>,
     shared_size: usize,
 }
 
@@ -42,7 +42,7 @@ impl<'params, const HEADER_SIZE: usize> ApplicationBuilder<'params, HEADER_SIZE>
     pub fn new(params: &'params PastaParams) -> Self {
         Self {
             params,
-            num_application_steps: 0,
+            registered_outputs: Vec::new(),
             shared_size: 0,
             header_map: BTreeMap::new(),
         }
@@ -50,17 +50,14 @@ impl<'params, const HEADER_SIZE: usize> ApplicationBuilder<'params, HEADER_SIZE>
 
     /// Mirrors `ragu_pcd::ApplicationBuilder::register`.
     pub fn register<S: Step + 'params>(mut self, _step: S) -> Result<Self> {
-        S::INDEX.assert_sequential(self.num_application_steps)?;
+        S::INDEX.assert_sequential(self.registered_outputs.len())?;
 
         self.prevent_duplicate_suffix::<S::Output>()?;
         self.prevent_duplicate_suffix::<S::Left>()?;
         self.prevent_duplicate_suffix::<S::Right>()?;
         self.shared_size = self.shared_size.max(S::Shared::num_values()?);
 
-        self.num_application_steps = self
-            .num_application_steps
-            .checked_add(1)
-            .ok_or_else(|| Error::Initialization("registered step count overflow".into()))?;
+        self.registered_outputs.push(S::Output::SUFFIX);
         Ok(self)
     }
 
@@ -77,7 +74,7 @@ impl<'params, const HEADER_SIZE: usize> ApplicationBuilder<'params, HEADER_SIZE>
         }
         Ok(Application {
             params: self.params,
-            num_application_steps: self.num_application_steps,
+            registered_outputs: self.registered_outputs,
             shared_size: self.shared_size,
         })
     }
@@ -128,7 +125,7 @@ impl<const HEADER_SIZE: usize> Application<'_, HEADER_SIZE> {
         right: Pcd<S::Right>,
     ) -> Result<(Pcd<S::Output>, S::Aux<'source>)> {
         match S::INDEX.application() {
-            Some(index) if index < self.num_application_steps => {}
+            Some(index) if index < self.registered_outputs.len() => {}
             _ => return Err(Error::Initialization(
                 "attempted to use application Step index that exceeds Application registered steps"
                     .into(),
@@ -197,9 +194,12 @@ impl<const HEADER_SIZE: usize> Application<'_, HEADER_SIZE> {
     }
 
     pub fn verify<RNG: CryptoRng, H: Header>(&self, pcd: &Pcd<H>, _rng: RNG) -> Result<bool> {
-        match pcd.proof.step_index.application() {
-            Some(application_index) if application_index < self.num_application_steps => {}
-            _ => return Ok(false),
+        let Some(application_index) = pcd.proof.step_index.application() else {
+            return Ok(false);
+        };
+        // The header must match the output registered for the proof's step.
+        if self.registered_outputs.get(application_index) != Some(&H::SUFFIX) {
+            return Ok(false);
         }
 
         let mut dr = Simulator::<Fp>::new();
