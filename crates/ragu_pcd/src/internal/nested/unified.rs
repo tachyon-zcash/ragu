@@ -33,6 +33,7 @@
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+
 use ragu_circuits::horner::Horner;
 use ragu_core::{
     Result,
@@ -40,7 +41,6 @@ use ragu_core::{
     gadgets::{Gadget, Kind},
     maybe::Maybe,
 };
-
 use ragu_primitives::{
     Element, GadgetExt, Point,
     allocator::Allocator,

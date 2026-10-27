@@ -11,8 +11,8 @@ use ragu_circuits::{
 use ragu_core::{Cycle, FixedGenerators, Result};
 use udon::{curve::Affine, field::Field, polynomial::evaluate_iter};
 
-use super::super::POLYS;
 use super::{
+    super::POLYS,
     Openings, Reduction,
     fold::{self, Derived, Fold, Layout, Weights, squeeze_pair},
     invert, openings,

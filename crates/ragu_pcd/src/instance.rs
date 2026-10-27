@@ -7,8 +7,7 @@
 //! [`proof`](crate::proof). A witnessed polynomial needs none here — its wire
 //! form is the [`PolyHandle`] a step is already handed.
 
-use ragu_core::Cycle;
-use ragu_core::{drivers::Driver, gadgets::Gadget};
+use ragu_core::{Cycle, drivers::Driver, gadgets::Gadget};
 use ragu_primitives::{Element, consistent::Consistent, io::Write};
 
 use crate::poly_commitment::PolyHandle;

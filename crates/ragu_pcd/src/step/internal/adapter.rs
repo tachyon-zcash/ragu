@@ -565,8 +565,11 @@ mod tests {
     #[test]
     fn malformed_shared_schemas_cannot_omit_wire_bindings() {
         fn trace<const SIZE: usize, const EXPORTS: usize>() -> Result<()> {
-            adapter(MalformedStep::<SIZE, EXPORTS>, 3)?
-                .trace((Fp::from(10), Fp::from(20), [Fp::from(3), Fp::from(4)]))?;
+            adapter(MalformedStep::<SIZE, EXPORTS>, 3)?.trace((
+                Fp::from(10),
+                Fp::from(20),
+                [Fp::from(3), Fp::from(4)],
+            ))?;
             Ok(())
         }
         assert!(

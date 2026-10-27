@@ -54,6 +54,8 @@ pub mod pasta;
 mod poly_commitment;
 mod proof;
 pub mod step;
+#[cfg(test)]
+mod tests;
 mod verify;
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
@@ -374,12 +376,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: Sel
             params,
         )?;
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE, J>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE, J>::new(
                     step::internal::bootstrap::Bootstrap::new(),
                     stage_size,
                     params,
-                )?)?;
+                )?,
+            )?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -464,12 +467,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: Sel
         }
 
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE, J>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, S, R, HEADER_SIZE, J>::new(
                     step,
                     J::layout().stage_len(self.shared_size),
                     params,
-                )?)?;
+                )?,
+            )?;
 
         Ok(self)
     }

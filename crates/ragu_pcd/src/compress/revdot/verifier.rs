@@ -10,8 +10,8 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Error, Result};
 use udon::{curve::Affine, field::Field};
 
-use super::super::POLYS;
 use super::{
+    super::POLYS,
     Openings, Reduction,
     fold::{self, Derived, Layout},
     invert, openings,

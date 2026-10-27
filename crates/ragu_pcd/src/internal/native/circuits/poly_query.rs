@@ -131,8 +131,7 @@ fn select_evaluation<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
 mod tests {
     use core::cell::Cell;
 
-    use ragu_core::Error;
-    use ragu_core::pasta::Fp;
+    use ragu_core::{Error, pasta::Fp};
     use ragu_primitives::{Simulator, allocator::Standard};
     use udon::field::Field;
 

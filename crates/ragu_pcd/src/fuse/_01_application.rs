@@ -52,10 +52,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
         let (right_proof, right_data) = right.into_parts();
         let circuit = S::INDEX.circuit_index(self.num_application_steps, polys)?;
         let stage_size = self.stage_size();
-        let (trace, aux) =
-            Adapter::<C, S, R, HEADER_SIZE, J>::new(step, stage_size, self.params)?
-                .trace((left_data, right_data, witness))?
-                .into_parts();
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE, J>::new(step, stage_size, self.params)?
+            .trace((left_data, right_data, witness))?
+            .into_parts();
         let rx = self.native_registry.assemble(&trace, circuit, &mut *rng)?;
 
         let AdapterAux {

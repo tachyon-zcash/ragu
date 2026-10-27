@@ -155,7 +155,8 @@ mod tests {
             }
         }
 
-        type Adapter<S> = super::super::adapter::Adapter<'static, Pasta, S, R, HEADER_SIZE, crate::NoHooks>;
+        type Adapter<S> =
+            super::super::adapter::Adapter<'static, Pasta, S, R, HEADER_SIZE, crate::NoHooks>;
         let circuit_single =
             Adapter::<Rerandomize<Single>>::new(Rerandomize::new(), 0, crate::pasta::baked())
                 .unwrap();
@@ -165,8 +166,7 @@ mod tests {
 
         // `Rerandomize<()>` is the instantiation `finalize` actually registers.
         let circuit_unit =
-            Adapter::<Rerandomize<()>>::new(Rerandomize::new(), 0, crate::pasta::baked())
-                .unwrap();
+            Adapter::<Rerandomize<()>>::new(Rerandomize::new(), 0, crate::pasta::baked()).unwrap();
 
         // A frozen twin of `Rerandomize`, written from primitives: one uniform
         // wire set shared by the left input and output, plus the standard unit
@@ -211,8 +211,7 @@ mod tests {
                 ))
             }
         }
-        let circuit_twin =
-            Adapter::<UnitRight>::new(UnitRight, 0, crate::pasta::baked()).unwrap();
+        let circuit_twin = Adapter::<UnitRight>::new(UnitRight, 0, crate::pasta::baked()).unwrap();
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

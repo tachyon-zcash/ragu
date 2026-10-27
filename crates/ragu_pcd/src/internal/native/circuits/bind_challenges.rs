@@ -60,6 +60,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point,
     allocator::{Allocator, Standard},
+    vec::Len,
 };
 
 use super::super::{
@@ -69,8 +70,6 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use ragu_primitives::vec::Len;
-
 use crate::{framework_hooks::HookConfig, internal::nested};
 
 /// The number of binding circuits: two challenges each over the ten the

@@ -60,7 +60,7 @@ use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
-    staging::{MultiStage, StageExt, StageReader},
+    staging::{self, MultiStage, StageExt, StageReader},
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
@@ -72,7 +72,6 @@ use udon::field::Field;
 use crate::{
     framework_hooks::{HookConfig, HookLayout},
     header::Header,
-    poly_commitment,
     internal::{
         endoscalar::EndoscalarStage,
         native::{
@@ -83,6 +82,7 @@ use crate::{
             self, EndoscalingStep, EndoscalingStepWitness, NumStepsLen, PointsStage, PointsWitness,
         },
     },
+    poly_commitment,
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -1163,18 +1163,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: crate::Selec
         // Nor does it raise poly-queries: every position holds the padding
         // query, which opens the first polynomial at zero, as the adapter's
         // padding does. The constant 1 evaluates to 1 everywhere.
-        builder.set_application_poly_queries(vec![
-            PolyQuery {
-                com: padding_com,
-                x: C::CircuitField::ZERO,
-                y: C::CircuitField::ONE,
-            };
-            J::PolyQueries::len()
-        ]);
+        let padding_query = PolyQuery {
+            com: padding_com,
+            x: C::CircuitField::ZERO,
+            y: C::CircuitField::ONE,
+        };
+        builder.set_application_poly_queries(vec![padding_query; J::PolyQueries::len()]);
+        // The application stage carries those paddings in its hook region, as
+        // the adapter stages them, so the proof's stage and hook lists agree.
+        let padding_handle = poly_commitment::handle::<C>(padding_com)
+            .expect("the padding commitment is a host-curve point");
+        let mut hook_region = Vec::with_capacity(self.hook_layout().poly_query_instance_len());
+        for _ in 0..polys {
+            hook_region.extend(padding_handle);
+        }
+        for _ in 0..J::PolyQueries::len() {
+            hook_region.extend(padding_handle);
+            hook_region.push(padding_query.x);
+            hook_region.push(padding_query.y);
+        }
+        let stage_rx =
+            staging::stage_rx::<_, R>(C::CircuitField::ONE, 1, self.stage_size(), &hook_region)
+                .expect("the hook region fits the application stage");
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
-        builder.set_native_application_stage_rx(ones_host.clone());
+        builder.set_native_application_stage_rx(stage_rx);
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
