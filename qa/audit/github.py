@@ -16,6 +16,7 @@ import findings
 REPOSITORY = "tachyon-zcash/ragu"
 CHECK = "ragu-audit/completed"
 MARKER = "<!-- ragu-audit-summary:v2 -->"
+LOCAL_MARKER = "<!-- ragu-audit-local-summary:v1 -->"
 INLINE_MARKER = "<!-- ragu-audit-inline:v1:"
 
 
@@ -149,11 +150,22 @@ def checks(api, head, app_id):
     return sorted((check for check in values if check["name"] == CHECK and str(check["app"]["id"]) == str(app_id)), key=lambda check: check["id"], reverse=True)
 
 
-def owns_comment(comment, app):
-    if not comment.get("body", "").startswith(MARKER + "\n") or comment.get("user", {}).get("type") != "Bot":
+def authored(item, author):
+    """Match the App's items, or a maintainer's own items for a local run.
+
+    An App author carries its `id` and `slug`; a maintainer carries `login`.
+    """
+    user = item.get("user") or {}
+    if "login" in author:
+        return user.get("type") == "User" and user.get("login") == author["login"]
+    if user.get("type") != "Bot":
         return False
-    via = comment.get("performed_via_github_app")
-    return via.get("id") == app["id"] if via else comment["user"].get("login") == app["slug"] + "[bot]"
+    via = item.get("performed_via_github_app")
+    return via.get("id") == author["id"] if via else user.get("login") == author["slug"] + "[bot]"
+
+
+def owns_comment(comment, app):
+    return comment.get("body", "").startswith(MARKER + "\n") and authored(comment, app)
 
 
 def excerpt(text, size=9000):
@@ -218,6 +230,12 @@ def review_excerpt(text, size):
     return text
 
 
+def report_url(run, skill):
+    url = os.environ.get("RAGU_AUDIT_REPORT_" + skill.upper().replace("-", "_"), "")
+    expected = rf"https://github\.com/{REPOSITORY}/actions/runs/{run['run_id']}/artifacts/[1-9][0-9]*"
+    return url if re.fullmatch(expected, url) else run["url"]
+
+
 def verified_findings(run, out):
     bundle = runner.candidates(run, out, partial=True)
     if len(bundle["reviews"]) == len(runner.SKILLS):
@@ -246,14 +264,13 @@ def diff_lines(files):
     return result
 
 
-def owns_inline(review, app):
-    if not review.get("body", "").startswith(INLINE_MARKER) or review.get("user", {}).get("type") != "Bot":
-        return False
-    via = review.get("performed_via_github_app")
-    return via.get("id") == app["id"] if via else review["user"].get("login") == app["slug"] + "[bot]"
+def owns_inline(review, author):
+    return review.get("body", "").startswith(INLINE_MARKER) and authored(review, author)
 
 
-def publish_inline(api, run, check, out):
+def publish_inline(api, run, author, out, live=None):
+    """Post findings as inline reviews; `live` rechecks the invocation first."""
+    live = live or guard
     try:
         bundle, groups = verified_findings(run, out)
     except (OSError, ValueError, KeyError, TypeError):
@@ -285,45 +302,47 @@ def publish_inline(api, run, check, out):
         body = f"{INLINE_MARKER}{identity} -->\n\nRagu audit findings for `{run['head']}` against `{run['base']}`.\n\nFull reports and validation limits are linked from the audit status comment."
 
         def existing():
-            matches = [review for review in reviews if owns_inline(review, check["app"]) and review["body"] == body]
+            matches = [review for review in reviews if owns_inline(review, author) and review["body"] == body]
             if len(matches) > 1:
                 raise ValueError("duplicate inline reviews")
             return matches[0] if matches else None
 
         review = existing()
-        guard(api, run)
+        live(api, run)
         if review is None:
             try:
                 review = api.call(path + "/reviews", {"commit_id": run["head"], "body": body,
                                                      "event": "COMMENT", "comments": batch}, "POST")
             except (OSError, ValueError):
                 # Never repeat a creation after an ambiguous response. Recover
-                # only the exact App-owned review and verify every comment.
+                # only this author's exact review and verify every comment.
                 reviews = list(api.pages(path + "/reviews"))
                 review = existing()
                 if review is None:
                     raise
             if not any(item["id"] == review["id"] for item in reviews):
                 reviews.append(review)
-        if (not owns_inline(review, check["app"]) or review["body"] != body
+        if (not owns_inline(review, author) or review["body"] != body
                 or review.get("commit_id") != run["head"] or review.get("state") != "COMMENTED"):
             raise ValueError("inline review publication was not confirmed")
         actual = [item for item in api.pages(path + f"/reviews/{number(review['id'])}/comments")
                   if not item.get("in_reply_to_id")]
         expected = {(item["path"], item["line"], item["side"], item["body"]) for item in batch}
         received = {(item.get("path"), item.get("line"), item.get("side"), item.get("body")) for item in actual
-                    if item.get("commit_id") == run["head"] and item.get("user", {}).get("type") == "Bot"
-                    and item["user"].get("login") == check["app"]["slug"] + "[bot]"}
+                    if item.get("commit_id") == run["head"] and authored(item, author)}
         if len(actual) != len(batch) or received != expected:
             raise ValueError("inline review comments were not confirmed")
         publication["urls"].append(f"https://github.com/{REPOSITORY}/pull/{run['pr']}#pullrequestreview-{review['id']}")
         publication["count"] += len(batch)
-    guard(api, run)
+    live(api, run)
     return publication
 
 
 def summary(run, state, out=None, *, inline=None):
-    lines = [MARKER, invocation_marker(run), "", f"## Ragu audit: {state}", ""]
+    local = bool(run.get("local"))
+    # A local run has no workflow invocation, check, or artifacts to link.
+    lines = [LOCAL_MARKER, "", f"## Ragu audit (local run): {state}", ""] if local else [
+        MARKER, invocation_marker(run), "", f"## Ragu audit: {state}", ""]
     details = [f"Head: `{run['head']}` · Base: `{run['base']}`", "",
                f"Model: `{run['model']}` · Effort: `{run['effort']}`", "",
                f"Reconciliation: `{runner.model_settings(run, runner.RECONCILER)[0]}` · "
@@ -349,7 +368,9 @@ def summary(run, state, out=None, *, inline=None):
         elif state != "completed":
             if out is not None:
                 lines += [incomplete_details(run, out), ""]
-            lines += ["The review did not complete. Inspect the workflow and available reports, then post `/ragu-audit` to retry.", ""]
+            retry = ("Inspect the local reports, then run `/ragu-audit` again." if local
+                     else "Inspect the workflow and available reports, then post `/ragu-audit` to retry.")
+            lines += [f"The review did not complete. {retry}", ""]
         lines += ["### For humans", ""]
         if bundle is not None:
             if groups is None and bundle["findings"]:
@@ -388,19 +409,19 @@ def summary(run, state, out=None, *, inline=None):
             # Allocate the remaining comment budget to collapsed original reports.
             size = min(12000, max(0, 60000 - len("\n".join(lines).encode()) - 4000) // len(names))
             for skill in names:
-                variable = "RAGU_AUDIT_REPORT_" + skill.upper().replace("-", "_")
-                url = os.environ.get(variable, "")
-                expected = rf"https://github\.com/{REPOSITORY}/actions/runs/{run['run_id']}/artifacts/[1-9][0-9]*"
-                if not re.fullmatch(expected, url):
-                    url = run["url"]
                 text = review_excerpt((out / f"{skill}.md").read_text(), size)
                 label = findings.REVIEWER_NAMES[skill]
-                lines += [f"<details><summary>{label}</summary>", "", text, "",
-                          f"[Full report]({url})", "", "</details>", ""]
-        details += ["Original reports and reconciliation decisions are retained in the workflow artifacts.", "",
-                    "Maintainers assess findings and approve changes.", ""]
-    lines += ["---", "", "<details><summary>Run details</summary>", "", *details,
-              f"[Workflow and complete reports]({run['url']})", "", "</details>"]
+                link = [] if local else [f"[Full report]({report_url(run, skill)})", ""]
+                lines += [f"<details><summary>{label}</summary>", "", text, "", *link, "</details>", ""]
+        if local:
+            details += [f"Run locally on a maintainer's Claude plan with Claude Code {runner.cli_version(run)}. "
+                        "Original reports and reconciliation decisions stay on that machine. "
+                        f"No `{CHECK}` check was recorded.", ""]
+        else:
+            details += ["Original reports and reconciliation decisions are retained in the workflow artifacts.", ""]
+        details += ["Maintainers assess findings and approve changes.", ""]
+    workflow = [] if local else [f"[Workflow and complete reports]({run['url']})", ""]
+    lines += ["---", "", "<details><summary>Run details</summary>", "", *details, *workflow, "</details>"]
     return "\n".join(lines)
 
 
@@ -474,7 +495,7 @@ def queue(api, value, expected_head=None, comment_id=None, *, read_api=None):
 
 
 def validate_identity(run):
-    if not isinstance(run, dict):
+    if not isinstance(run, dict) or run.get("local"):
         raise ValueError("invalid run identity")
     sha(run["head"])
     sha(run["base"])
@@ -549,7 +570,7 @@ def publish(api, run, out, review_result):
             success = True
         except (OSError, ValueError, KeyError, TypeError):
             print("Review incomplete; see verified phase reports and diagnostics", flush=True)
-        inline = publish_inline(api, run, check, out)
+        inline = publish_inline(api, run, check["app"], out)
         upsert(api, run, check, "completed" if success else "incomplete", out=out, inline=inline)
         guard(api, run)  # Recheck after reading artifacts and publishing.
         finish_check(api, run, success, "Four skill reviews completed" if success else "Review incomplete")

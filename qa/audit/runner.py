@@ -34,6 +34,16 @@ RECONCILE_EFFORT = "high"
 MAX_RUN_COST_USD = Decimal("25.00")
 TOOLS = "Bash,Read,Edit"
 INHERITED_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "SHELL", "CARGO_HOME", "RUSTUP_HOME")
+# A local run signs in with the maintainer's own Claude login. On macOS that
+# login lives in the user's keychain, which the CLI finds by user name.
+LOGIN_ENV = ("USER", "LOGNAME")
+# Credential stores a sandboxed PR command could otherwise read on a
+# maintainer's machine. The network allowlist still reaches GitHub. Hiding
+# Library/Keychains also hides keychain items from `security`. The Claude
+# config holds a Linux login and past transcripts; the CLI itself still reads it.
+LOCAL_SECRETS = (".config/gh", ".git-credentials", ".netrc", ".gnupg", ".docker", ".kube", ".config/gcloud",
+                 ".azure", ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", "Library/Keychains",
+                 ".claude", ".claude.json")
 REVIEW_TIMEOUT = 3300
 RECONCILE_TIMEOUT = 180
 GIT_TIMEOUT = 180
@@ -228,6 +238,11 @@ def model_settings(run, skill):
     return run["model"], run["effort"]
 
 
+def cli_version(run):
+    """The workflow pins Claude Code; a local run records the maintainer's install."""
+    return run["claude_version"] if run.get("local") else CLAUDE_VERSION
+
+
 def reuse_key(run):
     return {**{key: run[key] for key in ("repository", "head", "base", "configuration", "model", "effort")},
             "reconciliation": model_settings(run, RECONCILER), "claude_version": CLAUDE_VERSION}
@@ -300,8 +315,12 @@ def shared_scratch():
 def settings(root, source, work, out, private, plugin, scratch):
     # apiKeyHelper runs outside the Bash sandbox. PR tests cannot read its file
     # or inspect parent-process memory through /proc. No key enters the CLI env.
+    # Without a stored key (private is None), a local run uses the CLI's login.
     scratch = scratch.resolve()
-    deny_read = [str(private), "/proc", "/run", "/var/run", str(Path.home() / ".ssh"), str(Path.home() / ".aws")]
+    keys = [] if private is None else [private]
+    deny_read = [*map(str, keys), "/proc", "/run", "/var/run", str(Path.home() / ".ssh"), str(Path.home() / ".aws")]
+    if private is None:
+        deny_read += [str(Path.home() / name) for name in LOCAL_SECRETS]
     state = work / "claude"
     deny_read += [str(state / skill / ".credentials.json") for skill in ROLES]
     deny_read += [str(state / f"{skill}.json") for skill in ROLES]
@@ -320,7 +339,7 @@ def settings(root, source, work, out, private, plugin, scratch):
         deny_read.append(str(out / "findings.json"))
     if source.name not in SKILLS[1:]:
         deny_read.append(str(out / "core-findings.json"))
-    protected = [root, root / ".git", out, private, plugin, work / "control", state, scratch / source.name / "shared-temp"]
+    protected = [root, root / ".git", out, *keys, plugin, work / "control", state, scratch / source.name / "shared-temp"]
     protected += peer_scratch + shared_scratch()
     protected += [work / skill for skill in ROLES if work / skill != source]
     protected += [work / skill / ".git" for skill in ROLES]
@@ -332,8 +351,10 @@ def settings(root, source, work, out, private, plugin, scratch):
         protected += [source, cargo]
     deny = [f"Read(/{path}{suffix})" for path in deny_read for suffix in ("", "/**")]
     deny += [f"{tool}(/{path}{suffix})" for path in protected for tool in ("Write", "Edit") for suffix in ("", "/**")]
+    helper = {} if private is None else {
+        "apiKeyHelper": shlex.join([sys.executable, str(root / "qa/audit/runner.py"), "read-key", "--private", str(private)])}
     return {
-        "apiKeyHelper": shlex.join([sys.executable, str(root / "qa/audit/runner.py"), "read-key", "--private", str(private)]),
+        **helper,
         "disableSkillShellExecution": True,
         # Refuse native cache edits noninteractively without adding an OS
         # write ban that would prevent Cargo from downloading dependencies.
@@ -365,8 +386,16 @@ def environment(run, work, skill, scratch):
     result = {key: os.environ[key] for key in INHERITED_ENV if key in os.environ}
     workers = len(SKILLS) - 1 if skill in SKILLS[1:] else 1
     model, effort = model_settings(run, skill)
+    if run.get("local"):
+        # The maintainer's login is tied to the default config directory; a
+        # separate one per reviewer would start signed out. Settings and
+        # CLAUDE.md files stay unloaded through --setting-sources. Memory and
+        # claude.ai connectors also come with that login; keep both out.
+        result.update({key: os.environ[key] for key in LOGIN_ENV if key in os.environ})
+        result.update({"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false"})
+    else:
+        result["CLAUDE_CONFIG_DIR"] = str(work / "claude" / skill)
     result.update({
-        "CLAUDE_CONFIG_DIR": str(work / "claude" / skill),
         "CLAUDE_CODE_TMPDIR": str(scratch / skill),
         "TMPDIR": str(scratch / skill),
         "CARGO_HOME": str(cargo_home(work)),
@@ -603,7 +632,7 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
     limit = REVIEW_TIMEOUT if timeout is None else timeout
     status = {"run": run, "skill": skill, "state": "running", "events": 0,
               "tool_calls": 0, "last_tool": None, "stderr_bytes": 0}
-    secret = (private / "key").read_text().strip()
+    secret = "" if private is None else (private / "key").read_text().strip()
     stderr, pending, result = bytearray(), bytearray(), None
     process = None
 
@@ -748,8 +777,9 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
 def command(skill, executable, root, run, work, out, private, plugin, scratch, instruction, schema, tools, budget=None):
     source = work / skill
     model, effort = model_settings(run, skill)
+    # --bare authenticates only with an API key, so a local run omits it.
     result = [
-        executable, "--print", "--bare", "--restricted", "--no-session-persistence",
+        executable, "--print", *([] if run.get("local") else ["--bare"]), "--restricted", "--no-session-persistence",
         "--setting-sources", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         "--permission-mode", "acceptEdits", "--permission-prompts", "none",
         "--tools", tools,
@@ -897,14 +927,17 @@ is a brief account of checks and limitations. Return the requested schema.
 
 
 def review(root, run, work, out, private, reuse=None):
-    if "ANTHROPIC_API_KEY" in os.environ:
+    local = bool(run.get("local"))
+    if not local and "ANTHROPIC_API_KEY" in os.environ:
         raise ValueError("store the key in a separate step; the review process must not inherit it")
+    if local != (private is None):
+        raise ValueError("a local run uses the CLI's own login; a workflow run uses its stored key")
     budget = RunBudget(run)
     executable = str(Path(shutil.which("claude")).resolve())
     version = subprocess.check_output([executable, "--version"], text=True, timeout=30,
                                       env={key: os.environ[key] for key in INHERITED_ENV if key in os.environ})
-    if version.split()[0] != CLAUDE_VERSION:
-        raise ValueError(f"expected Claude Code {CLAUDE_VERSION}")
+    if version.split()[0] != cli_version(run):
+        raise ValueError(f"expected Claude Code {cli_version(run)}")
     out.mkdir(parents=True, exist_ok=False)
     work.mkdir(parents=True, exist_ok=True)
     (work / "claude").mkdir(mode=0o700, exist_ok=True)
@@ -927,7 +960,7 @@ def review(root, run, work, out, private, reuse=None):
     write_json(plugin / ".claude-plugin/plugin.json", {"name": "ragu-review", "version": "1.0.0"})
     for skill in SKILLS:
         shutil.copytree(root / ".claude/skills" / skill, plugin / "skills" / skill)
-    receipt = {"run": run, "merge_base": merge_base, "claude_version": CLAUDE_VERSION, "phases": []}
+    receipt = {"run": run, "merge_base": merge_base, "claude_version": cli_version(run), "phases": []}
     write_json(out / "receipt.json", receipt)
     phases = {}
     reconciled = False
@@ -984,7 +1017,7 @@ def review(root, run, work, out, private, reuse=None):
 def verify(run, out, *, partial=False):
     """Verify completion strictly, or recover independently valid specialists."""
     receipt = read_json(out / "receipt.json")
-    if not isinstance(receipt, dict) or receipt.get("run") != run or receipt.get("claude_version") != CLAUDE_VERSION:
+    if not isinstance(receipt, dict) or receipt.get("run") != run or receipt.get("claude_version") != cli_version(run):
         raise ValueError("receipt belongs to a different invocation")
     phases = receipt.get("phases", [])
     if not isinstance(phases, list) or not all(isinstance(phase, dict) for phase in phases):
@@ -1083,7 +1116,10 @@ def main():
     elif args.command == "read-key":
         print((args.private / "key").read_text())
     else:
-        review(args.root.resolve(), read_json(args.run), args.work.resolve(), args.out.resolve(),
+        run = read_json(args.run)
+        if run.get("local"):
+            raise ValueError("local runs start from local.py")
+        review(args.root.resolve(), run, args.work.resolve(), args.out.resolve(),
                args.private.resolve(), args.reuse)
 
 
