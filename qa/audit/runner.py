@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import selectors
 import shlex
 import shutil
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -40,10 +42,11 @@ LOGIN_ENV = ("USER", "LOGNAME")
 # Credential stores a sandboxed PR command could otherwise read on a
 # maintainer's machine. The network allowlist still reaches GitHub. Hiding
 # Library/Keychains also hides keychain items from `security`. The Claude
-# config holds a Linux login and past transcripts; the CLI itself still reads it.
+# configuration directory is hidden by local_state, which keeps each
+# reviewer's own session directory readable.
 LOCAL_SECRETS = (".config/gh", ".git-credentials", ".netrc", ".gnupg", ".docker", ".kube", ".config/gcloud",
                  ".azure", ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", "Library/Keychains",
-                 ".claude", ".claude.json")
+                 ".claude.json")
 REVIEW_TIMEOUT = 3300
 RECONCILE_TIMEOUT = 180
 GIT_TIMEOUT = 180
@@ -245,7 +248,7 @@ def cli_version(run):
 
 def reuse_key(run):
     return {**{key: run[key] for key in ("repository", "head", "base", "configuration", "model", "effort")},
-            "reconciliation": model_settings(run, RECONCILER), "claude_version": CLAUDE_VERSION}
+            "reconciliation": model_settings(run, RECONCILER), "claude_version": cli_version(run)}
 
 
 def reuse_origin(run):
@@ -312,6 +315,34 @@ def shared_scratch():
     return [Path("/tmp/claude").resolve(), Path(f"/tmp/claude-{os.getuid()}").resolve()]
 
 
+def project_slug(path):
+    """Claude Code names a working directory's state directory this way."""
+    return re.sub(r"[^a-zA-Z0-9]", "-", str(path))
+
+
+def session_id(work, skill):
+    """A local reviewer's fixed session ID, so peers can hide its state by name."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"ragu-audit:{work}:{skill}"))
+
+
+def local_state(root, skill, work):
+    """The maintainer's Claude state, except this reviewer's own session directory.
+
+    Local reviewers share the login's configuration directory. Claude Code
+    stores oversized tool outputs under projects/<cwd>/<session>/tool-results
+    and reads them back with Read, so that directory alone stays readable.
+    """
+    state = Path.home() / ".claude"
+    project = state / "projects" / project_slug(root)
+    sessions = {session_id(work, role) for role in ROLES}
+
+    def entries(directory, keep):
+        return sorted(path for path in directory.iterdir() if path.name not in keep) if directory.is_dir() else []
+
+    return [*entries(state, {"projects"}), *entries(state / "projects", {project.name}), *entries(project, sessions),
+            *(project / session_id(work, role) for role in ROLES if role != skill)]
+
+
 def settings(root, source, work, out, private, plugin, scratch):
     # apiKeyHelper runs outside the Bash sandbox. PR tests cannot read its file
     # or inspect parent-process memory through /proc. No key enters the CLI env.
@@ -321,6 +352,7 @@ def settings(root, source, work, out, private, plugin, scratch):
     deny_read = [*map(str, keys), "/proc", "/run", "/var/run", str(Path.home() / ".ssh"), str(Path.home() / ".aws")]
     if private is None:
         deny_read += [str(Path.home() / name) for name in LOCAL_SECRETS]
+        deny_read += [str(path) for path in local_state(root, source.name, work)]
     state = work / "claude"
     deny_read += [str(state / skill / ".credentials.json") for skill in ROLES]
     deny_read += [str(state / f"{skill}.json") for skill in ROLES]
@@ -777,9 +809,11 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
 def command(skill, executable, root, run, work, out, private, plugin, scratch, instruction, schema, tools, budget=None):
     source = work / skill
     model, effort = model_settings(run, skill)
-    # --bare authenticates only with an API key, so a local run omits it.
+    # --bare authenticates only with an API key, so a local run omits it. Its
+    # pinned session ID lets peers hide this reviewer's state directory by name.
+    local = bool(run.get("local"))
     result = [
-        executable, "--print", *([] if run.get("local") else ["--bare"]), "--restricted", "--no-session-persistence",
+        executable, "--print", *([] if local else ["--bare"]), "--restricted", "--no-session-persistence",
         "--setting-sources", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         "--permission-mode", "acceptEdits", "--permission-prompts", "none",
         "--tools", tools,
@@ -790,6 +824,8 @@ def command(skill, executable, root, run, work, out, private, plugin, scratch, i
         "--max-budget-usd", str(budget.remaining() if budget is not None else MAX_RUN_COST_USD),
         "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--json-schema", json.dumps(schema),
     ]
+    if local:
+        result += ["--session-id", session_id(work, skill)]
     if skill == RECONCILER:
         result += ["--max-turns", "20"]
     return result + ["--", instruction]
@@ -941,6 +977,11 @@ def review(root, run, work, out, private, reuse=None):
     out.mkdir(parents=True, exist_ok=False)
     work.mkdir(parents=True, exist_ok=True)
     (work / "claude").mkdir(mode=0o700, exist_ok=True)
+    if local:
+        # Peers deny these by name; Linux can only deny directories that exist.
+        project = Path.home() / ".claude" / "projects" / project_slug(root)
+        for skill in ROLES:
+            (project / session_id(work, skill)).mkdir(parents=True, exist_ok=True)
     for name in ("reuse-receipt.json", "reuse-reconciliation-receipt.json"):
         (out / name).touch(mode=0o600, exist_ok=False)
     for skill in ROLES:

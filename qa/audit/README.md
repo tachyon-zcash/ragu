@@ -51,8 +51,10 @@ A local run differs from the workflow:
 - Comments come from your account. Publishing again replaces your earlier
   local summary on that PR.
 - A moved PR head makes the review stale; a moved `main` does not.
-- Reviewers sign in through your Claude configuration directory.
+- Reviewers sign in through your Claude configuration directory. Its contents
+  are hidden from them, except each reviewer's own session directory, where
+  Claude Code keeps oversized tool outputs.
 - PR code runs on your machine. The Bash sandbox and network allowlist still
-  apply, and your Claude configuration, keychain, and common credential stores
-  are hidden, but the rest of your home directory is readable. Run it only on
+  apply, and your Claude state, keychain, and common credential stores are
+  hidden, but the rest of your home directory is readable. Run it only on
   PRs you would build locally.

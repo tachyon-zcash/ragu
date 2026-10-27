@@ -11,17 +11,18 @@ Audit PR `$ARGUMENTS` with `qa/audit/local.py`. It runs the bot's four reviews
 and reconciliation with the same sandbox and summary, but signs in with the
 Claude login on this machine. See `qa/audit/README.md`.
 
-1. If `$ARGUMENTS` names no PR number, ask for one. From the repository root,
-   start this as a background command with no timeout:
+1. `$ARGUMENTS` names the PR as a number, `#number`, or URL; if it names none,
+   ask for one. From the repository root, run this with the Bash tool in the
+   background (`run_in_background`, no `timeout`); it usually takes 10 to 20
+   minutes and may take over an hour:
 
    ```
    python3 qa/audit/local.py run $ARGUMENTS
    ```
 
-   The review takes tens of minutes; wait for it to finish rather than polling.
-   Each reviewer starts its own sandbox, which cannot start inside a sandboxed
-   shell. If the command fails for that reason, ask before rerunning it outside
-   the sandbox.
+   Wait for its completion notification rather than polling. Each reviewer
+   starts its own sandbox, which cannot start inside a sandboxed shell. If the
+   command fails for that reason, ask before rerunning it outside the sandbox.
 
 2. When it finishes, read the summary preview it printed. Report whether the
    review completed, the Must-fix and Suggestions counts, and each finding's

@@ -42,15 +42,17 @@ def command_present(api, run):
 
 
 class GitHub:
-    def __init__(self, token_name="GH_TOKEN"):
+    def __init__(self, token_name="GH_TOKEN", token=None):
         self.token_name = token_name
+        self.token = token  # Otherwise read from the environment at each call.
 
     def call(self, path, data=None, method=None):
+        token = os.environ[self.token_name] if self.token is None else self.token
         request = Request(
             "https://api.github.com" + path,
             data=None if data is None else json.dumps(data).encode(),
             method=method,
-            headers={"Authorization": "Bearer " + os.environ[self.token_name], "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
         )
         return json.loads(runner.github_response(request, timeout=45))
 
@@ -153,10 +155,10 @@ def checks(api, head, app_id):
 def authored(item, author):
     """Match the App's items, or a maintainer's own items for a local run.
 
-    An App author carries its `id` and `slug`; a maintainer carries `login`.
+    GitHub's App object carries `id` and `slug`; a maintainer is `{"login"}`.
     """
     user = item.get("user") or {}
-    if "login" in author:
+    if "slug" not in author:
         return user.get("type") == "User" and user.get("login") == author["login"]
     if user.get("type") != "Bot":
         return False
@@ -299,7 +301,9 @@ def publish_inline(api, run, author, out, live=None):
     for start in range(0, len(comments), 50):
         batch = comments[start:start + 50]
         identity = findings.fingerprint({"pr": run["pr"], "run": runner.reuse_key(run), "comments": batch})
-        body = f"{INLINE_MARKER}{identity} -->\n\nRagu audit findings for `{run['head']}` against `{run['base']}`.\n\nFull reports and validation limits are linked from the audit status comment."
+        reports = ("Report excerpts and validation limits are in the audit status comment." if run.get("local")
+                   else "Full reports and validation limits are linked from the audit status comment.")
+        body = f"{INLINE_MARKER}{identity} -->\n\nRagu audit findings for `{run['head']}` against `{run['base']}`.\n\n{reports}"
 
         def existing():
             matches = [review for review in reviews if owns_inline(review, author) and review["body"] == body]

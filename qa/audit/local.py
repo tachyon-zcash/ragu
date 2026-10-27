@@ -9,6 +9,7 @@ recorded.
 import argparse
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -27,11 +28,25 @@ DEFAULTS = {"RAGU_AUDIT_MODEL": "claude-sonnet-5-5", "RAGU_AUDIT_EFFORT": "high"
 def client():
     """GitHub access as the maintainer, held by this process only.
 
-    The runner's environment allowlist keeps the token away from reviewers.
+    The token goes to the client rather than into the environment, so neither
+    the reviewers (an allowlisted environment) nor this process's own git
+    subprocesses inherit it.
     """
-    if not os.environ.get("GH_TOKEN"):
-        os.environ["GH_TOKEN"] = subprocess.check_output(["gh", "auth", "token"], text=True, timeout=30).strip()
-    return github.GitHub()
+    token = os.environ.get("GH_TOKEN")
+    if not token:
+        try:
+            token = subprocess.check_output(["gh", "auth", "token"], text=True, timeout=30).strip()
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError("GitHub access needs `gh auth login` or GH_TOKEN") from error
+    return github.GitHub(token=token)
+
+
+def pr_number(value):
+    """Accept `921`, `#921`, or the pull request's URL."""
+    match = re.fullmatch(rf"(?:https://github\.com/{re.escape(github.REPOSITORY)}/pull/|#)?([0-9]+)/?", value.strip())
+    if match is None:
+        raise argparse.ArgumentTypeError(f"not a Ragu pull request number: {value}")
+    return match.group(1)
 
 
 def start(api, pr, head=None):
@@ -41,6 +56,9 @@ def start(api, pr, head=None):
     if runner.git(ROOT, "status", "--porcelain", "--", *TRUSTED):
         raise ValueError("commit or stash changes to the review skills, policies, or controller; "
                          "the run records their revision")
+    origin = runner.git(ROOT, "remote", "get-url", "origin")
+    if not re.fullmatch(rf"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:){re.escape(github.REPOSITORY)}(?:\.git)?/?", origin):
+        raise ValueError(f"origin is {origin}; the run fetches the PR from github.com/{github.REPOSITORY}")
     executable = shutil.which("claude")
     if executable is None:
         raise ValueError("Claude Code is not on PATH")
@@ -64,7 +82,7 @@ def verified(run, out):
 
 
 def cleanup(work):
-    """Remove the review worktrees and Cargo home; keep the reports."""
+    """Remove the review worktrees, Cargo home, and session directories; keep the reports."""
     for role in runner.ROLES:
         if (work / role).exists():
             try:
@@ -72,6 +90,10 @@ def cleanup(work):
             except subprocess.SubprocessError:
                 print(f"Could not remove the worktree at {work / role}", file=sys.stderr)
     shutil.rmtree(work / "cargo", ignore_errors=True)
+    # Claude Code spilled oversized tool outputs here; nothing else is kept.
+    project = Path.home() / ".claude" / "projects" / runner.project_slug(ROOT)
+    for role in runner.ROLES:
+        shutil.rmtree(project / runner.session_id(work, role), ignore_errors=True)
 
 
 def review(run):
@@ -131,21 +153,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     start_parser = commands.add_parser("run", help="review a PR; posts nothing")
-    start_parser.add_argument("pr")
+    start_parser.add_argument("pr", type=pr_number, help="number, #number, or URL")
     start_parser.add_argument("--head", type=github.sha, help="fail unless the PR is at this commit")
     publish_parser = commands.add_parser("publish", help="post a finished run's findings to its PR")
     publish_parser.add_argument("work", type=Path, help="directory printed by `run`")
     args = parser.parse_args()
-    api = client()
-    if args.command == "run":
-        work, state = review(start(api, args.pr, args.head))
-        print(f"Review {state}. Reports: {work / 'reports'}")
-        print(f"Summary preview: {work / 'comment.md'}")
-        print(f"Publish with: python3 {Path(__file__).resolve()} publish {work}")
-    else:
-        work = args.work.resolve()
-        result = publish(api, runner.read_json(work / "run.json"), work / "reports")
-        print(f"Posted: {result.get('html_url', 'summary comment')}")
+    try:
+        api = client()
+        if args.command == "run":
+            work, state = review(start(api, args.pr, args.head))
+            print(f"Review {state}. Reports: {work / 'reports'}")
+            print(f"Summary preview: {work / 'comment.md'}")
+            print(f"Publish with: python3 {Path(__file__).resolve()} publish {work}")
+        else:
+            work = args.work.resolve()
+            result = publish(api, runner.read_json(work / "run.json"), work / "reports")
+            print(f"Posted: {result.get('html_url', 'summary comment')}")
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        sys.exit(f"error: {error}")
 
 
 if __name__ == "__main__":

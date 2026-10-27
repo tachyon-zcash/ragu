@@ -69,27 +69,46 @@ class LocalTests(unittest.TestCase):
         self.assertNotIn("USER", workflow)
         self.assertEqual(workflow["CLAUDE_CONFIG_DIR"], str(self.out / "claude/code-review"))
 
-    def test_local_command_drops_bare_and_key_helper_and_hides_credential_stores(self):
-        names = ("root", "work", "reports", "private", "plugin", "scratch")
-        root, work, out, private, plugin, scratch = [self.out / name for name in names]
+    def test_local_command_hides_credential_stores_and_claude_state_except_its_own_session(self):
+        names = ("root", "work", "reports", "private", "plugin", "scratch", "home")
+        root, work, out, private, plugin, scratch, home = [self.out / name for name in names]
+        state = home / ".claude"
+        project = state / "projects" / runner.project_slug(root)
+        for path in (home / ".claude.json", state / ".credentials.json", state / "settings.json",
+                     state / "projects/-other-project/old.jsonl", project / "earlier.jsonl", project / "memory/MEMORY.md"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        own = project / runner.session_id(work, "code-review")
+        peers = [project / runner.session_id(work, role) for role in runner.ROLES if role != "code-review"]
 
         def invocation(run, key):
-            command = runner.command("code-review", "claude", root, run, work, out, key, plugin, scratch,
-                                     "trusted prompt", runner.SCHEMA, runner.TOOLS)
+            with patch.object(Path, "home", return_value=home):
+                command = runner.command("code-review", "claude", root, run, work, out, key, plugin, scratch,
+                                         "trusted prompt", runner.SCHEMA, runner.TOOLS)
             return command, json.loads(command[command.index("--settings") + 1])
 
         command, settings = invocation(local_run(), None)
         self.assertNotIn("--bare", command)
         self.assertNotIn("apiKeyHelper", settings)
+        self.assertEqual(command[command.index("--session-id") + 1], own.name)
         filesystem = settings["sandbox"]["filesystem"]
         for name in runner.LOCAL_SECRETS:
-            self.assertIn(str(Path.home() / name), filesystem["denyRead"])
+            self.assertIn(str(home / name), filesystem["denyRead"])
+        for path in (state / ".credentials.json", state / "settings.json", state / "projects/-other-project",
+                     project / "earlier.jsonl", project / "memory", *peers):
+            self.assertIn(str(path), filesystem["denyRead"])
+            self.assertIn(f"Read(/{path}/**)", settings["permissions"]["deny"])
+        for path in (state, state / "projects", project, own):
+            self.assertNotIn(str(path), filesystem["denyRead"])
+            self.assertNotIn(f"Read(/{path}/**)", settings["permissions"]["deny"])
         self.assertNotIn("None", filesystem["denyRead"] + filesystem["denyWrite"])
         self.assertIn(str(root), filesystem["denyWrite"])
         command, settings = invocation({"model": "claude-opus-5-5", "effort": "xhigh"}, private)
         self.assertIn("--bare", command)
+        self.assertNotIn("--session-id", command)
         self.assertIn("apiKeyHelper", settings)
-        self.assertNotIn(str(Path.home() / ".config/gh"), settings["sandbox"]["filesystem"]["denyRead"])
+        for path in (home / ".config/gh", state / "settings.json"):
+            self.assertNotIn(str(path), settings["sandbox"]["filesystem"]["denyRead"])
 
     def test_local_and_workflow_runs_cannot_swap_credentials(self):
         with patch.dict(os.environ), patch("subprocess.check_output") as call:
@@ -123,6 +142,8 @@ class LocalTests(unittest.TestCase):
 
     def test_start_binds_the_live_snapshot_and_local_cli(self):
         def git(root, command, *args, **kwargs):
+            if command == "remote":
+                return f"git@github.com:{github.REPOSITORY}.git"
             return "" if command == "status" else BASE
 
         environment = {key: value for key, value in os.environ.items() if not key.startswith("RAGU_AUDIT_")}
@@ -139,6 +160,53 @@ class LocalTests(unittest.TestCase):
         with patch.object(local.runner, "git", return_value=" M .claude/skills/tal-review/SKILL.md"):
             with self.assertRaisesRegex(ValueError, "commit or stash"):
                 local.start(self.api, "9")
+
+    def test_client_keeps_the_gh_token_out_of_the_environment(self):
+        with patch.dict(os.environ), patch.object(local.subprocess, "check_output", return_value="gho_token\n") as gh:
+            os.environ.pop("GH_TOKEN", None)
+            api = local.client()
+            self.assertNotIn("GH_TOKEN", os.environ)
+        gh.assert_called_once()
+        self.assertEqual(api.token, "gho_token")
+        with patch.dict(os.environ, {"GH_TOKEN": ""}), patch.object(local.subprocess, "check_output", side_effect=FileNotFoundError("gh")):
+            with self.assertRaisesRegex(ValueError, "gh auth login"):
+                local.client()
+
+    def test_start_refuses_a_fork_as_origin(self):
+        def git(root, command, *args, **kwargs):
+            return "https://github.com/someone/ragu.git" if command == "remote" else ""
+
+        with patch.object(local.runner, "git", side_effect=git):
+            with self.assertRaisesRegex(ValueError, "origin is https://github.com/someone/ragu.git"):
+                local.start(self.api, "9")
+
+    def test_command_line_accepts_pr_spellings_and_reports_startup_errors_briefly(self):
+        for value in ("921", "#921", f"https://github.com/{github.REPOSITORY}/pull/921", f"https://github.com/{github.REPOSITORY}/pull/921/"):
+            self.assertEqual(local.pr_number(value), "921")
+        for value in ("pr 921", "https://github.com/other/repo/pull/921", "921abc"):
+            with self.assertRaises(local.argparse.ArgumentTypeError):
+                local.pr_number(value)
+        with patch.object(sys, "argv", ["local.py", "run", "#921"]), patch.object(local, "client", return_value=self.api), \
+             patch.object(local, "start", side_effect=ValueError("commit or stash changes")) as start, \
+             patch.object(local, "review") as review:
+            with self.assertRaises(SystemExit) as stop:
+                local.main()
+        start.assert_called_once_with(self.api, "921", None)
+        review.assert_not_called()
+        self.assertEqual(stop.exception.code, "error: commit or stash changes")
+
+    def test_cleanup_removes_the_cargo_home_and_the_reviewers_session_directories(self):
+        work, home = self.out / "work", self.out / "home"
+        project = home / ".claude" / "projects" / runner.project_slug(local.ROOT)
+        (work / "cargo").mkdir(parents=True)
+        for role in runner.ROLES:
+            (project / runner.session_id(work, role) / "tool-results").mkdir(parents=True)
+        (project / "maintainer-session.jsonl").touch()
+        with patch.object(Path, "home", return_value=home), patch.object(local.runner, "git") as git:
+            local.cleanup(work)
+        git.assert_not_called()  # No worktrees were left to remove.
+        self.assertFalse((work / "cargo").exists())
+        self.assertEqual([path.name for path in project.iterdir()], ["maintainer-session.jsonl"])
 
     def test_failed_review_still_cleans_up_and_writes_a_summary(self):
         run = local_run()
@@ -157,7 +225,9 @@ class LocalTests(unittest.TestCase):
     def test_publish_posts_inline_and_one_replaceable_summary_as_the_maintainer(self):
         bot = {"id": 50, "user": {"type": "Bot", "login": APP["slug"] + "[bot]"}, "body": github.MARKER + "\nBot summary",
                "issue_url": f"https://api.github.com/repos/{github.REPOSITORY}/issues/9"}
-        self.api.comments.append(copy.deepcopy(bot))
+        other = {"id": 51, "user": {"type": "User", "login": "other-maintainer"}, "body": github.LOCAL_MARKER + "\nTheir summary",
+                 "issue_url": bot["issue_url"]}
+        self.api.comments += [copy.deepcopy(bot), copy.deepcopy(other)]
         run = local_run()
         self.reports(run, candidate())
         local.publish(self.api, run, self.out)
@@ -165,9 +235,10 @@ class LocalTests(unittest.TestCase):
         self.assertEqual(len(self.api.reviews), 1)
         self.assertEqual(len(self.api.review_comments), 1)
         self.assertEqual(self.api.reviews[0]["user"], LOGIN)
-        self.assertEqual(self.api.comments[0], bot)
-        self.assertEqual(len(self.api.comments), 2)
-        text = self.api.comments[1]["body"]
+        self.assertIn("Report excerpts and validation limits are in the audit status comment", self.api.reviews[0]["body"])
+        self.assertEqual(self.api.comments[:2], [bot, other])  # The bot's and another maintainer's summaries stay.
+        self.assertEqual(len(self.api.comments), 3)
+        text = self.api.comments[2]["body"]
         self.assertTrue(text.startswith(github.LOCAL_MARKER + "\n"))
         self.assertNotIn(github.MARKER, text)
         self.assertIn("## Ragu audit (local run): completed", text)
@@ -190,6 +261,15 @@ class LocalTests(unittest.TestCase):
         self.assertEqual(len(self.api.reviews), 1)
         self.assertEqual(len(self.api.comments), 1)
         self.assertIn("local run): stale", self.api.comments[-1]["body"])
+
+    def test_authorship_distinguishes_the_app_from_a_maintainer(self):
+        bot = {"user": {"type": "Bot", "login": APP["slug"] + "[bot]"}}
+        self.assertTrue(github.authored(bot, APP))
+        self.assertTrue(github.authored(bot, {**APP, "login": "ignored"}))  # GitHub may extend its App object.
+        self.assertFalse(github.authored(bot, {"login": APP["slug"] + "[bot]"}))
+        self.assertTrue(github.authored({"user": dict(LOGIN)}, {"login": LOGIN["login"]}))
+        self.assertFalse(github.authored({"user": {**LOGIN, "type": "Bot"}}, {"login": LOGIN["login"]}))
+        self.assertFalse(github.authored({"user": dict(LOGIN)}, {"login": "someone-else"}))
 
     def test_publish_refuses_workflow_runs(self):
         with self.assertRaisesRegex(ValueError, "not a local run"):
