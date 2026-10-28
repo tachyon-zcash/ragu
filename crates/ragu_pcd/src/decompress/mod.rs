@@ -49,7 +49,8 @@
 //!    native verifier on a real compressed proof. *Done.*
 //! 3. [`batch`]: $f(u)$, $v$ and the $\beta$ weights as a gadget. *Done.*
 //! 4. [`ipa`]: $b$, the round inverses and the scalars of the final check
-//!    as a gadget. *Done.* $s(X)$ as a stage polynomial is item 7's.
+//!    as a gadget. *Done.* Binding $G'$ through $s(X)$ is in *What
+//!    remains*, below.
 //! 5. [`transcript`]: the compression's transcript over the allocated
 //!    instance and messages, squeezing the native challenges. *Done*,
 //!    with the bridges allocated; binding them is the first of what
@@ -81,63 +82,115 @@
 //!    from the canonical compressed proof the application holds. *Done*:
 //!    an aggregator application proves, verifies and compresses at the
 //!    aggregator rank.
+//! 10. The decompression step
+//!     ([`decompress`](crate::step::internal::decompress)): the one step
+//!     whose output header is the decompressed proof's, with the native
+//!     extension's statement circuit ([`chunk::StatementCircuit`]) exposing
+//!     the header the chunks verified and its claim's $k(y)$ holding the
+//!     step's output header to it. *Done*: a wallet's compressed proof
+//!     decompresses into a proof of the aggregator its own steps fuse, and
+//!     a relabelled one fails.
 //!
 //! # Integration
 //!
 //! [`chunk`] is the complete verifier as circuits: every check the native
 //! verifier makes runs in some chunk of one side or the other, over the
-//! four stages of [`stages`]. Making it a proof the fuse takes as a child
-//! is what remains, since it changes the fuse's circuit set:
+//! four stages of [`stages`]. [`extension`] lays the chunk circuits and
+//! their stages out as a profile's extension (see
+//! [`profile`](crate::profile)) and registers them through the profile's
+//! hooks beside the fuse's circuits, on both registries; [`prover`] fills
+//! their polynomials for every proof from a compressed proof's prepared
+//! sides. The aggregator profile declares it, at the aggregator rank:
+//! every chunk then runs in every proof of that profile, over the
+//! canonical compressed proof the application's
+//! [`Decompression`](crate::profile::Decompression) holds, so each child
+//! carries 75 more polynomials at the tests' header size for the fuse to
+//! hash, evaluate and fold, which the fuse's circuits carry at four times
+//! the production rank's budget. The decompression step runs the chunks over the
+//! wallet's proof it is given and outputs that proof's header, which the
+//! statement circuit's claim holds to the header the chunks verified.
 //!
-//! - **Circuits on both registries.** [`extension`] lays the chunk circuits
-//!   and their stages out as a profile's extension (see
-//!   [`profile`](crate::profile)) and registers them through the profile's
-//!   hooks beside the fuse's circuits, on both registries; [`prover`]
-//!   fills their polynomials for every proof from a compressed proof's
-//!   prepared sides. The aggregator profile declares it, at the aggregator
-//!   rank: every chunk then runs in every proof of that profile, over the
-//!   canonical compressed proof the application's
-//!   [`Decompression`](crate::profile::Decompression) holds, so each child
-//!   carries a hundred more polynomials for the fuse to hash, evaluate and
-//!   fold, which the fuse's circuits carry at four times the production
-//!   rank's budget. A native fuse step that decompresses a wallet's proof
-//!   of its own, running the chunks over it and binding its statement to
-//!   the instance stage, is the fuse's to add.
-//! - **The stages' bindings.** The instance stage holds the compressed
-//!   proof's statement and the messages stage its messages; the transcript
-//!   stage holds the bridges the compression's transcript absorbs. Binding
-//!   those bridges to the stage's commitment fixes the compression's bridge
-//!   layout: today its transcript commits a point's two coordinates to the
-//!   first two nested generators and a scalar to the first, and the stage's
-//!   layout must become the bridge's. The registry's evaluations the chunks
-//!   read from the work stage are the decider's to check against the wallet
-//!   registry, as the fuse's query stage is, and no such check exists yet:
-//!   the chunks take the values a prover writes there, so a prover who
-//!   writes false ones has them accept a proof the wallet's verifier would
-//!   reject. The check needs the decider to recompute the evaluations at
-//!   the decompressed proof's challenges, through the polynomial-query
-//!   hooks #821 proposes, as $G'$ below does.
-//! - **$G'$, the open gap.** The IPA's final check takes $G' = \langle s,
-//!   G \rangle$ as a witness point, so as the circuits stand that check
-//!   binds nothing: a prover who chooses $G'$ satisfies it for any
-//!   left-hand side, and the end-to-end test does not cover such a prover.
-//!   Everything before the IPA's final check is bound. $G'$ is the
-//!   commitment to $s(X) = \prod_{i < k} (1 + u_{k-1-i} X^{2^i})$ over the
-//!   same generators, so the fix is to witness $s$ as a polynomial of the
-//!   decompression proof, take its commitment as $G'$, and defer one
-//!   evaluation claim, $s$ at a fresh point against [`ipa::s_at`], to the
-//!   fuse that consumes the proof. The hooks
-//!   [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes,
-//!   `witness_polynomial`, `derive_challenge` and `enforce_poly_query`,
-//!   first drafted in [#783](https://github.com/tachyon-zcash/ragu/pull/783)
-//!   and since closed, are exactly that for a circuit-field polynomial,
-//!   which covers the host curve's $G'$; the binding waits for #821 to
-//!   land. The nested curve's $G'$ is the commitment to a scalar-field
-//!   polynomial on the nested curve, which those hooks do not reach, so it
-//!   needs the same mechanism on the nested side.
+//! # What remains
+//!
+//! The decompression proof is sound for an honest prover, which is what
+//! the end-to-end tests and the measurements cover, and not yet against a
+//! dishonest one: three of the native verifier's checks are not enforced
+//! on it, and a prover who skips any one of them has the aggregator
+//! accept a compressed proof the wallet's verifier would reject. No tamper
+//! test reaches such a prover: each alters one input and leaves the rest
+//! as the honest preparation made it, so no test prepares the two sides
+//! from different proofs. In the verifier's order:
+//!
+//! 1. **The two sides are not bound to each other.** Everything that
+//!    passes between the sides is a witness the receiving side allocates
+//!    or loads (the [`run`] module's `Aux` and the transcript stage): the
+//!    challenges the scalar-field side lifts from their endoscalars' bits,
+//!    the digits of the full-width scalars each side scales the other
+//!    curve's points by, and the bridges through which the circuit-field
+//!    transcript absorbs the scalar field's values and the host curve's
+//!    points. Each side therefore verifies a proof of its own: the
+//!    circuit-field side the one whose transcript binds the statement,
+//!    the scalar-field side one of the prover's choosing, with the
+//!    challenges and scalars its point checks need chosen to pass; so
+//!    nothing holds either curve's point checks to its scalar identities.
+//!    The design is the fuse's: the side that computes a value holds it
+//!    as stage wires, and the other side's view of it is bound by that
+//!    stage's commitment, which the other side recomputes from the
+//!    value's bits as the fuse's challenge binders do and exposes for the
+//!    proof's consumer to hold to the stage's actual commitment, as
+//!    `stages_match` holds the fuse's own challenge stage. That takes
+//!    three pieces: the bits and digits as stage wires with their
+//!    commitments recomputed on the other side; the bridges as stage
+//!    commitments, which means the compression's transcript absorbs one
+//!    stage-shaped bridge per stage, laid out and blinded as the fuse's
+//!    bridge stages are, in place of a scalar at the first nested
+//!    generator and a point's coordinates at the first two, a change to
+//!    `compress` and `verify_compressed` and to every wallet proof's
+//!    challenges though not to its size; and an
+//!    [`Extension`](crate::profile::Extension) hook for the consumer's
+//!    check, in the fuse's circuits and in `verify_compressed`. None of
+//!    it waits on another PR.
+//! 2. **The registry's evaluations are unchecked.** The native verifier
+//!    evaluates the wallet registry at $(w, r, y)$ and at the circuits'
+//!    $\omega_c$ itself; the chunks read these evaluations from the work
+//!    stage and take the values a prover writes there. The design is the
+//!    fuse's query stage's: the decider recomputes the evaluations at the
+//!    decompressed proof's challenges against the wallet registry and
+//!    holds the stage's wires to them, through the polynomial-query hooks
+//!    [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes, as
+//!    $G'$ below does. Waits on #821. Until then nothing ties a proof to
+//!    the canonical wallet application either: an aggregator that builds
+//!    its [`Decompression`](crate::profile::Decompression) over a different
+//!    wallet application, or writes values of no registry at all, has its
+//!    proofs accepted. The check pins it once it exists, since the decider
+//!    recomputes the evaluations from the wallet registry it holds, which
+//!    makes the wallet application part of what a verifier of aggregator
+//!    proofs builds. Pinning a digest of the wallet registry in the
+//!    aggregator's registry tag is the alternative, still to decide.
+//! 3. **$G'$ is unbound.** The IPA's final check takes $G' = \langle s,
+//!    G \rangle$ as a witness point, so as the circuits stand that check
+//!    binds nothing: a prover who chooses $G'$ satisfies it for any
+//!    left-hand side. Everything before the IPA's final check is bound.
+//!    $G'$ is the commitment to $s(X) = \prod_{i < k} (1 + u_{k-1-i}
+//!    X^{2^i})$ over the same generators, so the fix is to witness $s$ as
+//!    a polynomial of the decompression proof, take its commitment as
+//!    $G'$, and defer one evaluation claim, $s$ at a fresh point against
+//!    [`ipa::s_at`], to the fuse that consumes the proof. The hooks #821
+//!    proposes, `witness_polynomial`, `derive_challenge` and
+//!    `enforce_poly_query`, first drafted in
+//!    [#783](https://github.com/tachyon-zcash/ragu/pull/783) and since
+//!    closed, are exactly that for a circuit-field polynomial, which
+//!    covers the host curve's $G'$. The nested curve's $G'$ is the
+//!    commitment to a scalar-field polynomial on the nested curve, which
+//!    those hooks do not reach, so it needs the same mechanism on the
+//!    nested side. Waits on #821 and a nested counterpart.
+//!
+//! The three are independent and land in any order; the aggregator's
+//! proofs are sound against a dishonest prover once all three have.
 
-// The gadgets have no caller until the decompression step assembles them,
-// so until then only their tests use them.
+// The chunk circuits use the gadgets piecewise. The whole-side verifier in
+// `circuit` and the entry points only it calls, such as the transcript
+// replay and the claim derivation, are reached from the tests alone.
 #![allow(dead_code)]
 
 use alloc::vec::Vec;

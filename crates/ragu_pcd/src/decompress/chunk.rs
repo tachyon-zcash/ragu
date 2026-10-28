@@ -17,6 +17,10 @@
 //! is sized by `K`. An aggregator runs the chunks at
 //! [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) over
 //! wallets' proofs at the production rank.
+//!
+//! Beside the chunks, a [`StatementCircuit`] loads the instance stage alone
+//! and exposes the output header the chunks verified as its public output,
+//! the one place the decompressed statement reaches a claim.
 
 use alloc::sync::Arc;
 use core::marker::PhantomData;
@@ -29,8 +33,12 @@ use ragu_circuits::{
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    gadgets::{Bound, Kind},
     maybe::Maybe,
+};
+use ragu_primitives::{
+    Element,
+    vec::{ConstLen, FixedVec},
 };
 
 use super::{
@@ -276,6 +284,81 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
         self.inner
             .synthesize::<_, S, K, HEADER_SIZE>(dr, loaded, witness)?;
         Ok(WithAux::new(S::output(dr), D::unit()))
+    }
+}
+
+/// The statement circuit of side `S`: the circuit whose public output is
+/// the output header of the compressed proof the chunks verified, read off
+/// the instance stage. The chunks bind every value of that stage to the
+/// proof they verify, so a claim on this circuit's output is a claim on the
+/// decompressed proof's statement, which the decompression step's verifier
+/// makes through the circuit's $k(y)$ (see
+/// [`statement_ky`](crate::internal::native::stages::preamble::ProofInputs::statement_ky)).
+pub(crate) struct StatementCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
+    schedule: Arc<Schedule>,
+    _marker: PhantomData<fn() -> (C, S, K, R)>,
+}
+
+impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
+    for StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    fn clone(&self) -> Self {
+        StatementCircuit {
+            schedule: self.schedule.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    /// The statement circuit over `schedule`'s instance stage.
+    pub(crate) fn new(schedule: Arc<Schedule>) -> MultiStage<S::F, R, Self> {
+        MultiStage::new(StatementCircuit {
+            schedule,
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
+    for StatementCircuit<C, S, K, R, HEADER_SIZE>
+{
+    type Last = InstanceStage<C, S, K, R, HEADER_SIZE>;
+    /// The output header the instance stage holds.
+    type Instance<'source> = FixedVec<S::F, ConstLen<HEADER_SIZE>>;
+    type Witness<'source> = &'source Prepared<C, S>;
+    type Output = Kind![S::F; FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|header| header[i]))
+        })
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
+        &self,
+        dr: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>>
+    where
+        Self: 'dr,
+    {
+        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
+        let dr = dr.finish();
+        let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
+        let span = self.schedule.layout.instance.output_header;
+        let header = span
+            .positions()
+            .map(|position| instance.elements[position].clone())
+            .collect::<alloc::vec::Vec<_>>();
+        Ok(WithAux::new(FixedVec::try_from(header)?, D::unit()))
     }
 }
 
