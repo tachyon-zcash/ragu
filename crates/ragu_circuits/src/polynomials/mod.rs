@@ -17,8 +17,8 @@ pub trait Rank:
     private::Sealed + Clone + Send + Sync + 'static + PartialEq + Eq + core::fmt::Debug + Default
 {
     /// The rank can range from $2$ to $28$ (to avoid overflows on 32-bit
-    /// architectures), but only [`ProductionRank`], [`TestRank`] and
-    /// `R<14>` are currently implemented.
+    /// architectures), but only [`ProductionRank`], [`AggregatorRank`],
+    /// [`TestRank`] and `R<14>` are currently implemented.
     const RANK: u32;
 
     /// Returns the $2^\text{RANK}$ number of coefficients in the polynomials
@@ -126,6 +126,12 @@ pub struct R<const RANK: u32>;
 /// $2^{11} = 2048$ gates.
 pub type ProductionRank = R<13>;
 
+/// The rank for aggregators' proofs: four times the production rank's
+/// capacity, $2^{15}$ polynomial coefficients and up to $2^{13} = 8192$
+/// gates, so that the fuse's circuits have the room to verify children that
+/// carry the decompression circuits' polynomials.
+pub type AggregatorRank = R<15>;
+
 /// A small rank for fast unit tests.
 ///
 /// Provides $2^7 = 128$ polynomial coefficients and supports up to
@@ -144,7 +150,7 @@ macro_rules! impl_rank_for_R {
     };
 }
 
-impl_rank_for_R! {7, 13, 14}
+impl_rank_for_R! {7, 13, 14, 15}
 
 #[cfg(test)]
 mod tests {
