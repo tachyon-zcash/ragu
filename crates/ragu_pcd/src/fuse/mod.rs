@@ -42,7 +42,10 @@ use ragu_core::{
     },
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{Element, EndoscalarChallenge, GadgetExt, Point, vec::CollectFixed};
+use ragu_primitives::{
+    Element, EndoscalarChallenge, GadgetExt, Point,
+    vec::{CollectFixed, Len},
+};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -101,20 +104,26 @@ struct NestedSPrime<C: Cycle, R: Rank> {
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// The nested batch this step opens, over the nested polynomials the
     /// builder has committed so far.
     fn nested_batch<'a>(
         &self,
-        builder: &'a ProofBuilder<'_, C, R, B>,
+        builder: &'a ProofBuilder<'_, C, R, J, B>,
         nested_s_prime: &'a NestedSPrime<C, R>,
         nested_registry_wy: &'a NestedRegistryWy<C, R>,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
     ) -> pcs::Batch<'a, C, R> {
         pcs::Batch {
+            polys: J::PolyWitnesses::len(),
             left,
             right,
             registry_wx0: &nested_s_prime.registry_wx0_poly,
@@ -136,13 +145,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         &self,
         mut challenges: nested::stages::challenges::Witness<C::ScalarField>,
         pre_beta: C::CircuitField,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<nested::stages::challenges::Witness<C::ScalarField>> {
         challenges.beta = nested::challenge::<C>(pre_beta)?;
-        builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<C::HostCurve, R>::rx(
-            C::ScalarField::ZERO,
-            &challenges,
-        )?);
+        builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::rx(C::ScalarField::ZERO, &challenges)?);
         Ok(challenges)
     }
 
@@ -168,8 +178,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
@@ -198,7 +213,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        let mut builder = ProofBuilder::<C, R, B>::new(
+        let mut builder = ProofBuilder::<C, R, J, B>::new(
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
@@ -388,7 +403,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 // commitment is what makes `pre_beta` independent across
                 // retries.
                 let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval, &builder)?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -469,6 +484,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
+            witness_polys: builder.witness_poly_commitments(),
             nested: nested_eval,
         };
 

@@ -59,10 +59,15 @@ fn check_targets<H: Header<Fp>>(
             Fq::random(|bytes| rng.fill_bytes(bytes)),
         ),
     ] {
-        let expected = ky::native_ky::<Pasta, ProductionRank, H, HEADER_SIZE>(pcd, y).unwrap();
+        let expected =
+            ky::native_ky::<Pasta, ProductionRank, H, HEADER_SIZE, crate::NoHooks>(pcd, y).unwrap();
         let expected_nested = ky::NestedKy {
             c: pcd.proof().nested_c(),
-            unified: ky::nested_ky(pcd.proof(), nested_y).unwrap(),
+            unified: ky::nested_ky::<_, _, ragu_primitives::vec::ConstLen<0>>(
+                pcd.proof(),
+                nested_y,
+            )
+            .unwrap(),
         };
         let (native, nested) = instance
             .targets::<HEADER_SIZE>(&challenges, &header, y, nested_y)
@@ -80,19 +85,19 @@ fn check_targets<H: Header<Fp>>(
 
         // Compare the finite target lists consumed by the claim builders,
         // including the raw claim's position relative to the circuit claims.
-        let targets: Vec<_> = native::claims::ky_values(&native)
+        let targets: Vec<_> = native::claims::ky_values(&native, 0)
             .take(native_count)
             .collect();
-        let decider_targets: Vec<_> = native::claims::ky_values(&expected)
+        let decider_targets: Vec<_> = native::claims::ky_values(&expected, 0)
             .take(native_count - 1)
             .collect();
         assert_eq!(targets[0], pcd.proof().native_c(), "{label}");
         assert_eq!(&targets[1..], decider_targets.as_slice(), "{label}");
         assert_eq!(
-            nested::claims::ky_values(&nested)
+            nested::claims::ky_values(&nested, 0)
                 .take(nested_count)
                 .collect::<Vec<_>>(),
-            nested::claims::ky_values(&expected_nested)
+            nested::claims::ky_values(&expected_nested, 0)
                 .take(nested_count)
                 .collect::<Vec<_>>(),
             "{label}"

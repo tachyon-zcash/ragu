@@ -31,13 +31,13 @@ use crate::{
     header::{Header, Suffix},
     internal::{native, nested},
     proof::recursive_propagation_tests::support::{self, Cache},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 type TestR = ProductionRank;
 const HEADER_SIZE: usize = 4;
 type App = Application<'static, Pasta, TestR, HEADER_SIZE>;
-type NativeEval = native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE>;
+type NativeEval = native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE, crate::NoHooks>;
 
 /// A header carrying one field element.
 struct Value;
@@ -70,7 +70,7 @@ impl Step<Pasta> for Seed {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -87,6 +87,7 @@ impl Step<Pasta> for Seed {
     where
         Self: 'dr,
     {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         Ok((
             (

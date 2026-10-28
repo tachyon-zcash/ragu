@@ -11,7 +11,9 @@
 //!   `eval`, $a$, $b$, `registry_xy` and $P$, then the five native points
 //!   stages holding the walk's inputs, the native stages besides those whose
 //!   contents must be fixed before a challenge is squeezed (see
-//!   [`native::stages::points`](crate::internal::native::stages::points)).
+//!   [`native::stages::points`](crate::internal::native::stages::points)),
+//!   then the commitments of the polynomials the step witnessed, which the
+//!   parent accumulates.
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage. Its
 //! [`collapse`](super::circuits::collapse) circuit computes the expected
@@ -29,6 +31,9 @@
 //! There is no suffix zero here: the nested registry holds internal circuits
 //! only, so nothing needs telling apart from an application circuit.
 
+use alloc::vec::Vec;
+use core::marker::PhantomData;
+
 use ragu_circuits::horner::Horner;
 use ragu_core::{
     Result,
@@ -40,21 +45,34 @@ use ragu_primitives::{
     Element, GadgetExt, Point,
     allocator::Allocator,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{FixedVec, Len},
 };
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::internal::native::unified::Slot;
 
-/// The host-curve commitments the instance exports, in [`Write`] order.
-pub const NUM_EXPORTED: usize = 14;
+/// The host-curve commitments the instance exports from the step's stages,
+/// in [`Write`] order; the witnessed polynomials' follow them.
+pub const NUM_STAGE_EXPORTS: usize = 14;
 
-/// Length type for the exported commitments.
-pub type ExportedLen = ConstLen<NUM_EXPORTED>;
+/// The host-curve commitments the instance of an application witnessing
+/// `polys` polynomials per step exports, in [`Write`] order.
+pub const fn num_exported(polys: usize) -> usize {
+    NUM_STAGE_EXPORTS + polys
+}
+
+/// Length type for the exported commitments, for a poly count `L`.
+pub struct ExportedLen<L: Len>(PhantomData<L>);
+
+impl<L: Len> Len for ExportedLen<L> {
+    fn len() -> usize {
+        num_exported(L::len())
+    }
+}
 
 /// The gadget kind of the nested internal circuits' output.
 #[allow(type_alias_bounds)]
-pub type OutputKind<C: Affine> = Kind![C::Base; Output<'_, _, C>];
+pub type OutputKind<C: Affine, L> = Kind![C::Base; Output<'_, _, C, L>];
 
 /// Native (non-gadget) representation of the nested unified instance.
 ///
@@ -68,7 +86,9 @@ pub struct Instance<C: Affine> {
     pub x: C::Base,
     pub y: C::Base,
     pub u: C::Base,
-    pub exported: [C; NUM_EXPORTED],
+    /// The step's stage exports, then its witnessed polynomials'
+    /// commitments: [`num_exported`] of them.
+    pub exported: Vec<C>,
     /// Accumulated coverage from prior circuits.
     pub coverage: Coverage,
 }
@@ -105,27 +125,29 @@ impl Coverage {
 
     /// Asserts that every slot has been covered.
     fn assert_complete(self) {
-        self.for_each_slot(|name, covered, _| {
+        self.for_each_slot(0, |name, covered, _| {
             assert!(covered, "slot `{name}` not covered by any circuit");
         });
     }
 
     /// Walks the slots in the output's $k(Y)$ order, handing `f` each slot's
     /// name, whether a circuit has covered it, and the number of $k(Y)$
-    /// wires it writes: one per element, two per exported point.
-    pub fn for_each_slot(&self, mut f: impl FnMut(&'static str, bool, usize)) {
+    /// wires it writes: one per element, two per exported point, of which
+    /// there are `num_exported`.
+    pub fn for_each_slot(&self, num_exported: usize, mut f: impl FnMut(&'static str, bool, usize)) {
         f("c", self.c, 1);
         f("v", self.v, 1);
         f("x", self.x, 1);
         f("y", self.y, 1);
         f("u", self.u, 1);
-        f("exported", self.exported, 2 * NUM_EXPORTED);
+        f("exported", self.exported, 2 * num_exported);
     }
 }
 
-/// The shared public instance of the nested internal circuits.
+/// The shared public instance of the nested internal circuits, for a poly
+/// count `L`.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     #[ragu(gadget)]
     pub c: Element<'dr, D>,
     #[ragu(gadget)]
@@ -137,10 +159,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     #[ragu(gadget)]
     pub u: Element<'dr, D>,
     #[ragu(gadget)]
-    pub exported: FixedVec<Point<'dr, D, C>, ExportedLen>,
+    pub exported: FixedVec<Point<'dr, D, C>, ExportedLen<L>>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Output<'dr, D, C> {
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> Output<'dr, D, C, L> {
     /// Allocates the instance's wires from its native values.
     pub fn alloc<A: Allocator<'dr, D>>(
         dr: &mut D,
@@ -153,7 +175,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Output<'dr, D, C> {
             x: Element::alloc(dr, allocator, instance.as_ref().map(|i| i.x))?,
             y: Element::alloc(dr, allocator, instance.as_ref().map(|i| i.y))?,
             u: Element::alloc(dr, allocator, instance.as_ref().map(|i| i.u))?,
-            exported: alloc_exported(dr, instance.as_ref().map(|i| i.exported))?,
+            exported: alloc_exported(dr, instance.as_ref().map(|i| &i.exported[..]))?,
         })
     }
 
@@ -167,10 +189,19 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Output<'dr, D, C> {
 }
 
 /// Allocates the exported commitments' wires.
-fn alloc_exported<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
+fn alloc_exported<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len>(
     dr: &mut D,
-    exported: DriverValue<D, [C; NUM_EXPORTED]>,
-) -> Result<FixedVec<Point<'dr, D, C>, ExportedLen>> {
+    exported: DriverValue<D, &[C]>,
+) -> Result<FixedVec<Point<'dr, D, C>, ExportedLen<L>>> {
+    D::try_just(|| {
+        if exported.as_ref().take().len() == ExportedLen::<L>::len() {
+            Ok(())
+        } else {
+            Err(ragu_core::Error::MalformedEncoding(
+                "nested instance does not export the configured commitments".into(),
+            ))
+        }
+    })?;
     FixedVec::try_from_fn(|i| Point::alloc(dr, exported.as_ref().map(|e| e[i])))
 }
 
@@ -180,18 +211,18 @@ fn alloc_exported<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 /// for it, receive and constrain, or compute and provide; whatever is left
 /// is allocated by [`finish`](Self::finish), which also folds the circuit's
 /// coverage into the [`Instance`] it returns.
-pub struct OutputBuilder<'dr, D: Driver<'dr>, A, C: Affine<Base = D::F>> {
+pub struct OutputBuilder<'dr, D: Driver<'dr>, A, C: Affine<Base = D::F>, L: Len> {
     pub c: Slot<'dr, D, A, Element<'dr, D>, C::Base>,
     pub v: Slot<'dr, D, A, Element<'dr, D>, C::Base>,
     pub x: Slot<'dr, D, A, Element<'dr, D>, C::Base>,
     pub y: Slot<'dr, D, A, Element<'dr, D>, C::Base>,
     pub u: Slot<'dr, D, A, Element<'dr, D>, C::Base>,
-    pub exported: Slot<'dr, D, A, FixedVec<Point<'dr, D, C>, ExportedLen>, [C; NUM_EXPORTED]>,
+    pub exported: Slot<'dr, D, A, FixedVec<Point<'dr, D, C>, ExportedLen<L>>, Vec<C>>,
     instance: DriverValue<D, Instance<C>>,
 }
 
-impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Affine<Base = D::F>>
-    OutputBuilder<'dr, D, A, C>
+impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Affine<Base = D::F>, L: Len>
+    OutputBuilder<'dr, D, A, C, L>
 {
     /// Creates a builder over `instance`, which carries the values and the
     /// coverage accumulated so far.
@@ -203,12 +234,12 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Affine<Base = D::F>>
         ) -> Result<Element<'dr, D>> {
             Element::alloc(dr, allocator, value)
         }
-        fn exported<'dr, D: Driver<'dr>, A, C: Affine<Base = D::F>>(
+        fn exported<'dr, D: Driver<'dr>, A, C: Affine<Base = D::F>, L: Len>(
             dr: &mut D,
             _: &mut A,
-            value: DriverValue<D, [C; NUM_EXPORTED]>,
-        ) -> Result<FixedVec<Point<'dr, D, C>, ExportedLen>> {
-            alloc_exported(dr, value)
+            value: DriverValue<D, Vec<C>>,
+        ) -> Result<FixedVec<Point<'dr, D, C>, ExportedLen<L>>> {
+            alloc_exported(dr, value.as_ref().map(|v| &v[..]))
         }
         OutputBuilder {
             c: Slot::new(instance.as_ref().map(|i| i.c), element),
@@ -216,7 +247,7 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Affine<Base = D::F>>
             x: Slot::new(instance.as_ref().map(|i| i.x), element),
             y: Slot::new(instance.as_ref().map(|i| i.y), element),
             u: Slot::new(instance.as_ref().map(|i| i.u), element),
-            exported: Slot::new(instance.as_ref().map(|i| i.exported), exported),
+            exported: Slot::new(instance.as_ref().map(|i| i.exported.clone()), exported),
             instance,
         }
     }
@@ -227,7 +258,7 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Affine<Base = D::F>>
         self,
         dr: &mut D,
         allocator: &mut A,
-    ) -> Result<(Output<'dr, D, C>, DriverValue<D, Instance<C>>)> {
+    ) -> Result<(Output<'dr, D, C, L>, DriverValue<D, Instance<C>>)> {
         let c = self.c.take(dr, allocator)?;
         let v = self.v.take(dr, allocator)?;
         let x = self.x.take(dr, allocator)?;

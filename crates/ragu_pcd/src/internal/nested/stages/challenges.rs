@@ -63,7 +63,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{ConstLen, FixedVec, Len as LenTrait},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
@@ -163,13 +163,20 @@ pub struct Pair<'dr, D: Driver<'dr>> {
     pub zero: Element<'dr, D>,
 }
 
-#[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, L> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = super::eval::Stage<C, R>;
+impl<C: Affine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, R: Rank, L: LenTrait> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
+    type Parent = super::eval::Stage<C, R, L>;
     type Witness<'source> = &'source Witness<C::Base>;
     type OutputKind = Kind![C::Base; Output<'_, _>];
 
@@ -220,7 +227,7 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ragu_primitives::vec::ConstLen<0>>::default());
     }
 
     /// The challenge stage's lifts read back off its rx polynomial are the
@@ -233,18 +240,24 @@ mod tests {
         let beta = F::from(99);
         let header = [ragu_core::pasta::Fp::from(crate::header::Suffix::new(0).get()); 4];
         let witness = Witness::new::<_, 4>(lifts, &header, &header, beta);
-        let rx = <Stage<EqAffine, R> as StageExt<F, R>>::rx(F::from(11), &witness)?;
+        let rx = <Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>> as StageExt<F, R>>::rx(
+            F::from(11),
+            &witness,
+        )?;
         let reader = StageReader::<F, R>::new(&rx);
 
-        let indices = stage_wire_indices::<F, R, Stage<EqAffine, R>>(|out| {
-            let mut wires = Vec::new();
-            for pair in out.pairs.iter() {
-                wires.extend(wires_of(&pair.lift)?);
-            }
-            wires.extend(wires_of(&out.base_case.lift)?);
-            wires.extend(wires_of(&out.beta.lift)?);
-            Ok(wires)
-        })?;
+        let indices =
+            stage_wire_indices::<F, R, Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>>(
+                |out| {
+                    let mut wires = Vec::new();
+                    for pair in out.pairs.iter() {
+                        wires.extend(wires_of(&pair.lift)?);
+                    }
+                    wires.extend(wires_of(&out.base_case.lift)?);
+                    wires.extend(wires_of(&out.beta.lift)?);
+                    Ok(wires)
+                },
+            )?;
         for (i, lift) in lifts.iter().enumerate() {
             assert_eq!(reader.read(indices[i]), *lift, "lift {i}");
         }

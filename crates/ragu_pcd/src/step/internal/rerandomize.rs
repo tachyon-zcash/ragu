@@ -28,7 +28,7 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Step, StepCtx};
 use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 
@@ -57,7 +57,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, C>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -78,8 +78,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // `Encoded::new_uniform`). The output reuses the left input's wires;
         // the right input is the standard unit encoding carried by the cached
         // seeded proof.
-        let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
-        let right_encoded = Encoded::new(dr, allocator, right)?;
+        let left_encoded = Encoded::new_uniform(ctx.dr, allocator, left.clone())?;
+        let right_encoded = Encoded::new(ctx.dr, allocator, right)?;
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization
@@ -155,26 +155,18 @@ mod tests {
             }
         }
 
+        type Adapter<S> =
+            super::super::adapter::Adapter<'static, Pasta, S, R, HEADER_SIZE, crate::NoHooks>;
         let circuit_single =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<Single>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-                0,
-            )
-            .unwrap();
+            Adapter::<Rerandomize<Single>>::new(Rerandomize::new(), 0, crate::pasta::baked())
+                .unwrap();
         let circuit_pair =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<Pair>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-                0,
-            )
-            .unwrap();
+            Adapter::<Rerandomize<Pair>>::new(Rerandomize::new(), 0, crate::pasta::baked())
+                .unwrap();
 
         // `Rerandomize<()>` is the instantiation `finalize` actually registers.
         let circuit_unit =
-            super::super::adapter::Adapter::<Pasta, Rerandomize<()>, R, HEADER_SIZE>::new(
-                Rerandomize::new(),
-                0,
-            )
-            .unwrap();
+            Adapter::<Rerandomize<()>>::new(Rerandomize::new(), 0, crate::pasta::baked()).unwrap();
 
         // A frozen twin of `Rerandomize`, written from primitives: one uniform
         // wire set shared by the left input and output, plus the standard unit
@@ -192,7 +184,7 @@ mod tests {
             type Output = ();
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
-                dr: &mut D,
+                ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
                 _: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -206,6 +198,7 @@ mod tests {
                 DriverValue<D, ()>,
                 DriverValue<D, ()>,
             )> {
+                let dr = &mut *ctx.dr;
                 let allocator = &mut ragu_primitives::allocator::Standard::new();
                 let left_encoded =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, left.clone())?;
@@ -218,9 +211,7 @@ mod tests {
                 ))
             }
         }
-        let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight, 0)
-                .unwrap();
+        let circuit_twin = Adapter::<UnitRight>::new(UnitRight, 0, crate::pasta::baked()).unwrap();
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

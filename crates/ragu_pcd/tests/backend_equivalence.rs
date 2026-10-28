@@ -27,7 +27,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Step, StepCtx},
 };
 
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -125,7 +125,8 @@ const RNG_FINGERPRINT_WORDS: usize = 4;
 const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
-type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
+type TestApplication<'params, B> =
+    Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, crate::NoHooks, B>;
 type TestPcd = Pcd<Pasta, ProductionRank, ()>;
 type TestCompressedPcd = CompressedPcd<Pasta, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
@@ -147,7 +148,7 @@ impl Step<Pasta> for UnitStep {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        dr: &mut D,
+        ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -161,6 +162,7 @@ impl Step<Pasta> for UnitStep {
         DriverValue<D, ()>,
         DriverValue<D, Self::Aux<'source>>,
     )> {
+        let dr = &mut *ctx.dr;
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
@@ -1131,7 +1133,17 @@ mod proof_equivalence {
                 bridge_ab_commitment: _,
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
+                application_poly_queries: _,
+                witness_polys: _,
+                witness_poly_commitments: _,
             } = self;
+
+            // The proofs' hook layout, which fixes how many endoscaling
+            // steps each walk takes.
+            let polys = self.witness_polys.len();
+            if polys != other.witness_polys.len() {
+                return Some("witnessed polynomial count");
+            }
 
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");
@@ -1143,11 +1155,17 @@ mod proof_equivalence {
                 return Some("headers");
             }
 
-            if native::RxIndex::ALL
-                .into_iter()
-                .any(|index| !polynomial_eq(&self[index], &other[index]))
+            if native::RxIndex::all(polys).any(|index| !polynomial_eq(&self[index], &other[index]))
             {
                 return Some("native rx polynomials");
+            }
+            if self
+                .witness_polys
+                .iter()
+                .zip(&other.witness_polys)
+                .any(|(a, b)| !polynomial_eq(a, b))
+            {
+                return Some("witnessed polynomials");
             }
             if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
                 || !polynomial_eq(&self.native_b_poly, &other.native_b_poly)
@@ -1161,9 +1179,7 @@ mod proof_equivalence {
             {
                 return Some("native protocol polynomials");
             }
-            if nested::RxIndex::ALL
-                .into_iter()
-                .any(|index| !polynomial_eq(&self[index], &other[index]))
+            if nested::RxIndex::all(polys).any(|index| !polynomial_eq(&self[index], &other[index]))
             {
                 return Some("nested polynomials");
             }
@@ -1208,11 +1224,22 @@ mod proof_equivalence {
                 return Some("challenges");
             }
 
-            if native::RxIndex::ALL
-                .into_iter()
+            if native::RxIndex::all(polys)
                 .any(|index| self.native_rx_commitment(index) != other.native_rx_commitment(index))
             {
                 return Some("native rx commitments");
+            }
+            if self.witness_poly_commitments() != other.witness_poly_commitments() {
+                return Some("witnessed polynomial commitments");
+            }
+            if self.application_poly_queries.len() != other.application_poly_queries.len()
+                || self
+                    .application_poly_queries
+                    .iter()
+                    .zip(&other.application_poly_queries)
+                    .any(|(a, b)| a.com != b.com || a.x != b.x || a.y != b.y)
+            {
+                return Some("poly-queries");
             }
             if self.native_commitment(native::RxComponent::AbA)
                 != other.native_commitment(native::RxComponent::AbA)

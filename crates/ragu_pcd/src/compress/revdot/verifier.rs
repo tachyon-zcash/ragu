@@ -11,6 +11,7 @@ use ragu_core::{Cycle, Error, Result};
 use udon::{curve::Affine, field::Field};
 
 use super::{
+    super::POLYS,
     Openings, Reduction,
     fold::{self, Derived, Layout},
     invert, openings,
@@ -174,7 +175,7 @@ pub(crate) fn verify_native<C: Cycle, R: Rank, B: Backend>(
     let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,
-        native::claims::ky_values(targets),
+        native::claims::ky_values(targets, POLYS),
         commitment,
         |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
         reduction,
@@ -198,7 +199,7 @@ pub(crate) fn verify_nested<C: Cycle, R: Rank, B: Backend>(
     let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,
-        nested::claims::ky_values(targets),
+        nested::claims::ky_values(targets, POLYS),
         commitment,
         |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
         reduction,

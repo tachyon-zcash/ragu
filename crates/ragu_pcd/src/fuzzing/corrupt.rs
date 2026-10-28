@@ -167,12 +167,14 @@ pub enum NativeRx {
 }
 
 impl NativeRx {
-    /// The number of native rx polynomial components.
-    pub const NUM: usize = crate::internal::native::RxIndex::NUM;
+    /// The number of native rx polynomial components of an application
+    /// without hooks, which is what the corruption vocabulary addresses.
+    pub const NUM: usize = crate::internal::native::RxIndex::num(0);
 
-    /// All variants, in the canonical order `internal` defines.
+    /// All variants of an application without hooks, in the canonical
+    /// order `internal` defines.
     ///
-    /// Derived from `internal::native::RxIndex::ALL` rather than restated.
+    /// Derived from `internal::native::RxIndex::nth` rather than restated.
     /// That order is not cosmetic — it drives the `Write` impl for `RxValues`
     /// and the evaluation order in `poly_queries` — and a hand-copied list
     /// could drift from it silently, which an exhaustive `match` would not
@@ -180,11 +182,11 @@ impl NativeRx {
     pub const ALL: [Self; Self::NUM] = Self::derive_all();
 
     const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::native::RxIndex::ALL;
+        let steps = crate::internal::native::num_endoscaling_steps(0);
         let mut out = [Self::Application; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
-            out[i] = Self::from_internal(src[i]);
+            out[i] = Self::from_internal(crate::internal::native::RxIndex::nth(steps, i));
             i += 1;
         }
         out
@@ -548,6 +550,13 @@ pub enum Corruption<C: Cycle> {
         /// What to add.
         delta: C::ScalarField,
     },
+    /// Perturb the claimed evaluation `y` of the poly-query at the given
+    /// index; out of range is a no-op.
+    QueryY(usize, C::CircuitField),
+    /// Negate the commitment of the poly-query at the given index, so it is
+    /// a valid point that commits to no carried polynomial; out of range is
+    /// a no-op.
+    QueryCom(usize),
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
@@ -599,6 +608,8 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             Corruption::NestedPCoeff { coeff, .. } => {
                 write!(f, "NestedPCoeff {{ coeff: {coeff} }}")
             }
+            Corruption::QueryY(index, _) => write!(f, "QueryY({index})"),
+            Corruption::QueryCom(index) => write!(f, "QueryCom({index})"),
         }
     }
 }
@@ -828,6 +839,24 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.nested_p_poly_mut().add_assign(&delta);
                 Binding::MustReject
             }
+
+            Corruption::QueryY(index, delta) => {
+                match self.application_poly_queries.get_mut(index) {
+                    Some(query) if delta != C::CircuitField::ZERO => {
+                        query.y += delta;
+                        Binding::MustReject
+                    }
+                    _ => Binding::Unbound,
+                }
+            }
+
+            Corruption::QueryCom(index) => match self.application_poly_queries.get_mut(index) {
+                Some(query) => {
+                    query.com = -query.com;
+                    Binding::MustReject
+                }
+                None => Binding::Unbound,
+            },
         }
     }
 
@@ -848,8 +877,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// Create the synthesized dummy proof used to bootstrap recursion.
     #[doc(hidden)]
@@ -859,8 +893,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 }
 
 impl NestedRx {
-    /// The number of nested rx components.
-    pub const NUM: usize = crate::internal::nested::RxIndex::NUM;
+    /// The number of nested rx components of an application without hooks,
+    /// as [`NativeRx::NUM`].
+    pub const NUM: usize = crate::internal::nested::RxIndex::num(0);
 
     /// Whether this is a bridge stage's rx, whose commitment
     /// [`BridgeCommitment`] addresses.
@@ -880,18 +915,18 @@ impl NestedRx {
 
     /// All variants, in the canonical order `internal` defines.
     ///
-    /// Derived from `internal::nested::RxIndex::ALL` for the same reason as
+    /// Derived from `internal::nested::RxIndex::nth` for the same reason as
     /// [`NativeRx::ALL`], and more urgently: this order is pinned by
     /// `test_nested_registry_tag`, so restating it by hand would put a
     /// consensus-relevant ordering in two places.
     pub const ALL: [Self; Self::NUM] = Self::derive_all();
 
     const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::nested::RxIndex::ALL;
+        let steps = crate::internal::nested::num_endoscaling_steps(0);
         let mut out = [Self::EndoscalarStage; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
-            out[i] = Self::from_internal(src[i]);
+            out[i] = Self::from_internal(crate::internal::nested::RxIndex::nth(steps, i));
             i += 1;
         }
         out

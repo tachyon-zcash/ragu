@@ -51,7 +51,7 @@ pub(crate) mod support {
                 stages::{eval as nested_eval, preamble},
             },
         },
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Step, StepCtx},
     };
 
     pub(crate) type App = Application<'static, C, R, HEADER_SIZE>;
@@ -94,7 +94,7 @@ pub(crate) mod support {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, C>,
             witness: DriverValue<D, Fp>,
             left: DriverValue<D, L::Data>,
             right: DriverValue<D, H::Data>,
@@ -111,6 +111,7 @@ pub(crate) mod support {
         where
             Self: 'dr,
         {
+            let dr = &mut *ctx.dr;
             let allocator = &mut Standard::new();
             let left = Encoded::new(dr, allocator, left)?;
             let right = Encoded::new(dr, allocator, right)?;
@@ -450,7 +451,11 @@ pub(crate) mod support {
         child: &Proof<C, R>,
         side: Side,
     ) -> Result<()> {
-        let native = stage_wire_indices::<_, R, preamble::Stage<EqAffine, R>>(|stage| {
+        let native = stage_wire_indices::<
+            _,
+            R,
+            preamble::Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>,
+        >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
                 Side::Right => &stage.right,
@@ -513,7 +518,7 @@ pub(crate) mod support {
         let circuit_id = stage_wire_indices::<
             _,
             R,
-            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE, crate::NoHooks>,
         >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
@@ -530,7 +535,7 @@ pub(crate) mod support {
         let native_claims = stage_wire_indices::<
             _,
             R,
-            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE, crate::NoHooks>,
         >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
@@ -554,7 +559,11 @@ pub(crate) mod support {
             expected,
             "{side:?}: copied native claim and challenge binding"
         );
-        let nested_claim = stage_wire_indices::<_, R, preamble::Stage<EqAffine, R>>(|stage| {
+        let nested_claim = stage_wire_indices::<
+            _,
+            R,
+            preamble::Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>,
+        >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
                 Side::Right => &stage.right,
@@ -690,8 +699,8 @@ pub(crate) mod support {
 
         /// The wire's reservation index in its stage.
         pub(crate) fn index(self) -> Result<usize> {
-            type EvalStage = native_eval::Stage<C, R, HEADER_SIZE>;
-            type PreambleStage = native_preamble::Stage<C, R, HEADER_SIZE>;
+            type EvalStage = native_eval::Stage<C, R, HEADER_SIZE, crate::NoHooks>;
+            type PreambleStage = native_preamble::Stage<C, R, HEADER_SIZE, crate::NoHooks>;
             let wires = match self {
                 Self::EvalLeftP => stage_wire_indices::<Fp, R, EvalStage>(|out| {
                     wires_of(&out.evaluations.left.p_poly)
@@ -756,9 +765,11 @@ pub(crate) mod support {
     /// is the transcript: `w` was squeezed over the old bridge commitment.
     pub(crate) fn repair_bridge_preamble_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Preamble));
-        let wires = stage_wire_indices::<Fq, R, preamble::Stage<EqAffine, R>>(|out| {
-            wires_of(&out.native_preamble)
-        })?;
+        let wires = stage_wire_indices::<
+            Fq,
+            R,
+            preamble::Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>,
+        >(|out| wires_of(&out.native_preamble))?;
         set_wires(
             Arc::make_mut(&mut proof.bridge_preamble_rx),
             &wires,
@@ -775,9 +786,11 @@ pub(crate) mod support {
     /// bridge commitment.
     pub(crate) fn repair_bridge_eval_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Eval));
-        let wires = stage_wire_indices::<Fq, R, nested_eval::Stage<EqAffine, R>>(|out| {
-            wires_of(&out.native_eval)
-        })?;
+        let wires = stage_wire_indices::<
+            Fq,
+            R,
+            nested_eval::Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>,
+        >(|out| wires_of(&out.native_eval))?;
         set_wires(Arc::make_mut(&mut proof.bridge_eval_rx), &wires, &[x, y]);
         recommit(app, proof, Cache::BridgeEval);
         Ok(())
@@ -965,11 +978,15 @@ mod endpoints {
         assert!(app.verify(&honest, inputs.verifier_rng())?);
         assert!(app.verify(&sibling, inputs.verifier_rng())?);
 
-        let native_endpoint = stage_wire_indices::<_, R, nested::PointsStage<EqAffine>>(|stage| {
-            wires_of(stage.interstitials.last().unwrap())
-        })?;
+        let native_endpoint = stage_wire_indices::<
+            _,
+            R,
+            nested::PointsStage<EqAffine, ragu_primitives::vec::ConstLen<0>>,
+        >(|stage| wires_of(stage.interstitials.last().unwrap()))?;
         let nested_endpoint =
-            stage_wire_indices::<_, R, WalkStage<EpAffine>>(|stage| wires_of(stage.p()))?;
+            stage_wire_indices::<_, R, WalkStage<EpAffine, ragu_primitives::vec::ConstLen<0>>>(
+                |stage| wires_of(stage.p()),
+            )?;
 
         for (native, nested) in [(false, false), (true, false), (false, true), (true, true)] {
             let (mut changed, data) = honest.clone().into_parts();
@@ -1044,7 +1061,9 @@ mod endpoints {
             }
             assert_eq!(changed.v(), native_v);
             assert_eq!(changed.nested_v()?, nested_v);
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::verify::nested_points_match::<_, _, crate::NoHooks>(
+                &changed
+            )?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(
@@ -1191,9 +1210,11 @@ mod timing {
             let (mut changed, data) = honest.clone().into_parts();
             match case {
                 "ab_after_x" => {
-                    let wires = stage_wire_indices::<_, R, AbStage<EpAffine>>(|stage| {
-                        wires_of(&stage.registry_wy)
-                    })?;
+                    let wires = stage_wire_indices::<
+                        _,
+                        R,
+                        AbStage<EpAffine, ragu_primitives::vec::ConstLen<0>>,
+                    >(|stage| wires_of(&stage.registry_wy))?;
                     let reader = StageReader::new(&changed.native_points_ab_rx);
                     let old = EpAffine::from_xy(reader.read(wires[0]), reader.read(wires[1]))
                         .expect("the stored registry point is on the curve");
@@ -1215,7 +1236,7 @@ mod timing {
 
                     // Rebuild the deterministic AB bridge around the changed stage,
                     // including its original blinding, rather than leave a stale copy.
-                    let bridge = ab::Stage::<EqAffine, R>::rx(
+                    let bridge = ab::Stage::<EqAffine, R, ragu_primitives::vec::ConstLen<0>>::rx(
                         bridge_alpha_power(changed.bridge_alpha, nested::RxIndex::BridgeAB),
                         &ab::Witness {
                             a: changed.native_commitment(native::RxComponent::AbA),
@@ -1279,9 +1300,11 @@ mod timing {
                     changed.nested_registry_xy_commitment.0 = point;
                     assert_ne!(point, honest.proof().nested_registry_xy_commitment());
 
-                    let wires = stage_wire_indices::<_, R, FStage<EpAffine>>(|stage| {
-                        wires_of(&stage.registry_xy)
-                    })?;
+                    let wires = stage_wire_indices::<
+                        _,
+                        R,
+                        FStage<EpAffine, ragu_primitives::vec::ConstLen<0>>,
+                    >(|stage| wires_of(&stage.registry_xy))?;
                     support::set_wires(
                         &mut changed.native_points_f_rx,
                         &wires,
@@ -1292,9 +1315,11 @@ mod timing {
                         C::host_generators(app.params),
                     );
                     changed.native_points_f_commitment.0 = new_f;
-                    let copy = stage_wire_indices::<_, R, f::Stage<EqAffine, R>>(|stage| {
-                        wires_of(&stage.native_points_f)
-                    })?;
+                    let copy = stage_wire_indices::<
+                        _,
+                        R,
+                        f::Stage<EqAffine, R, ragu_primitives::vec::ConstLen<0>>,
+                    >(|stage| wires_of(&stage.native_points_f))?;
                     support::set_wires(
                         Arc::make_mut(&mut changed.bridge_f_rx),
                         &copy,
@@ -1317,7 +1342,9 @@ mod timing {
             }
             assert_eq!(changed.x(), honest.proof().x());
             assert_eq!(changed.u(), honest.proof().u());
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::verify::nested_points_match::<_, _, crate::NoHooks>(
+                &changed
+            )?);
             let child = changed.carry::<Value>(data);
             let expected = case == "honest";
             assert_eq!(
@@ -1383,7 +1410,11 @@ mod commitments {
         inputs: &support::Inputs,
         delta: Fq,
     ) -> Result<()> {
-        type ChallengeStage = nested::stages::challenges::Stage<<C as Cycle>::HostCurve, R>;
+        type ChallengeStage = nested::stages::challenges::Stage<
+            <C as Cycle>::HostCurve,
+            R,
+            ragu_primitives::vec::ConstLen<0>,
+        >;
 
         let parent = pcd.proof();
         let verify = |proof: Proof<C, R>| {
@@ -1420,7 +1451,11 @@ mod commitments {
             // it contains every term except beta's. Rejection must still hold
             // after both commitment representations have been repaired.
             if coefficient
-                != crate::internal::native::circuits::bind_beta::generator_index::<C, R>()
+                != crate::internal::native::circuits::bind_beta::generator_index::<
+                    C,
+                    R,
+                    ragu_primitives::vec::ConstLen<0>,
+                >()
             {
                 changed.nested_challenges_partial =
                     (changed.nested_challenges_partial.to_projective()
@@ -1466,10 +1501,11 @@ mod commitments {
             beta_lift[0],
         );
         assert_eq!(challenges.base_case_sign, sign);
-        let expected = nested::stages::challenges::Stage::<ragu_core::pasta::EqAffine, R>::rx(
-            Fq::ZERO,
-            &challenges,
-        )?;
+        let expected = nested::stages::challenges::Stage::<
+            ragu_core::pasta::EqAffine,
+            R,
+            ragu_primitives::vec::ConstLen<0>,
+        >::rx(Fq::ZERO, &challenges)?;
         assert!(
             parent
                 .nested_challenges_rx()
@@ -1483,11 +1519,16 @@ mod commitments {
         let generators = Pasta::nested_generators(pasta);
         let mut binding = ragu_core::pasta::Ep::identity();
         for (i, lift) in challenge_lifts.iter().enumerate() {
-            binding += generators.g()[generator_index::<C, R>(i)] * *lift;
+            binding += generators.g()
+                [generator_index::<C, R, ragu_primitives::vec::ConstLen<0>>(i)]
+                * *lift;
         }
-        binding +=
-            generators.g()[generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)] * sign;
-        let beta_term = generators.g()[bind_beta::generator_index::<C, R>()] * beta_lift[0];
+        binding += generators.g()[generator_index::<C, R, ragu_primitives::vec::ConstLen<0>>(
+            nested::stages::challenges::SIGN_INDEX,
+        )] * sign;
+        let beta_term = generators.g()
+            [bind_beta::generator_index::<C, R, ragu_primitives::vec::ConstLen<0>>()]
+            * beta_lift[0];
         assert_eq!(
             parent.nested_challenges_commitment(),
             (binding + beta_term).to_affine(),
@@ -1501,7 +1542,11 @@ mod commitments {
 
         // 3. The eval stage's partials are the running sums the binders check;
         //    the last binder's sum is the exported binding.
-        let partials = BindingPartials::compute::<C, R, ReferenceBackend>(pasta, &challenges);
+        let partials =
+            BindingPartials::compute::<C, R, ReferenceBackend, ragu_primitives::vec::ConstLen<0>>(
+                pasta,
+                &challenges,
+            );
         let mut acc = ragu_core::pasta::Ep::identity();
         for k in 0..NUM_BINDERS {
             for (i, lift) in challenge_lifts
@@ -1510,12 +1555,14 @@ mod commitments {
                 .take(2 * (k + 1))
                 .skip(2 * k)
             {
-                acc += generators.g()[generator_index::<C, R>(i)] * *lift;
+                acc += generators.g()
+                    [generator_index::<C, R, ragu_primitives::vec::ConstLen<0>>(i)]
+                    * *lift;
             }
             if k + 1 == NUM_BINDERS {
-                acc += generators.g()
-                    [generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)]
-                    * sign;
+                acc += generators.g()[generator_index::<C, R, ragu_primitives::vec::ConstLen<0>>(
+                    nested::stages::challenges::SIGN_INDEX,
+                )] * sign;
                 assert_eq!(partials.binding, acc.to_affine(), "binding");
             } else {
                 assert_eq!(partials.partials[k], acc.to_affine(), "partial {k}");
@@ -1588,7 +1635,9 @@ mod commitments {
 
         // The walk's last interstitial, against this step's cache.
         let walk = StageReader::<ragu_core::pasta::Fp, R>::new(&parent[RxIndex::PointsWalk]);
-        let wires = stage_wire_indices::<_, R, WalkStage<Nested>>(|stage| wires_of(stage.p()))?;
+        let wires = stage_wire_indices::<_, R, WalkStage<Nested, ragu_primitives::vec::ConstLen<0>>>(
+            |stage| wires_of(stage.p()),
+        )?;
         let last: alloc::vec::Vec<ragu_core::pasta::Fp> =
             wires.iter().map(|&i| walk.read(i)).collect();
         assert_eq!(
@@ -1598,7 +1647,9 @@ mod commitments {
         );
 
         for pcd in [parent_pcd, left_pcd, right_pcd] {
-            assert!(crate::verify::nested_points_match(pcd.proof())?);
+            assert!(crate::verify::nested_points_match::<_, _, crate::NoHooks>(
+                pcd.proof()
+            )?);
             assert!(app.verify(pcd, inputs.verifier_rng())?);
         }
 
@@ -1621,7 +1672,7 @@ mod commitments {
             ] {
                 *cache(&mut changed) = point;
                 assert!(
-                    !crate::verify::nested_points_match(&changed)?,
+                    !crate::verify::nested_points_match::<_, _, crate::NoHooks>(&changed)?,
                     "mismatched {name}"
                 );
             }

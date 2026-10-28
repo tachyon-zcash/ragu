@@ -55,10 +55,17 @@ use crate::{
 };
 
 type NativeNumGroups = <native::RevdotParameters as fold_revdot::Parameters>::NumGroups;
-type NestedNumGroups = <nested::RevdotParameters as fold_revdot::Parameters>::NumGroups;
+type NestedNumGroups<J> = <nested::RevdotParameters<
+    <J as crate::framework_hooks::HookConfig>::PolyWitnesses,
+> as fold_revdot::Parameters>::NumGroups;
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_ab<'dr, D, RNG: rand::CryptoRng>(
@@ -66,13 +73,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         native_a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups>,
         native_b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups>,
-        nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
+        nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -104,11 +111,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     /// the bridge carrying the layer-2 error terms is absorbed.
     fn compute_nested_ab<'dr, D>(
         &self,
-        a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
-        b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups>,
+        a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
+        b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<J>>,
         native_mu_prime: &Element<'dr, D>,
         native_nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -120,10 +127,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .expect("nested mu_prime must be non-zero");
         let nested_mu_prime_nu_prime = nested_mu_prime * nested_nu_prime;
 
-        let a_poly =
-            fold_revdot::fold_outer::<_, _, nested::RevdotParameters>(a, nested_mu_prime_inv);
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, nested::RevdotParameters>(b, nested_mu_prime_nu_prime);
+        let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<J::PolyWitnesses>>(
+            a,
+            nested_mu_prime_inv,
+        );
+        let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<J::PolyWitnesses>>(
+            b,
+            nested_mu_prime_nu_prime,
+        );
 
         builder.set_nested_a_poly(a_poly);
         builder.set_nested_b_poly(b_poly);
@@ -138,7 +149,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
         nu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,

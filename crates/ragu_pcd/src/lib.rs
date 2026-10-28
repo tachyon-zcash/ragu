@@ -14,6 +14,14 @@
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//!
+//! # The hook layout is declared per application
+//!
+//! How many polynomials a step may witness, and how many openings it may
+//! enforce, are parameters of [`ApplicationBuilder`]. They are declared rather than folded from the
+//! registered steps because handing a circuit to the registry freezes its
+//! shape, which a maximum over steps would not settle until the last one
+//! arrives. One layout serves every step; steps that use less are padded up.
 
 #![no_std]
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -31,25 +39,32 @@ extern crate std;
 
 mod backend;
 mod compress;
+mod framework_hooks;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
 // here.
 pub mod fuzzing;
 pub mod header;
+pub(crate) mod instance;
 mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
+mod poly_commitment;
 mod proof;
 pub mod step;
+#[cfg(test)]
+mod tests;
 mod verify;
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
+pub use framework_hooks::{HookConfig, HookLayout};
 use header::Header;
+pub use poly_commitment::PolyHandle;
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
@@ -58,7 +73,10 @@ use ragu_circuits::{
     staging,
 };
 use ragu_core::{Cycle, Error, Result};
-use ragu_primitives::shared::Shared;
+use ragu_primitives::{
+    shared::Shared,
+    vec::{ConstLen, Len},
+};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -109,22 +127,50 @@ impl<C: Cycle> RegistryTags<C> {
 
 /// A circuit registration held until every step's shared gadget size is
 /// known, so all step circuits reserve the same application stage layout.
+/// The cycle parameters arrive with `finalize`; the hooks commit through
+/// them.
 type ApplicationRegistration<'params, C, R> = Box<
     dyn FnOnce(
             RegistryBuilder<'params, <C as Cycle>::CircuitField, R>,
             usize,
+            &'params <C as Cycle>::Params,
         ) -> Result<RegistryBuilder<'params, <C as Cycle>::CircuitField, R>>
         + Send
         + Sync
         + 'params,
 >;
 
+/// The usual way to write an application's [`HookLayout`]:
+///
+/// ```rust
+/// use ragu_circuits::polynomials::ProductionRank;
+/// use ragu_core::pasta::Pasta;
+/// use ragu_pcd::{AppHooks, Application};
+///
+/// type MyApp<'params> = Application<'params, Pasta, ProductionRank, 4, AppHooks<3, 3>>;
+/// ```
+pub struct AppHooks<const POLYS: usize, const QUERIES: usize>;
+
+/// Convenience alias for an application that does not use hooks.
+pub type NoHooks = AppHooks<0, 0>;
+
+impl<const POLYS: usize, const QUERIES: usize> HookConfig for AppHooks<POLYS, QUERIES> {
+    type PolyWitnesses = ConstLen<POLYS>;
+    type PolyQueries = ConstLen<QUERIES>;
+}
+
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// `HEADER_SIZE` is the width of one encoded header and `J` the hook layout —
+/// usually written inline as [`AppHooks`]. The hook layout prices the region
+/// of the application stage the framework owns, ahead of each step's own
+/// [`Shared`](Step::Shared) gadget.
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
     B: SelectableBackend = ReferenceBackend,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
@@ -134,19 +180,19 @@ pub struct ApplicationBuilder<
     /// The largest shared gadget size among the registered steps.
     shared_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
-    _marker: PhantomData<([(); HEADER_SIZE], B)>,
+    _marker: PhantomData<([(); HEADER_SIZE], J, B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
-    for ApplicationBuilder<'_, C, R, HEADER_SIZE, B>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: SelectableBackend> Default
+    for ApplicationBuilder<'_, C, R, HEADER_SIZE, J, B>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
+impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: SelectableBackend>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, J, B>
 {
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     pub fn new() -> Self {
@@ -183,7 +229,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// select a Ragu implementation but cannot provide one.
     pub fn with_backend<SelectedBackend: SelectableBackend>(
         self,
-    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, SelectedBackend> {
+    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, J, SelectedBackend> {
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
@@ -208,10 +254,11 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     ///
     /// Every step circuit, including the internal bootstrap and
     /// rerandomization steps, reserves `ceil(n / 2)` gates for the stage,
-    /// where `n` is the application's largest shared wire count, and a step
-    /// adds one connecting equality constraint per wire in its own shared
-    /// gadget. An application whose steps all declare `Shared = ()` reserves
-    /// nothing.
+    /// where `n` is the hook layout's stage region plus the application's
+    /// largest shared wire count, and a step adds one connecting equality
+    /// constraint per wire in its own shared gadget and per hook wire. An
+    /// application whose steps all declare `Shared = ()` under [`NoHooks`]
+    /// reserves nothing.
     ///
     /// # Errors
     ///
@@ -241,7 +288,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let shared_size = self.shared_size.max(S::Shared::num_values()?);
         // Leave room after the SYSTEM gate and the stage.
         if 1usize
-            .checked_add(staging::stage_gates(shared_size))
+            .checked_add(staging::stage_gates(J::layout().stage_len(shared_size)))
             .is_none_or(|end| end >= R::n())
         {
             return Err(Error::Initialization(
@@ -251,8 +298,10 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         self.shared_size = shared_size;
 
         self.application_circuits
-            .push(Box::new(move |registry, shared_size| {
-                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, shared_size)?)
+            .push(Box::new(move |registry, stage_size, params| {
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE, J>::new(
+                    step, stage_size, params,
+                )?)
             }));
         self.num_application_steps += 1;
 
@@ -269,7 +318,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
             self.application_circuits
-                .push(Box::new(|registry, _| registry.register_circuit(())));
+                .push(Box::new(|registry, _, _| registry.register_circuit(())));
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -295,37 +344,45 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub fn finalize(
         mut self,
         params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, J, B>> {
+        let polys = J::PolyWitnesses::len();
+        let stage_size = J::layout().stage_len(self.shared_size);
+
         // Build the native registry:
         // 1. Application circuits (using the final stage size)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts(self.num_application_steps);
+            internal::native::total_circuit_counts(self.num_application_steps, polys);
 
         for register in self.application_circuits.drain(..) {
-            self.native_registry = register(self.native_registry, self.shared_size)?;
+            self.native_registry = register(self.native_registry, stage_size, params)?;
         }
 
         // Then, register internal circuits and masks.
-        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
+        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE, J>(
             self.native_registry,
             params,
             log2_circuits,
-            self.shared_size,
+            stage_size,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
         // because it is the one step allowed to declare `Dummy` inputs;
         // every other internal step goes through `register_internal_step`,
         // which rejects them.
-        self = self.register_internal_step(step::internal::rerandomize::Rerandomize::<()>::new())?;
+        self = self.register_internal_step(
+            step::internal::rerandomize::Rerandomize::<()>::new(),
+            params,
+        )?;
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE, J>::new(
                     step::internal::bootstrap::Bootstrap::new(),
-                    self.shared_size,
-                )?)?;
+                    stage_size,
+                    params,
+                )?,
+            )?;
 
         assert_eq!(
             self.native_registry.log2_circuits(),
@@ -339,7 +396,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = internal::nested::register_all::<C, R>(self.nested_registry)?;
+        self.nested_registry =
+            internal::nested::register_all::<C, R, J::PolyWitnesses>(self.nested_registry)?;
 
         let mut app = Application {
             native_registry: self.native_registry.finalize()?,
@@ -396,6 +454,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     fn register_internal_step<S: Step<C, Shared = ()> + 'params>(
         mut self,
         step: S,
+        params: &'params C::Params,
     ) -> Result<Self> {
         const {
             assert!(
@@ -408,11 +467,13 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
 
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, S, R, HEADER_SIZE, J>::new(
                     step,
-                    self.shared_size,
-                )?)?;
+                    J::layout().stage_len(self.shared_size),
+                    params,
+                )?,
+            )?;
 
         Ok(self)
     }
@@ -449,6 +510,7 @@ pub struct Application<
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
+    J: HookConfig = NoHooks,
     B: SelectableBackend = ReferenceBackend,
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
@@ -467,12 +529,22 @@ pub struct Application<
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
     seeded_trivial: OnceCell<Proof<C, R>>,
-    _marker: PhantomData<([(); HEADER_SIZE], B)>,
+    _marker: PhantomData<([(); HEADER_SIZE], J, B)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig, B: SelectableBackend>
+    Application<'_, C, R, HEADER_SIZE, J, B>
 {
+    pub(crate) fn hook_layout(&self) -> HookLayout {
+        J::layout()
+    }
+
+    /// The application stage's size, in field elements: the hook region,
+    /// then the largest registered [`Shared`](Step::Shared) gadget.
+    pub(crate) fn stage_size(&self) -> usize {
+        J::layout().stage_len(self.shared_size)
+    }
+
     /// Seed a new computation by running a [`Step`] declaring `()` for both of
     /// its inputs.
     ///

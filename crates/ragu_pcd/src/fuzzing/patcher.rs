@@ -349,8 +349,8 @@ fn covered_positions(
 ///
 /// Propagates any error from witness generation, from laying out a stage, or
 /// from the visitor.
-pub fn capture_internal_circuits<'source, C, R, const HEADER_SIZE: usize, B, RNG, S, V>(
-    app: &Application<'_, C, R, HEADER_SIZE, B>,
+pub fn capture_internal_circuits<'source, C, R, const HEADER_SIZE: usize, J, B, RNG, S, V>(
+    app: &Application<'_, C, R, HEADER_SIZE, J, B>,
     rng: &mut RNG,
     step: S,
     witness: S::Witness<'source>,
@@ -361,6 +361,7 @@ pub fn capture_internal_circuits<'source, C, R, const HEADER_SIZE: usize, B, RNG
 where
     C: Cycle,
     R: Rank,
+    J: crate::framework_hooks::HookConfig,
     B: crate::SelectableBackend,
     RNG: CryptoRng,
     S: Step<C>,
@@ -381,14 +382,15 @@ where
 /// # Errors
 ///
 /// As [`capture_internal_circuits`].
-pub fn capture_internal_circuits_bootstrap<C, R, const HEADER_SIZE: usize, B, RNG, V>(
-    app: &Application<'_, C, R, HEADER_SIZE, B>,
+pub fn capture_internal_circuits_bootstrap<C, R, const HEADER_SIZE: usize, J, B, RNG, V>(
+    app: &Application<'_, C, R, HEADER_SIZE, J, B>,
     rng: &mut RNG,
     visitor: &mut V,
 ) -> Result<()>
 where
     C: Cycle,
     R: Rank,
+    J: crate::framework_hooks::HookConfig,
     B: crate::SelectableBackend,
     RNG: CryptoRng,
     V: InternalCircuitVisitor<C>,
@@ -404,8 +406,13 @@ where
     )
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     #[allow(clippy::too_many_arguments)]
     fn capture_internal_circuits_at<'source, RNG, S, V>(
@@ -600,7 +607,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
             EndoscalarChallenge::sample(&mut dr, |dr| {
                 let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval, &builder)?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -650,7 +657,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // the constraints a circuit emits, so a fresh instance yields the same
         // capture — and reports each circuit's own coverage.
         let make_unified =
-            |builder: &ProofBuilder<'_, C, R, B>| -> Result<native::unified::Instance<C>> {
+            |builder: &ProofBuilder<'_, C, R, J, B>| -> Result<native::unified::Instance<C>> {
                 Ok(native::unified::Instance {
                     bridge_preamble_commitment: builder.bridge_preamble_commitment(),
                     w: builder.w(),
@@ -689,8 +696,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             }
         };
 
-        type OuterError<C, R, const HEADER_SIZE: usize> =
-            native::stages::outer_error::Stage<C, R, HEADER_SIZE, native::RevdotParameters>;
+        type OuterError<C, R, const HEADER_SIZE: usize, J> =
+            native::stages::outer_error::Stage<C, R, HEADER_SIZE, J, native::RevdotParameters>;
 
         // The honest stage values, per stage, for the overlay: each circuit's
         // chain is the concatenation in `add_stage` order (a skipped stage is
@@ -701,22 +708,23 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         )?;
         let preamble_values = [
             binding_values.as_slice(),
-            &stage_values::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
+            &stage_values::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE, J>>(
                 &preamble_witness,
             )?,
         ]
         .concat();
         let outer_error_values =
-            stage_values::<_, R, OuterError<C, R, HEADER_SIZE>>(&native_outer_error_witness)?;
+            stage_values::<_, R, OuterError<C, R, HEADER_SIZE, J>>(&native_outer_error_witness)?;
         let inner_error_values = stage_values::<
             _,
             R,
-            native::stages::inner_error::Stage<C, R, HEADER_SIZE, native::RevdotParameters>,
+            native::stages::inner_error::Stage<C, R, HEADER_SIZE, J, native::RevdotParameters>,
         >(&native_inner_error_witness)?;
-        let query_values =
-            stage_values::<_, R, native::stages::query::Stage<C, R, HEADER_SIZE>>(&query_witness)?;
+        let query_values = stage_values::<_, R, native::stages::query::Stage<C, R, HEADER_SIZE, J>>(
+            &query_witness,
+        )?;
         let eval_values =
-            stage_values::<_, R, native::stages::eval::Stage<C, R, HEADER_SIZE>>(&eval_witness)?;
+            stage_values::<_, R, native::stages::eval::Stage<C, R, HEADER_SIZE, J>>(&eval_witness)?;
         let chain = |stages: &[&[C::CircuitField]]| -> Vec<C::CircuitField> { stages.concat() };
         let preamble_outer_error = chain(&[&preamble_values, &outer_error_values]);
 
@@ -727,10 +735,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new(
             self.params,
-            total_circuit_counts(self.num_application_steps).1,
+            total_circuit_counts(self.num_application_steps, J::PolyWitnesses::len()).1,
         );
         let hashes_1_witness = || {
             Ok(native::circuits::hashes_1::Witness {
@@ -753,7 +762,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             .into_iter()
             .map(OutputRef::Instance)
             .chain(
-                stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
+                stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE, J>>(|stage| {
                     let mut wires: Vec<_> = stage
                         .sponge_state
                         .into_elements()
@@ -785,6 +794,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new(self.params);
         let hashes_2_witness = || {
@@ -824,6 +834,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new();
         let inner_collapse_witness = || {
@@ -836,7 +847,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let inner_collapse_spec = CircuitSpec {
             name: "inner_collapse".into(),
-            outputs: stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
+            outputs: stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE, J>>(|stage| {
                 Ok(stage.collapsed.iter().map(|e| *e.wire()).collect())
             })?
             .into_iter()
@@ -858,6 +869,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new();
         let outer_collapse_witness = || {
@@ -880,7 +892,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                 .into_iter()
                 .map(OutputRef::Instance)
                 .chain(
-                    stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE>>(|stage| {
+                    stage_wire_indices::<_, R, OuterError<C, R, HEADER_SIZE, J>>(|stage| {
                         Ok([&stage.left, &stage.right]
                             .into_iter()
                             .map(|child| &child.application)
@@ -900,7 +912,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         )?;
 
         // compute_v derives the expected evaluation v.
-        let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new();
+        let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE, J>::new();
         let compute_v_witness = || {
             Ok(native::circuits::compute_v::Witness {
                 unified: make_unified(&builder)?,
@@ -927,7 +939,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // generators by two challenges and checks the running sum against
         // the k-th partial the eval stage witnessed, which is its output; the
         // last one checks it against the instance's partial binding instead.
-        type Eval<C, R, const HEADER_SIZE: usize> = native::stages::eval::Stage<C, R, HEADER_SIZE>;
+        type Eval<C, R, const HEADER_SIZE: usize, J> =
+            native::stages::eval::Stage<C, R, HEADER_SIZE, J>;
         for k in 0..native::NUM_BINDERS {
             let bind_witness = || {
                 Ok(native::circuits::bind_challenges::Witness {
@@ -943,14 +956,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             let partial: Vec<OutputRef> = if k + 1 == native::NUM_BINDERS {
                 Vec::new()
             } else {
-                stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE>>(|stage| {
+                stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE, J>>(|stage| {
                     wires_of(&stage.partials[k])
                 })?
                 .into_iter()
                 .map(OutputRef::Stage)
                 .collect()
             };
-            crate::with_binder!(k, C, R, HEADER_SIZE, self.params, |circuit| {
+            crate::with_binder!(k, C, R, HEADER_SIZE, J, self.params, |circuit| {
                 let bind_spec = CircuitSpec {
                     name: format!("bind_challenges_{k}"),
                     outputs: covered_outputs(&circuit, bind_witness()?, coverage(&[]))?
@@ -977,6 +990,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             C,
             R,
             HEADER_SIZE,
+            J,
             native::RevdotParameters,
         >::new(self.params);
         let bind_beta_witness = || {
@@ -1014,17 +1028,25 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         type Nested<C> = <C as Cycle>::NestedCurve;
         let native_walk_values: Vec<C::CircuitField> = [
             binding_values.clone(),
-            stage_values::<_, R, native_points::ChildrenStage<Nested<C>>>(&native_points.children)?,
-            stage_values::<_, R, native_points::RegistryWxStage<Nested<C>>>(
+            stage_values::<_, R, native_points::ChildrenStage<Nested<C>, J::PolyWitnesses>>(
+                &native_points.children,
+            )?,
+            stage_values::<_, R, native_points::RegistryWxStage<Nested<C>, J::PolyWitnesses>>(
                 &native_points.registry_wx,
             )?,
-            stage_values::<_, R, native_points::AbStage<Nested<C>>>(&native_points.ab)?,
-            stage_values::<_, R, native_points::FStage<Nested<C>>>(&native_points.f)?,
-            stage_values::<_, R, native_points::WalkStage<Nested<C>>>(&native_walk)?,
+            stage_values::<_, R, native_points::AbStage<Nested<C>, J::PolyWitnesses>>(
+                &native_points.ab,
+            )?,
+            stage_values::<_, R, native_points::FStage<Nested<C>, J::PolyWitnesses>>(
+                &native_points.f,
+            )?,
+            stage_values::<_, R, native_points::WalkStage<Nested<C>, J::PolyWitnesses>>(
+                &native_walk,
+            )?,
         ]
         .concat();
 
-        let bind_endoscalar = native::circuits::bind_endoscalar::Circuit::<C, R>::new();
+        let bind_endoscalar = native::circuits::bind_endoscalar::Circuit::<C, R, J>::new();
         let bind_endoscalar_witness = || {
             Ok(native::circuits::bind_endoscalar::Witness {
                 unified: make_unified(&builder)?,
@@ -1034,9 +1056,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let bind_endoscalar_spec = CircuitSpec {
             name: "bind_endoscalar".into(),
-            outputs: stage_wire_indices::<C::CircuitField, R, native_points::WalkStage<Nested<C>>>(
-                |walk| wires_of(&walk.endoscalar),
-            )?
+            outputs: stage_wire_indices::<
+                C::CircuitField,
+                R,
+                native_points::WalkStage<Nested<C>, J::PolyWitnesses>,
+            >(|walk| wires_of(&walk.endoscalar))?
             .into_iter()
             .map(OutputRef::Stage)
             .chain(
@@ -1053,14 +1077,14 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             bind_endoscalar_witness,
         )?;
 
-        for step in 0..native::NUM_ENDOSCALING_STEPS {
-            let circuit = native::circuits::endoscaling_step::Circuit::<C, R>::new(step);
+        for step in 0..native::num_endoscaling_steps(J::PolyWitnesses::len()) {
+            let circuit = native::circuits::endoscaling_step::Circuit::<C, R, J>::new(step);
             let spec = CircuitSpec {
                 name: format!("native_endoscaling_step_{step}"),
                 outputs: stage_wire_indices::<
                     C::CircuitField,
                     R,
-                    native_points::WalkStage<Nested<C>>,
+                    native_points::WalkStage<Nested<C>, J::PolyWitnesses>,
                 >(|walk| wires_of(&walk.interstitials[step]))?
                 .into_iter()
                 .map(OutputRef::Stage)
@@ -1083,17 +1107,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         // witness, from `compute_p`.
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
-            stage_values::<_, R, PointsStage<C::HostCurve>>(&points_witness)?,
+            stage_values::<_, R, PointsStage<C::HostCurve, J::PolyWitnesses>>(&points_witness)?,
         ]
         .concat();
 
-        for step in 0..NumStepsLen::len() {
-            let circuit = MultiStage::new(EndoscalingStep::<C::HostCurve, R>::new(step));
+        for step in 0..NumStepsLen::<J::PolyWitnesses>::len() {
+            let circuit = MultiStage::new(
+                EndoscalingStep::<C::HostCurve, R, J::PolyWitnesses>::new(step),
+            );
             let spec = CircuitSpec {
                 name: format!("endoscaling_step_{step}"),
-                outputs: stage_wire_indices::<C::ScalarField, R, PointsStage<C::HostCurve>>(
-                    |points| wires_of(&points.interstitials[step]),
-                )?
+                outputs: stage_wire_indices::<
+                    C::ScalarField,
+                    R,
+                    PointsStage<C::HostCurve, J::PolyWitnesses>,
+                >(|points| wires_of(&points.interstitials[step]))?
                 .into_iter()
                 .map(OutputRef::Stage)
                 .collect(),
@@ -1131,31 +1159,32 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
+            witness_polys: builder.witness_poly_commitments(),
             nested: nested_eval,
         };
         let nested_values: Vec<C::ScalarField> = [
             endoscaling_values,
-            stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_preamble,
             )?,
-            stage_values::<_, R, nested::stages::s_prime::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::s_prime::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_s_prime_witness,
             )?,
-            stage_values::<_, R, nested::stages::inner_error::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::inner_error::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_inner_error_witness,
             )?,
-            stage_values::<_, R, nested::stages::outer_error::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::outer_error::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_outer_error_witness,
             )?,
-            stage_values::<_, R, nested::stages::ab::Stage<C::HostCurve, R>>(&nested_ab_witness)?,
-            stage_values::<_, R, nested::stages::query::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::ab::Stage<C::HostCurve, R, J::PolyWitnesses>>(&nested_ab_witness)?,
+            stage_values::<_, R, nested::stages::query::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_query_witness,
             )?,
-            stage_values::<_, R, nested::stages::f::Stage<C::HostCurve, R>>(&nested_f_witness)?,
-            stage_values::<_, R, nested::stages::eval::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::f::Stage<C::HostCurve, R, J::PolyWitnesses>>(&nested_f_witness)?,
+            stage_values::<_, R, nested::stages::eval::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_eval_witness,
             )?,
-            stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R>>(
+            stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R, J::PolyWitnesses>>(
                 &nested_challenges,
             )?,
         ]
@@ -1183,7 +1212,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                         builder.native_points_registry_wx_commitment(),
                         builder.native_points_ab_commitment(),
                         builder.native_points_f_commitment(),
-                    ],
+                    ]
+                    .into_iter()
+                    .chain(builder.witness_poly_commitments().iter().copied())
+                    .collect(),
                     coverage: Default::default(),
                 },
                 endoscalar: beta_endo,
@@ -1200,12 +1232,19 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             })
         };
         let nested_coverage = |instance: nested::unified::Instance<C::HostCurve>| -> Vec<usize> {
-            covered_positions(|f| instance.coverage.for_each_slot(f), &[])
+            covered_positions(
+                |f| instance.coverage.for_each_slot(instance.exported.len(), f),
+                &[],
+            )
         };
 
         // export copies the instance's x, y, u (and its commitments) from
         // stage wires.
-        let export = MultiStage::new(nested::circuits::export::Circuit::<C::HostCurve, R>::new());
+        let export = MultiStage::new(nested::circuits::export::Circuit::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::new());
         let export_spec = CircuitSpec {
             name: "nested_export".into(),
             outputs: covered_outputs(&export, nested_witness()?, nested_coverage)?
@@ -1217,8 +1256,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
 
         // collapse forces the outer_error stage's collapsed values from the
         // inner error terms and, outside the base case, c_n from those.
-        let collapse =
-            MultiStage::new(nested::circuits::collapse::Circuit::<C::HostCurve, R>::new());
+        let collapse = MultiStage::new(nested::circuits::collapse::Circuit::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::new());
         let collapse_covered = if base_case {
             Vec::new()
         } else {
@@ -1233,7 +1275,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
                     stage_wire_indices::<
                         C::ScalarField,
                         R,
-                        nested::stages::outer_error::Stage<C::HostCurve, R>,
+                        nested::stages::outer_error::Stage<C::HostCurve, R, J::PolyWitnesses>,
                     >(|stage| {
                         Ok(stage.collapsed.iter().map(|e| *e.wire()).collect())
                     })?
@@ -1245,8 +1287,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         visitor.visit_nested(&collapse_spec, &collapse, &nested_values, nested_witness)?;
 
         // compute_v derives v_n.
-        let compute_v =
-            MultiStage::new(nested::circuits::compute_v::Circuit::<C::HostCurve, R>::new());
+        let compute_v = MultiStage::new(nested::circuits::compute_v::Circuit::<
+            C::HostCurve,
+            R,
+            J::PolyWitnesses,
+        >::new());
         let compute_v_spec = CircuitSpec {
             name: "nested_compute_v".into(),
             outputs: covered_outputs(&compute_v, nested_witness()?, nested_coverage)?

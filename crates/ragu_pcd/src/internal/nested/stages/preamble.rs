@@ -14,23 +14,26 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Point,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
     Proof,
     internal::{
-        native::{NUM_BINDERS, NUM_ENDOSCALING_STEPS, RxIndex},
-        nested::{PointsStage, unified},
+        native::{NUM_BINDERS, RxIndex, StepsLen},
+        nested::{PointsStage, child_endoscaling_points, unified},
     },
 };
 
-/// Number of curve points in this stage: the native preamble's commitment
-/// and those of the two native points stages committed before $w$, then for
-/// each child every native rx commitment and its $a$, $b$, `registry_xy`
-/// and $P$.
-pub const NUM_POINTS: usize = 3 + 2 * (RxIndex::NUM + 4);
+/// Number of curve points in this stage for an application witnessing
+/// `polys` polynomials per step: the native preamble's commitment and those
+/// of the two native points stages committed before $w$, then for each child
+/// every native rx commitment, its $a$, $b$, `registry_xy` and $P$, and its
+/// witnessed polynomials' commitments.
+pub const fn num_points(polys: usize) -> usize {
+    3 + 2 * child_endoscaling_points(polys)
+}
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
@@ -42,8 +45,7 @@ pub const NUM_POINTS: usize = 3 + 2 * (RxIndex::NUM + 4);
 /// expected export claim value $k(y_n)$ from them. The collapse circuit binds
 /// the copies to the child's export circuit: it folds the child's
 /// instance-circuit claims with that expected value, outside the base case.
-#[derive(Clone)]
-pub struct ChildWitness<C: Affine> {
+pub struct ChildWitness<C: Affine, L: Len> {
     // Field order matches the `_10_p` accumulation order.
     /// Commitment from the child's application circuit.
     pub application: C,
@@ -66,7 +68,7 @@ pub struct ChildWitness<C: Affine> {
     /// Commitment from the child's endoscalar binding circuit.
     pub bind_endoscalar: C,
     /// Commitments from the child's native endoscaling steps.
-    pub endoscaling_steps: [C; NUM_ENDOSCALING_STEPS],
+    pub endoscaling_steps: FixedVec<C, StepsLen<L>>,
     /// Commitment from the child's native walk stage.
     pub points_walk: C,
 
@@ -98,12 +100,51 @@ pub struct ChildWitness<C: Affine> {
     pub stashed_points_ab: C,
     /// Stashed commitment from the child's native `f` points stage.
     pub stashed_points_f: C,
+    /// Stashed witness-poly commitments from the child, which `_10_p`
+    /// accumulates after the child's $P$.
+    pub stashed_witness_polys: FixedVec<C, L>,
 
     /// The scalars of the child's nested unified instance: its nested
     /// accumulator value and batch evaluation, and the lifts of its $x$, $y$
     /// and $u$. With the stashed commitments above these make up the child's
     /// nested instance.
     pub nested: NestedValues<C::Base>,
+}
+
+// A derive would demand `L: Clone`, which a `Len` marker need not be.
+impl<C: Affine, L: Len> Clone for ChildWitness<C, L> {
+    fn clone(&self) -> Self {
+        Self {
+            application: self.application,
+            application_stage: self.application_stage,
+            hashes_1: self.hashes_1,
+            hashes_2: self.hashes_2,
+            inner_collapse: self.inner_collapse,
+            outer_collapse: self.outer_collapse,
+            compute_v: self.compute_v,
+            bind_challenges: self.bind_challenges,
+            bind_beta: self.bind_beta,
+            bind_endoscalar: self.bind_endoscalar,
+            endoscaling_steps: self.endoscaling_steps.clone(),
+            points_walk: self.points_walk,
+            stashed_preamble: self.stashed_preamble,
+            stashed_inner_error: self.stashed_inner_error,
+            stashed_outer_error: self.stashed_outer_error,
+            stashed_query: self.stashed_query,
+            stashed_eval: self.stashed_eval,
+            stashed_ab_a: self.stashed_ab_a,
+            stashed_ab_b: self.stashed_ab_b,
+            stashed_registry_xy: self.stashed_registry_xy,
+            stashed_p: self.stashed_p,
+            stashed_points_binding: self.stashed_points_binding,
+            stashed_points_children: self.stashed_points_children,
+            stashed_points_registry_wx: self.stashed_points_registry_wx,
+            stashed_points_ab: self.stashed_points_ab,
+            stashed_points_f: self.stashed_points_f,
+            stashed_witness_polys: self.stashed_witness_polys.clone(),
+            nested: self.nested,
+        }
+    }
 }
 
 /// The scalar half of a child's nested unified instance (see
@@ -117,13 +158,14 @@ pub struct NestedValues<F> {
     pub u: F,
 }
 
-impl<C: Affine> ChildWitness<C> {
+impl<C: Affine, L: Len> ChildWitness<C, L> {
     /// Construct from a child proof's commitments and nested instance.
     ///
     /// # Errors
     ///
     /// Fails if a challenge of the child lies outside the endoscalar range,
-    /// which an honest transcript output does with negligible probability.
+    /// which an honest transcript output does with negligible probability,
+    /// or if the child carries other than `L` witnessed polynomials.
     pub fn from_proof<CC: Cycle<HostCurve = C>, R: Rank>(proof: &Proof<CC, R>) -> Result<Self> {
         use crate::internal::native::RxComponent;
         let instance = proof.nested_instance()?;
@@ -140,7 +182,7 @@ impl<C: Affine> ChildWitness<C> {
             }),
             bind_beta: proof.native_rx_commitment(RxIndex::BindBeta),
             bind_endoscalar: proof.native_rx_commitment(RxIndex::BindEndoscalar),
-            endoscaling_steps: core::array::from_fn(|step| {
+            endoscaling_steps: FixedVec::from_fn(|step| {
                 proof.native_rx_commitment(RxIndex::EndoscalingStep(step as u32))
             }),
             points_walk: proof.native_rx_commitment(RxIndex::PointsWalk),
@@ -158,6 +200,7 @@ impl<C: Affine> ChildWitness<C> {
             stashed_points_registry_wx: proof.native_rx_commitment(RxIndex::PointsRegistryWx),
             stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
+            stashed_witness_polys: FixedVec::try_from(proof.witness_poly_commitments().to_vec())?,
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -170,7 +213,7 @@ impl<C: Affine> ChildWitness<C> {
 }
 
 /// Witness data for the preamble bridge stage.
-pub struct Witness<C: Affine> {
+pub struct Witness<C: Affine, L: Len> {
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
     /// Commitment of the native points binding stage, fixed here before
@@ -180,14 +223,14 @@ pub struct Witness<C: Affine> {
     /// $w$ is squeezed.
     pub native_points_children: C,
     /// Witness data from the left child proof.
-    pub left: ChildWitness<C>,
+    pub left: ChildWitness<C, L>,
     /// Witness data from the right child proof.
-    pub right: ChildWitness<C>,
+    pub right: ChildWitness<C, L>,
 }
 
 /// Output gadget for a single child proof in the preamble bridge stage.
 #[derive(Gadget, Write)]
-pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     // Field order matches `_10_p` accumulation order.
     /// Point commitment from the child's application circuit.
     #[ragu(gadget)]
@@ -221,7 +264,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub bind_endoscalar: Point<'dr, D, C>,
     /// Point commitments from the child's native endoscaling steps.
     #[ragu(gadget)]
-    pub endoscaling_steps: FixedVec<Point<'dr, D, C>, ConstLen<NUM_ENDOSCALING_STEPS>>,
+    pub endoscaling_steps: FixedVec<Point<'dr, D, C>, StepsLen<L>>,
     /// Point commitment from the child's native walk stage.
     #[ragu(gadget)]
     pub points_walk: Point<'dr, D, C>,
@@ -268,6 +311,10 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     /// Stashed commitment from the child's native `f` points stage.
     #[ragu(gadget)]
     pub stashed_points_f: Point<'dr, D, C>,
+    /// Stashed witness-poly commitments from the child, after the named
+    /// points — the order `_10_p` accumulates and the child exports.
+    #[ragu(gadget)]
+    pub stashed_witness_polys: FixedVec<Point<'dr, D, C>, L>,
 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
@@ -289,39 +336,44 @@ pub struct NestedValuesOutput<'dr, D: Driver<'dr>> {
     pub u: Element<'dr, D>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
     /// The child's nested unified instance, assembled from the values this
     /// stage holds, in the order the child's circuits serialize it.
-    pub fn nested_instance(&self) -> unified::Output<'dr, D, C> {
+    pub fn nested_instance(&self) -> unified::Output<'dr, D, C, L> {
         unified::Output {
             c: self.nested.c.clone(),
             v: self.nested.v.clone(),
             x: self.nested.x.clone(),
             y: self.nested.y.clone(),
             u: self.nested.u.clone(),
-            exported: FixedVec::new(alloc::vec![
-                self.stashed_preamble.clone(),
-                self.stashed_inner_error.clone(),
-                self.stashed_outer_error.clone(),
-                self.stashed_query.clone(),
-                self.stashed_eval.clone(),
-                self.stashed_ab_a.clone(),
-                self.stashed_ab_b.clone(),
-                self.stashed_registry_xy.clone(),
-                self.stashed_p.clone(),
-                self.stashed_points_binding.clone(),
-                self.stashed_points_children.clone(),
-                self.stashed_points_registry_wx.clone(),
-                self.stashed_points_ab.clone(),
-                self.stashed_points_f.clone(),
-            ])
-            .expect("NUM_EXPORTED commitments"),
+            exported: FixedVec::new(
+                [
+                    self.stashed_preamble.clone(),
+                    self.stashed_inner_error.clone(),
+                    self.stashed_outer_error.clone(),
+                    self.stashed_query.clone(),
+                    self.stashed_eval.clone(),
+                    self.stashed_ab_a.clone(),
+                    self.stashed_ab_b.clone(),
+                    self.stashed_registry_xy.clone(),
+                    self.stashed_p.clone(),
+                    self.stashed_points_binding.clone(),
+                    self.stashed_points_children.clone(),
+                    self.stashed_points_registry_wx.clone(),
+                    self.stashed_points_ab.clone(),
+                    self.stashed_points_f.clone(),
+                ]
+                .into_iter()
+                .chain(self.stashed_witness_polys.iter().cloned())
+                .collect(),
+            )
+            .expect("num_exported commitments"),
         }
     }
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> core::ops::Index<RxIndex>
-    for ChildOutput<'dr, D, C>
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> core::ops::Index<RxIndex>
+    for ChildOutput<'dr, D, C, L>
 {
     type Output = Point<'dr, D, C>;
 
@@ -354,8 +406,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> core::ops::Index<RxIndex>
     }
 }
 
-impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
-    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C>>) -> Result<Self> {
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> ChildOutput<'dr, D, C, L> {
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, L>>) -> Result<Self> {
         Ok(ChildOutput {
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             application_stage: Point::alloc(dr, witness.as_ref().map(|w| w.application_stage))?,
@@ -396,6 +448,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
             )?,
             stashed_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_ab))?,
             stashed_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_f))?,
+            stashed_witness_polys: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.stashed_witness_polys[i]))
+            })?,
             nested: {
                 let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
                     Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))
@@ -416,7 +471,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> ChildOutput<'dr, D, C> {
 ///
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, L: Len> {
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
@@ -428,25 +483,32 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub native_points_children: Point<'dr, D, C>,
     /// Output gadget for the left child proof.
     #[ragu(gadget)]
-    pub left: ChildOutput<'dr, D, C>,
+    pub left: ChildOutput<'dr, D, C, L>,
     /// Output gadget for the right child proof.
     #[ragu(gadget)]
-    pub right: ChildOutput<'dr, D, C>,
+    pub right: ChildOutput<'dr, D, C, L>,
 }
 
-#[derive(Default)]
-pub struct Stage<C: Affine, R> {
-    _marker: PhantomData<(C, R)>,
+pub struct Stage<C: Affine, R, L> {
+    _marker: PhantomData<(C, R, L)>,
 }
 
-impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R> {
-    type Parent = PointsStage<C>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+impl<C: Affine, R, L> Default for Stage<C, R, L> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<C: Affine, R: Rank, L: Len> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, L> {
+    type Parent = PointsStage<C, L>;
+    type Witness<'source> = &'source Witness<C, L>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, L>];
 
     fn values() -> usize {
         // (x, y) per point, then the five nested scalars of each child.
-        NUM_POINTS * 2 + 2 * 5
+        num_points(L::len()) * 2 + 2 * 5
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -482,6 +544,8 @@ mod tests {
 
     #[test]
     fn stage_values_matches_wire_count() {
-        assert_stage_values(&Stage::<EqAffine, R>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<0>>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<4>>::default());
+        assert_stage_values(&Stage::<EqAffine, R, ConstLen<8>>::default());
     }
 }

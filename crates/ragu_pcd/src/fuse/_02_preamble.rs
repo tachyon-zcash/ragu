@@ -19,8 +19,13 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: crate::SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// Commits the native and bridge preamble stages, returning both
     /// witnesses: the native one for the native circuits, the bridge one for
@@ -30,10 +35,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<(
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
-        nested::stages::preamble::Witness<C::HostCurve>,
+        nested::stages::preamble::Witness<C::HostCurve, J::PolyWitnesses>,
     )> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
         self.commit_native_points_children(rng, left, right, builder)?;
@@ -46,7 +51,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = native::stages::preamble::Witness::new(
             left,
@@ -55,7 +60,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             builder.right_header(),
         )?;
 
-        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
+        let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE, J>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             &preamble_witness,
         )?;
@@ -70,8 +75,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<nested::stages::preamble::Witness<C::HostCurve>> {
+        builder: &mut ProofBuilder<'_, C, R, J, B>,
+    ) -> Result<nested::stages::preamble::Witness<C::HostCurve, J::PolyWitnesses>> {
         let bridge_witness = nested::stages::preamble::Witness {
             native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
@@ -79,7 +84,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };
-        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R>::rx(
+        let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R, J::PolyWitnesses>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &bridge_witness,
         )?;

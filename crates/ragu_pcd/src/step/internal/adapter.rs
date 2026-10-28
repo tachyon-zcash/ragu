@@ -10,14 +10,17 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element,
+    Element, GadgetExt,
     allocator::{Allocator, Standard},
     shared::Shared,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::super::Step;
-use crate::Header;
+use super::super::{Step, StepCtx};
+use crate::{
+    Header,
+    framework_hooks::{FrameworkAux, FrameworkHooks, HookConfig},
+};
 
 /// Represents triple a length determined at compile time.
 pub struct TripleConstLen<const N: usize>;
@@ -28,41 +31,68 @@ impl<const N: usize> Len for TripleConstLen<N> {
     }
 }
 
+/// Auxiliary data produced by [`Adapter::witness`]: the input headers, the
+/// output data, the inner step's own aux, the application stage's values and
+/// the framework hooks' outputs.
+pub(crate) struct AdapterAux<'source, C: Cycle, S: Step<C>, const HEADER_SIZE: usize> {
+    pub left_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub right_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+    pub output_data: <S::Output as Header<C::CircuitField>>::Data,
+    pub step_aux: S::Aux<'source>,
+    /// The application stage's values: the hook region, then the step's
+    /// [`Shared`](Step::Shared) gadget.
+    pub shared: Vec<C::CircuitField>,
+    /// Every framework hook's output; see [`FrameworkAux`].
+    pub framework: FrameworkAux<C>,
+}
+
 /// The circuit of an application [`Step`]: the step's constraints over the
 /// proof's application stage, with the three headers as its public inputs.
 ///
 /// The application stage occupies the first gates of every step circuit,
 /// reserved by [`reserve_shared_stage`]: the step's own trace is zero there
 /// and the committed stage polynomial supplies those wires, as for a staged
-/// circuit. Its size is the largest [`Step::Shared`] layout registered in the
-/// application, derived from every registered step before constructing the
-/// circuits, so the block is reserved here rather than through a type-level
-/// stage.
-pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
+/// circuit. The stage holds the framework's hook region first — the wires the
+/// hooks hand a step, laid out by the application's [`HookLayout`] — and the
+/// step's [`Step::Shared`] gadget after it. Its size is the hook region plus
+/// the largest shared layout registered in the application, derived from
+/// every registered step before constructing the circuits, so the block is
+/// reserved here rather than through a type-level stage.
+///
+/// [`HookLayout`]: crate::HookLayout
+pub(crate) struct Adapter<'params, C: Cycle, S, R: Rank, const HEADER_SIZE: usize, J: HookConfig> {
     step: S,
     /// The application stage size, in field elements.
-    shared_size: usize,
-    _marker: PhantomData<(C, R)>,
+    stage_size: usize,
+    /// Held for the hooks; a [`Step`] never sees these.
+    params: &'params C::Params,
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
-    /// The circuit of `step` over an application stage of `shared_size`
-    /// elements.
+impl<'params, C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Adapter<'params, C, S, R, HEADER_SIZE, J>
+{
+    /// The circuit of `step` over an application stage of `stage_size`
+    /// elements; the hook layout comes from `J`. A step that asks for more
+    /// hooks than it allows overruns the hook region, which is what refuses
+    /// it.
     ///
     /// # Errors
     ///
-    /// Returns an initialization error if the step's [`Step::Shared`] gadget
-    /// has more wires than the stage holds; registration sizes the stage from
-    /// every step, so this guards the prover's own calls.
-    pub fn new(step: S, shared_size: usize) -> Result<Self> {
-        if S::Shared::num_values()? > shared_size {
+    /// Returns an initialization error if the hook region and the step's
+    /// [`Step::Shared`] gadget have more wires than the stage holds;
+    /// registration sizes the stage from every step, so this guards the
+    /// prover's own calls.
+    pub fn new(step: S, stage_size: usize, params: &'params C::Params) -> Result<Self> {
+        if J::layout().stage_len(S::Shared::num_values()?) > stage_size {
             return Err(Error::Initialization(
                 "the step's shared gadget has more wires than the application stage holds".into(),
             ));
         }
         Ok(Adapter {
             step,
-            shared_size,
+            stage_size,
+            params,
             _marker: PhantomData,
         })
     }
@@ -137,8 +167,8 @@ pub(crate) fn bind_shared<'dr, D: Driver<'dr>, G: Gadget<'dr, D>>(
     Ok(())
 }
 
-impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
-    for Adapter<C, S, R, HEADER_SIZE>
+impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    Circuit<C::CircuitField> for Adapter<'_, C, S, R, HEADER_SIZE, J>
 {
     type Instance<'source> = (
         FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -151,15 +181,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         S::Witness<'source>,
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
-    type Aux<'source> = (
-        (
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
-        ),
-        <S::Output as Header<C::CircuitField>>::Data,
-        S::Aux<'source>,
-        Vec<C::CircuitField>,
-    );
+    type Aux<'source> = AdapterAux<'source, C, S, HEADER_SIZE>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
         &self,
@@ -177,21 +199,48 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     where
         Self: 'dr,
     {
-        let stage_wires = reserve_shared_stage(dr, self.shared_size)?;
+        let stage_wires = reserve_shared_stage(dr, self.stage_size)?;
         let (left, right, witness) = witness.cast();
 
-        let ((left, right, output), shared, output_data, step_aux) = self
-            .step
-            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+        let mut hooks = FrameworkHooks::new(J::layout(), self.params);
+        let ((left, right, output), shared, output_data, step_aux) = {
+            let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
+            self.step
+                .witness::<_, HEADER_SIZE>(&mut ctx, witness, left, right)?
+        };
+        // Fill what the body left over, through the same hooks it used.
+        hooks.pad_to_layout::<R>(dr)?;
 
+        // The hook region leads the stage: the same types the fuse reads back
+        // off a child's stage, in the same order, so neither side spells the
+        // layout out. A step that witnessed more than its layout affords has
+        // more wires than the region, which is refused here.
+        let hook_len = J::layout().poly_query_instance_len();
+        let mut staged = Vec::with_capacity(self.stage_size);
+        for poly in hooks.witnessed_polys() {
+            poly.write(dr, &mut staged)?;
+        }
+        for query in hooks.poly_queries() {
+            query.write(dr, &mut staged)?;
+        }
+        if staged.len() != hook_len {
+            return Err(Error::Initialization(
+                "the hooks' wires do not fit the application's hook layout".into(),
+            ));
+        }
+        let (hook_stage, shared_stage) = stage_wires.split_at(hook_len);
+        for (element, wire) in staged.iter().zip(hook_stage) {
+            bind_shared(dr, element, core::slice::from_ref(wire))?;
+        }
+
+        // The step's own shared gadget follows the hook region.
         let size = S::Shared::num_values()?;
-        let wires = stage_wires.get(..size).ok_or_else(|| {
+        let wires = shared_stage.get(..size).ok_or_else(|| {
             Error::Initialization("the shared gadget exceeds the reserved layout".into())
         })?;
         bind_shared(dr, &shared, wires)?;
-        let mut shared_values = Vec::with_capacity(size);
-        S::Shared::write_shared(&shared, &mut shared_values)?;
-        if shared_values.len() != size {
+        S::Shared::write_shared(&shared, &mut staged)?;
+        if staged.len() != hook_len + size {
             return Err(Error::Initialization(
                 "the shared gadget's witness count differs from its layout".into(),
             ));
@@ -201,6 +250,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
+
+        // Read every hook's wires back out as values for the fuse.
+        let framework = hooks.into_values()?;
 
         let adapter_aux = D::try_just(|| {
             let left_header = elements[0..HEADER_SIZE]
@@ -213,12 +265,14 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            Ok((
-                (left_header, right_header),
-                output_data.take(),
-                step_aux.take(),
-                shared_values.iter().map(|e| *e.value().take()).collect(),
-            ))
+            Ok(AdapterAux {
+                left_header,
+                right_header,
+                output_data: output_data.take(),
+                step_aux: step_aux.take(),
+                shared: staged.iter().map(|e| *e.value().take()).collect(),
+                framework: framework.take(),
+            })
         })?;
 
         Ok(WithAux::new(FixedVec::try_from(elements)?, adapter_aux))
@@ -238,6 +292,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        NoHooks,
         header::{Header, Suffix},
         step::{Encoded, Index, Step},
     };
@@ -245,6 +300,14 @@ mod tests {
     type TestR = TestRank;
     const HEADER_SIZE: usize = 4;
     const SHARED_SIZE: usize = 2;
+
+    /// An adapter at the empty hook layout over a stage of `stage_size`.
+    fn adapter<S: Step<Pasta>>(
+        step: S,
+        stage_size: usize,
+    ) -> Result<Adapter<'static, Pasta, S, TestR, HEADER_SIZE, NoHooks>> {
+        Adapter::new(step, stage_size, crate::pasta::baked())
+    }
 
     struct TestHeader;
 
@@ -275,7 +338,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
             _witness: DriverValue<D, Self::Witness<'source>>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -289,6 +352,7 @@ mod tests {
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )> {
+            let dr = &mut *ctx.dr;
             let allocator = &mut Standard::new();
             let left_elem = Element::alloc(dr, allocator, left)?;
             let right_elem = Element::alloc(dr, allocator, right)?;
@@ -325,7 +389,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
             witness: DriverValue<D, Self::Witness<'source>>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -339,6 +403,7 @@ mod tests {
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )> {
+            let dr = &mut *ctx.dr;
             let allocator = &mut Standard::new();
             let left = Element::alloc(dr, allocator, left)?;
             let right = Element::alloc(dr, allocator, right)?;
@@ -373,8 +438,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, SHARED_SIZE).unwrap();
+        let adapter = adapter(TestStep, SHARED_SIZE).unwrap();
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let output = adapter
@@ -391,8 +455,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
 
-        let adapter =
-            Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, SHARED_SIZE).unwrap();
+        let adapter = adapter(TestStep, SHARED_SIZE).unwrap();
         let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
 
         let aux = adapter
@@ -400,7 +463,14 @@ mod tests {
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux, shared) = aux.take();
+        let AdapterAux {
+            left_header,
+            right_header,
+            output_data,
+            step_aux: _,
+            shared,
+            framework: _,
+        } = aux.take();
         assert!(shared.is_empty());
 
         // Left header should start with 10
@@ -415,22 +485,17 @@ mod tests {
     /// values and binds those wires to the stage's reserved wires.
     #[test]
     fn step_exports_its_shared_gadget() {
-        let adapter =
-            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(SharedSum, SHARED_SIZE).unwrap();
+        let adapter = adapter(SharedSum, SHARED_SIZE).unwrap();
         let values = [Fp::from(3u64), Fp::from(4u64)];
         let (_, aux) = adapter
             .trace((Fp::from(10u64), Fp::from(20u64), values))
             .expect("trace")
             .into_parts();
-        let (_, output_data, (), shared) = aux;
-        assert_eq!(shared, values);
-        assert_eq!(output_data, Fp::from(7u64));
+        assert_eq!(aux.shared, values);
+        assert_eq!(aux.output_data, Fp::from(7u64));
 
         // A stage smaller than the step's gadget is refused.
-        assert!(
-            Adapter::<Pasta, SharedSum, TestR, HEADER_SIZE>::new(SharedSum, SHARED_SIZE - 1)
-                .is_err()
-        );
+        assert!(self::adapter(SharedSum, SHARED_SIZE - 1).is_err());
     }
 
     // Deliberately broken implementations exercise checks independently of
@@ -469,7 +534,7 @@ mod tests {
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
-            dr: &mut D,
+            ctx: &mut StepCtx<'_, 'dr, D, Pasta>,
             witness: DriverValue<D, Self::Witness<'source>>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -484,7 +549,7 @@ mod tests {
             DriverValue<D, ()>,
         )> {
             let (headers, shared, output, aux) =
-                SharedSum.witness::<_, HS>(dr, witness, left, right)?;
+                SharedSum.witness::<_, HS>(ctx, witness, left, right)?;
             Ok((
                 headers,
                 Malformed {
@@ -500,11 +565,11 @@ mod tests {
     #[test]
     fn malformed_shared_schemas_cannot_omit_wire_bindings() {
         fn trace<const SIZE: usize, const EXPORTS: usize>() -> Result<()> {
-            Adapter::<Pasta, MalformedStep<SIZE, EXPORTS>, TestR, HEADER_SIZE>::new(
-                MalformedStep,
-                3,
-            )?
-            .trace((Fp::from(10), Fp::from(20), [Fp::from(3), Fp::from(4)]))?;
+            adapter(MalformedStep::<SIZE, EXPORTS>, 3)?.trace((
+                Fp::from(10),
+                Fp::from(20),
+                [Fp::from(3), Fp::from(4)],
+            ))?;
             Ok(())
         }
         assert!(
@@ -524,10 +589,7 @@ mod tests {
     #[test]
     fn steps_reserve_the_stage_gates() {
         let counts = |size| {
-            ragu_circuits::testing::synthesis_counts(
-                &Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep, size).unwrap(),
-            )
-            .unwrap()
+            ragu_circuits::testing::synthesis_counts(&adapter(TestStep, size).unwrap()).unwrap()
         };
         let unstaged = counts(0);
         for size in [1, 2, 3, 64, 257] {

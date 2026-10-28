@@ -58,23 +58,31 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, EndoscalarChallenge, GadgetExt, allocator::Standard};
-
-use super::super::{
-    InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
-    StaticFQuery,
-    claims::{self, Processor},
-    stages::{
-        eval as native_eval, preamble as native_preamble,
-        query::{self as native_query, ChildEvaluations},
-    },
-    unified::{self, OutputBuilder},
+use ragu_primitives::{
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, allocator::Standard, vec::Len,
 };
-use crate::internal::{
-    claims::Source,
-    fold_revdot::{Parameters, fold_two_layer},
-    inverter::Inverter,
-    native::RevdotParameters,
+
+use super::{
+    super::{
+        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
+        StaticFQuery,
+        claims::{self, Processor},
+        stages::{
+            eval as native_eval, preamble as native_preamble,
+            query::{self as native_query, ChildEvaluations},
+        },
+        unified::{self, OutputBuilder},
+    },
+    poly_query,
+};
+use crate::{
+    framework_hooks::HookConfig,
+    internal::{
+        claims::Source,
+        fold_revdot::{Parameters, fold_two_layer},
+        inverter::Inverter,
+        native::RevdotParameters,
+    },
 };
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
@@ -84,11 +92,11 @@ use crate::internal::{
 ///
 /// [module-level documentation]: self
 /// [$v$]: unified::Output::v
-pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize> {
-    _marker: PhantomData<(C, R)>,
+pub struct Circuit<C: Cycle, R, const HEADER_SIZE: usize, J: HookConfig> {
+    _marker: PhantomData<(C, R, J)>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig> Circuit<C, R, HEADER_SIZE, J> {
     pub fn new() -> MultiStage<C::CircuitField, R, Self> {
         MultiStage::new(Circuit {
             _marker: PhantomData,
@@ -104,7 +112,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_SIZE> {
 /// - Evaluation component polynomials from eval stage
 ///
 /// [$v$]: unified::Output::v
-pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, L: Len> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Witness for the preamble stage (provides child proof data).
@@ -112,16 +120,16 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Witness for the query stage (provides registry and polynomial evaluations).
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides evaluation component polynomials).
-    pub eval_witness: &'a native_eval::Witness<C>,
+    pub eval_witness: &'a native_eval::Witness<C, L>,
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
-    for Circuit<C, R, HEADER_SIZE>
+impl<C: Cycle, R: Rank, const HEADER_SIZE: usize, J: HookConfig>
+    MultiStageCircuit<C::CircuitField, R> for Circuit<C, R, HEADER_SIZE, J>
 {
-    type Last = native_eval::Stage<C, R, HEADER_SIZE>;
+    type Last = native_eval::Stage<C, R, HEADER_SIZE, J>;
 
     type Instance<'source> = &'source unified::Instance<C>;
-    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
+    type Witness<'source> = Witness<'source, C, R, HEADER_SIZE, J::PolyWitnesses>;
     type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
@@ -149,9 +157,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
         let builder =
             builder.skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve>>()?;
         let (preamble, builder) =
-            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
-        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
-        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
+            builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE, J>>()?;
+        let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE, J>>()?;
+        let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE, J>>()?;
         let dr = builder.finish();
 
         // Preamble is enforced because it contains child proof data that must
@@ -204,6 +212,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
 
                 compute_axbx::<_, RevdotParameters>(
                     dr,
+                    J::PolyWitnesses::len(),
                     &query,
                     z.element(),
                     &txz,
@@ -220,8 +229,18 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
             let fu = {
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
-                let denominators =
-                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
+                let denominators = Denominators::new(
+                    dr,
+                    J::PolyWitnesses::len(),
+                    &u,
+                    &w,
+                    x.element(),
+                    &y,
+                    z.element(),
+                    &preamble,
+                )?;
+                let selected = poly_query::select_evaluations(dr, allocator, eval, &preamble)?;
+
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     eval,
@@ -230,6 +249,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitFi
                     &denominators,
                     &computed_ax,
                     &computed_bx,
+                    &selected,
                 ) {
                     pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
                 }
@@ -262,6 +282,7 @@ struct ChildDenominators<'dr, D: Driver<'dr>> {
     y: Element<'dr, D>,
     x: Element<'dr, D>,
     circuit_id: Element<'dr, D>,
+    poly_queries: Vec<Element<'dr, D>>,
 }
 
 /// Denominators for current step challenge points.
@@ -290,14 +311,15 @@ struct Denominators<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
-    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
+    fn new<C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize, J: HookConfig>(
         dr: &mut D,
+        polys: usize,
         u: &Element<'dr, D>,
         w: &Element<'dr, D>,
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE, J>,
     ) -> Result<Self> {
         let xz = x.mul(dr, z)?;
 
@@ -315,9 +337,22 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
         let challenges_x = inverter.add(dr, x)?;
         let challenges_y = inverter.add(dr, y)?;
         let challenges_xz = inverter.add(dr, &xz)?;
+        let left_queries = preamble
+            .left
+            .poly_queries
+            .iter()
+            .map(|query| inverter.add(dr, &query.x))
+            .collect::<Result<Vec<_>>>()?;
+        let right_queries = preamble
+            .right
+            .poly_queries
+            .iter()
+            .map(|query| inverter.add(dr, &query.x))
+            .collect::<Result<Vec<_>>>()?;
 
-        let circuit_indices =
-            InternalCircuitValues::try_from_fn(|id| inverter.add_circuit(dr, id.circuit_index()))?;
+        let circuit_indices = InternalCircuitValues::try_from_fn(polys, |id| {
+            inverter.add_circuit(dr, id.circuit_index(polys))
+        })?;
 
         let inverted = inverter.invert(dr)?;
 
@@ -327,12 +362,14 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[left_y].clone(),
                 x: inverted[left_x].clone(),
                 circuit_id: inverted[left_circuit_id].clone(),
+                poly_queries: left_queries.iter().map(|&i| inverted[i].clone()).collect(),
             },
             right: ChildDenominators {
                 u: inverted[right_u].clone(),
                 y: inverted[right_y].clone(),
                 x: inverted[right_x].clone(),
                 circuit_id: inverted[right_circuit_id].clone(),
+                poly_queries: right_queries.iter().map(|&i| inverted[i].clone()).collect(),
             },
             challenges: ChallengeDenominators {
                 w: inverted[challenges_w].clone(),
@@ -340,7 +377,7 @@ impl<'dr, D: Driver<'dr>> Denominators<'dr, D> {
                 y: inverted[challenges_y].clone(),
                 xz: inverted[challenges_xz].clone(),
             },
-            internal: InternalCircuitValues::from_fn(|id| {
+            internal: InternalCircuitValues::from_fn(polys, |id| {
                 inverted[*circuit_indices.get(id)].clone()
             }),
         })
@@ -519,6 +556,7 @@ impl<'a, 'dr, D: Driver<'dr>> Processor<&'a Element<'dr, D>, &'a Element<'dr, D>
 /// - Layer 2: internal folding within each layer
 fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
     dr: &mut D,
+    polys: usize,
     query: &native_query::Output<'dr, D>,
     z: &Element<'dr, D>,
     txz: &Element<'dr, D>,
@@ -534,7 +572,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
         right: &query.right,
     };
     let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_registry);
-    claims::build(&source, &mut processor)?;
+    claims::build(&source, &mut processor, polys)?;
 
     let (ax_sources, bx_sources) = processor.build();
     let ax = fold_two_layer::<_, P>(dr, &ax_sources, mu_inv, mu_prime_inv)?;
@@ -565,6 +603,7 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
 /// 6. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
 ///    internal index
+/// 7. **Child poly-queries** — $p_i(u) = y_i$ at $x_i$ per child query
 ///
 /// The static query prefix is defined by [`STATIC_F_QUERIES`] and consumed by
 /// both this circuit and the prover's [`compute_f`] path. The ordering affects
@@ -573,13 +612,20 @@ fn compute_axbx<'dr, D: Driver<'dr>, P: Parameters>(
 /// [`compute_f`]: crate::Application::compute_f
 /// [$\alpha$]: unified::Output::alpha
 #[rustfmt::skip]
-fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>(
-    eval: &'a native_eval::Evaluations<'dr, D>,
+fn poly_queries<
+    'a, 'dr,
+    D: Driver<'dr>,
+    C: Cycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+    J: HookConfig,
+>(
+    eval: &'a native_eval::Evaluations<'dr, D, J>,
     query: &'a native_query::Output<'dr, D>,
-    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+    preamble: &'a native_preamble::Output<'dr, D, C, HEADER_SIZE, J>,
     d: &'a Denominators<'dr, D>,
     computed_ax: &'a Element<'dr, D>,
     computed_bx: &'a Element<'dr, D>,
+    selected: &'a [Vec<Element<'dr, D>>; 2],
 ) -> impl Iterator<Item = (&'a Element<'dr, D>, &'a Element<'dr, D>, &'a Element<'dr, D>)> {
     STATIC_F_QUERIES.into_iter().map(move |query_id| match query_id {
         StaticFQuery::LeftP => (&eval.left.p_poly, &preamble.left.unified.v, &d.left.u),
@@ -661,10 +707,16 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HE
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]
         .into_iter()
         .flat_map(move |(eval, query)|
-            RxIndex::ALL.iter().map(move |&id|
+            RxIndex::all(J::PolyWitnesses::len()).map(move |id|
                 (eval.rx.get(id), query.rx.get(id), &d.challenges.xz))))
     // m(\omega^j, x, y) evaluations for each internal index j
-    .chain(InternalCircuitIndex::ALL.iter().map(|&id| {
+    .chain(InternalCircuitIndex::all(J::PolyWitnesses::len()).map(move |id| {
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
     }))
+    // Child poly-queries, trailing block matching `compute_f`.
+    .chain([(&selected[0], &preamble.left, &d.left), (&selected[1], &preamble.right, &d.right)]
+        .into_iter()
+        .flat_map(move |(child_selected, child_preamble, child_d)|
+            (0..child_preamble.poly_queries.len()).map(move |i|
+                (&child_selected[i], &child_preamble.poly_queries[i].y, &child_d.poly_queries[i]))))
 }

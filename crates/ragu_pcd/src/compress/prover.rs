@@ -38,8 +38,13 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
     Ok((batch, opening))
 }
 
-impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<
+    C: IpaCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    J: crate::framework_hooks::HookConfig,
+    B: SelectableBackend,
+> Application<'_, C, R, HEADER_SIZE, J, B>
 {
     /// Compresses `pcd` into a [`CompressedPcd`] over the same data.
     ///
@@ -49,11 +54,17 @@ impl<C: IpaCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// proof: [`verify_compressed`](Self::verify_compressed) judges the
     /// instance the proof commits to, as [`verify`](Self::verify) judges
     /// the proof.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an application whose steps witness polynomials: compression
+    /// is laid out for [`NoHooks`](crate::NoHooks) only.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
+        super::refuse_hooks::<J>()?;
         let proof = pcd.proof();
         let instance = Instance::of::<R, HEADER_SIZE>(proof)?;
         // The challenges as the proof stores them: a cache of the fuse's own
