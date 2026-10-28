@@ -1,15 +1,10 @@
-use alloc::{boxed::Box, string::ToString as _, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use ragu_circuits::polynomials::{Rank, TestRank};
-use ragu_core::{
-    Error,
-    pasta::{Ep, Eq, Fp, Fq, PallasGenerators, PastaParams, VestaGenerators},
-};
+use ragu_core::pasta::{Ep, Eq, Fp, Fq, PallasGenerators, PastaParams, VestaGenerators};
 use udon::curve::{AffineAdapter, Projective as _};
 
 mod application;
-mod ctx;
-mod parity;
 mod proof;
 
 /// Deterministic test parameters with distinct generators at every test-rank
@@ -41,11 +36,4 @@ pub(crate) fn test_params() -> &'static PastaParams {
         AffineAdapter::as_slice(&[vesta_blinding])[0],
     );
     Box::leak(Box::new(PastaParams::new(pallas, vesta)))
-}
-
-pub(crate) fn assert_invalid_witness(error: Error, expected: &str) {
-    match error {
-        Error::InvalidWitness(source) => assert_eq!(source.to_string(), expected),
-        other => panic!("expected InvalidWitness, got {other:?}"),
-    }
 }
