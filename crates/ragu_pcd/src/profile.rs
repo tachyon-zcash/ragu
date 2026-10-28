@@ -68,7 +68,7 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
-pub use crate::decompress::prover::Decompression;
+pub use crate::decompress::prover::{Decompressed, Decompression};
 use crate::{
     SelectableBackend,
     decompress::extension,
@@ -259,14 +259,15 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The native extension's polynomials for one proof: each circuit's,
     /// assembled against `registry` at the circuit's index in the layout,
-    /// then each stage's, blinded from `rng`, over the context the
-    /// application holds.
+    /// then each stage's, blinded from `rng`, over `source`, the proof the
+    /// step decompresses, or over the context's canonical proof without.
     ///
     /// # Errors
     ///
     /// The default fills an empty extension and fails for any other.
     fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -276,7 +277,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, registry, rng);
+        let _ = (context, source, registry, rng);
         if Self::native_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -292,6 +293,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default fills an empty extension and fails for any other.
     fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -301,7 +303,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, registry, rng);
+        let _ = (context, source, registry, rng);
         if Self::nested_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -747,8 +749,12 @@ impl Profile for Standard {
 /// every fuse runs the chunks over a compressed proof. The application
 /// holds a [`Decompression`] of the wallet application it aggregates, taken
 /// at [`finalize_with`](crate::ApplicationBuilder::finalize_with), whose
-/// canonical compressed proof every fuse decompresses until a step
-/// decompresses a wallet's proof of its own.
+/// canonical compressed proof every fuse decompresses, except the
+/// decompression step: it decompresses the wallet proof it is given
+/// ([`decompress`](crate::Application::decompress)) and outputs that
+/// proof's header. The extension's statement circuit exposes the header
+/// the chunks verified, and its claim's $k(y)$ holds a proof of the
+/// decompression step to it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
@@ -797,7 +803,9 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = AGGREGATOR_NAME;
     const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(()));
-    const NATIVE_EXTENSION: usize = Self::native_chunks(HEADER_SIZE).0 + extension::NATIVE_STAGES;
+    // The chunks, the statement circuit and the stages.
+    const NATIVE_EXTENSION: usize =
+        Self::native_chunks(HEADER_SIZE).0 + 1 + extension::NATIVE_STAGES;
     const NESTED_EXTENSION: usize = Self::NESTED_CHUNKS + extension::NESTED_STAGES;
 
     type Context<'params, Base, R, B>
@@ -876,6 +884,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
 
     fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -886,11 +895,12 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         RNG: CryptoRng,
     {
         Self::accepts::<R>(H)?;
-        context.native_rxs::<Self>(registry, rng)
+        context.native_rxs::<Self>(source, registry, rng)
     }
 
     fn nested_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -901,7 +911,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         RNG: CryptoRng,
     {
         Self::accepts::<R>(H)?;
-        context.nested_rxs::<Self>(registry, rng)
+        context.nested_rxs::<Self>(source, registry, rng)
     }
 }
 
@@ -1592,6 +1602,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1672,6 +1683,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1687,6 +1699,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -1953,6 +1966,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1975,6 +1989,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2088,6 +2103,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2114,6 +2130,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&Decompressed<Base>>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2562,10 +2579,10 @@ mod tests {
     #[test]
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
-        assert_eq!(shape, Shape::solve(63 + 4, 44 + 3, 4, 4));
+        assert_eq!(shape, Shape::solve(63 + 1 + 4, 44 + 3, 4, 4));
         assert_eq!(
             Shape::of::<Aggregator<103>>(),
-            Shape::solve(67 + 4, 44 + 3, 4, 4)
+            Shape::solve(67 + 1 + 4, 44 + 3, 4, 4)
         );
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
         std::println!(

@@ -1,28 +1,36 @@
 //! The decompression circuits as the aggregator profile's extension: the
-//! pinned layout is the schedules', the hooks register every chunk and
-//! stage at the aggregator rank and refuse the production rank, and an
-//! application over the profile builds at the aggregator rank, where
-//! every fuse circuit fits with the extension's polynomials, and its
-//! bootstrap proof verifies with the chunks run over the wallet
-//! application's canonical compressed proof.
+//! pinned layout is the schedules', the hooks register every chunk, the
+//! statement circuit and every stage at the aggregator rank and refuse the
+//! production rank, and an application over the profile builds at the
+//! aggregator rank, where every fuse circuit fits with the extension's
+//! polynomials, and its bootstrap proof verifies with the chunks run over
+//! the wallet application's canonical compressed proof. A wallet proof
+//! decompresses into a proof of the aggregator carrying its header, and
+//! one relabelled on the way fails.
 
 use ragu_circuits::{
     polynomials::{AggregatorRank, ProductionRank},
     registry::RegistryBuilder,
 };
 use ragu_core::{
-    Error,
+    Cycle, Error, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
     pasta::{Fp, Fq, Pasta},
 };
+use ragu_primitives::{Element, allocator::Allocator};
 use rand::{SeedableRng, rngs::StdRng};
 
 use super::{native, nested};
 use crate::{
-    ApplicationBuilder,
+    Application, ApplicationBuilder,
     decompress::support::{HEADER_SIZE, Setup, TestR},
+    header::{Header, Suffix},
     profile::{
         Aggregator, BondingSlot, CircuitSlot, Decompression, Profile, Profiled, Shape, Standard,
     },
+    step::{Encoded, Index, Step, internal::decompress::Decompress},
 };
 
 type P = Aggregator<HEADER_SIZE>;
@@ -52,7 +60,7 @@ fn pinned_layout_is_the_schedules() {
 
     let native = P::native_extension();
     let (chunks, transcript) = P::native_chunks(HEADER_SIZE);
-    assert_eq!(native.circuits.len(), chunks);
+    assert_eq!(native.circuits.len(), chunks + 1);
     assert_eq!(native.stages, 4);
     assert!(
         native.circuits[..transcript]
@@ -60,13 +68,16 @@ fn pinned_layout_is_the_schedules() {
             .all(|c| c == &[0, 1, 2, 3])
     );
     assert!(
-        native.circuits[transcript..]
+        native.circuits[transcript..chunks]
             .iter()
             .all(|c| c == &[0, 1, 2])
     );
-    assert_eq!(native.final_masks.len(), 2);
+    assert_eq!(native.circuits[chunks], [0]);
+    assert_eq!(native.statement, Some(chunks as u32));
+    assert_eq!(native.final_masks.len(), 3);
     assert_eq!(native.final_masks[0].len(), chunks - transcript);
     assert_eq!(native.final_masks[1].len(), transcript);
+    assert_eq!(native.final_masks[2], [chunks as u32]);
     assert!(native.is_consistent());
 
     let nested = P::nested_extension();
@@ -74,6 +85,7 @@ fn pinned_layout_is_the_schedules() {
     assert_eq!(nested.stages, 3);
     assert!(nested.circuits.iter().all(|c| c == &[0, 1, 2]));
     assert_eq!(nested.final_masks.len(), 1);
+    assert_eq!(nested.statement, None);
     assert!(nested.is_consistent());
 }
 
@@ -175,4 +187,105 @@ fn the_fuse_fits_at_the_aggregator_rank() {
         .unwrap();
     let bootstrap = app.bootstrap.clone().expect("finalized").carry::<()>(());
     assert!(app.verify_uncompressed(&bootstrap, &mut rng).unwrap());
+}
+
+/// A header carrying one field element.
+struct Value;
+
+impl Header<Fp> for Value {
+    const SUFFIX: Suffix = Suffix::new(7);
+    type Data = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness)
+    }
+}
+
+/// A seed step outputting its witness as a [`Value`] header.
+struct Leaf;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for Leaf {
+    const INDEX: Index = Index::new(0);
+    type Witness<'source> = Fp;
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = Value;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Fp>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, Value, H>,
+        ),
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let left = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        let output = Encoded::new(dr, allocator, witness.clone())?;
+        Ok(((left, right, output), witness, D::unit()))
+    }
+}
+
+/// A wallet application with a leaf step, for proofs with a header.
+fn wallet() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
+    ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap()
+}
+
+/// A wallet's compressed proof decompresses into a proof of the aggregator
+/// carrying the wallet proof's header and data, which verifies; the same
+/// decompression under another header fails, since the statement circuit's
+/// claim holds the decompression step's output header to the decompressed
+/// statement's.
+#[test]
+fn decompresses_a_wallet_proof() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(9);
+    let wallet = wallet();
+    let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(42)).unwrap();
+    let compressed = wallet.compress(&leaf, &mut rng).unwrap();
+    assert!(wallet.verify_compressed(&compressed).unwrap());
+
+    let decompression = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, decompression)
+        .unwrap();
+    let node = app.decompress(&mut rng, &compressed).unwrap();
+    assert_eq!(*node.data(), Fp::from(42));
+    assert!(app.verify_uncompressed(&node, &mut rng).unwrap());
+
+    let decompressed = app.context().prepare(&compressed).unwrap();
+    let (relabelled, ()) = app
+        .fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            Fp::from(43),
+            app.bootstrap_pcd(),
+            app.bootstrap_pcd(),
+            Some(&decompressed),
+        )
+        .unwrap();
+    assert!(
+        !matches!(app.verify_uncompressed(&relabelled, &mut rng), Ok(true)),
+        "a relabelled decompression fails"
+    );
 }
