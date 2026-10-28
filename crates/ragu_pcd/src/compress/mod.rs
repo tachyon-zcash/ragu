@@ -35,19 +35,23 @@
 //!
 //! The transcript squeezes circuit-field elements, and every compression
 //! challenge is the endoscalar lift of a squeeze, as the fuse's challenges
-//! are: the squeeze's low 128 bits read as an endoscalar and lifted into
-//! the field of the curve the challenge serves, through [`Lifted`]. The
+//! are: the squeeze's low [`ENDOSCALAR_BITS`] bits read as an endoscalar
+//! and lifted into the field of the curve the challenge serves, through
+//! [`Lifted`]. The
 //! lift is what lets a circuit over the other field scale that curve's
 //! points by the challenge, which decompression needs; the nested curve's
 //! squeezes first keep their canonical integers within the two fields'
 //! common capacity. A squeeze outside the endoscalar range, a $2^{-129}$
 //! event, rejects the proof. The lift is injective, so under ideal
 //! transcript draws a nonzero degree-$d$ residual in one challenge
-//! vanishes with probability at most $d/2^{128}$. These fresh compression
-//! challenges are checked by the terminal verifier.
+//! vanishes with probability at most $d/2^{143}$, with $143$ the
+//! endoscalar's width. These fresh compression challenges are checked by
+//! the terminal verifier.
 //!
 //! Like an uncompressed proof, a compressed proof is not hiding: the
 //! openings it carries are evaluations of the witness polynomials.
+//!
+//! [`ENDOSCALAR_BITS`]: ragu_primitives::ENDOSCALAR_BITS
 
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Cycle, Result};
@@ -179,12 +183,14 @@ impl<F> Sampled<F> {
 
 /// A transcript whose challenges are endoscalar lifts, as the fuse's are:
 /// each squeeze of the inner transcript is read as an endoscalar, its low
-/// 128 bits, and lifted into the scalar field of the curve the challenge
-/// serves, so that a circuit over the other field can scale that curve's
-/// points by the challenge through the endomorphism while the field checks
-/// use the lift. A squeeze outside the endoscalar range, a $2^{-129}$
-/// event, rejects the proof, as [`Instance::challenges`] rejects such a
-/// `pre_beta`.
+/// [`ENDOSCALAR_BITS`] bits, and lifted into the scalar field of the curve
+/// the challenge serves, so that a circuit over the other field can scale
+/// that curve's points by the challenge through the endomorphism while the
+/// field checks use the lift. A squeeze outside the endoscalar range, a
+/// $2^{-129}$ event, rejects the proof, as [`Instance::challenges`] rejects
+/// such a `pre_beta`.
+///
+/// [`ENDOSCALAR_BITS`]: ragu_primitives::ENDOSCALAR_BITS
 pub(crate) struct Lifted<T>(pub T);
 
 impl<C: Affine, T: IpaTranscript<C>> IpaTranscript<C> for Lifted<T> {
@@ -210,11 +216,19 @@ impl<C: Affine, T: IpaTranscript<C>> IpaTranscript<C> for Lifted<T> {
 /// ([`bridge_positions`](crate::decompress::stages::bridge_positions)), so
 /// that the decompression's circuit-field side can sum the bridges it
 /// absorbed into those stages' commitments.
+///
+/// # Errors
+///
+/// Fails if `params`' nested generators stop short of those positions,
+/// which the Standard tables do: compressing needs tables that reach the
+/// aggregator rank (see
+/// [`check_bridge_generators`](crate::decompress::stages::check_bridge_generators)).
 pub(crate) fn transcript<'params, C: ProfiledCycle, B: SelectableBackend, R: Rank>(
     params: &'params C::Params,
     instance: &Instance<C>,
     output_header: &[C::CircuitField],
 ) -> Result<CycleTranscript<'params, C, B>> {
+    crate::decompress::stages::check_bridge_generators::<C, C::Profile, R>(params)?;
     let mut transcript = CycleTranscript::<C, B>::positioned(
         params,
         IPA_TAG,

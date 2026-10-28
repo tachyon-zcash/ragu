@@ -303,7 +303,7 @@ fn wallet() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
     ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
         .register(Leaf)
         .unwrap()
-        .finalize(crate::pasta::baked())
+        .finalize(crate::pasta::baked_aggregator())
         .unwrap()
 }
 
@@ -358,7 +358,7 @@ fn decompresses_a_wallet_proof() {
 /// own.
 #[test]
 fn sides_from_different_proofs_are_rejected() {
-    let pasta = crate::pasta::baked();
+    let pasta = crate::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(23);
     let wallet = wallet();
     let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(42)).unwrap();
@@ -492,7 +492,7 @@ fn stored_coefficients<C: crate::profile::ProfiledCycle, R: Rank>(
 fn timings() {
     use std::time::Instant;
 
-    let pasta = crate::pasta::baked();
+    let pasta = crate::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(21);
     macro_rules! timed {
         ($label:expr, $e:expr) => {{
@@ -564,7 +564,7 @@ fn timings() {
             .unwrap()
             .register(Join)
             .unwrap()
-            .finalize_with(pasta, decompression)
+            .finalize_with(crate::pasta::baked_aggregator(), decompression)
             .unwrap()
     );
     let _ = timed!(

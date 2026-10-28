@@ -10,7 +10,9 @@
 //! `baked-aggregator` feature adds separate larger tables, loaded only by
 //! `baked_aggregator()`. Enabling it does not enlarge or initialize the Standard
 //! parameters. The larger tables are sized for the aggregator rank, at which
-//! the aggregator profile proves.
+//! the aggregator profile proves, and compression needs them whatever
+//! the profile: it bridges a proof's values at their positions in the
+//! decompression's stages at that rank, past the end of the Standard tables.
 
 pub use ragu_core::pasta::{Pasta, PastaParams};
 

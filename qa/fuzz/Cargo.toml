@@ -42,7 +42,7 @@ udon = { package = "zakura-udon", version = "0.1.0", default-features = false, f
 ragu_primitives = { path = "../../crates/ragu_primitives" }
 ragu_core = { path = "../../crates/ragu_core" }
 ragu_circuits = { path = "../../crates/ragu_circuits" }
-ragu_pcd = { path = "../../crates/ragu_pcd", features = ["baked", "unstable-fuzzing"] }
+ragu_pcd = { path = "../../crates/ragu_pcd", features = ["baked-aggregator", "unstable-fuzzing"] }
 # The patcher engine (recording driver, repair solver, oracles) that
 # `fuzz_advice_patcher` drives over generated programs.
 ragu_testing = { path = "../../crates/ragu_testing" }

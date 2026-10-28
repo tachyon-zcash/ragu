@@ -96,7 +96,7 @@ mod registry {
             Some(tags) => builder.with_registry_tags(tags, b"recursive boundary test setup")?,
             None => builder,
         }
-        .finalize(crate::pasta::baked())
+        .finalize(crate::pasta::baked_aggregator())
     }
 
     /// Exercise the ordinary size and both sides of a registry-domain expansion.

@@ -103,7 +103,7 @@ fn check_identity_commitments<C: IpaCycle + ProfiledCycle, R: Rank>(
 #[test]
 fn identity_bridge_commitments_are_rejected() -> Result<()> {
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())?;
+        .finalize(crate::pasta::baked_aggregator())?;
     check_identity_commitments(&app)
 }
 
@@ -153,7 +153,7 @@ impl<F: Field> Header<F> for FailingHeader {
 #[test]
 fn header_computation_errors_are_preserved() -> Result<()> {
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())?;
+        .finalize(crate::pasta::baked_aggregator())?;
     let mut rng = StdRng::seed_from_u64(0x908_e77);
     let honest = app.bootstrap_pcd();
     assert!(app.verify_uncompressed(&honest, &mut rng)?);
