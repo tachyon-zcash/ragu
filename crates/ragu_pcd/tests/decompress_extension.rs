@@ -220,8 +220,9 @@ fn hooks_register_every_chunk_and_stage() {
 /// The profile's shape is wider than the standard one, and an application
 /// over it builds at the aggregator rank: every fuse circuit fits the
 /// budget with the extension's polynomials, every chunk circuit registers
-/// beside them, and the bootstrap proof, with the chunks run over the
-/// wallet application's canonical compressed proof, verifies.
+/// beside them and none can stand in for an application circuit, and the
+/// bootstrap proof, with the chunks run over the wallet application's
+/// canonical compressed proof, verifies.
 #[test]
 fn the_fuse_fits_at_the_aggregator_rank() {
     let standard = Shape::of::<Standard>();
@@ -241,6 +242,7 @@ fn the_fuse_fits_at_the_aggregator_rank() {
     let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
         .finalize_with(crate::pasta::baked_aggregator(), decompression)
         .unwrap();
+    crate::internal::tests::assert_only_steps_satisfy_application_instances(&app);
     let bootstrap = app.bootstrap.clone().expect("finalized").carry::<()>(());
     assert!(app.verify_uncompressed(&bootstrap, &mut rng).unwrap());
 }
