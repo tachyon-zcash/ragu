@@ -193,7 +193,7 @@ pub fn num_claims<P: Profile>() -> usize {
 
 /// Length type for the nested fold's groups in profile `P`: the standard
 /// profile's [`NUM_FOLD_GROUPS`], or as many groups of
-/// [`FOLD_GROUP_SIZE`](FOLD_GROUP_SIZE) as the profile's
+/// [`FOLD_GROUP_SIZE`] as the profile's
 /// [`num_claims`] need, whichever is more.
 pub struct NumFoldGroups<P: Profile>(PhantomData<P>);
 
@@ -205,7 +205,7 @@ impl<P: Profile> Len for NumFoldGroups<P> {
 
 /// Parameters for folding the children's nested revdot claims in profile
 /// `P`: [`NumFoldGroups`] groups of
-/// [`FOLD_GROUP_SIZE`](FOLD_GROUP_SIZE).
+/// [`FOLD_GROUP_SIZE`].
 pub struct RevdotParameters<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Clone for RevdotParameters<P> {

@@ -148,10 +148,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
         let a_poly = a_poly.into_owned();
 
-        let b_poly = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(
-            b,
-            mu_prime,
-        );
+        let b_poly =
+            fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
         let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known

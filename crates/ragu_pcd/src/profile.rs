@@ -863,8 +863,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 /// and the native walk's steps are native rx polynomials. Going once around
 /// at four endoscalings per step, a native step adds about a quarter of a
 /// native step, so the map from a step count to the count the batch then
-/// needs is a contraction with one fixed point, which [`Shape::solve`] finds
-/// by iteration; more endoscalings per step contract faster.
+/// needs converges to a fixed point, which [`Shape::solve`] finds by
+/// iteration from one step; more endoscalings per step converge faster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
@@ -2351,15 +2351,15 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 49,
-                nested_points: 113,
-                nested_steps: 28,
-                nested_rx: 42,
-                native_points: 99,
-                native_steps: 25,
+                native_rx: 47,
+                nested_points: 109,
+                nested_steps: 27,
+                nested_rx: 41,
+                native_points: 97,
+                native_steps: 24,
             }
         );
-        assert_eq!(shape.polynomials(), 99);
+        assert_eq!(shape.polynomials(), 96);
     }
 
     #[test]

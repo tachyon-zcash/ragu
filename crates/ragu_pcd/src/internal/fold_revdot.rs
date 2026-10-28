@@ -17,10 +17,12 @@
 //! size while the carried count depends only on the slot budget.
 //!
 //! A challenge equal to one of the nodes 0..m makes Z vanish and the weights
-//! select that node's claim alone, so the fold then checks one claim. A
-//! transcript challenge lands there with probability m/|F|. The dummy proof's
-//! all-one challenges sit on node 1 by construction; see `dummy_proof` in
-//! `proof/mod.rs`.
+//! select that node's claim alone, so the fold then checks one claim.
+//! For a challenge uniform on a support S, the node-hit probability is
+//! |S intersect {0, ..., m-1}| / |S|, at most m/|S|. Pasta nested challenges
+//! are injective lifts of 128-bit endoscalars, so their support has size 2^128,
+//! rather than the full nested field size. The dummy proof's all-one
+//! challenges sit on node 1 by construction; see `dummy_proof` in `proof/mod.rs`.
 
 use alloc::{vec, vec::Vec};
 use core::{borrow::Borrow, cell::RefCell, marker::PhantomData};

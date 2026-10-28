@@ -77,7 +77,7 @@ impl<P: Profile> Len for Endoscalings<P> {
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here. The profile's shape rederives
 /// the whole cycle (see [`Shape`]).
-pub const NUM_ENDOSCALING_STEPS: usize = 25;
+pub const NUM_ENDOSCALING_STEPS: usize = 24;
 
 const _: () = assert!(
     endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
