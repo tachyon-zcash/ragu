@@ -51,7 +51,7 @@ A filename or Git commit ID does not replace a content digest.
 
 The `baked` feature and `pasta::baked()` retain Standard's original $2^{13}$
 vector generators per curve. The optional `baked-aggregator` feature adds
-separate $2^{14}$ tables loaded by `pasta::baked_aggregator()`. Enabling or
+separate $2^{15}$ tables loaded by `pasta::baked_aggregator()`. Enabling or
 loading those tables does not enlarge Standard's parameters. A setup that uses
 the larger parameters must hash and record that selected artifact and feature
 configuration in its own manifest. Existing frozen records remain descriptions

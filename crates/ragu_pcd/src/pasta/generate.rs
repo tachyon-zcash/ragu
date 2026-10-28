@@ -18,9 +18,10 @@ const DOMAIN_PREFIX: &str = "Ragu-Parameters";
 // consumer's array types, so a mismatch is rejected at compile time.
 const DEFAULT_EP_K: usize = 13;
 const DEFAULT_EQ_K: usize = 13;
-// Copies of the optional Aggregator table capacities, checked by Bento too.
-const AGGREGATOR_EP_K: usize = 14;
-const AGGREGATOR_EQ_K: usize = 14;
+// Copies of the optional Aggregator table capacities, the aggregator rank's,
+// checked by Bento too.
+const AGGREGATOR_EP_K: usize = 15;
+const AGGREGATOR_EQ_K: usize = 15;
 
 /// `n` vector generators from `0 || i`, then the blinding generator from `1`,
 /// then the IPA's generator from `2`.
