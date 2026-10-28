@@ -17,7 +17,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use super::*;
-use crate::profile::{CircuitSlot, Extension, ExtensionRxs, Registered};
+use crate::profile::{CircuitSlot, Decompressed, Extension, ExtensionRxs, Registered};
 
 const MANIFEST: &[u8] = b"fixed-verifier-circuits-test";
 
@@ -118,6 +118,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
 
     fn native_extension_rxs<'params, Base, Rk, const HS: usize, B, RNG>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::CircuitField, Rk>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, Rk>>
@@ -140,6 +141,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
 
     fn nested_extension_rxs<'params, Base, Rk, const HS: usize, B, RNG>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&Decompressed<Base>>,
         registry: &Registry<'params, Base::ScalarField, Rk>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, Rk>>
