@@ -20,10 +20,10 @@ lazy_static! {
 
 /// Returns the optional larger parameters for Aggregator extensions.
 ///
-/// Each curve has $2^{14}$ vector generators, supporting `R<14>` extension
-/// tests. Their $2^{13}$-point prefix, blinding generator and IPA generator
-/// are the Standard parameters' originals. This capacity does not fix the
-/// production Aggregator rank before its decompression circuits land.
+/// Each curve has $2^{15}$ vector generators, the aggregator rank's (see
+/// [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank)). Their
+/// $2^{13}$-point prefix, blinding generator and IPA generator are the
+/// Standard parameters' originals.
 ///
 /// Requires the `baked-aggregator` feature. Only calling this function loads
 /// these larger tables; [`super::baked()`] always loads the original tables.
