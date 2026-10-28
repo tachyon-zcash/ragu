@@ -33,10 +33,10 @@ RAGU005|crates/ragu_pcd/src/decompress/circuit.rs|1369|A commitment the nested e
 RAGU005|crates/ragu_pcd/src/decompress/derive.rs|65|Absent points are fixed by the claim structure, not the witness; the Horner chain scales alone past them.
 RAGU005|crates/ragu_pcd/src/decompress/derive.rs|475|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
 RAGU005|crates/ragu_pcd/src/decompress/ipa.rs|67|The first factor seeds the product; later factors multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|161|The first square is the base itself; each later one squares the previous.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|189|The exponent is a constant of the rank; its set bits fix which squares multiply.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|190|The exponent is a constant of the rank; its first set bit seeds the product.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|208|The first two powers are one and the base; later ones multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|171|The first square is the base itself; each later one squares the previous.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|199|The exponent is a constant of the rank; its set bits fix which squares multiply.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|200|The exponent is a constant of the rank; its first set bit seeds the product.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|218|The first two powers are one and the base; later ones multiply once each.
 RAGU005|crates/ragu_pcd/src/decompress/revdot.rs|303|A claim's kind is fixed by the protocol's claim list, never by the witness.
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|163|A point source is a constant of the schedule, a pure function of the proof system's constants.
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|175|An element source is a constant of the schedule, a pure function of the proof system's constants.
