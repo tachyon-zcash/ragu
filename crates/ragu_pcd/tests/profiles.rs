@@ -1,20 +1,20 @@
 //! Two profiles in one binary: a standard-profile application over `Pasta`
 //! at the production rank and an aggregator-profile application over the
-//! same curves at the aggregator rank. The standard application proves,
-//! verifies and compresses its proofs; the aggregator's registries build
-//! with the decompression circuits, and its bootstrap waits on their
-//! prover. The cycles are distinct types, so neither application accepts
-//! the other's proofs.
+//! same curves at the aggregator rank, each proving, verifying and
+//! compressing its own proofs, the aggregator's with the decompression
+//! circuits over the wallet application's canonical compressed proof. The
+//! cycles are distinct types, so neither application accepts the other's
+//! proofs.
 
 use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
 use ragu_core::{
-    Cycle, Error, Result,
+    Cycle, Result,
     pasta::{Fp, Pasta, PastaParams},
 };
 use ragu_pcd::{
     Application, ApplicationBuilder,
     ipa::IpaCycle,
-    profile::{Aggregator, Profiled, ProfiledCycle, Shape, Standard},
+    profile::{Aggregator, Decompression, Profiled, ProfiledCycle, Shape, Standard},
 };
 use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
@@ -47,13 +47,12 @@ where
 }
 
 #[test]
-fn both_profiles_build_in_one_binary() -> Result<()> {
-    prove_verify_compress(&wallet()?, 1)?;
+fn both_profiles_prove_in_one_binary() -> Result<()> {
+    let wallet = wallet()?;
+    prove_verify_compress(&wallet, 1)?;
 
-    // The aggregator's shape is its own, and its registries build at the
-    // aggregator rank: the fuse fits the budget with the decompression
-    // circuits registered. Finalizing proves the bootstrap, which stops at
-    // the extension's prover, the next step.
+    // The aggregator's shape is its own, and it proves at the aggregator
+    // rank over the wallet application's canonical compressed proof.
     type Agg = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
     assert_ne!(
         Shape::of::<Aggregator<HEADER_SIZE>>(),
@@ -61,10 +60,11 @@ fn both_profiles_build_in_one_binary() -> Result<()> {
     );
     let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Agg::circuit_poseidon(pasta);
-    let result = ApplicationBuilder::<Agg, AggregatorRank, HEADER_SIZE>::new()
+    let mut rng = StdRng::seed_from_u64(2);
+    let decompression = Decompression::new(wallet, &mut rng)?;
+    let aggregator = ApplicationBuilder::<Agg, AggregatorRank, HEADER_SIZE>::new()
         .register(WitnessLeaf { poseidon_params })?
         .register(Hash2 { poseidon_params })?
-        .finalize(pasta);
-    assert!(matches!(result, Err(Error::Initialization(_))));
-    Ok(())
+        .finalize_with(pasta, decompression)?;
+    prove_verify_compress(&aggregator, 3)
 }

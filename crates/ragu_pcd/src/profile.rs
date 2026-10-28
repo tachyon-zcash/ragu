@@ -68,6 +68,7 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
+pub use crate::decompress::prover::Decompression;
 use crate::{
     SelectableBackend,
     decompress::extension,
@@ -741,6 +742,13 @@ impl Profile for Standard {
 /// computed from the schedule, and the hooks check the pins against the
 /// schedule they register. A header size without a pin does not compile;
 /// pin it from the counts the schedule's tests report.
+///
+/// Every proof of the profile carries the chunk circuits' polynomials, so
+/// every fuse runs the chunks over a compressed proof. The application
+/// holds a [`Decompression`] of the wallet application it aggregates, taken
+/// at [`finalize_with`](crate::ApplicationBuilder::finalize_with), whose
+/// canonical compressed proof every fuse decompresses until a step
+/// decompresses a wallet's proof of its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
@@ -793,7 +801,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NESTED_EXTENSION: usize = Self::NESTED_CHUNKS + extension::NESTED_STAGES;
 
     type Context<'params, Base, R, B>
-        = ()
+        = Decompression<'params, Base, R, HEADER_SIZE, B>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
@@ -864,6 +872,36 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(HEADER_SIZE)?;
         extension::register_nested_bonding::<Base, ProductionRank, R, HEADER_SIZE>(bonding, slot)
+    }
+
+    fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::CircuitField, R>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        Self::accepts::<R>(H)?;
+        context.native_rxs::<Self>(registry, rng)
+    }
+
+    fn nested_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::ScalarField, R>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        Self::accepts::<R>(H)?;
+        context.nested_rxs::<Self>(registry, rng)
     }
 }
 
