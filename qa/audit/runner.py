@@ -47,7 +47,13 @@ LOGIN_ENV = ("USER", "LOGNAME")
 LOCAL_SECRETS = (".config/gh", ".git-credentials", ".netrc", ".gnupg", ".docker", ".kube", ".config/gcloud",
                  ".azure", ".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", "Library/Keychains",
                  ".claude.json")
+# A local run may review with Codex instead. Its reviewers get a permission
+# profile of this name, and none of the maintainer's hooks, memories, or apps.
+CODEX_PROFILE = "ragu-audit"
+CODEX_FEATURES_OFF = ("hooks", "memories", "apps", "browser_use", "computer_use", "in_app_browser", "guardian_approval")
 REVIEW_TIMEOUT = 3300
+# One build or test run must not consume a reviewer's session; coverage comes first.
+COMMAND_MINUTES = 15
 RECONCILE_TIMEOUT = 180
 GIT_TIMEOUT = 180
 HEARTBEAT_SECONDS = 30
@@ -127,7 +133,7 @@ class RunBudget:
               "claude-sonnet-5-5": tuple(map(Decimal, ("2", "10", "2.5", "4", ".10")))}
 
     def __init__(self, run, limit=None):
-        for role in (SKILLS[0], RECONCILER):
+        for role in (SKILLS[0], SKILLS[1], RECONCILER):
             if model_settings(run, role)[0] not in self.PRICES:
                 raise ValueError("the safety guard needs pricing for the configured model")
         self.limit = MAX_RUN_COST_USD if limit is None else Decimal(str(limit))
@@ -238,17 +244,36 @@ class RunBudget:
 def model_settings(run, skill):
     if skill == RECONCILER:
         return run.get("reconcile_model", RECONCILE_MODEL), run.get("reconcile_effort", RECONCILE_EFFORT)
+    if skill == SKILLS[0] and "core_model" in run:
+        # The core pass must read the whole diff; it may need a stronger model than the specialists.
+        return run["core_model"], run.get("core_effort", run["effort"])
     return run["model"], run["effort"]
 
 
 def cli_version(run):
     """The workflow pins Claude Code; a local run records the maintainer's install."""
-    return run["claude_version"] if run.get("local") else CLAUDE_VERSION
+    return run["cli_version"] if run.get("local") else CLAUDE_VERSION
+
+
+def backend(run):
+    """Which CLI reviews. The workflow always runs Claude Code."""
+    return run.get("backend", "claude") if run.get("local") else "claude"
+
+
+def installed_version(text):
+    """`claude --version` prints `2.1.310 (Claude Code)`; `codex --version` prints `codex-cli 0.163.0`."""
+    match = re.search(r"\d+\.\d+\.\d+", text)
+    if match is None:
+        raise ValueError("could not read the CLI version")
+    return match.group()
 
 
 def reuse_key(run):
-    return {**{key: run[key] for key in ("repository", "head", "base", "configuration", "model", "effort")},
-            "reconciliation": model_settings(run, RECONCILER), "claude_version": cli_version(run)}
+    key = {**{key: run[key] for key in ("repository", "head", "base", "configuration", "model", "effort")},
+           "reconciliation": model_settings(run, RECONCILER), "claude_version": cli_version(run)}
+    if "core_model" in run:  # Only then, so existing checks and reusable reports keep their identity.
+        key["core"] = model_settings(run, SKILLS[0])
+    return key
 
 
 def reuse_origin(run):
@@ -292,6 +317,20 @@ def prepare(root, run, work):
 
 def cargo_home(work):
     return Path(os.environ.get("CARGO_HOME") or work / "cargo").resolve()
+
+
+def prefetch_dependencies(source, work):
+    """Download the locked dependencies once, before offline Codex reviewers start.
+
+    Cargo only reads manifests and fetches sources here; nothing is built.
+    """
+    env = {key: os.environ[key] for key in INHERITED_ENV if key in os.environ}
+    env["CARGO_HOME"] = str(cargo_home(work))
+    try:
+        subprocess.run(["cargo", "fetch", "--locked"], cwd=source, env=env, check=True, timeout=1800,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"Dependency prefetch failed ({type(error).__name__}); offline builds may be incomplete", flush=True)
 
 
 def prepare_cargo(work):
@@ -350,9 +389,16 @@ def settings(root, source, work, out, private, plugin, scratch):
     scratch = scratch.resolve()
     keys = [] if private is None else [private]
     deny_read = [*map(str, keys), "/proc", "/run", "/var/run", str(Path.home() / ".ssh"), str(Path.home() / ".aws")]
+    hidden, rules = [], []
     if private is None:
         deny_read += [str(Path.home() / name) for name in LOCAL_SECRETS]
         deny_read += [str(path) for path in local_state(root, source.name, work)]
+        # PR commands never need the maintainer's Claude state. The Read tool
+        # keeps only this reviewer's spilled outputs: transcripts and memory
+        # written during the run match these patterns.
+        hidden = [str(Path.home() / ".claude")]
+        project = Path.home() / ".claude" / "projects" / project_slug(root)
+        rules = [f"Read(/{project}/{pattern})" for pattern in ("*.jsonl", "*/subagents/**", "*/session-memory/**", "memory/**")]
     state = work / "claude"
     deny_read += [str(state / skill / ".credentials.json") for skill in ROLES]
     deny_read += [str(state / f"{skill}.json") for skill in ROLES]
@@ -381,7 +427,7 @@ def settings(root, source, work, out, private, plugin, scratch):
     readonly = source.name == RECONCILER
     if readonly:
         protected += [source, cargo]
-    deny = [f"Read(/{path}{suffix})" for path in deny_read for suffix in ("", "/**")]
+    deny = [f"Read(/{path}{suffix})" for path in deny_read for suffix in ("", "/**")] + rules
     deny += [f"{tool}(/{path}{suffix})" for path in protected for tool in ("Write", "Edit") for suffix in ("", "/**")]
     helper = {} if private is None else {
         "apiKeyHelper": shlex.join([sys.executable, str(root / "qa/audit/runner.py"), "read-key", "--private", str(private)])}
@@ -399,7 +445,7 @@ def settings(root, source, work, out, private, plugin, scratch):
             "allowUnsandboxedCommands": False,
             "excludedCommands": [],
             "filesystem": {
-                "denyRead": deny_read,
+                "denyRead": deny_read + hidden,
                 "denyWrite": [str(path) for path in protected],
                 "allowWrite": ([str(source), str(cargo)] if not readonly else []) + [str(scratch / source.name)],
             },
@@ -418,6 +464,13 @@ def environment(run, work, skill, scratch):
     result = {key: os.environ[key] for key in INHERITED_ENV if key in os.environ}
     workers = len(SKILLS) - 1 if skill in SKILLS[1:] else 1
     model, effort = model_settings(run, skill)
+    if backend(run) == "codex":
+        # Codex signs in through its own home directory. Its sandbox has no
+        # network, so Cargo builds from the dependencies fetched beforehand.
+        result.update({"TMPDIR": str(scratch / skill), "CARGO_HOME": str(cargo_home(work)),
+                       "CARGO_BUILD_JOBS": str(max(1, (os.cpu_count() or 1) // workers)),
+                       "CARGO_NET_OFFLINE": "true", "GIT_OPTIONAL_LOCKS": "0", "NO_COLOR": "1"})
+        return result
     if run.get("local"):
         # The maintainer's login is tied to the default config directory; a
         # separate one per reviewer would start signed out. Settings and
@@ -437,13 +490,23 @@ def environment(run, work, skill, scratch):
         "CLAUDE_CODE_SUBAGENT_MODEL": model,
         "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1",
         "CLAUDE_CODE_EFFORT_LEVEL": effort,
-        "BASH_MAX_TIMEOUT_MS": "1200000",
+        "BASH_MAX_TIMEOUT_MS": str(COMMAND_MINUTES * 60000),
         "GIT_OPTIONAL_LOCKS": "0",
     })
     return result
 
 
-def prompt(skill, source, merge_base, run, out):
+def skill_text(path):
+    """A skill's instructions without the frontmatter that only Claude Code reads."""
+    text = path.read_text()
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            text = text[end + 5:]
+    return text.strip()
+
+
+def prompt(skill, source, merge_base, run, out, root=None):
     if skill == SKILLS[0]:
         handoff = "Leave assessments empty."
     else:
@@ -453,18 +516,45 @@ validation. Support or challenge an existing core finding in assessments using
 its exact ID and new evidence, rather than duplicating it in findings. Review
 the pinned source independently. Do not read another specialist's reports or
 CLI state."""
-    return f"""/ragu-review:{skill} Review the changes in {source} from {merge_base} to {run['head']}.
+    if backend(run) == "codex":
+        # Codex cannot load Claude Code skills, and its working directory is the
+        # PR checkout, so the skill is inlined and the policies are named by path.
+        skill_dir = source.parent / "trusted-plugin" / "skills" / skill
+        opening = f"""Apply the `{skill}` review skill below to the changes in {source} from {merge_base} to {run['head']}.
+Its supporting files are in {skill_dir}. Read files and run checks with shell commands.
 
+<skill>
+{skill_text(skill_dir / "SKILL.md")}
+</skill>
+"""
+        policies = f"Trusted policies are in {root}/.claude/code-review and {root}/.claude/review-shared."
+        network = ("The sandbox has no network access. Cargo works offline from CARGO_HOME, which\n"
+                   "already holds the locked dependencies; do not ask to widen permissions.")
+    else:
+        opening = f"/ragu-review:{skill} Review the changes in {source} from {merge_base} to {run['head']}.\n"
+        policies = ("Trusted policies are in the current working directory's .claude/code-review\n"
+                    "and .claude/review-shared directories.")
+        network = ("The sandbox allowlist permits Cargo downloads and GitHub. Do not supply\n"
+                   "per-command allowed_domains or ask to widen permissions.")
+    return f"""{opening}
 The source checkout is {source}; run source
 commands there, using git -C with these exact revisions. Base tip: {run['base']}.
-Trusted policies are in the current working directory's .claude/code-review
-and .claude/review-shared directories.
+{policies}
 
 Use CARGO_HOME at {cargo_home(source.parent)}; do not replace it or copy
 authentication configuration. Use inherited TMPDIR and CARGO_BUILD_JOBS for
 scratch work and concurrent builds; shared temporary directories are blocked.
-The sandbox allowlist permits Cargo downloads and GitHub. Do not supply
-per-command allowed_domains or ask to widen permissions.
+{network}
+
+This session may run for about {REVIEW_TIMEOUT // 60} minutes and is not stopped
+early; spend that time on coverage rather than finishing early. Start by listing
+every changed file and examine each one: read risky or novel code in full, and
+name the repetitive, mechanical changes you only skimmed. Coverage is complete
+once every changed file was examined; set complete=false only for files not
+examined at all or when the session ran out of time, and list them. Builds and
+tests are evidence for suspected defects, not a substitute for reading: keep
+each command under {COMMAND_MINUTES} minutes, filter tests narrowly, and never let
+one command consume the session.
 
 Apply the skill to changed code and affected callers; mark irrelevant areas
 not applicable. {handoff}
@@ -512,7 +602,8 @@ def incomplete_reason(result):
     if result.get("permission_denials"):
         reasons.append("sandbox permissions blocked a tool action")
     if result.get("type") != "result" or result.get("subtype") != "success" or result.get("is_error") is not False:
-        reasons.append("the Claude session did not finish successfully")
+        session = "Codex" if result.get("backend") == "codex" else "Claude"
+        reasons.append(f"the {session} session did not finish successfully")
     output = result.get("structured_output", {})
     if not isinstance(output, dict) or output.get("complete") is not True:
         reasons.append("the reviewer reported incomplete coverage")
@@ -667,6 +758,30 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
     secret = "" if private is None else (private / "key").read_text().strip()
     stderr, pending, result = bytearray(), bytearray(), None
     process = None
+    codex = backend(run) == "codex"
+    final = {"text": None, "failed": False}
+
+    def codex_event(value):
+        # Codex streams items, then one turn.completed with the token usage.
+        nonlocal result
+        kind = value.get("type")
+        item = value.get("item") if isinstance(value.get("item"), dict) else {}
+        if kind == "item.completed":
+            if item.get("type") == "agent_message":
+                final["text"] = item.get("text")
+            elif item.get("type") != "reasoning":
+                status["tool_calls"] += 1
+                status["last_tool"] = {"command_execution": "Bash", "file_change": "Edit"}.get(item.get("type"), "other")
+        elif kind == "error":
+            status["errors"] = status.get("errors", 0) + 1  # Diagnostic only; the turn decides.
+        elif kind == "turn.failed":
+            final["failed"] = True
+            if result is None:
+                result = codex_result(None, None, True, status["tool_calls"], started)
+        elif kind == "turn.completed":
+            if result is not None:
+                raise ValueError("duplicate Codex result")
+            result = codex_result(value.get("usage"), final["text"], final["failed"], status["tool_calls"], started)
 
     def save(heartbeat=False):
         status["elapsed_seconds"] = round(time.monotonic() - started, 3)
@@ -692,6 +807,9 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
         if not isinstance(value, dict):
             raise ValueError("invalid Claude event stream")
         status["events"] += 1
+        if codex:
+            codex_event(value)
+            return
         if value.get("type") == "result":
             if result is not None:
                 raise ValueError("duplicate Claude result")
@@ -724,8 +842,9 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
             raise ValueError("review cancelled")
         if budget is not None:
             budget.check()
-        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, start_new_session=True)
+        # Codex appends anything on stdin to the prompt; give it none.
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   stdin=subprocess.DEVNULL if codex else None, start_new_session=True)
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ, "stdout")
             selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -806,7 +925,81 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
             save(heartbeat=True)
 
 
+def codex_result(usage, text, failed, tool_calls, started):
+    """Shape Codex's final message like Claude Code's result record.
+
+    The rest of the pipeline then verifies, renders, and publishes it the same
+    way. Codex reports tokens rather than a cost estimate.
+    """
+    output = None
+    if text is not None and not failed:
+        try:
+            output = json.loads(text)
+        except ValueError:
+            output = None
+    ok = isinstance(output, dict)
+    result = {"type": "result", "subtype": "success" if ok else "error_during_execution", "is_error": not ok,
+              "backend": "codex", "num_turns": tool_calls + 1, "duration_ms": int((time.monotonic() - started) * 1000),
+              "total_cost_usd": 0.0, "usage": usage if isinstance(usage, dict) else {}}
+    if ok:
+        result["structured_output"] = output
+    return result
+
+
+def toml_table(values):
+    """An inline TOML table of string pairs; JSON string syntax is valid TOML."""
+    return "{" + ", ".join(f"{json.dumps(key)}={json.dumps(value)}" for key, value in values.items()) + "}"
+
+
+def codex_permissions(source, work, out, scratch):
+    """Codex's filesystem profile: the Claude sandbox's reads and writes, by path.
+
+    Everything is readable except the maintainer's credentials and Claude state,
+    the controller's private directories, peers' checkouts and scratch, and the
+    reports, from which only the handoff files are shown. Writes stay within the
+    reviewer's own checkout, the shared Cargo home, and its scratch directory.
+    """
+    readonly = source.name == RECONCILER
+    home = Path.home()
+    access = {"/": "read"}
+    hidden = [home / name for name in (".ssh", ".aws", ".claude", ".codex", *LOCAL_SECRETS)]
+    hidden += [work / name for name in ("control", "claude", "codex")]
+    hidden += [work / skill for skill in ROLES if skill != source.name]
+    hidden += [scratch / skill for skill in ROLES if skill != source.name]
+    hidden += [*shared_scratch(), out]
+    access.update({str(path): "none" for path in hidden})
+    if source.name in SKILLS[1:]:
+        access.update({str(out / name): "read" for name in ("core-findings.json", "code-review.md")})
+    if readonly:
+        access[str(out / "findings.json")] = "read"
+    writable = [scratch / source.name] if readonly else [source, cargo_home(work), scratch / source.name]
+    access.update({str(path): "write" for path in writable})
+    return access
+
+
+def codex_command(skill, executable, run, work, out, scratch, instruction, schema):
+    """`codex exec` with no user configuration, no network, and the review's permission profile."""
+    source = work / skill
+    model, effort = model_settings(run, skill)
+    schema_path = work / "codex" / f"{skill}.schema.json"
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(schema_path, schema)
+    profile = f"permissions.{CODEX_PROFILE}"
+    result = [executable, "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
+              "--color", "never", "-C", str(source), "-m", model, "--output-schema", str(schema_path),
+              "-c", f'default_permissions="{CODEX_PROFILE}"',
+              "-c", f"{profile}.filesystem={toml_table(codex_permissions(source, work, out, scratch))}",
+              "-c", f"{profile}.network={{enabled=false}}",
+              "-c", 'approval_policy="never"', "-c", "project_doc_max_bytes=0", "-c", "mcp_servers={}",
+              "-c", f'model_reasoning_effort="{effort}"', "-c", f"developer_instructions={json.dumps(TRUST)}"]
+    for feature in CODEX_FEATURES_OFF:
+        result += ["--disable", feature]
+    return result + ["--", instruction]
+
+
 def command(skill, executable, root, run, work, out, private, plugin, scratch, instruction, schema, tools, budget=None):
+    if backend(run) == "codex":
+        return codex_command(skill, executable, run, work, out, scratch, instruction, schema)
     source = work / skill
     model, effort = model_settings(run, skill)
     # --bare authenticates only with an API key, so a local run omits it. Its
@@ -835,11 +1028,11 @@ def review_skill(skill, executable, root, run, work, out, private, plugin, merge
     source = work / skill
     try:
         invocation = command(skill, executable, root, run, work, out, private, plugin, scratch,
-                             prompt(skill, source, merge_base, run, out), SCHEMA, TOOLS, budget)
+                             prompt(skill, source, merge_base, run, out, root), SCHEMA, TOOLS, budget)
     except SafetyLimit:
         write_json(out / f"{skill}.status.json", {"run": run, "skill": skill, "state": "budget"})
         raise
-    print(f"Running {skill} on {run['head']} ({run['model']}, {run['effort']})", flush=True)
+    print(f"Running {skill} on {run['head']} ({', '.join(model_settings(run, skill))})", flush=True)
     started = time.monotonic()
     try:
         result = execute_review(isolate_shared_temp(invocation, scratch / skill), cwd=root,
@@ -968,16 +1161,20 @@ def review(root, run, work, out, private, reuse=None):
         raise ValueError("store the key in a separate step; the review process must not inherit it")
     if local != (private is None):
         raise ValueError("a local run uses the CLI's own login; a workflow run uses its stored key")
-    budget = RunBudget(run)
-    executable = str(Path(shutil.which("claude")).resolve())
+    cli = backend(run)
+    budget = None if cli == "codex" else RunBudget(run)  # Codex reports tokens, not a cost estimate.
+    found = shutil.which(cli)
+    if found is None:
+        raise ValueError(f"{cli} is not on PATH")
+    executable = str(Path(found).resolve())
     version = subprocess.check_output([executable, "--version"], text=True, timeout=30,
                                       env={key: os.environ[key] for key in INHERITED_ENV if key in os.environ})
-    if version.split()[0] != cli_version(run):
-        raise ValueError(f"expected Claude Code {cli_version(run)}")
+    if installed_version(version) != cli_version(run):
+        raise ValueError(f"expected {cli} {cli_version(run)}")
     out.mkdir(parents=True, exist_ok=False)
     work.mkdir(parents=True, exist_ok=True)
     (work / "claude").mkdir(mode=0o700, exist_ok=True)
-    if local:
+    if local and cli == "claude":
         # Peers deny these by name; Linux can only deny directories that exist.
         project = Path.home() / ".claude" / "projects" / project_slug(root)
         for skill in ROLES:
@@ -996,6 +1193,8 @@ def review(root, run, work, out, private, reuse=None):
     (out / "reconciliation-receipt.json").touch(mode=0o600, exist_ok=False)
     prepare_cargo(work)
     merge_base = prepare(root, run, work)
+    if cli == "codex":
+        prefetch_dependencies(work / SKILLS[0], work)
     plugin = work / "trusted-plugin"
     (plugin / ".claude-plugin").mkdir(parents=True)
     write_json(plugin / ".claude-plugin/plugin.json", {"name": "ragu-review", "version": "1.0.0"})
@@ -1048,7 +1247,7 @@ def review(root, run, work, out, private, reuse=None):
                     print(f"Incomplete {skill}; see artifacts", flush=True)
         if not failed and not reconciled:
             reconcile_reviews(executable, root, run, work, out, private, plugin, scratch, cancelled, budget)
-    if budget.stopped.is_set():
+    if budget is not None and budget.stopped.is_set():
         raise SafetyLimit("review reached its safety limit")
     if failed:
         names = ", ".join(skill for skill in SKILLS if skill in failed)

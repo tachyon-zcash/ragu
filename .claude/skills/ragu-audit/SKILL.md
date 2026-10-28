@@ -11,10 +11,11 @@ Audit PR `$ARGUMENTS` with `qa/audit/local.py`. It runs the bot's four reviews
 and reconciliation with the same sandbox and summary, but signs in with the
 Claude login on this machine. See `qa/audit/README.md`.
 
-1. `$ARGUMENTS` names the PR as a number, `#number`, or URL; if it names none,
-   ask for one. From the repository root, run this with the Bash tool in the
-   background (`run_in_background`, no `timeout`); it usually takes 10 to 20
-   minutes and may take over an hour:
+1. `$ARGUMENTS` names the PR as a number, `#number`, or URL, optionally followed
+   by `--head <sha>` or `--backend codex` (review with Codex CLI instead of
+   Claude Code); if it names no PR, ask for one. From the repository root, run
+   this with the Bash tool in the background (`run_in_background`, no
+   `timeout`); it usually takes 10 to 20 minutes and may take over an hour:
 
    ```
    python3 qa/audit/local.py run $ARGUMENTS

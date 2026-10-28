@@ -1,9 +1,9 @@
-"""Run the Ragu audit with your own Claude login instead of the workflow's API key.
+"""Run the Ragu audit with your own Claude or Codex login instead of the workflow's API key.
 
 `run` reviews a PR with the workflow's passes, sandbox, and reconciliation, and
 writes the summary the bot would post. `publish` posts the same inline findings
 and summary from your GitHub account. Without the App, no completion check is
-recorded.
+recorded. The workflow itself always reviews with Claude Code.
 """
 
 import argparse
@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 import github
 import runner
@@ -21,8 +22,10 @@ import runner
 ROOT = Path(__file__).resolve().parents[2]
 # What the reviewers trust from this checkout; the receipt records its revision.
 TRUSTED = (".claude/code-review", ".claude/review-shared", "qa/audit", *(f".claude/skills/{skill}" for skill in runner.SKILLS))
-# The workflow's configured models; the same RAGU_AUDIT_* variables override them.
+BACKENDS = ("claude", "codex")
+# The workflow's configured Claude models; the same RAGU_AUDIT_* variables override them.
 DEFAULTS = {"RAGU_AUDIT_MODEL": "claude-sonnet-5-5", "RAGU_AUDIT_EFFORT": "high"}
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 def client():
@@ -49,7 +52,38 @@ def pr_number(value):
     return match.group(1)
 
 
-def start(api, pr, head=None):
+def codex_default_model():
+    """The maintainer's own Codex default; the reviewers ignore that configuration otherwise."""
+    path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    try:
+        model = tomllib.loads(path.read_text()).get("model")
+    except (OSError, ValueError):
+        model = None
+    if not isinstance(model, str) or not model:
+        raise ValueError("set RAGU_AUDIT_MODEL to a Codex model, or `model` in ~/.codex/config.toml")
+    return model
+
+
+def codex_models():
+    """Model settings for a Codex run: the default model at the bot's effort unless overridden."""
+    default = os.environ.get("RAGU_AUDIT_MODEL") or codex_default_model()
+    result = {"model": default, "effort": os.environ.get("RAGU_AUDIT_EFFORT") or "high",
+              "reconcile_model": os.environ.get("RAGU_AUDIT_RECONCILE_MODEL") or default,
+              "reconcile_effort": os.environ.get("RAGU_AUDIT_RECONCILE_EFFORT") or "high"}
+    prefixes = ["", "reconcile_"]
+    if os.environ.get("RAGU_AUDIT_CORE_MODEL") or os.environ.get("RAGU_AUDIT_CORE_EFFORT"):
+        result["core_model"] = os.environ.get("RAGU_AUDIT_CORE_MODEL") or default
+        result["core_effort"] = os.environ.get("RAGU_AUDIT_CORE_EFFORT") or result["effort"]
+        prefixes.append("core_")
+    for prefix in prefixes:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,99}", result[prefix + "model"]) or result[prefix + "effort"] not in EFFORTS:
+            raise ValueError("set a Codex model ID and an effort of low, medium, high, xhigh, or max")
+    return result
+
+
+def start(api, pr, head=None, backend="claude"):
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {', '.join(BACKENDS)}")
     target = github.pr(api, pr)  # Open and targeting main; base is main's live tip.
     if head is not None and target["head"]["sha"] != head:
         raise ValueError(f"PR head is {target['head']['sha']}, not {head}")
@@ -59,15 +93,19 @@ def start(api, pr, head=None):
     origin = runner.git(ROOT, "remote", "get-url", "origin")
     if not re.fullmatch(rf"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:){re.escape(github.REPOSITORY)}(?:\.git)?/?", origin):
         raise ValueError(f"origin is {origin}; the run fetches the PR from github.com/{github.REPOSITORY}")
-    executable = shutil.which("claude")
+    executable = shutil.which(backend)
     if executable is None:
-        raise ValueError("Claude Code is not on PATH")
+        raise ValueError(f"{backend} is not on PATH")
     version = subprocess.check_output([str(Path(executable).resolve()), "--version"], text=True, timeout=30)
-    for key, value in DEFAULTS.items():
-        os.environ.setdefault(key, value)
+    if backend == "codex":
+        models = codex_models()
+    else:
+        for key, value in DEFAULTS.items():
+            os.environ.setdefault(key, value)
+        models = github.model_configuration()
     run = {"repository": github.REPOSITORY, "pr": github.number(pr), "head": target["head"]["sha"],
            "base": target["base"]["sha"], "configuration": runner.git(ROOT, "rev-parse", "HEAD"),
-           **github.model_configuration(), "local": True, "claude_version": version.split()[0]}
+           **models, "local": True, "backend": backend, "cli_version": runner.installed_version(version)}
     if run["configuration"] != run["base"]:
         print(f"Skills and policies come from {run['configuration']}, not main's tip {run['base']}.", file=sys.stderr)
     return run
@@ -81,7 +119,12 @@ def verified(run, out):
         return False
 
 
-def cleanup(work):
+def outcome(run, out):
+    """Completed only if the controller finished and all four reviews verify, as the workflow requires."""
+    return "completed" if not (out / "controller.json").exists() and verified(run, out) else "incomplete"
+
+
+def cleanup(work, run):
     """Remove the review worktrees, Cargo home, and session directories; keep the reports."""
     for role in runner.ROLES:
         if (work / role).exists():
@@ -90,10 +133,11 @@ def cleanup(work):
             except subprocess.SubprocessError:
                 print(f"Could not remove the worktree at {work / role}", file=sys.stderr)
     shutil.rmtree(work / "cargo", ignore_errors=True)
-    # Claude Code spilled oversized tool outputs here; nothing else is kept.
-    project = Path.home() / ".claude" / "projects" / runner.project_slug(ROOT)
-    for role in runner.ROLES:
-        shutil.rmtree(project / runner.session_id(work, role), ignore_errors=True)
+    if runner.backend(run) == "claude":
+        # Claude Code spilled oversized tool outputs here; nothing else is kept.
+        project = Path.home() / ".claude" / "projects" / runner.project_slug(ROOT)
+        for role in runner.ROLES:
+            shutil.rmtree(project / runner.session_id(work, role), ignore_errors=True)
 
 
 def review(run):
@@ -106,9 +150,11 @@ def review(run):
         runner.review(ROOT, run, work, out, None)
     except Exception as error:  # Summarize whichever passes still verify.
         print(f"Review incomplete: {error}", file=sys.stderr)
+        out.mkdir(parents=True, exist_ok=True)
+        runner.write_json(out / "controller.json", {"error": f"{type(error).__name__}: {error}"[:500]})
     finally:
-        cleanup(work)
-    state = "completed" if verified(run, out) else "incomplete"
+        cleanup(work, run)
+    state = outcome(run, out)
     (work / "comment.md").write_text(github.summary(run, state, out))
     return work, state
 
@@ -134,8 +180,9 @@ def publish(api, run, out):
     author = {"login": api.call("/user")["login"]}
     try:
         live(api, run)
-        state = "completed" if verified(run, out) else "incomplete"
+        state = outcome(run, out)
         inline = github.publish_inline(api, run, author, out, live)
+        live(api, run)  # The summary describes a head that must still be current.
     except github.StaleReview as error:
         print(f"{error}; posting the summary without inline comments", file=sys.stderr)
         state, inline = "stale", None
@@ -155,13 +202,14 @@ def main():
     start_parser = commands.add_parser("run", help="review a PR; posts nothing")
     start_parser.add_argument("pr", type=pr_number, help="number, #number, or URL")
     start_parser.add_argument("--head", type=github.sha, help="fail unless the PR is at this commit")
+    start_parser.add_argument("--backend", choices=BACKENDS, default="claude", help="review with Claude Code (default) or Codex CLI")
     publish_parser = commands.add_parser("publish", help="post a finished run's findings to its PR")
     publish_parser.add_argument("work", type=Path, help="directory printed by `run`")
     args = parser.parse_args()
     try:
         api = client()
         if args.command == "run":
-            work, state = review(start(api, args.pr, args.head))
+            work, state = review(start(api, args.pr, args.head, args.backend))
             print(f"Review {state}. Reports: {work / 'reports'}")
             print(f"Summary preview: {work / 'comment.md'}")
             print(f"Publish with: python3 {Path(__file__).resolve()} publish {work}")
