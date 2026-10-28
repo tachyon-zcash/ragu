@@ -52,12 +52,15 @@
 //! and review the diff: it should name exactly the stages the change was
 //! meant to touch.
 //!
-//! Every scenario runs once per profile, the wallet's [`Standard`] and the
-//! [`Aggregator`]. Both currently produce identical proofs, so they check
-//! the same fixtures in `standard/`. Only the standard prover writes them
-//! when regenerating.
+//! Every scenario runs in the wallet's [`Standard`] profile, over the
+//! fixtures in `standard/`. The [`Aggregator`] profile's proofs differ:
+//! they carry the decompression circuits' polynomials, at the aggregator
+//! rank over the `baked-aggregator` tables, so the shared fixtures no
+//! longer cover them. TODO: give the aggregator its own expected outputs,
+//! proved under its own tape with the wallet application as its context.
 //!
 //! [`Standard`]: crate::profile::Standard
+//! [`Aggregator`]: crate::profile::Aggregator
 //!
 //! The steps are the fixtures' own: `ragu_testing`'s implement the `Step` of
 //! the dev-dependency copy of this crate and cannot be registered from inside
@@ -108,7 +111,7 @@ use crate::{
         IpaCycle, IpaProof,
         fingerprint::{self, Event},
     },
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle},
+    profile::{Profile, ProfiledCycle},
     step::{Encoded, Index, Step, internal::bootstrap::Bootstrap},
 };
 
@@ -1012,8 +1015,8 @@ struct Fixtures {
 impl Fixtures {
     fn of<C: ProfiledCycle>() -> Self {
         let profile = <C::Profile as Profile>::NAME;
-        // Aggregator currently has the standard layout. Checking the same
-        // snapshots guards that agreement without storing duplicate files.
+        // The standard profile's fixtures; the aggregator's, once it has
+        // its own, go beside them (see the module docs).
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fuse/standard");
         if writing() {
             fs::create_dir_all(&dir).expect("the fixture directory can be created");
@@ -1529,34 +1532,5 @@ mod standard {
     #[test]
     fn verifier() {
         verifier_fixtures::<Pasta>();
-    }
-}
-
-/// The aggregator's profile.
-mod aggregator {
-    use super::*;
-
-    type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
-
-    #[cfg_attr(
-        debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
-    )]
-    #[test]
-    fn prover() {
-        // Standard is the only writer of the shared fixtures. In check
-        // mode, both profiles must independently reproduce them.
-        if !writing() {
-            prover_fixtures::<C>();
-        }
-    }
-
-    #[cfg_attr(
-        debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
-    )]
-    #[test]
-    fn verifier() {
-        verifier_fixtures::<C>();
     }
 }
