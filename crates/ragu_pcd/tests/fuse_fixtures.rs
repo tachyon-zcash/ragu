@@ -123,7 +123,8 @@ type TestPcd<C> = Pcd<C, R, Value>;
 /// A profile of the Pasta cycle the fixtures prove in.
 trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams> {
     /// The fixtures' application: their four steps at production rank, on
-    /// the baked parameters.
+    /// the aggregator-rank parameters, which compressing needs; their
+    /// prefix is the Standard tables, so the fuse's proofs are the same.
     fn app() -> App<Self>;
 }
 
@@ -138,7 +139,7 @@ where
             .and_then(|b| b.register(Merge::new()))
             .and_then(|b| b.register(UnitLeft::new()))
             .and_then(|b| b.register(UnitRight::new()))
-            .and_then(|b| b.finalize(crate::pasta::baked()))
+            .and_then(|b| b.finalize(crate::pasta::baked_aggregator()))
             .expect("the application must build")
     }
 }

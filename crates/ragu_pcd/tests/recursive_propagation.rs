@@ -137,7 +137,7 @@ pub(crate) mod support {
     pub(crate) type UnitRight = HashStep<Value, (), 3>;
 
     fn build_app() -> Result<App> {
-        app_builder()?.finalize(crate::pasta::baked())
+        app_builder()?.finalize(crate::pasta::baked_aggregator())
     }
 
     /// The application's builder with its steps registered, before

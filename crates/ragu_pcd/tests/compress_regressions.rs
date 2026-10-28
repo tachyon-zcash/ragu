@@ -351,7 +351,7 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
 
 fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
     super::transcript::<_, ReferenceBackend, ProductionRank>(
-        crate::pasta::baked(),
+        crate::pasta::baked_aggregator(),
         instance,
         header,
     )
@@ -363,7 +363,7 @@ fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
 
 fn statement_challenge(tag: &[u8], instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
     let mut transcript = CycleTranscript::<Pasta>::positioned(
-        crate::pasta::baked(),
+        crate::pasta::baked_aggregator(),
         tag,
         crate::decompress::stages::bridge_positions::<
             Pasta,

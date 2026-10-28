@@ -22,7 +22,7 @@ Add Ragu to your `Cargo.toml`:
 [dependencies]
 ragu_circuits = { version = "0.1", features = ["insecure-test-registry-tag"] }
 ragu_core = "0.1"
-ragu_pcd = { version = "0.1", features = ["baked"] }
+ragu_pcd = { version = "0.1", features = ["baked-aggregator"] }
 ragu_primitives = "0.1"
 udon = { package = "zakura-udon", version = "0.1.0", features = ["traits"] }
 rand = "0.10"
@@ -260,8 +260,9 @@ use ragu_pcd::ApplicationBuilder;
 use rand::{SeedableRng, rngs::StdRng};
 
 fn main() -> Result<()> {
-    // 1. Initialize Pasta curve parameters
-    let pasta = ragu_pcd::pasta::baked();
+    // 1. Initialize Pasta curve parameters: the aggregator rank's tables,
+    //    which compression needs
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let mut rng = StdRng::seed_from_u64(12345);
 
     // 2. Build application with our steps

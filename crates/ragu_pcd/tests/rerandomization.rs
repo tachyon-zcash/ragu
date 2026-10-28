@@ -147,7 +147,7 @@ impl<C: Cycle> Step<C> for Step1 {
 
 #[test]
 fn rerandomization_flow() {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
@@ -176,7 +176,7 @@ fn rerandomization_flow() {
 
 #[test]
 fn multiple_rerandomizations_all_verify() {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()
@@ -202,7 +202,7 @@ fn multiple_rerandomizations_all_verify() {
 
 #[test]
 fn rerandomization_preserves_header_data() {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(StepWithData)
         .unwrap()
@@ -235,7 +235,7 @@ fn rerandomization_preserves_header_data() {
 
 #[test]
 fn rerandomized_fused_proof_verifies() {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(Step0)
         .unwrap()

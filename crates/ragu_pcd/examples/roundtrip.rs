@@ -43,7 +43,10 @@ fn timed<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
 }
 
 fn main() -> Result<()> {
-    let pasta = ragu_pcd::pasta::baked();
+    // The aggregator rank's tables, even for the wallet: compression
+    // bridges a proof's values at their positions in the decompression's
+    // stages at that rank, past the end of the Standard tables.
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     let mut rng = StdRng::seed_from_u64(0);
 
@@ -76,6 +79,8 @@ fn main() -> Result<()> {
         "aggregator: the aggregator profile at rank {}",
         AggregatorRank::RANK
     );
+    // The same tables, which reach the aggregator rank.
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Agg::circuit_poseidon(pasta);
     let decompression = timed("canonical decompression", || {
         Decompression::new(wallet, &mut rng)

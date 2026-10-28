@@ -120,7 +120,7 @@ fn verification_uses_the_receiving_application() {
     use ragu_pcd::{ApplicationBuilder, RegistryTags};
     use ragu_testing::pcd::nontrivial::WitnessLeaf;
 
-    let params = ragu_pcd::pasta::baked();
+    let params = ragu_pcd::pasta::baked_aggregator();
     let build = |beacon| {
         let manifest = [0x24; 20];
         ApplicationBuilder::<C, R, 4>::new()

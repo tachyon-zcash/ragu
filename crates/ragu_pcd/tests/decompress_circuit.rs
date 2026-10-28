@@ -24,7 +24,11 @@ fn witness(setup: &Setup) -> Witness<Pasta> {
 /// both accept.
 fn run(witness: &Witness<Pasta>) -> crate::Result<(usize, usize)> {
     let circuit = Simulator::simulate((), |dr, _| {
-        circuit_field_side::<_, Pasta, TestR, HEADER_SIZE>(dr, crate::pasta::baked(), witness)
+        circuit_field_side::<_, Pasta, TestR, HEADER_SIZE>(
+            dr,
+            crate::pasta::baked_aggregator(),
+            witness,
+        )
     })?;
     let scalar = Simulator::simulate((), |dr, _| {
         scalar_field_side::<_, Pasta, TestR>(dr, witness)

@@ -234,7 +234,7 @@ struct Apps {
 
 impl Apps {
     fn build(dummy_circuits: usize) -> Self {
-        let pasta = ragu_pcd::pasta::baked();
+        let pasta = ragu_pcd::pasta::baked_aggregator();
         let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
             .register(UnitStep)
             .unwrap()
@@ -959,7 +959,7 @@ fn serial_fuse_keeps_individual_msms_and_original_iteration() {
         .with_backend::<SerialFuseBackend>()
         .register(UnitStep)
         .unwrap()
-        .finalize(ragu_pcd::pasta::baked())
+        .finalize(ragu_pcd::pasta::baked_aggregator())
         .unwrap();
     let mut rng = StdRng::seed_from_u64(0);
     let (left, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
@@ -976,7 +976,7 @@ fn selected_backend_dispatch_reaches_protocol_phases() {
         .unwrap()
         .register_dummy_circuits(0)
         .unwrap()
-        .finalize(ragu_pcd::pasta::baked())
+        .finalize(ragu_pcd::pasta::baked_aggregator())
         .unwrap();
     let mut rng = StdRng::seed_from_u64(0);
     let (left, _) = app.seed(&mut rng, UnitStep, ()).unwrap();

@@ -46,7 +46,7 @@ where
     ApplicationBuilder::<C, ProductionRank, HEADER_SIZE>::new()
         .register(UnitStep)?
         .with_registry_tags(tags, MANIFEST)?
-        .finalize(crate::pasta::baked())
+        .finalize(crate::pasta::baked_aggregator())
 }
 
 fn check_both_verifiers<C>(
