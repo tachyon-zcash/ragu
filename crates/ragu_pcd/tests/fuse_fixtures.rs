@@ -1536,7 +1536,7 @@ mod standard {
 mod aggregator {
     use super::*;
 
-    type C = Profiled<Pasta, Aggregator>;
+    type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
 
     #[cfg_attr(
         debug_assertions,

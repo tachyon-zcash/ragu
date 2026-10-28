@@ -14,7 +14,10 @@ use rand::{SeedableRng, rngs::StdRng};
 use crate::{
     Application, ApplicationBuilder, Pcd, RegistryTags,
     ipa::IpaCycle,
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle, testing::UnitStep},
+    profile::{
+        Profile, Profiled, ProfiledCycle,
+        testing::{Twin, UnitStep},
+    },
 };
 
 const HEADER_SIZE: usize = 4;
@@ -131,11 +134,11 @@ fn standard_nested_setup_binding() -> Result<()> {
 }
 
 #[test]
-fn aggregator_native_setup_binding() -> Result<()> {
-    check_setup_binding::<Profiled<Pasta, Aggregator>>(ChangedTag::Native)
+fn twin_native_setup_binding() -> Result<()> {
+    check_setup_binding::<Profiled<Pasta, Twin>>(ChangedTag::Native)
 }
 
 #[test]
-fn aggregator_nested_setup_binding() -> Result<()> {
-    check_setup_binding::<Profiled<Pasta, Aggregator>>(ChangedTag::Nested)
+fn twin_nested_setup_binding() -> Result<()> {
+    check_setup_binding::<Profiled<Pasta, Twin>>(ChangedTag::Nested)
 }

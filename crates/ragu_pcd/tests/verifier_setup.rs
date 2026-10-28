@@ -320,8 +320,8 @@ fn standard_verifier_uses_its_registered_application_circuits() -> Result<()> {
 }
 
 #[test]
-fn aggregator_verifier_uses_its_registered_application_circuits() -> Result<()> {
-    check_application_circuits::<Aggregator>()
+fn twin_verifier_uses_its_registered_application_circuits() -> Result<()> {
+    check_application_circuits::<Twin>()
 }
 
 fn check_extension_circuit<const NATIVE: bool>() -> Result<()> {
