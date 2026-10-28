@@ -102,7 +102,7 @@ fn app() -> App {
     ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
         .register(Seed)
         .expect("register seed step")
-        .finalize(crate::pasta::baked())
+        .finalize(crate::pasta::baked_aggregator())
         .expect("failed to create test application")
 }
 

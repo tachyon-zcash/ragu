@@ -24,7 +24,7 @@ const HEADER_SIZE: usize = 4;
 
 /// The wallet application: the standard profile at the production rank.
 fn wallet() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>> {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
         .register(WitnessLeaf { poseidon_params })?

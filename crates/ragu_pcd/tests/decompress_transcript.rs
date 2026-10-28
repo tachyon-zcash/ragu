@@ -43,7 +43,7 @@ impl Bridges {
     fn of(proof: &compress::CompressedProof<Pasta>) -> Self {
         Bridges {
             points: <NativeSide as Side<Pasta>>::transcript::<TestR>(
-                crate::pasta::baked(),
+                crate::pasta::baked_aggregator(),
                 &proof.instance,
                 proof,
             )

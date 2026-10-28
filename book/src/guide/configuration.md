@@ -59,6 +59,9 @@ For the Aggregator profile, `baked-aggregator` adds separate $2^{15}$ tables
 through `ragu_pcd::pasta::baked_aggregator()`, sized for the aggregator rank.
 The regular `baked()` tables remain the same size even when that feature is
 enabled; the larger tables are initialized only when their loader is called.
+Compressing needs the larger tables whatever the profile, because compression
+bridges a proof's values at their positions at the aggregator rank: an
+application that compresses builds over `baked_aggregator()`.
 
 ### Why Pasta?
 

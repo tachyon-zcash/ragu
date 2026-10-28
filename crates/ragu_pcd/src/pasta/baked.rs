@@ -71,6 +71,10 @@ impl IpaCycle for Pasta {
 ///
 /// The embedded points require no decoding. Parameter slices are assembled
 /// once and retained for the lifetime of the program.
+///
+/// These tables stop at the Standard rank, short of the positions
+/// compression bridges a proof's values at: an application that compresses
+/// needs `baked_aggregator()`, under the `baked-aggregator` feature.
 pub fn baked() -> &'static PastaParams {
     &PASTA_PARAMETERS
 }

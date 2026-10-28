@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
   the aggregator profile proves at. Standard's `baked()` keeps its original
   `R<13>` table sizes and generators, including when the additional Aggregator
-  parameters are enabled and loaded.
+  parameters are enabled and loaded. Compressing needs them too, whatever the
+  profile: compression bridges a proof's values at their positions at the
+  aggregator rank, past the end of `baked()`'s tables.
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_backend::ReferenceBackend`.

@@ -101,7 +101,7 @@ impl Fixture {
 /// circuit.
 fn empty_app() -> Application<'static, C, R, HEADER_SIZE> {
     ApplicationBuilder::<C, R, HEADER_SIZE>::new()
-        .finalize(ragu_pcd::pasta::baked())
+        .finalize(ragu_pcd::pasta::baked_aggregator())
         .expect("the empty application must build")
 }
 

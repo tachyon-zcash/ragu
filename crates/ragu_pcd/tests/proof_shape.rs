@@ -150,7 +150,7 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
 #[test]
 fn malformed_standard_proof_shapes_are_rejected() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+        .finalize(crate::pasta::baked_aggregator())
         .unwrap();
     check_shapes(&app);
 }

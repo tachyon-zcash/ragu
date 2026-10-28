@@ -404,7 +404,7 @@ fn bound_commitments(
     type NestedLifts = LiftsStage<Pasta, Nested, TestR, R, HEADER_SIZE>;
     type NestedDigits = DigitsStage<Pasta, Nested, TestR, R, HEADER_SIZE>;
     type NativeDigits = DigitsStage<Pasta, Native, TestR, R, HEADER_SIZE>;
-    let params = crate::pasta::baked();
+    let params = crate::pasta::baked_aggregator();
     let nested = &sides.nested;
     let nested_commit = |rx: &sparse::Polynomial<Fq, R>| {
         ReferenceBackend::sparse_commit_to_affine(rx, Pasta::nested_generators(params))

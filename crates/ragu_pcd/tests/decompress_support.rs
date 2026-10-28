@@ -46,7 +46,7 @@ pub(crate) struct Setup {
 impl Setup {
     pub fn new() -> Self {
         let app = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
-            .finalize(crate::pasta::baked())
+            .finalize(crate::pasta::baked_aggregator())
             .expect("failed to create test application");
         let pcd = app.bootstrap_pcd();
         let proof = app
@@ -73,7 +73,7 @@ impl Setup {
     /// any challenge is sampled.
     pub fn absorbed(&self) -> Transcript {
         transcript::<Pasta, ReferenceBackend, TestR>(
-            crate::pasta::baked(),
+            crate::pasta::baked_aggregator(),
             &self.proof.instance,
             &self.header,
         )

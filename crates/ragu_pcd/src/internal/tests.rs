@@ -1201,7 +1201,7 @@ macro_rules! fuse_gates {
                 .unwrap()
                 .num_gates
         }
-        let pasta = crate::pasta::baked();
+        let pasta = crate::pasta::baked_aggregator();
         let (_, log2_circuits) = native::total_circuit_counts::<$P>(NUM_APP_STEPS);
         let mut native_gates: alloc::vec::Vec<(alloc::string::String, usize)> =
             alloc::vec::Vec::new();
