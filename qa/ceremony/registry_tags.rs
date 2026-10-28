@@ -93,8 +93,11 @@ fn derive(profile: Profile, beacon: &[u8], manifest_digest: &[u8]) -> (Fp, Fq) {
             (tags.native(), tags.nested())
         }
         Profile::Aggregator => {
-            let tags =
-                RegistryTags::<Profiled<Pasta, Aggregator>>::from_beacon(beacon, manifest_digest);
+            // The labels name the profile, not its header size.
+            let tags = RegistryTags::<Profiled<Pasta, Aggregator<4>>>::from_beacon(
+                beacon,
+                manifest_digest,
+            );
             (tags.native(), tags.nested())
         }
     }

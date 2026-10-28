@@ -144,7 +144,7 @@ pub use backend::SelectableBackend;
 /// use ragu_core::pasta::Pasta;
 /// use ragu_pcd::{RegistryTags, profile::{Aggregator, Profiled}};
 ///
-/// fn relabel(standard: RegistryTags<Pasta>) -> RegistryTags<Profiled<Pasta, Aggregator>> {
+/// fn relabel(standard: RegistryTags<Pasta>) -> RegistryTags<Profiled<Pasta, Aggregator<4>>> {
 ///     RegistryTags {
 ///         native: Tag::new(standard.native()),
 ///         nested: Tag::new(standard.nested()),

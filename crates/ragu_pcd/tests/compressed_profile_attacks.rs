@@ -5,7 +5,7 @@ use ragu_core::pasta::Fq;
 use udon::field::Field;
 
 use super::*;
-use crate::profile::testing::{Crossing, CrossingBack, CrossingContext};
+use crate::profile::testing::{Crossing, CrossingBack, CrossingContext, Twin};
 
 fn reject<P: Profile, Rk: Rank>(
     app: &App<P, Rk>,
@@ -340,13 +340,13 @@ where
 }
 
 #[test]
-fn compressed_standard_rejects_aggregator_packets_and_edits() -> Result<()> {
-    check_profile_packets::<Aggregator, Standard>(Some(Fp::from(7)), Fp::from(7), true)
+fn compressed_standard_rejects_twin_packets_and_edits() -> Result<()> {
+    check_profile_packets::<Twin, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
-fn compressed_aggregator_rejects_standard_packets_and_edits() -> Result<()> {
-    check_profile_packets::<Standard, Aggregator>(Some(Fp::from(7)), Fp::from(7), true)
+fn compressed_twin_rejects_standard_packets_and_edits() -> Result<()> {
+    check_profile_packets::<Standard, Twin>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
@@ -420,8 +420,8 @@ fn compressed_standard_rejects_fresh_weaker_proving_with_its_own_setup() -> Resu
 }
 
 #[test]
-fn compressed_aggregator_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<()> {
-    check_fresh_weaker_proving::<Aggregator>()
+fn compressed_twin_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<()> {
+    check_fresh_weaker_proving::<Twin>()
 }
 
 fn check_extension_edits<P>() -> Result<()>
