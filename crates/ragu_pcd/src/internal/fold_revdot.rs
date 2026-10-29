@@ -192,16 +192,22 @@ fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
             // verifier independently uses the public k(y) targets, so false
             // input claims cannot be hidden by this prover-side construction.
             let mut residual = vec![F::ZERO; 2 * m - 1];
-            for i in 0..a.len() {
-                for j in 0..b.len() {
-                    let product = B::sparse_revdot(a[i].borrow(), b[j].borrow());
-                    for (k, c) in multiply(&basis[i], &basis[j]).into_iter().enumerate() {
-                        residual[k] += product * c;
-                    }
-                    if i == j {
-                        for (k, &c) in basis[i].iter().enumerate() {
-                            residual[k] -= product * c;
-                        }
+            // Borrow before scheduling so callers need not make their wrappers Sync.
+            let pairs = a.iter().enumerate().flat_map(|(i, a)| {
+                let a = a.borrow();
+                b.iter()
+                    .enumerate()
+                    .map(move |(j, b)| (i, j, a, b.borrow()))
+            });
+            // The backend may compute products concurrently, returning them in
+            // input order for deterministic residual accumulation.
+            for (i, j, product) in B::map(pairs, |(i, j, a, b)| (i, j, B::sparse_revdot(a, b))) {
+                for (k, c) in multiply(&basis[i], &basis[j]).into_iter().enumerate() {
+                    residual[k] += product * c;
+                }
+                if i == j {
+                    for (k, &c) in basis[i].iter().enumerate() {
+                        residual[k] -= product * c;
                     }
                 }
             }
@@ -522,3 +528,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/backend_equivalence/fold_revdot.rs"]
+mod backend_equivalence;
