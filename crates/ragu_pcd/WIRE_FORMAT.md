@@ -1,15 +1,17 @@
 # PCD proof format: envelope v2, payload schemas v1
 
-`Application::proof_format` selects an envelope using trusted `ProofContext`
-identifiers. Every encoding has exactly one length, fixed by the profile, the
-rank and the header size: `ProofFormat::encoded_len`. `encode` checks the
-proof's shape and writes the envelope and minimal payload. `decode` rejects any
-other length before reading a byte, checks the envelope before the payload,
-and rejects malformed elements. Acceptance still requires verification: a
-receiver expands the decoded proof with `Application::expand`, compresses it
-and checks `Application::verify_compressed` with the accompanying header data,
-which is not included in these bytes. The uncompressed `verify_minimal`, under
-`test-utils`, is a test oracle for that path.
+`Application::proof_format` selects a format using trusted `ProofContext`
+identifiers. The profile, rank and header size determine each payload's length.
+`encoded_len` gives the complete minimal-proof size; `compressed_encoded_len`
+gives the complete compressed-proof size.
+
+Both encoders check the proof's structure before writing. Both decoders check
+exact length first, then the envelope, then canonical field and point encodings.
+Decoding does not establish cryptographic validity. For a minimal proof, expand
+and compress it before calling `Application::verify_compressed`. For a compressed
+proof, attach the accompanying header data and call that verifier directly.
+Header data is not included in these bytes. The uncompressed `verify_minimal`,
+under `test-utils`, is a test oracle for the minimal-proof path.
 
 ## Envelope
 
@@ -295,3 +297,17 @@ cargo test --release --locked --lib proof_wire::tests::decode_to_verify_smoke --
 The PCD regression suite also decodes and expands a child, folds it into a new
 proof, then compresses and verifies that result. Golden proof bytes, RNG tapes
 and verifier fingerprints remain separate work.
+
+## Encoding precedents
+
+The Orchard codecs separate canonical element readers from bundle parsing and
+use `Bundle::try_from_parts` to enforce the expected proof size. See
+[librustzcash's bundle reader](https://github.com/zcash/librustzcash/blob/main/zcash_primitives/src/transaction/components/orchard.rs)
+and [Orchard's proof size calculation](https://github.com/zcash/orchard/blob/main/src/lib.rs).
+The caller selects [BundleVersion](https://github.com/zcash/orchard/blob/main/src/bundle.rs)
+from trusted context.
+
+Ragu follows those boundaries: element codecs enforce canonical representations,
+the envelope checks the receiver's context, and verification establishes proof
+validity. Orchard carries length prefixes for vectors; Ragu's receiving types
+fix all payload lengths, so its decoder needs no counts from the input.

@@ -1,4 +1,8 @@
-//! Count-free compressed payload. All counts come from the receiving type.
+//! Fixed-length encoding of compressed proofs.
+//!
+//! Fields are encoded in declaration order. Vector lengths come from the
+//! receiving profile, rank and header size; no counts are read from the payload.
+
 use super::{
     CompressedProof, Messages,
     batch::Batch,
@@ -9,8 +13,8 @@ use super::{
         native_components, nested_components,
     },
 };
-use crate::ipa::IpaProof;
 use crate::{
+    ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
         Decode, DefaultEncoding, Encode, Error, FixedSequence, Point, Reader, Scalar, Validate,
@@ -48,29 +52,54 @@ impl<const H: usize> Len for Headers<H> {
     }
 }
 
+// Keep encoding, decoding, size calculation and structural checks in one field
+// declaration so that they cannot disagree about the compressed layout.
 macro_rules! codec {
     ([$($generics:tt)*] $ty:ty, $codec:ty, $ctor:ident { $($field:ident: $ft:ty => $enc:ty),* $(,)? }) => {
         impl<$($generics)*> Validate<$codec> for $ty {
-            fn valid(&self) -> bool { true $( && <$ft as Validate<$enc>>::valid(&self.$field) )* }
+            fn valid(&self) -> bool {
+                true $( && <$ft as Validate<$enc>>::valid(&self.$field) )*
+            }
         }
         impl<$($generics)*> Encode<$codec> for $ty {
-            fn encode(&self, out: &mut Vec<u8>) { $( <$ft as Encode<$enc>>::encode(&self.$field, out); )* }
+            fn encode(&self, output: &mut Vec<u8>) {
+                $( <$ft as Encode<$enc>>::encode(&self.$field, output); )*
+            }
         }
         impl<$($generics)*> Decode<$codec> for $ty {
-            fn encoded_len() -> usize { 0 $(+ <$ft as Decode<$enc>>::encoded_len())* }
+            fn encoded_len() -> usize {
+                0 $(+ <$ft as Decode<$enc>>::encoded_len())*
+            }
             fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
-                Ok($ctor { $( $field: <$ft as Decode<$enc>>::decode(reader)?, )* })
+                Ok($ctor {
+                    $( $field: <$ft as Decode<$enc>>::decode(reader)?, )*
+                })
             }
         }
     }
 }
-codec!([F: Field] Child<F>, DefaultEncoding, Child { x: F => Scalar, y: F => Scalar, id: F => Scalar });
-codec!([F: Field] NestedChild<F>, DefaultEncoding, NestedChild { x: F => Scalar, y: F => Scalar });
-codec!([P: Affine] Fold<P>, DefaultEncoding, Fold { inner: P => Point, outer: P => Point, inner_epsilon: P::Scalar => Scalar, outer_epsilon: P::Scalar => Scalar });
+codec!([F: Field] Child<F>, DefaultEncoding, Child {
+    x: F => Scalar,
+    y: F => Scalar,
+    id: F => Scalar,
+});
+codec!([F: Field] NestedChild<F>, DefaultEncoding, NestedChild {
+    x: F => Scalar,
+    y: F => Scalar,
+});
+codec!([P: Affine] Fold<P>, DefaultEncoding, Fold {
+    inner: P => Point,
+    outer: P => Point,
+    inner_epsilon: P::Scalar => Scalar,
+    outer_epsilon: P::Scalar => Scalar,
+});
 codec!([P: Affine] Reduction<P>, DefaultEncoding, Reduction {
-    fold: Fold<P> => DefaultEncoding, p: P => Point, q: P => Point,
+    fold: Fold<P> => DefaultEncoding,
+    p: P => Point,
+    q: P => Point,
     openings: Vec<P::Scalar> => FixedSequence<Scalar, ConstLen<{Derived::ALL.len()}>>,
-    p_at_inverse_r: P::Scalar => Scalar, q_at_r: P::Scalar => Scalar,
+    p_at_inverse_r: P::Scalar => Scalar,
+    q_at_r: P::Scalar => Scalar,
 });
 codec!([P: Affine] Batch<P>, DefaultEncoding, Batch {
     f: P => Point,
@@ -99,13 +128,17 @@ impl<P: Affine> Decode<RoundPair> for (P, P) {
         ))
     }
 }
-codec!([P: Affine, R: Rank, const H: usize] IpaProof<P>, Compressed<R,H>, IpaProof {
-    s_commitment: P => Point, rounds: Vec<(P,P)> => FixedSequence<RoundPair, Rounds<R>>, c: P::Scalar => Scalar,
+codec!([P: Affine, R: Rank, const H: usize] IpaProof<P>, Compressed<R, H>, IpaProof {
+    s_commitment: P => Point,
+    rounds: Vec<(P, P)> => FixedSequence<RoundPair, Rounds<R>>,
+    c: P::Scalar => Scalar,
 });
-codec!([P: Affine, R: Rank, const H: usize] Messages<P>, Compressed<R,H>, Messages {
-    reduction: Reduction<P> => DefaultEncoding, batch: Batch<P> => DefaultEncoding, opening: IpaProof<P> => Compressed<R,H>,
+codec!([P: Affine, R: Rank, const H: usize] Messages<P>, Compressed<R, H>, Messages {
+    reduction: Reduction<P> => DefaultEncoding,
+    batch: Batch<P> => DefaultEncoding,
+    opening: IpaProof<P> => Compressed<R, H>,
 });
-codec!([C: ProfiledCycle, R: Rank, const H: usize] Instance<C>, Compressed<R,H>, Instance {
+codec!([C: ProfiledCycle, R: Rank, const H: usize] Instance<C>, Compressed<R, H>, Instance {
     circuit_id: CircuitIndex => DefaultEncoding,
     left_header: Vec<C::CircuitField> => FixedSequence<Scalar, Headers<H>>,
     right_header: Vec<C::CircuitField> => FixedSequence<Scalar, Headers<H>>,
@@ -130,6 +163,8 @@ codec!([C: ProfiledCycle, R: Rank, const H: usize] Instance<C>, Compressed<R,H>,
     nested_a_at_u: C::ScalarField => Scalar,
     nested_b_at_u: C::ScalarField => Scalar,
 });
-codec!([C: ProfiledCycle, R: Rank, const H: usize] CompressedProof<C>, Compressed<R,H>, CompressedProof {
-    instance: Instance<C> => Compressed<R,H>, native: Messages<C::HostCurve> => Compressed<R,H>, nested: Messages<C::NestedCurve> => Compressed<R,H>,
+codec!([C: ProfiledCycle, R: Rank, const H: usize] CompressedProof<C>, Compressed<R, H>, CompressedProof {
+    instance: Instance<C> => Compressed<R, H>,
+    native: Messages<C::HostCurve> => Compressed<R, H>,
+    nested: Messages<C::NestedCurve> => Compressed<R, H>,
 });

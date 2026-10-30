@@ -53,7 +53,7 @@ fn check_identity_commitments<C: IpaCycle + ProfiledCycle, R: Rank>(
             _ => continue,
         };
         *point = C::NestedCurve::identity();
-        assert!(proof.well_formed::<HEADER_SIZE>());
+        assert!(!proof.well_formed::<HEADER_SIZE>());
         assert!(
             !app.verify_uncompressed(&proof.carry::<()>(()), &mut rng)?,
             "identity nested commitment {index:?}"
@@ -68,7 +68,7 @@ fn check_identity_commitments<C: IpaCycle + ProfiledCycle, R: Rank>(
     for j in 0..honest.proof().native_extension_stage_commitments.len() {
         let mut proof = honest.proof().clone();
         proof.native_extension_stage_commitments[j].0 = C::HostCurve::identity();
-        assert!(proof.well_formed::<HEADER_SIZE>());
+        assert!(!proof.well_formed::<HEADER_SIZE>());
         assert!(
             !app.verify_uncompressed(&proof.carry::<()>(()), &mut rng)?,
             "identity native extension commitment {j}"

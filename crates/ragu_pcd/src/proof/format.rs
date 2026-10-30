@@ -8,17 +8,36 @@ use udon::field::Field;
 
 use super::MinimalProof;
 use crate::{
-    Application, SelectableBackend,
+    Application, CompressedProof, SelectableBackend,
+    compress::codec::Compressed as CompressedEncoding,
     profile::{Profile, ProfiledCycle},
     wire::{Decode, Encode, Error, Reader, Scalar},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
 const ENVELOPE_VERSION: u16 = 2;
-/// The payload kind of a minimal proof. The envelope carries one kind per
-/// proof representation, each with its own schema.
-const MINIMAL_PAYLOAD: u16 = 1;
-const COMPRESSED_PAYLOAD: u16 = 2;
+/// Each proof representation has its own payload kind and schema version.
+#[derive(Clone, Copy)]
+enum PayloadKind {
+    Minimal,
+    Compressed,
+}
+
+impl PayloadKind {
+    fn tag(self) -> u16 {
+        match self {
+            Self::Minimal => 1,
+            Self::Compressed => 2,
+        }
+    }
+
+    fn schema_version(self) -> u16 {
+        match self {
+            Self::Minimal => MINIMAL_SCHEMA_VERSION,
+            Self::Compressed => COMPRESSED_SCHEMA_VERSION,
+        }
+    }
+}
 const MINIMAL_SCHEMA_VERSION: u16 = 1;
 const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
@@ -45,11 +64,13 @@ pub struct ProofContext {
 ///
 /// Construct with [`Application::proof_format`]. Minimal encodings have exactly
 /// [`encoded_len`](Self::encoded_len) bytes; compressed encodings have exactly
-/// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Other lengths are rejected before
-/// the envelope is read, and the envelope is checked before the payload.
-/// Decoding validates representation only: a receiver rebuilds the proof
-/// with [`Application::expand`], compresses it with [`Application::compress`]
-/// and accepts it on [`Application::verify_compressed`]. The uncompressed
+/// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Decoding checks
+/// the exact length, then the envelope, then the payload representation.
+///
+/// Decoding does not verify a proof. Expand and compress a decoded minimal proof
+/// with [`Application::expand`] and [`Application::compress`], then call
+/// [`Application::verify_compressed`]. A decoded compressed proof can be verified
+/// directly after attaching its accompanying header data. The uncompressed
 /// `verify_minimal`, under `test-utils`, is a test oracle for that path. See
 /// the crate's `WIRE_FORMAT.md` for the version and compatibility contract.
 pub struct ProofFormat<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
@@ -87,29 +108,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         hash.as_bytes().try_into().expect("32-byte profile tag")
     }
 
-    fn envelope(&self, payload: u16) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(ENVELOPE_SIZE);
+    fn write_envelope(&self, payload: PayloadKind, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(MAGIC);
-        ENVELOPE_VERSION.encode(&mut bytes);
-        payload.encode(&mut bytes);
-        match payload {
-            MINIMAL_PAYLOAD => MINIMAL_SCHEMA_VERSION,
-            COMPRESSED_PAYLOAD => COMPRESSED_SCHEMA_VERSION,
-            _ => unreachable!("internal payload kind"),
-        }
-        .encode(&mut bytes);
-        PROTOCOL_VERSION.encode(&mut bytes);
-        R::RANK.encode(&mut bytes);
-        (HEADER_SIZE as u64).encode(&mut bytes);
+        ENVELOPE_VERSION.encode(bytes);
+        payload.tag().encode(bytes);
+        payload.schema_version().encode(bytes);
+        PROTOCOL_VERSION.encode(bytes);
+        R::RANK.encode(bytes);
+        (HEADER_SIZE as u64).encode(bytes);
         bytes.extend_from_slice(&self.profile_tag());
         bytes.extend_from_slice(&self.context.suite);
         bytes.extend_from_slice(&self.context.application);
-        bytes
     }
 
-    /// The exact size of every encoding: the envelope plus the payload the
-    /// profile, rank and header size fix. Bound transport input to this
-    /// before buffering.
+    /// Exact byte length of a minimal proof, including the envelope.
+    ///
+    /// Bound transport input to this size before buffering a minimal proof.
     pub fn encoded_len(&self) -> usize {
         ENVELOPE_SIZE + MinimalProof::<C, R, HEADER_SIZE>::encoded_len()
     }
@@ -117,17 +131,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
     /// Exact byte length of a compressed proof, including the shared envelope.
     pub fn compressed_encoded_len(&self) -> usize {
         ENVELOPE_SIZE
-            + <crate::CompressedProof<C> as Decode<
-                crate::compress::codec::Compressed<R, HEADER_SIZE>,
-            >>::encoded_len()
+            + <CompressedProof<C> as Decode<CompressedEncoding<R, HEADER_SIZE>>>::encoded_len()
     }
 
     /// Encodes a compressed proof of this application's shape. This does not
     /// verify the proof. Payload kind 2 distinguishes it from a minimal proof.
-    pub fn encode_compressed(
-        &self,
-        proof: &crate::CompressedProof<C>,
-    ) -> Result<Vec<u8>, Error<'static>> {
+    pub fn encode_compressed(&self, proof: &CompressedProof<C>) -> Result<Vec<u8>, Error<'static>> {
         if !proof.well_formed::<R, HEADER_SIZE>() {
             return Err(Error::Invalid {
                 offset: 0,
@@ -135,20 +144,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
                 reason: "invalid compressed proof structure",
             });
         }
-        let mut bytes = self.envelope(COMPRESSED_PAYLOAD);
-        <crate::CompressedProof<C> as Encode<crate::compress::codec::Compressed<R, HEADER_SIZE>>>::encode(proof, &mut bytes);
+        let mut bytes = Vec::with_capacity(self.compressed_encoded_len());
+        self.write_envelope(PayloadKind::Compressed, &mut bytes);
+        <CompressedProof<C> as Encode<CompressedEncoding<R, HEADER_SIZE>>>::encode(
+            proof, &mut bytes,
+        );
         Ok(bytes)
     }
 
     /// Decodes a compressed proof after checking its exact length and context.
     /// Attach the accompanying header data with `carry` and use
     /// [`Application::verify_compressed`] before accepting it.
-    pub fn decode_compressed<'a>(
-        &self,
-        bytes: &'a [u8],
-    ) -> Result<crate::CompressedProof<C>, Error<'a>> {
-        let mut reader = self.open(bytes, COMPRESSED_PAYLOAD, self.compressed_encoded_len())?;
-        <crate::CompressedProof<C> as Decode<crate::compress::codec::Compressed<R, HEADER_SIZE>>>::decode(&mut reader)
+    pub fn decode_compressed<'a>(&self, bytes: &'a [u8]) -> Result<CompressedProof<C>, Error<'a>> {
+        let mut reader = self.open(
+            bytes,
+            PayloadKind::Compressed,
+            self.compressed_encoded_len(),
+        )?;
+        <CompressedProof<C> as Decode<CompressedEncoding<R, HEADER_SIZE>>>::decode(&mut reader)
     }
 
     /// Encodes a structurally valid proof, including its version and context.
@@ -164,7 +177,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
                 reason: "invalid proof structure",
             });
         }
-        let mut bytes = self.envelope(MINIMAL_PAYLOAD);
+        let mut bytes = Vec::with_capacity(self.encoded_len());
+        self.write_envelope(PayloadKind::Minimal, &mut bytes);
         proof.encode(&mut bytes);
         Ok(bytes)
     }
@@ -175,7 +189,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         &self,
         bytes: &'a [u8],
     ) -> Result<MinimalProof<C, R, HEADER_SIZE>, Error<'a>> {
-        let mut reader = self.open(bytes, MINIMAL_PAYLOAD, self.encoded_len())?;
+        let mut reader = self.open(bytes, PayloadKind::Minimal, self.encoded_len())?;
         MinimalProof::decode(&mut reader)
     }
 
@@ -184,7 +198,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
     fn open<'a>(
         &self,
         bytes: &'a [u8],
-        payload: u16,
+        payload: PayloadKind,
         expected: usize,
     ) -> Result<Reader<'a>, Error<'a>> {
         if bytes.len() != expected {
@@ -195,7 +209,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         }
         let mut reader = Reader::new(bytes);
         let envelope = reader.take(ENVELOPE_SIZE)?;
-        let known = self.envelope(payload);
+        let mut known = Vec::with_capacity(ENVELOPE_SIZE);
+        self.write_envelope(payload, &mut known);
         // Report the exact rejected envelope component. All checks precede
         // payload decoding, including rejection of a future schema version.
         for (start, end, reason) in [
@@ -333,18 +348,19 @@ mod tests {
         assert_ne!(standard.profile_tag(), aggregator.profile_tag());
         for (kind, length, other_length) in [
             (
-                MINIMAL_PAYLOAD,
+                PayloadKind::Minimal,
                 standard.encoded_len(),
                 aggregator.encoded_len(),
             ),
             (
-                COMPRESSED_PAYLOAD,
+                PayloadKind::Compressed,
                 standard.compressed_encoded_len(),
                 aggregator.compressed_encoded_len(),
             ),
         ] {
             assert_eq!(length, other_length, "test requires equal profile shapes");
-            let mut bytes = standard.envelope(kind);
+            let mut bytes = Vec::with_capacity(length);
+            standard.write_envelope(kind, &mut bytes);
             bytes.resize(length, 0);
             assert!(matches!(
                 aggregator.open(&bytes, kind, other_length),

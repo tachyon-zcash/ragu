@@ -46,7 +46,7 @@ pub enum Kind {
     Compressed,
 }
 
-/// Materialize the valid seed outside libFuzzer's per-input timing budget.
+/// Materialize the valid seed once before exercising target inputs.
 pub fn initialize() {
     LazyLock::force(&SEED);
 }

@@ -456,10 +456,10 @@ invalid. The untouched seed must verify.
 The first input byte modulo six selects raw remaining bytes, unchanged seed,
 up to 32 five-byte `(little-endian u32 offset, XOR byte)` edits, truncation,
 append (at most 128 bytes), or a canonical scalar replacement. Offsets wrap
-within the generated payload. The three committed files per target under
+within the generated wire bytes (including the envelope). The three committed files per target under
 `regressions/` are tiny control inputs, not serialized proofs; campaigns and
 coverage replay discover them alongside local seeds. No multi-megabyte fixture
-is stored in git. Proof setup is cached outside libFuzzer's per-input timer;
+is stored in git. Proof setup is cached once per process;
 minimal-proof verification is still a production-rank operation and can take
 seconds per input.
 
