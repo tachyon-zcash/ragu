@@ -27,7 +27,7 @@ use udon::field::Field;
 
 use super::{BindingCircuit, Circuit, DigitsCircuit, StatementCircuit, TranscriptCircuit, last};
 use crate::decompress::{
-    program::{Chunk, Last, Schedule},
+    program::{Chunk, Last, Schedule, challenges_per_curve, squeezed},
     run::{Prepared, Sides},
     side::{Native, Nested, Side},
     stages::{
@@ -331,6 +331,41 @@ fn rejects_tampered_stages() {
     assert!(
         !rejected(&sides.native) && !rejected(&sides.nested),
         "restored, both accept"
+    );
+}
+
+/// A chunk that scales by a challenge taken from bits holds those bits to
+/// the lifts stage. The scalar-field side is re-run with other bits for
+/// the host curve's $\beta$, which only point chains scale by, so every
+/// chunk is consistent with the other bits; the lifts stage alone is
+/// restored to the honest lifts. A circuit that runs no lift chunk then
+/// fails: the chains' bits cannot differ from the lift chunk's.
+#[test]
+fn chains_hold_their_bits_to_the_lifts_stage() {
+    let setup = Setup::new();
+    let mut sides = sides::<SmallR>(&setup);
+    let nested = &mut sides.nested;
+    let honest_lifts = nested.lifts.clone();
+    let beta = challenges_per_curve::<TestR>() + 3 + squeezed::BETA;
+    nested.aux.challenge_bits[beta] = nested.aux.challenge_bits[beta].flip_bit(5);
+    nested
+        .run::<TestR, HEADER_SIZE>(crate::pasta::baked_aggregator())
+        .unwrap();
+    nested.lifts = honest_lifts;
+
+    let schedule = circuit_schedule::<Nested, SmallR>();
+    let mut rng = StdRng::seed_from_u64(17);
+    let without_lift_chunks = (0..schedule.circuits.len()).filter(|&index| {
+        !schedule.chunks[schedule.circuits[index].chunks.clone()]
+            .iter()
+            .any(|chunk| matches!(chunk, Chunk::Lift { .. }))
+    });
+    assert!(
+        without_lift_chunks.into_iter().any(|index| {
+            !run_circuit::<Nested, SmallR>(&schedule, index, nested, &mut rng)
+                .is_ok_and(|report| report.satisfied)
+        }),
+        "a chain over other bits than the lifts stage's fails a chunk"
     );
 }
 

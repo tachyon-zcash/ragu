@@ -752,6 +752,46 @@ type NestedMessagesBridge<C, P, K> = ValuesStage<
 /// proof's bridges are laid out for the decompression of its profile
 /// whether or not one exists: every profile's are formed the same way.
 pub(crate) fn bridge_positions<C: Cycle, P: Profile, K: Rank>() -> Result<BridgePositions> {
+    let (points, scalars) = bridge_degrees::<C, P, K>()?;
+    Ok(BridgePositions::new(points, scalars))
+}
+
+/// Checks that the nested generators `params` holds reach every position
+/// [`bridge_positions`] lays a proof in profile `P` at rank `K` out at.
+/// The positions are the [`BridgeRank`]'s whatever the proof's rank, so
+/// tables sized to a smaller rank, the Standard tables among them, stop
+/// short of them: an application that compresses needs tables that reach
+/// the aggregator rank.
+///
+/// # Errors
+///
+/// Fails if a position lies past the last generator.
+pub(crate) fn check_bridge_generators<C: Cycle, P: Profile, K: Rank>(
+    params: &C::Params,
+) -> Result<()> {
+    let generators = C::nested_generators(params).g().len();
+    let (points, scalars) = bridge_degrees::<C, P, K>()?;
+    let last = points
+        .iter()
+        .flatten()
+        .chain(&scalars)
+        .max()
+        .copied()
+        .unwrap_or(0);
+    if last >= generators {
+        return Err(Error::Initialization(
+            alloc::format!(
+                "the parameters hold {generators} nested generators but the compression bridges a value at generator {last}: compressing needs tables that reach the aggregator rank, such as `baked_aggregator()`"
+            )
+            .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The generators [`bridge_positions`] names: each host-curve point's
+/// coordinates', then each scalar-field value's, in absorption order.
+fn bridge_degrees<C: Cycle, P: Profile, K: Rank>() -> Result<(Vec<[usize; 2]>, Vec<usize>)> {
     let (mut points, mut scalars) = degrees::<
         C::ScalarField,
         C::HostCurve,
@@ -770,7 +810,7 @@ pub(crate) fn bridge_positions<C: Cycle, P: Profile, K: Rank>() -> Result<Bridge
     >()?;
     points.extend(message_points);
     scalars.extend(message_scalars);
-    Ok(BridgePositions::new(points, scalars))
+    Ok((points, scalars))
 }
 
 /// Forms the compression's bridges as [`bridge_positions`] places them,
@@ -784,7 +824,13 @@ pub(crate) struct Bridger<'a, C: Cycle> {
 impl<'a, C: Cycle> Bridger<'a, C> {
     /// A bridger at the start of the absorption order, for a proof in
     /// profile `P` at rank `K`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `params`' nested generators stop short of the positions
+    /// (see [`check_bridge_generators`]).
     pub(crate) fn new<P: Profile, K: Rank>(params: &'a C::Params) -> Result<Self> {
+        check_bridge_generators::<C, P, K>(params)?;
         Ok(Bridger {
             g: C::nested_generators(params).g(),
             positions: bridge_positions::<C, P, K>()?,

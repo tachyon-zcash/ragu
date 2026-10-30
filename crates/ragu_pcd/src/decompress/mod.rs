@@ -116,7 +116,11 @@
 //! scalars each side scales the other curve's points by, and the bridges
 //! through which the circuit-field transcript absorbs the scalar field's
 //! values and the host curve's points, is a witness the receiving side
-//! allocates. What holds it to the sending side is the fuse's design: the
+//! allocates, chunk by chunk: a witness one chunk allocates binds no other
+//! chunk's, so a chunk that scales by a challenge from bits holds its
+//! bits' lift to the lifts stage slot the challenge's lift chunk fills,
+//! and a scalar's digits are allocated once, across the parts of its one
+//! scaling. What holds a witness to the sending side is the fuse's design: the
 //! sending side holds the value as wires of an unblinded stage, the
 //! receiving side recomputes that stage's commitment from the witness it
 //! took, and its binding circuit exposes the recomputation for the

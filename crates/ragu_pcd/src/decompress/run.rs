@@ -218,7 +218,13 @@ where
     }
 
     /// A challenge's endoscalar: read off the squeezed element,
-    /// constrained into range, or allocated from its bits.
+    /// constrained into range, or allocated from its bits and held, by
+    /// its lift, to the challenge's lifts stage slot
+    /// ([`Regions::bits_lifts`](super::program::Regions::bits_lifts)),
+    /// which the other side's recomputation of that stage binds to the
+    /// challenge it squeezed. The bits are the chunk's own witnesses, so
+    /// every chunk that scales by a challenge from bits pays for the lift
+    /// that holds them.
     fn endoscalar(&self, dr: &mut D, challenge: ChallengeRef) -> Result<Endoscalar<'dr, D>> {
         Ok(match challenge {
             ChallengeRef::Raw(slot) => Endoscalar::extract(EndoscalarChallenge::from_element(
@@ -227,10 +233,20 @@ where
                 self.work(slot),
             )?),
             ChallengeRef::Bits(id) => {
-                let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
-                Endoscalar::alloc(dr, bits)?
+                let endoscalar = self.bits(dr, id)?;
+                let slot = self.schedule.regions.bits_lifts[id];
+                endoscalar.lift(dr)?.enforce_equal(dr, &self.lift(slot))?;
+                endoscalar
             }
         })
+    }
+
+    /// The endoscalar of the challenge at `id` of the side's challenge
+    /// bits, allocated from them and held to nothing: what the lift chunk
+    /// lifts into the lifts stage slot every other use holds its bits to.
+    fn bits(&self, dr: &mut D, id: usize) -> Result<Endoscalar<'dr, D>> {
+        let bits = self.witness.as_ref().map(|w| w.aux.challenge_bits[id]);
+        Endoscalar::alloc(dr, bits)
     }
 
     /// A fixed point's value, for a scaling's offset.
@@ -483,7 +499,13 @@ where
         }
         Chunk::Lift { pairs } => {
             for &(challenge, out) in pairs {
-                let endoscalar = ctx.endoscalar(dr, challenge)?;
+                // The lift chunk fills the slot every other use of a
+                // challenge from bits holds its lift to, so it allocates
+                // the bits alone and lets the write hold them.
+                let endoscalar = match challenge {
+                    ChallengeRef::Raw(_) => ctx.endoscalar(dr, challenge)?,
+                    ChallengeRef::Bits(id) => ctx.bits(dr, id)?,
+                };
                 writes.push(Write::Lift(out, endoscalar.lift(dr)?));
             }
         }
@@ -810,10 +832,11 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         layout.sort_by_key(|term| term.0);
         let mut actual = witness.ab_terms.clone();
         actual.sort_by_key(|term| term.0);
-        assert_eq!(
-            layout, actual,
-            "the ab bridge layout is the stage polynomial's"
-        );
+        if layout != actual {
+            return Err(Error::InvalidWitness(
+                "the ab bridge stage's coefficients are not at the wires the schedule names".into(),
+            ));
+        }
         let placeholder = S::generators(params)[0];
         let mut work = Values::blank(schedule.points, schedule.elements, placeholder);
         supply(

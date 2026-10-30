@@ -150,8 +150,10 @@ pub(crate) enum ChallengeRef {
     /// its endoscalar, constraining it into range.
     Raw(usize),
     /// A challenge squeezed on the other side, by index into the side's
-    /// challenge bits: the chunk allocates its bits as witnesses, bound
-    /// across the cycle by the stage that holds them.
+    /// challenge bits: the chunk allocates its bits as witnesses and holds
+    /// their lift to the challenge's lifts stage slot
+    /// ([`Regions::bits_lifts`]), which the other side's recomputation of
+    /// that stage binds to the challenge it squeezed.
     Bits(usize),
 }
 
@@ -359,6 +361,13 @@ pub(crate) struct Regions {
     /// [`fuse_lifts`](Self::fuse_lifts) in the lifts stage; the
     /// circuit-field side recomputes the stage in that order.
     pub point_lifts: Vec<usize>,
+    /// Scalar-field side: the lifts stage slot of each challenge taken
+    /// from bits, by [`ChallengeRef::Bits`] index: [`lifts`](Self::lifts),
+    /// [`fuse_lifts`](Self::fuse_lifts) and
+    /// [`point_lifts`](Self::point_lifts) in order. Every chunk that
+    /// scales by such a challenge holds its bits' lift to this slot. Empty
+    /// on the circuit-field side, which takes no challenge from bits.
+    pub bits_lifts: Vec<usize>,
     /// The claims' base targets: application, unified bridge, unified on
     /// the circuit-field side; unified alone on the scalar-field side.
     pub targets: Vec<usize>,
@@ -480,20 +489,31 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
                 .steps
                 .iter()
                 .map(|step| match step {
-                    Step::Horner { .. } => 730,
-                    Step::AddScaled {
-                        scale_by: Some(_), ..
-                    } => 730,
+                    Step::Horner { scale_by, .. }
+                    | Step::AddScaled {
+                        scale_by: Some(scale_by),
+                        ..
+                    } => scaling(*scale_by),
                     Step::AddScaled { scale_by: None, .. } => 20,
                 })
                 .sum::<usize>()
         }
-        Chunk::Checks { checks } => 730 * checks.len(),
+        Chunk::Checks { checks } => checks.iter().map(|&(_, by, _)| scaling(by)).sum(),
         Chunk::Scale { digits, bind, .. } => {
             150 + (10 + if bind.is_some() { 8 } else { 0 }) * (digits.1 - digits.0)
         }
         Chunk::Sign { .. } => 60,
         Chunk::Equal { .. } => 40,
+    }
+}
+
+/// The gates a scaling by `challenge` takes: the endoscalar read off its
+/// squeeze or allocated from its bits and the point scaled, and for a
+/// challenge from bits the lift that holds the bits to the lifts stage.
+fn scaling(challenge: ChallengeRef) -> usize {
+    match challenge {
+        ChallengeRef::Raw(_) => 730,
+        ChallengeRef::Bits(_) => 840,
     }
 }
 
@@ -2015,6 +2035,12 @@ fn nested_schedule_with<
     b.regions.lifts = b.slots.lifts(per_curve);
     b.regions.fuse_lifts = b.slots.lifts(3);
     b.regions.point_lifts = b.slots.lifts(per_curve);
+    b.regions.bits_lifts = [
+        b.regions.lifts.clone(),
+        b.regions.fuse_lifts.clone(),
+        b.regions.point_lifts.clone(),
+    ]
+    .concat();
     {
         let pairs: Vec<(ChallengeRef, usize)> = (0..per_curve)
             .map(|i| (ChallengeRef::Bits(i), b.regions.lifts[i]))

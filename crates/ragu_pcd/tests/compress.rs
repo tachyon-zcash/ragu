@@ -125,6 +125,30 @@ fn accepts<H: Header<Fp>>(app: &App, pcd: &CompressedPcd<Pasta, H>) -> bool {
         .expect("verify_compressed should not error")
 }
 
+/// Tables that stop short of the bridge positions refuse to compress, and
+/// to verify a compressed proof, with an error rather than a panic: the
+/// Standard tables end at the production rank, and the bridges lie at the
+/// aggregator rank's positions.
+#[test]
+fn tables_short_of_the_bridge_positions_are_refused() {
+    let standard = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        .register(Seed)
+        .expect("register seed step")
+        .finalize(crate::pasta::baked())
+        .expect("failed to create test application");
+    assert!(matches!(
+        standard.compress(&standard.bootstrap_pcd(), &mut StdRng::seed_from_u64(5)),
+        Err(Error::Initialization(_))
+    ));
+    let app = app();
+    let compressed = compress(&app, &app.bootstrap_pcd(), 5);
+    assert!(accepts(&app, &compressed));
+    assert!(matches!(
+        standard.verify_compressed(&compressed),
+        Err(Error::Initialization(_))
+    ));
+}
+
 #[test]
 fn accepts_what_the_decider_accepts() {
     let app = app();
