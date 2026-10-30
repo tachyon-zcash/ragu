@@ -237,31 +237,69 @@ impl<'a, F: Field, R: Rank> Stripped<'a, F, R> {
     }
 }
 
-impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
-    fn sxy(&self, x: F, y: F, floor_plan: &[ConstraintSegment]) -> F {
-        // Remove the ONE wire contribution: 1 at y^0 (d[0] maps to degree 0).
-        self.0.sxy(x, y, floor_plan) - F::ONE
-    }
-
-    fn sx(&self, x: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
-        let mut poly = self.0.sx(x, floor_plan);
-        // Horner places the last constraint (enforce_one) at y^0 = coeffs[0].
-        // TODO: sparse::Polynomial should support subtracting a field element
-        // from the constant term directly.
+impl<F: Field, R: Rank> Stripped<'_, F, R> {
+    /// Removes the `enforce_one` contribution, which Horner places at
+    /// $y^0$ (`coeffs[0]`).
+    // TODO: sparse::Polynomial should support subtracting a field element
+    // from the constant term directly.
+    fn strip_constant_term(mut poly: sparse::Polynomial<F, R>) -> sparse::Polynomial<F, R> {
         let coeff_0 = poly.iter_coeffs().next().unwrap();
         let correction = sparse::Polynomial::from_coeffs(alloc::vec![coeff_0]);
         poly.sub_assign(&correction);
         poly
     }
 
-    fn sy(&self, y: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
-        let mut poly = self.0.sy(y, floor_plan);
-        // The SYSTEM gate's d-wire holds the ONE wire; remove its y^0 contribution.
-        // In the wiring perspective, d[0] maps to degree 0.
+    /// Removes the ONE wire's $y^0$ contribution: the SYSTEM gate's $d$ wire,
+    /// which maps to degree 0 in the wiring perspective.
+    fn strip_one_wire(mut poly: sparse::Polynomial<F, R>) -> sparse::Polynomial<F, R> {
         let mut correction = sparse::View::<_, R, _>::wiring();
         correction.d.push(F::ONE);
         poly.sub_assign(&correction.build());
         poly
+    }
+}
+
+impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
+    fn sxy(&self, x: F, y: F, floor_plan: &[ConstraintSegment]) -> F {
+        // Remove the ONE wire contribution: 1 at y^0 (d[0] maps to degree 0).
+        self.0.sxy(x, y, floor_plan) - F::ONE
+    }
+
+    fn sxy_with_cache(
+        &self,
+        x: F,
+        y: F,
+        floor_plan: &[ConstraintSegment],
+        cache: &mut crate::wiring::MemoCache<F>,
+    ) -> F {
+        // Remove the ONE wire contribution, as in `sxy`.
+        self.0.sxy_with_cache(x, y, floor_plan, cache) - F::ONE
+    }
+
+    fn sx(&self, x: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
+        Self::strip_constant_term(self.0.sx(x, floor_plan))
+    }
+
+    fn sx_with_cache(
+        &self,
+        x: F,
+        floor_plan: &[ConstraintSegment],
+        cache: &mut crate::wiring::MemoCache<F>,
+    ) -> sparse::Polynomial<F, R> {
+        Self::strip_constant_term(self.0.sx_with_cache(x, floor_plan, cache))
+    }
+
+    fn sy(&self, y: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
+        Self::strip_one_wire(self.0.sy(y, floor_plan))
+    }
+
+    fn sy_with_cache(
+        &self,
+        y: F,
+        floor_plan: &[ConstraintSegment],
+        cache: &mut crate::wiring::MemoCache<F>,
+    ) -> sparse::Polynomial<F, R> {
+        Self::strip_one_wire(self.0.sy_with_cache(y, floor_plan, cache))
     }
 
     fn segment_records(&self) -> &[SegmentRecord] {
