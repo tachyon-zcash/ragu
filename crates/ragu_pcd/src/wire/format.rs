@@ -5,9 +5,8 @@ use core::marker::PhantomData;
 
 use ragu_circuits::polynomials::Rank;
 
-use super::Proof;
 use crate::{
-    Application, CompressedProof, SelectableBackend,
+    Application, CompressedProof, Proof, SelectableBackend,
     profile::{Profile, ProfiledCycle},
     wire::{Decode, Dimensions, Encode, Error, Reader},
 };

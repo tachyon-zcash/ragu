@@ -23,10 +23,17 @@ use ragu_circuits::polynomials::Rank;
 use ragu_primitives::vec::Len;
 use udon::{curve::Affine, field::Field};
 
+mod compressed;
+pub(crate) mod format;
 mod polynomial;
 mod registry;
+mod schema;
+#[cfg(feature = "serde")]
+mod serde;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use schema::proof_schema;
 
 /// Version of the low-level codec framing, which the `serde` adapters lead
 /// with. Nested payloads have no envelope.

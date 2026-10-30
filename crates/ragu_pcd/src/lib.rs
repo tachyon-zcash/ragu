@@ -91,7 +91,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
-pub use proof::{Pcd, Proof, ProofContext, ProofFormat};
+pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
@@ -100,6 +100,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
+pub use wire::format::{ProofContext, ProofFormat};
 
 /// Domain separation tag for the Ragu PCD protocol.
 ///

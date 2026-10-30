@@ -4,17 +4,17 @@
 //! receiving profile and from the payload's dimensions, its rank and header size;
 //! no counts are read from the payload.
 
-use super::{
-    CompressedProof, Messages,
-    batch::Batch,
-    instance::{Child, Instance, NestedChild, OPENED},
-    revdot::{
-        Reduction,
-        fold::{Derived, Fold},
-        native_components, nested_components,
-    },
-};
 use crate::{
+    compress::{
+        CompressedProof, Messages,
+        batch::Batch,
+        instance::{Child, Instance, NestedChild, OPENED},
+        revdot::{
+            Reduction,
+            fold::{Derived, Fold},
+            native_components, nested_components,
+        },
+    },
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{

@@ -74,4 +74,4 @@ macro_rules! proof_schema {
         }
     };
 }
-pub(super) use proof_schema;
+pub(crate) use proof_schema;

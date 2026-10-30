@@ -58,7 +58,6 @@ use crate::{
 };
 
 pub(crate) mod batch;
-pub(crate) mod codec;
 pub(crate) mod instance;
 mod prover;
 pub(crate) mod revdot;

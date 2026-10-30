@@ -11,13 +11,9 @@
 
 pub(crate) mod builder;
 mod derive;
-mod format;
 #[cfg(test)]
 #[path = "../../tests/malformed_proofs.rs"]
 mod malformed_proof_tests;
-mod schema;
-#[cfg(feature = "serde")]
-mod serialize;
 mod validate;
 #[cfg(test)]
 #[path = "../../tests/wire_validation.rs"]
@@ -79,7 +75,6 @@ mod access;
 use alloc::{sync::Arc, vec, vec::Vec};
 
 pub(crate) use builder::ProofBuilder;
-pub use format::{ProofContext, ProofFormat};
 use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
@@ -178,7 +173,7 @@ pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex
     bridge_alpha.pow_u64(n)
 }
 
-schema::proof_schema! {
+wire::proof_schema! {
     /// Represents a recursive proof for the correctness of some computation.
     ///
     /// All fields are flat (no nested component structs). Polynomial fields are

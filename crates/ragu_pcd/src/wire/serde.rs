@@ -5,7 +5,7 @@
 //! The string is the codec version byte; a prelude recording the rank, as a
 //! little-endian `u32`, and the header size, as a little-endian `u64`, which
 //! neither type carries; and then the payload, in the layout
-//! [`ProofFormat`](super::ProofFormat) envelopes. The prelude fixes the
+//! [`ProofFormat`](crate::ProofFormat) envelopes. The prelude fixes the
 //! payload's exact length, which deserialization checks before decoding it,
 //! and formats without a bytes type are buffered only up to that length.
 //!
@@ -26,9 +26,8 @@ use serde::{
     ser,
 };
 
-use super::Proof;
 use crate::{
-    CompressedProof,
+    CompressedProof, Proof,
     profile::ProfiledCycle,
     wire::{self, Decode, Dimensions, Encode, Error, Reader},
 };
