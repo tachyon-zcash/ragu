@@ -109,3 +109,26 @@ fn minimal_verification_preserves_header_encoding_errors() {
         Err(Error::ConstraintBoundExceeded { limit: 42 })
     ));
 }
+
+#[test]
+#[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
+fn decoded_expanded_child_remains_usable_by_fuse() {
+    use super::recursive_propagation_tests::support::{Merge, Seed, Value, with_app};
+    use ragu_core::pasta::Fp;
+
+    with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(0xdec0de);
+        let (child, ()) = app.seed(&mut rng, Seed::new(), Fp::from(7)).unwrap();
+        let (proof, data) = child.into_parts();
+        let bytes = proof.into_minimal::<4>().to_bytes();
+        let decoded = Minimal::from_bytes(&bytes).unwrap();
+        let child = app.expand(decoded).unwrap().carry::<Value>(data);
+        let compressed_child = app.compress(&child, &mut rng).unwrap();
+        assert!(app.verify_compressed(&compressed_child).unwrap());
+        let (parent, ()) = app
+            .fuse(&mut rng, Merge::new(), Fp::from(11), child.clone(), child)
+            .unwrap();
+        let compressed_parent = app.compress(&parent, &mut rng).unwrap();
+        assert!(app.verify_compressed(&compressed_parent).unwrap());
+    });
+}

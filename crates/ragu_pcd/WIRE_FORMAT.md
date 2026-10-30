@@ -1,4 +1,4 @@
-# PCD proof format v1
+# PCD proof format: envelope v2, payload schemas v1
 
 `Application::proof_format` selects an envelope using trusted `ProofContext`
 identifiers. Every encoding has exactly one length, fixed by the profile, the
@@ -13,23 +13,35 @@ which is not included in these bytes. The uncompressed `verify_minimal`, under
 
 ## Envelope
 
-All integers are unsigned little-endian. The header is exactly 92 bytes.
+All integers are unsigned little-endian. The header is exactly 124 bytes.
 
 | Offset | Size | Meaning |
 | --- | --- | --- |
 | 0 | 8 | Magic: `52 41 47 55 50 43 44 00` (`RAGUPCD` plus NUL) |
-| 8 | 2 | Envelope version: 1 |
+| 8 | 2 | Envelope version: 2 |
 | 10 | 2 | Payload kind: 1 minimal, 2 compressed |
 | 12 | 2 | Schema version of that payload kind: 1 |
 | 14 | 2 | Verification protocol version: 1 (`ragu-pcd-v1`) |
 | 16 | 4 | Polynomial rank exponent (`Rank::RANK`) |
 | 20 | 8 | Application header size in field elements |
-| 28 | 32 | Suite identifier |
-| 60 | 32 | Application/setup identifier |
-| 92 | remainder | The payload, without an additional version byte |
+| 28 | 32 | Profile tag |
+| 60 | 32 | Suite identifier |
+| 92 | 32 | Application/setup identifier |
+| 124 | remainder | The payload, without an additional version byte |
 
 Each header component must exactly match the expected value. Unknown versions
 are rejected; there is no heuristic interpretation or automatic downgrade.
+
+The profile tag is BLAKE2b-256 of the UTF-8 bytes of the receiving
+`Profile::NAME`, personalized with `ragu-profile-v1` (zero-padded to BLAKE2b's
+16-byte personalization field). The name must be stable and unique as required
+by `Profile`. This checks the profile independently of the application ID,
+even when profiles have the same layout. The tag does not authenticate the
+profile's implementation or replace the complete setup manifest.
+
+Envelope v1 (92 bytes, without the profile tag) is not accepted by this decoder.
+There is no implicit fallback; migrate by decoding with the old format and
+re-encoding under the intended current setup after verification.
 
 The two identifiers come from the receiver's trusted deployment manifest,
 never from the received envelope. They should be collision-resistant digests
@@ -205,7 +217,7 @@ child headers, one scalar and one `u32` circuit index. The payload is therefore
 
     (P − 2) · N · s + (P + 1) · s + 2 · H · s + s + 4
 
-bytes, and the complete encoding adds the 92-byte envelope. At rank 13 with
+bytes, and the complete encoding adds the 124-byte envelope. At rank 13 with
 Pasta, the standard profile and a four-element header this is 23,596,228 bytes
 of payload. The test `encoded_length_is_a_function_of_profile_rank_and_header_size`
 pins this formula and `schema_v1_pins_protocol_and_shape` the shape.
@@ -219,7 +231,7 @@ compress well, and the fixed decoded length bounds the inflated size exactly.
 ## Compressed payload (kind 2, schema 1)
 
 `ProofFormat::compressed_encoded_len`, `encode_compressed`, and
-`decode_compressed` use the same 92-byte envelope. The payload kind is checked
+`decode_compressed` use the same 124-byte envelope. The payload kind is checked
 before decoding, and the two representations cannot be interchanged. Attach
 the separately transmitted output data with `CompressedProof::carry` and call
 `Application::verify_compressed`; decoding never establishes validity.
@@ -246,6 +258,40 @@ Points are canonical compressed nonidentity points, scalars are canonical field
 elements, and the circuit id is a little-endian u32. There are no vector counts.
 The instance uses 93 points and 27 scalars for Standard/Pasta/header-size 4;
 each side adds `6 + 2*rank` points and 21 scalars. At rank 13, the envelope and
-payload together occupy 7,328 bytes. Other profiles obtain counts from their
+payload together occupy 7,360 bytes. Other profiles obtain counts from their
 component iterators, not from this example. The receiving setup manifest must
 identify the profile and both transcript parameter sets as well as the circuits.
+
+## Structural preflight and fuzz coverage
+
+The same codec declarations generate retained-field validation for minimal and
+expanded proofs, and for compressed messages. Fixed vectors check their expected
+length before traversal; point slots reject identity. Application preflight also
+checks the circuit domain, and checks cached challenge lifts on expanded proofs.
+Expansion, compression, folding and verification invoke these checks before
+using proof components. Minimal challenges are reconstructed and their lifts
+checked during expansion, since they are not carried in the payload.
+
+Malformed proof failures become `Ok(false)` at the verification boundary.
+Decoders continue to return representation errors, and application header or
+computation errors propagate rather than being disguised as invalid proofs.
+This is structural validation, not a replacement for cryptographic verification.
+
+`qa/fuzz` provides `fuzz_minimal_wire` and `fuzz_compressed_wire`. Each exercises
+raw bytes and bounded mutations of a valid proof generated once per process.
+Successful decoding must re-encode identically and is followed by the production
+verification path (including expansion and compression for minimal proofs).
+Mutations are not assumed invalid: the oracle checks canonicality, absence of
+panics, and acceptance of the unmodified seed. No complete proof blobs are stored.
+
+Both targets are registered in the scheduled fuzz and coverage matrices. Rust CI
+runs the shared decode-to-verify smoke test and replays the small committed
+control inputs through both target binaries. From `qa/fuzz`, the smoke test is:
+
+```sh
+cargo test --release --locked --lib proof_wire::tests::decode_to_verify_smoke -- --ignored --exact
+```
+
+The PCD regression suite also decodes and expands a child, folds it into a new
+proof, then compresses and verifies that result. Golden proof bytes, RNG tapes
+and verifier fingerprints remain separate work.

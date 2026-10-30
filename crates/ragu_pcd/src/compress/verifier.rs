@@ -59,9 +59,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         // reason `verify_uncompressed` gives, and the headers must have the
         // declared size; and the messages must have the shape read below.
         if !self.native_registry.circuit_in_domain(instance.circuit_id)
-            || instance.left_header.len() != HEADER_SIZE
-            || instance.right_header.len() != HEADER_SIZE
-            || !proof.well_formed::<R>()
+            || !proof.well_formed::<R, HEADER_SIZE>()
         {
             return Ok(false);
         }

@@ -28,7 +28,7 @@ dense. For storage or transport, create `Application::proof_format(ProofContext)
 using suite and application identifiers from your trusted setup manifest.
 `ProofFormat::encode` writes the versioned envelope and proof payload;
 `ProofFormat::decode` rejects any other length before reading a byte, then
-checks versions, rank, header size and context before allocating proof data.
+checks versions, rank, header size, an explicit profile tag and context before allocating proof data.
 `Application::expand` rebuilds the full proof, deriving the challenges and
 the two derived stages itself. A receiver then compresses the expanded proof
 and accepts it on `Application::verify_compressed`; `Application::verify_minimal`

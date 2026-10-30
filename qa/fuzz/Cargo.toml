@@ -342,3 +342,19 @@ path = "fuzz_targets/fuzz_registry.rs"
 test = false
 doc = false
 bench = false
+
+# Decode-to-production-verification byte boundary.
+[[bin]]
+name = "fuzz_minimal_wire"
+path = "fuzz_targets/fuzz_minimal_wire.rs"
+test = false
+doc = false
+bench = false
+
+# Decode-to-production-verification byte boundary.
+[[bin]]
+name = "fuzz_compressed_wire"
+path = "fuzz_targets/fuzz_compressed_wire.rs"
+test = false
+doc = false
+bench = false

@@ -53,6 +53,19 @@ macro_rules! proof_schema {
             }
         }
 
+        impl<$C: ProfiledCycle, $R: Rank> Proof<$C, $R> {
+            /// Checks retained field shapes and nonidentity point slots before
+            /// indexing them. The schema also defines this check for minimal proofs.
+            pub(crate) fn well_formed<const $H: usize>(&self) -> bool {
+                true $( && <$ty as wire::Validate<$codec>>::valid(&self.$field) )*
+            }
+        }
+        impl<$C: ProfiledCycle, $R: Rank, const $H: usize> MinimalProof<$C, $R, $H> {
+            pub(crate) fn well_formed(&self) -> bool {
+                true $( && <$ty as wire::Validate<$codec>>::valid(&self.$field) )*
+            }
+        }
+
         impl<$C: ProfiledCycle, $R: Rank, const $H: usize> Encode for MinimalProof<$C, $R, $H> {
             fn encode(&self, output: &mut Vec<u8>) {
                 $( <$ty as Encode<$codec>>::encode(&self.$field, output); )*

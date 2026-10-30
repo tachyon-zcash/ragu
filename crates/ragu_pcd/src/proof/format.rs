@@ -9,12 +9,12 @@ use udon::field::Field;
 use super::MinimalProof;
 use crate::{
     Application, SelectableBackend,
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
     wire::{Decode, Encode, Error, Reader, Scalar},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
-const ENVELOPE_VERSION: u16 = 1;
+const ENVELOPE_VERSION: u16 = 2;
 /// The payload kind of a minimal proof. The envelope carries one kind per
 /// proof representation, each with its own schema.
 const MINIMAL_PAYLOAD: u16 = 1;
@@ -23,7 +23,7 @@ const MINIMAL_SCHEMA_VERSION: u16 = 1;
 const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 const PROTOCOL_VERSION: u16 = 1;
-const ENVELOPE_SIZE: usize = 92;
+const ENVELOPE_SIZE: usize = 124;
 
 /// Trusted identifiers for the cryptographic suite and complete application setup.
 ///
@@ -74,6 +74,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEADER_SIZE> {
+    /// Stable profile tag derived from the receiving profile's canonical name.
+    ///
+    /// BLAKE2b-256 hashes the UTF-8 bytes of [`Profile::NAME`] with
+    /// personalization `ragu-profile-v1`. Names must be stable and unique as
+    /// required by `Profile`; this tag does not replace the complete setup ID.
+    pub fn profile_tag(&self) -> [u8; 32] {
+        let hash = blake2b_simd::Params::new()
+            .hash_length(32)
+            .personal(b"ragu-profile-v1")
+            .hash(C::Profile::NAME.as_bytes());
+        hash.as_bytes().try_into().expect("32-byte profile tag")
+    }
+
     fn envelope(&self, payload: u16) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(ENVELOPE_SIZE);
         bytes.extend_from_slice(MAGIC);
@@ -88,6 +101,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         PROTOCOL_VERSION.encode(&mut bytes);
         R::RANK.encode(&mut bytes);
         (HEADER_SIZE as u64).encode(&mut bytes);
+        bytes.extend_from_slice(&self.profile_tag());
         bytes.extend_from_slice(&self.context.suite);
         bytes.extend_from_slice(&self.context.application);
         bytes
@@ -114,10 +128,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         &self,
         proof: &crate::CompressedProof<C>,
     ) -> Result<Vec<u8>, Error<'static>> {
-        if !proof.well_formed::<R>()
-            || proof.instance.left_header.len() != HEADER_SIZE
-            || proof.instance.right_header.len() != HEADER_SIZE
-        {
+        if !proof.well_formed::<R, HEADER_SIZE>() {
             return Err(Error::Invalid {
                 offset: 0,
                 bytes: &[],
@@ -195,8 +206,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
             (14, 16, "unsupported proof protocol version"),
             (16, 20, "proof rank mismatch"),
             (20, 28, "proof header size mismatch"),
-            (28, 60, "proof suite mismatch"),
-            (60, 92, "proof application mismatch"),
+            (28, 60, "proof profile mismatch"),
+            (60, 92, "proof suite mismatch"),
+            (92, 124, "proof application mismatch"),
         ] {
             if envelope[start..end] != known[start..end] {
                 return Err(Error::Invalid {
@@ -266,7 +278,7 @@ mod tests {
         // Every polynomial of the shape but the two derived stages, with
         // `2^rank` coefficients each; a commitment per polynomial plus the
         // nested challenges partial; two headers; one scalar; one circuit
-        // index. The envelope adds 92 bytes.
+        // index. The envelope adds 124 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
             let polynomials = Shape::of::<Standard>().polynomials();
             (polynomials - 2) * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 32 + 4
@@ -286,13 +298,74 @@ mod tests {
             },
             marker: PhantomData,
         };
-        assert_eq!(format.encoded_len(), 92 + payload::<ProductionRank, 4>());
+        assert_eq!(format.encoded_len(), 124 + payload::<ProductionRank, 4>());
         // 93 instance points; 27 instance scalars; per side 6+2R points,
         // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
             format.compressed_encoded_len(),
-            92 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
+            124 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
         );
+    }
+
+    #[test]
+    fn profile_tag_rejects_same_shape_with_identical_context() {
+        use crate::profile::{Aggregator, Profiled};
+        let context = ProofContext {
+            suite: [1; 32],
+            application: [2; 32],
+        };
+        let standard = ProofFormat::<Pasta, TestRank, 4> {
+            context,
+            marker: PhantomData,
+        };
+        let aggregator = ProofFormat::<Profiled<Pasta, Aggregator>, TestRank, 4> {
+            context,
+            marker: PhantomData,
+        };
+        assert_eq!(
+            standard.profile_tag(),
+            [
+                0x82, 0xcf, 0xab, 0x66, 0x41, 0x72, 0x3d, 0x59, 0x14, 0x59, 0x7a, 0xbc, 0x3f, 0x2f,
+                0xea, 0xcd, 0x8c, 0xe0, 0x62, 0x57, 0x46, 0x73, 0xab, 0x7e, 0xc8, 0x7f, 0xab, 0x3a,
+                0x24, 0x2f, 0xfd, 0x12
+            ]
+        );
+        assert_ne!(standard.profile_tag(), aggregator.profile_tag());
+        for (kind, length, other_length) in [
+            (
+                MINIMAL_PAYLOAD,
+                standard.encoded_len(),
+                aggregator.encoded_len(),
+            ),
+            (
+                COMPRESSED_PAYLOAD,
+                standard.compressed_encoded_len(),
+                aggregator.compressed_encoded_len(),
+            ),
+        ] {
+            assert_eq!(length, other_length, "test requires equal profile shapes");
+            let mut bytes = standard.envelope(kind);
+            bytes.resize(length, 0);
+            assert!(matches!(
+                aggregator.open(&bytes, kind, other_length),
+                Err(Error::Invalid {
+                    offset: 28,
+                    reason: "proof profile mismatch",
+                    ..
+                })
+            ));
+            // A v1 envelope cannot be reinterpreted as the new layout, even
+            // when padded to the receiving type's expected length.
+            bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+            assert!(matches!(
+                standard.open(&bytes, kind, length),
+                Err(Error::Invalid {
+                    offset: 8,
+                    reason: "unsupported proof envelope version",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

@@ -12,7 +12,9 @@ use super::{
 use crate::ipa::IpaProof;
 use crate::{
     profile::{Profile, ProfiledCycle},
-    wire::{Decode, DefaultEncoding, Encode, Error, FixedSequence, Point, Reader, Scalar},
+    wire::{
+        Decode, DefaultEncoding, Encode, Error, FixedSequence, Point, Reader, Scalar, Validate,
+    },
 };
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -48,6 +50,9 @@ impl<const H: usize> Len for Headers<H> {
 
 macro_rules! codec {
     ([$($generics:tt)*] $ty:ty, $codec:ty, $ctor:ident { $($field:ident: $ft:ty => $enc:ty),* $(,)? }) => {
+        impl<$($generics)*> Validate<$codec> for $ty {
+            fn valid(&self) -> bool { true $( && <$ft as Validate<$enc>>::valid(&self.$field) )* }
+        }
         impl<$($generics)*> Encode<$codec> for $ty {
             fn encode(&self, out: &mut Vec<u8>) { $( <$ft as Encode<$enc>>::encode(&self.$field, out); )* }
         }
@@ -72,6 +77,11 @@ codec!([P: Affine] Batch<P>, DefaultEncoding, Batch {
     evaluations: Vec<P::Scalar> => FixedSequence<Scalar, ConstLen<{Derived::ALL.len() + 2 + OPENED}>>,
 });
 struct RoundPair;
+impl<P: Affine> Validate<RoundPair> for (P, P) {
+    fn valid(&self) -> bool {
+        <P as Validate<Point>>::valid(&self.0) && <P as Validate<Point>>::valid(&self.1)
+    }
+}
 impl<P: Affine> Encode<RoundPair> for (P, P) {
     fn encode(&self, out: &mut Vec<u8>) {
         <P as Encode<Point>>::encode(&self.0, out);

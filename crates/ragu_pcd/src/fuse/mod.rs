@@ -30,7 +30,7 @@ pub(crate) mod patcher;
 
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{EndoscalarChallenge, GadgetExt, Point, vec::CollectFixed};
 use rand::CryptoRng;
 use udon::field::Field;
@@ -68,8 +68,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if either child proof does not have
-    /// this application's profile's shape, which the verifier rejects too,
+    /// Returns [`ragu_core::Error::InvalidWitness`] if either child proof fails
+    /// structural preflight (shape, points, circuit domain or challenge lifts),
     /// and propagates the step's and the prover's errors otherwise.
     pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
@@ -79,15 +79,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        // The children's polynomials are read by this profile's layout
-        // below; a child of another shape is refused, as the verifier
-        // refuses it, rather than read past its ends.
-        if !left.proof().well_formed::<HEADER_SIZE>() || !right.proof().well_formed::<HEADER_SIZE>()
-        {
-            return Err(Error::InvalidWitness(
-                "a child proof does not have this profile's shape".into(),
-            ));
-        }
+        // Check both children before reconstructing their stages or consuming RNG.
+        self.preflight_proof(left.proof())?;
+        self.preflight_proof(right.proof())?;
 
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,

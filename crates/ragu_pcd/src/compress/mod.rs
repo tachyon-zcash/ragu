@@ -49,11 +49,7 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{Cycle, Result};
 use udon::curve::Affine;
 
-use self::{
-    batch::Batch,
-    instance::Instance,
-    revdot::{Reduction, fold::Derived, native_components, nested_components},
-};
+use self::{batch::Batch, instance::Instance, revdot::Reduction};
 use crate::{
     SelectableBackend,
     header::Header,
@@ -99,19 +95,8 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// Whether the messages have the shape the verifier reads: one
     /// commitment per component, one opening per derived polynomial, one
     /// value per batched polynomial and one IPA round per bit of the rank.
-    pub(crate) fn well_formed<R: Rank>(&self) -> bool {
-        fn side<P: Affine, R: Rank>(messages: &Messages<P>) -> bool {
-            let derived = Derived::ALL.len();
-            // The batch covers the derived polynomials, the reduction's p
-            // and q, and the four the instance opens.
-            messages.reduction.openings.len() == derived
-                && messages.batch.evaluations.len() == derived + 2 + instance::OPENED
-                && messages.opening.rounds.len() == R::RANK as usize
-        }
-        self.instance.native.len() == native_components::<C::Profile>().count()
-            && self.instance.nested.len() == nested_components::<C::Profile>().count()
-            && side::<_, R>(&self.native)
-            && side::<_, R>(&self.nested)
+    pub(crate) fn well_formed<R: Rank, const H: usize>(&self) -> bool {
+        <Self as crate::wire::Validate<codec::Compressed<R, H>>>::valid(self)
     }
 }
 

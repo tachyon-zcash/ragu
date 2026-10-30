@@ -29,14 +29,14 @@ fn compressed_transport_roundtrip_and_rejection() {
     assert!(format.decode(&bytes).is_err());
     let minimal = format.encode(&proof.proof().minimize::<4>()).unwrap();
     assert!(format.decode_compressed(&minimal).is_err());
-    for n in [0, 1, 91, bytes.len() - 1] {
+    for n in [0, 1, 123, bytes.len() - 1] {
         assert!(format.decode_compressed(&bytes[..n]).is_err());
     }
     let mut bad = bytes.clone();
     bad.push(0);
     assert!(format.decode_compressed(&bad).is_err());
     // Each envelope component is independently checked at the correct length.
-    for offset in [0, 8, 10, 12, 14, 16, 20, 28, 60] {
+    for offset in [0, 8, 10, 12, 14, 16, 20, 28, 60, 92] {
         let mut bad = bytes.clone();
         bad[offset] ^= 1;
         assert!(
@@ -45,14 +45,14 @@ fn compressed_transport_roundtrip_and_rejection() {
         );
     }
     // First native point: circuit id and the two fixed four-element headers precede it.
-    let point = 92 + 4 + 2 * 4 * 32;
+    let point = 124 + 4 + 2 * 4 * 32;
     for value in [0, 0xff] {
         let mut bad = bytes.clone();
         bad[point..point + 32].fill(value);
         assert!(format.decode_compressed(&bad).is_err());
     }
     let mut bad = bytes.clone();
-    bad[96..128].fill(0xff);
+    bad[128..160].fill(0xff);
     assert!(
         format.decode_compressed(&bad).is_err(),
         "noncanonical header scalar"

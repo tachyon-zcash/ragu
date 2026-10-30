@@ -34,7 +34,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// None of these is read from the input, so an expanded proof carries
     /// only values this application would derive itself.
     ///
-    /// Expansion does not validate the provided fields or their commitments.
+    /// Expansion checks field shapes, nonidentity points and the circuit domain,
+    /// but does not validate the provided polynomial commitments.
     /// [Compress](Self::compress) the expanded proof and accept it on
     /// [`verify_compressed`](Self::verify_compressed) before using it in
     /// another proof. The uncompressed `verify_minimal`, under `test-utils`,
@@ -47,6 +48,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// with negligible probability. A receiver of untrusted input treats
     /// either as a rejection, as `verify_minimal` does.
     pub fn expand(&self, proof: MinimalProof<C, R, HEADER_SIZE>) -> Result<Proof<C, R>> {
+        self.preflight_minimal(&proof)?;
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
         macro_rules! absorb {

@@ -132,9 +132,9 @@ fn application_envelope_rejects_mismatches_before_payload_decoding() {
     assert_eq!(&bytes[..8], b"RAGUPCD\0");
     assert_eq!(
         &bytes[8..28],
-        &[1, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
+        &[2, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
     );
-    assert_eq!(&bytes[92..], &payload[1..]);
+    assert_eq!(&bytes[124..], &payload[1..]);
     let decoded = format.decode(&bytes).unwrap();
     assert_eq!(decoded.to_bytes(), payload);
     assert!(
@@ -150,8 +150,9 @@ fn application_envelope_rejects_mismatches_before_payload_decoding() {
         (14, "unsupported proof protocol version"),
         (16, "proof rank mismatch"),
         (20, "proof header size mismatch"),
-        (28, "proof suite mismatch"),
-        (60, "proof application mismatch"),
+        (28, "proof profile mismatch"),
+        (60, "proof suite mismatch"),
+        (92, "proof application mismatch"),
     ] {
         let mut invalid = bytes.clone();
         invalid[offset] = invalid[offset].wrapping_add(1);
@@ -160,7 +161,7 @@ fn application_envelope_rejects_mismatches_before_payload_decoding() {
     }
     // Any other length is rejected before the envelope is read, so a short
     // input with a bad magic reports its length, not the magic.
-    for end in [0, 8, 91, 92, bytes.len() - 1] {
+    for end in [0, 8, 123, 124, bytes.len() - 1] {
         let mut short = bytes[..end].to_vec();
         if end > 0 {
             short[0] = 0;

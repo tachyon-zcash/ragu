@@ -121,40 +121,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             };
         }
 
-        if !pcd.proof().well_formed::<HEADER_SIZE>() {
-            return Ok(false);
-        }
+        let lifts = proof_check!(self.preflight_proof(pcd.proof()));
 
         // Sample verification challenges w, y, and z.
         let w = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let y = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let z = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
-
-        // The proof's circuit_id selects which wiring polynomial the verifier
-        // checks against, and every domain point carries one, so an in-domain id
-        // is always well defined. It need not name a circuit: the domain also
-        // holds registered bonding polynomials and, at unassigned points, the
-        // zero polynomial, which is itself a bonding polynomial. Letting the
-        // prover choose freely among them is safe because this check expects a
-        // circuit and so fixes k_0 = 1, which no bonding polynomial (s(X, 0) =
-        // 0) can satisfy. Rejecting out-of-domain ids keeps the selection inside
-        // that argument, rather than an evaluation of the registry interpolation
-        // at an arbitrary point.
-        // (Internal circuit IDs are constants and don't need this check.)
-        if !self
-            .native_registry
-            .circuit_in_domain(pcd.proof().circuit_id())
-        {
-            return Ok(false);
-        }
-
-        // Every nested challenge is the lift of a native one, which exists
-        // only for challenges in the endoscalar range. An honest transcript
-        // output lies outside it with negligible probability; a proof
-        // carrying one is malformed rather than an internal error.
-        let Ok(lifts) = pcd.proof().challenges().lifts::<C>() else {
-            return Ok(false);
-        };
 
         // Compute unified k(y), unified_bridge k(y), and application k(y).
         // The raw claim's target stays `None`: see `SingleProofSource::rx`.

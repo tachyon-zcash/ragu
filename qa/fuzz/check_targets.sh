@@ -7,14 +7,15 @@
 # `Cargo.toml` and forgotten in the cron is simply never fuzzed, silently and
 # for as long as nobody counts.
 #
-# Seeds are deliberately not checked. This substrate's decoder is total —
+# General substrate seeds are deliberately not checked. Its decoder is total —
 # every byte slice is a valid program — so libFuzzer bootstraps any target
 # from an empty corpus, and requiring committed seeds would mean 200 blobs in
 # git that silently change meaning whenever a target's `Input` gains a field.
 # The empty-coverage failure this census was written alongside is handled
 # where it belongs, in `fuzz-coverage.yml`: a target that has produced a
 # corpus before and has none now fails; one that has never been fuzzed
-# reports that it has no data yet.
+# reports that it has no data yet. The two proof-wire targets additionally
+# require their three tiny committed control inputs (checked below).
 #
 # Usage:
 #   ./check_targets.sh          # census; non-zero exit on any mismatch
@@ -84,6 +85,16 @@ compare() {
 compare "fuzz.sh's TARGETS" "${script[@]}"
 compare "fuzz-cron.yml's matrix" "${cron[@]}"
 compare "fuzz-coverage.yml's matrix" "${coverage[@]}"
+
+# These byte-boundary targets need tiny control seeds to exercise successful
+# decoding immediately; they generate the actual proof bytes at runtime.
+for target in fuzz_minimal_wire fuzz_compressed_wire; do
+  for seed in raw valid scalar; do
+    if [ ! -s "regressions/$target/$seed" ]; then
+      note "$target is missing its $seed decode-to-verify regression seed"
+    fi
+  done
+done
 
 if [ "$fail" -eq 0 ]; then
   echo "=== target census OK: ${#manifest[@]} targets, all scheduled ==="

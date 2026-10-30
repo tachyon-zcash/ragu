@@ -93,6 +93,8 @@ TARGETS=(
   fuzz_poseidon_differential
   fuzz_verify_reject
   fuzz_verify_reject_full
+  fuzz_minimal_wire
+  fuzz_compressed_wire
   fuzz_pcd_lifecycle
   fuzz_witness_cheat
   fuzz_driver_metamorphic
@@ -306,6 +308,9 @@ if [[ "${1:-}" == "coverage" ]]; then
     if has_input_files "corpus/$target"; then
       dirs+=("corpus/$target")
     fi
+    if has_input_files "regressions/$target"; then
+      dirs+=("regressions/$target")
+    fi
     if has_input_files "seeds/$target"; then
       dirs+=("seeds/$target")
     fi
@@ -363,6 +368,9 @@ run_target() {
   # local, read-only seed set merged in at startup so cold starts
   # never begin from an empty corpus.
   local dirs=("corpus/$target")
+  if [[ -d "regressions/$target" ]]; then
+    dirs+=("regressions/$target")
+  fi
   if [[ -d "seeds/$target" ]]; then
     dirs+=("seeds/$target")
   fi

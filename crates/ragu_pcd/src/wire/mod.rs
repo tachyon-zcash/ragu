@@ -57,6 +57,45 @@ pub trait Encode<C = DefaultEncoding> {
     }
 }
 
+/// Checks the in-memory invariants enforced by a codec, before encoding or
+/// traversing untrusted proof fields. This does not establish proof validity.
+pub(crate) trait Validate<C = DefaultEncoding> {
+    fn valid(&self) -> bool;
+}
+
+impl<F: Field> Validate<Scalar> for F {
+    fn valid(&self) -> bool {
+        true
+    }
+}
+impl<G: Affine> Validate<Point> for G {
+    fn valid(&self) -> bool {
+        !self.is_identity()
+    }
+}
+impl<T: Validate<C>, C, L: Len> Validate<FixedSequence<C, L>> for Vec<T> {
+    fn valid(&self) -> bool {
+        self.len() == L::len() && self.iter().all(<T as Validate<C>>::valid)
+    }
+}
+impl<T: Validate> Validate for Arc<T> {
+    fn valid(&self) -> bool {
+        T::valid(self)
+    }
+}
+impl<F: Field, R: ragu_circuits::polynomials::Rank> Validate
+    for ragu_circuits::polynomials::sparse::Polynomial<F, R>
+{
+    fn valid(&self) -> bool {
+        true
+    }
+}
+impl Validate for ragu_circuits::registry::CircuitIndex {
+    fn valid(&self) -> bool {
+        true
+    }
+}
+
 /// Decodes a value using codec `C`.
 pub trait Decode<C = DefaultEncoding>: Sized {
     /// The exact number of payload bytes, excluding the version byte.
