@@ -2,7 +2,7 @@
 //!
 //! This is the only step declaring [`Dummy`] inputs, and so the only circuit
 //! that can take the base case: its fuse skips the child revdot claim (see
-//! [`outer_collapse`]). [`finalize`] runs it once over two synthesized
+//! [`collapse`]). [`finalize`] runs it once over two synthesized
 //! [`dummy_pcd`] proofs to produce the bootstrap proof, which [`seed`] then
 //! consumes as an ordinary, fully verified child of every seed step.
 //!
@@ -17,7 +17,7 @@
 //! [`dummy_pcd`]: crate::Application::dummy_pcd
 //! [`finalize`]: crate::ApplicationBuilder::finalize
 //! [`seed`]: crate::Application::seed
-//! [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
+//! [`collapse`]: crate::internal::native::circuits::collapse
 
 use ragu_core::{
     Cycle, Result,

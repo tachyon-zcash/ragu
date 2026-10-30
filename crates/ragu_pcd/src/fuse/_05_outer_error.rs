@@ -15,17 +15,19 @@ use ragu_circuits::{
     staging::{Stage as StageTrait, StageExt},
 };
 use ragu_core::{
-    Result,
-    drivers::{Driver, emulator::Emulator},
-    maybe::Maybe,
+    Cycle, Result,
+    drivers::{
+        Driver,
+        emulator::{Emulator, Wireless},
+    },
+    maybe::{Always, Maybe},
 };
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::{
-    NestedFuseEmulator,
-    claims::{FoldKey, NativeFuseBuilder, NestedFuseBuilder, NestedFuseProofSource, TrackedPoly},
+use super::claims::{
+    FoldKey, NativeFuseBuilder, NestedFuseBuilder, NestedFuseProofSource, TrackedPoly,
 };
 use crate::{
     Application,
@@ -41,6 +43,9 @@ use crate::{
 
 type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
 type NestedNumGroups<P> = <nested::RevdotParameters<P> as Parameters>::NumGroups;
+
+/// The wireless emulator the fuse step's scalar-field computations run in.
+pub(super) type NestedFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::ScalarField>>;
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>

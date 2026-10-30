@@ -30,7 +30,7 @@
 //! walks against what the children exported through their unified
 //! instances: their bridge commitments, completed challenge bindings and
 //! persistent polynomial commitments; and what lets
-//! [`inner_collapse`](super::super::circuits::inner_collapse) take the
+//! [`collapse`](super::super::circuits::collapse) take the
 //! children's nested extension stage commitments, which it holds the
 //! children's binding circuits to through their claims' $k(y)$ (see
 //! [`Binding`](crate::profile::Binding)). [`WalkStage`], committed after
@@ -55,7 +55,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Endoscalar, Point,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, HoistedEndoscalar, Point, Uendo,
     consistent::Consistent,
     vec::{ConstLen, FixedVec, Len},
 };
@@ -275,14 +275,14 @@ pub struct FWitness<C: Affine> {
 /// step.
 #[derive(Clone)]
 pub struct WalkWitness<C: Affine, P: Profile> {
-    pub endoscalar: u128,
+    pub endoscalar: Uendo,
     pub interstitials: FixedVec<C, NumSteps<P>>,
 }
 
 impl<C: Affine, P: Profile> WalkWitness<C, P> {
     /// The walk's outputs under `endoscalar`, from a simulated walk.
     pub fn new(
-        endoscalar: u128,
+        endoscalar: Uendo,
         walk: PointsWitness<C, NumPoints<P>, super::super::Endoscalings<P>>,
     ) -> Self {
         Self {
@@ -517,7 +517,7 @@ pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 #[derive(Gadget)]
 pub struct Walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
-    pub endoscalar: Endoscalar<'dr, D>,
+    pub endoscalar: HoistedEndoscalar<'dr, D>,
     #[ragu(gadget)]
     pub interstitials: FixedVec<Point<'dr, D, C>, NumSteps<P>>,
 }
@@ -701,8 +701,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
     type OutputKind = Kind![C::Base; Walk<'_, _, C, P>];
 
     fn values() -> usize {
-        // The endoscalar's bits, then (x, y) of one interstitial per step.
-        u128::BITS as usize + 2 * NumSteps::<P>::len()
+        // The endoscalar's bits and hoisted products, then (x, y) of one
+        // interstitial per step.
+        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS + 2 * NumSteps::<P>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -714,7 +715,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
         Self: 'dr,
     {
         Ok(Walk {
-            endoscalar: Endoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?,
+            endoscalar: HoistedEndoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?,
             interstitials: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
             })?,

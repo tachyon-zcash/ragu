@@ -34,9 +34,19 @@ this to chain witness values through composed completeness proofs. -/
 def ProverSpec (input : Bool) (out : F p) (_hint : ProverHint (F p)) :=
   out = if input then 1 else 0
 
+/-- The output expression exported to parent layout proofs: the gate's first
+wire, the boolean `main` returns. Keeping this separate from `main` lets
+callers name the wire without unfolding the gate. -/
+@[circuit_norm]
+def output (offset : ℕ) : Expression (F p) :=
+  varFromOffset field offset
+
 instance elaborated
     : ElaboratedCircuit (F p) (UnconstrainedNative Bool) field main where
   localLength _ := 3
+  output _ offset := output offset
+  output_eq _ offset := by
+    simp [main, output, circuit_norm, Core.mul]
 
 theorem soundness
     : GeneralFormalCircuit.WithHint.Soundness (F p) (Input := (UnconstrainedNative Bool)) (Output := field) main Assumptions Spec := by

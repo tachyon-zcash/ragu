@@ -9,13 +9,33 @@
 //! endoscaling walk reads them from, whose commitment the `s_prime` bridge
 //! carries, so they are fixed before $y$ is squeezed.
 
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
-use ragu_core::Result;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::RegistryAt,
+    staging::StageExt,
+};
+use ragu_core::{Cycle, Result};
 use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
-use super::{NativeSPrime, NestedSPrime};
 use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
+
+/// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
+pub(super) struct NativeSPrime<C: Cycle, R: Rank> {
+    pub(super) registry_wx0_poly: sparse::Polynomial<C::CircuitField, R>,
+    pub(super) registry_wx0_commitment: C::HostCurve,
+    pub(super) registry_wx1_poly: sparse::Polynomial<C::CircuitField, R>,
+    pub(super) registry_wx1_commitment: C::HostCurve,
+}
+
+/// Ephemeral nested-field data for the $m_n(w_n, x_{i,n}, Y)$ restrictions,
+/// used only during the fuse step.
+pub(super) struct NestedSPrime<C: Cycle, R: Rank> {
+    pub(super) registry_wx0_poly: sparse::Polynomial<C::ScalarField, R>,
+    pub(super) registry_wx0_commitment: C::NestedCurve,
+    pub(super) registry_wx1_poly: sparse::Polynomial<C::ScalarField, R>,
+    pub(super) registry_wx1_commitment: C::NestedCurve,
+}
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>

@@ -1,7 +1,10 @@
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use proptest::{prelude::*, test_runner::TestCaseResult};
+use proptest::{
+    prelude::*,
+    test_runner::{FileFailurePersistence, TestCaseResult},
+};
 use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
@@ -424,7 +427,13 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
 /// Two cases by default: each case builds three applications and runs the
 /// protocol end to end. `PROPTEST_CASES` raises it (CI sets a floor).
 fn config() -> ProptestConfig {
-    let mut config = ProptestConfig::with_cases(2);
+    // Keep seeds beside this source despite its #[path] mount under src/proof.
+    let mut config = ProptestConfig {
+        cases: 2,
+        ..ProptestConfig::with_failure_persistence(FileFailurePersistence::WithSource(
+            "proptest-regressions",
+        ))
+    };
     if let Some(cases) = std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -1317,8 +1326,7 @@ mod proof_equivalence {
                 native_p_poly: _,
                 native_hashes_1_rx: _,
                 native_hashes_2_rx: _,
-                native_inner_collapse_rx: _,
-                native_outer_collapse_rx: _,
+                native_collapse_rx: _,
                 native_compute_v_rx: _,
                 native_bind_challenges_rxs: _,
                 native_bind_beta_rx: _,
@@ -1351,7 +1359,6 @@ mod proof_equivalence {
                 nested_p_poly: _,
                 nested_challenges_rx: _,
                 nested_challenges_partial: _,
-                nested_export_rx: _,
                 nested_collapse_rx: _,
                 nested_compute_v_rx: _,
                 nested_endoscaling_step_commitments: _,
@@ -1364,7 +1371,6 @@ mod proof_equivalence {
                 nested_registry_xy_commitment: _,
                 nested_p_commitment: _,
                 nested_challenges_commitment: _,
-                nested_export_commitment: _,
                 nested_collapse_commitment: _,
                 nested_compute_v_commitment: _,
                 w: _,
@@ -1388,8 +1394,7 @@ mod proof_equivalence {
                 native_p_commitment: _,
                 native_hashes_1_commitment: _,
                 native_hashes_2_commitment: _,
-                native_inner_collapse_commitment: _,
-                native_outer_collapse_commitment: _,
+                native_collapse_commitment: _,
                 native_compute_v_commitment: _,
                 native_bind_challenges_commitments: _,
                 native_bind_beta_commitment: _,
@@ -1547,7 +1552,6 @@ mod proof_equivalence {
                 || self.nested_p_commitment != other.nested_p_commitment
                 || self.nested_challenges_commitment != other.nested_challenges_commitment
                 || self.nested_challenges_partial != other.nested_challenges_partial
-                || self.nested_export_commitment != other.nested_export_commitment
                 || self.nested_collapse_commitment != other.nested_collapse_commitment
                 || self.nested_compute_v_commitment != other.nested_compute_v_commitment
             {

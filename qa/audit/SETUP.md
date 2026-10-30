@@ -34,14 +34,18 @@ attribution, and disagreements. Comments attach to exact cited head-side lines
 in the reviewed diff; there is no suggestion-count cutoff. GitHub accepts
 comments only on lines in a diff hunk, so a finding whose cited lines all fall
 outside the hunks of a changed file attaches to that file's nearest diff line
-and links the cited line. A finding without an inline anchor remains in the
-status comment, with its source link. The diff and comments use the invocation's
+and links the cited line. A finding citing only files outside the diff attaches
+to the first diff line of the changed file sharing the longest directory prefix
+with a cited file, and links the cited line. Only a diff without commentable
+lines leaves findings in the status comment. The diff and comments use the invocation's
 pinned base and head commits. New pushes, updates to main, or closing the PR
 do not invalidate that snapshot or change how its findings are published.
-One App-owned status comment shows **For humans** counts and links to the
-inline reviews. Each invocation posts its status comment below the command,
-where it appears without a page reload, and deletes the previous one; later
-states of that invocation edit its own comment. Reviewed revisions, model
+Each invocation keeps an App-owned status comment with **For humans** counts
+and links to its inline reviews. It posts the comment below the command, where
+it appears without a page reload; later states edit only that invocation's
+comment.
+Earlier summaries, report links, and inline threads remain available. Identical
+reruns reuse existing inline reviews. Reviewed revisions, model
 settings, and extra notes are collapsed under Run details.
 Under **For agents**, the four original Markdown reviewer reports remain
 collapsed below the summary, with full artifact links when the comment budget requires truncation.
@@ -234,8 +238,8 @@ the configured model's resistance to misleading text. Review coverage and
 findings remain model-reported and need human assessment.
 
 A new command can cancel an older review on that PR; stale results cannot
-pass the gate. The publisher terminates the old invocation's check and updates
-its summary only if a newer invocation has not replaced it. Failed or stale
+pass the gate. The publisher terminates the old invocation's check and edits
+only that invocation's own summary, leaving newer summaries untouched. Failed or stale
 reviews still show verified summaries and findings from completed passes,
 clearly tied to the reviewed revisions. Brief App writes are serialized across
 PRs; model reviews remain concurrent. GitHub labels jobs that use an environment as deployments. Regression

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 347890e339a5411aba40ba05da42dc99f016ecf387aa204be50e3bbf2eb9b0f6 # shrinks to inputs = Inputs { proof_seed: 31, verifier_seed: 8673665847939954327, left: 0x210bc490b6ec660f6f449d45a51710385afe295f51274142a5edac6d7af045c4, right: 0x210bc490b6ec660f6f449d45a51710385afe295f51274142a5edac6d7af045c6, salt: 0x0329b1a6b89d189ec3e2d60fcd41baa1af505d4984bc65e254231ff26175a0a3, left_depth: 1, right_depth: 0 }, bit = 73, delta = 0x172bb28eff126756add02455627ed2ea22ea176b8e0a967bce2ee0439465f099, reblind_first = false

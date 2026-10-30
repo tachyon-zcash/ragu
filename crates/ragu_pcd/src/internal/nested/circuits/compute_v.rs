@@ -25,13 +25,13 @@
 //! - Takes $\beta_n$ from the challenge stage: the lift of the endoscalar
 //!   the parent binds through `bind_beta`, so no extraction is needed here.
 //!   The endoscalar stage's wires, which the endoscaling steps walk $P$
-//!   with and which the export circuit constrains to bits, are enforced to
+//!   with and which the collapse circuit constrains to bits, are enforced to
 //!   lift to the same value, which binds them through it.
 //! - Computes $v_n$ as the $\beta_n$-weighted sum of $f_n(u_n)$ and the eval
 //!   stage's nested evaluations, in [`Batch::evaluated`] order.
 //!
 //! Every challenge is read from the challenge stage; the instance's own $x$,
-//! $y$ and $u$ are those same wires by the [`export`](super::export)
+//! $y$ and $u$ are those same wires by the [`collapse`](super::collapse)
 //! circuit.
 //!
 //! [`pcs`]: crate::internal::nested::pcs

@@ -30,7 +30,7 @@ use crate::{
 /// Number of circuits using unified $k(y)$ in [`build`].
 ///
 /// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`inner_collapse`], [`outer_collapse`], [`compute_v`], the
+/// [`hashes_2`], [`collapse`], [`compute_v`], the
 /// [`NUM_BINDERS`] `bind_challenges` circuits, `bind_beta` and
 /// `bind_endoscalar`.
 ///
@@ -40,11 +40,10 @@ use crate::{
 /// [`hashes_1`]: crate::internal::native::circuits::hashes_1
 /// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
 /// [`hashes_2`]: crate::internal::native::circuits::hashes_2
-/// [`inner_collapse`]: crate::internal::native::circuits::inner_collapse
-/// [`outer_collapse`]: crate::internal::native::circuits::outer_collapse
+/// [`collapse`]: crate::internal::native::circuits::collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 6 + NUM_BINDERS;
+const NUM_UNIFIED_CIRCUITS: usize = 5 + NUM_BINDERS;
 
 /// The points stages the walk's inputs are committed in, in chain order.
 const POINTS_INPUT_STAGES: [RxIndex; 5] = [
@@ -155,7 +154,7 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 /// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
 ///
 /// This ordering must match the $k(y)$ ordering in
-/// [`inner_collapse`](crate::internal::native::circuits::inner_collapse)
+/// [`collapse`](crate::internal::native::circuits::collapse)
 /// and `compute_outer_error` in the fuse implementation.
 pub fn build<P: Profile, S, Pr>(source: &S, processor: &mut Pr) -> Result<()>
 where
@@ -197,13 +196,13 @@ where
                 }
             }
 
-            // inner_collapse: InnerCollapse + Preamble + InnerError + OuterError,
+            // collapse: Collapse + Preamble + InnerError + OuterError,
             // and PointsBinding for a profile whose native extension binds,
             // whose binding k(y) the circuit takes from that stage.
-            InnerCollapseCircuit => {
+            CollapseCircuit => {
                 let bound = P::native_extension().binding.is_some();
                 for ((((pc, pb), pre), em), en) in source
-                    .rx(Rx(InnerCollapse))
+                    .rx(Rx(Collapse))
                     .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(InnerError)))
@@ -216,17 +215,6 @@ where
                     }
                     rxs.extend([pre, em, en]);
                     processor.internal_circuit_claim(id, rxs.into_iter());
-                }
-            }
-
-            // outer_collapse: OuterCollapse + Preamble + OuterError
-            OuterCollapseCircuit => {
-                for ((fc, pre), en) in source
-                    .rx(Rx(OuterCollapse))
-                    .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(OuterError)))
-                {
-                    processor.internal_circuit_claim(id, [fc, pre, en].into_iter());
                 }
             }
 
@@ -254,15 +242,14 @@ where
                 }
             }
 
-            // bind_beta: BindBeta + PointsBinding + Preamble + OuterError
+            // bind_beta: BindBeta + PointsBinding + Preamble
             BindBetaCircuit => {
-                for (((bb, pb), pre), en) in source
+                for ((bb, pb), pre) in source
                     .rx(Rx(BindBeta))
                     .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
-                    .zip(source.rx(Rx(OuterError)))
                 {
-                    processor.internal_circuit_claim(id, [bb, pb, pre, en].into_iter());
+                    processor.internal_circuit_claim(id, [bb, pb, pre].into_iter());
                 }
             }
 
@@ -385,17 +372,14 @@ where
 
             // Final stage bonding claims
             InnerErrorFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(InnerCollapse)))?;
+                processor.bonding_claim(id, source.rx(Rx(Collapse)))?;
             }
             OuterErrorFinalStaged => {
-                processor.bonding_claim(
-                    id,
-                    source
-                        .rx(Rx(Hashes1))
-                        .chain(source.rx(Rx(Hashes2)))
-                        .chain(source.rx(Rx(OuterCollapse)))
-                        .chain(source.rx(Rx(BindBeta))),
-                )?;
+                processor
+                    .bonding_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
+            }
+            PreambleFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(BindBeta)))?;
             }
             EvalFinalStaged => {
                 processor.bonding_claim(

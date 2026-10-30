@@ -3,10 +3,11 @@
 //! and the persistent polynomial commitments to the unified instance.
 //!
 //! The endoscaling steps walk the nested batch's commitments with the bits
-//! the [`WalkStage`] holds. This circuit reads `pre_beta` from the unified
-//! instance, extracts the endoscalar from it exactly as `compute_v` does,
-//! and enforces the stage's bits equal to it, so that the walk is by the
-//! transcript's $\beta$. It loads every input stage enforced, so that every
+//! and hoisted bit products the [`WalkStage`] holds. This circuit reads
+//! `pre_beta` from the unified instance, extracts the endoscalar from it
+//! exactly as `compute_v` does, hoists its products, and enforces the stage's
+//! gadget equal to that wire by wire, so that the walk is by the transcript's
+//! $\beta$. It loads every input stage enforced, so that every
 //! point the walk consumes lies on the curve. It covers the
 //! [`nested_p_commitment`] slot, enforcing it equal to the walk's last
 //! interstitial: a parent walks the cached $P_n$ and holds that copy against
@@ -30,10 +31,12 @@ use ragu_circuits::{
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    gadgets::{Bound, Gadget as _},
     maybe::Maybe,
 };
-use ragu_primitives::{Endoscalar, EndoscalarChallenge, GadgetExt as _, allocator::Standard};
+use ragu_primitives::{
+    Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, allocator::Standard,
+};
 
 use super::super::{
     stages::points::{
@@ -117,12 +120,14 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
+        // The walk stage's contracts: its bits are the canonical extraction
+        // of `pre_beta` and its products are the products of those bits.
+        // Hoisting the extracted endoscalar derives the products, and the
+        // conservative equality transfers both to the stage's wires.
         let pre_beta = unified_output.pre_beta.read(dr, allocator)?;
         let pre_beta = EndoscalarChallenge::from_element(dr, allocator, pre_beta)?;
-        let extracted = Endoscalar::extract(pre_beta);
-        for (staged, extracted) in walk.endoscalar.bits().zip(extracted.bits()) {
-            staged.element().enforce_equal(dr, &extracted.element())?;
-        }
+        let extracted = HoistedEndoscalar::hoist(dr, Endoscalar::extract(pre_beta))?;
+        extracted.enforce_conservative_equal(dr, &walk.endoscalar)?;
 
         // The walk's last interstitial is P_n: pin it to the instance, where
         // a parent reads it.

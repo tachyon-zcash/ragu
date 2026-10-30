@@ -35,9 +35,9 @@ the semantics a constraint system actually has — a constraint `e = 0` and a
 virtual wire `e` depend on `e` only as a polynomial in the wires, which is
 exactly what a production driver flattens an `add`/`enforce_zero` linear
 combination into. It is also what makes the check total: a gadget such as
-`Endoscalar::lift` feeds its own virtual output back into itself 64 times, so
-its output *as a tree* has `2⁶⁴` nodes, while its polynomial has a few hundred
-terms.
+`Endoscalar::lift` feeds its own virtual output back into itself 47 times, and
+its output is compared as a polynomial of a few hundred terms however either
+side happened to build the tree.
 
 The encoding of a normal form is injective: every token is either fixed-width
 or length-prefixed, so the normalized trace can be unambiguously decoded from

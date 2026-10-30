@@ -169,6 +169,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend;
 
     /// The circuits and stages the profile adds on the native side.
+    ///
+    /// The challenge binders load a native extension's stages, and at the
+    /// production rank their largest variant sits fifteen gates under the
+    /// gate budget with the standard header: an extension stage costing more
+    /// needs a smaller header or a cheaper binder. The internal census tests
+    /// pin that count.
     fn native_extension() -> Extension {
         Extension::EMPTY
     }
@@ -1432,7 +1438,8 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            let circuit = nested::circuits::export::Circuit::<Base::HostCurve, R, Standard>::new();
+            let circuit =
+                nested::circuits::collapse::Circuit::<Base::HostCurve, R, Standard>::new();
             slot.register(MultiStage::new(circuit))
         }
 
@@ -2592,15 +2599,15 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 47,
-                nested_points: 109,
-                nested_steps: 27,
-                nested_rx: 41,
-                native_points: 97,
-                native_steps: 24,
+                native_rx: 45,
+                nested_points: 105,
+                nested_steps: 26,
+                nested_rx: 39,
+                native_points: 93,
+                native_steps: 23,
             }
         );
-        assert_eq!(shape.polynomials(), 96);
+        assert_eq!(shape.polynomials(), 92);
     }
 
     /// The aggregator's shape follows its pinned circuits, and grows with

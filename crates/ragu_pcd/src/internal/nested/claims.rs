@@ -134,7 +134,7 @@ where
             }
             // The instance circuits: each one's rx and every stage it
             // reserves, which is every nested stage.
-            Export | Collapse | ComputeV => {
+            Collapse | ComputeV => {
                 let own = RxIndex::INSTANCE[InternalCircuitIndex::INSTANCE
                     .iter()
                     .position(|&circuit| circuit == id)

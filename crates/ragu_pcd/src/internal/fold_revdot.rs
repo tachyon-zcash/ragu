@@ -28,11 +28,12 @@
 //! A challenge equal to a node makes $Z$ vanish and the weights select that
 //! node's claim alone, so the fold then checks one claim. A challenge uniform
 //! on $S$ hits a node with probability at most $m / |S|$. Pasta nested
-//! challenges are injective lifts of 128-bit endoscalars, so their support has
-//! size $2^{128}$ rather than the full nested field size. The dummy proof that
-//! stands in for absent predecessors uses all-one challenges, which sit on
-//! node $1$ by construction. That is harmless: a dummy is never verified on its
-//! own, and the bootstrap step that consumes it leaves its claim unconstrained.
+//! challenges are injective lifts of 143-bit endoscalars
+//! ([`ragu_primitives::ENDOSCALAR_BITS`]), so their support has size $2^{143}$.
+//! The dummy proof that stands in for absent predecessors uses all-one
+//! challenges, which sit on node $1$ by construction. That is harmless: a
+//! dummy is never verified on its own, and the bootstrap step that consumes
+//! it leaves its claim unconstrained.
 
 use alloc::{vec, vec::Vec};
 use core::{borrow::Borrow, cell::RefCell, marker::PhantomData};

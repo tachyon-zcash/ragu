@@ -305,17 +305,17 @@ class AuditTests(unittest.TestCase):
         self.assertIn("audit: running", self.api.comments[0]["body"])
         self.assertEqual(run["configuration"], BASE)
 
-    def test_reruns_post_a_new_comment_and_remove_the_old_one(self):
+    def test_reruns_post_a_new_comment_and_preserve_the_old_one(self):
         old = github.queue(self.api, 9)
-        old_id = self.api.comments[0]["id"]
+        old_comment = copy.deepcopy(self.api.comments[0])
         os.environ["GITHUB_RUN_ID"] = "40027821676"
         new = github.queue(self.api, 9)
-        self.assertEqual(len(self.api.comments), 1)
+        self.assertEqual(len(self.api.comments), 2)
         self.assertEqual(len(self.api.checks), 2)
-        # The new summary is posted below the command rather than edited into the old one.
-        self.assertNotEqual(self.api.comments[0]["id"], old_id)
-        self.assertIn(github.invocation_marker(new), self.api.comments[0]["body"])
-        self.assertIn(("/repos/" + github.REPOSITORY + f"/issues/comments/{old_id}", None, "DELETE"), self.api.mutations)
+        self.assertEqual(self.api.comments[0], old_comment)
+        self.assertNotEqual(self.api.comments[1]["id"], old_comment["id"])
+        self.assertIn(github.invocation_marker(new), self.api.comments[1]["body"])
+        self.assertFalse(any(method == "DELETE" for _, _, method in self.api.mutations))
         os.environ["GITHUB_RUN_ID"] = str(old["run_id"])
         with self.assertRaises(ValueError):
             github.guard(self.api, old)
@@ -326,31 +326,44 @@ class AuditTests(unittest.TestCase):
         old = github.queue(self.api, 9)
         os.environ["GITHUB_RUN_ID"] = "40027821676"
         new = github.queue(self.api, 9)
-        body = self.api.comments[0]["body"]
+        newest = copy.deepcopy(self.api.comments[-1])
         os.environ["GITHUB_RUN_ID"] = str(old["run_id"])
         self.reports(old)
         with self.assertRaises(github.SupersededReview):
             github.publish(self.api, old, self.out, "success")
-        self.assertEqual([comment["body"] for comment in self.api.comments], [body])
-        self.assertIn(github.invocation_marker(new), body)
+        self.assertEqual(len(self.api.comments), 2)
+        self.assertEqual(self.api.comments[-1], newest)
+        self.assertIn(github.invocation_marker(new), newest["body"])
+        self.assertIn("audit: superseded", self.api.comments[0]["body"])
 
-    def test_failed_deletion_keeps_editing_the_new_invocations_comment(self):
-        github.queue(self.api, 9)
-        call = self.api.call
-
-        def refuse_deletion(path, data=None, method=None):
-            if method == "DELETE":
-                raise HTTPError(path, 403, "Forbidden", {}, None)
-            return call(path, data, method)
-
+    def test_new_invocation_updates_only_its_own_comment(self):
+        old = github.queue(self.api, 9)
+        self.reports(old)
+        github.publish(self.api, old, self.out, "success")
+        old_comment = copy.deepcopy(self.api.comments[0])
         os.environ["GITHUB_RUN_ID"] = "40027821676"
-        with patch.object(self.api, "call", side_effect=refuse_deletion):
-            new = github.queue(self.api, 9)
+        new = github.queue(self.api, 9)
         self.assertEqual(len(self.api.comments), 2)
         self.reports(new)
         github.publish(self.api, new, self.out, "success")
-        self.assertIn("audit: running", self.api.comments[0]["body"])
+        self.assertEqual(self.api.comments[0], old_comment)
+        self.assertIn(old["url"], old_comment["body"])
         self.assertIn("audit: completed", self.api.comments[1]["body"])
+        self.assertIn(new["url"], self.api.comments[1]["body"])
+
+    def test_deleted_current_summary_can_be_restored_with_older_history_present(self):
+        github.queue(self.api, 9)
+        old_comment = copy.deepcopy(self.api.comments[0])
+        os.environ["GITHUB_RUN_ID"] = "40027821676"
+        new = github.queue(self.api, 9)
+        self.api.call(f"/repos/{github.REPOSITORY}/issues/comments/{self.api.comments[-1]['id']}", method="DELETE")
+        self.reports(new)
+        github.publish(self.api, new, self.out, "success")
+        self.assertEqual(len(self.api.comments), 2)
+        self.assertEqual(self.api.comments[0], old_comment)
+        self.assertIn(github.invocation_marker(new), self.api.comments[-1]["body"])
+        self.assertIn("audit: completed", self.api.comments[-1]["body"])
+        self.assertEqual(self.api.checks[-1]["conclusion"], "success")
 
     def duplicate_pr(self):
         self.api.targets[10] = {**copy.deepcopy(self.api.target), "number": 10}
@@ -415,14 +428,16 @@ class AuditTests(unittest.TestCase):
             self.assertIn("queue: max", jobs[name])
             self.assertIn("cancel-in-progress: false", jobs[name])
 
-    def test_next_manual_review_uses_new_base_and_updates_comment(self):
+    def test_next_manual_review_uses_new_base_and_preserves_previous_summary(self):
         run = github.queue(self.api, 9)
         self.api.checks[0].update(status="completed", conclusion="success")
+        old_comment = copy.deepcopy(self.api.comments[0])
         self.api.main_sha = "c" * 40
         os.environ["GITHUB_WORKFLOW_SHA"] = "c" * 40
         current = github.queue(self.api, 9)
-        self.assertEqual(len(self.api.comments), 1)
-        self.assertIn("audit: running", self.api.comments[0]["body"])
+        self.assertEqual(len(self.api.comments), 2)
+        self.assertEqual(self.api.comments[0], old_comment)
+        self.assertIn("audit: running", self.api.comments[-1]["body"])
         self.assertEqual(current["base"], self.api.main_sha)
         self.assertEqual(self.api.checks[-1]["status"], "in_progress")
         self.assertNotEqual(run["external_id"], current["external_id"])
@@ -510,12 +525,13 @@ class AuditTests(unittest.TestCase):
         old = github.queue(self.api, 9, HEAD, 12)
         self.reports(old)
         new = github.queue(self.api, 9)
-        body = self.api.comments[0]["body"]
+        body = self.api.comments[-1]["body"]
         check = copy.deepcopy(self.api.checks[-1])
         self.api.comment = None
         with self.assertRaises(github.CancelledReview):
             github.publish(self.api, old, self.out, "failure")
-        self.assertEqual(self.api.comments[0]["body"], body)
+        self.assertEqual(self.api.comments[-1]["body"], body)
+        self.assertIn("audit: cancelled", self.api.comments[0]["body"])
         self.assertEqual(self.api.checks[-1], check)
         self.assertEqual(self.api.checks[-1]["id"], new["check_id"])
         self.assertEqual(self.api.checks[0]["conclusion"], "cancelled")
@@ -565,11 +581,12 @@ class AuditTests(unittest.TestCase):
                     if move_head:
                         api.target["head"]["sha"] = "d" * 40
                     new = github.queue(api, 9)
-                body = api.comments[0]["body"]
+                body = api.comments[-1]["body"]
                 check = copy.deepcopy(api.checks[-1])
                 with self.assertRaises(github.SupersededReview):
                     github.publish(api, old, self.out, "success")
-                self.assertEqual(api.comments[0]["body"], body)
+                self.assertEqual(api.comments[-1]["body"], body)
+                self.assertIn("audit: superseded", api.comments[0]["body"])
                 self.assertEqual(api.checks[-1], check)
                 self.assertEqual(api.checks[0]["conclusion"], "failure")
                 self.assertEqual(api.checks[-1]["id"], new["check_id"])

@@ -105,14 +105,14 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     check_pair!(
         nested_extension_circuit_rxs,
         nested_extension_circuit_commitments,
-        honest.proof().nested_export_rx,
-        honest.proof().nested_export_commitment
+        honest.proof().nested_collapse_rx,
+        honest.proof().nested_collapse_commitment
     );
     check_pair!(
         nested_extension_stage_rxs,
         nested_extension_stage_commitments,
-        honest.proof().nested_export_rx,
-        honest.proof().nested_export_commitment
+        honest.proof().nested_collapse_rx,
+        honest.proof().nested_collapse_commitment
     );
     check_pair!(
         native_endoscaling_step_rxs,
@@ -123,8 +123,8 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     check_pair!(
         nested_endoscaling_step_rxs,
         nested_endoscaling_step_commitments,
-        honest.proof().nested_export_rx,
-        honest.proof().nested_export_commitment
+        honest.proof().nested_collapse_rx,
+        honest.proof().nested_collapse_commitment
     );
     check_pair!(
         native_bind_challenges_rxs,

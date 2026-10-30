@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import html
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -261,7 +261,10 @@ def anchor(locations, available):
     accepts comments only on lines in a diff hunk, so a finding citing a
     changed file outside its hunks moves to that file's nearest diff line and
     `cited` keeps the location its comment links. A finding citing only files
-    outside the diff has no anchor and returns None.
+    outside the diff attaches to the first diff line of the changed file
+    nearest a cited file: the longest shared directory prefix, then the
+    fewest further directories, then path order. Only a diff without
+    commentable lines leaves a finding unanchored, returning None.
     """
     for loc in locations:
         if (loc["path"], loc["line"]) in available:
@@ -270,7 +273,18 @@ def anchor(locations, available):
         lines = [line for path, line in available if path == loc["path"]]
         if lines:
             return loc["path"], min(lines, key=lambda line: (abs(line - loc["line"]), line)), loc
-    return None
+    if not available:
+        return None
+
+    def closeness(pair):
+        loc, path = pair
+        cited, changed = PurePosixPath(loc["path"]).parent.parts, PurePosixPath(path).parent.parts
+        shared = next((index for index, (a, b) in enumerate(zip(cited, changed)) if a != b), min(len(cited), len(changed)))
+        return shared, shared - len(changed)
+
+    # `max` keeps the first of equals: the earliest cited location, then path order.
+    loc, path = max(((loc, path) for loc in locations for path in sorted({path for path, _ in available})), key=closeness)
+    return path, min(line for changed, line in available if changed == path), loc
 
 
 def owns_inline(review, app):
@@ -406,10 +420,10 @@ def summary(run, state, out=None, *, inline=None):
                 lines += ["### For humans", "", counts, ""]
                 shown = inline["fallback"]
                 if shown:
-                    lines += ["These findings have no inline anchor in the reviewed diff, so they are kept here.", ""]
+                    lines += ["The reviewed diff has no commentable lines, so these findings are kept here.", ""]
             else:
                 lines += ["### For humans", ""]
-            # Beside the counts line, the few unanchored findings need no counted headings of their own.
+            # Beside the counts line, findings a diff without commentable lines leaves here need no counted headings.
             headings = inline is None
             short = findings.shortlist(bundle, shown, heading_level=4, headings=headings) if inline is None or shown else []
             if len("\n".join(short).encode()) > 54000:
@@ -448,18 +462,14 @@ def upsert(api, run, check, state, *, out=None, only_current=False, inline=None,
     """Publish this invocation's status comment.
 
     A `new` invocation posts its comment below the command, where GitHub shows
-    it without a reload, then deletes earlier invocations' comments so that
-    one remains. Later states edit only the comment carrying this invocation's
-    marker, so an older invocation never replaces or deletes a newer summary.
+    it without a reload. Earlier summaries remain available with their reports
+    and links. Later states edit only this invocation's marked comment.
     """
     listing = f"/repos/{REPOSITORY}/issues/{run['pr']}/comments"
     owned = [comment for comment in api.pages(listing) if owns_comment(comment, check["app"])]
     existing = next((comment for comment in owned if invocation_marker(run) in comment["body"].splitlines()), None)
-    if existing is None and not new:
-        if only_current:
-            return  # An older invocation must never replace a newer summary.
-        if owned:
-            raise ValueError("a newer invocation replaced this summary")
+    if existing is None and not new and only_current:
+        return  # Terminal cleanup edits only this invocation's existing summary.
     body = summary(run, state, out, inline=inline)
     path = f"/repos/{REPOSITORY}/issues/comments/{existing['id']}" if existing else listing
     try:
@@ -473,15 +483,6 @@ def upsert(api, run, check, state, *, out=None, only_current=False, inline=None,
             raise
     if not owns_comment(result, check["app"]) or result["body"] != body:
         raise ValueError("summary publication was not confirmed")
-    if new:
-        for comment in owned:
-            if comment["id"] == result["id"]:
-                continue
-            try:
-                api.call(f"/repos/{REPOSITORY}/issues/comments/{comment['id']}", method="DELETE")
-            except (OSError, ValueError):
-                # A leftover summary is harmless: later states edit only this invocation's comment.
-                print("Could not delete an earlier summary; leaving it in place", flush=True)
 
 
 def queue(api, value, expected_head=None, comment_id=None, *, read_api=None):
@@ -563,11 +564,13 @@ def guard(api, run):
     own, values = own_check(api, run)
     command_present(api, run)
     # Branch updates do not invalidate a frozen review. A newer invocation
-    # can replace its summary even when the new check belongs to another head.
+    # can supersede it even when the new check belongs to another head.
     owned = [comment for comment in api.pages(f"/repos/{REPOSITORY}/issues/{run['pr']}/comments")
              if owns_comment(comment, own["app"])]
-    if owned and invocation_marker(run) not in max(owned, key=lambda comment: comment["id"])["body"].splitlines():
-        raise SupersededReview("a newer review superseded this invocation")
+    for comment in owned:
+        marker = re.search(r"^<!-- ragu-audit-run:[0-9]+:[0-9]+:([0-9]+) -->$", comment["body"], re.MULTILINE)
+        if marker and int(marker[1]) > run["check_id"]:
+            raise SupersededReview("a newer review superseded this invocation")
     prefix = scope(run)
     if not values or not (values[0].get("external_id") or "").startswith(prefix):
         raise SupersededReview("a newer review uses a different configuration")

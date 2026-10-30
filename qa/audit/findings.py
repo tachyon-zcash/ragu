@@ -279,8 +279,8 @@ def entry(candidates, item, *, located=True, location=None):
 def inline_body(candidates, item, cited=None):
     """The summary's entry as paragraphs, anchored to the finding's line instead of linking it.
 
-    A comment anchored near its finding, because the cited line is outside the
-    diff, links the `cited` location instead.
+    A comment anchored away from its finding, because the cited line or file is
+    outside the diff, links the `cited` location instead.
     """
     return "\n\n".join(entry(candidates, item, located=cited is not None, location=cited))
 

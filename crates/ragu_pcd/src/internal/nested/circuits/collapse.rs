@@ -1,9 +1,14 @@
 //! Collapse circuit for the nested section: verifies both layers of the
 //! two-layer revdot fold of the children's nested claims.
 //!
-//! The native side spreads this over `inner_collapse` and `outer_collapse`
-//! because its stages leave no room for both layers in one circuit; the
-//! nested stage chain is small enough that one circuit does it.
+//! It also pins the nested unified instance's lifted x, y and u to the
+//! challenge stage and its exported commitments to their stage copies, and
+//! re-emits the stage contracts the endoscaling walk rests on, which the
+//! loading circuit, a bonding claim, cannot: every point of the points stage
+//! lies on the curve, and the endoscalar stage's
+//! [`HoistedEndoscalar`](ragu_primitives::HoistedEndoscalar) holds boolean
+//! bits and the products of those bits. `compute_v` ties that endoscalar's
+//! lift to the challenge stage's beta lift and computes v_n.
 //!
 //! ## Operations
 //!
@@ -27,14 +32,14 @@
 //! step; for a profile whose nested extension has a binding circuit, the
 //! $k(y_n)$ of the child's native extension stages it names, read off the
 //! same stage's copies (see [`Binding`](crate::profile::Binding)); zero
-//! for each bonding claim. Export separately equates the current
-//! instance's $y_n$ with that stage value.
+//! for each bonding claim. The current instance's $y_n$ is equated with
+//! that stage value here.
 //!
 //! ## Base case
 //!
 //! When Bootstrap consumes two dummy children, their claims are not
 //! satisfied, and the prover witnesses whatever $c_n$ its folded accumulator
-//! has, exactly as the native `outer_collapse` allows. The layer-one
+//! has, exactly as the native `collapse` allows. The layer-one
 //! equalities remain enforced; only the final $c_n$ comparison is waived.
 //! The verdict is the sign the challenge stage carries. No nested circuit
 //! constrains that wire:
@@ -63,7 +68,9 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{
+    Element, GadgetExt as _, allocator::Standard, consistent::Consistent, vec::FixedVec,
+};
 use udon::curve::EndomorphismAffine as Affine;
 
 use super::common;
@@ -80,7 +87,7 @@ use crate::{
     profile::Profile,
 };
 
-/// Collapse circuit verifying the nested fold.
+/// Circuit binding the nested instance to its stages and verifying the nested fold.
 pub struct Circuit<C: Affine, R: Rank, P: Profile> {
     _marker: PhantomData<(C, R, P)>,
 }
@@ -115,12 +122,61 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (dr, stages) = common::load_all(dr, &witness)?;
 
+        // The walk's contracts: points on the curve, and the endoscalar
+        // stage's bit wires bits with its product wires the products of those
+        // bits, each gadget re-emitted on the stage's wires.
+        stages.points.enforce_consistent(dr)?;
+        stages.endoscalar.enforce_consistent(dr)?;
+
         let allocator = &mut Standard::new();
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
+
+        // The lifted challenges a parent opens this step at.
+        let pairs = &stages.challenges.pairs;
+        unified
+            .x
+            .receive(dr, allocator)?
+            .enforce_equal(dr, &pairs[stages::challenges::X].lift)?;
+        unified
+            .y
+            .receive(dr, allocator)?
+            .enforce_equal(dr, &pairs[stages::challenges::Y].lift)?;
+        unified
+            .u
+            .receive(dr, allocator)?
+            .enforce_equal(dr, &pairs[stages::challenges::U].lift)?;
+
+        // The commitments a parent endoscales, in `unified` order.
+        let last_interstitial = stages
+            .points
+            .interstitials
+            .last()
+            .expect("every walk has at least one interstitial");
+        let held = [
+            &stages.preamble.native_preamble,
+            &stages.inner_error.native_inner_error,
+            &stages.outer_error.native_outer_error,
+            &stages.query.native_query,
+            &stages.eval.native_eval,
+            &stages.ab.a,
+            &stages.ab.b,
+            &stages.query.registry_xy,
+            last_interstitial,
+            &stages.preamble.native_points_binding,
+            &stages.preamble.native_points_children,
+            &stages.s_prime.native_points_registry_wx,
+            &stages.ab.native_points_ab,
+            &stages.f.native_points_f,
+        ];
+        let exported = unified.exported.receive(dr, allocator)?;
+        for (instance, stage) in exported.iter().zip(held) {
+            instance.enforce_equal(dr, stage)?;
+        }
+
         let lifts = &stages.challenges.pairs;
 
         // Evaluate the children's instance copies at this step's challenge
-        // stage y_n, independently of Export's equality for the public copy.
+        // stage y_n, which is also bound to the public copy above.
         let y = &lifts[challenges::Y].lift;
         let left_unified = stages.preamble.left.nested_instance().ky(dr, y)?;
         let right_unified = stages.preamble.right.nested_instance().ky(dr, y)?;

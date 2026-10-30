@@ -42,8 +42,8 @@ pub fn num_points<P: Profile>() -> usize {
 /// The remaining `stashed_*` fields are copies of values the child's nested
 /// unified instance exports, placed here so that loading can enforce them
 /// against [`PointsStage`] and so that this step can compute the child's
-/// expected export claim value $k(y_n)$ from them. The collapse circuit binds
-/// the copies to the child's export circuit: it folds the child's
+/// expected instance claim value $k(y_n)$ from them. The collapse circuit binds
+/// the copies to the child's instance circuits: it folds the child's
 /// instance-circuit claims with that expected value, outside the base case.
 #[derive(Clone)]
 pub struct ChildWitness<C: Affine, P: Profile> {
@@ -56,10 +56,8 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub hashes_1: C,
     /// Commitment from the child's second hashes circuit.
     pub hashes_2: C,
-    /// Commitment from the child's inner collapse circuit.
-    pub inner_collapse: C,
-    /// Commitment from the child's outer collapse circuit.
-    pub outer_collapse: C,
+    /// Commitment from the child's collapse circuit.
+    pub collapse: C,
     /// Commitment from the child's compute_v circuit.
     pub compute_v: C,
     /// Commitments from the child's nested challenge binding circuits.
@@ -140,8 +138,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             application: proof.native_rx_commitment(RxIndex::Application),
             hashes_1: proof.native_rx_commitment(RxIndex::Hashes1),
             hashes_2: proof.native_rx_commitment(RxIndex::Hashes2),
-            inner_collapse: proof.native_rx_commitment(RxIndex::InnerCollapse),
-            outer_collapse: proof.native_rx_commitment(RxIndex::OuterCollapse),
+            collapse: proof.native_rx_commitment(RxIndex::Collapse),
             compute_v: proof.native_rx_commitment(RxIndex::ComputeV),
             bind_challenges: core::array::from_fn(|k| {
                 proof.native_rx_commitment(RxIndex::BindChallenges(k as u32))
@@ -213,12 +210,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Point commitment from the child's second hashes circuit.
     #[ragu(gadget)]
     pub hashes_2: Point<'dr, D, C>,
-    /// Point commitment from the child's inner collapse circuit.
+    /// Point commitment from the child's collapse circuit.
     #[ragu(gadget)]
-    pub inner_collapse: Point<'dr, D, C>,
-    /// Point commitment from the child's outer collapse circuit.
-    #[ragu(gadget)]
-    pub outer_collapse: Point<'dr, D, C>,
+    pub collapse: Point<'dr, D, C>,
     /// Point commitment from the child's compute_v circuit.
     #[ragu(gadget)]
     pub compute_v: Point<'dr, D, C>,
@@ -349,8 +343,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
             Application => &self.application,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
-            InnerCollapse => &self.inner_collapse,
-            OuterCollapse => &self.outer_collapse,
+            Collapse => &self.collapse,
             ComputeV => &self.compute_v,
             BindChallenges(k) => &self.bind_challenges[k as usize],
             BindBeta => &self.bind_beta,
@@ -379,8 +372,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
             hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
-            inner_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.inner_collapse))?,
-            outer_collapse: Point::alloc(dr, witness.as_ref().map(|w| w.outer_collapse))?,
+            collapse: Point::alloc(dr, witness.as_ref().map(|w| w.collapse))?,
             compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
             bind_challenges: FixedVec::try_from_fn(|k| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.bind_challenges[k]))

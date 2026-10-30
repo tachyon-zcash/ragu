@@ -3,8 +3,8 @@
 //!
 //! Every other patcher target hunts under-constrained advice in *generated*
 //! substrate programs. This one hunts it in the circuits that actually carry
-//! ragu's recursion — the native `hashes_1`, `hashes_2`, `inner_collapse`,
-//! `outer_collapse` and `compute_v`, and the nested endoscaling steps — by
+//! ragu's recursion — the native `hashes_1`, `hashes_2`, `collapse` and
+//! `compute_v`, and the nested endoscaling steps — by
 //! capturing them from real fuses and then playing a malicious prover
 //! against the constraints they emitted.
 //!
@@ -16,7 +16,7 @@
 //! constraint graph ([`ragu_testing::patcher::capture_with_stage_values`]). It
 //! does so at four [`Point`]s of a tree, because the cheap ones are degenerate
 //! in their own ways — the bootstrap base case consumes synthesized dummies
-//! and leaves `outer_collapse`'s `c` free, while two children of equal depth
+//! and leaves `collapse`'s `c` free, while two children of equal depth
 //! make the two sides of a collapse mirror images — and no single point is
 //! representative.
 //!

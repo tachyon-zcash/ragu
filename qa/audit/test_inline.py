@@ -92,7 +92,17 @@ class InlineTests(unittest.TestCase):
         self.assertEqual(github.anchor([outside, near, exact], available), ("b.rs", 5, None))
         self.assertEqual(github.anchor([outside, near], available), ("a.rs", 20, near))
         self.assertEqual(github.anchor([{"path": "a.rs", "line": 15}], available), ("a.rs", 10, {"path": "a.rs", "line": 15}))
-        self.assertIsNone(github.anchor([outside], available))
+        self.assertEqual(github.anchor([outside], available), ("a.rs", 10, outside))
+        self.assertIsNone(github.anchor([outside], set()))
+
+    def test_findings_citing_untouched_files_anchor_to_the_nearest_changed_file(self):
+        available = {("src/x/a.rs", 3), ("src/b.rs", 9), ("src/b.rs", 7), ("other/c.rs", 1)}
+        sibling = {"path": "src/y.rs", "line": 40}
+        self.assertEqual(github.anchor([sibling], available), ("src/b.rs", 7, sibling))
+        nested = {"path": "src/x/z.rs", "line": 2}
+        self.assertEqual(github.anchor([sibling, nested], available), ("src/x/a.rs", 3, nested))
+        self.assertEqual(github.anchor([{"path": "other/d.rs", "line": 5}, sibling], available),
+                         ("other/c.rs", 1, {"path": "other/d.rs", "line": 5}))
 
     def test_findings_outside_hunks_anchor_to_the_nearest_line_and_link_the_cited_line(self):
         self.reports(candidate(), candidate(title="Outside hunk", cause="Different cause",
@@ -109,29 +119,66 @@ class InlineTests(unittest.TestCase):
         for text in ("**Outside hunk**", "**Incorrect result**", "outside this PR's diff", "#### Must-fix"):
             self.assertNotIn(text, summary)
 
-    def test_findings_citing_only_files_outside_the_diff_stay_in_the_summary(self):
+    def test_findings_citing_only_files_outside_the_diff_are_posted_inline(self):
         self.reports(candidate(), candidate(title="Untouched file", cause="Different cause",
                                            locations=[{"path": "src/other.rs", "line": 3}]))
         self.publish()
-        self.assertEqual(len(self.api.review_comments), 1)
+        self.assertEqual(len(self.api.review_comments), 2)
+        moved = next(item for item in self.api.review_comments if "Untouched file" in item["body"])
+        self.assertEqual((moved["path"], moved["line"]), ("src/lib.rs", 1))
+        self.assertIn(f"[other.rs:3](https://github.com/tachyon-zcash/ragu/blob/{HEAD}/src/other.rs#L3)", moved["body"])
         summary = self.api.comments[0]["body"]
-        self.assertIn("### For humans\n\n**Must-fix: 2 · Suggestions: 0** · 1 finding posted inline", summary)
-        self.assertIn("no inline anchor in the reviewed diff", summary)
-        self.assertIn("**Untouched file**", summary)
-        self.assertNotIn("**Incorrect result**", summary)
-        for text in ("#### Must-fix", "#### Suggestions", "None after reconciliation", "None reported"):
+        self.assertIn("### For humans\n\n**Must-fix: 2 · Suggestions: 0** · 2 findings posted inline", summary)
+        self.assertIn("### For agents", summary)
+        for text in ("**Untouched file**", "**Incorrect result**", "kept here", "#### Must-fix", "#### Suggestions"):
             self.assertNotIn(text, summary)
+
+    def test_a_diff_without_commentable_lines_keeps_findings_in_the_summary(self):
+        self.api.files = [{"filename": "src/lib.rs", "status": "removed", "patch": "@@ -1 +0,0 @@\n-old"}]
+        self.reports()
+        self.publish()
+        self.assertEqual(self.api.review_comments, [])
+        summary = self.api.comments[0]["body"]
+        self.assertIn("### For humans\n\n**Must-fix: 1 · Suggestions: 0**", summary)
+        self.assertIn("The reviewed diff has no commentable lines, so these findings are kept here.", summary)
+        self.assertIn("**Incorrect result**", summary)
+        self.assertIn("### For agents", summary)
 
     def test_republication_and_reused_reports_do_not_duplicate_inline_threads(self):
         self.reports()
         self.publish()
         self.publish()
+        summary = copy.deepcopy(self.api.comments[0])
+        threads = copy.deepcopy(self.api.review_comments)
         with patch.dict(os.environ, {"GITHUB_RUN_ID": str(self.run["run_id"] + 1)}):
             self.run = github.queue(self.api, 9, HEAD, 12)
             self.reports()
             self.publish()
         self.assertEqual(len(self.api.reviews), 1)
         self.assertEqual(len(self.api.review_comments), 1)
+        self.assertEqual(self.api.review_comments, threads)
+        self.assertEqual(len(self.api.comments), 2)
+        self.assertEqual(self.api.comments[0], summary)
+        for comment in self.api.comments:
+            self.assertIn("1 finding posted inline", comment["body"])
+
+    def test_new_snapshot_preserves_earlier_summary_and_inline_threads(self):
+        self.reports()
+        self.publish()
+        summary = copy.deepcopy(self.api.comments[0])
+        thread = copy.deepcopy(self.api.review_comments[0])
+        self.api.target["head"]["sha"] = "c" * 40
+        with patch.dict(os.environ, {"GITHUB_RUN_ID": str(self.run["run_id"] + 1)}):
+            self.run = github.queue(self.api, 9, "c" * 40, 12)
+            self.reports()
+            self.publish()
+        self.assertEqual(len(self.api.comments), 2)
+        self.assertEqual(len(self.api.reviews), 2)
+        self.assertEqual(len(self.api.review_comments), 2)
+        self.assertEqual(self.api.comments[0], summary)
+        self.assertEqual(self.api.review_comments[0], thread)
+        self.assertEqual(self.api.review_comments[1]["commit_id"], "c" * 40)
+        self.assertIn(github.invocation_marker(self.run), self.api.comments[1]["body"])
 
     def test_lost_creation_response_recovers_without_another_post(self):
         self.reports()

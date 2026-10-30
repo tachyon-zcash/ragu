@@ -266,12 +266,12 @@ impl<'dr, F: Field> Allocator<'dr, Recorder<F>> for TrackingAllocator {
 /// (issue #793, the "remove trust in the recorder" item). The recorder
 /// captures the constraint graph *once* and the differential then reasons
 /// entirely over that stored snapshot ([`Event`]s, [`constraints_hold`]); a
-/// capture bug — a mis-folded `Coeff` gain, a dropped term, a swapped wire —
+/// capture bug — an incorrectly folded `Coeff` gain, a dropped term, a swapped wire —
 /// would corrupt every later verdict invisibly. `Playback` re-derives the
 /// verdict from scratch: the same synthesis, the same gadget calls, but its
 /// own linear-combination evaluator reading the injected `values` directly.
 /// If the recorder's stored answer and this live re-execution ever disagree,
-/// the recorder mis-captured the circuit.
+/// the recorder captured the circuit incorrectly.
 ///
 /// `Wire = usize` and allocation is sequential from the fixed ONE wire, so
 /// running the *same* synthesis (with a plain [`Standard`] allocator, whose

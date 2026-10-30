@@ -41,7 +41,7 @@
 //! stricter than the harness needs:
 //!
 //! - [`Op::AllocRaw`] was held out because its skip depends on fuzzer bytes
-//!   rather than a mutatable value, so the zero-crossing classification
+//!   rather than a mutable value, so the zero-crossing classification
 //!   could not neutralize it. But that is the reason it is *safe*, not the
 //!   reason it is dangerous: the skip is decided by
 //!   `F::from_bytes(bytes)` over bytes fixed in the program, so it resolves
@@ -122,7 +122,7 @@
 //! re-verified by a fresh synthesis of the *real* gadget calls
 //! (`patcher::Playback`) with an independent linear-combination evaluator.
 //! If that live re-execution disagrees with the recorder's stored-event
-//! verdict, the recorder mis-captured the circuit and every signal is
+//! verdict, the recorder captured the circuit incorrectly and every signal is
 //! suspect — so the engine validates its own model on every run.
 //!
 //! Allocation goes through the production pooling allocator on both sides
@@ -551,7 +551,7 @@ fn patch_round<F: Field>(input: &Input, decoded: &Program) {
     // Playback cross-check: re-derive the verdict from a fresh synthesis of
     // the *real* gadget calls over the repaired witness, with an independent
     // linear-combination evaluator. If the recorder's stored-event verdict
-    // and this live re-execution disagree, the recorder mis-captured the
+    // and this live re-execution disagree, the recorder incorrectly captured the
     // circuit and every signal above is suspect. A plain `Standard` replays
     // exactly the gate / `assign_extra` sequence `TrackingAllocator` made,
     // so wire ids line up with the recorder's.
@@ -568,7 +568,7 @@ fn patch_round<F: Field>(input: &Input, decoded: &Program) {
         ragu_accepts,
         "RECORDER CAPTURE BUG: the stored constraint graph accepts={ragu_accepts} but a \
          fresh playback of the real gadget synthesis says accepts={}. The recorder \
-         mis-captured the circuit. Program: {program:?}",
+         incorrectly captured the circuit. Program: {program:?}",
         playback.accepts(),
     );
 

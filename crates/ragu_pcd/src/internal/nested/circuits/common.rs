@@ -2,13 +2,14 @@
 //! fuse step commits, and the loading of all of them.
 //!
 //! The nested stages form one chain, from the endoscalar stage to the
-//! challenge stage, and the [`export`](super::export),
-//! [`collapse`](super::collapse) and [`compute_v`](super::compute_v)
-//! circuits all end on its last stage, so each reserves the whole chain and
+//! challenge stage. The [`collapse`](super::collapse) and
+//! [`compute_v`](super::compute_v) circuits both end on its last stage,
+//! so each reserves the whole chain and
 //! loads it here. Every stage is loaded unenforced: output contracts are not
 //! emitted here, though each wire still holds a coefficient of its committed
-//! stage polynomial. The export circuit enforces curve membership of the
-//! points stage and booleanity of the endoscalar stage once for all consuming
+//! stage polynomial. The collapse circuit enforces curve membership of the
+//! points stage and the hoisted endoscalar stage's contract, boolean bits
+//! with product wires the products of those bits, once for all consuming
 //! circuits.
 
 use ragu_circuits::{polynomials::Rank, staging::StageBuilder};
@@ -17,7 +18,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::Endoscalar;
+use ragu_primitives::{HoistedEndoscalar, Uendo};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
@@ -32,7 +33,7 @@ use crate::{
 /// unified instance the circuit outputs.
 pub struct Witness<'a, C: Affine, P: Profile> {
     pub instance: unified::Instance<C>,
-    pub endoscalar: u128,
+    pub endoscalar: Uendo,
     pub points: &'a PointsWitness<C, P>,
     pub preamble: &'a stages::preamble::Witness<C, P>,
     pub s_prime: &'a stages::s_prime::Witness<C>,
@@ -47,7 +48,7 @@ pub struct Witness<'a, C: Affine, P: Profile> {
 
 /// The output gadgets of the stages a circuit reads, once loaded.
 pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    pub endoscalar: Endoscalar<'dr, D>,
+    pub endoscalar: HoistedEndoscalar<'dr, D>,
     pub points: Points<'dr, D, C, P>,
     pub preamble: stages::preamble::Output<'dr, D, C, P>,
     pub s_prime: stages::s_prime::Output<'dr, D, C>,

@@ -233,8 +233,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_p_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_hashes_1_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_hashes_2_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_inner_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_outer_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_compute_v_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_bind_challenges_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_bind_beta_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -291,7 +290,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_challenges_partial: Option<C::NestedCurve>,
 
     // Nested instance circuits
-    nested_export_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_collapse_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_compute_v_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
 
@@ -314,7 +312,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     nested_challenges_commitment: OnceCell<C::NestedCurve>,
 
     // Nested instance circuit commitment caches
-    nested_export_commitment: OnceCell<C::NestedCurve>,
     nested_collapse_commitment: OnceCell<C::NestedCurve>,
     nested_compute_v_commitment: OnceCell<C::NestedCurve>,
 
@@ -342,8 +339,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_p_commitment: OnceCell<C::HostCurve>,
     native_hashes_1_commitment: OnceCell<C::HostCurve>,
     native_hashes_2_commitment: OnceCell<C::HostCurve>,
-    native_inner_collapse_commitment: OnceCell<C::HostCurve>,
-    native_outer_collapse_commitment: OnceCell<C::HostCurve>,
+    native_collapse_commitment: OnceCell<C::HostCurve>,
     native_compute_v_commitment: OnceCell<C::HostCurve>,
     native_bind_challenges_commitments: OnceCell<Vec<C::HostCurve>>,
     native_bind_beta_commitment: OnceCell<C::HostCurve>,
@@ -385,8 +381,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_p_poly: None,
             native_hashes_1_rx: None,
             native_hashes_2_rx: None,
-            native_inner_collapse_rx: None,
-            native_outer_collapse_rx: None,
+            native_collapse_rx: None,
             native_compute_v_rx: None,
             native_bind_challenges_rxs: None,
             native_bind_beta_rx: None,
@@ -426,7 +421,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_p_poly: None,
             nested_challenges_rx: None,
             nested_challenges_partial: None,
-            nested_export_rx: None,
             nested_collapse_rx: None,
             nested_compute_v_rx: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
@@ -439,7 +433,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_registry_xy_commitment: OnceCell::new(),
             nested_p_commitment: OnceCell::new(),
             nested_challenges_commitment: OnceCell::new(),
-            nested_export_commitment: OnceCell::new(),
             nested_collapse_commitment: OnceCell::new(),
             nested_compute_v_commitment: OnceCell::new(),
             w: None,
@@ -463,8 +456,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_p_commitment: OnceCell::new(),
             native_hashes_1_commitment: OnceCell::new(),
             native_hashes_2_commitment: OnceCell::new(),
-            native_inner_collapse_commitment: OnceCell::new(),
-            native_outer_collapse_commitment: OnceCell::new(),
+            native_collapse_commitment: OnceCell::new(),
             native_compute_v_commitment: OnceCell::new(),
             native_bind_challenges_commitments: OnceCell::new(),
             native_bind_beta_commitment: OnceCell::new(),
@@ -503,8 +495,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     native_setter!(set_native_eval_rx, native_eval_rx);
     native_setter!(set_native_hashes_1_rx, native_hashes_1_rx);
     native_setter!(set_native_hashes_2_rx, native_hashes_2_rx);
-    native_setter!(set_native_inner_collapse_rx, native_inner_collapse_rx);
-    native_setter!(set_native_outer_collapse_rx, native_outer_collapse_rx);
+    native_setter!(set_native_collapse_rx, native_collapse_rx);
     native_setter!(set_native_compute_v_rx, native_compute_v_rx);
     setter!(
         set_native_bind_challenges_rxs,
@@ -725,15 +716,9 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     );
     lazy_commitment!(
         native,
-        native_inner_collapse_commitment,
-        native_inner_collapse_commitment,
-        native_inner_collapse_rx
-    );
-    lazy_commitment!(
-        native,
-        native_outer_collapse_commitment,
-        native_outer_collapse_commitment,
-        native_outer_collapse_rx
+        native_collapse_commitment,
+        native_collapse_commitment,
+        native_collapse_rx
     );
     lazy_commitment!(
         native,
@@ -985,17 +970,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         C::NestedCurve
     );
     setter!(
-        set_nested_export_rx,
-        nested_export_rx,
-        sparse::Polynomial<C::ScalarField, R>
-    );
-    lazy_commitment!(
-        nested,
-        nested_export_commitment,
-        nested_export_commitment,
-        nested_export_rx
-    );
-    setter!(
         set_nested_collapse_rx,
         nested_collapse_rx,
         sparse::Polynomial<C::ScalarField, R>
@@ -1078,8 +1052,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_eval_commitment();
         self.native_hashes_1_commitment();
         self.native_hashes_2_commitment();
-        self.native_inner_collapse_commitment();
-        self.native_outer_collapse_commitment();
+        self.native_collapse_commitment();
         self.native_compute_v_commitment();
         self.native_bind_challenges_commitments();
         self.native_bind_beta_commitment();
@@ -1110,7 +1083,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.nested_registry_xy_commitment();
         self.nested_p_commitment();
         self.nested_challenges_commitment();
-        self.nested_export_commitment();
         self.nested_collapse_commitment();
         self.nested_compute_v_commitment();
 
@@ -1149,8 +1121,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_p_poly: take!(native_p_poly),
             native_hashes_1_rx: take!(native_hashes_1_rx),
             native_hashes_2_rx: take!(native_hashes_2_rx),
-            native_inner_collapse_rx: take!(native_inner_collapse_rx),
-            native_outer_collapse_rx: take!(native_outer_collapse_rx),
+            native_collapse_rx: take!(native_collapse_rx),
             native_compute_v_rx: take!(native_compute_v_rx),
             native_bind_challenges_rxs: take!(native_bind_challenges_rxs),
             native_bind_beta_rx: take!(native_bind_beta_rx),
@@ -1194,7 +1165,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_p_poly: take!(nested_p_poly),
             nested_challenges_rx: take!(nested_challenges_rx),
             nested_challenges_partial: take!(nested_challenges_partial),
-            nested_export_rx: take!(nested_export_rx),
             nested_collapse_rx: take!(nested_collapse_rx),
             nested_compute_v_rx: take!(nested_compute_v_rx),
 
@@ -1226,7 +1196,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
             nested_p_commitment: cached!(nested_p_commitment),
             nested_challenges_commitment: cached!(nested_challenges_commitment),
-            nested_export_commitment: cached!(nested_export_commitment),
             nested_collapse_commitment: cached!(nested_collapse_commitment),
             nested_compute_v_commitment: cached!(nested_compute_v_commitment),
 
@@ -1252,8 +1221,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_p_commitment: cached!(native_p_commitment),
             native_hashes_1_commitment: cached!(native_hashes_1_commitment),
             native_hashes_2_commitment: cached!(native_hashes_2_commitment),
-            native_inner_collapse_commitment: cached!(native_inner_collapse_commitment),
-            native_outer_collapse_commitment: cached!(native_outer_collapse_commitment),
+            native_collapse_commitment: cached!(native_collapse_commitment),
             native_compute_v_commitment: cached!(native_compute_v_commitment),
             native_bind_challenges_commitments: self
                 .native_bind_challenges_commitments

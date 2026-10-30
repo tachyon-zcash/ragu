@@ -36,7 +36,7 @@
 //!   at the parent's $x_n z_n$, with the step's other rx polynomials
 //!   ([`Batch::queries`]).
 //! - The parent's nested `compute_v` adds the opened evaluation to each of
-//!   the step's export, collapse and compute-v claims, and holds the fold of
+//!   the step's collapse and compute-v claims, and holds the fold of
 //!   its children's claims against its own $A_n(x_n z_n)$.
 //!
 //! The stage is unblinded and the commitment scheme is binding, so the only

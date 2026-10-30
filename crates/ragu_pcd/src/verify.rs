@@ -252,7 +252,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // per curve, including P = Com(p) and P_n = Com(p_n). The endoscaling
         // walks' staged inputs and endpoints are tied to these commitments by
         // `nested_points_claim` below and by the circuits that pin each walk
-        // (`bind_endoscalar` and `bind_beta` for P_n, the nested `export` and
+        // (`bind_endoscalar` and `bind_beta` for P_n, the nested `collapse` and
         // `loading` for P), whose claims the revdot checks above cover.
         let commitments_claim = {
             let proof = pcd.proof();

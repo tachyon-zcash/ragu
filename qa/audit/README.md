@@ -13,13 +13,16 @@ Post the exact command as a new PR comment with write access. Commits do not
 trigger the bot. The bot posts merged **Must-fix** findings and **Suggestions**
 as inline review comments, with evidence and reviewer attribution. A short
 source-checking pass refines the findings; if it cannot finish, verified
-reviewer findings are still published. One status comment links to the inline
-reviews, counts the findings, and preserves the collapsed original reports. A
-finding cited outside the diff hunks attaches to the nearest diff line of its
-file and links the cited line; findings without an inline anchor remain in
-that comment. Each invocation freezes its head and base commits. Later pushes
+reviewer findings are still published. Each invocation keeps its own status
+comment with inline review links, finding counts, and collapsed original
+reports. A finding cited outside the diff hunks attaches to the nearest diff
+line of its file and links the cited line. A finding citing only files outside
+the diff attaches to the nearest changed file and links its cited line, so
+every finding is posted inline. Each invocation freezes its head and base commits. Later pushes
 or updates to main do not change its findings, inline locations, or completion;
-all results remain attached to the reviewed commit.
+all results remain attached to the reviewed commit. New invocations preserve
+earlier summaries and inline threads; identical reruns reuse existing inline
+reviews.
 Delete the original command comment to stop its review.
 
 Identical reviews reuse verified results; retries resume unfinished passes.

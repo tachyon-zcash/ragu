@@ -40,11 +40,15 @@ pub fn capture_checked<'w, F: Field, Cir: Circuit<F>>(
             .unwrap_or_else(|error| panic!("{name}: honest playback failed: {error:?}")),
         "{name}: independent playback must accept the captured honest witness",
     );
-    if spec.name == "nested_export" {
+    if spec.name == "nested_collapse" {
         assert_eq!(
-            spec.outputs,
+            spec.outputs
+                .iter()
+                .copied()
+                .filter(|output| matches!(output, OutputRef::Instance(2..)))
+                .collect::<Vec<_>>(),
             (2..33).map(OutputRef::Instance).collect::<Vec<_>>(),
-            "nested export must declare x, y, u and every exported point coordinate",
+            "nested collapse must declare x, y, u and every exported point coordinate",
         );
     }
     let resolution = spec.resolve(&cap.instance, &cap.stage_wires)?;

@@ -7,10 +7,10 @@ RAGU004|crates/ragu_circuits/src/raw.rs|172|The reserved extra wire is intention
 RAGU005|crates/ragu_core/src/drivers/emulator.rs|354|Known prediction bypasses execution only in the constraint-free Wire-equals-unit emulator.
 RAGU005|crates/ragu_pcd/src/step/encoder.rs|97|The enum structurally distinguishes a pre-encoded value from one requiring conversion.
 RAGU005|crates/ragu_pcd/src/step/internal/padded.rs|99|The early error depends only on the structural number of header elements already written.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|321|The fixed interpolation-node index selects an endpoint product or a multiplication; it does not depend on witness values.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|323|The fixed group size and node index select the last endpoint product instead of multiplying by one.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|359|The quotient slice comes from a FixedVec length type; a singleton claim has no quotient coefficients or correction operations.
-RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|391|The interpolation-basis cache is keyed by the fixed length type and prior structural fold calls, never by witness values.
+RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|322|The fixed interpolation-node index selects an endpoint product or a multiplication; it does not depend on witness values.
+RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|324|The fixed group size and node index select the last endpoint product instead of multiplying by one.
+RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|360|The quotient slice comes from a FixedVec length type; a singleton claim has no quotient coefficients or correction operations.
+RAGU005|crates/ragu_pcd/src/internal/fold_revdot.rs|392|The interpolation-basis cache is keyed by the fixed length type and prior structural fold calls, never by witness values.
 RAGU004|crates/ragu_primitives/src/allocator.rs|68|The stateless allocator intentionally returns A and wastes the zero B and C wires of its allocation gate.
 RAGU005|crates/ragu_primitives/src/allocator.rs|109|Structural pool occupancy selects redemption of a D wire or allocation of a fresh gate.
 RAGU004|crates/ragu_primitives/src/allocator.rs|112|The pooled allocator intentionally returns A, stores Extra, and wastes the zero B and C wires.
@@ -38,22 +38,22 @@ RAGU005|crates/ragu_pcd/src/decompress/mod.rs|252|The exponent is a constant of 
 RAGU005|crates/ragu_pcd/src/decompress/mod.rs|253|The exponent is a constant of the rank; its first set bit seeds the product.
 RAGU005|crates/ragu_pcd/src/decompress/mod.rs|271|The first two powers are one and the base; later ones multiply once each.
 RAGU005|crates/ragu_pcd/src/decompress/revdot.rs|303|A claim's kind is fixed by the protocol's claim list, never by the witness.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|171|A point source is a constant of the schedule, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|183|An element source is a constant of the schedule, a pure function of the proof system's constants.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|222|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|387|A challenge's endoscalar is read once per chain chunk; the chunk's challenge list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|395|Whether a chain continues a work slot is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|400|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|404|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|414|Whether a term is scaled is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|420|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|447|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|454|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|462|The transcript's operation list is a constant of the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|474|Whether a transcript chunk saves the sponge state is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|609|Whether a scaling's digits come from bits or from an element is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|621|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|631|Whether a scaling part sums its digits' generators for the other side's digits stage is fixed by the schedule's chunk descriptor.
-RAGU005|crates/ragu_pcd/src/decompress/run.rs|643|The first digit's term seeds the sum; later digits add once each, over the schedule's fixed digit range.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|172|A point source is a constant of the schedule, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|184|An element source is a constant of the schedule, a pure function of the proof system's constants.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|223|Which challenges a side squeezes and which it takes from bits is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|388|A challenge's endoscalar is read once per chain chunk; the chunk's challenge list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|396|Whether a chain continues a work slot is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|401|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|405|A Horner step with or without an addend is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|415|Whether a term is scaled is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|421|The first term seeds the accumulator; later terms add once each, per the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|448|The chunk kind is the schedule's constant descriptor; each chunk circuit runs the one at its index.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|455|Whether a transcript chunk resumes a saved sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|463|The transcript's operation list is a constant of the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|475|Whether a transcript chunk saves the sponge state is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|610|Whether a scaling's digits come from bits or from an element is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|622|Whether a scaling part is the last, and so removes the offset, is fixed by the schedule.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|632|Whether a scaling part sums its digits' generators for the other side's digits stage is fixed by the schedule's chunk descriptor.
+RAGU005|crates/ragu_pcd/src/decompress/run.rs|644|The first digit's term seeds the sum; later digits add once each, over the schedule's fixed digit range.
 RAGU005|crates/ragu_pcd/src/internal/ky.rs|191|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|167|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.

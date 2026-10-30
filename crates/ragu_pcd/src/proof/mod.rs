@@ -13,8 +13,9 @@ pub(crate) mod builder;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
-// `#[ignore]`d: the PR gate compiles and skips them, and the scheduled
-// heavy-tests run picks them up with `cargo test -- --ignored`.
+// `#[ignore]`d in the platform matrix. Rust CI explicitly replays the
+// properties with saved recursion failures, and the scheduled heavy-tests
+// run picks up the full suites with `cargo test -- --ignored`.
 #[cfg(test)]
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
@@ -68,7 +69,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
-    extract_endoscalar, lift_endoscalar,
+    Uendo, extract_endoscalar, lift_endoscalar,
     vec::{FixedVec, Len},
 };
 use udon::field::Field;
@@ -189,8 +190,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_p_poly: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_hashes_1_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_hashes_2_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_inner_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_outer_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_bind_challenges_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_bind_beta_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -253,10 +253,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) nested_challenges_partial: C::NestedCurve,
 
     // Nested instance circuits (ScalarField, NestedCurve commitments): the
-    // export circuit pins the nested unified instance to the stages, the
-    // collapse circuit verifies the nested fold, and the compute-v circuit
-    // the nested batch evaluation.
-    pub(crate) nested_export_rx: sparse::Polynomial<C::ScalarField, R>,
+    // collapse circuit pins the nested unified instance to the stages and
+    // verifies the nested fold; compute-v checks the nested batch evaluation.
     pub(crate) nested_collapse_rx: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_compute_v_rx: sparse::Polynomial<C::ScalarField, R>,
 
@@ -279,7 +277,6 @@ pub struct Proof<C: Cycle, R: Rank> {
     nested_challenges_commitment: Cached<C::NestedCurve>,
 
     // Nested instance circuit commitment caches
-    nested_export_commitment: Cached<C::NestedCurve>,
     nested_collapse_commitment: Cached<C::NestedCurve>,
     nested_compute_v_commitment: Cached<C::NestedCurve>,
 
@@ -307,8 +304,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_p_commitment: Cached<C::HostCurve>,
     native_hashes_1_commitment: Cached<C::HostCurve>,
     native_hashes_2_commitment: Cached<C::HostCurve>,
-    native_inner_collapse_commitment: Cached<C::HostCurve>,
-    native_outer_collapse_commitment: Cached<C::HostCurve>,
+    native_collapse_commitment: Cached<C::HostCurve>,
     native_compute_v_commitment: Cached<C::HostCurve>,
     native_bind_challenges_commitments: Vec<Cached<C::HostCurve>>,
     native_bind_beta_commitment: Cached<C::HostCurve>,
@@ -379,8 +375,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             Application => &self.native_application_rx,
             Hashes1 => &self.native_hashes_1_rx,
             Hashes2 => &self.native_hashes_2_rx,
-            InnerCollapse => &self.native_inner_collapse_rx,
-            OuterCollapse => &self.native_outer_collapse_rx,
+            Collapse => &self.native_collapse_rx,
             ComputeV => &self.native_compute_v_rx,
             BindChallenges(k) => &self.native_bind_challenges_rxs[k as usize],
             BindBeta => &self.native_bind_beta_rx,
@@ -417,7 +412,6 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             EndoscalingStep(step) => &self.nested_endoscaling_step_rxs[step as usize],
             ExtensionCircuit(k) => &self.nested_extension_circuit_rxs[k as usize],
             ExtensionStage(k) => &self.nested_extension_stage_rxs[k as usize],
-            Export => &self.nested_export_rx,
             Collapse => &self.nested_collapse_rx,
             ComputeV => &self.nested_compute_v_rx,
             EndoscalarStage => &self.nested_endoscalar_rx,
@@ -514,10 +508,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.nested_challenges_partial
     }
 
-    pub(crate) fn nested_export_commitment(&self) -> C::NestedCurve {
-        self.nested_export_commitment.0
-    }
-
     pub(crate) fn nested_collapse_commitment(&self) -> C::NestedCurve {
         self.nested_collapse_commitment.0
     }
@@ -526,7 +516,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.nested_compute_v_commitment.0
     }
 
-    /// This proof's nested unified instance, as its export circuit
+    /// This proof's nested unified instance, as its collapse circuit
     /// serialized it: the accumulator value, the batch evaluation, the lifts
     /// of $x$, $y$ and $u$, and the exported host-curve commitments.
     pub(crate) fn nested_instance(&self) -> Result<nested::unified::Instance<C::HostCurve>> {
@@ -639,8 +629,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Application => self.native_application_commitment.0,
             Hashes1 => self.native_hashes_1_commitment.0,
             Hashes2 => self.native_hashes_2_commitment.0,
-            InnerCollapse => self.native_inner_collapse_commitment.0,
-            OuterCollapse => self.native_outer_collapse_commitment.0,
+            Collapse => self.native_collapse_commitment.0,
             ComputeV => self.native_compute_v_commitment.0,
             BindChallenges(k) => self.native_bind_challenges_commitments[k as usize].0,
             BindBeta => self.native_bind_beta_commitment.0,
@@ -753,7 +742,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             BridgeF => self.bridge_f_commitment,
             BridgeEval => self.bridge_eval_commitment,
             ChallengeStage => self.nested_challenges_commitment.0,
-            Export => self.nested_export_commitment.0,
             Collapse => self.nested_collapse_commitment.0,
             ComputeV => self.nested_compute_v_commitment.0,
         }
@@ -777,7 +765,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(crate) fn compute_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         points: &[C::HostCurve],
         endoscalar_alpha: C::ScalarField,
         points_alpha: C::ScalarField,
@@ -972,7 +960,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(crate) fn compute_native_endoscaling<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         inputs: &Inputs<C::NestedCurve, C::Profile>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
@@ -1128,8 +1116,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // since the real p commitment is the PointsStage last interstitial.
         builder.set_native_hashes_1_rx(ones_host.clone());
         builder.set_native_hashes_2_rx(ones_host.clone());
-        builder.set_native_inner_collapse_rx(ones_host.clone());
-        builder.set_native_outer_collapse_rx(ones_host.clone());
+        builder.set_native_collapse_rx(ones_host.clone());
         builder.set_native_compute_v_rx(ones_host.clone());
         builder.set_native_bind_challenges_rxs(vec![ones_host.clone(); native::NUM_BINDERS]);
         builder.set_native_bind_beta_rx(ones_host.clone());
@@ -1209,7 +1196,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             )
             .expect("trivial challenge stage rx"),
         );
-        builder.set_nested_export_rx(ones_nested.clone());
         builder.set_nested_collapse_rx(ones_nested.clone());
         builder.set_nested_compute_v_rx(ones_nested.clone());
         let extension = C::Profile::nested_extension();
@@ -1372,8 +1358,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 application: host_commitment,
                 hashes_1: host_commitment,
                 hashes_2: host_commitment,
-                inner_collapse: host_commitment,
-                outer_collapse: host_commitment,
+                collapse: host_commitment,
                 compute_v: host_commitment,
                 bind_challenges: [host_commitment; native::NUM_BINDERS],
                 bind_beta: host_commitment,

@@ -41,7 +41,6 @@ fn expected_rx_order() -> Vec<RxIndex> {
     (0..nested::NumSteps::<crate::profile::Standard>::len())
         .map(|step| EndoscalingStep(step.try_into().unwrap()))
         .chain([
-            Export,
             Collapse,
             ComputeV,
             EndoscalarStage,
@@ -65,7 +64,6 @@ fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
     (0..nested::NumSteps::<crate::profile::Standard>::len())
         .map(|step| EndoscalingStep(step.try_into().unwrap()))
         .chain([
-            Export,
             Collapse,
             ComputeV,
             EndoscalarStage,
@@ -348,7 +346,7 @@ mod folding {
     use udon::field::Field;
 
     use super::{
-        super::{NestedFuseEmulator, claims::NestedFuseProofSource},
+        super::{_05_outer_error::NestedFuseEmulator, claims::NestedFuseProofSource},
         stage_values, support,
     };
     use crate::{

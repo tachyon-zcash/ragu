@@ -37,8 +37,8 @@
 //! * the unified slots it covers — `provide`s, or `receive`s and checks —
 //!   read off the `Coverage` it reports; and
 //! * the stage values it checks against an in-circuit computation: the
-//!   collapsed claims `inner_collapse` folds to, the $k(y)$ evaluations
-//!   `outer_collapse` recomputes, the sponge state `hashes_1` saves. These
+//!   collapsed claims `collapse` folds to, the $k(y)$ evaluations
+//!   `collapse` recomputes, the sponge state `hashes_1` saves. These
 //!   are reserved stage wires, committed outside the circuit, and the
 //!   circuit that checks them is the one that binds them.
 //!
@@ -53,9 +53,9 @@
 //! pattern — each checks one interstitial of the points stage against its
 //! Horner accumulation — and are handed to
 //! [`InternalCircuitVisitor::visit_nested`], as are the nested instance
-//! circuits: `export`, whose covered slots are copies of stage wires;
-//! `collapse`, which forces the `outer_error` stage's collapsed values and,
-//! outside the base case, the instance's $c_n$; and `compute_v`, which
+//! circuits: `collapse`, which pins the exported slots to stage wires,
+//! forces the `outer_error` stage's collapsed values and, outside the base
+//! case, the instance's $c_n$; and `compute_v`, which
 //! derives $v_n$. The remaining nested circuit, `loading`, is a bonding
 //! claim over stage polynomials with no witness of its own to capture.
 //!
@@ -374,7 +374,7 @@ where
 /// fuse [`ApplicationBuilder::finalize`](crate::ApplicationBuilder::finalize)
 /// performs over two synthesized dummy children.
 ///
-/// `outer_collapse` deliberately leaves the final claim `c` unconstrained
+/// `collapse` deliberately leaves the final claim `c` unconstrained
 /// there (the prover may witness any `c` to start the recursion), so its
 /// spec drops `c` at this point; its checks on the children's $k(y)$ values
 /// stay.
@@ -817,17 +817,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             hashes_2_witness,
         )?;
 
-        // inner_collapse covers no unified slot: it folds the inner error
-        // terms and checks the result against the collapsed claims the
-        // outer_error stage witnessed.
-        let inner_collapse = native::circuits::inner_collapse::Circuit::<
+        // collapse checks both fold layers and the children's application
+        // k(y) values. Only the final c comparison is waived at bootstrap.
+        let collapse = native::circuits::collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters<C::Profile>,
         >::new();
-        let inner_collapse_witness = || {
-            Ok(native::circuits::inner_collapse::Witness {
+        let collapse_witness = || {
+            Ok(native::circuits::collapse::Witness {
                 binding: &native_points.binding,
                 preamble_witness: &preamble_witness,
                 unified: make_unified(&builder)?,
@@ -835,57 +834,25 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 inner_error_witness: &native_inner_error_witness,
             })
         };
-        let inner_collapse_spec = CircuitSpec {
-            name: "inner_collapse".into(),
-            outputs: stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
-                |stage| Ok(stage.collapsed.iter().map(|e| *e.wire()).collect()),
-            )?
-            .into_iter()
-            .map(OutputRef::Stage)
-            .collect(),
-        };
-        visitor.visit(
-            &inner_collapse_spec,
-            &inner_collapse,
-            &chain(&[&preamble_values, &outer_error_values, &inner_error_values]),
-            inner_collapse_witness,
-        )?;
-
-        // outer_collapse recomputes the children's application k(y) values
-        // from the preamble and checks them against outer_error, then folds
-        // to the final claim c it receives (and checks, outside the base
-        // case).
-        let outer_collapse = native::circuits::outer_collapse::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new();
-        let outer_collapse_witness = || {
-            Ok(native::circuits::outer_collapse::Witness {
-                unified: make_unified(&builder)?,
-                preamble_witness: &preamble_witness,
-                outer_error_witness: &native_outer_error_witness,
-            })
-        };
         // At the base case the covered slot, c, is left free by design, so
         // only the k(y) checks remain as outputs.
-        let outer_collapse_covered = if base_case {
+        let collapse_covered = if base_case {
             Vec::new()
         } else {
-            covered_outputs(&outer_collapse, outer_collapse_witness()?, coverage(&[]))?
+            covered_outputs(&collapse, collapse_witness()?, coverage(&[]))?
         };
-        let outer_collapse_spec = CircuitSpec {
-            name: "outer_collapse".into(),
-            outputs: outer_collapse_covered
+        let collapse_spec = CircuitSpec {
+            name: "collapse".into(),
+            outputs: collapse_covered
                 .into_iter()
                 .map(OutputRef::Instance)
                 .chain(
                     stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
                         |stage| {
-                            Ok([&stage.left, &stage.right]
-                                .into_iter()
-                                .map(|child| &child.application)
+                            Ok(stage
+                                .collapsed
+                                .iter()
+                                .chain([&stage.left.application, &stage.right.application])
                                 .map(|e| *e.wire())
                                 .collect())
                         },
@@ -896,10 +863,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .collect(),
         };
         visitor.visit(
-            &outer_collapse_spec,
-            &outer_collapse,
-            &preamble_outer_error,
-            outer_collapse_witness,
+            &collapse_spec,
+            &collapse,
+            &chain(&[&preamble_values, &outer_error_values, &inner_error_values]),
+            collapse_witness,
         )?;
 
         // compute_v derives the expected evaluation v.
@@ -976,18 +943,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // stage commitment the binding stage witnessed. The other points
         // in that stage must match the child's transcript and persistent
         // commitment exports too: every binding-stage wire is an output.
-        let bind_beta = native::circuits::bind_beta::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new(self.params);
+        let bind_beta = native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params);
         let bind_beta_witness = || {
             Ok(native::circuits::bind_beta::Witness {
                 unified: make_unified(&builder)?,
                 binding: &native_points.binding,
                 preamble_witness: &preamble_witness,
-                outer_error_witness: &native_outer_error_witness,
             })
         };
         let bind_beta_spec = CircuitSpec {
@@ -1004,7 +965,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         visitor.visit(
             &bind_beta_spec,
             &bind_beta,
-            &preamble_outer_error,
+            &preamble_values,
             bind_beta_witness,
         )?;
 
@@ -1219,34 +1180,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             covered_positions(|f| instance.coverage.for_each_slot(f), &[])
         };
 
-        // export copies the instance's x, y, u (and its commitments) from
-        // stage wires.
-        let export = MultiStage::new(nested::circuits::export::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new());
-        let export_spec = CircuitSpec {
-            name: "nested_export".into(),
-            outputs: covered_outputs(&export, nested_witness()?, nested_coverage)?
-                .into_iter()
-                .map(OutputRef::Instance)
-                .collect(),
-        };
-        visitor.visit_nested(&export_spec, &export, &nested_values, nested_witness)?;
-
-        // collapse forces the outer_error stage's collapsed values from the
-        // inner error terms and, outside the base case, c_n from those.
+        // collapse also pins the exported challenges and commitments. These
+        // remain outputs at bootstrap; only c_n is left free there.
         let collapse = MultiStage::new(nested::circuits::collapse::Circuit::<
             C::HostCurve,
             R,
             C::Profile,
         >::new());
-        let collapse_covered = if base_case {
-            Vec::new()
-        } else {
-            covered_outputs(&collapse, nested_witness()?, nested_coverage)?
-        };
+        let collapse_covered = covered_outputs(&collapse, nested_witness()?, |instance| {
+            covered_positions(
+                |f| instance.coverage.for_each_slot(f),
+                if base_case { &["c"] } else { &[] },
+            )
+        })?;
         let collapse_spec = CircuitSpec {
             name: "nested_collapse".into(),
             outputs: collapse_covered

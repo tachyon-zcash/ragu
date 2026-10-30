@@ -38,7 +38,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Endoscalar, GadgetExt, NonzeroBank, Point,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, HoistedEndoscalar, NonzeroBank, Point, Uendo,
     consistent::Consistent,
     vec::{FixedVec, Len},
 };
@@ -89,7 +89,10 @@ impl<N: Len, E: Len> Len for NumStepsLen<N, E> {
     }
 }
 
-/// Stage for allocating the endoscalar witness.
+/// Stage for allocating the endoscalar witness: its bits and, hoisted so
+/// that every step selects its digit points in two gates, its per-digit bit
+/// products. The nested collapse circuit re-emits the gadget's contracts
+/// once.
 #[derive(Default)]
 pub struct EndoscalarStage;
 
@@ -97,11 +100,11 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
     type Parent = ();
 
     fn values() -> usize {
-        u128::BITS as usize
+        ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS
     }
 
-    type Witness<'source> = u128;
-    type OutputKind = Kind![F; Endoscalar<'_, _>];
+    type Witness<'source> = Uendo;
+    type OutputKind = Kind![F; HoistedEndoscalar<'_, _>];
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -111,7 +114,7 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
     where
         Self: 'dr,
     {
-        Endoscalar::alloc(dr, witness)
+        HoistedEndoscalar::alloc(dr, witness)
     }
 }
 
@@ -135,7 +138,7 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
     /// # Panics
     ///
     /// Panics if `points.len() != N::len()`.
-    pub fn new(endoscalar: u128, points: &[C]) -> Self {
+    pub fn new(endoscalar: Uendo, points: &[C]) -> Self {
         let num_points = N::len();
         assert_eq!(points.len(), num_points, "expected {num_points} points");
 
@@ -277,7 +280,7 @@ impl<C: Affine, R: Rank, N: Len, E: Len> EndoscalingStep<C, R, N, E> {
 /// Witness for an endoscaling step.
 pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len> {
     /// The endoscalar value.
-    pub endoscalar: u128,
+    pub endoscalar: Uendo,
     /// Point witnesses (inputs and interstitials).
     pub points: &'source PointsWitness<C, N, E>,
 }
@@ -308,10 +311,11 @@ impl<C: Affine, R: Rank, N: Len, E: Len> MultiStageCircuit<C::Base, R>
         let (points_guard, dr) = dr.add_stage::<PointsStage<C, N, E>>()?;
         let dr = dr.finish();
 
-        // Stages are loaded unenforced here: the export circuit enforces the
-        // points' curve membership and the endoscalar's booleanity once for
-        // the whole nested section. This only constrains the Horner
-        // accumulation relationship between inputs and interstitials.
+        // Stages are loaded unenforced here: the collapse circuit re-emits
+        // the walk's contracts once for the whole nested section, the points'
+        // curve membership and the hoisted endoscalar's, boolean bits with
+        // product wires the products of those bits. This only constrains the
+        // Horner accumulation relationship between inputs and interstitials.
         let endoscalar = endoscalar_guard.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?;
         let points = points_guard.unenforced(dr, witness.as_ref().map(|w| w.points))?;
 
@@ -359,7 +363,7 @@ mod tests {
         pasta::{Ep, EpAffine, EqAffine, Fp, Fq},
     };
     use ragu_primitives::{
-        Endoscalar,
+        Endoscalar, Uendo,
         vec::{ConstLen, Len},
     };
     use ragu_testing::registry::TestRegistryBuilder;
@@ -384,7 +388,7 @@ mod tests {
     type R = polynomials::ProductionRank;
 
     /// Computes the effective scalar for an endoscalar via emulated `lift`.
-    fn compute_effective_scalar(endo: u128) -> Fq {
+    fn compute_effective_scalar(endo: Uendo) -> Fq {
         Emulator::<Wired<Fq>>::emulate_wired(endo, |dr, witness| {
             let e = Endoscalar::alloc(dr, witness)?;
             let scalar = e.lift(dr)?;
@@ -398,7 +402,7 @@ mod tests {
     /// For inputs $[s_0, s_1, \ldots, s_N]$ and effective scalar $e$:
     ///
     /// $$\text{result} = e^N \cdot s_0 + e^{N-1} \cdot s_1 + \cdots + e \cdot s_{N-1} + s_N$$
-    fn compute_horner_native(endo: u128, inputs: &[EpAffine]) -> EpAffine {
+    fn compute_horner_native(endo: Uendo, inputs: &[EpAffine]) -> EpAffine {
         assert!(!inputs.is_empty());
         let e: Fq = compute_effective_scalar(endo);
 
@@ -414,7 +418,7 @@ mod tests {
     /// Takes the initial point and a separate inputs array (length NUM_POINTS - 1),
     /// mirroring the new uniform step structure.
     fn compute_interstitials<const NUM_POINTS: usize>(
-        endoscalar: u128,
+        endoscalar: Uendo,
         initial: EpAffine,
         inputs: &[EpAffine],
     ) -> Vec<EpAffine> {
@@ -455,7 +459,7 @@ mod tests {
         let num_steps = NumStepsLen::<ConstLen<NUM_POINTS>, E>::len();
 
         // Generate random endoscalar and base input points.
-        let endoscalar: u128 = rand::rng().random();
+        let endoscalar = Uendo::random(|| rand::rng().random());
         let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
             (Ep::generator()
                 * <Ep as Projective>::Scalar::random(|bytes| rand::rng().fill_bytes(bytes)))
@@ -535,7 +539,7 @@ mod tests {
         assert_eq!(InputsLen::<ConstLen<NUM_POINTS>>::len(), 10);
 
         // Generate random endoscalar and base input points.
-        let endoscalar: u128 = rand::rng().random();
+        let endoscalar = Uendo::random(|| rand::rng().random());
         let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
             (Ep::generator()
                 * <Ep as Projective>::Scalar::random(|bytes| rand::rng().fill_bytes(bytes)))
@@ -595,7 +599,7 @@ mod tests {
     #[test]
     fn test_endoscaling_single_point() -> Result<()> {
         const NUM_POINTS: usize = 1;
-        let endoscalar = 7;
+        let endoscalar = Uendo::from(7u128);
         let initial = Ep::generator().to_affine();
         let mut points =
             PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &[initial]);
@@ -729,7 +733,7 @@ mod tests {
     fn test_points_witness_new() {
         /// Verifies PointsWitness::new produces identical results to manual construction.
         fn check<const NUM_POINTS: usize>() {
-            let endoscalar: u128 = rand::rng().random();
+            let endoscalar = Uendo::random(|| rand::rng().random());
             let base_inputs: [EpAffine; NUM_POINTS] = core::array::from_fn(|_| {
                 (Ep::generator()
                     * <Ep as Projective>::Scalar::random(|bytes| rand::rng().fill_bytes(bytes)))

@@ -28,8 +28,8 @@ has been absorbed. The zero before it is the suffix that separates internal
 circuits from application circuits, described under
 [substitution](#substitution).
 
-Four of the five internal circuits — `hashes_2`, `inner_collapse`,
-`outer_collapse`, and `compute_v` — use this value directly. The stage and
+The `hashes_2`, `collapse`, `compute_v`, `bind_challenges`, `bind_beta`
+and `bind_endoscalar` circuits use this value directly. The stage and
 final-staged masks take zero for their $k(y)$ values, since staging masks
 enforce those constraints instead.
 

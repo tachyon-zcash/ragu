@@ -37,7 +37,7 @@ this part.
 
 ## What is verified today
 
-Verification currently covers the gadget layer: 53 concrete circuit instances,
+Verification currently covers the gadget layer: 67 concrete circuit instances,
 each one a specific instantiation at a fixed prime field with all compile-time
 parameters made concrete.
 
@@ -50,7 +50,13 @@ parameters made concrete.
   conditional endomorphism application and negation.
 - **Booleans** — allocation, conjunction, conditional selection, conditional
   equality enforcement, and contract re-establishment.
-- **Endoscalars** — allocation, extraction, lifting, and group scaling.
+- **Endoscalars** — allocation, extraction, lifting, radix-3 group scaling,
+  hoisting, and contract re-establishment. Nine gadget variants are enrolled
+  over both Pasta fields. Concrete endpoints establish successful affine
+  walks, injective lifts, and multiplication by those lifts on both Pasta
+  curves. The [gadget contracts](circuits/contracts.md#assumption-discharge)
+  state the caller obligations and group-order certificates these results
+  require.
 - **Poseidon** — the permutation at the deployed Pasta parameters on both
   fields, and the sponge in several distinct control-flow shapes:
   single-block hashing on each field, uniform blocks across a rate boundary,
@@ -59,6 +65,11 @@ parameters made concrete.
 - **Horner evaluation** at three arities, plus the trailing-constant $k(Y)$
   form.
 - **Nonzero banks** at three arities, and the core multiplication gate.
+
+Normalization, denormalization, initialization, digit selectors, and unchecked
+triple-and-add are subcircuits of the registered endoscalar instances. Their
+traces are checked through those parent instances; they have no standalone
+extraction instances.
 
 Every one of these is proved without `sorry`, and the Lean build runs with
 `--wfail` so that an admitted goal fails CI rather than passing quietly. The
@@ -71,6 +82,12 @@ Everything above the gadget layer. The internal recursion circuits, the
 accumulation scheme, the staging system, and the protocol as a whole have no
 Lean theorems about them.
 
+The [open endoscalar stage-binding contract](circuits/contracts.md#endoscalar-stage-binding)
+specifies how the product owners, consuming walks and lifts, transcript,
+parent checks, and terminal verifier must be connected. The gadget results
+do not assume this contract as an axiom; proving it is work for the broader
+recursive formalization.
+
 Some of the gadget layer has nothing to verify rather than something unproved,
 and the distinction matters when reading the list above as a coverage claim.
 Demotion (`promotion.rs`) strips witness data through a driver whose every
@@ -81,12 +98,12 @@ extractor relies on this serialization to read wires in and out, so a bug there
 would change what every other theorem is about.
 
 The `Consistent` implementations are the one place this boundary is easy to
-misread. `Boolean`, `Point`, and `Invertible` each re-establish their wire
-contracts by allocating a fresh gadget and constraining it equal to the
-existing wires — real constraints, emitted where the staging machinery
-substitutes wires — and the re-establishment instances above cover exactly
-that trace. `Nonzero`'s implementation is `Element::enforce_invertible`, which
-is covered under that name.
+misread. `Boolean`, `Point`, `Invertible`, and `HoistedEndoscalar` each
+re-establish their wire contracts by allocating a fresh gadget and constraining
+it equal to the existing wires. The re-establishment instances above cover
+these constraints, emitted where the staging machinery substitutes wires.
+`Nonzero`'s implementation is `Element::enforce_invertible`, which is covered
+under that name.
 
 Neither is any Rust code verified: the proofs are about
 circuits extracted from Rust, not about the Rust implementation that extracted

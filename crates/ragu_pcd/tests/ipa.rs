@@ -691,7 +691,7 @@ fn sides_share_one_transcript() {
     assert_eq!(Field::to_bytes(&nested), Field::to_bytes(&second));
     assert_ne!(Field::to_bytes(&nested), Field::to_bytes(&host));
     assert!(
-        Field::to_le_bits(&nested).as_ref()[128..254]
+        Field::to_le_bits(&nested).as_ref()[ragu_primitives::ENDOSCALAR_BITS..]
             .iter()
             .any(|bit| *bit)
     );

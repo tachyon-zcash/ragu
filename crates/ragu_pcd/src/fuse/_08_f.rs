@@ -23,12 +23,15 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
-use ragu_core::{Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::{NativeF, NativeSPrime, NestedF, NestedRegistryWy, NestedSPrime, RegistryWy};
+use super::{
+    _03_s_prime::{NativeSPrime, NestedSPrime},
+    _04_inner_error::{NestedRegistryWy, RegistryWy},
+};
 use crate::{
     Application, Proof,
     internal::{
@@ -39,6 +42,18 @@ use crate::{
     profile::ProfiledCycle,
     proof::ProofBuilder,
 };
+
+/// Ephemeral native-field data for $f(X)$, used only during the fuse step.
+pub(super) struct NativeF<C: Cycle, R: Rank> {
+    pub(super) poly: sparse::Polynomial<C::CircuitField, R>,
+    pub(super) commitment: C::HostCurve,
+}
+
+/// Ephemeral nested-field data for $f_n(X)$, used only during the fuse step.
+pub(super) struct NestedF<C: Cycle, R: Rank> {
+    pub(super) poly: sparse::Polynomial<C::ScalarField, R>,
+    pub(super) commitment: C::NestedCurve,
+}
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -248,6 +263,49 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
         NestedF { poly, commitment }
+    }
+
+    /// The nested batch this step opens, over the nested polynomials the
+    /// builder has committed so far.
+    pub(super) fn nested_batch<'a>(
+        &self,
+        builder: &'a ProofBuilder<'_, C, R, B>,
+        nested_s_prime: &'a NestedSPrime<C, R>,
+        nested_registry_wy: &'a NestedRegistryWy<C, R>,
+        left: &'a Proof<C, R>,
+        right: &'a Proof<C, R>,
+    ) -> pcs::Batch<'a, C, R> {
+        pcs::Batch {
+            left,
+            right,
+            registry_wx0: &nested_s_prime.registry_wx0_poly,
+            registry_wx1: &nested_s_prime.registry_wx1_poly,
+            registry_wy: &nested_registry_wy.poly,
+            registry_xy: builder.nested_registry_xy_poly(),
+            a: builder.nested_a_poly(),
+            b: builder.nested_b_poly(),
+        }
+    }
+
+    /// The nested challenges this step's openings are at, derived from the
+    /// native ones (see [`nested::challenge`]).
+    fn nested_challenges<'dr, D: Driver<'dr, F = C::CircuitField>>(
+        &self,
+        w: &Element<'dr, D>,
+        x: &Element<'dr, D>,
+        y: &Element<'dr, D>,
+        z: &Element<'dr, D>,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+    ) -> Result<pcs::Challenges<C::ScalarField>> {
+        Ok(pcs::Challenges {
+            w: nested::challenge::<C>(*w.value().take())?,
+            x: nested::challenge::<C>(*x.value().take())?,
+            y: nested::challenge::<C>(*y.value().take())?,
+            z: nested::challenge::<C>(*z.value().take())?,
+            left: pcs::ChildChallenges::of(left)?,
+            right: pcs::ChildChallenges::of(right)?,
+        })
     }
 }
 

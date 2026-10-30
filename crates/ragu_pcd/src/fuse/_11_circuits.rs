@@ -1,9 +1,17 @@
+//! Trace the internal circuits.
+//!
+//! This traces the native and nested internal circuits over the stage
+//! witnesses the earlier phases saved, assembles their rx polynomials, and
+//! sets them on the [`ProofBuilder`] together with the profile's extension.
+
 use alloc::vec::Vec;
 
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging::MultiStage};
 use ragu_core::{Error, Result};
+use ragu_primitives::Uendo;
 use rand::CryptoRng;
 
+use super::_10_p::{NativeInputs, NativeWalk};
 use crate::{
     Application,
     internal::{native, native::total_circuit_counts, nested},
@@ -35,8 +43,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >,
         query_witness: &native::stages::query::Witness<C>,
         eval_witness: &native::stages::eval::Witness<C>,
-        native_points: &super::NativeInputs<C>,
-        native_walk: &super::_10_p::NativeWalk<C>,
+        native_points: &NativeInputs<C>,
+        native_walk: &NativeWalk<C>,
         source: Option<&Decompressed<C::Base>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
@@ -106,13 +114,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut *rng,
         )?;
 
-        let (inner_collapse_trace, unified) = native::circuits::inner_collapse::Circuit::<
+        let (collapse_trace, unified) = native::circuits::collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters<C::Profile>,
         >::new()
-        .trace(native::circuits::inner_collapse::Witness {
+        .trace(native::circuits::collapse::Witness {
             binding: &native_points.binding,
             preamble_witness,
             unified,
@@ -120,27 +128,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             inner_error_witness: native_inner_error_witness,
         })?
         .into_parts();
-        let inner_collapse_rx = self.native_registry.assemble(
-            &inner_collapse_trace,
-            native::InternalCircuitIndex::InnerCollapseCircuit.circuit_index::<C::Profile>(),
-            &mut *rng,
-        )?;
-
-        let (outer_collapse_trace, unified) = native::circuits::outer_collapse::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new()
-        .trace(native::circuits::outer_collapse::Witness {
-            unified,
-            preamble_witness,
-            outer_error_witness: native_outer_error_witness,
-        })?
-        .into_parts();
-        let outer_collapse_rx = self.native_registry.assemble(
-            &outer_collapse_trace,
-            native::InternalCircuitIndex::OuterCollapseCircuit.circuit_index::<C::Profile>(),
+        let collapse_rx = self.native_registry.assemble(
+            &collapse_trace,
+            native::InternalCircuitIndex::CollapseCircuit.circuit_index::<C::Profile>(),
             &mut *rng,
         )?;
 
@@ -187,23 +177,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         builder.set_native_hashes_1_rx(hashes_1_rx);
         builder.set_native_hashes_2_rx(hashes_2_rx);
-        builder.set_native_inner_collapse_rx(inner_collapse_rx);
-        builder.set_native_outer_collapse_rx(outer_collapse_rx);
+        builder.set_native_collapse_rx(collapse_rx);
 
         // Native circuit binding the children's nested beta commitments.
-        let (bind_beta_trace, unified) = native::circuits::bind_beta::Circuit::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::new(self.params)
-        .trace(native::circuits::bind_beta::Witness {
-            unified,
-            binding: &native_points.binding,
-            preamble_witness,
-            outer_error_witness: native_outer_error_witness,
-        })?
-        .into_parts();
+        let (bind_beta_trace, unified) =
+            native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params)
+                .trace(native::circuits::bind_beta::Witness {
+                    unified,
+                    binding: &native_points.binding,
+                    preamble_witness,
+                })?
+                .into_parts();
         let bind_beta_rx = self.native_registry.assemble(
             &bind_beta_trace,
             native::InternalCircuitIndex::BindBetaCircuit.circuit_index::<C::Profile>(),
@@ -260,14 +244,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// Traces this step's nested internal instance circuits, assembles their
     /// Rx polynomials, and stores them in the proof builder.
     ///
-    /// Traces export, collapse, and batch evaluation with the saved nested
+    /// Traces the collapse and compute-v circuits with the saved nested
     /// stage witnesses. Their shared instance accumulates coverage, which
-    /// must be complete after all three circuits. The endoscaling traces
+    /// must be complete after both circuits. The endoscaling traces
     /// are produced earlier by [`Self::compute_p`].
     pub(super) fn compute_nested_internal_circuits<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        nested_endoscalar: u128,
+        nested_endoscalar: Uendo,
         nested_points: &nested::PointsWitness<C::HostCurve, C::Profile>,
         nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve>,
@@ -320,19 +304,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             challenges: nested_challenges_witness,
         };
 
-        let (export_trace, instance) = MultiStage::new(nested::circuits::export::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new())
-        .trace(witness(instance))?
-        .into_parts();
-        let export_rx = self.nested_registry.assemble(
-            &export_trace,
-            nested::InternalCircuitIndex::Export.circuit_index::<C::Profile>(),
-            &mut *rng,
-        )?;
-
         let (collapse_trace, instance) = MultiStage::new(nested::circuits::collapse::Circuit::<
             C::HostCurve,
             R,
@@ -362,7 +333,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // As for the native instance: every slot covered exactly once.
         instance.assert_complete();
 
-        builder.set_nested_export_rx(export_rx);
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 

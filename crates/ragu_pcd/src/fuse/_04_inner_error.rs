@@ -11,15 +11,18 @@
 //! restriction; its nested counterpart's commitment enters the native
 //! points stage committed before $x$ (see `_06_ab`).
 
-use ragu_circuits::{polynomials::Rank, registry::RegistryAt, staging::StageExt};
-use ragu_core::{Result, drivers::Driver, maybe::Maybe};
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::RegistryAt,
+    staging::StageExt,
+};
+use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::{
-    NestedRegistryWy, RegistryWy,
-    claims::{NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource},
+use super::claims::{
+    NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource,
 };
 use crate::{
     Application,
@@ -30,6 +33,19 @@ use crate::{
     profile::ProfiledCycle,
     proof::ProofBuilder,
 };
+
+/// Ephemeral $m(w, X, y)$ registry restriction, used only during the fuse step.
+pub(super) struct RegistryWy<C: Cycle, R: Rank> {
+    pub(super) poly: sparse::Polynomial<C::CircuitField, R>,
+    pub(super) commitment: C::HostCurve,
+}
+
+/// Ephemeral $m_n(w_n, X, y_n)$ nested registry restriction, used only
+/// during the fuse step.
+pub(super) struct NestedRegistryWy<C: Cycle, R: Rank> {
+    pub(super) poly: sparse::Polynomial<C::ScalarField, R>,
+    pub(super) commitment: C::NestedCurve,
+}
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>

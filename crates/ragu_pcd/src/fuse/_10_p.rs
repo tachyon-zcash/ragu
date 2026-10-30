@@ -22,12 +22,18 @@ use alloc::vec::Vec;
 use core::ops::AddAssign;
 
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::{Cycle, Result};
-use ragu_primitives::{EndoscalarChallenge, lift_endoscalar, vec::Len};
+use ragu_core::{
+    Cycle, Result,
+    drivers::emulator::{Emulator, Wireless},
+    maybe::Always,
+};
+use ragu_primitives::{EndoscalarChallenge, Uendo, lift_endoscalar, vec::Len};
 use udon::field::Field;
 
 use super::{
-    NativeF, NativeFuseEmulator, NativeSPrime, NestedF, NestedRegistryWy, NestedSPrime, RegistryWy,
+    _03_s_prime::{NativeSPrime, NestedSPrime},
+    _04_inner_error::{NestedRegistryWy, RegistryWy},
+    _08_f::{NativeF, NestedF},
 };
 use crate::{
     Application, Proof,
@@ -48,6 +54,10 @@ pub(super) type NativeInputs<C> = Inputs<<C as Cycle>::NestedCurve, <C as Profil
 /// The native walk stage's witness: the endoscalar and the walk's outputs.
 pub(super) type NativeWalk<C> =
     WalkWitness<<C as Cycle>::NestedCurve, <C as ProfiledCycle>::Profile>;
+
+/// The wireless emulator the fuse step's transcript runs in, which `pre_beta`
+/// is sampled from.
+type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 
 /// Accumulates polynomials with their commitments.
 struct Accumulator<'a, C: Cycle, R: Rank> {
@@ -162,7 +172,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_native_p<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         s_prime: &NativeSPrime<C, R>,
@@ -252,7 +262,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_nested_p<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        beta_endo: u128,
+        beta_endo: Uendo,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,

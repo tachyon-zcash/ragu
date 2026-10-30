@@ -148,10 +148,8 @@ pub enum NativeRx {
     Hashes1,
     /// The `hashes_2` circuit's rx polynomial.
     Hashes2,
-    /// The `inner_collapse` circuit's rx polynomial.
-    InnerCollapse,
-    /// The `outer_collapse` circuit's rx polynomial.
-    OuterCollapse,
+    /// The `collapse` circuit's rx polynomial.
+    Collapse,
     /// The `compute_v` circuit's rx polynomial.
     ComputeV,
     /// A `bind_challenges` circuit's rx polynomial.
@@ -236,8 +234,7 @@ impl NativeRx {
             I::Application => Self::Application,
             I::Hashes1 => Self::Hashes1,
             I::Hashes2 => Self::Hashes2,
-            I::InnerCollapse => Self::InnerCollapse,
-            I::OuterCollapse => Self::OuterCollapse,
+            I::Collapse => Self::Collapse,
             I::ComputeV => Self::ComputeV,
             I::BindChallenges(k) => Self::BindChallenges(k),
             I::BindBeta => Self::BindBeta,
@@ -265,8 +262,6 @@ impl NativeRx {
 pub enum NestedRx {
     /// EndoscalingStep circuit rx polynomial (indexed by step number).
     EndoscalingStep(u32),
-    /// Export circuit rx polynomial.
-    Export,
     /// Collapse circuit rx polynomial.
     Collapse,
     /// Compute-v circuit rx polynomial.
@@ -996,7 +991,6 @@ impl NestedRx {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),
             I::EndoscalingStep(n) => Self::EndoscalingStep(n),
-            I::Export => Self::Export,
             I::Collapse => Self::Collapse,
             I::ComputeV => Self::ComputeV,
             I::EndoscalarStage => Self::EndoscalarStage,

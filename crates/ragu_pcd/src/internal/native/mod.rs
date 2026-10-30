@@ -77,7 +77,7 @@ impl<P: Profile> Len for Endoscalings<P> {
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here. The profile's shape rederives
 /// the whole cycle (see [`Shape`]).
-pub const NUM_ENDOSCALING_STEPS: usize = 24;
+pub const NUM_ENDOSCALING_STEPS: usize = 23;
 
 const _: () = assert!(
     endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
@@ -132,14 +132,14 @@ fn try_fixed_vec<T, L: Len, E>(
 }
 
 /// The native rx polynomials that are not endoscaling steps: the
-/// application's, the five hashing, collapse and compute-v circuits', the
+/// application's, the four hashing, collapse and compute-v circuits', the
 /// binders', bind-beta's, bind-endoscalar's and the eleven stages'.
-pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
+pub const NUM_FIXED_RX: usize = 18 + NUM_BINDERS;
 
 /// The native internal circuits that are not endoscaling steps: the rx
-/// polynomials' circuits and stages, the application's aside, and the four
+/// polynomials' circuits and stages, the application's aside, and the five
 /// final stage masks.
-pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 4;
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 5;
 
 /// The minimum groups for the native quotient fold: fourteen groups of
 /// seven provide room for 98 claims. Larger profiles grow the group count.
@@ -212,12 +212,11 @@ pub mod circuits {
     pub mod bind_beta;
     pub mod bind_challenges;
     pub mod bind_endoscalar;
+    pub mod collapse;
     pub mod compute_v;
     pub mod endoscaling_step;
     pub mod hashes_1;
     pub mod hashes_2;
-    pub mod inner_collapse;
-    pub mod outer_collapse;
 }
 
 pub mod claims;
@@ -228,8 +227,7 @@ pub enum InternalCircuitIndex {
     // Native circuits
     Hashes1Circuit,
     Hashes2Circuit,
-    InnerCollapseCircuit,
-    OuterCollapseCircuit,
+    CollapseCircuit,
     ComputeVCircuit,
     /// Nested challenge binding circuit at the given index (see
     /// [`bind_challenges`](circuits::bind_challenges)).
@@ -263,6 +261,8 @@ pub enum InternalCircuitIndex {
     OuterErrorFinalStaged,
     EvalFinalStaged,
     PointsWalkFinalStaged,
+    /// The preamble's final mask, under which `bind_beta` ends.
+    PreambleFinalStaged,
     /// A bonding of the profile's native extension, a stage's mask or a
     /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
     /// order.
@@ -300,8 +300,7 @@ impl InternalCircuitIndex {
         let mut c = 0;
         push(&mut slots, &mut c, Self::Hashes1Circuit);
         push(&mut slots, &mut c, Self::Hashes2Circuit);
-        push(&mut slots, &mut c, Self::InnerCollapseCircuit);
-        push(&mut slots, &mut c, Self::OuterCollapseCircuit);
+        push(&mut slots, &mut c, Self::CollapseCircuit);
         push(&mut slots, &mut c, Self::ComputeVCircuit);
         {
             let mut k = 0;
@@ -334,6 +333,7 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::OuterErrorFinalStaged);
         push(&mut slots, &mut c, Self::EvalFinalStaged);
         push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
+        push(&mut slots, &mut c, Self::PreambleFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -393,8 +393,7 @@ impl InternalCircuitIndex {
         match self {
             Hashes1Circuit
             | Hashes2Circuit
-            | InnerCollapseCircuit
-            | OuterCollapseCircuit
+            | CollapseCircuit
             | ComputeVCircuit
             | BindChallengesCircuit(_)
             | BindBetaCircuit
@@ -416,6 +415,7 @@ impl InternalCircuitIndex {
             | OuterErrorFinalStaged
             | EvalFinalStaged
             | PointsWalkFinalStaged
+            | PreambleFinalStaged
             | ExtensionBonding(_) => true,
         }
     }
@@ -431,8 +431,7 @@ impl InternalCircuitIndex {
 pub struct InternalCircuitValues<T, P: Profile> {
     pub hashes_1_circuit: T,
     pub hashes_2_circuit: T,
-    pub inner_collapse_circuit: T,
-    pub outer_collapse_circuit: T,
+    pub collapse_circuit: T,
     pub compute_v_circuit: T,
     pub bind_challenges_circuits: [T; NUM_BINDERS],
     pub bind_beta_circuit: T,
@@ -456,6 +455,7 @@ pub struct InternalCircuitValues<T, P: Profile> {
     pub outer_error_final_staged: T,
     pub eval_final_staged: T,
     pub points_walk_final_staged: T,
+    pub preamble_final_staged: T,
     /// One per bonding of the profile's native extension.
     pub extension_bondings: FixedVec<T, NumExtensionBondings<P>>,
 }
@@ -483,8 +483,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
         match id {
             Hashes1Circuit => &self.hashes_1_circuit,
             Hashes2Circuit => &self.hashes_2_circuit,
-            InnerCollapseCircuit => &self.inner_collapse_circuit,
-            OuterCollapseCircuit => &self.outer_collapse_circuit,
+            CollapseCircuit => &self.collapse_circuit,
             ComputeVCircuit => &self.compute_v_circuit,
             BindChallengesCircuit(k) => &self.bind_challenges_circuits[k as usize],
             BindBetaCircuit => &self.bind_beta_circuit,
@@ -506,6 +505,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             OuterErrorFinalStaged => &self.outer_error_final_staged,
             EvalFinalStaged => &self.eval_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
+            PreambleFinalStaged => &self.preamble_final_staged,
             ExtensionBonding(j) => &self.extension_bondings[j as usize],
         }
     }
@@ -530,8 +530,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
         Ok(InternalCircuitValues {
             hashes_1_circuit: f(Hashes1Circuit)?,
             hashes_2_circuit: f(Hashes2Circuit)?,
-            inner_collapse_circuit: f(InnerCollapseCircuit)?,
-            outer_collapse_circuit: f(OuterCollapseCircuit)?,
+            collapse_circuit: f(CollapseCircuit)?,
             compute_v_circuit: f(ComputeVCircuit)?,
             bind_challenges_circuits: {
                 let mut out = [(); NUM_BINDERS].map(|()| None);
@@ -559,6 +558,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             outer_error_final_staged: f(OuterErrorFinalStaged)?,
             eval_final_staged: f(EvalFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
+            preamble_final_staged: f(PreambleFinalStaged)?,
             extension_bondings: try_fixed_vec(|j| f(ExtensionBonding(j as u32)))?,
         })
     }
@@ -571,8 +571,7 @@ pub enum RxIndex {
     Application,
     Hashes1,
     Hashes2,
-    InnerCollapse,
-    OuterCollapse,
+    Collapse,
     ComputeV,
     /// A nested challenge binding circuit's rx polynomial.
     BindChallenges(u32),
@@ -629,8 +628,7 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::Application);
         push(&mut slots, &mut c, Self::Hashes1);
         push(&mut slots, &mut c, Self::Hashes2);
-        push(&mut slots, &mut c, Self::InnerCollapse);
-        push(&mut slots, &mut c, Self::OuterCollapse);
+        push(&mut slots, &mut c, Self::Collapse);
         push(&mut slots, &mut c, Self::ComputeV);
         {
             let mut k = 0;
@@ -712,8 +710,7 @@ pub struct RxValues<T, P: Profile> {
     pub application: T,
     pub hashes_1: T,
     pub hashes_2: T,
-    pub inner_collapse: T,
-    pub outer_collapse: T,
+    pub collapse: T,
     pub compute_v: T,
     pub bind_challenges: [T; NUM_BINDERS],
     pub bind_beta: T,
@@ -760,8 +757,7 @@ impl<T, P: Profile> RxValues<T, P> {
             Application => &self.application,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
-            InnerCollapse => &self.inner_collapse,
-            OuterCollapse => &self.outer_collapse,
+            Collapse => &self.collapse,
             ComputeV => &self.compute_v,
             BindChallenges(k) => &self.bind_challenges[k as usize],
             BindBeta => &self.bind_beta,
@@ -803,8 +799,7 @@ impl<T, P: Profile> RxValues<T, P> {
             application: f(Application)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
-            inner_collapse: f(InnerCollapse)?,
-            outer_collapse: f(OuterCollapse)?,
+            collapse: f(Collapse)?,
             compute_v: f(ComputeV)?,
             bind_challenges: {
                 let mut out = [(); NUM_BINDERS].map(|()| None);
@@ -983,6 +978,10 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             EvalFinalStaged => {
                 registry.register_bonding(stages::eval::Stage::<C, R, HEADER_SIZE>::final_mask()?)
             }
+            PreambleFinalStaged => {
+                registry
+                    .register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::final_mask()?)
+            }
             PointsBindingStage => registry.register_bonding(<stages::points::BindingStage<
                 C::NestedCurve,
                 C::Profile,
@@ -1037,16 +1036,8 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 HEADER_SIZE,
                 RevdotParameters<C::Profile>,
             >::new(params))?,
-            InnerCollapseCircuit => {
-                registry.register_internal_circuit(circuits::inner_collapse::Circuit::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                    RevdotParameters<C::Profile>,
-                >::new())?
-            }
-            OuterCollapseCircuit => {
-                registry.register_internal_circuit(circuits::outer_collapse::Circuit::<
+            CollapseCircuit => {
+                registry.register_internal_circuit(circuits::collapse::Circuit::<
                     C,
                     R,
                     HEADER_SIZE,
@@ -1065,13 +1056,13 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                     registry.register_internal_circuit(circuit)?
                 })
             }
-            BindBetaCircuit => registry
-                .register_internal_circuit(circuits::bind_beta::Circuit::<
-                C,
-                R,
-                HEADER_SIZE,
-                RevdotParameters<C::Profile>,
-            >::new(params))?,
+            BindBetaCircuit => {
+                registry.register_internal_circuit(circuits::bind_beta::Circuit::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                >::new(params))?
+            }
         };
     }
 

@@ -36,7 +36,18 @@ import Ragu.Circuits.Element.Square
 import Ragu.Circuits.Endoscalar.Alloc
 import Ragu.Circuits.Endoscalar.Extract
 import Ragu.Circuits.Endoscalar.GroupScale
+import Ragu.Circuits.Endoscalar.Hoist
+import Ragu.Circuits.Endoscalar.HoistedAlloc
+import Ragu.Circuits.Endoscalar.HoistedConsistent
+import Ragu.Circuits.Endoscalar.HoistedGroupScale
+import Ragu.Circuits.Endoscalar.HoistedLift
+import Ragu.Circuits.Endoscalar.Initial
 import Ragu.Circuits.Endoscalar.Lift
+import Ragu.Circuits.Endoscalar.LiftInjectivity
+import Ragu.Circuits.Endoscalar.Walk
+import Ragu.Circuits.Endoscalar.WalkGroup
+import Ragu.Circuits.Endoscalar.WalkPasta
+import Ragu.Circuits.Endoscalar.WalkScalar
 import Ragu.Circuits.Horner.Ky
 import Ragu.Circuits.NonzeroBank.Scope
 import Ragu.Circuits.Point.AddIncomplete
@@ -45,10 +56,15 @@ import Ragu.Circuits.Point.Alloc
 import Ragu.Circuits.Point.ConditionalEndo
 import Ragu.Circuits.Point.ConditionalNegate
 import Ragu.Circuits.Point.Consistent
+import Ragu.Circuits.Point.Denormalize
 import Ragu.Circuits.Point.Double
 import Ragu.Circuits.Point.DoubleAndAddIncomplete
 import Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked
+import Ragu.Circuits.Point.Group
+import Ragu.Circuits.Point.Endomorphism
+import Ragu.Circuits.Point.Normalize
 import Ragu.Circuits.Point.Spec
+import Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked
 import Ragu.Circuits.Poseidon.Linear
 import Ragu.Circuits.Poseidon.ParamsFp
 import Ragu.Circuits.Poseidon.ParamsFq
@@ -56,6 +72,9 @@ import Ragu.Circuits.Poseidon.Permutation
 import Ragu.Circuits.Poseidon.Round
 import Ragu.Circuits.Poseidon.Sbox
 import Ragu.Circuits.Poseidon.Sponge
+import Ragu.Lemmas.EndoscalarProof
+import Ragu.Lemmas.EndoscalarGroup
+import Ragu.Lemmas.CoordinateMap
 
 /-!
 # Ragu formal-verification trust boundary
@@ -290,6 +309,112 @@ census_axioms Ragu.Circuits.Element.Mul.completeness
 census_axioms Ragu.Circuits.Element.Square.soundness
 census_axioms Ragu.Circuits.Element.Square.completeness
 
+/-! ## Endoscalar integer bounds
+
+These named results are cited by the radix-3 model and its contract documentation.
+Pin them directly even though their names are not automatic census endpoints. -/
+
+census_axioms Ragu.Lemmas.EndoscalarProof.endoscaleN_injective_of_characteristicBound_lt
+census_axioms Ragu.Lemmas.EndoscalarProof.four_le_eisensteinNorm_accIndex
+census_axioms Ragu.Lemmas.EndoscalarProof.groupScale_collision_norm_bounds
+census_axioms Ragu.Lemmas.EndoscalarProof.groupScale_collision_combinations_ne_zero
+
+/-! ## Verified lift injectivity
+
+These bridge the verified plain/hoisted lift builders to the integer
+injectivity theorem, with the 47-digit bounds instantiated for both Pasta
+fields. Every result uses only the standard theorem tier. -/
+
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.initial_eq
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.digit_eq
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.index_fold
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.liftNative_eq_endoscaleN
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.decode_injective
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.liftNative_injective
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.characteristicBound_lt_p
+census_axioms Ragu.Circuits.Endoscalar.LiftInjectivity.characteristicBound_lt_q
+census_axioms Ragu.Circuits.Endoscalar.Lift.injective_soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.injective_soundness
+census_axioms Ragu.Circuits.Endoscalar.Lift.ep_injective_soundness
+census_axioms Ragu.Circuits.Endoscalar.Lift.eq_injective_soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.ep_injective_soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.eq_injective_soundness
+
+census_axioms Ragu.Lemmas.EndoscalarGroup.eq_nsmul_of_generator
+census_axioms Ragu.Circuits.Point.Endomorphism.pallas_generator
+census_axioms Ragu.Circuits.Point.Endomorphism.vesta_generator
+census_axioms Ragu.Circuits.Point.Endomorphism.pallas_endo +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Point.Endomorphism.vesta_endo +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+
+/-! ## Endoscalar curve bridge
+
+The abstract group and affine proofs use only the standard theorem tier.
+The concrete Pasta results reuse the two group-order certificates already
+listed above; no new native certificate is introduced by this bridge. -/
+
+census_axioms Ragu.Lemmas.CoordinateMap.coords_add
+census_axioms Ragu.Lemmas.CoordinateMap.card_curve
+census_axioms Ragu.Lemmas.CoordinateMap.endo_quadratic
+census_axioms Ragu.Lemmas.EndoscalarGroup.zsmul_ne_zero_of_prime_card
+census_axioms Ragu.Lemmas.EndoscalarGroup.norm_zsmul_eq_zero
+census_axioms Ragu.Lemmas.EndoscalarGroup.eval_ne_zero
+census_axioms Ragu.Lemmas.EndoscalarGroup.collision_combinations_ne_zero
+census_axioms Ragu.Circuits.Point.Group.embed_add
+census_axioms Ragu.Circuits.Point.Group.embed_double
+census_axioms Ragu.Circuits.Point.Group.tripleAdd_exists
+census_axioms Ragu.Circuits.Endoscalar.WalkGroup.accAfter_exists
+census_axioms Ragu.Circuits.Endoscalar.WalkGroup.groupScaleNative_ne_none
+census_axioms Ragu.Circuits.Endoscalar.WalkPasta.collisionBound_lt_p
+census_axioms Ragu.Circuits.Endoscalar.WalkPasta.collisionBound_lt_q
+census_axioms Ragu.Circuits.Endoscalar.WalkPasta.ep_groupScaleNative_ne_none +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.WalkPasta.eq_groupScaleNative_ne_none +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_assumptions +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_assumptions +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_soundness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_soundness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_completeness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_completeness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_assumptions +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_assumptions +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_soundness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_soundness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_completeness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_completeness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.digitPrefix_eq
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.groupScaleNative_eq_index
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.eval_eq_scalar
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.decode_scalarBits
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.groupScaleNative_eq_lift
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.ep_spec +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.WalkScalar.eq_spec +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.ep_scalar_soundness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.GroupScale.eq_scalar_soundness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.ep_scalar_soundness +native(
+  CompElliptic.Curves.Pasta.Pallas.q_nsmul_Gpt)
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.eq_scalar_soundness +native(
+  CompElliptic.Curves.Pasta.Vesta.p_nsmul_Gpt)
+
 /-! ## Endoscalar, Horner, and nonzero-bank circuits -/
 
 census_axioms Ragu.Circuits.Endoscalar.Alloc.soundness
@@ -300,6 +425,26 @@ census_axioms Ragu.Circuits.Endoscalar.GroupScale.Step.soundness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.Step.completeness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.soundness
 census_axioms Ragu.Circuits.Endoscalar.GroupScale.completeness
+census_axioms Ragu.Circuits.Endoscalar.Hoist.Digit.soundness
+census_axioms Ragu.Circuits.Endoscalar.Hoist.Digit.completeness
+census_axioms Ragu.Circuits.Endoscalar.Hoist.soundness
+census_axioms Ragu.Circuits.Endoscalar.Hoist.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedAlloc.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedAlloc.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedConsistent.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedConsistent.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.Step.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.Step.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedGroupScale.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.Digit.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.Digit.completeness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.soundness
+census_axioms Ragu.Circuits.Endoscalar.HoistedLift.completeness
+census_axioms Ragu.Circuits.Endoscalar.Initial.soundness
+census_axioms Ragu.Circuits.Endoscalar.Initial.completeness
+census_axioms Ragu.Circuits.Endoscalar.Lift.Digit.soundness
+census_axioms Ragu.Circuits.Endoscalar.Lift.Digit.completeness
 census_axioms Ragu.Circuits.Endoscalar.Lift.soundness
 census_axioms Ragu.Circuits.Endoscalar.Lift.completeness
 census_axioms Ragu.Circuits.Horner.Ky.soundness
@@ -321,12 +466,18 @@ census_axioms Ragu.Circuits.Point.ConditionalNegate.soundness
 census_axioms Ragu.Circuits.Point.ConditionalNegate.completeness
 census_axioms Ragu.Circuits.Point.Consistent.soundness
 census_axioms Ragu.Circuits.Point.Consistent.completeness
+census_axioms Ragu.Circuits.Point.Denormalize.soundness
+census_axioms Ragu.Circuits.Point.Denormalize.completeness
 census_axioms Ragu.Circuits.Point.Double.soundness
 census_axioms Ragu.Circuits.Point.Double.completeness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncomplete.soundness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncomplete.completeness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked.soundness
 census_axioms Ragu.Circuits.Point.DoubleAndAddIncompleteUnchecked.completeness
+census_axioms Ragu.Circuits.Point.Normalize.soundness
+census_axioms Ragu.Circuits.Point.Normalize.completeness
+census_axioms Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked.soundness
+census_axioms Ragu.Circuits.Point.TripleAndAddIncompleteUnchecked.completeness
 
 /-! ## Poseidon circuits -/
 

@@ -20,7 +20,7 @@ use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::{fft::bit_reverse, field::Field};
 
-use super::{NestedRegistryWy, RegistryWy};
+use super::_04_inner_error::{NestedRegistryWy, RegistryWy};
 use crate::{
     Application, Proof,
     internal::{native, nested},

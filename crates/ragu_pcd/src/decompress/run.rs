@@ -20,7 +20,8 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::{
-    Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, extract_endoscalar,
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
+    extract_endoscalar,
     poseidon::{Sponge, SpongeState},
     vec::{FixedVec, Len},
 };
@@ -122,7 +123,7 @@ pub(crate) struct Aux<G> {
     /// the schedule's [`ChallengeRef::Bits`] indexes them: the reduction
     /// it checks in its field, the fuse's $x$, $y$ and $u$, then the
     /// reduction whose points it checks.
-    pub challenge_bits: Vec<u128>,
+    pub challenge_bits: Vec<Uendo>,
     /// The other field's values, in [`ScalarRef::Bits`] order: $v$, $c$
     /// and $c b z$ of the reduction whose points the side checks, then
     /// what the side's [`Side::foreign`] adds.
@@ -789,7 +790,7 @@ fn supply<F: Field, P, Q>(
 type Executor<F> = Emulator<Wireless<Always<()>, F>>;
 
 /// The endoscalars of raw challenges, as their bits.
-fn bits<F: Field>(raw: &[F]) -> Result<Vec<u128>> {
+fn bits<F: Field>(raw: &[F]) -> Result<Vec<Uendo>> {
     raw.iter().map(|&raw| extract_endoscalar(raw)).collect()
 }
 

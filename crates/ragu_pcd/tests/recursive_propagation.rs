@@ -12,7 +12,10 @@ pub(crate) mod support {
     use core::marker::PhantomData;
     use std::sync::Mutex;
 
-    use proptest::prelude::*;
+    use proptest::{
+        prelude::*,
+        test_runner::{FileFailurePersistence, PersistedSeed},
+    };
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{
         polynomials::{ProductionRank, Rank, sparse},
@@ -280,7 +283,16 @@ pub(crate) mod support {
     /// PROPTEST_CASES can change the four-case default for longer campaigns;
     /// zero is ignored, since a run with no cases would pass vacuously.
     pub(crate) fn config() -> ProptestConfig {
-        let mut config = ProptestConfig::with_cases(4);
+        // These files are mounted with #[path] from src/proof. SourceParallel
+        // retains the `..` components and can require an untracked directory
+        // to exist before it can read a committed seed. Keep seeds beside the
+        // source instead, so a fresh checkout replays them too.
+        let mut config = ProptestConfig {
+            cases: 4,
+            ..ProptestConfig::with_failure_persistence(FileFailurePersistence::WithSource(
+                "proptest-regressions",
+            ))
+        };
         if let Some(cases) = std::env::var("PROPTEST_CASES")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -289,6 +301,32 @@ pub(crate) mod support {
             config.cases = cases;
         }
         config
+    }
+
+    /// Check the same file!() path used by proptest against the committed seeds.
+    pub(crate) fn assert_regression_seeds(
+        config: ProptestConfig,
+        source_file: &'static str,
+        contents: &str,
+    ) {
+        let expected: Vec<PersistedSeed> = contents
+            .lines()
+            .map(|line| line.split('#').next().unwrap().trim())
+            .filter(|seed| !seed.is_empty())
+            .map(|seed| seed.parse().expect("valid committed proptest seed"))
+            .collect();
+        assert!(
+            !expected.is_empty(),
+            "the regression fixture must have seeds"
+        );
+        assert_eq!(
+            config
+                .failure_persistence
+                .expect("regression persistence is enabled")
+                .load_persisted_failures2(Some(source_file)),
+            expected,
+            "proptest must discover every committed seed for {source_file}"
+        );
     }
 
     #[derive(Clone, Debug)]

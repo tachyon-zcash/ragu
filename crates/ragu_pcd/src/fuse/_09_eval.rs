@@ -22,7 +22,10 @@ use ragu_core::Result;
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::{NativeSPrime, NestedRegistryWy, NestedSPrime, RegistryWy};
+use super::{
+    _03_s_prime::{NativeSPrime, NestedSPrime},
+    _04_inner_error::{NestedRegistryWy, RegistryWy},
+};
 use crate::{
     Application, Proof,
     internal::{native, nested},
@@ -163,5 +166,26 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
 
         Ok((eval_rx, bridge_rx, bridge_eval_commitment))
+    }
+
+    /// Commits the nested challenge stage: the lifts of this step's
+    /// challenges, the base-case sign and the lift of `pre_beta`, unblinded,
+    /// so that its nested-curve commitment is the fixed linear combination
+    /// of generators the binding circuits recompute. Completes the witness
+    /// used for the eval stage's binding partials with beta's lift and returns
+    /// it for the nested circuits that load the stage.
+    pub(super) fn commit_nested_challenges(
+        &self,
+        mut challenges: nested::stages::challenges::Witness<C::ScalarField>,
+        pre_beta: C::CircuitField,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<nested::stages::challenges::Witness<C::ScalarField>> {
+        challenges.beta = nested::challenge::<C>(pre_beta)?;
+        builder.set_nested_challenges_rx(nested::stages::challenges::Stage::<
+            C::HostCurve,
+            R,
+            C::Profile,
+        >::rx(C::ScalarField::ZERO, &challenges)?);
+        Ok(challenges)
     }
 }

@@ -27,7 +27,11 @@ changed findings and checks or identify the older snapshot and unfinished work.
 
 Discover `.claude/code-review/*.md`, read `standards.md` and every applicable
 policy, and apply their shared references. For documentation, also read
-`.claude/review-shared/{writing,math,surface-placement}.md`.
+`.claude/review-shared/{writing,math,surface-placement}.md`. For code that runs
+in a `Driver` context (gadgets, circuits, stages, steps, routines), apply
+`circuit-documentation.md` to its doc comments as well; it condenses
+`book/src/implementation/circuit-code-documentation.md`, which stays the
+convention's canonical text.
 
 Prefer Read for files, Grep for searches, and Glob for discovery.
 In minimal runtimes without Grep/Glob, use Bash `rg` for searches and

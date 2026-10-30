@@ -18,9 +18,8 @@
 //! $k(y_n)$ from those copies and checks their use in the nested fold,
 //! binding them to this step's exported values outside the base case.
 //! Each slot is the responsibility of exactly one circuit: the
-//! [`export`](super::circuits::export) circuit pins $x$, $y$, $u$ and the
-//! commitments to the stages that hold them, the
-//! [`collapse`](super::circuits::collapse) circuit checks $c_n$ and the
+//! [`collapse`](super::circuits::collapse) circuit pins $x$, $y$, $u$ and the
+//! commitments to the stages that hold them and checks $c_n$; the
 //! [`compute_v`](super::circuits::compute_v) circuit computes $v_n$. The
 //! [`OutputBuilder`] tracks that [`Coverage`] the way the native instance's
 //! builder does, and the prover asserts it complete once every circuit is

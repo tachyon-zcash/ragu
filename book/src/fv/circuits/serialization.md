@@ -38,11 +38,15 @@ let mut nonzero = WireDeserializer::new(nonzero_input).into_gadget(&element_temp
 
 The template only supplies the gadget's *structure*; every wire it carries is
 replaced. For gadgets whose public constructors emit operations (`Boolean`,
-`Endoscalar`), the private `wire_remap` module builds a constraint-free template
-on Ragu's wireless emulator and replaces its dummy wires with the symbolic
-inputs through the public gadget-mapping API. The remapping emits no Boolean
-constraints, so each Lean instance supplies any required `IsBool` preconditions
-through its `Assumptions`.
+`Endoscalar`, `HoistedEndoscalar`), the private `wire_remap` module builds a
+constraint-free template on Ragu's wireless emulator and replaces its dummy
+wires with the symbolic inputs through the public gadget-mapping API. Remapping
+emits no gates. A consumer that relies on Booleanity or product relations must
+receive them through its `Assumptions` or establish them with constraints.
+`Hoist` establishes the product relations when it creates the product wires;
+`HoistedConsistent` re-establishes both Booleanity and the product relations on
+existing wires. Their separately extracted
+[contracts](./contracts.md#assumption-discharge) state these guarantees.
 
 Either way, the extraction instance then calls the real gadget methods —
 `Boolean::and`, `Point::conditional_negate`, and so on — instead of mirroring

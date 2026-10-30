@@ -365,4 +365,76 @@ lemma double_and_add_incomplete_eq_of_wires (x_p y_p x_q y_q : F p)
     · rw [h_slope, h_y, h_sq2]
       linear_combination -h_lam2_mul
 
+
+/-- The three chained incomplete additions of `triple_and_add_incomplete` on
+the circuit's wires: `r₁ = A + D` from the slope `t₁`, `r₂ = r₁ + A` from
+`q₂ - t₁` where `q₂ = -2y / (x₁ - x)`, and `r₂ + A` from `q₃ - (q₂ - t₁)`
+where `q₃ = -2y / (x₂ - x)`. The intermediate `y`-coordinates cancel out of
+the slope equations, so only the `x`-coordinates `x₁ = t₁² - x - x_D` and
+`x₂ = t₂² - x₁ - x` are wires. The result's `x₃ = t₃² - x₂ - x` is written
+with the intermediate `x`-coordinates cancelled, `t₃² - t₂² + t₁² - x - x_D`,
+as the gadget computes it. -/
+lemma triple_and_add_incomplete_eq_of_wires (x y x_d y_d t1 t1_sq q2 t2_sq q3 t3_sq y_term : F p)
+    (h_ne1 : x ≠ x_d)
+    (h_t1 : t1 = (y_d + -y) / (x_d + -x))
+    (h_sq1 : t1_sq = t1 ^ 2)
+    (h_ne2 : t1_sq + -x + -x_d ≠ x)
+    (h_q2 : q2 = (-(2 * y)) / (t1_sq + -x + -x_d + -x))
+    (h_sq2 : t2_sq = (q2 - t1) ^ 2)
+    (h_ne3 : t2_sq + -(t1_sq + -x + -x_d) + -x ≠ x)
+    (h_q3 : q3 = (-(2 * y)) / (t2_sq + -(t1_sq + -x + -x_d) + -x + -x))
+    (h_sq3 : t3_sq = (q3 - (q2 - t1)) ^ 2)
+    (h_y : y_term = (q3 - (q2 - t1)) * (x - (t3_sq + -t2_sq + t1_sq + -x + -x_d))) :
+    ∃ r1 r2 : Point (F p),
+      Point.add_incomplete ⟨x, y⟩ ⟨x_d, y_d⟩ = some r1 ∧
+      r1.add_incomplete ⟨x, y⟩ = some r2 ∧
+      r2.add_incomplete ⟨x, y⟩ = some ⟨t3_sq + -t2_sq + t1_sq + -x + -x_d, y_term + -y⟩ := by
+  subst h_sq1 h_sq2 h_sq3 h_y
+  have h_d1 : x_d - x ≠ 0 := by
+    intro h; apply h_ne1; linear_combination -h
+  have h_d2 : x - (t1 ^ 2 + -x + -x_d) ≠ 0 := by
+    intro h; apply h_ne2; linear_combination -h
+  have h_d3 : x - ((q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x) ≠ 0 := by
+    intro h; apply h_ne3; linear_combination -h
+  -- The slope equations in product form.
+  have e1 : t1 * (x_d - x) = y_d - y := by
+    rw [h_t1]
+    have h1 : x_d + -x = x_d - x := by ring
+    have h2 : y_d + -y = y_d - y := by ring
+    rw [h1, h2]
+    exact div_mul_cancel₀ _ h_d1
+  have e2 : q2 * (x - (t1 ^ 2 + -x + -x_d)) = 2 * y := by
+    rw [h_q2]
+    have hd : t1 ^ 2 + -x + -x_d + -x ≠ 0 := by
+      intro h; apply h_d2; linear_combination -h
+    field_simp
+    ring
+  have e3 : q3 * (x - ((q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x)) = 2 * y := by
+    rw [h_q3]
+    have hd : (q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x + -x ≠ 0 := by
+      intro h; apply h_d3; linear_combination -h
+    field_simp
+    ring
+  -- The three slopes as the definition writes them.
+  have hl1 : (y_d - y) / (x_d - x) = t1 := by
+    rw [div_eq_iff h_d1]; exact e1.symm
+  have hl2 : (y - (t1 * (x - (t1 ^ 2 + -x + -x_d)) - y)) / (x - (t1 ^ 2 + -x + -x_d)) =
+      q2 - t1 := by
+    rw [div_eq_iff h_d2]; linear_combination -e2
+  have hl3 : (y - ((q2 - t1) * (x - ((q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x)) - y)) /
+      (x - ((q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x)) = q3 - (q2 - t1) := by
+    rw [div_eq_iff h_d3]; linear_combination -e3
+  refine ⟨⟨t1 ^ 2 + -x + -x_d, t1 * (x - (t1 ^ 2 + -x + -x_d)) - y⟩,
+    ⟨(q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x,
+      (q2 - t1) * (x - ((q2 - t1) ^ 2 + -(t1 ^ 2 + -x + -x_d) + -x)) - y⟩, ?_, ?_, ?_⟩
+  · simp only [Point.add_incomplete, if_neg h_ne1, Option.some.injEq, Point.mk.injEq]
+    rw [hl1]
+    exact ⟨by ring, by ring⟩
+  · simp only [Point.add_incomplete, if_neg h_ne2, Option.some.injEq, Point.mk.injEq]
+    rw [hl2]
+    exact ⟨by ring, by linear_combination -e2⟩
+  · simp only [Point.add_incomplete, if_neg h_ne3, Option.some.injEq, Point.mk.injEq]
+    rw [hl3]
+    exact ⟨by ring, by linear_combination -e3⟩
+
 end Ragu.Circuits.Point.Lemmas

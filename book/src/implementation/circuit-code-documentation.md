@@ -446,6 +446,9 @@ Prefer direct wording:
 
 ## Review Checklist
 
+The code-review policy in `.claude/code-review/circuit-documentation.md`
+mirrors this checklist for reviewers; keep the two aligned.
+
 When documenting or reviewing circuit code, ask:
 
 1. Can a value carried through `DriverValue` affect emitted constraints? If yes,

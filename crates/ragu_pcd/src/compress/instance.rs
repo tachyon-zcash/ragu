@@ -491,7 +491,7 @@ impl<C: ProfiledCycle> Instance<C> {
         }
     }
 
-    /// The nested unified instance under `challenges`, as the export circuit
+    /// The nested unified instance under `challenges`, as the collapse circuit
     /// serializes it.
     pub(crate) fn nested_unified(
         &self,

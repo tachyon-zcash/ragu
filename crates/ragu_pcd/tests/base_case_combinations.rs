@@ -518,12 +518,13 @@ fn check_proof_guards(
     native_delta: Fp,
     nested_delta: Fq,
 ) -> Result<()> {
-    let mut native_trace = proof.native_outer_collapse_rx.clone();
+    let mut native_trace = proof.native_collapse_rx.clone();
     native_trace.add_assign(&proof.native_preamble_rx);
     native_trace.add_assign(&proof.native_outer_error_rx);
+    native_trace.add_assign(&proof.native_inner_error_rx);
     assert_eq!(
         accepts_wrong_c(
-            native::circuits::outer_collapse::Circuit::<
+            native::circuits::collapse::Circuit::<
                 C,
                 R,
                 HEADER_SIZE,
@@ -557,7 +558,6 @@ fn check_proof_guards(
 }
 
 #[test]
-#[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
 fn nested_collapse_uses_challenge_stage_y_even_in_bootstrap() -> Result<()> {
     support::with_app(|app| {
         let bootstrap = app.bootstrap_pcd();
@@ -614,16 +614,18 @@ fn nested_collapse_uses_challenge_stage_y_even_in_bootstrap() -> Result<()> {
 
             // Change only the supported challenge-stage coefficient. The
             // layer-one equalities must reject even when the final c_n
-            // comparison is waived, without relying on Export's equality.
+            // comparison is waived.
             let mut changed = coefficients.clone();
             changed[y_degree] += Fq::ONE;
             assert!(!constraints.hold(&changed), "{case}: substituted stage y");
 
-            // The public copy is Export's responsibility. This is a local
-            // Collapse check, not acceptance of a proof with a divergent y.
+            // The combined circuit must also reject a divergent public copy.
             let mut changed = coefficients;
             changed[instance_y_degree] += Fq::ONE;
-            assert!(constraints.hold(&changed), "{case}: substituted instance y");
+            assert!(
+                !constraints.hold(&changed),
+                "{case}: substituted instance y"
+            );
         }
         Ok(())
     })
@@ -709,7 +711,6 @@ fn check_guards(
 }
 
 #[test]
-#[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
 fn noncanonical_unit_children_reject_through_two_generations() {
     let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
         .register(UnitStep)

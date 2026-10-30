@@ -49,7 +49,7 @@ use ragu_primitives::{Element, vec::FixedVec};
 use udon::curve::Affine;
 
 use super::{
-    NestedRegistryWy,
+    _04_inner_error::NestedRegistryWy,
     claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
 };
 use crate::{
