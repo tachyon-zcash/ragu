@@ -345,8 +345,8 @@ bench = false
 
 # Decode-to-production-verification byte boundary.
 [[bin]]
-name = "fuzz_minimal_wire"
-path = "fuzz_targets/fuzz_minimal_wire.rs"
+name = "fuzz_proof_wire"
+path = "fuzz_targets/fuzz_proof_wire.rs"
 test = false
 doc = false
 bench = false

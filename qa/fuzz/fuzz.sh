@@ -93,7 +93,7 @@ TARGETS=(
   fuzz_poseidon_differential
   fuzz_verify_reject
   fuzz_verify_reject_full
-  fuzz_minimal_wire
+  fuzz_proof_wire
   fuzz_compressed_wire
   fuzz_pcd_lifecycle
   fuzz_witness_cheat

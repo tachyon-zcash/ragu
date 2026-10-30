@@ -36,7 +36,7 @@ baked-aggregator = ["baked"]
 default = ["alloc"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
-# `serde::{Serialize, Deserialize}` for `MinimalProof`, as its wire bytes.
+# `serde::{Serialize, Deserialize}` for `Proof` and `CompressedProof`, as their wire bytes.
 serde = ["dep:serde"]
 # Exposes `Application::verify_uncompressed` as a test oracle for the crate's
 # own tests, benchmarks and the fuzz harness. Production verification goes

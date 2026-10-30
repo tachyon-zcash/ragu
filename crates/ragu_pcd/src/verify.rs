@@ -57,7 +57,7 @@ use udon::{
 };
 
 use crate::{
-    Application, MinimalProof, Pcd, Proof, RAGU_TAG, SelectableBackend,
+    Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{
         claims, ky,
@@ -121,7 +121,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             };
         }
 
-        let lifts = proof_check!(self.preflight_proof(pcd.proof()));
+        // A deserialized proof's derived fields are filled here, from the
+        // fields it retains, before anything reads them.
+        let (prepared, lifts) = proof_check!(self.prepare(pcd.proof()));
+        let proof: &Proof<C, R> = &prepared;
 
         // Sample verification challenges w, y, and z.
         let w = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
@@ -133,13 +136,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let output_header =
             ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?.try_into()?;
         let native_ky = proof_check!(ky::native_ky_from_header::<C, R, HEADER_SIZE>(
-            pcd.proof(),
+            proof,
             output_header,
             y,
         ));
 
         // Build a and b polynomials for each revdot claim.
-        let source = native::SingleProofSource { proof: pcd.proof() };
+        let source = native::SingleProofSource { proof };
         let mut builder =
             claims::Builder::<_, C::CircuitField, R, Verifier<B>>::new(&self.native_registry, y, z);
         native_claims::build::<C::Profile, _, _>(&source, &mut builder)?;
@@ -153,7 +156,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // Check all nested revdot claims.
         let nested_revdot_claims = {
-            let nested_source = nested::SingleProofSource { proof: pcd.proof() };
+            let nested_source = nested::SingleProofSource { proof };
             let y_nested = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
             let z_nested = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
             let mut nested_builder = claims::Builder::<_, C::ScalarField, R, Verifier<B>>::new(
@@ -167,17 +170,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             // for the instance circuits' claims: the instance is read off
             // the proof (c_n and v_n derived from its polynomials), and the
             // claims bind it to those circuits' traces.
-            let nested_ky = proof_check!(ky::nested_ky(pcd.proof(), y_nested));
+            let nested_ky = proof_check!(ky::nested_ky(proof, y_nested));
             let native_bound =
-                ky::nested_bound::<C::Profile, _>(|index| pcd.proof().native_rx_commitment(index));
+                ky::nested_bound::<C::Profile, _>(|index| proof.native_rx_commitment(index));
             let ky_source = ky::NestedKy {
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
                 // It remains meaningful inside the collapse circuit, where
                 // c_n is an instance wire the fold is checked against.
                 c: Verifier::<B>::sparse_revdot(
-                    &pcd.proof()[NestedRxComponent::AbA],
-                    &pcd.proof()[NestedRxComponent::AbB],
+                    &proof[NestedRxComponent::AbA],
+                    &proof[NestedRxComponent::AbB],
                 ),
                 unified: nested_ky,
                 // The nested binding circuit's claim holds its recomputation
@@ -193,9 +196,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // Check registry_xy polynomial evaluation at the sampled w.
         // registry_xy_poly is m(W, x, y) - the registry evaluated at current x, y, free in W.
         let registry_xy_claim = {
-            let x = pcd.proof().x();
-            let y = pcd.proof().y();
-            let poly_eval = Verifier::<B>::sparse_eval(pcd.proof().native_registry_xy_poly(), w);
+            let x = proof.x();
+            let y = proof.y();
+            let poly_eval = Verifier::<B>::sparse_eval(proof.native_registry_xy_poly(), w);
             let expected = Verifier::<B>::registry_wxy(&self.native_registry, w, x, y);
             poly_eval == expected
         };
@@ -205,9 +208,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // at a sampled w.
         let nested_registry_xy_claim = {
             let w = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
-            let x = nested_challenge::<C>(pcd.proof().x())?;
-            let y = nested_challenge::<C>(pcd.proof().y())?;
-            let poly_eval = Verifier::<B>::sparse_eval(pcd.proof().nested_registry_xy_poly(), w);
+            let x = nested_challenge::<C>(proof.x())?;
+            let y = nested_challenge::<C>(proof.y())?;
+            let poly_eval = Verifier::<B>::sparse_eval(proof.nested_registry_xy_poly(), w);
             let expected = Verifier::<B>::registry_wxy(&self.nested_registry, w, x, y);
             poly_eval == expected
         };
@@ -217,8 +220,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // coefficients. A parent holds a child's stage to the child's headers
         // through `bind_beta`, its walk and its nested batch; the root has no
         // parent, so the decider holds the root's stage to its headers here.
-        let nested_challenges_claim =
-            nested_challenges_match::<C, R, HEADER_SIZE>(pcd.proof(), &lifts)?;
+        let nested_challenges_claim = nested_challenges_match::<C, R, HEADER_SIZE>(proof, &lifts)?;
 
         // Check cached commitments against their polynomials in one batch
         // per curve, including P = Com(p) and P_n = Com(p_n). The endoscaling
@@ -227,7 +229,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // (`bind_endoscalar` and `bind_beta` for P_n, the nested `collapse` and
         // `loading` for P), whose claims the revdot checks above cover.
         let commitments_claim = {
-            let proof = pcd.proof();
             let native = {
                 let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> = Vec::new();
                 let mut points: Vec<C::HostCurve> = Vec::new();
@@ -277,13 +278,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // The points the native walk consumes must commit to the nested
         // polynomials the decider retains, not just to evaluations at u_n.
-        let nested_points_claim = nested_points_match(pcd.proof())?;
+        let nested_points_claim = nested_points_match(proof)?;
 
         // The challenges, rederived from the transcript over the bridge
         // commitments in the fuse's schedule, and pre_beta in the endoscalar
         // challenge range the prover grinds it into.
         let transcript_claim = {
-            let proof = pcd.proof();
             let mut dr = Emulator::execute();
             let mut transcript =
                 Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
@@ -335,7 +335,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // commitments, the native points stage holding the nested ones, and
         // the proof's bridge blinding: rederive and compare.
         let ab_bridge_claim = {
-            let proof = pcd.proof();
             let expected = nested_ab::Stage::<C::HostCurve, R, C::Profile>::rx(
                 crate::proof::bridge_alpha_power(
                     proof.bridge_alpha,
@@ -361,7 +360,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // are not carried by the proof, but their claimed evaluations are,
         // and the registry gives what they must be.
         let mesh_claim = {
-            let proof = pcd.proof();
             let native = self.native_mesh_claim(proof)?;
             let nested = self.nested_mesh_claim(proof)?;
             native && nested
@@ -377,33 +375,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim)
-    }
-
-    /// Verifies a [`MinimalProof`] for the provided [`Header`].
-    ///
-    /// The derived fields the decider checks are ones this application
-    /// computed by [expansion](Self::expand), never ones the encoder
-    /// supplied; the expanded proof then goes through
-    /// [`verify_uncompressed`](Self::verify_uncompressed) unchanged,
-    /// including its shape check.
-    ///
-    /// Returns `Ok(false)` when expansion finds a bridge commitment that is
-    /// not an affine point or squeezes a challenge with no lift, as the
-    /// uncompressed verifier does for the same proof. Other computation and
-    /// header-encoding errors propagate, as there.
-    #[cfg_attr(docsrs, doc(cfg(feature = "test-utils")))]
-    pub fn verify_minimal<RNG: CryptoRng, H: Header<C::CircuitField>>(
-        &self,
-        proof: MinimalProof<C, R, HEADER_SIZE>,
-        data: H::Data,
-        rng: RNG,
-    ) -> Result<bool> {
-        let proof = match self.expand(proof) {
-            Ok(proof) => proof,
-            Err(Error::InvalidWitness(_)) => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        self.verify_uncompressed(&proof.carry::<H>(data), rng)
     }
 
     /// The native mesh claim: see

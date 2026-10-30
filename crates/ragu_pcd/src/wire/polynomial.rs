@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::{Rank, sparse::Polynomial};
 use udon::field::Field;
 
-use super::{Decode, Encode, Error, Reader, Scalar};
+use super::{Decode, Dimensions, Encode, Error, Reader, Scalar};
 
 // The rank fixes the coefficient count, so the layout carries no counts and
 // does not depend on the in-memory block structure or its gap tolerance.
@@ -18,23 +18,23 @@ impl<F: Field, R: Rank> Encode for Polynomial<F, R> {
 }
 
 impl<F: Field, R: Rank> Decode for Polynomial<F, R> {
-    fn encoded_len() -> usize {
-        R::num_coeffs() * <F as Decode<Scalar>>::encoded_len()
+    fn encoded_len(dims: Dimensions) -> usize {
+        R::num_coeffs() * <F as Decode<Scalar>>::encoded_len(dims)
     }
 
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
         // Check the whole polynomial is present before allocating for it.
         let offset = reader.offset();
         let bytes = reader.remaining();
-        if bytes.len() < Self::encoded_len() {
+        if bytes.len() < Self::encoded_len(dims) {
             return Err(Error::Truncated {
                 offset,
-                requested: Self::encoded_len(),
+                requested: Self::encoded_len(dims),
                 bytes,
             });
         }
         let coeffs = (0..R::num_coeffs())
-            .map(|_| <F as Decode<Scalar>>::decode(reader))
+            .map(|_| <F as Decode<Scalar>>::decode(reader, dims))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self::from_coeffs(coeffs))
     }
@@ -49,6 +49,12 @@ mod tests {
     use ragu_core::pasta::Fp;
 
     use super::*;
+
+    // A polynomial's layout depends on its rank alone.
+    const DIMS: Dimensions = Dimensions {
+        rank: 0,
+        header_size: 0,
+    };
     use crate::wire::VERSION;
 
     type Poly = Polynomial<Fp, TestRank>;
@@ -58,7 +64,7 @@ mod tests {
         for value in coeffs {
             <Fp as Encode<Scalar>>::encode(value, &mut bytes);
         }
-        bytes.resize(1 + Poly::encoded_len(), 0);
+        bytes.resize(1 + Poly::encoded_len(DIMS), 0);
         bytes
     }
 
@@ -72,7 +78,7 @@ mod tests {
         assert_eq!(expected.len(), 1 + TestRank::num_coeffs() * 32);
         assert_eq!(dense.to_bytes(), expected);
         assert_eq!(padded.to_bytes(), expected);
-        let decoded = Poly::from_bytes(&expected).unwrap();
+        let decoded = Poly::from_bytes(&expected, DIMS).unwrap();
         assert!(decoded.iter_coeffs().eq(dense.iter_coeffs()));
         assert!(decoded.iter_stored_coeffs().eq(dense.iter_stored_coeffs()));
         assert_eq!(decoded.to_bytes(), expected);
@@ -89,7 +95,7 @@ mod tests {
         let from_view: Poly = view.build();
         let dense = Poly::from_coeffs(from_view.iter_coeffs().collect());
         assert_eq!(from_view.to_bytes(), dense.to_bytes());
-        let decoded = Poly::from_bytes(&from_view.to_bytes()).unwrap();
+        let decoded = Poly::from_bytes(&from_view.to_bytes(), DIMS).unwrap();
         assert!(decoded.iter_stored_coeffs().eq(dense.iter_stored_coeffs()));
     }
 
@@ -97,7 +103,8 @@ mod tests {
     fn rejects_other_lengths_and_bad_coefficients() {
         let bytes = Poly::from_coeffs(vec![Fp::ONE, Fp::from(2)]).to_bytes();
         for end in [0, 1, 33, bytes.len() - 1] {
-            let Error::Length { expected, actual } = Poly::from_bytes(&bytes[..end]).unwrap_err()
+            let Error::Length { expected, actual } =
+                Poly::from_bytes(&bytes[..end], DIMS).unwrap_err()
             else {
                 panic!("expected a length error")
             };
@@ -106,22 +113,23 @@ mod tests {
         }
         let mut trailing = bytes.clone();
         trailing.push(0);
-        Poly::from_bytes(&trailing).unwrap_err();
+        Poly::from_bytes(&trailing, DIMS).unwrap_err();
 
         // A short reader (no outer length check) reports the whole polynomial.
         let mut reader = Reader::new(&bytes[1..40]);
         let Error::Truncated {
             offset, requested, ..
-        } = Poly::decode(&mut reader).unwrap_err()
+        } = Poly::decode(&mut reader, DIMS).unwrap_err()
         else {
             panic!("expected truncation")
         };
         assert_eq!(offset, 0);
-        assert_eq!(requested, Poly::encoded_len());
+        assert_eq!(requested, Poly::encoded_len(DIMS));
 
         let mut bad = bytes;
         bad[1..33].fill(0xff);
-        let Error::Invalid { offset, reason, .. } = Poly::from_bytes(&bad).unwrap_err() else {
+        let Error::Invalid { offset, reason, .. } = Poly::from_bytes(&bad, DIMS).unwrap_err()
+        else {
             panic!("expected a non-canonical coefficient")
         };
         assert_eq!(offset, 1);
@@ -137,17 +145,17 @@ mod tests {
             padded.resize(TestRank::num_coeffs(), Fp::ZERO);
             let chunked = Poly::from_coeffs(padded);
             let bytes = canonical.to_bytes();
-            prop_assert_eq!(bytes.len(), 1 + Poly::encoded_len());
+            prop_assert_eq!(bytes.len(), 1 + Poly::encoded_len(DIMS));
             prop_assert_eq!(&chunked.to_bytes(), &bytes);
-            let decoded = Poly::from_bytes(&bytes).unwrap();
+            let decoded = Poly::from_bytes(&bytes, DIMS).unwrap();
             prop_assert!(decoded.iter_coeffs().eq(canonical.iter_coeffs()));
             prop_assert!(decoded.iter_stored_coeffs().eq(canonical.iter_stored_coeffs()));
             prop_assert_eq!(decoded.to_bytes(), bytes);
         }
 
         #[test]
-        fn accepted_bytes_are_canonical(bytes in proptest::collection::vec(any::<u8>(), 1 + Poly::encoded_len())) {
-            if let Ok(poly) = Poly::from_bytes(&bytes) {
+        fn accepted_bytes_are_canonical(bytes in proptest::collection::vec(any::<u8>(), 1 + Poly::encoded_len(DIMS))) {
+            if let Ok(poly) = Poly::from_bytes(&bytes, DIMS) {
                 prop_assert_eq!(poly.to_bytes(), bytes);
             }
         }

@@ -21,14 +21,14 @@ static SEED: LazyLock<Seed> = LazyLock::new(|| {
     assert!(app.verify_compressed(&compressed).unwrap());
     Seed {
         data: *proof.data(),
-        minimal: format.encode(&proof.proof().minimize::<4>()).unwrap(),
+        proof: format.encode(proof.proof()).unwrap(),
         compressed: format.encode_compressed(compressed.proof()).unwrap(),
     }
 });
 
 struct Seed {
     data: NativeField,
-    minimal: Vec<u8>,
+    proof: Vec<u8>,
     compressed: Vec<u8>,
 }
 
@@ -42,7 +42,7 @@ fn context() -> ProofContext {
 /// Which wire payload the target exercises.
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
-    Minimal,
+    Proof,
     Compressed,
 }
 
@@ -63,7 +63,7 @@ pub struct Outcome {
 // are admitted. No input can request an unbounded allocation or fresh proof tree.
 fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
     let seed = match kind {
-        Kind::Minimal => &SEED.minimal,
+        Kind::Proof => &SEED.proof,
         Kind::Compressed => &SEED.compressed,
     };
     let (&mode, edits) = input.split_first().unwrap_or((&0, &[]));
@@ -92,12 +92,12 @@ fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
         } else {
             &edits[..edits.len().min(128)]
         }),
-        // Zero is canonical in the first minimal scalar (bridge alpha) and
+        // Zero is canonical in the first proof scalar (bridge alpha) and
         // final compressed scalar (nested IPA c). These edits reach beyond
         // representation checks. The envelope is version 2 (124 bytes).
         5 => {
             let offset = match kind {
-                Kind::Minimal => 124,
+                Kind::Proof => 124,
                 Kind::Compressed => bytes.len() - 32,
             };
             bytes[offset..offset + 32].fill(0);
@@ -110,28 +110,27 @@ fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
 /// Decode, enforce a canonical byte round trip, and invoke the production path.
 /// A changed input may still be a valid proof: acceptance is not itself a bug.
 /// Panics, noncanonical successful decoding, or rejection of the untouched seed
-/// are bugs. Errors from expansion/compression/verification are valid rejection.
+/// are bugs. Errors from derivation, compression or verification are valid
+/// rejection.
 pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
     let bytes = candidate(kind, input);
     let app = &APP.0;
     let format = app.proof_format(context());
     let mut outcome = Outcome::default();
     match kind {
-        Kind::Minimal => {
+        Kind::Proof => {
             if let Ok(decoded) = format.decode(&bytes) {
                 outcome.decoded = true;
                 assert!(
                     format.encode(&decoded).unwrap() == bytes,
-                    "noncanonical minimal encoding"
+                    "noncanonical proof encoding"
                 );
-                if let Ok(expanded) = app.expand(decoded) {
-                    let mut rng = StdRng::seed_from_u64(0xdec0de);
-                    if let Ok(compressed) =
-                        app.compress(&expanded.carry::<LeafNode>(SEED.data), &mut rng)
-                    {
-                        outcome.verified =
-                            Some(app.verify_compressed(&compressed).unwrap_or(false));
-                    }
+                // Compression derives the decoded proof's omitted fields.
+                let mut rng = StdRng::seed_from_u64(0xdec0de);
+                if let Ok(compressed) =
+                    app.compress(&decoded.carry::<LeafNode>(SEED.data), &mut rng)
+                {
+                    outcome.verified = Some(app.verify_compressed(&compressed).unwrap_or(false));
                 }
             }
         }
@@ -169,11 +168,11 @@ mod tests {
         initialize();
         for (kind, inputs) in [
             (
-                Kind::Minimal,
+                Kind::Proof,
                 [
-                    include_bytes!("../regressions/fuzz_minimal_wire/raw").as_slice(),
-                    include_bytes!("../regressions/fuzz_minimal_wire/valid").as_slice(),
-                    include_bytes!("../regressions/fuzz_minimal_wire/scalar").as_slice(),
+                    include_bytes!("../regressions/fuzz_proof_wire/raw").as_slice(),
+                    include_bytes!("../regressions/fuzz_proof_wire/valid").as_slice(),
+                    include_bytes!("../regressions/fuzz_proof_wire/scalar").as_slice(),
                 ],
             ),
             (

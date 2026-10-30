@@ -1,17 +1,15 @@
-//! Versioned application envelope over fixed-length minimal and compressed proofs.
+//! Versioned application envelope over fixed-length proofs and compressed proofs.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::polynomials::Rank;
-use udon::field::Field;
 
-use super::MinimalProof;
+use super::Proof;
 use crate::{
     Application, CompressedProof, SelectableBackend,
-    compress::codec::Compressed as CompressedEncoding,
     profile::{Profile, ProfiledCycle},
-    wire::{Decode, Encode, Error, Reader, Scalar},
+    wire::{Decode, Dimensions, Encode, Error, Reader},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
@@ -19,26 +17,26 @@ const ENVELOPE_VERSION: u16 = 2;
 /// Each proof representation has its own payload kind and schema version.
 #[derive(Clone, Copy)]
 enum PayloadKind {
-    Minimal,
+    Proof,
     Compressed,
 }
 
 impl PayloadKind {
     fn tag(self) -> u16 {
         match self {
-            Self::Minimal => 1,
+            Self::Proof => 1,
             Self::Compressed => 2,
         }
     }
 
     fn schema_version(self) -> u16 {
         match self {
-            Self::Minimal => MINIMAL_SCHEMA_VERSION,
+            Self::Proof => PROOF_SCHEMA_VERSION,
             Self::Compressed => COMPRESSED_SCHEMA_VERSION,
         }
     }
 }
-const MINIMAL_SCHEMA_VERSION: u16 = 1;
+const PROOF_SCHEMA_VERSION: u16 = 1;
 const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 const PROTOCOL_VERSION: u16 = 1;
@@ -62,17 +60,18 @@ pub struct ProofContext {
 
 /// A versioned proof format for one application's trusted context.
 ///
-/// Construct with [`Application::proof_format`]. Minimal encodings have exactly
+/// Construct with [`Application::proof_format`]. Proof encodings have exactly
 /// [`encoded_len`](Self::encoded_len) bytes; compressed encodings have exactly
 /// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Decoding checks
 /// the exact length, then the envelope, then the payload representation.
 ///
-/// Decoding does not verify a proof. Expand and compress a decoded minimal proof
-/// with [`Application::expand`] and [`Application::compress`], then call
-/// [`Application::verify_compressed`]. A decoded compressed proof can be verified
-/// directly after attaching its accompanying header data. The uncompressed
-/// `verify_minimal`, under `test-utils`, is a test oracle for that path. See
-/// the crate's `WIRE_FORMAT.md` for the version and compatibility contract.
+/// Decoding does not verify a proof. A decoded [`Proof`] carries only the
+/// fields its encoding retains; the application derives the rest when one of
+/// its methods first takes it. Compress it with [`Application::compress`] and
+/// accept it on [`Application::verify_compressed`] before using it in another
+/// proof. A decoded compressed proof can be verified directly after attaching
+/// its accompanying header data. See the crate's `WIRE_FORMAT.md` for the
+/// version and compatibility contract.
 pub struct ProofFormat<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     context: ProofContext,
     marker: PhantomData<(C, R)>,
@@ -95,6 +94,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEADER_SIZE> {
+    /// The rank and header size the envelope records, which fix the payload's
+    /// layout.
+    fn dims() -> Dimensions {
+        Dimensions::of::<R, HEADER_SIZE>()
+    }
+
     /// Stable profile tag derived from the receiving profile's canonical name.
     ///
     /// BLAKE2b-256 hashes the UTF-8 bytes of [`Profile::NAME`] with
@@ -121,21 +126,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         bytes.extend_from_slice(&self.context.application);
     }
 
-    /// Exact byte length of a minimal proof, including the envelope.
+    /// Exact byte length of a proof, including the envelope.
     ///
-    /// Bound transport input to this size before buffering a minimal proof.
+    /// Bound transport input to this size before buffering a proof.
     pub fn encoded_len(&self) -> usize {
-        ENVELOPE_SIZE + MinimalProof::<C, R, HEADER_SIZE>::encoded_len()
+        ENVELOPE_SIZE + <Proof<C, R> as Decode>::encoded_len(Self::dims())
     }
 
     /// Exact byte length of a compressed proof, including the shared envelope.
     pub fn compressed_encoded_len(&self) -> usize {
-        ENVELOPE_SIZE
-            + <CompressedProof<C> as Decode<CompressedEncoding<R, HEADER_SIZE>>>::encoded_len()
+        ENVELOPE_SIZE + <CompressedProof<C> as Decode>::encoded_len(Self::dims())
     }
 
     /// Encodes a compressed proof of this application's shape. This does not
-    /// verify the proof. Payload kind 2 distinguishes it from a minimal proof.
+    /// verify the proof. Payload kind 2 distinguishes it from an uncompressed
+    /// proof.
     pub fn encode_compressed(&self, proof: &CompressedProof<C>) -> Result<Vec<u8>, Error<'static>> {
         if !proof.well_formed::<R, HEADER_SIZE>() {
             return Err(Error::Invalid {
@@ -146,9 +151,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         }
         let mut bytes = Vec::with_capacity(self.compressed_encoded_len());
         self.write_envelope(PayloadKind::Compressed, &mut bytes);
-        <CompressedProof<C> as Encode<CompressedEncoding<R, HEADER_SIZE>>>::encode(
-            proof, &mut bytes,
-        );
+        <CompressedProof<C> as Encode>::encode(proof, &mut bytes);
         Ok(bytes)
     }
 
@@ -161,16 +164,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
             PayloadKind::Compressed,
             self.compressed_encoded_len(),
         )?;
-        <CompressedProof<C> as Decode<CompressedEncoding<R, HEADER_SIZE>>>::decode(&mut reader)
+        <CompressedProof<C> as Decode>::decode(&mut reader, Self::dims())
     }
 
     /// Encodes a structurally valid proof, including its version and context.
-    /// Does not establish cryptographic validity.
-    pub fn encode(
-        &self,
-        proof: &MinimalProof<C, R, HEADER_SIZE>,
-    ) -> Result<Vec<u8>, Error<'static>> {
-        if !proof.well_formed() {
+    /// Does not establish cryptographic validity. Only the fields the
+    /// encoding retains are written; see [`ProofFormat::decode`].
+    pub fn encode(&self, proof: &Proof<C, R>) -> Result<Vec<u8>, Error<'static>> {
+        if !proof.well_formed::<HEADER_SIZE>() {
             return Err(Error::Invalid {
                 offset: 0,
                 bytes: &[],
@@ -178,19 +179,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
             });
         }
         let mut bytes = Vec::with_capacity(self.encoded_len());
-        self.write_envelope(PayloadKind::Minimal, &mut bytes);
+        self.write_envelope(PayloadKind::Proof, &mut bytes);
         proof.encode(&mut bytes);
         Ok(bytes)
     }
 
     /// Decodes exactly one encoding, rejecting other lengths, unknown versions,
     /// mismatched context and malformed representation, in that order.
-    pub fn decode<'a>(
-        &self,
-        bytes: &'a [u8],
-    ) -> Result<MinimalProof<C, R, HEADER_SIZE>, Error<'a>> {
-        let mut reader = self.open(bytes, PayloadKind::Minimal, self.encoded_len())?;
-        MinimalProof::decode(&mut reader)
+    ///
+    /// The decoded proof holds the retained fields alone. The application
+    /// derives the others, never reading them from the input, when one of its
+    /// methods first takes the proof.
+    pub fn decode<'a>(&self, bytes: &'a [u8]) -> Result<Proof<C, R>, Error<'a>> {
+        let mut reader = self.open(bytes, PayloadKind::Proof, self.encoded_len())?;
+        Proof::decode(&mut reader, Self::dims())
     }
 
     /// Checks the length and the envelope of one encoding of `payload`,
@@ -237,32 +239,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
     }
 }
 
-/// A child header: exactly `HEADER_SIZE` field elements, the application's
-/// declared size, which the envelope also records and checks.
-pub(super) struct Header<const HEADER_SIZE: usize>;
-impl<F: Field, const HEADER_SIZE: usize> Encode<Header<HEADER_SIZE>> for Vec<F> {
-    fn encode(&self, output: &mut Vec<u8>) {
-        debug_assert_eq!(self.len(), HEADER_SIZE, "child header length");
-        for value in self {
-            <F as Encode<Scalar>>::encode(value, output);
-        }
-    }
-}
-impl<F: Field, const HEADER_SIZE: usize> Decode<Header<HEADER_SIZE>> for Vec<F> {
-    fn encoded_len() -> usize {
-        HEADER_SIZE * <F as Decode<Scalar>>::encoded_len()
-    }
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
-        (0..HEADER_SIZE)
-            .map(|_| <F as Decode<Scalar>>::decode(reader))
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ragu_circuits::polynomials::{ProductionRank, TestRank};
     use ragu_core::pasta::{Fp, Pasta};
+    use udon::field::Field;
 
     use super::*;
     use crate::profile::{Shape, Standard};
@@ -299,11 +280,14 @@ mod tests {
             (polynomials - 2) * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 32 + 4
         }
         assert_eq!(
-            MinimalProof::<Pasta, ProductionRank, 4>::encoded_len(),
+            <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
+                ProductionRank,
+                4,
+            >()),
             payload::<ProductionRank, 4>()
         );
         assert_eq!(
-            MinimalProof::<Pasta, TestRank, 1>::encoded_len(),
+            <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank, 1>()),
             payload::<TestRank, 1>()
         );
         let format = ProofFormat::<Pasta, ProductionRank, 4> {
@@ -348,7 +332,7 @@ mod tests {
         assert_ne!(standard.profile_tag(), aggregator.profile_tag());
         for (kind, length, other_length) in [
             (
-                PayloadKind::Minimal,
+                PayloadKind::Proof,
                 standard.encoded_len(),
                 aggregator.encoded_len(),
             ),
@@ -386,15 +370,21 @@ mod tests {
 
     #[test]
     fn header_codec_reads_exactly_the_declared_size() {
+        use crate::wire::{HeaderSize, Scalar, SizedSequence};
+        type Headers = SizedSequence<Scalar, HeaderSize>;
+        let dims = |header_size| Dimensions {
+            rank: 0,
+            header_size,
+        };
         let header = alloc::vec![Fp::ONE, Fp::from(2), Fp::from(3), Fp::from(4)];
-        let bytes = <Vec<Fp> as Encode<Header<4>>>::to_bytes(&header);
+        let bytes = <Vec<Fp> as Encode<Headers>>::to_bytes(&header);
         assert_eq!(bytes.len(), 1 + 4 * 32);
         assert_eq!(
-            <Vec<Fp> as Decode<Header<4>>>::from_bytes(&bytes).unwrap(),
+            <Vec<Fp> as Decode<Headers>>::from_bytes(&bytes, dims(4)).unwrap(),
             header
         );
         let Error::Length { expected, actual } =
-            <Vec<Fp> as Decode<Header<3>>>::from_bytes(&bytes).unwrap_err()
+            <Vec<Fp> as Decode<Headers>>::from_bytes(&bytes, dims(3)).unwrap_err()
         else {
             panic!("expected a length error")
         };

@@ -59,8 +59,10 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         pcd: &Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
-        let proof = pcd.proof();
-        self.preflight_proof(proof)?;
+        // A deserialized proof's derived fields are filled here, from the
+        // fields it retains, before anything reads them.
+        let (proof, _) = self.prepare(pcd.proof())?;
+        let proof = &*proof;
         let instance = Instance::of::<R, HEADER_SIZE>(proof)?;
         // The challenges as the proof stores them: a cache of the fuse's own
         // squeezes, which the decider holds to the transcript. `Instance::of`

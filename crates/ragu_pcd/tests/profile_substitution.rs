@@ -167,6 +167,7 @@ fn copy_proof_payload<
             bridge_f_commitment,
             bridge_eval_commitment,
             bridge_ab_commitment,
+            complete,
         }
     )
 }

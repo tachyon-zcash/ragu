@@ -6,10 +6,10 @@ use ragu_core::pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
 use udon::curve::Affine as CurveAffine;
 
-use super::{MinimalProof, Proof};
+use super::Proof;
 use crate::{
     Application, ApplicationBuilder,
-    wire::{self, Decode, Encode},
+    wire::{self, Decode, Dimensions, Encode},
 };
 
 type TestApp = Application<'static, Pasta, ProductionRank, 4>;
@@ -28,24 +28,28 @@ fn fixture() -> (TestApp, TestProof) {
     (app, pcd.into_parts().0)
 }
 
+/// `proof` and its deserialized counterpart, whose derived fields are not
+/// yet set, must both fail the checks that precede derivation.
+fn assert_prepare_rejects(app: &TestApp, proof: &TestProof, field: &str) {
+    let mut deserialized = proof.clone();
+    deserialized.complete = false;
+    for (proof, which) in [(proof, "in memory"), (&deserialized, "deserialized")] {
+        assert!(
+            matches!(app.prepare(proof), Err(ragu_core::Error::InvalidWitness(_))),
+            "{field} ({which}): preparation must reject before derivation"
+        );
+    }
+}
+
 // A vector of another length has no encoding (debug builds assert while
 // encoding it) and a payload of another length is rejected before a byte is
 // interpreted, so malformed shapes are checked at the in-memory boundaries.
 fn assert_rejected(app: &TestApp, proof: TestProof, field: &str) {
-    let minimal = proof.minimize::<4>();
-    assert!(!minimal.well_formed(), "{field}: the shape check must fail");
     assert!(
-        matches!(
-            app.expand(minimal.clone()),
-            Err(ragu_core::Error::InvalidWitness(_))
-        ),
-        "{field}: expansion must reject before reconstruction"
+        !proof.well_formed::<4>(),
+        "{field}: the shape check must fail"
     );
-    let result = app.verify_minimal::<_, ()>(minimal, (), StdRng::seed_from_u64(5678));
-    assert!(
-        matches!(&result, Ok(false)),
-        "in-memory {field}: got {result:?}"
-    );
+    assert_prepare_rejects(app, &proof, field);
     let result = app.verify_uncompressed(&proof.carry::<()>(()), StdRng::seed_from_u64(5678));
     assert!(
         matches!(&result, Ok(false)),
@@ -79,9 +83,8 @@ fn rejects_malformed_vector_lengths() {
 // The identity has an encoding, which the decoder rejects; in memory the
 // verifier rejects it, as it allocates every point by its coordinates.
 fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
-    let minimal = proof.minimize::<4>();
     assert!(
-        !minimal.well_formed(),
+        !proof.well_formed::<4>(),
         "{field}: retained point preflight must reject identity"
     );
     assert!(
@@ -89,28 +92,17 @@ fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
             suite: [0; 32],
             application: [0; 32]
         })
-        .encode(&minimal)
+        .encode(&proof)
         .is_err()
     );
-    let bytes = minimal.to_bytes();
+    let bytes = proof.to_bytes();
     let Err(wire::Error::Invalid { reason, .. }) =
-        MinimalProof::<Pasta, ProductionRank, 4>::from_bytes(&bytes)
+        TestProof::from_bytes(&bytes, Dimensions::of::<ProductionRank, 4>())
     else {
         panic!("{field}: expected the decoder to reject the identity")
     };
     assert_eq!(reason, "identity point", "{field}");
-    assert!(
-        matches!(
-            app.expand(minimal.clone()),
-            Err(ragu_core::Error::InvalidWitness(_))
-        ),
-        "{field}: expansion must reject before reconstruction"
-    );
-    let result = app.verify_minimal::<_, ()>(minimal, (), StdRng::seed_from_u64(5678));
-    assert!(
-        matches!(&result, Ok(false)),
-        "in-memory {field}: got {result:?}"
-    );
+    assert_prepare_rejects(app, &proof, field);
     let result = app.verify_uncompressed(&proof.carry::<()>(()), StdRng::seed_from_u64(5678));
     assert!(
         matches!(&result, Ok(false)),
@@ -193,18 +185,10 @@ fn rejects_malformed_child_header_lengths() {
 }
 
 #[test]
-fn preflight_rejects_out_of_domain_circuit_before_expansion_or_compression() {
+fn prepare_rejects_out_of_domain_circuit_before_derivation_or_compression() {
     let (app, mut proof) = fixture();
     proof.circuit_id = ragu_circuits::registry::CircuitIndex::from_u32(u32::MAX);
-    let minimal = proof.minimize::<4>();
-    assert!(matches!(
-        app.expand(minimal.clone()),
-        Err(ragu_core::Error::InvalidWitness(_))
-    ));
-    assert!(matches!(
-        app.verify_minimal::<_, ()>(minimal, (), StdRng::seed_from_u64(1)),
-        Ok(false)
-    ));
+    assert_prepare_rejects(&app, &proof, "circuit id");
     let pcd = proof.carry::<()>(());
     assert!(matches!(
         app.compress(&pcd, &mut StdRng::seed_from_u64(1)),
@@ -217,7 +201,7 @@ fn preflight_rejects_out_of_domain_circuit_before_expansion_or_compression() {
 }
 
 #[test]
-fn expanded_preflight_rejects_unliftable_cached_challenges() {
+fn prepare_rejects_unliftable_challenges_of_an_in_memory_proof() {
     use udon::field::Field;
     let (app, mut proof) = fixture();
     proof.w = -ragu_core::pasta::Fp::ONE;

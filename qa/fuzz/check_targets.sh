@@ -88,7 +88,7 @@ compare "fuzz-coverage.yml's matrix" "${coverage[@]}"
 
 # These byte-boundary targets need tiny control seeds to exercise successful
 # decoding immediately; they generate the actual proof bytes at runtime.
-for target in fuzz_minimal_wire fuzz_compressed_wire; do
+for target in fuzz_proof_wire fuzz_compressed_wire; do
   for seed in raw valid scalar; do
     if [ ! -s "regressions/$target/$seed" ]; then
       note "$target is missing its $seed decode-to-verify regression seed"

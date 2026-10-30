@@ -1,16 +1,17 @@
 //! Crate-local proof schema. Every field is either retained with an explicit
-//! codec or derived. Generating both representations here makes an
-//! unclassified field a build error without adding a general-purpose derive
-//! to another crate.
+//! codec or derived, with the placeholder a decoded proof holds until the
+//! application derives it. Generating the struct and its codec from one
+//! declaration makes an unclassified field a build error without adding a
+//! general-purpose derive to another crate.
 
 macro_rules! proof_schema {
     (
-        $(#[$doc:meta])* <$C:ident, $R:ident, const $H:ident: usize>
+        $(#[$doc:meta])* <$C:ident, $R:ident>
         retained {
             $( $(#[$attr:meta])* $vis:vis $field:ident: $ty:ty => [$codec:ty], )*
         }
         derived {
-            $( $(#[$dattr:meta])* $dvis:vis $derived:ident: $dty:ty, )*
+            $( $(#[$dattr:meta])* $dvis:vis $derived:ident: $dty:ty = $placeholder:expr, )*
         }
     ) => {
         $(#[$doc])*
@@ -18,15 +19,9 @@ macro_rules! proof_schema {
         pub struct Proof<$C: Cycle, $R: Rank> {
             $( $(#[$attr])* $vis $field: $ty, )*
             $( $(#[$dattr])* $dvis $derived: $dty, )*
-        }
-
-        /// Retained proof data. Transcript challenges and reconstructed stages
-        /// are omitted; commitments remain and are checked during verification.
-        /// The profile, rank and header size fix its encoded length.
-        /// Use [`crate::Application::proof_format`] for versioned transport.
-        #[derive(Clone)]
-        pub struct MinimalProof<$C: Cycle, $R: Rank, const $H: usize> {
-            $( $(#[$attr])* $vis $field: $ty, )*
+            /// Whether the derived fields hold this proof's values. A decoded
+            /// proof holds placeholders until the application derives them.
+            complete: bool,
         }
 
         struct ProofDerived<$C: Cycle, $R: Rank> {
@@ -34,49 +29,47 @@ macro_rules! proof_schema {
         }
 
         impl<$C: Cycle, $R: Rank> Proof<$C, $R> {
-            /// Clones the retained data, omitting derived fields.
-            pub fn minimize<const $H: usize>(&self) -> MinimalProof<$C, $R, $H> {
-                MinimalProof { $( $field: self.$field.clone(), )* }
-            }
-
-            /// Moves the retained data without cloning polynomial buffers.
-            pub fn into_minimal<const $H: usize>(self) -> MinimalProof<$C, $R, $H> {
-                let Self { $( $field, )* $( $derived: _, )* } = self;
-                MinimalProof { $( $field, )* }
-            }
-
-            fn expand<const $H: usize>(
-                minimal: MinimalProof<$C, $R, $H>,
-                derived: ProofDerived<$C, $R>,
-            ) -> Self {
-                Self { $( $field: minimal.$field, )* $( $derived: derived.$derived, )* }
+            /// Sets the derived fields, completing a decoded proof.
+            fn fill(&mut self, derived: ProofDerived<$C, $R>) {
+                $( self.$derived = derived.$derived; )*
+                self.complete = true;
             }
         }
 
         impl<$C: ProfiledCycle, $R: Rank> Proof<$C, $R> {
             /// Checks retained field shapes and nonidentity point slots before
-            /// indexing them. The schema also defines this check for minimal proofs.
-            pub(crate) fn well_formed<const $H: usize>(&self) -> bool {
-                true $( && <$ty as wire::Validate<$codec>>::valid(&self.$field) )*
+            /// indexing them.
+            pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
+                self.well_formed_in(wire::Dimensions::of::<$R, HEADER_SIZE>())
             }
-        }
-        impl<$C: ProfiledCycle, $R: Rank, const $H: usize> MinimalProof<$C, $R, $H> {
-            pub(crate) fn well_formed(&self) -> bool {
-                true $( && <$ty as wire::Validate<$codec>>::valid(&self.$field) )*
+
+            /// [`well_formed`](Self::well_formed) for a header size known only
+            /// at runtime, as the `serde` adapter reads it from its prelude.
+            pub(crate) fn well_formed_in(&self, dims: wire::Dimensions) -> bool {
+                true $( && <$ty as wire::Validate<$codec>>::valid(&self.$field, dims) )*
             }
         }
 
-        impl<$C: ProfiledCycle, $R: Rank, const $H: usize> Encode for MinimalProof<$C, $R, $H> {
+        // The retained fields alone: the derived ones are recomputed rather
+        // than read, so they have no encoding.
+        impl<$C: ProfiledCycle, $R: Rank> Encode for Proof<$C, $R> {
             fn encode(&self, output: &mut Vec<u8>) {
                 $( <$ty as Encode<$codec>>::encode(&self.$field, output); )*
             }
         }
-        impl<$C: ProfiledCycle, $R: Rank, const $H: usize> Decode for MinimalProof<$C, $R, $H> {
-            fn encoded_len() -> usize {
-                0usize $( + <$ty as Decode<$codec>>::encoded_len() )*
+        impl<$C: ProfiledCycle, $R: Rank> Decode for Proof<$C, $R> {
+            fn encoded_len(dims: wire::Dimensions) -> usize {
+                0usize $( + <$ty as Decode<$codec>>::encoded_len(dims) )*
             }
-            fn decode<'a>(reader: &mut wire::Reader<'a>) -> core::result::Result<Self, wire::Error<'a>> {
-                Ok(Self { $( $field: <$ty as Decode<$codec>>::decode(reader)?, )* })
+            fn decode<'a>(
+                reader: &mut wire::Reader<'a>,
+                dims: wire::Dimensions,
+            ) -> core::result::Result<Self, wire::Error<'a>> {
+                Ok(Self {
+                    $( $field: <$ty as Decode<$codec>>::decode(reader, dims)?, )*
+                    $( $derived: $placeholder, )*
+                    complete: false,
+                })
             }
         }
     };

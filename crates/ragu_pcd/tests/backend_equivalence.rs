@@ -1416,8 +1416,12 @@ mod proof_equivalence {
                 bridge_ab_commitment: _,
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
+                complete: _,
             } = self;
 
+            if self.complete != other.complete {
+                return Some("completeness");
+            }
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");
             }

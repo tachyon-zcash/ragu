@@ -17,19 +17,22 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
-//! - [`MinimalProof`] — the retained proof data, which
-//!   [`Application::expand`] rebuilds into a [`Proof`]. Use
-//!   [`Application::proof_format`] with trusted [`ProofContext`] identifiers
-//!   for versioned storage and transport.
+//! - [`Application::proof_format`] — a versioned [`ProofFormat`] for storing
+//!   and transporting both kinds of proof, bound to trusted [`ProofContext`]
+//!   identifiers.
 //!
 //! For each payload kind, [`ProofFormat`] accepts exactly one encoded length,
 //! fixed by the profile, rank and header size, and checks envelope, schema and protocol versions,
 //! rank, header size, suite and application identifiers before decoding proof
-//! data. The optional `serde` adapter on `MinimalProof` carries the low-level
-//! payload bytes for embedding in an already context-bound container. Decoding
-//! is not verification: a receiver expands the decoded proof, compresses it
-//! and accepts it on [`verify_compressed`](Application::verify_compressed).
-//! See `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.
+//! data. With the `serde` feature, [`Proof`] and [`CompressedProof`] implement
+//! `Serialize` and `Deserialize` directly, as the same payload behind a prelude
+//! recording the rank and header size, for embedding in a container that
+//! supplies its own context. Either way, a [`Proof`] carries only the fields
+//! its encoding retains: the application derives the rest, never reading them
+//! from the input, when one of its methods first takes the proof. Decoding is
+//! not verification: a receiver compresses a decoded proof and accepts it on
+//! [`verify_compressed`](Application::verify_compressed). See
+//! `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -88,7 +91,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
-pub use proof::{MinimalProof, Pcd, Proof, ProofContext, ProofFormat};
+pub use proof::{Pcd, Proof, ProofContext, ProofFormat};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,

@@ -305,7 +305,7 @@ jobs:
           cargo test --release --locked --lib proof_wire::tests::decode_to_verify_smoke -- --ignored --exact
           # Execute the actual libFuzzer entry points against the committed
           # control inputs too. Fixed-file replay needs no coverage build.
-          for target in fuzz_minimal_wire fuzz_compressed_wire; do
+          for target in fuzz_proof_wire fuzz_compressed_wire; do
             cargo run --release --locked --bin "$target" -- regressions/"$target"/* -timeout=180 -rss_limit_mb=4096
           done
 

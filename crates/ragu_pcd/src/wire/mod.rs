@@ -1,25 +1,25 @@
-//! Canonical byte encoding for minimal proof data.
+//! Canonical byte encoding for proof data.
 //!
-//! This is separate from the in-circuit element stream in [`ragu_primitives::io`].
-//! Every value has a fixed encoded length determined by its type: the rank,
-//! the header size and the protocol's vector counts fix the layout, so no
-//! length is read from the wire. [`Encode::encode`] and [`Decode::decode`]
-//! compose payloads; [`Encode::to_bytes`] and [`Decode::from_bytes`] add/check
-//! one version byte at the outer boundary and require the exact encoded length.
-//! The caller must select the same schema, field/curve suite, rank and header
-//! size. These low-level bytes do not identify their schema or application
-//! context. Domain formats must provide that envelope (for example
-//! `crate::ProofFormat`).
+//! The encoding itself is internal: proofs reach bytes through
+//! `ProofFormat`'s versioned envelope or through the optional `serde`
+//! adapters. [`Error`] is what both report when bytes are malformed.
+//!
+//! This is separate from the in-circuit element stream in
+//! `ragu_primitives::io`. Every value has a fixed encoded length, determined by
+//! its type and by the payload's dimensions: the rank, the header size and the
+//! protocol's vector counts fix the layout, so no length is read from the
+//! payload itself. Neither the rank of a compressed proof nor the header size
+//! of any proof is part of its type, so the envelope, or the `serde` adapters'
+//! prelude, supplies them.
 //!
 //! Integers are little-endian with their declared widths. Scalar and point
-//! representations are specified by their respective types. Explicit
-//! [`Scalar`] and [`Point`] codecs avoid overlapping blanket impls. When more
-//! than one codec applies, select it explicitly, for example
-//! `<Vec<F> as Decode<FixedSequence<Scalar, L>>>::from_bytes(bytes)`.
+//! representations are specified by their respective types. Explicit scalar
+//! and point codecs avoid overlapping blanket impls.
 
 use alloc::{sync::Arc, vec::Vec};
 use core::{marker::PhantomData, mem::size_of};
 
+use ragu_circuits::polynomials::Rank;
 use ragu_primitives::vec::Len;
 use udon::{curve::Affine, field::Field};
 
@@ -28,28 +28,77 @@ mod registry;
 #[cfg(test)]
 mod tests;
 
-/// Version of the low-level codec framing. Nested payloads have no envelope.
-pub const VERSION: u8 = 1;
+/// Version of the low-level codec framing, which the `serde` adapters lead
+/// with. Nested payloads have no envelope.
+#[cfg(any(test, feature = "serde"))]
+pub(crate) const VERSION: u8 = 1;
+
+/// The dimensions a payload's layout takes from its proof rather than from
+/// its type: the rank, which fixes a compressed proof's IPA rounds, and the
+/// header size, which fixes every child header.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Dimensions {
+    /// The rank, one IPA round per bit.
+    pub(crate) rank: u32,
+    /// The number of elements in each child header.
+    pub(crate) header_size: usize,
+}
+
+impl Dimensions {
+    /// The dimensions of an application's proofs.
+    pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>() -> Self {
+        Self {
+            rank: R::RANK,
+            header_size: HEADER_SIZE,
+        }
+    }
+}
 
 /// The ordinary codec for integers and generated structs.
-pub struct DefaultEncoding;
+pub(crate) struct DefaultEncoding;
 /// The canonical [`Field`] representation.
-pub struct Scalar;
+pub(crate) struct Scalar;
 /// The checked, compressed [`Affine`] representation of a point other than
 /// the identity. No proof slot admits the identity: the verifier allocates
 /// every point by its affine coordinates. Encoding the identity yields its
 /// canonical bytes, which decoding rejects.
-pub struct Point;
+pub(crate) struct Point;
 /// A vector of exactly [`Len::len`] elements using codec `C`, with no count on
 /// the wire.
-pub struct FixedSequence<C, L>(PhantomData<(C, L)>);
+pub(crate) struct FixedSequence<C, L>(PhantomData<(C, L)>);
+/// A vector of exactly the count [`Dimensions`] fix along dimension `D`, using
+/// codec `C`, with no count on the wire.
+pub(crate) struct SizedSequence<C, D>(PhantomData<(C, D)>);
+
+/// A count [`Dimensions`] fix.
+pub(crate) trait Dimension {
+    /// The count in `dims`.
+    fn of(dims: Dimensions) -> usize;
+}
+
+/// The number of elements in a child header.
+pub(crate) struct HeaderSize;
+impl Dimension for HeaderSize {
+    fn of(dims: Dimensions) -> usize {
+        dims.header_size
+    }
+}
+
+/// The number of IPA rounds, one per bit of the rank.
+pub(crate) struct Rounds;
+impl Dimension for Rounds {
+    fn of(dims: Dimensions) -> usize {
+        dims.rank as usize
+    }
+}
 
 /// Encodes a value using codec `C`.
-pub trait Encode<C = DefaultEncoding> {
+pub(crate) trait Encode<C = DefaultEncoding> {
     /// Appends the canonical payload, without a version envelope.
     fn encode(&self, output: &mut Vec<u8>);
 
     /// Encodes one complete value with the low-level codec version byte.
+    #[cfg(test)]
     fn to_bytes(&self) -> Vec<u8> {
         let mut output = alloc::vec![VERSION];
         self.encode(&mut output);
@@ -60,53 +109,60 @@ pub trait Encode<C = DefaultEncoding> {
 /// Checks the in-memory invariants enforced by a codec, before encoding or
 /// traversing untrusted proof fields. This does not establish proof validity.
 pub(crate) trait Validate<C = DefaultEncoding> {
-    fn valid(&self) -> bool;
+    fn valid(&self, dims: Dimensions) -> bool;
 }
 
 impl<F: Field> Validate<Scalar> for F {
-    fn valid(&self) -> bool {
+    fn valid(&self, _: Dimensions) -> bool {
         true
     }
 }
 impl<G: Affine> Validate<Point> for G {
-    fn valid(&self) -> bool {
+    fn valid(&self, _: Dimensions) -> bool {
         !self.is_identity()
     }
 }
 impl<T: Validate<C>, C, L: Len> Validate<FixedSequence<C, L>> for Vec<T> {
-    fn valid(&self) -> bool {
-        self.len() == L::len() && self.iter().all(<T as Validate<C>>::valid)
+    fn valid(&self, dims: Dimensions) -> bool {
+        self.len() == L::len() && self.iter().all(|value| value.valid(dims))
+    }
+}
+impl<T: Validate<C>, C, D: Dimension> Validate<SizedSequence<C, D>> for Vec<T> {
+    fn valid(&self, dims: Dimensions) -> bool {
+        self.len() == D::of(dims) && self.iter().all(|value| value.valid(dims))
     }
 }
 impl<T: Validate> Validate for Arc<T> {
-    fn valid(&self) -> bool {
-        T::valid(self)
+    fn valid(&self, dims: Dimensions) -> bool {
+        T::valid(self, dims)
     }
 }
-impl<F: Field, R: ragu_circuits::polynomials::Rank> Validate
-    for ragu_circuits::polynomials::sparse::Polynomial<F, R>
-{
-    fn valid(&self) -> bool {
+impl<F: Field, R: Rank> Validate for ragu_circuits::polynomials::sparse::Polynomial<F, R> {
+    fn valid(&self, _: Dimensions) -> bool {
         true
     }
 }
 impl Validate for ragu_circuits::registry::CircuitIndex {
-    fn valid(&self) -> bool {
+    fn valid(&self, _: Dimensions) -> bool {
         true
     }
 }
 
 /// Decodes a value using codec `C`.
-pub trait Decode<C = DefaultEncoding>: Sized {
-    /// The exact number of payload bytes, excluding the version byte.
-    fn encoded_len() -> usize;
+pub(crate) trait Decode<C = DefaultEncoding>: Sized {
+    /// The exact number of payload bytes in `dims`, excluding the version
+    /// byte.
+    fn encoded_len(dims: Dimensions) -> usize;
 
-    /// Reads one payload, leaving subsequent bytes for the enclosing value.
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>>;
+    /// Reads one payload of `dims`, leaving subsequent bytes for the
+    /// enclosing value.
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>>;
 
-    /// Decodes a complete versioned value of exactly the expected length.
-    fn from_bytes(input: &[u8]) -> Result<Self, Error<'_>> {
-        let expected = 1 + Self::encoded_len();
+    /// Decodes a complete versioned value of `dims` and exactly the expected
+    /// length.
+    #[cfg(test)]
+    fn from_bytes(input: &[u8], dims: Dimensions) -> Result<Self, Error<'_>> {
+        let expected = 1 + Self::encoded_len(dims);
         if input.len() != expected {
             return Err(Error::Length {
                 expected,
@@ -122,7 +178,7 @@ pub trait Decode<C = DefaultEncoding>: Sized {
                 reason: "unsupported wire version",
             });
         }
-        Self::decode(&mut reader)
+        Self::decode(&mut reader, dims)
     }
 }
 
@@ -160,29 +216,29 @@ pub enum Error<'a> {
 
 /// A borrowed byte cursor.
 #[derive(Clone)]
-pub struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     input: &'a [u8],
     offset: usize,
 }
 
 impl<'a> Reader<'a> {
     /// Starts reading payloads from `input`.
-    pub fn new(input: &'a [u8]) -> Self {
+    pub(crate) fn new(input: &'a [u8]) -> Self {
         Self { input, offset: 0 }
     }
 
     /// Number of bytes already consumed.
-    pub fn offset(&self) -> usize {
+    pub(crate) fn offset(&self) -> usize {
         self.offset
     }
 
     /// The unconsumed input.
-    pub fn remaining(&self) -> &'a [u8] {
+    pub(crate) fn remaining(&self) -> &'a [u8] {
         &self.input[self.offset..]
     }
 
     /// Reads exactly `length` bytes without copying or allocating.
-    pub fn take(&mut self, length: usize) -> Result<&'a [u8], Error<'a>> {
+    pub(crate) fn take(&mut self, length: usize) -> Result<&'a [u8], Error<'a>> {
         let bytes = self.remaining().get(..length).ok_or(Error::Truncated {
             offset: self.offset,
             requested: length,
@@ -201,8 +257,8 @@ macro_rules! integer {
             }
         }
         impl Decode for $ty {
-            fn encoded_len() -> usize { size_of::<Self>() }
-            fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
+            fn encoded_len(_: Dimensions) -> usize { size_of::<Self>() }
+            fn decode<'a>(reader: &mut Reader<'a>, _: Dimensions) -> Result<Self, Error<'a>> {
                 let mut bytes = [0; size_of::<Self>()];
                 bytes.copy_from_slice(reader.take(size_of::<Self>())?);
                 Ok(Self::from_le_bytes(bytes))
@@ -218,10 +274,10 @@ impl<F: Field> Encode<Scalar> for F {
     }
 }
 impl<F: Field> Decode<Scalar> for F {
-    fn encoded_len() -> usize {
+    fn encoded_len(_: Dimensions) -> usize {
         F::ZERO.to_bytes().as_ref().len()
     }
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
+    fn decode<'a>(reader: &mut Reader<'a>, _: Dimensions) -> Result<Self, Error<'a>> {
         let offset = reader.offset();
         let mut repr = F::ZERO.to_bytes();
         let bytes = reader.take(repr.as_ref().len())?;
@@ -248,10 +304,10 @@ impl<G: Affine> Encode<Point> for G {
     }
 }
 impl<G: Affine> Decode<Point> for G {
-    fn encoded_len() -> usize {
+    fn encoded_len(_: Dimensions) -> usize {
         G::identity().to_bytes().as_ref().len()
     }
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
+    fn decode<'a>(reader: &mut Reader<'a>, _: Dimensions) -> Result<Self, Error<'a>> {
         let offset = reader.offset();
         let mut repr = G::identity().to_bytes();
         let bytes = reader.take(repr.as_ref().len())?;
@@ -287,11 +343,11 @@ impl<T: Encode> Encode for Arc<T> {
     }
 }
 impl<T: Decode> Decode for Arc<T> {
-    fn encoded_len() -> usize {
-        T::encoded_len()
+    fn encoded_len(dims: Dimensions) -> usize {
+        T::encoded_len(dims)
     }
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
-        T::decode(reader).map(Arc::new)
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
+        T::decode(reader, dims).map(Arc::new)
     }
 }
 
@@ -306,11 +362,29 @@ impl<T: Encode<C>, C, L: Len> Encode<FixedSequence<C, L>> for Vec<T> {
     }
 }
 impl<T: Decode<C>, C, L: Len> Decode<FixedSequence<C, L>> for Vec<T> {
-    fn encoded_len() -> usize {
-        L::len() * T::encoded_len()
+    fn encoded_len(dims: Dimensions) -> usize {
+        L::len() * T::encoded_len(dims)
     }
-    fn decode<'a>(reader: &mut Reader<'a>) -> Result<Self, Error<'a>> {
-        (0..L::len()).map(|_| T::decode(reader)).collect()
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
+        (0..L::len()).map(|_| T::decode(reader, dims)).collect()
+    }
+}
+
+// The element count is fixed by the dimensions; callers check it with
+// `Validate` before encoding, since the dimensions are not at hand here.
+impl<T: Encode<C>, C, D: Dimension> Encode<SizedSequence<C, D>> for Vec<T> {
+    fn encode(&self, output: &mut Vec<u8>) {
+        for value in self {
+            value.encode(output);
+        }
+    }
+}
+impl<T: Decode<C>, C, D: Dimension> Decode<SizedSequence<C, D>> for Vec<T> {
+    fn encoded_len(dims: Dimensions) -> usize {
+        D::of(dims) * T::encoded_len(dims)
+    }
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
+        (0..D::of(dims)).map(|_| T::decode(reader, dims)).collect()
     }
 }
 

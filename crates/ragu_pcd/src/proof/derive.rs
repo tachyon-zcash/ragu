@@ -1,6 +1,5 @@
-//! Expansion of a [`MinimalProof`] into a [`Proof`]: the derived fields,
-//! recomputed from the provided ones by the same rules the verifier holds
-//! them to.
+//! The values a proof's encoding omits, derived from the ones it retains by
+//! the same rules the verifier holds them to.
 
 use alloc::sync::Arc;
 
@@ -9,7 +8,7 @@ use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt as _, Point};
 use udon::field::Field;
 
-use super::{Cached, MinimalProof, Proof, ProofDerived, bridge_alpha_power};
+use super::{Cached, Proof, ProofDerived, bridge_alpha_power};
 use crate::{
     Application, RAGU_TAG, SelectableBackend,
     internal::{
@@ -25,30 +24,24 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Rebuilds a [`Proof`] from its minimal form.
+    /// Fills a deserialized proof's derived fields.
     ///
     /// The challenges are squeezed from the transcript over the bridge
     /// commitments in the fuse's schedule, the `ab` bridge stage from the
     /// bridge blinding and the native commitments it binds, and the nested
     /// challenge stage from the challenges' lifts and the children's headers.
-    /// None of these is read from the input, so an expanded proof carries
-    /// only values this application would derive itself.
+    /// None of these is read from the encoding, so a deserialized proof
+    /// carries only values this application derives itself.
     ///
-    /// Expansion checks field shapes, nonidentity points and the circuit domain,
-    /// but does not validate the provided polynomial commitments.
-    /// [Compress](Self::compress) the expanded proof and accept it on
-    /// [`verify_compressed`](Self::verify_compressed) before using it in
-    /// another proof. The uncompressed `verify_minimal`, under `test-utils`,
-    /// is a test oracle for that path.
+    /// Expects a proof that passed the structural checks of
+    /// [`prepare`](Self::prepare), which precede every call.
     ///
     /// # Errors
     ///
-    /// Returns an error if a bridge commitment is not an affine point or a
-    /// squeezed challenge has no lift, which an honest transcript produces
-    /// with negligible probability. A receiver of untrusted input treats
-    /// either as a rejection, as `verify_minimal` does.
-    pub fn expand(&self, proof: MinimalProof<C, R, HEADER_SIZE>) -> Result<Proof<C, R>> {
-        self.preflight_minimal(&proof)?;
+    /// Returns an error if a squeezed challenge has no lift, which an honest
+    /// transcript produces with negligible probability. Callers treat it as a
+    /// rejection of the proof.
+    pub(super) fn derive(&self, proof: &mut Proof<C, R>) -> Result<()> {
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
         macro_rules! absorb {
@@ -111,21 +104,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             },
         )?;
 
-        Ok(Proof::expand(
-            proof,
-            ProofDerived {
-                w,
-                y,
-                z,
-                mu,
-                mu_prime,
-                x,
-                alpha,
-                u,
-                pre_beta,
-                bridge_ab_rx: Cached(Arc::new(bridge_ab_rx)),
-                nested_challenges_rx,
-            },
-        ))
+        proof.fill(ProofDerived {
+            w,
+            y,
+            z,
+            mu,
+            mu_prime,
+            x,
+            alpha,
+            u,
+            pre_beta,
+            bridge_ab_rx: Cached(Arc::new(bridge_ab_rx)),
+            nested_challenges_rx,
+        });
+        Ok(())
     }
 }

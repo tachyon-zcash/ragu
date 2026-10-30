@@ -6,6 +6,12 @@ use ragu_primitives::vec::ConstLen;
 
 use super::*;
 
+// The values here have layouts their types fix alone.
+const DIMS: Dimensions = Dimensions {
+    rank: 0,
+    header_size: 0,
+};
+
 type Pair = FixedSequence<DefaultEncoding, ConstLen<2>>;
 
 #[test]
@@ -20,7 +26,7 @@ fn integer_and_fixed_sequence_known_bytes() {
         <Vec<u16> as Encode<FixedSequence<DefaultEncoding, ConstLen<2>>>>::to_bytes(&values);
     assert_eq!(bytes, [1, 2, 1, 4, 3]);
     assert_eq!(
-        <Vec<u16> as Decode<FixedSequence<DefaultEncoding, ConstLen<2>>>>::from_bytes(&bytes)
+        <Vec<u16> as Decode<FixedSequence<DefaultEncoding, ConstLen<2>>>>::from_bytes(&bytes, DIMS)
             .unwrap(),
         values
     );
@@ -35,17 +41,23 @@ fn field_and_point_roundtrips() {
     fn fields<F: Field>() {
         for value in [F::ZERO, F::ONE, -F::ONE, F::from(17)] {
             let bytes = <F as Encode<Scalar>>::to_bytes(&value);
-            assert_eq!(<F as Decode<Scalar>>::from_bytes(&bytes).unwrap(), value);
+            assert_eq!(
+                <F as Decode<Scalar>>::from_bytes(&bytes, DIMS).unwrap(),
+                value
+            );
         }
     }
     fn points<G: Affine>() {
         for value in [G::generator(), -G::generator()] {
             let bytes = <G as Encode<Point>>::to_bytes(&value);
-            assert_eq!(<G as Decode<Point>>::from_bytes(&bytes).unwrap(), value);
+            assert_eq!(
+                <G as Decode<Point>>::from_bytes(&bytes, DIMS).unwrap(),
+                value
+            );
         }
         let bytes = <G as Encode<Point>>::to_bytes(&G::identity());
         let Error::Invalid { offset, reason, .. } =
-            <G as Decode<Point>>::from_bytes(&bytes).unwrap_err()
+            <G as Decode<Point>>::from_bytes(&bytes, DIMS).unwrap_err()
         else {
             panic!("expected an identity point error")
         };
@@ -58,7 +70,7 @@ fn field_and_point_roundtrips() {
     let values = vec![Fp::from(7), -Fp::ONE];
     let bytes = <Vec<Fp> as Encode<FixedSequence<Scalar, ConstLen<2>>>>::to_bytes(&values);
     assert_eq!(
-        <Vec<Fp> as Decode<FixedSequence<Scalar, ConstLen<2>>>>::from_bytes(&bytes).unwrap(),
+        <Vec<Fp> as Decode<FixedSequence<Scalar, ConstLen<2>>>>::from_bytes(&bytes, DIMS).unwrap(),
         values
     );
 }
@@ -81,7 +93,7 @@ fn rejects_noncanonical_representations() {
             offset,
             bytes: offending,
             ..
-        } = <F as Decode<Scalar>>::from_bytes(&bytes).unwrap_err()
+        } = <F as Decode<Scalar>>::from_bytes(&bytes, DIMS).unwrap_err()
         else {
             panic!("expected a non-canonical field error")
         };
@@ -95,7 +107,7 @@ fn rejects_noncanonical_representations() {
             offset,
             bytes: offending,
             ..
-        } = <G as Decode<Point>>::from_bytes(&bytes).unwrap_err()
+        } = <G as Decode<Point>>::from_bytes(&bytes, DIMS).unwrap_err()
         else {
             panic!("expected an invalid point error")
         };
@@ -114,7 +126,7 @@ fn rejects_other_lengths_and_versions() {
     assert_eq!(bytes.len(), 17);
     for length in 0..bytes.len() {
         let Error::Length { expected, actual } =
-            <Vec<u64> as Decode<Pair>>::from_bytes(&bytes[..length]).unwrap_err()
+            <Vec<u64> as Decode<Pair>>::from_bytes(&bytes[..length], DIMS).unwrap_err()
         else {
             panic!("expected a length error")
         };
@@ -124,7 +136,7 @@ fn rejects_other_lengths_and_versions() {
     let mut trailing = bytes.clone();
     trailing.push(0);
     let Error::Length { expected, actual } =
-        <Vec<u64> as Decode<Pair>>::from_bytes(&trailing).unwrap_err()
+        <Vec<u64> as Decode<Pair>>::from_bytes(&trailing, DIMS).unwrap_err()
     else {
         panic!("expected a length error")
     };
@@ -132,7 +144,7 @@ fn rejects_other_lengths_and_versions() {
     let mut wrong_version = bytes;
     wrong_version[0] = 2;
     let Error::Invalid { offset, reason, .. } =
-        <Vec<u64> as Decode<Pair>>::from_bytes(&wrong_version).unwrap_err()
+        <Vec<u64> as Decode<Pair>>::from_bytes(&wrong_version, DIMS).unwrap_err()
     else {
         panic!("expected a version error")
     };
@@ -147,7 +159,7 @@ fn short_reader_reports_the_missing_value() {
         offset,
         requested,
         bytes,
-    } = u64::decode(&mut reader).unwrap_err()
+    } = u64::decode(&mut reader, DIMS).unwrap_err()
     else {
         panic!("expected truncation")
     };
@@ -160,12 +172,12 @@ proptest! {
     #[test]
     fn pairs_roundtrip(values in proptest::collection::vec(any::<u64>(), 2)) {
         let bytes = <Vec<u64> as Encode<Pair>>::to_bytes(&values);
-        prop_assert_eq!(<Vec<u64> as Decode<Pair>>::from_bytes(&bytes).unwrap(), values);
+        prop_assert_eq!(<Vec<u64> as Decode<Pair>>::from_bytes(&bytes, DIMS).unwrap(), values);
     }
 
     #[test]
     fn accepted_bytes_have_one_spelling(bytes in proptest::collection::vec(any::<u8>(), 17)) {
-        if let Ok(value) = <Vec<u64> as Decode<Pair>>::from_bytes(&bytes) {
+        if let Ok(value) = <Vec<u64> as Decode<Pair>>::from_bytes(&bytes, DIMS) {
             prop_assert_eq!(<Vec<u64> as Encode<Pair>>::to_bytes(&value), bytes);
         }
     }
@@ -183,7 +195,10 @@ fn pre_udon_encodings() {
             .collect();
         assert_eq!(encoded, bytes);
         for (value, bytes) in values.iter().zip(bytes.chunks_exact(33)) {
-            assert_eq!(<F as Decode<Scalar>>::from_bytes(bytes).unwrap(), *value);
+            assert_eq!(
+                <F as Decode<Scalar>>::from_bytes(bytes, DIMS).unwrap(),
+                *value
+            );
         }
     }
     fn points<G: Affine>(bytes: &[u8]) {
@@ -196,13 +211,17 @@ fn pre_udon_encodings() {
         // The identity's spelling is pinned too, although no proof slot
         // admits it, so decoding rejects it.
         let (identity, rest) = bytes.split_at(33);
-        let Error::Invalid { reason, .. } = <G as Decode<Point>>::from_bytes(identity).unwrap_err()
+        let Error::Invalid { reason, .. } =
+            <G as Decode<Point>>::from_bytes(identity, DIMS).unwrap_err()
         else {
             panic!("expected an identity point error")
         };
         assert_eq!(reason, "identity point");
         for (value, bytes) in values[1..].iter().zip(rest.chunks_exact(33)) {
-            assert_eq!(<G as Decode<Point>>::from_bytes(bytes).unwrap(), *value);
+            assert_eq!(
+                <G as Decode<Point>>::from_bytes(bytes, DIMS).unwrap(),
+                *value
+            );
         }
     }
     fields::<Fp>(include_bytes!("../../tests/fixtures/wire/fp.bin"));

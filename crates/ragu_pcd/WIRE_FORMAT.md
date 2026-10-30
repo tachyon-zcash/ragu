@@ -2,16 +2,19 @@
 
 `Application::proof_format` selects a format using trusted `ProofContext`
 identifiers. The profile, rank and header size determine each payload's length.
-`encoded_len` gives the complete minimal-proof size; `compressed_encoded_len`
-gives the complete compressed-proof size.
+`encoded_len` gives the complete proof size; `compressed_encoded_len` gives the
+complete compressed-proof size. With the `serde` feature, `Proof` and
+`CompressedProof` also serialize directly, as the same payloads behind a short
+prelude (see [Serde](#serde)).
 
 Both encoders check the proof's structure before writing. Both decoders check
 exact length first, then the envelope, then canonical field and point encodings.
-Decoding does not establish cryptographic validity. For a minimal proof, expand
-and compress it before calling `Application::verify_compressed`. For a compressed
-proof, attach the accompanying header data and call that verifier directly.
-Header data is not included in these bytes. The uncompressed `verify_minimal`,
-under `test-utils`, is a test oracle for the minimal-proof path.
+Decoding does not establish cryptographic validity. A decoded proof holds the
+fields its payload retains; the application derives the rest when one of its
+methods first takes the proof. Compress it before calling
+`Application::verify_compressed`. For a compressed proof, attach the
+accompanying header data and call that verifier directly. Header data is not
+included in these bytes.
 
 ## Envelope
 
@@ -21,7 +24,7 @@ All integers are unsigned little-endian. The header is exactly 124 bytes.
 | --- | --- | --- |
 | 0 | 8 | Magic: `52 41 47 55 50 43 44 00` (`RAGUPCD` plus NUL) |
 | 8 | 2 | Envelope version: 2 |
-| 10 | 2 | Payload kind: 1 minimal, 2 compressed |
+| 10 | 2 | Payload kind: 1 proof, 2 compressed |
 | 12 | 2 | Schema version of that payload kind: 1 |
 | 14 | 2 | Verification protocol version: 1 (`ragu-pcd-v1`) |
 | 16 | 4 | Polynomial rank exponent (`Rank::RANK`) |
@@ -100,10 +103,7 @@ included. This is independent of the sparse in-memory storage and its gap
 tolerance. A fixed sequence is its elements, one after another. A child header
 is its `HEADER_SIZE` field elements.
 
-The low-level `Encode::to_bytes` and Serde adapter prepend the codec framing
-byte `01` to the payload and carry no context. They support embedding in a
-container that already supplies trusted context; they too accept exactly one
-length. The envelope decoder never accepts a bare payload.
+The envelope decoder never accepts a bare payload, nor the Serde framing.
 
 Fields appear in the following order. `C::CircuitField` is the native field;
 `C::ScalarField` is the nested field. Host and nested curves follow the suite's
@@ -114,8 +114,8 @@ absent. Field names identify the schema; Rust names are not encoded.
 | --- | --- |
 | `bridge_alpha` | `C::ScalarField`; `Scalar` |
 | `circuit_id` | `CircuitIndex` |
-| `left_header` | `Vec<C::CircuitField>`; `format::Header<HEADER_SIZE>` |
-| `right_header` | `Vec<C::CircuitField>`; `format::Header<HEADER_SIZE>` |
+| `left_header` | `Vec<C::CircuitField>`; `SizedSequence<Scalar, HeaderSize>` |
+| `right_header` | `Vec<C::CircuitField>`; `SizedSequence<Scalar, HeaderSize>` |
 | `native_application_rx` | `sparse::Polynomial<C::CircuitField, R>` |
 | `native_preamble_rx` | `sparse::Polynomial<C::CircuitField, R>` |
 | `native_inner_error_rx` | `sparse::Polynomial<C::CircuitField, R>` |
@@ -264,25 +264,52 @@ payload together occupy 7,360 bytes. Other profiles obtain counts from their
 component iterators, not from this example. The receiving setup manifest must
 identify the profile and both transcript parameter sets as well as the circuits.
 
+## Serde
+
+With the `serde` feature, `Proof` and `CompressedProof` implement `Serialize`
+and `Deserialize`. Each is one byte string, so every Serde data format carries
+the same bytes:
+
+| Offset | Size | Meaning |
+| --- | --- | --- |
+| 0 | 1 | Codec version: 1 |
+| 1 | 4 | Polynomial rank exponent (`Rank::RANK`) |
+| 5 | 8 | Header size in field elements |
+| 13 | remainder | The payload, exactly as under the envelope |
+
+Neither type carries its header size, and a compressed proof does not carry its
+rank, so this prelude records them. A proof's rank must equal its type's; a
+compressed proof's may be at most 32, and the header size at most 4096. The
+prelude fixes the exact length, which deserialization checks before decoding
+the payload, and formats without a bytes type are buffered only up to it,
+ignoring sequence size hints. Serializing a value whose headers or rounds
+disagree in length is an error: no prelude describes it.
+
+The prelude is not a trusted context. It identifies no suite, application or
+profile, so use it only inside a container that supplies its own context, and
+prefer `ProofFormat` for storage and transport. As there, a deserialized
+`Proof` holds the retained fields alone.
+
 ## Structural preflight and fuzz coverage
 
-The same codec declarations generate retained-field validation for minimal and
-expanded proofs, and for compressed messages. Fixed vectors check their expected
-length before traversal; point slots reject identity. Application preflight also
-checks the circuit domain, and checks cached challenge lifts on expanded proofs.
-Expansion, compression, folding and verification invoke these checks before
-using proof components. Minimal challenges are reconstructed and their lifts
-checked during expansion, since they are not carried in the payload.
+The same codec declarations generate retained-field validation for proofs and
+for compressed messages. Fixed vectors check their expected length before
+traversal; point slots reject identity. Every application method that takes a
+proof (fusion, compression and verification) first runs these checks and the
+circuit-domain check, then derives a decoded proof's omitted fields: its
+challenges are reconstructed from the bridge commitments and their lifts
+checked, since they are not carried in the payload. An in-memory proof's own
+challenges have their lifts checked at the same point.
 
 Malformed proof failures become `Ok(false)` at the verification boundary.
 Decoders continue to return representation errors, and application header or
 computation errors propagate rather than being disguised as invalid proofs.
 This is structural validation, not a replacement for cryptographic verification.
 
-`qa/fuzz` provides `fuzz_minimal_wire` and `fuzz_compressed_wire`. Each exercises
+`qa/fuzz` provides `fuzz_proof_wire` and `fuzz_compressed_wire`. Each exercises
 raw bytes and bounded mutations of a valid proof generated once per process.
 Successful decoding must re-encode identically and is followed by the production
-verification path (including expansion and compression for minimal proofs).
+verification path (including derivation and compression for proofs).
 Mutations are not assumed invalid: the oracle checks canonicality, absence of
 panics, and acceptance of the unmodified seed. No complete proof blobs are stored.
 
@@ -294,8 +321,8 @@ control inputs through both target binaries. From `qa/fuzz`, the smoke test is:
 cargo test --release --locked --lib proof_wire::tests::decode_to_verify_smoke -- --ignored --exact
 ```
 
-The PCD regression suite also decodes and expands a child, folds it into a new
-proof, then compresses and verifies that result. Golden proof bytes, RNG tapes
+The PCD regression suite also decodes a child, folds it into a new proof, then
+compresses and verifies that result. Golden proof bytes, RNG tapes
 and verifier fingerprints remain separate work.
 
 ## Encoding precedents

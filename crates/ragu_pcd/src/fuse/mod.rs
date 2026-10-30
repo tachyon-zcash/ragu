@@ -79,9 +79,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        // Check both children before reconstructing their stages or consuming RNG.
-        self.preflight_proof(left.proof())?;
-        self.preflight_proof(right.proof())?;
+        // Check both children, and derive what a deserialized child's encoding
+        // omits, before reconstructing their stages or consuming RNG.
+        let left = self.prepare_owned(left)?;
+        let right = self.prepare_owned(right)?;
 
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,

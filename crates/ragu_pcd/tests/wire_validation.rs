@@ -1,4 +1,5 @@
-//! Proof decoding must preserve values and reject malformed protocol layouts.
+//! A proof's encoding must preserve the fields it retains, leave the derived
+//! ones to the application, and reject malformed protocol layouts.
 
 use alloc::vec::Vec;
 
@@ -6,16 +7,20 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
 
-use super::MinimalProof;
+use super::Proof;
 use crate::{
     ApplicationBuilder,
-    wire::{Decode, Encode, Error},
+    wire::{Decode, Dimensions, Encode, Error},
 };
 
-type Minimal = MinimalProof<Pasta, ProductionRank, 4>;
+type TestProof = Proof<Pasta, ProductionRank>;
+
+fn dims() -> Dimensions {
+    Dimensions::of::<ProductionRank, 4>()
+}
 
 #[test]
-fn decoded_proof_preserves_derived_fields_and_rejects_wrong_vector_lengths() {
+fn decoded_proof_derives_its_omitted_fields_and_rejects_wrong_vector_lengths() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .finalize(crate::pasta::baked())
         .unwrap();
@@ -23,11 +28,16 @@ fn decoded_proof_preserves_derived_fields_and_rejects_wrong_vector_lengths() {
     let pcd = app.bootstrap_pcd();
     assert!(app.verify_uncompressed(&pcd, &mut rng).unwrap());
     let (proof, ()) = pcd.into_parts();
-    let bytes = proof.minimize::<4>().to_bytes();
-    let expanded = app.expand(Minimal::from_bytes(&bytes).unwrap()).unwrap();
-    assert_eq!(proof.test_mismatch(&expanded), None);
+    let bytes = proof.to_bytes();
+    let decoded = TestProof::from_bytes(&bytes, dims()).unwrap();
+    // The encoding holds the retained fields alone, and re-encodes to itself.
+    assert!(!decoded.complete);
+    assert_eq!(decoded.to_bytes(), bytes);
+    // Preparing derives every other field, equal to the original's.
+    let (prepared, _) = app.prepare(&decoded).unwrap();
+    assert_eq!(proof.test_mismatch(&prepared), None);
     assert!(
-        app.verify_uncompressed(&expanded.carry::<()>(()), &mut rng)
+        app.verify_uncompressed(&decoded.carry::<()>(()), &mut rng)
             .unwrap()
     );
 
@@ -49,7 +59,7 @@ fn decoded_proof_preserves_derived_fields_and_rejects_wrong_vector_lengths() {
                     malformed.truncate(malformed.len() - element.len());
                 }
                 assert!(
-                    matches!(Minimal::from_bytes(&malformed),
+                    matches!(TestProof::from_bytes(&malformed, dims()),
                         Err(Error::Length { expected, actual })
                             if expected == bytes.len() && actual == malformed.len()),
                     "{} (extra: {extra})", stringify!($field),
@@ -65,14 +75,21 @@ fn decoded_proof_preserves_derived_fields_and_rejects_wrong_vector_lengths() {
         nested_endoscaling_step_rxs,
         nested_endoscaling_step_commitments,
     );
-    let buffer = proof.native_endoscaling_step_rxs.as_ptr();
-    let moved = proof.into_minimal::<4>();
-    assert_eq!(moved.native_endoscaling_step_rxs.as_ptr(), buffer);
-    assert_eq!(moved.to_bytes(), bytes);
 }
 
 #[test]
-fn minimal_verification_preserves_header_encoding_errors() {
+#[should_panic(expected = "read before the application derived it")]
+fn a_decoded_proofs_derived_fields_cannot_be_read_before_they_are_derived() {
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let proof = app.bootstrap_pcd().into_parts().0;
+    let decoded = TestProof::from_bytes(&proof.to_bytes(), dims()).unwrap();
+    let _ = decoded.x();
+}
+
+#[test]
+fn decoded_verification_preserves_header_encoding_errors() {
     use ragu_core::{
         Error, Result,
         drivers::{Driver, DriverValue},
@@ -102,17 +119,35 @@ fn minimal_verification_preserves_header_encoding_errors() {
         .finalize(crate::pasta::baked())
         .unwrap();
     let proof = app.bootstrap_pcd().into_parts().0;
-    let bytes = proof.minimize::<4>().to_bytes();
-    let minimal = Minimal::from_bytes(&bytes).unwrap();
+    let decoded = TestProof::from_bytes(&proof.to_bytes(), dims()).unwrap();
     assert!(matches!(
-        app.verify_minimal::<_, BrokenHeader>(minimal, (), StdRng::seed_from_u64(0x5eed)),
+        app.verify_uncompressed(
+            &decoded.carry::<BrokenHeader>(()),
+            StdRng::seed_from_u64(0x5eed)
+        ),
         Err(Error::ConstraintBoundExceeded { limit: 42 })
     ));
 }
 
+#[cfg(feature = "serde")]
+#[test]
+fn a_proof_of_another_shape_has_no_serialization() {
+    use alloc::string::ToString;
+
+    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let mut proof = app.bootstrap_pcd().into_parts().0;
+    // The headers no longer share a length, so no prelude describes them.
+    let element = proof.left_header[0];
+    proof.left_header.push(element);
+    let error = serde_json::to_string(&proof).unwrap_err();
+    assert!(error.to_string().contains("its type's shape"), "{error}");
+}
+
 #[test]
 #[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
-fn decoded_expanded_child_remains_usable_by_fuse() {
+fn decoded_child_remains_usable_by_fuse() {
     use super::recursive_propagation_tests::support::{Merge, Seed, Value, with_app};
     use ragu_core::pasta::Fp;
 
@@ -120,9 +155,8 @@ fn decoded_expanded_child_remains_usable_by_fuse() {
         let mut rng = StdRng::seed_from_u64(0xdec0de);
         let (child, ()) = app.seed(&mut rng, Seed::new(), Fp::from(7)).unwrap();
         let (proof, data) = child.into_parts();
-        let bytes = proof.into_minimal::<4>().to_bytes();
-        let decoded = Minimal::from_bytes(&bytes).unwrap();
-        let child = app.expand(decoded).unwrap().carry::<Value>(data);
+        let decoded = TestProof::from_bytes(&proof.to_bytes(), dims()).unwrap();
+        let child = decoded.carry::<Value>(data);
         let compressed_child = app.compress(&child, &mut rng).unwrap();
         assert!(app.verify_compressed(&compressed_child).unwrap());
         let (parent, ()) = app

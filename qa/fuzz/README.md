@@ -446,7 +446,7 @@ these dependencies.
 
 ### Proof wire boundaries
 
-`fuzz_minimal_wire` and `fuzz_compressed_wire` decode raw bytes and bounded
+`fuzz_proof_wire` and `fuzz_compressed_wire` decode raw bytes and bounded
 mutations of an honest leaf proof generated once per process. The minimal path
 expands, compresses, and runs production compressed verification; the compressed
 path verifies directly. Every successful decode must reencode identically.
@@ -466,5 +466,5 @@ seconds per input.
 PR CI runs the release `proof_wire::tests::decode_to_verify_smoke` regression,
 which asserts that both unmodified seeds reach production verification, then
 executes both actual target binaries on the committed control inputs. Replay
-locally with `./fuzz.sh regress fuzz_minimal_wire` and
+locally with `./fuzz.sh regress fuzz_proof_wire` and
 `./fuzz.sh regress fuzz_compressed_wire`.

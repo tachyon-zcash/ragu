@@ -96,7 +96,13 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// commitment per component, one opening per derived polynomial, one
     /// value per batched polynomial and one IPA round per bit of the rank.
     pub(crate) fn well_formed<R: Rank, const H: usize>(&self) -> bool {
-        <Self as crate::wire::Validate<codec::Compressed<R, H>>>::valid(self)
+        self.well_formed_in(crate::wire::Dimensions::of::<R, H>())
+    }
+
+    /// [`well_formed`](Self::well_formed) for dimensions known only at runtime,
+    /// as the `serde` adapter reads it from its prelude.
+    pub(crate) fn well_formed_in(&self, dims: crate::wire::Dimensions) -> bool {
+        <Self as crate::wire::Validate>::valid(self, dims)
     }
 }
 

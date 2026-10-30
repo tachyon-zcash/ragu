@@ -27,8 +27,8 @@ fn compressed_transport_roundtrip_and_rejection() {
             .unwrap()
     );
     assert!(format.decode(&bytes).is_err());
-    let minimal = format.encode(&proof.proof().minimize::<4>()).unwrap();
-    assert!(format.decode_compressed(&minimal).is_err());
+    let uncompressed = format.encode(proof.proof()).unwrap();
+    assert!(format.decode_compressed(&uncompressed).is_err());
     for n in [0, 1, 123, bytes.len() - 1] {
         assert!(format.decode_compressed(&bytes[..n]).is_err());
     }
