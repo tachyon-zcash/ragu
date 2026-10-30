@@ -803,7 +803,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// header size: none run transcript chunks, and the digits chunks come
     /// last.
     pub const NESTED_CIRCUITS: Counts = Counts {
-        chunks: 32,
+        chunks: 36,
         transcript: 0,
         digits: 1,
     };
@@ -2618,15 +2618,15 @@ mod tests {
         let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
         assert_eq!(
             shape,
-            Shape::solve(51 + 2 + 6, 32 + 1 + 5, per_step, per_step)
+            Shape::solve(51 + 2 + 6, 36 + 1 + 5, per_step, per_step)
         );
         assert_eq!(
             Shape::of::<Aggregator<103>>(),
-            Shape::solve(56 + 2 + 6, 32 + 1 + 5, per_step, per_step)
+            Shape::solve(56 + 2 + 6, 36 + 1 + 5, per_step, per_step)
         );
         // The knob: at the production rank's four per step the walks are
         // far longer.
-        assert!(shape.polynomials() < Shape::solve(51 + 2 + 6, 32 + 1 + 5, 4, 4).polynomials());
+        assert!(shape.polynomials() < Shape::solve(51 + 2 + 6, 36 + 1 + 5, 4, 4).polynomials());
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
         std::println!(
             "aggregator at header size 4: {shape:?}, {} polynomials",

@@ -74,7 +74,7 @@
 //!    that an aggregator at
 //!    [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) can
 //!    cut a wallet's production-rank proof into fewer chunks, which pack
-//!    into 51 native and 32 nested circuits at the tests' header size.
+//!    into 51 native and 36 nested circuits at the tests' header size.
 //! 9. [`extension`] and [`prover`]: the chunk circuits as the aggregator
 //!    profile's extension, declared from pinned counts and registered
 //!    through the profile's hooks, and their polynomials for every proof
@@ -102,7 +102,7 @@
 //! profile declares it, at the aggregator rank: every chunk then runs in
 //! every proof of that profile, over the canonical compressed proof the
 //! application's [`Decompression`](crate::profile::Decompression) holds,
-//! so each child carries 98 more polynomials at the tests' header size
+//! so each child carries 101 more polynomials at the tests' header size
 //! for the fuse to hash, evaluate and fold, which the fuse's circuits
 //! carry at four times the production rank's budget. The decompression
 //! step runs the chunks over the wallet's proof it is given and outputs
@@ -142,8 +142,12 @@
 //!
 //! 1. **The registry's evaluations are unchecked.** The native verifier
 //!    evaluates the wallet registry at $(w, r, y)$ and at the circuits'
-//!    $\omega_c$ itself; the chunks read these evaluations from the work
-//!    stage and take the values a prover writes there. The design is the
+//!    $\omega_c$ itself, and at the children's points for the values the
+//!    wire bindings expect; the chunks read these evaluations from the
+//!    work stage ([`Regions::restrictions`](program::Regions::restrictions),
+//!    [`Regions::restriction_at_w`](program::Regions::restriction_at_w) and
+//!    [`Regions::registry_values`](program::Regions::registry_values)) and
+//!    take the values a prover writes there. The design is the
 //!    fuse's query stage's: the decider recomputes the evaluations at the
 //!    decompressed proof's challenges against the wallet registry and
 //!    holds the stage's wires to them, through the polynomial-query hooks
