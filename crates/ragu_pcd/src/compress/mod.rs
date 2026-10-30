@@ -62,6 +62,7 @@ use crate::{
 };
 
 pub(crate) mod batch;
+pub(crate) mod codec;
 pub(crate) mod instance;
 mod prover;
 pub(crate) mod revdot;
@@ -98,7 +99,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// Whether the messages have the shape the verifier reads: one
     /// commitment per component, one opening per derived polynomial, one
     /// value per batched polynomial and one IPA round per bit of the rank.
-    fn well_formed<R: Rank>(&self) -> bool {
+    pub(crate) fn well_formed<R: Rank>(&self) -> bool {
         fn side<P: Affine, R: Rank>(messages: &Messages<P>) -> bool {
             let derived = Derived::ALL.len();
             // The batch covers the derived polynomials, the reduction's p

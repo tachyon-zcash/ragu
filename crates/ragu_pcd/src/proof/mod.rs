@@ -10,6 +10,18 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+mod expand;
+mod format;
+#[cfg(test)]
+#[path = "../../tests/malformed_proofs.rs"]
+mod malformed_proof_tests;
+mod schema;
+#[cfg(feature = "serde")]
+mod serialize;
+mod validate;
+#[cfg(test)]
+#[path = "../../tests/wire_validation.rs"]
+mod wire_validation_tests;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
@@ -67,6 +79,7 @@ mod access;
 use alloc::{sync::Arc, vec, vec::Vec};
 
 pub(crate) use builder::ProofBuilder;
+pub use format::{ProofContext, ProofFormat};
 use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
@@ -76,7 +89,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
     Uendo, extract_endoscalar, lift_endoscalar,
-    vec::{FixedVec, Len},
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::field::Field;
 
@@ -94,6 +107,7 @@ use crate::{
         },
     },
     profile::{Profile, ProfiledCycle},
+    wire::{self, Decode, Encode},
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -164,209 +178,192 @@ pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex
     bridge_alpha.pow_u64(n)
 }
 
-/// Represents a recursive proof for the correctness of some computation.
-///
-/// All fields are flat (no nested component structs). Polynomial fields are
-/// primary data; commitment fields are `Cached` values derivable from
-/// polynomials, which `Application::verify_uncompressed` rederives rather
-/// than trusts. The `ab` bridge polynomial is also `Cached`,
-/// derivable from `bridge_alpha` and native commitments; the other seven
-/// carry prover-chosen data (the nested fold's error terms and the nested
-/// batch's values among them) and are primary.
-#[derive(Clone)]
-pub struct Proof<C: Cycle, R: Rank> {
-    /// Shared alpha source for deriving cached bridge polynomial alphas.
-    pub(crate) bridge_alpha: C::ScalarField,
+schema::proof_schema! {
+    /// Represents a recursive proof for the correctness of some computation.
+    ///
+    /// All fields are flat (no nested component structs). Polynomial fields are
+    /// primary data; commitment fields are `Cached` values derivable from
+    /// polynomials, which `Application::verify_uncompressed` rederives rather
+    /// than trusts. The `ab` bridge polynomial is also `Cached`,
+    /// derivable from `bridge_alpha` and native commitments; the other seven
+    /// carry prover-chosen data (the nested fold's error terms and the nested
+    /// batch's values among them) and are primary.
+    ///
+    /// The retained fields, with their wire codecs, come first; the derived
+    /// fields, which [`MinimalProof`] omits and `Application::expand`
+    /// recomputes, follow. Wire order is declaration order.
+    <C, R, const HEADER_SIZE: usize>
+    retained {
+        /// Shared alpha source for deriving cached bridge polynomial alphas.
+        pub(crate) bridge_alpha: C::ScalarField => [wire::Scalar],
 
-    // Application metadata
-    pub(crate) circuit_id: CircuitIndex,
-    pub(crate) left_header: Vec<C::CircuitField>,
-    pub(crate) right_header: Vec<C::CircuitField>,
+        // Application metadata
+        pub(crate) circuit_id: CircuitIndex => [wire::DefaultEncoding],
+        pub(crate) left_header: Vec<C::CircuitField> => [format::Header<HEADER_SIZE>],
+        pub(crate) right_header: Vec<C::CircuitField> => [format::Header<HEADER_SIZE>],
 
-    // Native rx polynomials (CircuitField, HostCurve commitment)
-    pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_outer_error_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_a_poly: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_b_poly: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_query_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_registry_xy_poly: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_eval_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_p_poly: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_hashes_1_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_hashes_2_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_collapse_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_bind_challenges_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    pub(crate) native_bind_beta_rx: sparse::Polynomial<C::CircuitField, R>,
-    // The native endoscaling walk over the nested batch's commitments: the
-    // endoscalar binding circuit, the steps, the five points stages holding
-    // the walk's inputs (see `native::stages::points`) and the walk stage
-    // holding the endoscalar's bits and the interstitials.
-    pub(crate) native_bind_endoscalar_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_endoscaling_step_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    /// The rx polynomials of the circuits of the profile's native extension.
-    pub(crate) native_extension_circuit_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    /// The rx polynomials of the stages of the profile's native extension.
-    pub(crate) native_extension_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
-    pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_children_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_ab_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_f_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R>,
+        // Native rx polynomials (CircuitField, HostCurve commitment)
+        pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_outer_error_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_a_poly: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_b_poly: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_query_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_registry_xy_poly: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_eval_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_p_poly: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_hashes_1_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_hashes_2_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_collapse_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_compute_v_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_bind_challenges_rxs: Vec<sparse::Polynomial<C::CircuitField, R>> => [wire::FixedSequence<wire::DefaultEncoding, ConstLen<{ native::NUM_BINDERS }>>],
+        pub(crate) native_bind_beta_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        // The native endoscaling walk over the nested batch's commitments: the
+        // endoscalar binding circuit, the steps, the five points stages holding
+        // the walk's inputs (see `native::stages::points`) and the walk stage
+        // holding the endoscalar's bits and the interstitials.
+        pub(crate) native_bind_endoscalar_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_endoscaling_step_rxs: Vec<sparse::Polynomial<C::CircuitField, R>> => [wire::FixedSequence<wire::DefaultEncoding, native::NumSteps<C::Profile>>],
+        /// The rx polynomials of the circuits of the profile's native extension.
+        pub(crate) native_extension_circuit_rxs: Vec<sparse::Polynomial<C::CircuitField, R>> => [wire::FixedSequence<wire::DefaultEncoding, native::NumExtensionCircuits<C::Profile>>],
+        /// The rx polynomials of the stages of the profile's native extension.
+        pub(crate) native_extension_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>> => [wire::FixedSequence<wire::DefaultEncoding, native::NumExtensionStages<C::Profile>>],
+        pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_points_children_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_points_ab_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_points_f_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
+        pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R> => [wire::DefaultEncoding],
 
-    // Bridge rx polynomials (non-cached, set by caller)
-    pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) bridge_outer_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) bridge_query_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) bridge_f_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) bridge_eval_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
+        // Bridge rx polynomials (non-cached, set by caller)
+        pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
+        pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
+        pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
+        pub(crate) bridge_outer_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
+        pub(crate) bridge_query_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
+        pub(crate) bridge_f_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
+        pub(crate) bridge_eval_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
 
-    // Bridge rx polynomial (cached, derived from bridge_alpha + native commitments)
-    bridge_ab_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+        // Nested endoscaling data (ScalarField, NestedCurve commitment)
+        pub(crate) nested_endoscaling_step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>> => [wire::FixedSequence<wire::DefaultEncoding, nested::NumSteps<C::Profile>>],
+        /// The rx polynomials of the circuits of the profile's nested extension.
+        pub(crate) nested_extension_circuit_rxs: Vec<sparse::Polynomial<C::ScalarField, R>> => [wire::FixedSequence<wire::DefaultEncoding, nested::NumExtensionCircuits<C::Profile>>],
+        /// The rx polynomials of the stages of the profile's nested extension.
+        pub(crate) nested_extension_stage_rxs: Vec<sparse::Polynomial<C::ScalarField, R>> => [wire::FixedSequence<wire::DefaultEncoding, nested::NumExtensionStages<C::Profile>>],
+        pub(crate) nested_endoscalar_rx: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
+        pub(crate) nested_points_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
 
-    // Nested endoscaling data (ScalarField, NestedCurve commitment)
-    pub(crate) nested_endoscaling_step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    /// The rx polynomials of the circuits of the profile's nested extension.
-    pub(crate) nested_extension_circuit_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    /// The rx polynomials of the stages of the profile's nested extension.
-    pub(crate) nested_extension_stage_rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) nested_endoscalar_rx: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_points_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
+        // Nested accumulator polynomials (ScalarField, NestedCurve commitment):
+        // the children's nested claims, folded.
+        pub(crate) nested_a_poly: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
+        pub(crate) nested_b_poly: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
 
-    // Nested accumulator polynomials (ScalarField, NestedCurve commitment):
-    // the children's nested claims, folded.
-    pub(crate) nested_a_poly: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_b_poly: sparse::Polynomial<C::ScalarField, R>,
+        // Nested batch polynomials (ScalarField, NestedCurve commitment): the
+        // $m_n(W, x_n, y_n)$ restriction, and the batch accumulated into $p_n$.
+        pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
+        pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
 
-    // Nested batch polynomials (ScalarField, NestedCurve commitment): the
-    // $m_n(W, x_n, y_n)$ restriction, and the batch accumulated into $p_n$.
-    pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R>,
+        // The challenge stage's commitment without its beta term: the sum the
+        // `bind_challenges` circuits recompute from the transcript challenges,
+        // carried by the native unified instance so that a parent can complete
+        // it and hold it against the stage it walks.
+        pub(crate) nested_challenges_partial: C::NestedCurve => [wire::Point],
 
-    // Nested challenge stage (ScalarField, unblinded NestedCurve
-    // commitment): the lifts of this step's native challenges, the
-    // base-case sign and the lift of `pre_beta`.
-    pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R>,
-    // The challenge stage's commitment without its beta term: the sum the
-    // `bind_challenges` circuits recompute from the transcript challenges,
-    // carried by the native unified instance so that a parent can complete
-    // it and hold it against the stage it walks.
-    pub(crate) nested_challenges_partial: C::NestedCurve,
+        // Nested instance circuits (ScalarField, NestedCurve commitments): the
+        // collapse circuit pins the nested unified instance to the stages and
+        // verifies the nested fold; compute-v checks the nested batch evaluation.
+        pub(crate) nested_collapse_rx: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
+        pub(crate) nested_compute_v_rx: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
 
-    // Nested instance circuits (ScalarField, NestedCurve commitments): the
-    // collapse circuit pins the nested unified instance to the stages and
-    // verifies the nested fold; compute-v checks the nested batch evaluation.
-    pub(crate) nested_collapse_rx: sparse::Polynomial<C::ScalarField, R>,
-    pub(crate) nested_compute_v_rx: sparse::Polynomial<C::ScalarField, R>,
+        // Nested endoscaling commitment caches
+        nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>> => [wire::FixedSequence<CachedPoint, nested::NumSteps<C::Profile>>],
+        nested_extension_circuit_commitments: Vec<Cached<C::NestedCurve>> => [wire::FixedSequence<CachedPoint, nested::NumExtensionCircuits<C::Profile>>],
+        nested_extension_stage_commitments: Vec<Cached<C::NestedCurve>> => [wire::FixedSequence<CachedPoint, nested::NumExtensionStages<C::Profile>>],
+        nested_endoscalar_commitment: Cached<C::NestedCurve> => [CachedPoint],
+        nested_points_commitment: Cached<C::NestedCurve> => [CachedPoint],
 
-    // Nested endoscaling commitment caches
-    nested_endoscaling_step_commitments: Vec<Cached<C::NestedCurve>>,
-    nested_extension_circuit_commitments: Vec<Cached<C::NestedCurve>>,
-    nested_extension_stage_commitments: Vec<Cached<C::NestedCurve>>,
-    nested_endoscalar_commitment: Cached<C::NestedCurve>,
-    nested_points_commitment: Cached<C::NestedCurve>,
+        // Nested accumulator commitment caches
+        nested_a_commitment: Cached<C::NestedCurve> => [CachedPoint],
+        nested_b_commitment: Cached<C::NestedCurve> => [CachedPoint],
 
-    // Nested accumulator commitment caches
-    nested_a_commitment: Cached<C::NestedCurve>,
-    nested_b_commitment: Cached<C::NestedCurve>,
+        // Nested batch commitment caches
+        nested_registry_xy_commitment: Cached<C::NestedCurve> => [CachedPoint],
+        nested_p_commitment: Cached<C::NestedCurve> => [CachedPoint],
 
-    // Nested batch commitment caches
-    nested_registry_xy_commitment: Cached<C::NestedCurve>,
-    nested_p_commitment: Cached<C::NestedCurve>,
+        // Nested challenge stage commitment cache
+        nested_challenges_commitment: Cached<C::NestedCurve> => [CachedPoint],
 
-    // Nested challenge stage commitment cache
-    nested_challenges_commitment: Cached<C::NestedCurve>,
+        // Nested instance circuit commitment caches
+        nested_collapse_commitment: Cached<C::NestedCurve> => [CachedPoint],
+        nested_compute_v_commitment: Cached<C::NestedCurve> => [CachedPoint],
 
-    // Nested instance circuit commitment caches
-    nested_collapse_commitment: Cached<C::NestedCurve>,
-    nested_compute_v_commitment: Cached<C::NestedCurve>,
+        // Native commitment caches
+        native_application_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_preamble_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_inner_error_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_outer_error_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_a_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_b_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_query_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_registry_xy_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_eval_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_p_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_hashes_1_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_hashes_2_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_collapse_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_compute_v_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_bind_challenges_commitments: Vec<Cached<C::HostCurve>> => [wire::FixedSequence<CachedPoint, ConstLen<{ native::NUM_BINDERS }>>],
+        native_bind_beta_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_bind_endoscalar_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_endoscaling_step_commitments: Vec<Cached<C::HostCurve>> => [wire::FixedSequence<CachedPoint, native::NumSteps<C::Profile>>],
+        native_extension_circuit_commitments: Vec<Cached<C::HostCurve>> => [wire::FixedSequence<CachedPoint, native::NumExtensionCircuits<C::Profile>>],
+        native_extension_stage_commitments: Vec<Cached<C::HostCurve>> => [wire::FixedSequence<CachedPoint, native::NumExtensionStages<C::Profile>>],
+        native_points_binding_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_points_children_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_points_registry_wx_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_points_ab_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_points_f_commitment: Cached<C::HostCurve> => [CachedPoint],
+        native_points_walk_commitment: Cached<C::HostCurve> => [CachedPoint],
 
-    // Challenges
-    pub(crate) w: C::CircuitField,
-    pub(crate) y: C::CircuitField,
-    pub(crate) z: C::CircuitField,
-    pub(crate) mu: C::CircuitField,
-    pub(crate) mu_prime: C::CircuitField,
-    pub(crate) x: C::CircuitField,
-    pub(crate) alpha: C::CircuitField,
-    pub(crate) u: C::CircuitField,
-    pub(crate) pre_beta: C::CircuitField,
+        // Bridge commitments (non-cached)
+        pub(crate) bridge_preamble_commitment: C::NestedCurve => [wire::Point],
+        pub(crate) bridge_s_prime_commitment: C::NestedCurve => [wire::Point],
+        pub(crate) bridge_inner_error_commitment: C::NestedCurve => [wire::Point],
+        pub(crate) bridge_outer_error_commitment: C::NestedCurve => [wire::Point],
+        pub(crate) bridge_query_commitment: C::NestedCurve => [wire::Point],
+        pub(crate) bridge_f_commitment: C::NestedCurve => [wire::Point],
+        pub(crate) bridge_eval_commitment: C::NestedCurve => [wire::Point],
 
-    // Native commitment caches
-    native_application_commitment: Cached<C::HostCurve>,
-    native_preamble_commitment: Cached<C::HostCurve>,
-    native_inner_error_commitment: Cached<C::HostCurve>,
-    native_outer_error_commitment: Cached<C::HostCurve>,
-    native_a_commitment: Cached<C::HostCurve>,
-    native_b_commitment: Cached<C::HostCurve>,
-    native_query_commitment: Cached<C::HostCurve>,
-    native_registry_xy_commitment: Cached<C::HostCurve>,
-    native_eval_commitment: Cached<C::HostCurve>,
-    native_p_commitment: Cached<C::HostCurve>,
-    native_hashes_1_commitment: Cached<C::HostCurve>,
-    native_hashes_2_commitment: Cached<C::HostCurve>,
-    native_collapse_commitment: Cached<C::HostCurve>,
-    native_compute_v_commitment: Cached<C::HostCurve>,
-    native_bind_challenges_commitments: Vec<Cached<C::HostCurve>>,
-    native_bind_beta_commitment: Cached<C::HostCurve>,
-    native_bind_endoscalar_commitment: Cached<C::HostCurve>,
-    native_endoscaling_step_commitments: Vec<Cached<C::HostCurve>>,
-    native_extension_circuit_commitments: Vec<Cached<C::HostCurve>>,
-    native_extension_stage_commitments: Vec<Cached<C::HostCurve>>,
-    native_points_binding_commitment: Cached<C::HostCurve>,
-    native_points_children_commitment: Cached<C::HostCurve>,
-    native_points_registry_wx_commitment: Cached<C::HostCurve>,
-    native_points_ab_commitment: Cached<C::HostCurve>,
-    native_points_f_commitment: Cached<C::HostCurve>,
-    native_points_walk_commitment: Cached<C::HostCurve>,
+        // Bridge commitment (cached, derived from the cached bridge rx)
+        bridge_ab_commitment: Cached<C::NestedCurve> => [CachedPoint],
+    }
+    derived {
+        // Bridge rx polynomial (cached, derived from bridge_alpha + native commitments)
+        bridge_ab_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>,
 
-    // Bridge commitments (non-cached)
-    pub(crate) bridge_preamble_commitment: C::NestedCurve,
-    pub(crate) bridge_s_prime_commitment: C::NestedCurve,
-    pub(crate) bridge_inner_error_commitment: C::NestedCurve,
-    pub(crate) bridge_outer_error_commitment: C::NestedCurve,
-    pub(crate) bridge_query_commitment: C::NestedCurve,
-    pub(crate) bridge_f_commitment: C::NestedCurve,
-    pub(crate) bridge_eval_commitment: C::NestedCurve,
+        // Nested challenge stage (ScalarField, unblinded NestedCurve
+        // commitment): the lifts of this step's native challenges, the
+        // base-case sign and the lift of `pre_beta`.
+        pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R>,
 
-    // Bridge commitment (cached, derived from the cached bridge rx)
-    bridge_ab_commitment: Cached<C::NestedCurve>,
-}
-
-impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
-    /// Whether the headers, polynomial vectors and commitment-cache vectors
-    /// have exactly the receiving profile's shape. Check before traversing
-    /// components so that missing entries cannot panic and trailing ones
-    /// cannot be ignored.
-    pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
-        let native_steps = native::NumSteps::<C::Profile>::len();
-        let nested_steps = nested::NumSteps::<C::Profile>::len();
-        let native_extension = C::Profile::native_extension();
-        let nested_extension = C::Profile::nested_extension();
-
-        self.left_header.len() == HEADER_SIZE
-            && self.right_header.len() == HEADER_SIZE
-            && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
-            && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
-            && self.native_endoscaling_step_rxs.len() == native_steps
-            && self.native_endoscaling_step_commitments.len() == native_steps
-            && self.native_extension_circuit_rxs.len() == native_extension.circuits.len()
-            && self.native_extension_circuit_commitments.len() == native_extension.circuits.len()
-            && self.native_extension_stage_rxs.len() == native_extension.stages
-            && self.native_extension_stage_commitments.len() == native_extension.stages
-            && self.nested_endoscaling_step_rxs.len() == nested_steps
-            && self.nested_endoscaling_step_commitments.len() == nested_steps
-            && self.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
-            && self.nested_extension_circuit_commitments.len() == nested_extension.circuits.len()
-            && self.nested_extension_stage_rxs.len() == nested_extension.stages
-            && self.nested_extension_stage_commitments.len() == nested_extension.stages
+        // Challenges
+        pub(crate) w: C::CircuitField,
+        pub(crate) y: C::CircuitField,
+        pub(crate) z: C::CircuitField,
+        pub(crate) mu: C::CircuitField,
+        pub(crate) mu_prime: C::CircuitField,
+        pub(crate) x: C::CircuitField,
+        pub(crate) alpha: C::CircuitField,
+        pub(crate) u: C::CircuitField,
+        pub(crate) pre_beta: C::CircuitField,
     }
 }
+
+/// The wire codec of a [`Cached`] commitment: the point itself. A marker of
+/// its own keeps the impl clear of the point codec's blanket over every
+/// `Affine` type, which coherence cannot rule out for `Cached`.
+struct CachedPoint;
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
@@ -1481,5 +1478,21 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         };
         rx.scale(C::ScalarField::ONE + C::ScalarField::ONE);
         commitment.0 = ReferenceBackend::sparse_commit_to_affine(rx, C::nested_generators(params));
+    }
+}
+
+impl<G: Encode<wire::Point>> Encode<CachedPoint> for Cached<G> {
+    fn encode(&self, output: &mut Vec<u8>) {
+        <G as Encode<wire::Point>>::encode(&self.0, output);
+    }
+}
+
+impl<G: Decode<wire::Point>> Decode<CachedPoint> for Cached<G> {
+    fn encoded_len() -> usize {
+        <G as Decode<wire::Point>>::encoded_len()
+    }
+
+    fn decode<'a>(reader: &mut wire::Reader<'a>) -> core::result::Result<Self, wire::Error<'a>> {
+        <G as Decode<wire::Point>>::decode(reader).map(Cached)
     }
 }

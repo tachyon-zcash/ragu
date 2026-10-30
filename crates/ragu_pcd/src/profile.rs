@@ -20,7 +20,7 @@
 //! A cycle names its profile through [`ProfiledCycle`], so every generic item
 //! in this crate reaches the shape through the cycle it already carries, and
 //! a wallet proof and an aggregator proof over the same curves are different
-//! types. [`Pasta`] proves in the standard profile; [`Profiled`] puts a cycle
+//! types. [`Pasta`](ragu_core::pasta::Pasta) proves in the standard profile; [`Profiled`] puts a cycle
 //! under any other profile, keeping its curves, generators and Poseidon
 //! instances. The native and nested internal modules size their walks, index
 //! lists and value containers from the profile's [`Shape`], so one binary
@@ -785,7 +785,7 @@ impl ProfiledCycle for Pasta {
 /// instances with `P`'s proof shape.
 ///
 /// `Profiled<Pasta, Aggregator>` is the aggregator cycle over the Pasta
-/// curves. It is a distinct type from [`Pasta`], so an application over one
+/// curves. It is a distinct type from [`Pasta`](ragu_core::pasta::Pasta), so an application over one
 /// never accepts the other's proofs.
 pub struct Profiled<C, P>(PhantomData<(C, P)>);
 

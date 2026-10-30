@@ -57,7 +57,7 @@ use udon::{
 };
 
 use crate::{
-    Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
+    Application, MinimalProof, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{
         claims, ky,
@@ -405,6 +405,33 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim)
+    }
+
+    /// Verifies a [`MinimalProof`] for the provided [`Header`].
+    ///
+    /// The derived fields the decider checks are ones this application
+    /// computed by [expansion](Self::expand), never ones the encoder
+    /// supplied; the expanded proof then goes through
+    /// [`verify_uncompressed`](Self::verify_uncompressed) unchanged,
+    /// including its shape check.
+    ///
+    /// Returns `Ok(false)` when expansion finds a bridge commitment that is
+    /// not an affine point or squeezes a challenge with no lift, as the
+    /// uncompressed verifier does for the same proof. Other computation and
+    /// header-encoding errors propagate, as there.
+    #[cfg_attr(docsrs, doc(cfg(feature = "test-utils")))]
+    pub fn verify_minimal<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        proof: MinimalProof<C, R, HEADER_SIZE>,
+        data: H::Data,
+        rng: RNG,
+    ) -> Result<bool> {
+        let proof = match self.expand(proof) {
+            Ok(proof) => proof,
+            Err(Error::InvalidWitness(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        self.verify_uncompressed(&proof.carry::<H>(data), rng)
     }
 
     /// The native mesh claim: see

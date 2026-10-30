@@ -17,6 +17,19 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`MinimalProof`] — the retained proof data, which
+//!   [`Application::expand`] rebuilds into a [`Proof`]. Use
+//!   [`Application::proof_format`] with trusted [`ProofContext`] identifiers
+//!   for versioned storage and transport.
+//!
+//! For each payload kind, [`ProofFormat`] accepts exactly one encoded length,
+//! fixed by the profile, rank and header size, and checks envelope, schema and protocol versions,
+//! rank, header size, suite and application identifiers before decoding proof
+//! data. The optional `serde` adapter on `MinimalProof` carries the low-level
+//! payload bytes for embedding in an already context-bound container. Decoding
+//! is not verification: a receiver expands the decoded proof, compresses it
+//! and accepts it on [`verify_compressed`](Application::verify_compressed).
+//! See `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -51,6 +64,7 @@ pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
 mod verify;
+pub mod wire;
 
 #[cfg(test)]
 #[path = "../tests/setup_binding.rs"]
@@ -74,7 +88,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
-pub use proof::{Pcd, Proof};
+pub use proof::{MinimalProof, Pcd, Proof, ProofContext, ProofFormat};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
