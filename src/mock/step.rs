@@ -1,8 +1,96 @@
 //! Mock PCD step — mirrors `ragu_pcd::Step`.
 
-use ragu_core::{Error, Result};
+use alloc::vec::Vec;
 
-use super::{ctx::StepCtx, header::Header};
+use ragu_core::{
+    Error, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Bound,
+    pasta::Fp,
+};
+use ragu_primitives::{Element, GadgetExt, allocator::Allocator, io::Buffer, shared::Shared};
+
+pub use super::ctx::StepCtx;
+use super::header::Header;
+
+/// Encoded header gadget returned by a step, preserving its computed wires.
+///
+/// `HEADER_SIZE` is the application's configured width, including the suffix
+/// slot, as in real ragu. Serialization pads with zeros and rejects overflow.
+/// No recursive uniform-encoding variant is needed here.
+pub struct Encoded<'dr, D: Driver<'dr, F = Fp>, H: Header, const HEADER_SIZE: usize>(
+    Bound<'dr, D, H::Output>,
+);
+
+impl<'dr, D: Driver<'dr, F = Fp>, H: Header, const HEADER_SIZE: usize> Clone
+    for Encoded<'dr, D, H, HEADER_SIZE>
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<'dr, D: Driver<'dr, F = Fp>, H: Header, const HEADER_SIZE: usize>
+    Encoded<'dr, D, H, HEADER_SIZE>
+{
+    /// Wraps the actual gadget computed by the step without reallocation.
+    pub fn from_gadget(gadget: Bound<'dr, D, H::Output>) -> Self {
+        Self(gadget)
+    }
+
+    /// Borrows the underlying header gadget.
+    pub fn as_gadget(&self) -> &Bound<'dr, D, H::Output> {
+        &self.0
+    }
+
+    /// Encodes witness data using the supplied driver and allocator.
+    pub fn new<A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, H::Data>,
+    ) -> Result<Self> {
+        Ok(Self::from_gadget(H::encode(dr, allocator, witness)?))
+    }
+
+    pub(crate) fn write(self, dr: &mut D, buf: &mut Vec<Element<'dr, D>>) -> Result<()> {
+        if HEADER_SIZE == 0 {
+            return Err(Error::MalformedEncoding(
+                "HEADER_SIZE must include a suffix slot".into(),
+            ));
+        }
+        let mut counting = CountingBuffer::<_, HEADER_SIZE> {
+            written: 0,
+            inner: buf,
+        };
+        self.0.write(dr, &mut counting)?;
+        while counting.written < HEADER_SIZE - 1 {
+            Element::zero(dr).write(dr, &mut counting)?;
+        }
+        Element::constant(dr, Fp::from(H::SUFFIX.get())).write(dr, counting.inner)?;
+        Ok(())
+    }
+}
+
+struct CountingBuffer<'a, B, const HEADER_SIZE: usize> {
+    written: usize,
+    inner: &'a mut B,
+}
+
+impl<'dr, D: Driver<'dr>, B: Buffer<'dr, D>, const HEADER_SIZE: usize> Buffer<'dr, D>
+    for CountingBuffer<'_, B, HEADER_SIZE>
+{
+    fn write(&mut self, dr: &mut D, value: &Element<'dr, D>) -> Result<()> {
+        let capacity = HEADER_SIZE.saturating_sub(1);
+        if self.written >= capacity {
+            return Err(Error::MalformedEncoding(
+                alloc::format!("Header encoding size exceeded HEADER_SIZE - 1 ({capacity})").into(),
+            ));
+        }
+        self.inner.write(dr, value)?;
+        self.written += 1;
+        Ok(())
+    }
+}
 
 /// Number of internal step indexes reserved by mock_ragu.
 ///
@@ -96,17 +184,36 @@ impl Index {
 /// Mirrors `ragu_pcd::Step`.
 pub trait Step: Sized + Send + Sync {
     const INDEX: Index;
+    /// The shared application-stage gadget. The mock executes its constraints
+    /// locally but does not commit a separate recursive stage polynomial.
+    type Shared: Shared<Fp>;
     type Witness<'source>: Send;
     type Aux<'source>: Send;
     type Left: Header;
     type Right: Header;
     type Output: Header;
 
-    fn witness<'source>(
+    /// Emits this step's constraints using real ragu drivers and gadgets.
+    ///
+    /// Returns encoded left, right, and output headers, carried output data,
+    /// and auxiliary witness data. Use `Encoded::from_gadget` for computed
+    /// outputs so the proof binds the same wires used by the step's constraints.
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
-        ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        left: <Self::Left as Header>::Data,
-        right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)>;
+        ctx: &mut StepCtx<'_, 'dr, D>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+        left: DriverValue<D, <Self::Left as Header>::Data>,
+        right: DriverValue<D, <Self::Right as Header>::Data>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Right, HEADER_SIZE>,
+            Encoded<'dr, D, Self::Output, HEADER_SIZE>,
+        ),
+        Bound<'dr, D, Self::Shared>,
+        DriverValue<D, <Self::Output as Header>::Data>,
+        DriverValue<D, Self::Aux<'source>>,
+    )>
+    where
+        Self: 'dr;
 }

@@ -77,6 +77,18 @@ pub fn derive_write(input: TokenStream) -> TokenStream {
     })
 }
 
+/// Derives the fixed shared-wire schema re-exported by `ragu_primitives::shared`.
+#[proc_macro_derive(Shared, attributes(ragu))]
+pub fn derive_shared(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    macro_body(|| {
+        let udon_path = path_resolution::UdonPath::resolve()?;
+        let ragu_core_path = path_resolution::RaguCorePath::resolve()?;
+        let ragu_primitives_path = path_resolution::RaguPrimitivesPath::resolve()?;
+        derive::shared::derive(input, udon_path, ragu_core_path, ragu_primitives_path)
+    })
+}
+
 #[cfg(test)]
 #[allow(unused_imports)]
 use ragu_primitives::consistent::Consistent as _;

@@ -25,6 +25,8 @@ mock = [
   "dep:blake2b_simd",
   "dep:udon",
   "dep:ragu_core",
+  "dep:ragu_primitives",
+  "dep:ragu_circuits",
   "dep:rand",
 ]
 # Kept for compatibility: the mock has no parallel stage of its own.
@@ -43,6 +45,8 @@ blake2b_simd = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 udon = { workspace = true, optional = true }
 ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
 
 [workspace]
 members = [
