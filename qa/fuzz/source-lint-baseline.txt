@@ -23,3 +23,5 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|217|The public-rate threshold
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|254|Save behavior is selected by structural sponge mode at an explicit API boundary.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is structural sponge state, not a circuit witness.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
+RAGU005|src/mock/step.rs|56|HEADER_SIZE is a const generic and a zero width is rejected before any header element is written.
+RAGU005|src/mock/step.rs|84|The early error depends only on the structural number of header elements already written.
