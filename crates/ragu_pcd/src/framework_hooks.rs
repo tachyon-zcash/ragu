@@ -23,7 +23,7 @@ use udon::{field::Field, polynomial::evaluate_iter};
 
 use crate::{
     instance,
-    poly_commitment::{Commit, HANDLE_WIRES, PolyHandle},
+    poly_commitment::{CommitAndName, HANDLE_WIRES, PolyHandle},
     profile::Profile,
     proof::PolyQuery,
 };
@@ -53,7 +53,7 @@ pub(crate) struct FrameworkHooks<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D:
     witnessed_polys: Vec<Witnessed<'dr, D, C>>,
     hook_layout: HookLayout,
     params: &'dr C::Params,
-    commit: Commit<C>,
+    commit: CommitAndName<C>,
 }
 
 /// Every hook's output as plain values, for the fuse. Every list is in call
@@ -150,9 +150,14 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         })
     }
 
-    /// `commit` is [`poly_commitment::commit`](crate::poly_commitment::commit)
+    /// `commit` is
+    /// [`poly_commitment::commit_and_name`](crate::poly_commitment::commit_and_name)
     /// at the application's rank and backend.
-    pub(crate) fn new(hook_layout: HookLayout, params: &'dr C::Params, commit: Commit<C>) -> Self {
+    pub(crate) fn new(
+        hook_layout: HookLayout,
+        params: &'dr C::Params,
+        commit: CommitAndName<C>,
+    ) -> Self {
         Self {
             poly_queries: Vec::new(),
             witnessed_polys: Vec::new(),

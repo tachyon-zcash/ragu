@@ -205,8 +205,11 @@ impl<C: ProfiledCycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize, B: Backend
         let (left, right, witness) = witness.cast();
 
         let layout = HookLayout::of::<C::Profile>();
-        let mut hooks =
-            FrameworkHooks::new(layout, self.params, poly_commitment::commit::<C, R, B>);
+        let mut hooks = FrameworkHooks::new(
+            layout,
+            self.params,
+            poly_commitment::commit_and_name::<C, R, B>,
+        );
         let ((left, right, output), shared, output_data, step_aux) = {
             let mut ctx = StepCtx::<'_, '_, _, C>::new(dr, &mut hooks);
             self.step

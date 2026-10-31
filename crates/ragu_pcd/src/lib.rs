@@ -81,13 +81,13 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 pub use framework_hooks::HookLayout;
 use header::Header;
-pub use poly_commitment::PolyHandle;
+pub use poly_commitment::{HANDLE_WIRES, PolyHandle};
 pub use profile::AppHooks;
 use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::Rank,
+    polynomials::{Rank, sparse},
     registry::{Registry, RegistryBuilder, Tag},
     staging,
 };
@@ -671,6 +671,26 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// region, then the largest registered shared gadget.
     pub(crate) fn stage_size(&self) -> usize {
         stage_size::<C>(self.shared_size)
+    }
+
+    /// The handle a step is handed for `polynomial`: the coordinates of the
+    /// name of its commitment, so an off-circuit party can compare a handle
+    /// a header carries with a polynomial it holds.
+    ///
+    /// The commitment, and so the name, is this application's: the
+    /// polynomial is committed at its rank `R` through its backend `B`. A
+    /// name made at another rank or backend does not match.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness)
+    /// for the zero polynomial, whose commitment has no name.
+    pub fn poly_handle(
+        &self,
+        polynomial: &sparse::Polynomial<C::CircuitField, R>,
+    ) -> Result<[C::CircuitField; HANDLE_WIRES]> {
+        let coefficients: Vec<_> = polynomial.iter_coeffs().collect();
+        Ok(poly_commitment::commit_and_name::<C, R, B>(&coefficients, self.params)?.1)
     }
 
     /// Seed a new computation by running a [`Step`] declaring `()` for both of

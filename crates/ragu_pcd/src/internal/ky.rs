@@ -36,7 +36,6 @@ use crate::Proof;
 use crate::{
     header::Header,
     profile::{Binding, Profile, ProfiledCycle},
-    proof::PolyQuery,
 };
 
 /// The targets of one proof's native revdot claims at one $y$.
@@ -327,10 +326,9 @@ pub struct NativeParts<'a, C: Cycle> {
     pub left_header: &'a [C::CircuitField],
     pub right_header: &'a [C::CircuitField],
     pub output_header: &'a [C::CircuitField],
-    /// The step's witnessed polynomials' commitments.
-    pub witness_polys: &'a [C::HostCurve],
-    /// The step's poly-queries.
-    pub poly_queries: &'a [PolyQuery<C::HostCurve>],
+    /// The hook region of the step's application stage (see
+    /// [`hook_region`](crate::proof::hook_region)).
+    pub hook_region: &'a [C::CircuitField],
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
     /// The nested extension stage commitments the native binding circuit
@@ -353,8 +351,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.left_header),
             parts.as_ref().map(|p| p.right_header),
             parts.as_ref().map(|p| p.output_header),
-            parts.as_ref().map(|p| p.witness_polys),
-            parts.as_ref().map(|p| p.poly_queries),
+            parts.as_ref().map(|p| p.hook_region),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
         )?;

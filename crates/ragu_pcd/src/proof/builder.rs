@@ -19,7 +19,12 @@ use ragu_core::{Cycle, Result};
 use ragu_primitives::vec::{FixedVec, Len};
 
 use super::{Cached, PolyQuery, Proof};
-use crate::{framework_hooks::WitnessPolys, internal::nested, profile::ProfiledCycle};
+use crate::{
+    framework_hooks::WitnessPolys,
+    internal::nested,
+    poly_commitment::{self, HANDLE_WIRES},
+    profile::ProfiledCycle,
+};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -370,6 +375,9 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     /// Derived from [`witness_polys`](Self::witness_polys) on first access,
     /// like every other commitment cache here.
     witness_poly_commitments: OnceCell<Vec<C::HostCurve>>,
+    /// The names of [`witness_poly_commitments`](Self::witness_poly_commitments),
+    /// derived from them on first access.
+    witness_poly_names: OnceCell<Vec<[C::CircuitField; HANDLE_WIRES]>>,
 }
 
 impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
@@ -490,6 +498,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             application_poly_queries: None,
             witness_polys: None,
             witness_poly_commitments: OnceCell::new(),
+            witness_poly_names: OnceCell::new(),
         }
     }
 
@@ -900,6 +909,28 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         })
     }
 
+    /// Lazily names every witnessed polynomial's commitment (see
+    /// [`poly_commitment::name`]) and caches the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ragu_core::Error::InvalidWitness`] if a commitment is the
+    /// identity: the zero polynomial has no name.
+    pub(crate) fn witness_poly_names(&self) -> Result<&[[C::CircuitField; HANDLE_WIRES]]> {
+        if self.witness_poly_names.get().is_none() {
+            let names = self
+                .witness_poly_commitment_list()
+                .iter()
+                .map(|&commitment| poly_commitment::name::<C, R, B>(commitment, self.params))
+                .collect::<Result<Vec<_>>>()?;
+            let _ = self.witness_poly_names.set(names);
+        }
+        Ok(self
+            .witness_poly_names
+            .get()
+            .expect("set above if it was not already"))
+    }
+
     setter!(
         set_application_poly_queries,
         application_poly_queries,
@@ -1134,6 +1165,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_points_f_commitment();
         self.native_points_walk_commitment();
         self.witness_poly_commitment_list();
+        self.witness_poly_names()?;
 
         // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
@@ -1331,6 +1363,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_walk_commitment: cached!(native_points_walk_commitment),
 
             witness_poly_commitments: cached!(witness_poly_commitments),
+            witness_poly_names: cached!(witness_poly_names),
             application_poly_queries: take!(application_poly_queries),
             witness_polys: take!(witness_polys),
             #[cfg(test)]

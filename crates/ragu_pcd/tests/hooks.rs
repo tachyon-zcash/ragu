@@ -23,7 +23,7 @@ use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
     AppHooks, Application, ApplicationBuilder, HookLayout, Pcd, Proof,
-    poly_commitment::{self, HANDLE_WIRES},
+    poly_commitment::HANDLE_WIRES,
     profile::Profiled,
     step::{Encoded, Index, Step, StepCtx},
 };
@@ -150,6 +150,19 @@ fn a_hooked_application_seeds_fuses_and_verifies() -> Result<()> {
         right,
     )?;
     assert!(app.verify_uncompressed(&node, &mut rng)?);
+    Ok(())
+}
+
+/// `Application::poly_handle` is the handle a step is handed for the same
+/// polynomial, so an off-circuit party can name what a step witnessed.
+#[test]
+fn poly_handle_is_the_handle_a_step_is_handed() -> Result<()> {
+    let app = app()?;
+    let mut rng = StdRng::seed_from_u64(808);
+    let coeffs = [3, 1, 4, 1, 5];
+    let proof = seeded(&app, &mut rng, &coeffs)?.into_parts().0;
+    let polynomial = Opening::honest(&coeffs, 11).polynomial();
+    assert_eq!(app.poly_handle(&polynomial)?, proof.witness_poly_names()[0]);
     Ok(())
 }
 
@@ -399,12 +412,8 @@ fn renamer_app() -> Result<App> {
 /// The renamer's proof and the hook region its stage holds: its one handle,
 /// then each query's handle, `x` and `y`, all naming `h_q`.
 fn renamed(app: &App, rng: &mut StdRng) -> Result<(Proof<Hooked, R>, Vec<Fp>)> {
-    let q = [-Fp::from(7u64), Fp::from(1u64)];
-    let h_q = poly_commitment::handle::<Hooked>(poly_commitment::commit::<
-        Hooked,
-        R,
-        ragu_backend::ReferenceBackend,
-    >(&q, crate::pasta::baked()))?;
+    let q = sparse::Polynomial::<Fp, R>::from_coeffs(vec![-Fp::from(7u64), Fp::from(1u64)]);
+    let h_q = app.poly_handle(&q)?;
     let (proof, ()) = app.seed(rng, Renamer, h_q)?.0.into_parts();
     let mut region = Vec::new();
     region.extend(h_q);

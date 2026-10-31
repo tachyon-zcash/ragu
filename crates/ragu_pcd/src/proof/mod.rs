@@ -93,7 +93,7 @@ use crate::{
             PointsWitness,
         },
     },
-    poly_commitment,
+    poly_commitment::{self, HANDLE_WIRES},
     profile::{Profile, ProfiledCycle},
 };
 
@@ -156,19 +156,39 @@ pub struct PolyQuery<Curve: udon::curve::Affine> {
     pub y: Curve::Scalar,
 }
 
-/// The hook region that witnessed-polynomial `commitments` and `queries`
-/// encode: each commitment's handle, then each poly-query's handle, `x` and
-/// `y`, in the order the adapter stages them.
+/// The hook region that witnessed-polynomial `commitments`, their `names`
+/// and `queries` encode: each commitment's name, then each poly-query's
+/// commitment's name, `x` and `y`, in the order the adapter stages them.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
+/// the lists differ in length or a query's commitment is none of
+/// `commitments`, which a proof the adapter built never has.
 pub(crate) fn hook_region<C: Cycle>(
     commitments: &[C::HostCurve],
+    names: &[[C::CircuitField; HANDLE_WIRES]],
     queries: &[PolyQuery<C::HostCurve>],
 ) -> Result<Vec<C::CircuitField>> {
+    if commitments.len() != names.len() {
+        return Err(ragu_core::Error::InvalidWitness(
+            "one name per witnessed polynomial".into(),
+        ));
+    }
     let mut region = Vec::new();
-    for &commitment in commitments {
-        region.extend(poly_commitment::handle::<C>(commitment)?);
+    for name in names {
+        region.extend(name);
     }
     for query in queries {
-        region.extend(poly_commitment::handle::<C>(query.com)?);
+        let named = commitments
+            .iter()
+            .position(|&commitment| commitment == query.com)
+            .ok_or_else(|| {
+                ragu_core::Error::InvalidWitness(
+                    "a poly-query names a commitment the proof does not carry".into(),
+                )
+            })?;
+        region.extend(names[named]);
         region.push(query.x);
         region.push(query.y);
     }
@@ -394,6 +414,9 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
     /// [`witness_polys`](Self::witness_polys)' commitments, in the same order.
     witness_poly_commitments: Cached<Vec<C::HostCurve>>,
+    /// The names of [`witness_poly_commitments`](Self::witness_poly_commitments),
+    /// in the same order: what the step was handed and staged.
+    witness_poly_names: Cached<Vec<[C::CircuitField; HANDLE_WIRES]>>,
 
     /// Set by a test that forges the hook lists a parent reads, to stand in
     /// for a fusing prover that skips its own [`has_shape`](Self::has_shape)
@@ -422,6 +445,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     pub(crate) fn witness_poly_commitments(&self) -> &[C::HostCurve] {
         &self.witness_poly_commitments.0
     }
+
+    /// [`witness_poly_commitments`](Self::witness_poly_commitments)' names,
+    /// in the same order.
+    pub(crate) fn witness_poly_names(&self) -> &[[C::CircuitField; HANDLE_WIRES]] {
+        &self.witness_poly_names.0
+    }
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
@@ -433,6 +462,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
         self.application_poly_queries.len() == layout.poly_queries
             && self.witness_polys.len() == layout.witness_polys
             && self.witness_poly_commitments.0.len() == layout.witness_polys
+            && self.witness_poly_names.0.len() == layout.witness_polys
             && (self.skips_stage_check() || self.stage_carries_hooks(&layout))
     }
 
@@ -469,6 +499,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     fn carried_hook_region(&self) -> Result<Vec<C::CircuitField>> {
         hook_region::<C>(
             self.witness_poly_commitments(),
+            self.witness_poly_names(),
             self.application_poly_queries(),
         )
     }
@@ -1251,6 +1282,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let padding_poly = sparse::Polynomial::<_, R>::from_coeffs(vec![C::CircuitField::ONE]);
         let padding_com =
             B::sparse_commit_to_affine(&padding_poly, C::host_generators(self.params));
+        let padding_name = poly_commitment::name::<C, R, B>(padding_com, self.params)
+            .expect("the padding commitment is a host-curve point");
         builder.set_application_polys(vec![padding_poly.clone(); layout.witness_polys]);
         // Nor does it raise poly-queries: every position holds the padding
         // query, which opens the first polynomial at zero, as the adapter's
@@ -1270,6 +1303,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         } else {
             let hook_region = hook_region::<C>(
                 &vec![padding_com; layout.witness_polys],
+                &vec![padding_name; layout.witness_polys],
                 &vec![padding_query; layout.poly_queries],
             )
             .expect("the padding commitment is a host-curve point");

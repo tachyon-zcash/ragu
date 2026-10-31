@@ -27,7 +27,6 @@ use crate::{
     internal::{ky, native::unified},
     poly_commitment::{HANDLE_WIRES, PolyHandle},
     profile::{Profile, ProfiledCycle},
-    proof::{PolyQuery, hook_region},
     step::{InternalStepIndex, internal::padded},
 };
 
@@ -245,7 +244,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
 {
     /// Allocates a child's hook region, padded positions included: each
     /// witnessed polynomial's handle, then each poly-query's handle, `x` and
-    /// `y` (see [`hook_region`]).
+    /// `y` (see [`hook_region`](crate::proof::hook_region)).
     #[allow(clippy::type_complexity)]
     fn alloc_hook_region(
         dr: &mut D,
@@ -348,17 +347,17 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
     }
 
     /// Allocate ProofInputs from the parts a proof's instance and stage carry:
-    /// the child headers, the encoded output header, the witnessed
-    /// polynomials' commitments and the poly-queries, the circuit id as its
-    /// domain point, and the unified instance's values.
-    #[allow(clippy::too_many_arguments)]
+    /// the child headers, the encoded output header, the hook region (see
+    /// [`hook_region`]), the circuit id as its domain point, and the unified
+    /// instance's values.
+    ///
+    /// [`hook_region`]: crate::proof::hook_region
     pub fn alloc_from_parts(
         dr: &mut D,
         left_header: DriverValue<D, &[D::F]>,
         right_header: DriverValue<D, &[D::F]>,
         output_header: DriverValue<D, &[D::F]>,
-        witness_polys: DriverValue<D, &[C::HostCurve]>,
-        poly_queries: DriverValue<D, &[PolyQuery<C::HostCurve>]>,
+        hook_region: DriverValue<D, &[D::F]>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
     ) -> Result<Self> {
@@ -384,10 +383,8 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             right: alloc_header(dr, right_header)?,
         };
         let output_header = alloc_header(dr, output_header)?;
-        let (witness_polys, poly_queries) = Self::alloc_hook_region(
-            dr,
-            D::try_just(|| hook_region::<C>(witness_polys.take(), poly_queries.take()))?,
-        )?;
+        let (witness_polys, poly_queries) =
+            Self::alloc_hook_region(dr, hook_region.map(|region| region.to_vec()))?;
         Ok(ProofInputs {
             children,
             output_header,

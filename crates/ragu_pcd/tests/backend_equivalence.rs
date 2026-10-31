@@ -1424,6 +1424,7 @@ mod proof_equivalence {
                 application_poly_queries: _,
                 witness_polys: _,
                 witness_poly_commitments: _,
+                witness_poly_names: _,
                 // Test-only forgery markers, not proof content.
                 skip_stage_check: _,
                 forged_hook_region: _,
@@ -1592,6 +1593,7 @@ mod proof_equivalence {
 
             if !extension_eq(&self.witness_polys, &other.witness_polys)
                 || self.witness_poly_commitments() != other.witness_poly_commitments()
+                || self.witness_poly_names() != other.witness_poly_names()
             {
                 return Some("witnessed polynomials");
             }

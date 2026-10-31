@@ -70,6 +70,7 @@ use crate::{
         transcript::Transcript,
     },
     ipa::IpaCycle,
+    poly_commitment,
     profile::ProfiledCycle,
     proof::PolyQuery,
 };
@@ -407,6 +408,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             native && nested
         };
 
+        // The names the root's step was handed, and staged, are those of the
+        // carried commitments, which `commitments_claim` holds to the carried
+        // polynomials. A parent binds a child's names in-circuit; the root
+        // has no parent, so the decider recomputes them.
+        let names_claim = {
+            let proof = pcd.proof();
+            proof
+                .witness_poly_commitments()
+                .iter()
+                .zip(proof.witness_poly_names())
+                .all(|(&commitment, cached)| {
+                    poly_commitment::name::<C, R, Verifier<B>>(commitment, self.params)
+                        .is_ok_and(|name| name == *cached)
+                })
+        };
+
         // A root proof's own poly-queries are not yet folded; check them
         // natively. Rejects a query whose commitment is no carried
         // polynomial's, or whose evaluation disagrees with that polynomial.
@@ -438,6 +455,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && transcript_claim
             && ab_bridge_claim
             && mesh_claim
+            && names_claim
             && poly_query_claims)
     }
 

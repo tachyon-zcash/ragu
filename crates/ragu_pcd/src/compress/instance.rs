@@ -453,8 +453,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     output_header,
                     // Compression refuses a profile that declares hooks
                     // (`super::refuse_hooks`), so there are none to carry.
-                    witness_polys: &[],
-                    poly_queries: &[],
+                    hook_region: &[],
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,
