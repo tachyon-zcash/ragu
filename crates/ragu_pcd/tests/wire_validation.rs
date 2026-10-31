@@ -1,5 +1,5 @@
-//! A proof's encoding must preserve the fields it retains, leave the derived
-//! ones to the application, and reject malformed protocol layouts.
+//! A proof's encoding must preserve every field and reject malformed protocol
+//! layouts.
 
 use alloc::vec::Vec;
 
@@ -20,7 +20,7 @@ fn dims() -> Dimensions {
 }
 
 #[test]
-fn decoded_proof_derives_its_omitted_fields_and_rejects_wrong_vector_lengths() {
+fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .finalize(crate::pasta::baked())
         .unwrap();
@@ -30,13 +30,9 @@ fn decoded_proof_derives_its_omitted_fields_and_rejects_wrong_vector_lengths() {
     let (proof, ()) = pcd.into_parts();
     let bytes = proof.to_bytes();
     let decoded = TestProof::from_bytes(&bytes, dims()).unwrap();
-    // The encoding holds the retained fields alone, and re-encodes to itself.
-    assert!(!decoded.complete);
+    // Decoding restores every field, and the proof re-encodes to itself.
+    assert_eq!(proof.test_mismatch(&decoded), None);
     assert_eq!(decoded.to_bytes(), bytes);
-    // Deriving fills every other field, equal to the original's.
-    let mut derived = decoded.clone();
-    app.derive(&mut derived).unwrap();
-    assert_eq!(proof.test_mismatch(&derived), None);
     assert!(
         app.verify_uncompressed(&decoded.carry::<()>(()), &mut rng)
             .unwrap()
@@ -76,58 +72,6 @@ fn decoded_proof_derives_its_omitted_fields_and_rejects_wrong_vector_lengths() {
         nested_endoscaling_step_rxs,
         nested_endoscaling_step_commitments,
     );
-}
-
-#[test]
-#[should_panic(expected = "read before the application derived it")]
-fn a_decoded_proofs_derived_fields_cannot_be_read_before_they_are_derived() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .finalize(crate::pasta::baked())
-        .unwrap();
-    let proof = app.bootstrap_pcd().into_parts().0;
-    let decoded = TestProof::from_bytes(&proof.to_bytes(), dims()).unwrap();
-    let _ = decoded.x();
-}
-
-#[test]
-fn decoded_verification_preserves_header_encoding_errors() {
-    use ragu_core::{
-        Error, Result,
-        drivers::{Driver, DriverValue},
-        gadgets::Bound,
-    };
-    use ragu_primitives::allocator::Allocator;
-    use udon::field::Field;
-
-    use crate::header::{Header, Suffix};
-
-    struct BrokenHeader;
-    impl<F: Field> Header<F> for BrokenHeader {
-        const SUFFIX: Suffix = <() as Header<F>>::SUFFIX;
-        type Data = ();
-        type Output = ();
-
-        fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
-            _: &mut D,
-            _: &mut A,
-            _: DriverValue<D, Self::Data>,
-        ) -> Result<Bound<'dr, D, Self::Output>> {
-            Err(Error::ConstraintBoundExceeded { limit: 42 })
-        }
-    }
-
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .finalize(crate::pasta::baked())
-        .unwrap();
-    let proof = app.bootstrap_pcd().into_parts().0;
-    let decoded = TestProof::from_bytes(&proof.to_bytes(), dims()).unwrap();
-    assert!(matches!(
-        app.verify_uncompressed(
-            &decoded.carry::<BrokenHeader>(()),
-            StdRng::seed_from_u64(0x5eed)
-        ),
-        Err(Error::ConstraintBoundExceeded { limit: 42 })
-    ));
 }
 
 #[cfg(feature = "serde")]

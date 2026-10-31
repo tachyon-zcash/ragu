@@ -1208,8 +1208,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             alpha: take!(alpha),
             u: take!(u),
             pre_beta: take!(pre_beta),
-            // The builder sets every derived field itself.
-            complete: true,
 
             native_application_commitment: cached!(native_application_commitment),
             native_preamble_commitment: cached!(native_preamble_commitment),

@@ -61,8 +61,6 @@ fn decoded_proof_verifies_and_compresses() {
         .decode(&format.encode(&proof).unwrap())
         .unwrap()
         .carry::<LeafNode>(data);
-    // The application derives the decoded proof's omitted fields when it
-    // takes the proof, for verification and for compression alike.
     assert!(app.verify_uncompressed(&decoded, &mut rng).unwrap());
     let compressed = app.compress(&decoded, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
@@ -82,7 +80,7 @@ fn decoded_proof_verifies_and_a_tampered_one_does_not() {
     );
 
     // Another bridge alpha, the payload's first scalar, decodes fine, but the
-    // `ab` stage derived from it no longer matches the shipped commitment.
+    // `ab` stage the verifier derives from it no longer matches the shipped one.
     let mut tampered = bytes;
     tampered[ENVELOPE..ENVELOPE + 32].fill(0);
     tampered[ENVELOPE] = 2;
@@ -194,11 +192,11 @@ fn wire_measurements() {
         let verification = start.elapsed();
         samples.push([encoding, decoding, verification]);
         println!(
-            "bytes={}, encode={encoding:?}, decode={decoding:?}, derive+verify={verification:?}",
+            "bytes={}, encode={encoding:?}, decode={decoding:?}, verify={verification:?}",
             bytes.len()
         );
     }
-    for (column, name) in ["encode", "decode", "derive+verify"].iter().enumerate() {
+    for (column, name) in ["encode", "decode", "verify"].iter().enumerate() {
         let mut values: Vec<_> = samples.iter().map(|s| s[column]).collect();
         values.sort();
         println!("median {name}={:?}", values[2]);

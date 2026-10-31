@@ -64,12 +64,11 @@ pub struct ProofContext {
 /// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Decoding checks
 /// the exact length, then the envelope, then the payload representation.
 ///
-/// Decoding does not verify a proof. A decoded [`Proof`] carries only the
-/// fields its encoding retains; the application derives the rest when one of
-/// its methods first takes it. Compress it with [`Application::compress`] and
-/// accept it on [`Application::verify_compressed`] before using it in another
-/// proof. A decoded compressed proof can be verified directly after attaching
-/// its accompanying header data. See the crate's `WIRE_FORMAT.md` for the
+/// Decoding does not verify a proof. Compress a decoded [`Proof`] with
+/// [`Application::compress`] and accept it on
+/// [`Application::verify_compressed`] before using it in another proof. A
+/// decoded compressed proof can be verified directly after attaching its
+/// accompanying header data. See the crate's `WIRE_FORMAT.md` for the
 /// version and compatibility contract.
 pub struct ProofFormat<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     context: ProofContext,
@@ -167,10 +166,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
     }
 
     /// Encodes a structurally valid proof, including its version and context.
-    /// Does not establish cryptographic validity. Only the fields the
-    /// encoding retains are written; see [`ProofFormat::decode`].
+    /// Does not establish cryptographic validity.
     pub fn encode(&self, proof: &Proof<C, R>) -> Result<Vec<u8>, Error<'static>> {
-        if !proof.well_formed::<HEADER_SIZE>() {
+        if !<Proof<C, R> as Validate>::valid(proof, Self::dims()) {
             return Err(Error::Invalid {
                 offset: 0,
                 bytes: &[],
@@ -185,10 +183,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
 
     /// Decodes exactly one encoding, rejecting other lengths, unknown versions,
     /// mismatched context and malformed representation, in that order.
-    ///
-    /// The decoded proof holds the retained fields alone. The application
-    /// derives the others, never reading them from the input, when one of its
-    /// methods first takes the proof.
     pub fn decode<'a>(&self, bytes: &'a [u8]) -> Result<Proof<C, R>, Error<'a>> {
         let mut reader = self.open(bytes, PayloadKind::Proof, self.encoded_len())?;
         Proof::decode(&mut reader, Self::dims())
@@ -270,13 +264,13 @@ mod tests {
 
     #[test]
     fn encoded_length_is_a_function_of_profile_rank_and_header_size() {
-        // Every polynomial of the shape but the two derived stages, with
-        // `2^rank` coefficients each; a commitment per polynomial plus the
-        // nested challenges partial; two headers; one scalar; one circuit
-        // index. The envelope adds 124 bytes.
+        // Every polynomial of the shape, with `2^rank` coefficients each; a
+        // commitment per polynomial plus the nested challenges partial; two
+        // headers; the bridge alpha and nine challenges; one circuit index.
+        // The envelope adds 124 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
             let polynomials = Shape::of::<Standard>().polynomials();
-            (polynomials - 2) * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 32 + 4
+            polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 10 * 32 + 4
         }
         assert_eq!(
             <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<

@@ -9,10 +9,8 @@ prelude (see [Serde](#serde)).
 
 Both encoders check the proof's structure before writing. Both decoders check
 exact length first, then the envelope, then canonical field and point encodings.
-Decoding does not establish cryptographic validity. A decoded proof holds the
-fields its payload retains; the application derives the rest when one of its
-methods first takes the proof. Compress it before calling
-`Application::verify_compressed`. For a compressed proof, attach the
+Decoding does not establish cryptographic validity. Compress a decoded proof
+before calling `Application::verify_compressed`. For a compressed proof, attach the
 accompanying header data and call that verifier directly. Header data is not
 included in these bytes.
 
@@ -68,7 +66,7 @@ current registry and challenge semantics; pre-#897 setup identifiers must not be
 reused for the updated protocol.
 
 Schema v1 fixes the field order below, codec encodings, the standard profile's
-shape (its vector sizes), and classification of retained and omitted fields. Changes to these require a
+shape (its vector sizes). Changes to these require a
 new schema version and explicit decoder dispatch. Envelope layout changes
 require a new envelope version. Incompatible transcript or verification
 semantics require a new protocol version here and a new tag for the affected
@@ -107,8 +105,7 @@ The envelope decoder never accepts a bare payload, nor the Serde framing.
 
 Fields appear in the following order. `C::CircuitField` is the native field;
 `C::ScalarField` is the nested field. Host and nested curves follow the suite's
-ordered cycle. The two derived stages and nine transcript challenges are
-absent. Field names identify the schema; Rust names are not encoded.
+ordered cycle. Field names identify the schema; Rust names are not encoded.
 
 | Field | Payload type / codec |
 | --- | --- |
@@ -149,6 +146,7 @@ absent. Field names identify the schema; Rust names are not encoded.
 | `bridge_query_rx` | `Arc<sparse::Polynomial<C::ScalarField, R>>` |
 | `bridge_f_rx` | `Arc<sparse::Polynomial<C::ScalarField, R>>` |
 | `bridge_eval_rx` | `Arc<sparse::Polynomial<C::ScalarField, R>>` |
+| `bridge_ab_rx` | `Cached<Arc<sparse::Polynomial<C::ScalarField, R>>>` |
 | `nested_endoscaling_step_rxs` | `Vec<sparse::Polynomial<C::ScalarField, R>>`; `FixedSequence<DefaultEncoding, nested::NumSteps<C::Profile>>` |
 | `nested_extension_circuit_rxs` | `Vec<sparse::Polynomial<C::ScalarField, R>>`; `FixedSequence<DefaultEncoding, nested::NumExtensionCircuits<C::Profile>>` |
 | `nested_extension_stage_rxs` | `Vec<sparse::Polynomial<C::ScalarField, R>>`; `FixedSequence<DefaultEncoding, nested::NumExtensionStages<C::Profile>>` |
@@ -158,6 +156,7 @@ absent. Field names identify the schema; Rust names are not encoded.
 | `nested_b_poly` | `sparse::Polynomial<C::ScalarField, R>` |
 | `nested_registry_xy_poly` | `sparse::Polynomial<C::ScalarField, R>` |
 | `nested_p_poly` | `sparse::Polynomial<C::ScalarField, R>` |
+| `nested_challenges_rx` | `sparse::Polynomial<C::ScalarField, R>` |
 | `nested_challenges_partial` | `C::NestedCurve`; `Point` |
 | `nested_collapse_rx` | `sparse::Polynomial<C::ScalarField, R>` |
 | `nested_compute_v_rx` | `sparse::Polynomial<C::ScalarField, R>` |
@@ -173,6 +172,15 @@ absent. Field names identify the schema; Rust names are not encoded.
 | `nested_challenges_commitment` | `Cached<C::NestedCurve>`; `CachedPoint` |
 | `nested_collapse_commitment` | `Cached<C::NestedCurve>`; `CachedPoint` |
 | `nested_compute_v_commitment` | `Cached<C::NestedCurve>`; `CachedPoint` |
+| `w` | `C::CircuitField`; `Scalar` |
+| `y` | `C::CircuitField`; `Scalar` |
+| `z` | `C::CircuitField`; `Scalar` |
+| `mu` | `C::CircuitField`; `Scalar` |
+| `mu_prime` | `C::CircuitField`; `Scalar` |
+| `x` | `C::CircuitField`; `Scalar` |
+| `alpha` | `C::CircuitField`; `Scalar` |
+| `u` | `C::CircuitField`; `Scalar` |
+| `pre_beta` | `C::CircuitField`; `Scalar` |
 | `native_application_commitment` | `Cached<C::HostCurve>`; `CachedPoint` |
 | `native_preamble_commitment` | `Cached<C::HostCurve>`; `CachedPoint` |
 | `native_inner_error_commitment` | `Cached<C::HostCurve>`; `CachedPoint` |
@@ -213,14 +221,15 @@ absent. Field names identify the schema; Rust names are not encoded.
 Let N = `2^rank`, H the header size, s the element width of the suite (32
 bytes for Pasta fields and compressed points), and P the polynomial count of
 the profile's shape (`Shape::polynomials`; 92 for the standard profile). Schema
-v1 retains P − 2 polynomials (every one but the two derived stages), P + 1
-points (a commitment per polynomial and the nested challenges partial), two
-child headers, one scalar and one `u32` circuit index. The payload is therefore
+v1 encodes all P polynomials, P + 1 points (a commitment per polynomial and the
+nested challenges partial), two child headers, ten scalars (the bridge alpha
+and the nine transcript challenges) and one `u32` circuit index. The payload is
+therefore
 
-    (P − 2) · N · s + (P + 1) · s + 2 · H · s + s + 4
+    P · N · s + (P + 1) · s + 2 · H · s + 10 · s + 4
 
 bytes, and the complete encoding adds the 124-byte envelope. At rank 13 with
-Pasta, the standard profile and a four-element header this is 23,596,228 bytes
+Pasta, the standard profile and a four-element header this is 24,120,804 bytes
 of payload. The test `encoded_length_is_a_function_of_profile_rank_and_header_size`
 pins this formula and `schema_v1_pins_protocol_and_shape` the shape.
 
@@ -287,18 +296,18 @@ disagree in length is an error: no prelude describes it.
 
 The prelude is not a trusted context. It identifies no suite, application or
 profile, so use it only inside a container that supplies its own context, and
-prefer `ProofFormat` for storage and transport. As there, a deserialized
-`Proof` holds the retained fields alone.
+prefer `ProofFormat` for storage and transport.
 
 ## Structural preflight and fuzz coverage
 
-The same codec declarations generate retained-field validation for proofs and
-for compressed messages. Fixed vectors check their expected length before
-traversal; point slots reject identity. Every application method that takes a
-proof (fusion, compression and verification) first checks its shape, then
-derives a decoded proof's omitted fields: its challenges are reconstructed from
-the bridge commitments, since they are not carried in the payload, and a
-decoded proof whose challenges have no lift is rejected.
+The same codec declarations generate validation for proofs and for compressed
+messages. Fixed vectors check their expected length before traversal; point
+slots reject identity. Both encoders run it before writing, so neither emits
+bytes its decoder rejects. A decoded proof is taken like one built in memory:
+every application method that takes a proof (fusion, compression and
+verification) first checks its shape. The verifier recomputes the transcript
+challenges and the two stages derived from other fields, and rejects a proof
+whose stored values differ.
 
 Malformed proof failures become `Ok(false)` at the verification boundary.
 Decoders continue to return representation errors, and application header or

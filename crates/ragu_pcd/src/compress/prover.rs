@@ -63,10 +63,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         if !proof.well_formed::<HEADER_SIZE>() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));
         }
-        // A deserialized proof's encoding omits the values derived from its
-        // other fields; fill them before anything reads them.
-        let pcd = self.complete(pcd)?;
-        let proof = pcd.proof();
         let instance = Instance::of::<R, HEADER_SIZE>(proof)?;
         // The challenges as the proof stores them: a cache of the fuse's own
         // squeezes, which the decider holds to the transcript. `Instance::of`

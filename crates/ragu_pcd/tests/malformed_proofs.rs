@@ -70,8 +70,8 @@ fn rejects_malformed_vector_lengths() {
 // verifier rejects it, as it allocates every point by its coordinates.
 fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
     assert!(
-        !proof.well_formed::<4>(),
-        "{field}: retained point preflight must reject identity"
+        !<TestProof as wire::Validate>::valid(&proof, Dimensions::of::<ProductionRank, 4>()),
+        "{field}: the codec check must reject identity"
     );
     assert!(
         app.proof_format(crate::ProofContext {

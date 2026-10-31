@@ -125,7 +125,6 @@ pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
                     format.encode(&decoded).unwrap() == bytes,
                     "noncanonical proof encoding"
                 );
-                // Compression derives the decoded proof's omitted fields.
                 let mut rng = StdRng::seed_from_u64(0xdec0de);
                 if let Ok(compressed) =
                     app.compress(&decoded.carry::<LeafNode>(SEED.data), &mut rng)

@@ -9,10 +9,6 @@
 //! payload's exact length, which deserialization checks before decoding it,
 //! and formats without a bytes type are buffered only up to that length.
 //!
-//! A [`Proof`] writes only the fields its encoding retains. Deserializing one
-//! yields a proof whose derived fields the application fills, never reading
-//! them from the input, when one of its methods first takes it.
-//!
 //! The prelude is not a trusted context and identifies no application: use
 //! `ProofFormat` for an envelope bound to an application's identifiers.
 
@@ -73,7 +69,7 @@ impl<C: ProfiledCycle, R: Rank> Framed for Proof<C, R> {
             rank: R::RANK,
             header_size: self.left_header.len(),
         };
-        (Self::admits(dims).is_ok() && self.well_formed_in(dims)).then_some(dims)
+        (Self::admits(dims).is_ok() && <Self as wire::Validate>::valid(self, dims)).then_some(dims)
     }
 
     fn admits(dims: Dimensions) -> Result<(), &'static str> {

@@ -27,9 +27,7 @@
 //! data. With the `serde` feature, [`Proof`] and [`CompressedProof`] implement
 //! `Serialize` and `Deserialize` directly, as the same payload behind a prelude
 //! recording the rank and header size, for embedding in a container that
-//! supplies its own context. Either way, a [`Proof`] carries only the fields
-//! its encoding retains: the application derives the rest, never reading them
-//! from the input, when one of its methods first takes the proof. Decoding is
+//! supplies its own context. Decoding is
 //! not verification: a receiver compresses a decoded proof and accepts it on
 //! [`verify_compressed`](Application::verify_compressed). See
 //! `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.

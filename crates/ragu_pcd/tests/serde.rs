@@ -36,8 +36,7 @@ fn a_proof_serializes_as_its_payload_behind_a_prelude() {
     let envelope = app.proof_format(context()).encode(&proof).unwrap();
     assert_eq!(&bytes[PRELUDE.len()..], &envelope[ENVELOPE..]);
 
-    // The deserialized proof holds the retained fields, which re-serialize
-    // to the same string, and the application derives the rest.
+    // The deserialized proof re-serializes to the same string.
     let decoded: Proof<C, R> = serde_json::from_str(&json).unwrap();
     assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
     let decoded = decoded.carry::<LeafNode>(data);

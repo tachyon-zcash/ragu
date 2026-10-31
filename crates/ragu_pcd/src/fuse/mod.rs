@@ -89,11 +89,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ));
         }
 
-        // A deserialized child's encoding omits the values derived from its
-        // other fields; fill them before its stages are reconstructed.
-        let left = self.complete_owned(left)?;
-        let right = self.complete_owned(right)?;
-
         let mut builder = ProofBuilder::<C, R, B>::new(
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),

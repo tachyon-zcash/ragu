@@ -10,7 +10,6 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
-mod derive;
 #[cfg(test)]
 #[path = "../../tests/malformed_proofs.rs"]
 mod malformed_proof_tests;
@@ -183,16 +182,10 @@ wire::proof_schema! {
     /// carry prover-chosen data (the nested fold's error terms and the nested
     /// batch's values among them) and are primary.
     ///
-    /// The retained fields, with their wire codecs, come first; the derived
-    /// fields follow. Serializing writes the retained fields alone, in
-    /// declaration order. A deserialized proof holds placeholders for the
-    /// derived ones, which the application recomputes when one of its methods
-    /// first takes the proof, so they are never read from untrusted bytes.
-    ///
-    /// With the `serde` feature, a proof serializes as one byte string. See
-    /// the crate's `WIRE_FORMAT.md`.
-    <C, R>
-    retained {
+    /// Serializing writes every field in declaration order, each with the
+    /// codec it names. With the `serde` feature, a proof serializes as one
+    /// byte string. See the crate's `WIRE_FORMAT.md`.
+    <C, R> {
         /// Shared alpha source for deriving cached bridge polynomial alphas.
         pub(crate) bridge_alpha: C::ScalarField => [wire::Scalar],
 
@@ -244,6 +237,9 @@ wire::proof_schema! {
         pub(crate) bridge_f_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
         pub(crate) bridge_eval_rx: Arc<sparse::Polynomial<C::ScalarField, R>> => [wire::DefaultEncoding],
 
+        // Bridge rx polynomial (cached, derived from bridge_alpha + native commitments)
+        bridge_ab_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>> => [wire::DefaultEncoding],
+
         // Nested endoscaling data (ScalarField, NestedCurve commitment)
         pub(crate) nested_endoscaling_step_rxs: Vec<sparse::Polynomial<C::ScalarField, R>> => [wire::FixedSequence<wire::DefaultEncoding, nested::NumSteps<C::Profile>>],
         /// The rx polynomials of the circuits of the profile's nested extension.
@@ -263,6 +259,10 @@ wire::proof_schema! {
         pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
         pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
 
+        // Nested challenge stage (ScalarField, unblinded NestedCurve
+        // commitment): the lifts of this step's native challenges, the
+        // base-case sign and the lift of `pre_beta`.
+        pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R> => [wire::DefaultEncoding],
         // The challenge stage's commitment without its beta term: the sum the
         // `bind_challenges` circuits recompute from the transcript challenges,
         // carried by the native unified instance so that a parent can complete
@@ -296,6 +296,17 @@ wire::proof_schema! {
         // Nested instance circuit commitment caches
         nested_collapse_commitment: Cached<C::NestedCurve> => [CachedPoint],
         nested_compute_v_commitment: Cached<C::NestedCurve> => [CachedPoint],
+
+        // Challenges
+        pub(crate) w: C::CircuitField => [wire::Scalar],
+        pub(crate) y: C::CircuitField => [wire::Scalar],
+        pub(crate) z: C::CircuitField => [wire::Scalar],
+        pub(crate) mu: C::CircuitField => [wire::Scalar],
+        pub(crate) mu_prime: C::CircuitField => [wire::Scalar],
+        pub(crate) x: C::CircuitField => [wire::Scalar],
+        pub(crate) alpha: C::CircuitField => [wire::Scalar],
+        pub(crate) u: C::CircuitField => [wire::Scalar],
+        pub(crate) pre_beta: C::CircuitField => [wire::Scalar],
 
         // Native commitment caches
         native_application_commitment: Cached<C::HostCurve> => [CachedPoint],
@@ -337,32 +348,42 @@ wire::proof_schema! {
         // Bridge commitment (cached, derived from the cached bridge rx)
         bridge_ab_commitment: Cached<C::NestedCurve> => [CachedPoint],
     }
-    derived {
-        // Bridge rx polynomial (cached, derived from bridge_alpha + native commitments)
-        bridge_ab_rx: Cached<Arc<sparse::Polynomial<C::ScalarField, R>>> = Cached(Arc::new(sparse::Polynomial::new())),
-
-        // Nested challenge stage (ScalarField, unblinded NestedCurve
-        // commitment): the lifts of this step's native challenges, the
-        // base-case sign and the lift of `pre_beta`.
-        pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R> = sparse::Polynomial::new(),
-
-        // Challenges
-        pub(crate) w: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) y: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) z: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) mu: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) mu_prime: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) x: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) alpha: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) u: C::CircuitField = C::CircuitField::ZERO,
-        pub(crate) pre_beta: C::CircuitField = C::CircuitField::ZERO,
-    }
 }
 
 /// The wire codec of a [`Cached`] commitment: the point itself. A marker of
 /// its own keeps the impl clear of the point codec's blanket over every
 /// `Affine` type, which coherence cannot rule out for `Cached`.
 struct CachedPoint;
+
+impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// Whether the headers, polynomial vectors and commitment-cache vectors
+    /// have exactly the receiving profile's shape. Check before traversing
+    /// components so that missing entries cannot panic and trailing ones
+    /// cannot be ignored.
+    pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
+        let native_steps = native::NumSteps::<C::Profile>::len();
+        let nested_steps = nested::NumSteps::<C::Profile>::len();
+        let native_extension = C::Profile::native_extension();
+        let nested_extension = C::Profile::nested_extension();
+
+        self.left_header.len() == HEADER_SIZE
+            && self.right_header.len() == HEADER_SIZE
+            && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
+            && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
+            && self.native_endoscaling_step_rxs.len() == native_steps
+            && self.native_endoscaling_step_commitments.len() == native_steps
+            && self.native_extension_circuit_rxs.len() == native_extension.circuits.len()
+            && self.native_extension_circuit_commitments.len() == native_extension.circuits.len()
+            && self.native_extension_stage_rxs.len() == native_extension.stages
+            && self.native_extension_stage_commitments.len() == native_extension.stages
+            && self.nested_endoscaling_step_rxs.len() == nested_steps
+            && self.nested_endoscaling_step_commitments.len() == nested_steps
+            && self.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
+            && self.nested_extension_circuit_commitments.len() == nested_extension.circuits.len()
+            && self.nested_extension_stage_rxs.len() == nested_extension.stages
+            && self.nested_extension_stage_commitments.len() == nested_extension.stages
+    }
+}
 
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
@@ -422,11 +443,11 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             BridgeSPrime => self.bridge_s_prime_rx.as_ref(),
             BridgeInnerError => self.bridge_inner_error_rx.as_ref(),
             BridgeOuterError => self.bridge_outer_error_rx.as_ref(),
-            BridgeAB => self.completed().bridge_ab_rx.0.as_ref(),
+            BridgeAB => self.bridge_ab_rx.0.as_ref(),
             BridgeQuery => self.bridge_query_rx.as_ref(),
             BridgeF => self.bridge_f_rx.as_ref(),
             BridgeEval => self.bridge_eval_rx.as_ref(),
-            ChallengeStage => &self.completed().nested_challenges_rx,
+            ChallengeStage => &self.nested_challenges_rx,
         }
     }
 }
@@ -446,17 +467,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
         Pcd { proof: self, data }
-    }
-
-    /// This proof, for reading a derived field. A deserialized proof holds
-    /// placeholders until an application method derives its values, so a
-    /// read before then is a bug in this crate, not a malformed input.
-    fn completed(&self) -> &Self {
-        assert!(
-            self.complete,
-            "a derived field of a deserialized proof was read before the application derived it"
-        );
-        self
     }
 
     // TODO: Route this witness-value computation through the selected backend
@@ -480,7 +490,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// An exact-equivalent backend implementation would leave the synthesized
     /// constraints unchanged.
     pub(crate) fn v(&self) -> C::CircuitField {
-        self.native_p_poly.eval(self.u())
+        self.native_p_poly.eval(self.u)
     }
 
     /// Returns the nested accumulator's revdot product
@@ -496,7 +506,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     ///
     /// As with [`Self::v`], this computes witness data, not circuit structure.
     pub(crate) fn nested_v(&self) -> Result<C::ScalarField> {
-        Ok(self.nested_p_poly.eval(nested::challenge::<C>(self.u())?))
+        Ok(self.nested_p_poly.eval(nested::challenge::<C>(self.u)?))
     }
 
     pub(crate) fn nested_registry_xy_poly(&self) -> &sparse::Polynomial<C::ScalarField, R> {
@@ -508,7 +518,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     pub(crate) fn nested_challenges_rx(&self) -> &sparse::Polynomial<C::ScalarField, R> {
-        &self.completed().nested_challenges_rx
+        &self.nested_challenges_rx
     }
 
     pub(crate) fn nested_challenges_commitment(&self) -> C::NestedCurve {
@@ -536,9 +546,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         Ok(nested::unified::Instance {
             c: self.nested_c(),
             v: self.nested_v()?,
-            x: nested::challenge::<C>(self.x())?,
-            y: nested::challenge::<C>(self.y())?,
-            u: nested::challenge::<C>(self.u())?,
+            x: nested::challenge::<C>(self.x)?,
+            y: nested::challenge::<C>(self.y)?,
+            u: nested::challenge::<C>(self.u)?,
             exported: [
                 self.native_rx_commitment(RxIndex::Preamble),
                 self.native_rx_commitment(RxIndex::InnerError),
@@ -561,17 +571,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     /// The native challenges of this proof, in challenge-stage order.
     pub(crate) fn challenges(&self) -> nested::Challenges<C::CircuitField> {
-        let proof = self.completed();
         nested::Challenges {
-            w: proof.w,
-            y: proof.y,
-            z: proof.z,
-            mu: proof.mu,
-            mu_prime: proof.mu_prime,
-            x: proof.x,
-            alpha: proof.alpha,
-            u: proof.u,
-            pre_beta: proof.pre_beta,
+            w: self.w,
+            y: self.y,
+            z: self.z,
+            mu: self.mu,
+            mu_prime: self.mu_prime,
+            x: self.x,
+            alpha: self.alpha,
+            u: self.u,
+            pre_beta: self.pre_beta,
         }
     }
 
@@ -596,39 +605,39 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     pub(crate) fn w(&self) -> C::CircuitField {
-        self.completed().w
+        self.w
     }
 
     pub(crate) fn y(&self) -> C::CircuitField {
-        self.completed().y
+        self.y
     }
 
     pub(crate) fn z(&self) -> C::CircuitField {
-        self.completed().z
+        self.z
     }
 
     pub(crate) fn mu(&self) -> C::CircuitField {
-        self.completed().mu
+        self.mu
     }
 
     pub(crate) fn mu_prime(&self) -> C::CircuitField {
-        self.completed().mu_prime
+        self.mu_prime
     }
 
     pub(crate) fn x(&self) -> C::CircuitField {
-        self.completed().x
+        self.x
     }
 
     pub(crate) fn alpha(&self) -> C::CircuitField {
-        self.completed().alpha
+        self.alpha
     }
 
     pub(crate) fn u(&self) -> C::CircuitField {
-        self.completed().u
+        self.u
     }
 
     pub(crate) fn pre_beta(&self) -> C::CircuitField {
-        self.completed().pre_beta
+        self.pre_beta
     }
 
     /// Returns the native commitment for the given [`RxIndex`].
@@ -1514,5 +1523,31 @@ impl<G: Decode<wire::Point>> Decode<CachedPoint> for Cached<G> {
         dims: wire::Dimensions,
     ) -> core::result::Result<Self, wire::Error<'a>> {
         <G as Decode<wire::Point>>::decode(reader, dims).map(Cached)
+    }
+}
+
+// A cached polynomial encodes as the polynomial it caches.
+impl<T: wire::Validate> wire::Validate for Cached<T> {
+    fn valid(&self, dims: wire::Dimensions) -> bool {
+        self.0.valid(dims)
+    }
+}
+
+impl<T: Encode> Encode for Cached<T> {
+    fn encode(&self, output: &mut Vec<u8>) {
+        self.0.encode(output);
+    }
+}
+
+impl<T: Decode> Decode for Cached<T> {
+    fn encoded_len(dims: wire::Dimensions) -> usize {
+        T::encoded_len(dims)
+    }
+
+    fn decode<'a>(
+        reader: &mut wire::Reader<'a>,
+        dims: wire::Dimensions,
+    ) -> core::result::Result<Self, wire::Error<'a>> {
+        T::decode(reader, dims).map(Cached)
     }
 }

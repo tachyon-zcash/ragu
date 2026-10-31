@@ -125,10 +125,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             return Ok(false);
         }
 
-        // A deserialized proof's encoding omits the values derived from its
-        // other fields; fill them before anything reads them.
-        let pcd = proof_check!(self.complete(pcd));
-
         // Sample verification challenges w, y, and z.
         let w = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let y = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));

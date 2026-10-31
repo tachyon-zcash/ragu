@@ -17,12 +17,9 @@ feature enables `alloc` and supports `no_std`.
 ## Proof serialization
 
 Serialization lives entirely in this crate: a private schema macro declares
-each `Proof` field as retained, with its codec, or derived, and an internal
-`wire` module owns the byte codecs. A proof's encoding holds the retained
-fields alone. Decoding yields a `Proof` whose derived fields, the nine
-transcript challenges and two stages, the application recomputes when one of
-its methods (`fuse`, `compress` or a verifier) first takes the proof, so they
-are never read from untrusted bytes.
+each `Proof` field with its codec, and an internal `wire` module owns the byte
+codecs. A proof's encoding holds every field, so decoding yields a `Proof`
+that the application takes like one it built itself.
 
 Every encoding has one length, fixed by the application's profile, rank and
 header size: no count or length is read from the payload, and polynomials are
