@@ -169,6 +169,10 @@ fn copy_proof_payload<
             bridge_f_commitment,
             bridge_eval_commitment,
             bridge_ab_commitment,
+            application_poly_queries,
+            witness_polys,
+            witness_poly_commitments,
+            skip_stage_check,
         }
     )
 }

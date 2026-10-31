@@ -44,9 +44,14 @@
 //!
 //! Like an uncompressed proof, a compressed proof is not hiding: the
 //! openings it carries are evaluations of the witness polynomials.
+//!
+//! Compression covers only profiles whose steps witness no polynomials and
+//! record no poly-queries: its instance and openings are laid out for that
+//! shape, and [`refuse_hooks`] turns any other profile away at both entry
+//! points.
 
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, Error, Result};
 use udon::curve::Affine;
 
 use self::{
@@ -56,10 +61,27 @@ use self::{
 };
 use crate::{
     SelectableBackend,
+    framework_hooks::HookLayout,
     header::Header,
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
 };
+
+/// Refuses a profile that declares hooks.
+///
+/// # Errors
+///
+/// Returns [`Error::Initialization`] if `P` declares any witnessed
+/// polynomial or poly-query.
+pub(crate) fn refuse_hooks<P: Profile>() -> Result<()> {
+    if HookLayout::of::<P>() == HookLayout::default() {
+        Ok(())
+    } else {
+        Err(Error::Initialization(
+            "compression supports only profiles without hooks".into(),
+        ))
+    }
+}
 
 pub(crate) mod batch;
 pub(crate) mod instance;

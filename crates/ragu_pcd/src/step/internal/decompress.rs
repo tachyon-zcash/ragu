@@ -166,25 +166,31 @@ mod tests {
         }
 
         // No application stage: the twins stage nothing either way.
-        let circuit_single =
-            super::super::adapter::Adapter::<Pasta, Decompress<Single>, R, HEADER_SIZE>::new(
-                Decompress::new(),
-                0,
-            )
-            .unwrap();
-        let circuit_pair =
-            super::super::adapter::Adapter::<Pasta, Decompress<Pair>, R, HEADER_SIZE>::new(
-                Decompress::new(),
-                0,
-            )
-            .unwrap();
+        let circuit_single = super::super::adapter::Adapter::<
+            Pasta,
+            Decompress<Single>,
+            R,
+            HEADER_SIZE,
+            ragu_backend::ReferenceBackend,
+        >::new(Decompress::new(), 0, crate::pasta::baked())
+        .unwrap();
+        let circuit_pair = super::super::adapter::Adapter::<
+            Pasta,
+            Decompress<Pair>,
+            R,
+            HEADER_SIZE,
+            ragu_backend::ReferenceBackend,
+        >::new(Decompress::new(), 0, crate::pasta::baked())
+        .unwrap();
         // `Decompress<()>` is the instantiation `finalize` registers.
-        let circuit_unit =
-            super::super::adapter::Adapter::<Pasta, Decompress<()>, R, HEADER_SIZE>::new(
-                Decompress::new(),
-                0,
-            )
-            .unwrap();
+        let circuit_unit = super::super::adapter::Adapter::<
+            Pasta,
+            Decompress<()>,
+            R,
+            HEADER_SIZE,
+            ragu_backend::ReferenceBackend,
+        >::new(Decompress::new(), 0, crate::pasta::baked())
+        .unwrap();
 
         // A frozen twin of `Decompress`, written from primitives: the
         // standard unit encoding for both inputs and one uniform wire set for
@@ -223,8 +229,14 @@ mod tests {
                 Ok(((left, right, output), (), witness, D::unit()))
             }
         }
-        let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, Twin, R, HEADER_SIZE>::new(Twin, 0).unwrap();
+        let circuit_twin = super::super::adapter::Adapter::<
+            Pasta,
+            Twin,
+            R,
+            HEADER_SIZE,
+            ragu_backend::ReferenceBackend,
+        >::new(Twin, 0, crate::pasta::baked())
+        .unwrap();
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();

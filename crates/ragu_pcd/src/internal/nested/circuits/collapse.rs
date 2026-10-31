@@ -104,7 +104,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     type Last = stages::challenges::Stage<C, R, P>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C, P>;
-    type Output = unified::OutputKind<C>;
+    type Output = unified::OutputKind<C, P>;
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -168,7 +168,11 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.ab.native_points_ab,
             &stages.f.native_points_f,
         ];
+        // Then the commitments of the polynomials this step witnessed, which
+        // the eval stage holds and a parent accumulates.
+        let held = held.into_iter().chain(stages.eval.witness_polys.iter());
         let exported = unified.exported.receive(dr, allocator)?;
+        assert_eq!(exported.len(), held.clone().count());
         for (instance, stage) in exported.iter().zip(held) {
             instance.enforce_equal(dr, stage)?;
         }

@@ -39,12 +39,13 @@ use ragu_primitives::{
     Element, Point,
     allocator::Allocator,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{CollectFixed, ConstLen, FixedVec},
 };
 use udon::field::Field;
 
 use crate::{
     Proof,
+    framework_hooks::WitnessPolys,
     internal::{
         native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
         nested,
@@ -141,6 +142,9 @@ pub struct ChildEvaluationsWitness<F, P: Profile> {
     /// This polynomial is queried only to insert the claim about $p(X)$ from
     /// the child proof into the accumulator for the fuse step.
     pub p_poly: F,
+
+    /// The child proof's witnessed polynomials, each evaluated at $u$.
+    pub witness_poly_evals: FixedVec<F, WitnessPolys<P>>,
 }
 
 impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
@@ -152,20 +156,25 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
     >(
         proof: &Proof<C, R>,
         u: F,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut rx = B::map(
             RxIndex::all::<C::Profile>()
                 .into_iter()
                 .map(|id| &proof[id]),
             |poly| B::sparse_eval(poly, u),
         );
-        ChildEvaluationsWitness {
+        Ok(ChildEvaluationsWitness {
             rx: RxValues::<_, P>::from_fn(|_| rx.next().expect("one evaluation per rx")),
             a_poly: B::sparse_eval(&proof[RxComponent::AbA], u),
             b_poly: B::sparse_eval(&proof[RxComponent::AbB], u),
             registry_xy_poly: B::sparse_eval(proof.native_registry_xy_poly(), u),
             p_poly: B::sparse_eval(proof.native_p_poly(), u),
-        }
+            witness_poly_evals: proof
+                .witness_polys()
+                .iter()
+                .map(|p| B::sparse_eval(p, u))
+                .collect_fixed()?,
+        })
     }
 }
 
@@ -230,6 +239,7 @@ impl<C: ProfiledCycle> Witness<C> {
             b_poly: C::CircuitField::ZERO,
             registry_xy_poly: C::CircuitField::ZERO,
             p_poly: C::CircuitField::ZERO,
+            witness_poly_evals: FixedVec::from_fn(|_| C::CircuitField::ZERO),
         };
         Witness {
             left: child(),
@@ -266,6 +276,10 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, P: Profile> {
     pub registry_xy_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub p_poly: Element<'dr, D>,
+    /// The child's witnessed-polynomial evaluations at $u$, in the order
+    /// `_10_p` accumulates them.
+    #[ragu(gadget)]
+    pub witness_poly_evals: FixedVec<Element<'dr, D>, WitnessPolys<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
@@ -288,6 +302,13 @@ impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
                 witness.as_ref().map(|w| w.registry_xy_poly),
             )?,
             p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
+            witness_poly_evals: FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|w| w.witness_poly_evals[i]),
+                )
+            })?,
         })
     }
 }
@@ -344,9 +365,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
-        // + (x, y) per binding partial
-        2 * (RxIndex::num::<C::Profile>() + 4) + 6 + 2 * (NUM_BINDERS - 1)
+        // 2 * ChildEvaluations (rx + 4 + witnessed polynomials each) + current
+        // step elements (6) + (x, y) per binding partial
+        2 * (RxIndex::num::<C::Profile>() + 4 + C::Profile::WITNESS_POLYS)
+            + 6
+            + 2 * (NUM_BINDERS - 1)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -411,5 +434,10 @@ mod tests {
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<
+            crate::profile::Profiled<Pasta, crate::AppHooks<4, 1>>,
+            R,
+            { HEADER_SIZE },
+        >::default());
     }
 }

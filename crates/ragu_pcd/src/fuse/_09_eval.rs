@@ -101,8 +101,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let native = native::stages::eval::Witness {
-            left: left_witness,
-            right: right_witness,
+            left: left_witness?,
+            right: right_witness?,
             current,
             partials,
         };
@@ -143,6 +143,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
+        builder: &ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
@@ -159,6 +160,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::eval::Witness {
                 native_eval: native_eval_commitment,
+                witness_polys: builder.witness_poly_commitments(),
                 nested: nested_eval.clone(),
             },
         )?;

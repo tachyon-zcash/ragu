@@ -283,7 +283,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_points_registry_wx_commitment(),
                 builder.native_points_ab_commitment(),
                 builder.native_points_f_commitment(),
-            ],
+            ]
+            .into_iter()
+            .chain(builder.witness_poly_commitments().iter().copied())
+            .collect(),
             coverage: Default::default(),
         };
         let witness = |instance| nested::circuits::common::Witness {

@@ -275,7 +275,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // commitment is what makes `pre_beta` independent across
                 // retries.
                 let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval, &builder)?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -354,6 +354,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
+            witness_polys: builder.witness_poly_commitments(),
             nested: nested_eval,
         };
 

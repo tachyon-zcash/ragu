@@ -35,16 +35,19 @@ extern crate std;
 
 mod backend;
 mod compress;
+mod framework_hooks;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
 // here.
 pub mod fuzzing;
 pub mod header;
+mod instance;
 mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
+mod poly_commitment;
 pub mod profile;
 mod proof;
 pub mod step;
@@ -68,11 +71,18 @@ mod decompress_statement_tests;
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;
 
+#[cfg(test)]
+#[path = "../tests/hooks.rs"]
+mod hooks_tests;
+
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
+pub use framework_hooks::HookLayout;
 use header::Header;
+pub use poly_commitment::PolyHandle;
+pub use profile::AppHooks;
 use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
@@ -210,12 +220,21 @@ impl<C: ProfiledCycle> RegistryTags<C> {
     }
 }
 
+/// The application stage's size, in field elements, for steps whose largest
+/// [`Shared`](Step::Shared) gadget has `shared_size` wires: the profile's
+/// hook region, then that gadget.
+fn stage_size<C: ProfiledCycle>(shared_size: usize) -> usize {
+    framework_hooks::HookLayout::of::<C::Profile>().stage_len(shared_size)
+}
+
 /// A circuit registration held until every step's shared gadget size is
 /// known, so all step circuits reserve the same application stage layout.
+/// It takes the stage size and the parameters the step's hooks commit with.
 type ApplicationRegistration<'params, C, R> = Box<
     dyn FnOnce(
             RegistryBuilder<'params, <C as Cycle>::CircuitField, R>,
             usize,
+            &'params <C as Cycle>::Params,
         ) -> Result<RegistryBuilder<'params, <C as Cycle>::CircuitField, R>>
         + Send
         + Sync
@@ -361,9 +380,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffixes::<S::Right>()?;
 
         let shared_size = self.shared_size.max(S::Shared::num_values()?);
-        // Leave room after the SYSTEM gate and the stage.
+        // Leave room after the SYSTEM gate and the stage, which holds the hook
+        // region ahead of the shared gadget.
         if 1usize
-            .checked_add(staging::stage_gates(shared_size))
+            .checked_add(staging::stage_gates(stage_size::<C>(shared_size)))
             .is_none_or(|end| end >= R::n())
         {
             return Err(Error::Initialization(
@@ -373,8 +393,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.shared_size = shared_size;
 
         self.application_circuits
-            .push(Box::new(move |registry, shared_size| {
-                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step, shared_size)?)
+            .push(Box::new(move |registry, stage_size, params| {
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE, B>::new(
+                    step, stage_size, params,
+                )?)
             }));
         self.num_application_steps += 1;
 
@@ -391,7 +413,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
             self.application_circuits
-                .push(Box::new(|registry, _| registry.register_circuit(())));
+                .push(Box::new(|registry, _, _| registry.register_circuit(())));
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -445,8 +467,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
 
+        let stage_size = stage_size::<C>(self.shared_size);
         for register in self.application_circuits.drain(..) {
-            self.native_registry = register(self.native_registry, self.shared_size)?;
+            self.native_registry = register(self.native_registry, stage_size, params)?;
         }
 
         // Then, register internal circuits and masks.
@@ -454,26 +477,33 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             self.native_registry,
             params,
             log2_circuits,
-            self.shared_size,
+            stage_size,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
         // because it is the one step allowed to declare `Dummy` inputs;
         // every other internal step goes through `register_internal_step`,
         // which rejects them.
-        self = self.register_internal_step(step::internal::rerandomize::Rerandomize::<()>::new())?;
+        self = self.register_internal_step(
+            step::internal::rerandomize::Rerandomize::<()>::new(),
+            params,
+        )?;
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE, B>::new(
                     step::internal::bootstrap::Bootstrap::new(),
-                    self.shared_size,
-                )?)?;
+                    stage_size,
+                    params,
+                )?,
+            )?;
         // The decompression step, for a profile whose extension verifies a
         // compressed proof: the one step whose output header is that
         // proof's statement (see `step::internal::decompress`).
         if C::Profile::native_extension().statement.is_some() {
-            self =
-                self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
+            self = self.register_internal_step(
+                step::internal::decompress::Decompress::<()>::new(),
+                params,
+            )?;
         }
 
         assert_eq!(
@@ -547,6 +577,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     fn register_internal_step<S: Step<C, Shared = ()> + 'params>(
         mut self,
         step: S,
+        params: &'params C::Params,
     ) -> Result<Self> {
         const {
             assert!(
@@ -559,11 +590,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
 
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, S, R, HEADER_SIZE, B>::new(
                     step,
-                    self.shared_size,
-                )?)?;
+                    stage_size::<C>(self.shared_size),
+                    params,
+                )?,
+            )?;
 
         Ok(self)
     }
@@ -609,7 +642,8 @@ pub struct Application<
     /// The profile's prover context: what its prover holds across proofs
     /// (see [`Profile::Context`]).
     context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
-    /// The application stage's size, in field elements.
+    /// The largest [`Shared`](Step::Shared) gadget among the registered
+    /// steps, in field elements; see [`stage_size`](Self::stage_size).
     shared_size: usize,
     /// The proof that bootstraps the recursion: a genuine, verifying
     /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
@@ -631,6 +665,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// [`finalize_with`](ApplicationBuilder::finalize_with).
     pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
         &self.context
+    }
+
+    /// The application stage's size, in field elements: the profile's hook
+    /// region, then the largest registered shared gadget.
+    pub(crate) fn stage_size(&self) -> usize {
+        stage_size::<C>(self.shared_size)
     }
 
     /// Seed a new computation by running a [`Step`] declaring `()` for both of

@@ -425,7 +425,8 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),
-            ],
+            ]
+            .to_vec(),
             coverage: Default::default(),
         })
     }
@@ -450,6 +451,10 @@ impl<C: ProfiledCycle> Instance<C> {
                     left_header: &self.left_header,
                     right_header: &self.right_header,
                     output_header,
+                    // Compression refuses a profile that declares hooks
+                    // (`super::refuse_hooks`), so there are none to carry.
+                    witness_polys: &[],
+                    poly_queries: &[],
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,

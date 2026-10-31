@@ -416,11 +416,11 @@ mod folding {
                 |dr, witness| {
                     let (instance, y) = witness.cast();
                     let y = Element::alloc(dr, &mut (), y)?;
-                    let output = nested::unified::Output::<_, ragu_core::pasta::EqAffine>::alloc(
-                        dr,
-                        &mut (),
-                        instance.as_ref(),
-                    )?;
+                    let output = nested::unified::Output::<
+                        _,
+                        ragu_core::pasta::EqAffine,
+                        crate::profile::Standard,
+                    >::alloc(dr, &mut (), instance.as_ref())?;
                     Ok(*output.ky(dr, &y)?.value().take())
                 },
             )

@@ -148,6 +148,19 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The endoscalings a nested endoscaling step performs, likewise.
     const NESTED_ENDOSCALINGS_PER_STEP: usize = nested::ENDOSCALINGS_PER_STEP;
 
+    /// The polynomials each step witnesses
+    /// ([`StepCtx::witness_polynomial`](crate::step::StepCtx::witness_polynomial)),
+    /// padded to this count. A proof carries them for one level, and its
+    /// parent folds each into its accumulator, so each child's lengthen the
+    /// nested walk by one point apiece. None in the standard profile.
+    const WITNESS_POLYS: usize = 0;
+    /// The poly-queries each step records
+    /// ([`StepCtx::enforce_poly_query`](crate::step::StepCtx::enforce_poly_query)),
+    /// padded to this count; a parent discharges them. None in the standard
+    /// profile. A profile that records any must witness a polynomial, since a
+    /// padding poly-query opens one.
+    const POLY_QUERIES: usize = 0;
+
     /// What the profile's prover holds across proofs beyond the proof
     /// under construction: the extension's witness source, which an
     /// application takes at
@@ -337,6 +350,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
+        }
+        if Self::POLY_QUERIES > 0 && Self::WITNESS_POLYS == 0 {
+            return Err(Error::Initialization(
+                "a profile that records poly-queries must witness a polynomial".into(),
+            ));
         }
         for (name, profile) in [
             (Standard::NAME, TypeId::of::<Standard>()),
@@ -748,6 +766,35 @@ impl Profile for Aggregator {
         B: SelectableBackend;
 }
 
+/// The standard profile with polynomial hooks: each step witnesses `POLYS`
+/// polynomials and records `QUERIES` poly-queries, padded to those counts
+/// (see [`StepCtx`](crate::step::StepCtx)).
+///
+/// The counts are the application's declaration rather than a fold over its
+/// steps, because the internal circuits are laid out from them: every child's
+/// witnessed polynomials are points the parent's nested walk folds, and the
+/// hook region of the application stage holds every step's handles and
+/// poly-queries. An application with hooks runs over
+/// `Profiled<Pasta, AppHooks<POLYS, QUERIES>>`; one without runs in
+/// [`Standard`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AppHooks<const POLYS: usize, const QUERIES: usize>;
+
+impl<const POLYS: usize, const QUERIES: usize> Profile for AppHooks<POLYS, QUERIES> {
+    const NAME: &'static str = "app-hooks";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const WITNESS_POLYS: usize = POLYS;
+    const POLY_QUERIES: usize = QUERIES;
+
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
 /// A cycle with a profile: what every item that lays out a proof is generic
 /// over.
 pub trait ProfiledCycle: Cycle {
@@ -889,6 +936,9 @@ pub struct Shape {
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
     pub native_steps: usize,
+    /// The polynomials a proof's step witnessed, which the proof carries for
+    /// one level: each child's are points of the parent's nested walk.
+    pub witness_polys: usize,
 }
 
 impl Shape {
@@ -899,11 +949,12 @@ impl Shape {
     /// Panics under the same conditions as [`Self::solve`]. When used in
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
-        Self::solve(
+        Self::solve_hooked(
             P::NATIVE_EXTENSION,
             P::NESTED_EXTENSION,
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
+            P::WITNESS_POLYS,
         )
     }
 
@@ -921,6 +972,28 @@ impl Shape {
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
+        Self::solve_hooked(
+            native_extension,
+            nested_extension,
+            native_endoscalings,
+            nested_endoscalings,
+            0,
+        )
+    }
+
+    /// [`solve`](Self::solve) for a profile whose steps witness
+    /// `witness_polys` polynomials each.
+    ///
+    /// # Panics
+    ///
+    /// As [`solve`](Self::solve).
+    pub const fn solve_hooked(
+        native_extension: usize,
+        nested_extension: usize,
+        native_endoscalings: usize,
+        nested_endoscalings: usize,
+        witness_polys: usize,
+    ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
         loop {
@@ -930,6 +1003,7 @@ impl Shape {
                 nested_extension,
                 native_endoscalings,
                 nested_endoscalings,
+                witness_polys,
             );
             if shape.native_steps == native_steps {
                 return shape;
@@ -948,9 +1022,10 @@ impl Shape {
         nested_extension: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
+        witness_polys: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
-        let nested_points = nested::num_endoscaling_points(native_rx);
+        let nested_points = nested::num_endoscaling_points(native_rx, witness_polys);
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
         let native_points = nested::pcs::num_batched_points(nested_rx);
@@ -962,13 +1037,15 @@ impl Shape {
             nested_rx,
             native_points,
             native_steps,
+            witness_polys,
         }
     }
 
     /// Every polynomial a proof of this shape carries: both sides' rx
-    /// polynomials and, on each side, $a$, $b$, `registry_xy` and $p$.
+    /// polynomials, on each side $a$, $b$, `registry_xy` and $p$, and the
+    /// polynomials its step witnessed.
     pub const fn polynomials(&self) -> usize {
-        self.native_rx + 4 + self.nested_rx + 4
+        self.native_rx + 4 + self.nested_rx + 4 + self.witness_polys
     }
 }
 
@@ -2377,6 +2454,7 @@ mod tests {
                 nested_rx: 40,
                 native_points: 95,
                 native_steps: 24,
+                witness_polys: 0,
             }
         );
         assert_eq!(shape.polynomials(), 95);
@@ -2411,6 +2489,7 @@ mod tests {
                 nested_extension,
                 4,
                 4,
+                0,
             );
             assert_eq!(
                 again, shape,

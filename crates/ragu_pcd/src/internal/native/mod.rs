@@ -219,6 +219,7 @@ pub mod circuits {
     pub mod endoscaling_step;
     pub mod hashes_1;
     pub mod hashes_2;
+    mod poly_query;
 }
 
 pub mod claims;

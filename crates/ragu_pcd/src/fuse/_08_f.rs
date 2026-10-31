@@ -23,7 +23,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
+use ragu_core::{Cycle, Error, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 use rand::CryptoRng;
 use udon::field::Field;
@@ -236,6 +236,26 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_registry_xy_poly().iter_coeffs(),
                 omega_j(id),
             ));
+        }
+
+        // Child poly-queries: the quotient (p_i(X) - y_i)/(X - x_i) per
+        // child poly-query, against the polynomial the query's commitment
+        // identifies (`compute_v` resolves the same one via its one-hot).
+        // Must remain the trailing block, matching `poly_queries`.
+        for proof in [left, right] {
+            for query in proof.application_poly_queries() {
+                let (_, poly) = proof
+                    .witness_poly_commitments()
+                    .iter()
+                    .zip(proof.witness_polys())
+                    .find(|(com, _)| **com == query.com)
+                    .ok_or_else(|| {
+                        Error::InvalidWitness(
+                            "poly-query names a commitment the proof does not carry".into(),
+                        )
+                    })?;
+                iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
+            }
         }
 
         let poly = alpha_batched_quotients::<_, R>(iters, alpha);

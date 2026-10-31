@@ -40,6 +40,7 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
     Proof,
+    framework_hooks::WitnessPolys,
     internal::nested::{RxComponent, RxIndex, pcs::OwnRxLen},
     profile::{Profile, ProfiledCycle},
 };
@@ -134,6 +135,8 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
     pub native_eval: C,
+    /// The current step's witnessed-polynomial host commitments.
+    pub witness_polys: FixedVec<C, WitnessPolys<P>>,
     /// The nested evaluations at $u_n$.
     pub nested: Evaluations<C::Base, P>,
 }
@@ -210,6 +213,11 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub native_eval: Point<'dr, D, C>,
+    /// The current step's witnessed-polynomial host commitments: absorbed
+    /// before `pre_beta`, exported through the unified instance, and folded
+    /// by the parent.
+    #[ragu(gadget)]
+    pub witness_polys: FixedVec<Point<'dr, D, C>, WitnessPolys<P>>,
     /// The nested evaluations at $u_n$.
     #[ragu(gadget)]
     pub nested: EvaluationsOutput<'dr, D, P>,
@@ -226,8 +234,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point + 2 children + current step elements (6)
-        NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 6
+        // (x, y) per point, the witnessed commitments, 2 children, the
+        // current step elements (6)
+        NUM * 2 + 2 * WitnessPolys::<P>::len() + 2 * (OwnRxLen::<P>::len() + 4) + 6
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -239,6 +248,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         let native_eval = Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?;
+        let witness_polys = FixedVec::try_from_fn(|i| {
+            Point::alloc(dr, witness.as_ref().map(|w| w.witness_polys[i]))
+        })?;
         let current = |dr: &mut D, f: fn(&CurrentStepWitness<D::F>) -> D::F| {
             Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested.current)))
         };
@@ -255,6 +267,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
 
         Ok(Output {
             native_eval,
+            witness_polys,
             nested,
         })
     }

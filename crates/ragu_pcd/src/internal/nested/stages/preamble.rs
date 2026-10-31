@@ -20,6 +20,7 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
     Proof,
+    framework_hooks::WitnessPolys,
     internal::{
         native::{self, NUM_BINDERS, RxIndex},
         nested::{PointsStage, unified},
@@ -29,10 +30,11 @@ use crate::{
 
 /// Number of curve points in this stage in profile `P`: the native
 /// preamble's commitment and those of the two native points stages committed
-/// before $w$, then for each child every native rx commitment and its $a$,
-/// $b$, `registry_xy` and $P$.
+/// before $w$, then for each child every native rx commitment, its $a$, $b$,
+/// `registry_xy` and $P$, and the commitments of the polynomials its step
+/// witnessed.
 pub fn num_points<P: Profile>() -> usize {
-    3 + 2 * (RxIndex::num::<P>() + 4)
+    3 + 2 * (RxIndex::num::<P>() + 4 + P::WITNESS_POLYS)
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -105,6 +107,9 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub stashed_points_ab: C,
     /// Stashed commitment from the child's native `f` points stage.
     pub stashed_points_f: C,
+    /// Stashed commitments of the polynomials the child's step witnessed,
+    /// which `_10_p` accumulates after the child's $P$.
+    pub stashed_witness_polys: FixedVec<C, WitnessPolys<P>>,
 
     /// The scalars of the child's nested unified instance: its nested
     /// accumulator value and batch evaluation, and the lifts of its $x$, $y$
@@ -172,6 +177,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_registry_wx: proof.native_rx_commitment(RxIndex::PointsRegistryWx),
             stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
+            stashed_witness_polys: FixedVec::try_from(proof.witness_poly_commitments().to_vec())?,
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -286,6 +292,11 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Stashed commitment from the child's native `f` points stage.
     #[ragu(gadget)]
     pub stashed_points_f: Point<'dr, D, C>,
+    /// Stashed commitments of the polynomials the child's step witnessed,
+    /// after the named points: the order `_10_p` accumulates and the child
+    /// exports.
+    #[ragu(gadget)]
+    pub stashed_witness_polys: FixedVec<Point<'dr, D, C>, WitnessPolys<P>>,
 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
@@ -310,30 +321,35 @@ pub struct NestedValuesOutput<'dr, D: Driver<'dr>> {
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
     /// The child's nested unified instance, assembled from the values this
     /// stage holds, in the order the child's circuits serialize it.
-    pub fn nested_instance(&self) -> unified::Output<'dr, D, C> {
+    pub fn nested_instance(&self) -> unified::Output<'dr, D, C, P> {
         unified::Output {
             c: self.nested.c.clone(),
             v: self.nested.v.clone(),
             x: self.nested.x.clone(),
             y: self.nested.y.clone(),
             u: self.nested.u.clone(),
-            exported: FixedVec::new(alloc::vec![
-                self.stashed_preamble.clone(),
-                self.stashed_inner_error.clone(),
-                self.stashed_outer_error.clone(),
-                self.stashed_query.clone(),
-                self.stashed_eval.clone(),
-                self.stashed_ab_a.clone(),
-                self.stashed_ab_b.clone(),
-                self.stashed_registry_xy.clone(),
-                self.stashed_p.clone(),
-                self.stashed_points_binding.clone(),
-                self.stashed_points_children.clone(),
-                self.stashed_points_registry_wx.clone(),
-                self.stashed_points_ab.clone(),
-                self.stashed_points_f.clone(),
-            ])
-            .expect("NUM_EXPORTED commitments"),
+            exported: FixedVec::new(
+                [
+                    self.stashed_preamble.clone(),
+                    self.stashed_inner_error.clone(),
+                    self.stashed_outer_error.clone(),
+                    self.stashed_query.clone(),
+                    self.stashed_eval.clone(),
+                    self.stashed_ab_a.clone(),
+                    self.stashed_ab_b.clone(),
+                    self.stashed_registry_xy.clone(),
+                    self.stashed_p.clone(),
+                    self.stashed_points_binding.clone(),
+                    self.stashed_points_children.clone(),
+                    self.stashed_points_registry_wx.clone(),
+                    self.stashed_points_ab.clone(),
+                    self.stashed_points_f.clone(),
+                ]
+                .into_iter()
+                .chain(self.stashed_witness_polys.iter().cloned())
+                .collect(),
+            )
+            .expect("NUM_EXPORTED commitments, then the witnessed polynomials'"),
         }
     }
 }
@@ -420,6 +436,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
             )?,
             stashed_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_ab))?,
             stashed_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_f))?,
+            stashed_witness_polys: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.stashed_witness_polys[i]))
+            })?,
             nested: {
                 let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
                     Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))

@@ -5,8 +5,16 @@
 //! own trace and the application stage, committed once per fuse. This sets the
 //! application fields on the [`ProofBuilder`] and returns the child proofs
 //! along with the output data from the step circuit.
+//!
+//! Nothing about a poly-query is re-checked here. This is where the hooks'
+//! coefficient vectors become polynomials at the application's rank, that being
+//! the first place the rank is in scope.
 
-use ragu_circuits::{CircuitExt, polynomials::Rank, staging};
+use ragu_circuits::{
+    CircuitExt,
+    polynomials::{Rank, sparse},
+    staging,
+};
 use ragu_core::{Error, Result};
 use ragu_primitives::shared::Shared;
 use rand::CryptoRng;
@@ -14,9 +22,13 @@ use udon::field::Field;
 
 use crate::{
     Application, Header, Pcd, Proof,
+    framework_hooks::{FrameworkAux, HookLayout},
     profile::ProfiledCycle,
     proof::ProofBuilder,
-    step::{Step, internal::adapter::Adapter},
+    step::{
+        Step,
+        internal::adapter::{Adapter, AdapterAux},
+    },
 };
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
@@ -39,13 +51,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (left_proof, left_data) = left.into_parts();
         let (right_proof, right_data) = right.into_parts();
         let circuit = S::INDEX.circuit_index::<C::Profile>(self.num_application_steps)?;
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step, self.shared_size)?
+        let stage_size = self.stage_size();
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE, B>::new(step, stage_size, self.params)?
             .trace((left_data, right_data, witness))?
             .into_parts();
         let rx = self.native_registry.assemble(&trace, circuit, &mut *rng)?;
 
-        let ((left_header, right_header), output_data, step_aux, shared) = aux;
-        if shared.len() != S::Shared::num_values()? || shared.len() > self.shared_size {
+        let AdapterAux {
+            left_header,
+            right_header,
+            output_data,
+            step_aux,
+            shared,
+            framework:
+                FrameworkAux {
+                    witness_polys: witnessed,
+                    poly_queries,
+                },
+        } = aux;
+        if shared.len() != HookLayout::of::<C::Profile>().stage_len(S::Shared::num_values()?)
+            || shared.len() > stage_size
+        {
             return Err(Error::InvalidWitness(
                 "the shared gadget does not fit the application stage".into(),
             ));
@@ -56,15 +82,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let stage_rx = staging::stage_rx::<_, R>(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             1,
-            self.shared_size,
+            stage_size,
             &shared,
         )?;
+
+        let witness_polys = witnessed
+            .iter()
+            .map(|coefficients| sparse::Polynomial::<_, R>::from_coeffs(coefficients.to_vec()))
+            .collect();
 
         builder.set_circuit_id(circuit);
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
         builder.set_native_application_rx(rx);
         builder.set_native_application_stage_rx(stage_rx);
+        builder.set_application_polys(witness_polys);
+        builder.set_application_poly_queries(poly_queries);
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

@@ -21,9 +21,13 @@ use ragu_primitives::{
 
 use crate::{
     Proof,
+    framework_hooks::{HookLayout, PolyQueries, WitnessPolys},
     header::{Header, Suffix},
+    instance,
     internal::{ky, native::unified},
+    poly_commitment::{HANDLE_WIRES, PolyHandle},
     profile::{Profile, ProfiledCycle},
+    proof::{PolyQuery, hook_region},
     step::{InternalStepIndex, internal::padded},
 };
 
@@ -82,21 +86,33 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 
 /// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget, Consistent)]
-pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-{
+pub struct ProofInputs<
+    'dr,
+    D: Driver<'dr>,
+    C: ProfiledCycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+> {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
     pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// The child's poly-queries; positions it left unused hold the padding
+    /// query.
+    #[ragu(gadget)]
+    pub poly_queries: FixedVec<instance::PolyQuery<'dr, D, C>, PolyQueries<C::Profile>>,
+    /// The handles of the child's witnessed polynomials; positions it left
+    /// unused hold the padding polynomial's.
+    #[ragu(gadget)]
+    pub witness_polys: FixedVec<PolyHandle<'dr, D, C>, WitnessPolys<C::Profile>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SIZE: usize>
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
@@ -203,15 +219,67 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SIZE: usize>
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
-    /// Allocate ProofInputs from a proof reference and pre-computed output header.
+    /// Allocates a child's hook region, padded positions included: each
+    /// witnessed polynomial's handle, then each poly-query's handle, `x` and
+    /// `y` (see [`hook_region`]).
+    #[allow(clippy::type_complexity)]
+    fn alloc_hook_region(
+        dr: &mut D,
+        region: DriverValue<D, Vec<C::CircuitField>>,
+    ) -> Result<(
+        FixedVec<PolyHandle<'dr, D, C>, WitnessPolys<C::Profile>>,
+        FixedVec<instance::PolyQuery<'dr, D, C>, PolyQueries<C::Profile>>,
+    )> {
+        let layout = HookLayout::of::<C::Profile>();
+        D::try_just(|| {
+            if region.as_ref().take().len() == layout.poly_query_instance_len() {
+                Ok(())
+            } else {
+                Err(Error::MalformedEncoding(
+                    "the hook region does not fit the profile's hook layout".into(),
+                ))
+            }
+        })?;
+        let pair = |at: usize| region.as_ref().map(|r| [r[at], r[at + 1]]);
+        let one = |at: usize| region.as_ref().map(|r| r[at]);
+        let witness_polys =
+            FixedVec::try_from_fn(|i| PolyHandle::alloc(dr, pair(HANDLE_WIRES * i)))?;
+        let queries_at = HANDLE_WIRES * layout.witness_polys;
+        let poly_queries = FixedVec::try_from_fn(|i| {
+            let at = queries_at + (HANDLE_WIRES + 2) * i;
+            Ok(instance::PolyQuery {
+                com: PolyHandle::alloc(dr, pair(at))?,
+                x: Element::alloc(dr, &mut (), one(at + HANDLE_WIRES))?,
+                y: Element::alloc(dr, &mut (), one(at + HANDLE_WIRES + 1))?,
+            })
+        })?;
+        Ok((witness_polys, poly_queries))
+    }
+
+    /// Allocate ProofInputs from a proof reference and pre-computed output
+    /// header.
     pub fn alloc<R: Rank>(
         dr: &mut D,
         proof: DriverValue<D, &Proof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
     ) -> Result<Self> {
+        // A child proof reaching the fuse has not passed through `verify`, so
+        // this is its own boundary. `alloc` has no verdict to return, hence
+        // `Err`: a carried artifact whose encoding does not fit its profile,
+        // not a witness the prover authored in-circuit.
+        D::try_just(|| {
+            if proof.as_ref().take().has_shape() {
+                Ok(())
+            } else {
+                Err(Error::MalformedEncoding(
+                    "proof does not carry exactly the profile's hook lists".into(),
+                ))
+            }
+        })?;
+
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
             allocator: &mut (),
@@ -233,12 +301,22 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         }
 
         let allocator = &mut ();
+        let children = ChildHeaders {
+            left: alloc_header(dr, allocator, proof.as_ref().map(|p| p.left_header()))?,
+            right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
+        };
+        let output_header = alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?;
+        // The one cast a `Proof` cannot avoid: it records commitments, and the
+        // native circuit can only hold wires.
+        let (witness_polys, poly_queries) = Self::alloc_hook_region(
+            dr,
+            D::try_just(|| proof.as_ref().take().preamble_hook_region())?,
+        )?;
         Ok(ProofInputs {
-            children: ChildHeaders {
-                left: alloc_header(dr, allocator, proof.as_ref().map(|p| p.left_header()))?,
-                right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
-            },
-            output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
+            children,
+            output_header,
+            poly_queries,
+            witness_polys,
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -248,14 +326,18 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         })
     }
 
-    /// Allocate ProofInputs from the parts a proof's instance carries: the
-    /// child headers, the encoded output header, the circuit id as its
+    /// Allocate ProofInputs from the parts a proof's instance and stage carry:
+    /// the child headers, the encoded output header, the witnessed
+    /// polynomials' commitments and the poly-queries, the circuit id as its
     /// domain point, and the unified instance's values.
+    #[allow(clippy::too_many_arguments)]
     pub fn alloc_from_parts(
         dr: &mut D,
         left_header: DriverValue<D, &[D::F]>,
         right_header: DriverValue<D, &[D::F]>,
         output_header: DriverValue<D, &[D::F]>,
+        witness_polys: DriverValue<D, &[C::HostCurve]>,
+        poly_queries: DriverValue<D, &[PolyQuery<C::HostCurve>]>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
     ) -> Result<Self> {
@@ -276,12 +358,20 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 .try_collect_fixed()
         }
 
+        let children = ChildHeaders {
+            left: alloc_header(dr, left_header)?,
+            right: alloc_header(dr, right_header)?,
+        };
+        let output_header = alloc_header(dr, output_header)?;
+        let (witness_polys, poly_queries) = Self::alloc_hook_region(
+            dr,
+            D::try_just(|| hook_region::<C>(witness_polys.take(), poly_queries.take()))?,
+        )?;
         Ok(ProofInputs {
-            children: ChildHeaders {
-                left: alloc_header(dr, left_header)?,
-                right: alloc_header(dr, right_header)?,
-            },
-            output_header: alloc_header(dr, output_header)?,
+            children,
+            output_header,
+            poly_queries,
+            witness_polys,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
         })
@@ -315,14 +405,19 @@ pub fn encode_output_header<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_S
 /// This is stage communication data, not part of the circuit's public instance.
 /// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<
+    'dr,
+    D: Driver<'dr>,
+    C: ProfiledCycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+> {
     #[ragu(gadget)]
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
     #[ragu(gadget)]
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
+impl<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>
     Output<'dr, D, C, HEADER_SIZE>
 {
     /// Returns true when the current step declared [`Dummy`] for both of its
@@ -356,9 +451,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified
-        // instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HEADER_SIZE + the hook region + 1
+        // circuit_id + unified instance wires)
+        2 * (3 * HEADER_SIZE
+            + HookLayout::of::<C::Profile>().poly_query_instance_len()
+            + 1
+            + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -395,5 +493,10 @@ mod tests {
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&Stage::<Pasta, R, { HEADER_SIZE }>::default());
+        assert_stage_values(&Stage::<
+            crate::profile::Profiled<Pasta, crate::AppHooks<4, 2>>,
+            R,
+            { HEADER_SIZE },
+        >::default());
     }
 }

@@ -36,6 +36,7 @@ use crate::Proof;
 use crate::{
     header::Header,
     profile::{Binding, Profile, ProfiledCycle},
+    proof::PolyQuery,
 };
 
 /// The targets of one proof's native revdot claims at one $y$.
@@ -277,15 +278,18 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
 /// The nested unified instance's $k(y)$ of `proof` at the nested `y`, with
 /// $c_n$ and $v_n$ derived from the proof's polynomials.
 #[cfg(any(test, feature = "test-utils"))]
-pub fn nested_ky<C: Cycle, R: Rank>(
+pub fn nested_ky<C: ProfiledCycle, R: Rank>(
     proof: &Proof<C, R>,
     y: C::ScalarField,
 ) -> Result<C::ScalarField> {
     Emulator::emulate_wireless((proof.nested_instance()?, y), |dr, witness| {
         let (instance, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
-        let output =
-            nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance.as_ref())?;
+        let output = nested_unified::Output::<_, C::HostCurve, C::Profile>::alloc(
+            dr,
+            &mut (),
+            instance.as_ref(),
+        )?;
         Ok(*output.ky(dr, &y)?.value().take())
     })
 }
@@ -312,6 +316,10 @@ pub struct NativeParts<'a, C: Cycle> {
     pub left_header: &'a [C::CircuitField],
     pub right_header: &'a [C::CircuitField],
     pub output_header: &'a [C::CircuitField],
+    /// The step's witnessed polynomials' commitments.
+    pub witness_polys: &'a [C::HostCurve],
+    /// The step's poly-queries.
+    pub poly_queries: &'a [PolyQuery<C::HostCurve>],
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
     /// The nested extension stage commitments the native binding circuit
@@ -334,6 +342,8 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.left_header),
             parts.as_ref().map(|p| p.right_header),
             parts.as_ref().map(|p| p.output_header),
+            parts.as_ref().map(|p| p.witness_polys),
+            parts.as_ref().map(|p| p.poly_queries),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
         )?;
@@ -356,14 +366,15 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
 
 /// The nested unified instance's $k(y)$ at the nested `y` from the
 /// instance's values, as the decider's `nested_ky` computes it from a proof.
-pub fn nested_ky_of<C: Cycle>(
+pub fn nested_ky_of<C: ProfiledCycle>(
     instance: &nested_unified::Instance<C::HostCurve>,
     y: C::ScalarField,
 ) -> Result<C::ScalarField> {
     Emulator::emulate_wireless((instance, y), |dr, witness| {
         let (instance, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
-        let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
+        let output =
+            nested_unified::Output::<_, C::HostCurve, C::Profile>::alloc(dr, &mut (), instance)?;
         Ok(*output.ky(dr, &y)?.value().take())
     })
 }

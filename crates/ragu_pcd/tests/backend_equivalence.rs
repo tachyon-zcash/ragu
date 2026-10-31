@@ -1421,6 +1421,11 @@ mod proof_equivalence {
                 bridge_ab_commitment: _,
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
+                application_poly_queries: _,
+                witness_polys: _,
+                witness_poly_commitments: _,
+                // A test-only forgery marker, not proof content.
+                skip_stage_check: _,
             } = self;
 
             if self.bridge_alpha != other.bridge_alpha {
@@ -1582,6 +1587,21 @@ mod proof_equivalence {
                 other.bridge_eval_commitment(),
             ] {
                 return Some("bridge commitments");
+            }
+
+            if !extension_eq(&self.witness_polys, &other.witness_polys)
+                || self.witness_poly_commitments() != other.witness_poly_commitments()
+            {
+                return Some("witnessed polynomials");
+            }
+            let query = |q: &crate::proof::PolyQuery<C::HostCurve>| (q.com, q.x, q.y);
+            if self
+                .application_poly_queries()
+                .iter()
+                .map(query)
+                .ne(other.application_poly_queries().iter().map(query))
+            {
+                return Some("poly-queries");
             }
 
             None

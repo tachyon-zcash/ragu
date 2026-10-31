@@ -70,7 +70,7 @@ use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
-    staging::{MultiStage, StageExt},
+    staging::{self, MultiStage, StageExt, StageReader},
 };
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{
@@ -80,6 +80,7 @@ use ragu_primitives::{
 use udon::field::Field;
 
 use crate::{
+    framework_hooks::HookLayout,
     header::Header,
     internal::{
         endoscalar::EndoscalarStage,
@@ -92,6 +93,7 @@ use crate::{
             PointsWitness,
         },
     },
+    poly_commitment,
     profile::{Profile, ProfiledCycle},
 };
 
@@ -135,6 +137,42 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
             data: self.data.clone(),
         }
     }
+}
+
+/// A polynomial-opening claim $p(x) = y$, identifying the polynomial by its
+/// commitment.
+///
+/// The commitment is the host-curve point itself: a `Proof` is plain data with
+/// no circuit to answer to, so nothing here needs the handle the native circuit
+/// cannot avoid. `Curve::Scalar` is the circuit field, which is why one
+/// parameter fixes all three fields.
+#[derive(Clone, Copy, Debug)]
+pub struct PolyQuery<Curve: udon::curve::Affine> {
+    /// The opened polynomial's commitment.
+    pub com: Curve,
+    /// The opening point.
+    pub x: Curve::Scalar,
+    /// The claimed evaluation $p(x) = y$.
+    pub y: Curve::Scalar,
+}
+
+/// The hook region that witnessed-polynomial `commitments` and `queries`
+/// encode: each commitment's handle, then each poly-query's handle, `x` and
+/// `y`, in the order the adapter stages them.
+pub(crate) fn hook_region<C: Cycle>(
+    commitments: &[C::HostCurve],
+    queries: &[PolyQuery<C::HostCurve>],
+) -> Result<Vec<C::CircuitField>> {
+    let mut region = Vec::new();
+    for &commitment in commitments {
+        region.extend(poly_commitment::handle::<C>(commitment)?);
+    }
+    for query in queries {
+        region.extend(poly_commitment::handle::<C>(query.com)?);
+        region.push(query.x);
+        region.push(query.y);
+    }
+    Ok(region)
 }
 
 /// The Horner fold of `polys` under `beta`, the first weighted highest: the
@@ -346,9 +384,94 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge commitment (cached, derived from the cached bridge rx)
     bridge_ab_commitment: Cached<C::NestedCurve>,
+
+    /// Padded to the profile's count. The step binds these to the hook region
+    /// of its application stage. Readers go through
+    /// [`application_poly_queries`](Self::application_poly_queries).
+    pub(crate) application_poly_queries: Vec<PolyQuery<C::HostCurve>>,
+
+    /// The step's witnessed polynomials, carried for one fuse level.
+    pub(crate) witness_polys: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    /// [`witness_polys`](Self::witness_polys)' commitments, in the same order.
+    witness_poly_commitments: Cached<Vec<C::HostCurve>>,
+
+    /// Set by a test that forges the hook lists a parent reads, to stand in
+    /// for a fusing prover that skips its own [`has_shape`](Self::has_shape)
+    /// check. Only the stage comparison is skipped; the lengths still hold.
+    #[cfg(test)]
+    pub(crate) skip_stage_check: bool,
+}
+
+impl<C: Cycle, R: Rank> Proof<C, R> {
+    pub(crate) fn application_poly_queries(&self) -> &[PolyQuery<C::HostCurve>] {
+        &self.application_poly_queries
+    }
+
+    pub(crate) fn witness_polys(&self) -> &[sparse::Polynomial<C::CircuitField, R>] {
+        &self.witness_polys
+    }
+
+    /// [`witness_polys`](Self::witness_polys)' commitments, in the same order.
+    pub(crate) fn witness_poly_commitments(&self) -> &[C::HostCurve] {
+        &self.witness_poly_commitments.0
+    }
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// Whether the hook lists are the ones the profile declares, and the
+    /// application stage's hook region carries them. `Proof` is checked where
+    /// it is *consumed*: at the fuse and at the root.
+    pub(crate) fn has_shape(&self) -> bool {
+        let layout = HookLayout::of::<C::Profile>();
+        self.application_poly_queries.len() == layout.poly_queries
+            && self.witness_polys.len() == layout.witness_polys
+            && self.witness_poly_commitments.0.len() == layout.witness_polys
+            && (self.skips_stage_check() || self.stage_carries_hooks(&layout))
+    }
+
+    #[cfg(test)]
+    fn skips_stage_check(&self) -> bool {
+        self.skip_stage_check
+    }
+
+    #[cfg(not(test))]
+    fn skips_stage_check(&self) -> bool {
+        false
+    }
+
+    /// Whether the hook region of the application stage holds the handles of
+    /// the carried commitments and the carried poly-queries, in the order the
+    /// adapter staged them. The fuse reads the points off the stage, so a
+    /// proof whose stage and carried hook lists disagree is malformed.
+    ///
+    /// This is the prover's early refusal, not the binding: a fusing prover
+    /// runs it on itself.
+    fn stage_carries_hooks(&self, layout: &HookLayout) -> bool {
+        let stage = StageReader::<C::CircuitField, R>::new(&self.native_application_stage_rx);
+        let Ok(expected) = self.carried_hook_region() else {
+            return false;
+        };
+        expected.len() == layout.poly_query_instance_len()
+            && expected
+                .iter()
+                .enumerate()
+                .all(|(index, limb)| stage.read(index) == *limb)
+    }
+
+    /// The hook region the carried hook lists encode (see [`hook_region`]).
+    fn carried_hook_region(&self) -> Result<Vec<C::CircuitField>> {
+        hook_region::<C>(
+            self.witness_poly_commitments(),
+            self.application_poly_queries(),
+        )
+    }
+
+    /// The hook region a fusing prover copies into its preamble: the one the
+    /// carried hook lists encode.
+    pub(crate) fn preamble_hook_region(&self) -> Result<Vec<C::CircuitField>> {
+        self.carried_hook_region()
+    }
+
     /// Whether the headers, polynomial vectors and commitment-cache vectors
     /// have exactly the receiving profile's shape. Check before traversing
     /// components so that missing entries cannot panic and trailing ones
@@ -558,7 +681,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
-            ],
+            ]
+            .into_iter()
+            .chain(self.witness_poly_commitments().iter().copied())
+            .collect(),
             coverage: Default::default(),
         })
     }
@@ -1106,9 +1232,41 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
+        // A dummy proof witnesses nothing itself: every position holds the
+        // padding polynomial, the constant 1, as `pad_to_layout` does.
+        let layout = HookLayout::of::<C::Profile>();
+        let padding_poly = sparse::Polynomial::<_, R>::from_coeffs(vec![C::CircuitField::ONE]);
+        let padding_com =
+            B::sparse_commit_to_affine(&padding_poly, C::host_generators(self.params));
+        builder.set_application_polys(vec![padding_poly.clone(); layout.witness_polys]);
+        // Nor does it raise poly-queries: every position holds the padding
+        // query, which opens the first polynomial at zero, as the adapter's
+        // padding does. The constant 1 evaluates to 1 everywhere.
+        let padding_query = PolyQuery {
+            com: padding_com,
+            x: C::CircuitField::ZERO,
+            y: C::CircuitField::ONE,
+        };
+        builder.set_application_poly_queries(vec![padding_query; layout.poly_queries]);
+        // The application stage carries those paddings in its hook region, as
+        // the adapter stages them, so the proof's stage and hook lists agree.
+        // Without hooks there is no region, and the stage stays the trivial
+        // polynomial every other dummy rx is.
+        let stage_rx = if layout.poly_query_instance_len() == 0 {
+            ones_host.clone()
+        } else {
+            let hook_region = hook_region::<C>(
+                &vec![padding_com; layout.witness_polys],
+                &vec![padding_query; layout.poly_queries],
+            )
+            .expect("the padding commitment is a host-curve point");
+            staging::stage_rx::<_, R>(C::CircuitField::ONE, 1, self.stage_size(), &hook_region)
+                .expect("the hook region fits the application stage")
+        };
+
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
-        builder.set_native_application_stage_rx(ones_host.clone());
+        builder.set_native_application_stage_rx(stage_rx);
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
@@ -1303,6 +1461,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 C::ScalarField::ONE,
                 &nested::stages::eval::Witness {
                     native_eval: builder.native_eval_commitment(),
+                    witness_polys: builder.witness_poly_commitments(),
                     nested: nested::stages::eval::Evaluations::zero(),
                 },
             )
@@ -1333,7 +1492,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
             // Per-child block: all per-child commitments are
             // `host_commitment` (ones_host), except registry_xy which
-            // has its own commitment.
+            // has its own commitment, and the witnessed polynomials, which
+            // are padding.
             for _ in 0..2 {
                 for _ in RxIndex::all::<C::Profile>() {
                     push(host_commitment, &ones_host);
@@ -1342,6 +1502,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 push(host_commitment, &ones_host); // AbB
                 push(registry_xy_commitment, registry_xy); // RegistryXY
                 push(host_commitment, &ones_host); // P placeholder
+                for _ in 0..layout.witness_polys {
+                    push(padding_com, &padding_poly); // witnessed polynomials
+                }
             }
 
             // Current-step bridge inputs.
@@ -1401,6 +1564,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_points_registry_wx: host_commitment,
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
+                stashed_witness_polys: FixedVec::from_fn(|_| padding_com),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
                 nested: nested::stages::preamble::NestedValues {

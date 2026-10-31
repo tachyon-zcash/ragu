@@ -255,6 +255,7 @@ impl CorruptionGroup {
             | Corruption::NestedAccumulatorCoeff { .. }
             | Corruption::NestedRegistryXyCoeff { .. }
             | Corruption::NestedPCoeff { .. } => Self::NestedPolynomials,
+            Corruption::QueryY(..) | Corruption::QueryCom(_) => Self::HeadersAndChallenges,
         }
     }
 }
@@ -593,5 +594,7 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
             Corruption::NestedRegistryXyCoeff { coeff, delta }
         }
         Corruption::NestedPCoeff { coeff, delta } => Corruption::NestedPCoeff { coeff, delta },
+        Corruption::QueryY(index, delta) => Corruption::QueryY(index, delta),
+        Corruption::QueryCom(index) => Corruption::QueryCom(index),
     }
 }

@@ -53,12 +53,15 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed.
+    /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed,
+    /// and [`Error::Initialization`] if the profile declares hooks, which
+    /// compression does not cover.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
+        super::refuse_hooks::<C::Profile>()?;
         let proof = pcd.proof();
         if !proof.well_formed::<HEADER_SIZE>() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));

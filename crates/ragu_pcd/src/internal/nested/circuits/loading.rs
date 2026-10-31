@@ -135,6 +135,9 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             walker.enforce_equal(dr, &child.stashed_ab_b)?;
             walker.enforce_equal(dr, &child.stashed_registry_xy)?;
             walker.enforce_equal(dr, &child.stashed_p)?;
+            for stashed_witness_poly in child.stashed_witness_polys.iter() {
+                walker.enforce_equal(dr, stashed_witness_poly)?;
+            }
         }
 
         walker.enforce_equal(dr, &s_prime.registry_wx0)?;

@@ -216,6 +216,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     proof.native_registry_xy_commitment(),
                 );
                 acc.acc(proof.native_p_poly(), proof.native_p_commitment());
+                // The child's witnessed polynomials, which it carried for
+                // this fuse and stashed in its nested instance.
+                for (poly, &commitment) in proof
+                    .witness_polys()
+                    .iter()
+                    .zip(proof.witness_poly_commitments())
+                {
+                    acc.acc(poly, commitment);
+                }
             }
 
             acc.acc(&s_prime.registry_wx0_poly, s_prime.registry_wx0_commitment);

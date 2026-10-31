@@ -38,6 +38,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         &self,
         pcd: &CompressedPcd<C, H>,
     ) -> Result<bool> {
+        super::refuse_hooks::<C::Profile>()?;
         // These checks report malformed proof messages and unusable
         // transcript challenges as InvalidWitness. Translate only those
         // proof-dependent failures: header encoding and static circuit

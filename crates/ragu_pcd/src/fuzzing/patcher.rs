@@ -597,7 +597,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
             EndoscalarChallenge::sample(&mut dr, |dr| {
                 let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval, &builder)?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -1104,6 +1104,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
+            witness_polys: builder.witness_poly_commitments(),
             nested: nested_eval,
         };
         let nested_values: Vec<C::ScalarField> = [
@@ -1160,7 +1161,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         builder.native_points_registry_wx_commitment(),
                         builder.native_points_ab_commitment(),
                         builder.native_points_f_commitment(),
-                    ],
+                    ]
+                    .into_iter()
+                    .chain(builder.witness_poly_commitments().iter().copied())
+                    .collect(),
                     coverage: Default::default(),
                 },
                 endoscalar: beta_endo,
@@ -1176,8 +1180,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 challenges: &nested_challenges,
             })
         };
+        let exported = nested::unified::ExportedLen::<C::Profile>::LEN;
         let nested_coverage = |instance: nested::unified::Instance<C::HostCurve>| -> Vec<usize> {
-            covered_positions(|f| instance.coverage.for_each_slot(f), &[])
+            covered_positions(|f| instance.coverage.for_each_slot(exported, f), &[])
         };
 
         // collapse also pins the exported challenges and commitments. These
@@ -1189,7 +1194,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >::new());
         let collapse_covered = covered_outputs(&collapse, nested_witness()?, |instance| {
             covered_positions(
-                |f| instance.coverage.for_each_slot(f),
+                |f| instance.coverage.for_each_slot(exported, f),
                 if base_case { &["c"] } else { &[] },
             )
         })?;

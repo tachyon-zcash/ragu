@@ -630,6 +630,13 @@ pub enum Corruption<C: Cycle> {
         /// What to add.
         delta: C::ScalarField,
     },
+    /// Perturb the claimed evaluation `y` of the poly-query at the given
+    /// index; out of range is a no-op.
+    QueryY(usize, C::CircuitField),
+    /// Negate the commitment of the poly-query at the given index, so it is
+    /// a valid point that commits to no carried polynomial; out of range is
+    /// a no-op.
+    QueryCom(usize),
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
@@ -681,6 +688,8 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             Corruption::NestedPCoeff { coeff, .. } => {
                 write!(f, "NestedPCoeff {{ coeff: {coeff} }}")
             }
+            Corruption::QueryY(index, _) => write!(f, "QueryY({index})"),
+            Corruption::QueryCom(index) => write!(f, "QueryCom({index})"),
         }
     }
 }
@@ -908,6 +917,27 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.nested_p_poly_mut().add_assign(&delta);
                 Binding::MustReject
             }
+
+            // A profile with poly-queries is never compressed
+            // (`compress::refuse_hooks`), so these bind the uncompressed
+            // verifier only.
+            Corruption::QueryY(index, delta) => {
+                match self.application_poly_queries.get_mut(index) {
+                    Some(query) if delta != C::CircuitField::ZERO => {
+                        query.y += delta;
+                        Binding::MustRejectUncompressed
+                    }
+                    _ => Binding::Unbound,
+                }
+            }
+
+            Corruption::QueryCom(index) => match self.application_poly_queries.get_mut(index) {
+                Some(query) => {
+                    query.com = -query.com;
+                    Binding::MustRejectUncompressed
+                }
+                None => Binding::Unbound,
+            },
         }
     }
 

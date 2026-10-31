@@ -71,6 +71,7 @@ use crate::{
     },
     ipa::IpaCycle,
     profile::ProfiledCycle,
+    proof::PolyQuery,
 };
 
 /// The backend whose kernels [`Application::verify_uncompressed`] consults for
@@ -122,6 +123,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
 
         if !pcd.proof().well_formed::<HEADER_SIZE>() {
+            return Ok(false);
+        }
+
+        // Reject wrong hook-list lengths, and an application stage whose hook
+        // region the carried lists do not encode, up front, so a malformed
+        // proof yields `Ok(false)` rather than `Err` from the pipeline below.
+        if !pcd.proof().has_shape() {
             return Ok(false);
         }
 
@@ -271,6 +279,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 points.push(proof.native_registry_xy_commitment());
                 polys.push(proof.native_p_poly());
                 points.push(proof.native_p_commitment());
+                // The step's witnessed polynomials: what a parent would
+                // accumulate, and what the root's own instance names.
+                polys.extend(proof.witness_polys());
+                points.extend_from_slice(proof.witness_poly_commitments());
                 commitments_match::<Verifier<B>, _, _, R, _>(
                     &polys,
                     &points,
@@ -395,6 +407,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             native && nested
         };
 
+        // A root proof's own poly-queries are not yet folded; check them
+        // natively. Rejects a query whose commitment is no carried
+        // polynomial's, or whose evaluation disagrees with that polynomial.
+        // `commitments_claim` holds the carried commitments to these very
+        // polynomials, so resolving one is finding the polynomial evaluated
+        // here.
+        let poly_query_claims = {
+            let proof = pcd.proof();
+            proof
+                .application_poly_queries()
+                .iter()
+                .all(|&PolyQuery { com, x, y }| {
+                    proof
+                        .witness_poly_commitments()
+                        .iter()
+                        .zip(proof.witness_polys())
+                        .find(|&(derived, _)| *derived == com)
+                        .is_some_and(|(_, poly)| Verifier::<B>::sparse_eval(poly, x) == y)
+                })
+        };
+
         Ok(native_revdot_claims
             && nested_revdot_claims
             && registry_xy_claim
@@ -404,7 +437,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             && nested_points_claim
             && transcript_claim
             && ab_bridge_claim
-            && mesh_claim)
+            && mesh_claim
+            && poly_query_claims)
     }
 
     /// The native mesh claim: see

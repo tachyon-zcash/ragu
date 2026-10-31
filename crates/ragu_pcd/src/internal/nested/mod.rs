@@ -44,11 +44,13 @@ use crate::{
 };
 
 /// The number of curve points the nested walk folds for a native batch of
-/// `native_rx` rx polynomials: `f`'s commitment, then for each child its
-/// native rx commitments, $a$, $b$, `registry_xy` and $p$, then the current
-/// step's two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`.
-pub const fn num_endoscaling_points(native_rx: usize) -> usize {
-    1 + 2 * (native_rx + 4) + 6
+/// `native_rx` rx polynomials and `witness_polys` witnessed polynomials per
+/// child: `f`'s commitment, then for each child its native rx commitments,
+/// $a$, $b$, `registry_xy`, $p$ and the polynomials its step witnessed, then
+/// the current step's two `registry_wx`, `registry_wy`, $a$, $b$ and
+/// `registry_xy`.
+pub const fn num_endoscaling_points(native_rx: usize, witness_polys: usize) -> usize {
+    1 + 2 * (native_rx + 4 + witness_polys) + 6
 }
 
 /// Number of curve points accumulated during `compute_p` for nested field
@@ -59,7 +61,7 @@ pub const fn num_endoscaling_points(native_rx: usize) -> usize {
 /// The endoscaling circuits process these points across
 /// [`NUM_ENDOSCALING_STEPS`] steps.
 pub const NUM_ENDOSCALING_POINTS: usize =
-    num_endoscaling_points(crate::internal::native::RxIndex::NUM);
+    num_endoscaling_points(crate::internal::native::RxIndex::NUM, 0);
 
 /// Length type for the curve points the nested walk folds in profile `P`:
 /// the profile's [`nested_points`](Shape::nested_points), which the standard

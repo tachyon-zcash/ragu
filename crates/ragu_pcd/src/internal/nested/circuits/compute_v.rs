@@ -92,7 +92,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     type Last = stages::challenges::Stage<C, R, P>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C, P>;
-    type Output = unified::OutputKind<C>;
+    type Output = unified::OutputKind<C, P>;
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
