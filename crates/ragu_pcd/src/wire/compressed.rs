@@ -4,6 +4,13 @@
 //! receiving profile and from the payload's dimensions, its rank and header size;
 //! no counts are read from the payload.
 
+use alloc::vec::Vec;
+use core::marker::PhantomData;
+
+use ragu_circuits::registry::CircuitIndex;
+use ragu_primitives::vec::{ConstLen, Len};
+use udon::{curve::Affine, field::Field};
+
 use crate::{
     compress::{
         CompressedProof, Messages,
@@ -22,11 +29,6 @@ use crate::{
         Reader, Rounds, Scalar, SizedSequence, Validate,
     },
 };
-use alloc::vec::Vec;
-use core::marker::PhantomData;
-use ragu_circuits::registry::CircuitIndex;
-use ragu_primitives::vec::{ConstLen, Len};
-use udon::{curve::Affine, field::Field};
 
 struct Native<P>(PhantomData<P>);
 struct Nested<P>(PhantomData<P>);
