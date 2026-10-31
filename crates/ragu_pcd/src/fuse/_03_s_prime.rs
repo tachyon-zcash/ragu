@@ -9,32 +9,58 @@
 //! endoscaling walk reads them from, whose commitment the `s_prime` bridge
 //! carries, so they are fixed before $y$ is squeezed.
 
+use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::RegistryAt,
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, FixedGenerators, Result};
 use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
 
-/// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
-pub(super) struct NativeSPrime<C: Cycle, R: Rank> {
-    pub(super) registry_wx0_poly: sparse::Polynomial<C::CircuitField, R>,
-    pub(super) registry_wx0_commitment: C::HostCurve,
-    pub(super) registry_wx1_poly: sparse::Polynomial<C::CircuitField, R>,
-    pub(super) registry_wx1_commitment: C::HostCurve,
+/// Registry restrictions at the two child evaluation points and their
+/// commitments, over either side's scalar field and commitment curve.
+pub(super) struct SPrime<G: Affine, R: Rank> {
+    pub(super) registry_wx0_poly: sparse::Polynomial<G::Scalar, R>,
+    pub(super) registry_wx0_commitment: G,
+    pub(super) registry_wx1_poly: sparse::Polynomial<G::Scalar, R>,
+    pub(super) registry_wx1_commitment: G,
 }
 
-/// Ephemeral nested-field data for the $m_n(w_n, x_{i,n}, Y)$ restrictions,
-/// used only during the fuse step.
-pub(super) struct NestedSPrime<C: Cycle, R: Rank> {
-    pub(super) registry_wx0_poly: sparse::Polynomial<C::ScalarField, R>,
-    pub(super) registry_wx0_commitment: C::NestedCurve,
-    pub(super) registry_wx1_poly: sparse::Polynomial<C::ScalarField, R>,
-    pub(super) registry_wx1_commitment: C::NestedCurve,
+/// Ephemeral native-field data, committed on the host curve.
+pub(super) type NativeSPrime<C, R> = SPrime<<C as Cycle>::HostCurve, R>;
+
+/// Ephemeral nested-field data, committed on the nested curve.
+pub(super) type NestedSPrime<C, R> = SPrime<<C as Cycle>::NestedCurve, R>;
+
+impl<G: Affine, R: Rank> SPrime<G, R> {
+    /// Compute both restrictions using challenges already in this curve's
+    /// scalar field. Challenge conversion and bridge commitments belong to
+    /// the caller's orchestration of the two sides.
+    fn compute<B: Backend>(
+        registry: &RegistryAt<'_, G::Scalar, R>,
+        [x0, x1]: [G::Scalar; 2],
+        generators: &impl FixedGenerators<G>,
+    ) -> Self {
+        let registry_wx0_poly = B::registry_at_x(registry, x0);
+        let registry_wx1_poly = B::registry_at_x(registry, x1);
+        let mut commitments = [G::identity(); 2];
+        G::batch_to_affine(
+            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], generators),
+            &mut commitments,
+        );
+        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
+
+        Self {
+            registry_wx0_poly,
+            registry_wx0_commitment,
+            registry_wx1_poly,
+            registry_wx1_commitment,
+        }
+    }
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
@@ -49,8 +75,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
-        let native = self.compute_native_s_prime(native_registry, left, right)?;
-        let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
+        let native = NativeSPrime::<C, R>::compute::<B>(
+            native_registry,
+            [left.x(), right.x()],
+            C::host_generators(self.params),
+        );
+        let nested = NestedSPrime::<C, R>::compute::<B>(
+            nested_registry,
+            [
+                nested::challenge::<C>(left.x())?,
+                nested::challenge::<C>(right.x())?,
+            ],
+            C::nested_generators(self.params),
+        );
         self.commit_native_points_registry_wx(
             rng,
             nested.registry_wx0_commitment,
@@ -79,59 +116,5 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_s_prime_rx(bridge_rx, bridge_commitment);
         Ok(())
-    }
-
-    fn compute_native_s_prime(
-        &self,
-        native_registry: &RegistryAt<'_, C::CircuitField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
-    ) -> Result<NativeSPrime<C, R>> {
-        let x0 = left.x();
-        let x1 = right.x();
-
-        let registry_wx0_poly = B::registry_at_x(native_registry, x0);
-        let registry_wx1_poly = B::registry_at_x(native_registry, x1);
-        let host_gen = C::host_generators(self.params);
-        let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
-        <C::HostCurve as Affine>::batch_to_affine(
-            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], host_gen),
-            &mut commitments,
-        );
-        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
-
-        Ok(NativeSPrime {
-            registry_wx0_poly,
-            registry_wx0_commitment,
-            registry_wx1_poly,
-            registry_wx1_commitment,
-        })
-    }
-
-    fn compute_nested_s_prime(
-        &self,
-        nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
-    ) -> Result<NestedSPrime<C, R>> {
-        let x0 = nested::challenge::<C>(left.x())?;
-        let x1 = nested::challenge::<C>(right.x())?;
-
-        let registry_wx0_poly = B::registry_at_x(nested_registry, x0);
-        let registry_wx1_poly = B::registry_at_x(nested_registry, x1);
-        let nested_gen = C::nested_generators(self.params);
-        let mut commitments = [<C::NestedCurve as Affine>::identity(); 2];
-        <C::NestedCurve as Affine>::batch_to_affine(
-            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], nested_gen),
-            &mut commitments,
-        );
-        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
-
-        Ok(NestedSPrime {
-            registry_wx0_poly,
-            registry_wx0_commitment,
-            registry_wx1_poly,
-            registry_wx1_commitment,
-        })
     }
 }
