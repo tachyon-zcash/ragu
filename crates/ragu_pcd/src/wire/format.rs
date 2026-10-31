@@ -41,14 +41,17 @@ const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 const PROTOCOL_VERSION: u16 = 1;
 const ENVELOPE_SIZE: usize = 124;
 
-/// Trusted identifiers for the cryptographic suite and complete application setup.
+/// Identifiers of the cryptographic suite and the application setup, which
+/// the envelope records and decoding checks.
 ///
-/// Assign these in your deployment manifest, never from an incoming proof. Use
-/// collision-resistant digests of canonical manifests: `suite` must identify the
-/// ordered curves, scalar/point encodings, generators and Poseidon parameters;
-/// `application` must identify the profile, ordered circuits, registry tags,
-/// both protocol transcript domains, and header semantics. Change the corresponding identifier whenever that manifest changes.
-/// These identifiers detect context mismatches; they do not authenticate a proof.
+/// [`Application::proof_context`] derives them from the application's
+/// parameters and registries, and [`Application::proof_format`] uses those.
+/// Supply your own through [`Application::proof_format_with`] when the setup
+/// includes configuration Ragu cannot see: use collision-resistant digests of
+/// canonical manifests, assigned in your deployment and never taken from an
+/// incoming proof, and change them whenever the manifest changes. Either way,
+/// the identifiers detect context mismatches; they do not authenticate a
+/// proof.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProofContext {
     /// Identifier of the complete cryptographic suite and parameters.
@@ -59,7 +62,8 @@ pub struct ProofContext {
 
 /// A versioned proof format for one application's trusted context.
 ///
-/// Construct with [`Application::proof_format`]. Proof encodings have exactly
+/// Construct with [`Application::proof_format`] or
+/// [`Application::proof_format_with`]. Proof encodings have exactly
 /// [`encoded_len`](Self::encoded_len) bytes; compressed encodings have exactly
 /// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Decoding checks
 /// the exact length, then the envelope, then the payload representation.
@@ -101,12 +105,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> fmt::Debug
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Selects the byte format using identifiers from a trusted setup manifest.
-    ///
-    /// The application supplies the profile, rank and header size. The caller supplies the
-    /// suite and application identifiers described by [`ProofContext`]; they
-    /// cannot be inferred from Rust type names or from untrusted proof bytes.
-    pub fn proof_format(&self, context: ProofContext) -> ProofFormat<C, R, HEADER_SIZE> {
+    /// The byte format of this application's proofs, bound to the
+    /// identifiers [`proof_context`](Self::proof_context) derives from its
+    /// setup.
+    pub fn proof_format(&self) -> ProofFormat<C, R, HEADER_SIZE> {
+        self.proof_format_with(self.proof_context())
+    }
+
+    /// The byte format of this application's proofs, bound to identifiers of
+    /// the caller's own; see [`ProofContext`]. The profile, rank and header
+    /// size come from the application either way.
+    pub fn proof_format_with(&self, context: ProofContext) -> ProofFormat<C, R, HEADER_SIZE> {
         ProofFormat {
             context,
             marker: PhantomData,

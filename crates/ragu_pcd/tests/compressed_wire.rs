@@ -1,5 +1,4 @@
 //! The production compressed-proof transport path and hostile byte boundaries.
-use ragu_pcd::ProofContext;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 #[allow(dead_code)]
@@ -13,11 +12,7 @@ fn compressed_transport_roundtrip_and_rejection() {
     let proof = leaf(&app, &mut rng, 42);
     let data = *proof.data();
     let compressed = app.compress(&proof, &mut rng).unwrap();
-    let context = ProofContext {
-        suite: [31; 32],
-        application: [47; 32],
-    };
-    let format = app.proof_format(context);
+    let format = app.proof_format();
     let bytes = format.encode_compressed(compressed.proof()).unwrap();
     assert_eq!(bytes.len(), format.compressed_encoded_len());
     let decoded = format.decode_compressed(&bytes).unwrap();

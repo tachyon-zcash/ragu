@@ -2,7 +2,7 @@
 //! format: a prelude recording the rank and header size, then the payload the
 //! application's envelope carries.
 
-use ragu_pcd::{CompressedProof, Proof, ProofContext};
+use ragu_pcd::{CompressedProof, Proof};
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, de::value::BorrowedBytesDeserializer};
@@ -17,13 +17,6 @@ const PRELUDE: [u8; 13] = [1, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0];
 /// The envelope `ProofFormat` puts ahead of the same payload.
 const ENVELOPE: usize = 124;
 
-fn context() -> ProofContext {
-    ProofContext {
-        suite: [0x53; 32],
-        application: [0x41; 32],
-    }
-}
-
 #[test]
 fn a_proof_serializes_as_its_payload_behind_a_prelude() {
     let app = app();
@@ -33,7 +26,7 @@ fn a_proof_serializes_as_its_payload_behind_a_prelude() {
     // JSON has no bytes type; the array of numbers is the byte string.
     let bytes: Vec<u8> = serde_json::from_str(&json).unwrap();
     assert_eq!(&bytes[..PRELUDE.len()], &PRELUDE);
-    let envelope = app.proof_format(context()).encode(&proof).unwrap();
+    let envelope = app.proof_format().encode(&proof).unwrap();
     assert_eq!(&bytes[PRELUDE.len()..], &envelope[ENVELOPE..]);
 
     // The deserialized proof re-serializes to the same string.
@@ -65,10 +58,7 @@ fn a_compressed_proof_serializes_as_its_payload_behind_a_prelude() {
     let json = serde_json::to_string(&compressed).unwrap();
     let bytes: Vec<u8> = serde_json::from_str(&json).unwrap();
     assert_eq!(&bytes[..PRELUDE.len()], &PRELUDE);
-    let envelope = app
-        .proof_format(context())
-        .encode_compressed(&compressed)
-        .unwrap();
+    let envelope = app.proof_format().encode_compressed(&compressed).unwrap();
     assert_eq!(&bytes[PRELUDE.len()..], &envelope[ENVELOPE..]);
 
     let decoded: CompressedProof<C> = serde_json::from_str(&json).unwrap();

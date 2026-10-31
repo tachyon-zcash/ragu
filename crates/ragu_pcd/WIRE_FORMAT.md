@@ -1,7 +1,7 @@
 # PCD proof format: envelope v2, payload schemas v1
 
-`Application::proof_format` selects a format using trusted `ProofContext`
-identifiers. The profile, rank and header size determine each payload's length.
+`Application::proof_format` selects a format bound to `ProofContext`
+identifiers, derived from the application's setup or supplied by the caller. The profile, rank and header size determine each payload's length.
 `encoded_len` gives the complete proof size; `compressed_encoded_len` gives the
 complete compressed-proof size. With the `serde` feature, `Proof` and
 `CompressedProof` also serialize directly, as the same payloads behind a short
@@ -46,16 +46,22 @@ Envelope v1 (92 bytes, without the profile tag) is not accepted by this decoder.
 There is no implicit fallback; migrate by decoding with the old format and
 re-encoding under the intended current setup after verification.
 
-The two identifiers come from the receiver's trusted deployment manifest,
-never from the received envelope. They should be collision-resistant digests
-of canonically encoded manifests. The suite manifest identifies the ordered
-curves and fields, their canonical byte encodings, generators, and Poseidon
-parameters. The application manifest identifies the ordered circuits,
-registry setup including tags, and accompanying data/header semantics. Rank
-and header size are additionally checked explicitly. Assign a new identifier
-when any identified configuration changes. Ragu cannot infer these manifests
-from Rust type names and does not compute these caller-owned identifiers.
-An identifier match is a context check, not authentication or verification.
+`Application::proof_context` derives the two identifiers from the application.
+`suite` is a BLAKE2b-256 digest (personalization `ragu-suite-v1`) of both
+curves' generator points, every commitment and blinding generator of both
+curves, and both Poseidon permutations' parameters. `application` is a
+BLAKE2b-256 digest (personalization `ragu-app-v1`) of the two protocol
+transcript tags, the profile name, the rank, the header size, the application
+step count and, per registry, its tag, its circuit count and its registry
+polynomial restricted to a fixed point, so a change to any of these changes
+the identifier. Variable-length inputs are length-prefixed.
+`Application::proof_format_with` takes identifiers of the receiver's own
+instead, for configuration outside Ragu's view such as the semantics of
+accompanying data: use collision-resistant digests of canonical manifests from
+the trusted deployment, never from the received envelope, and assign a new
+identifier whenever the manifest changes. Rank and header size are
+additionally checked explicitly. An identifier match is a context check, not
+authentication or verification.
 
 ## Version and compatibility rules
 
@@ -270,8 +276,9 @@ elements, and the circuit id is a little-endian u32. There are no vector counts.
 The instance uses 93 points and 27 scalars for Standard/Pasta/header-size 4;
 each side adds `6 + 2*rank` points and 21 scalars. At rank 13, the envelope and
 payload together occupy 7,360 bytes. Other profiles obtain counts from their
-component iterators, not from this example. The receiving setup manifest must
-identify the profile and both transcript parameter sets as well as the circuits.
+component iterators, not from this example. The derived application
+identifier covers the profile, both registries and the transcript tags; a
+caller-supplied one must too.
 
 ## Serde
 

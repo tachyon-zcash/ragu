@@ -73,14 +73,7 @@ fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
         !<TestProof as wire::Validate>::encodable(&proof, Dimensions::of::<ProductionRank, 4>()),
         "{field}: the codec check must reject identity"
     );
-    assert!(
-        app.proof_format(crate::ProofContext {
-            suite: [0; 32],
-            application: [0; 32]
-        })
-        .encode(&proof)
-        .is_err()
-    );
+    assert!(app.proof_format().encode(&proof).is_err());
     let bytes = proof.to_bytes();
     let Err(wire::Error::Invalid { reason, .. }) =
         TestProof::from_bytes(&bytes, Dimensions::of::<ProductionRank, 4>())

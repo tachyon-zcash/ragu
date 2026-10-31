@@ -18,8 +18,8 @@
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
 //! - [`Application::proof_format`] — a versioned [`ProofFormat`] for storing
-//!   and transporting both kinds of proof, bound to trusted [`ProofContext`]
-//!   identifiers.
+//!   and transporting both kinds of proof, bound to [`ProofContext`]
+//!   identifiers derived from the application's setup.
 //!
 //! For each payload kind, [`ProofFormat`] accepts exactly one encoded length,
 //! fixed by the profile, rank and header size, and checks envelope, schema and protocol versions,
@@ -457,6 +457,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
+            proof_context: OnceCell::new(),
             context,
             _marker: PhantomData,
         };
@@ -571,6 +572,9 @@ pub struct Application<
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
     seeded_trivial: OnceCell<Proof<C, R>>,
+    /// The identifiers of this setup, derived on first use; see
+    /// [`proof_context`](Self::proof_context).
+    proof_context: OnceCell<ProofContext>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 

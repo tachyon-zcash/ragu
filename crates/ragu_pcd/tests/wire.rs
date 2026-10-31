@@ -1,7 +1,7 @@
 //! Byte round trips of production-rank proofs through the application's
 //! versioned envelope.
 
-use ragu_pcd::{ProofContext, wire::Error};
+use ragu_pcd::wire::Error;
 use ragu_testing::pcd::nontrivial::{InternalNode, LeafNode};
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -11,18 +11,10 @@ use nontrivial_support::{C, R, app, deep, leaf};
 /// The envelope ahead of every payload.
 const ENVELOPE: usize = 124;
 
-/// Fixed test IDs stand in for trusted deployment-manifest digests.
-fn context() -> ProofContext {
-    ProofContext {
-        suite: [0x53; 32],
-        application: [0x41; 32],
-    }
-}
-
 #[test]
 fn seed_proof_round_trips() {
     let app = app();
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, _) = leaf(&app, &mut rng, 7).into_parts();
     let bytes = format.encode(&proof).unwrap();
@@ -37,7 +29,7 @@ fn seed_proof_round_trips() {
 #[ignore]
 fn fused_proof_round_trips() {
     let app = app();
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let (proof, data) = deep(&app).into_parts();
     let bytes = format.encode(&proof).unwrap();
     let decoded = format.decode(&bytes).unwrap();
@@ -54,7 +46,7 @@ fn fused_proof_round_trips() {
 #[test]
 fn decoded_proof_verifies_and_compresses() {
     let app = app();
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
     let decoded = format
@@ -69,7 +61,7 @@ fn decoded_proof_verifies_and_compresses() {
 #[test]
 fn decoded_proof_verifies_and_a_tampered_one_does_not() {
     let app = app();
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
     let bytes = format.encode(&proof).unwrap();
@@ -96,7 +88,7 @@ fn application_envelope_rejects_mismatches_before_payload_decoding() {
     let app = app();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let bytes = format.encode(&proof).unwrap();
     assert_eq!(bytes.len(), format.encoded_len());
     assert_eq!(&bytes[..8], b"RAGUPCD\0");
@@ -159,8 +151,39 @@ fn application_envelope_rejects_mismatches_before_payload_decoding() {
     let other = ragu_pcd::ApplicationBuilder::<C, R, 3>::new()
         .finalize(ragu_pcd::pasta::baked())
         .unwrap()
-        .proof_format(context());
+        .proof_format();
     assert!(matches!(other.decode(&bytes), Err(Error::Length { .. })));
+}
+
+#[test]
+fn derived_context_identifies_the_setup() {
+    let trivial = || {
+        ragu_pcd::ApplicationBuilder::<C, R, 4>::new()
+            .finalize(ragu_pcd::pasta::baked())
+            .unwrap()
+    };
+    // Another build of the same setup derives the same identifiers.
+    let other = trivial();
+    assert_eq!(other.proof_context(), trivial().proof_context());
+    // An application with other steps shares the suite and nothing else, so
+    // its format decodes none of this one's proofs.
+    let app = app();
+    let context = app.proof_context();
+    assert_eq!(other.proof_context().suite, context.suite);
+    assert_ne!(other.proof_context().application, context.application);
+    let mut rng = StdRng::seed_from_u64(0x5eed);
+    let bytes = app
+        .proof_format()
+        .encode(leaf(&app, &mut rng, 7).proof())
+        .unwrap();
+    assert!(matches!(
+        other.proof_format().decode(&bytes),
+        Err(Error::Invalid {
+            offset: 92,
+            reason: "proof application mismatch",
+            ..
+        })
+    ));
 }
 
 /// Reproducible local measurements; excluded from ordinary correctness tests.
@@ -170,7 +193,7 @@ fn wire_measurements() {
     use std::{hint::black_box, time::Instant};
 
     let app = app();
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
     let mut samples = Vec::new();

@@ -24,6 +24,7 @@ use ragu_primitives::vec::Len;
 use udon::{curve::Affine, field::Field};
 
 mod compressed;
+mod context;
 pub(crate) mod format;
 mod polynomial;
 mod registry;

@@ -5,7 +5,6 @@
 //! Raw inputs still exercise the decoder independently of the seed generator.
 use std::sync::LazyLock;
 
-use ragu_pcd::ProofContext;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -16,7 +15,7 @@ static SEED: LazyLock<Seed> = LazyLock::new(|| {
     let app = &APP.0;
     let mut rng = StdRng::seed_from_u64(0x77697265);
     let proof = pcd::seed(app, &mut rng, 42);
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let compressed = app.compress(&proof, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
     Seed {
@@ -30,13 +29,6 @@ struct Seed {
     data: NativeField,
     proof: Vec<u8>,
     compressed: Vec<u8>,
-}
-
-fn context() -> ProofContext {
-    ProofContext {
-        suite: [31; 32],
-        application: [47; 32],
-    }
 }
 
 /// Which wire payload the target exercises.
@@ -114,7 +106,7 @@ fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
 pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
     let bytes = candidate(kind, input);
     let app = &APP.0;
-    let format = app.proof_format(context());
+    let format = app.proof_format();
     let mut outcome = Outcome::default();
     match kind {
         Kind::Proof => {
