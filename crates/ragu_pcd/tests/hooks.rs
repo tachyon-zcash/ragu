@@ -13,16 +13,17 @@ use alloc::{vec, vec::Vec};
 
 use ragu_circuits::polynomials::{ProductionRank, sparse};
 use ragu_core::{
-    Error, Result,
+    Cycle, Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
     pasta::{Fp, Pasta},
 };
-use ragu_primitives::{Element, allocator::Standard};
+use ragu_primitives::{Element, GadgetExt, allocator::Standard, poseidon::Sponge};
 use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
     AppHooks, Application, ApplicationBuilder, HookLayout, Pcd, Proof,
+    poly_commitment::{self, HANDLE_WIRES},
     profile::Profiled,
     step::{Encoded, Index, Step, StepCtx},
 };
@@ -324,6 +325,157 @@ fn a_parent_cannot_discharge_a_swapped_poly_query() -> Result<()> {
     assert!(
         !app.verify_uncompressed(&fused, &mut rng)?,
         "the parent discharged an opening the child's stage does not hold"
+    );
+    Ok(())
+}
+
+/// Gap 1b probe: a seed that opens `q(X) = X - 7` at `x = Poseidon(h_q)`,
+/// where `h_q` is `q`'s honest handle, claiming `q(x) + 1`. It stages `h_q`
+/// but commits `p'`, the constant `q(x) + 1`, so the opening holds for the
+/// polynomial actually committed.
+struct Renamer;
+
+impl Step<Hooked> for Renamer {
+    const INDEX: Index = Index::new(1);
+    type Shared = ();
+    type Witness<'source> = [Fp; HANDLE_WIRES];
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D, Hooked>,
+        name: DriverValue<D, [Fp; HANDLE_WIRES]>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+        ),
+        (),
+        DriverValue<D, ()>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut Standard::new();
+        // x is derived from the staged name, before any polynomial exists.
+        let limbs = [
+            Element::alloc(ctx.dr, allocator, name.as_ref().map(|n| n[0]))?,
+            Element::alloc(ctx.dr, allocator, name.as_ref().map(|n| n[1]))?,
+        ];
+        let mut sponge = Sponge::new(ctx.dr, Pasta::circuit_poseidon(crate::pasta::baked()));
+        limbs.write(ctx.dr, &mut sponge)?;
+        let x = sponge.squeeze(ctx.dr)?;
+        let claim = x.value().map(|x| *x - Fp::from(7u64) + Fp::from(1u64));
+        let forged = claim
+            .as_ref()
+            .map(|c| sparse::Polynomial::<Fp, R>::from_coeffs(vec![*c]));
+        let handle = ctx.witness_polynomial_named(forged, name)?;
+        let y = Element::alloc(ctx.dr, allocator, claim)?;
+        ctx.enforce_poly_query(&handle, x, y)?;
+        Ok((
+            (
+                Encoded::new(ctx.dr, allocator, left)?,
+                Encoded::new(ctx.dr, allocator, right)?,
+                Encoded::new(ctx.dr, allocator, D::unit())?,
+            ),
+            (),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
+fn renamer_app() -> Result<App> {
+    ApplicationBuilder::<Hooked, R, HEADER_SIZE>::new()
+        .register(CommitAndOpen)?
+        .register(Renamer)?
+        .finalize(crate::pasta::baked())
+}
+
+/// The renamer's proof and the hook region its stage holds: its one handle,
+/// then each query's handle, `x` and `y`, all naming `h_q`.
+fn renamed(app: &App, rng: &mut StdRng) -> Result<(Proof<Hooked, R>, Vec<Fp>)> {
+    let q = [-Fp::from(7u64), Fp::from(1u64)];
+    let h_q = poly_commitment::handle::<Hooked>(poly_commitment::commit::<
+        Hooked,
+        R,
+        ragu_backend::ReferenceBackend,
+    >(&q, crate::pasta::baked()))?;
+    let (proof, ()) = app.seed(rng, Renamer, h_q)?.0.into_parts();
+    let mut region = Vec::new();
+    region.extend(h_q);
+    for query in proof.application_poly_queries() {
+        region.extend(h_q);
+        region.push(query.x);
+        region.push(query.y);
+    }
+    Ok((proof, region))
+}
+
+/// Fuses `child` beside an honest seed under an honest step.
+fn fuse_beside(app: &App, rng: &mut StdRng, child: Proof<Hooked, R>) -> Result<Pcd<Hooked, R, ()>> {
+    let sibling = seeded(app, rng, &[3, 1, 4, 1, 5])?;
+    Ok(app
+        .fuse(
+            rng,
+            CommitAndOpen,
+            Opening::honest(&[2, 7, 1], 9),
+            child.carry::<()>(()),
+            sibling,
+        )?
+        .0)
+}
+
+/// Control for [`a_fusing_prover_cannot_rename_a_child_polynomial`]: the
+/// renamed child under an honest parent, whose copy of the handles comes from
+/// the carried commitments. `read_hooks` refuses the copy against the child's
+/// stage, so a child-side rename alone never reaches the handle-to-commitment
+/// seam.
+#[test]
+fn a_child_side_rename_is_refused_by_read_hooks() -> Result<()> {
+    let app = renamer_app()?;
+    let mut rng = StdRng::seed_from_u64(1931);
+    let (mut child, _) = renamed(&app, &mut rng)?;
+    // The root refuses the renamer itself.
+    assert!(!app.verify_uncompressed(&child.clone().carry::<()>(()), &mut rng)?);
+    child.skip_stage_check = true;
+    let fused = fuse_beside(&app, &mut rng, child)?;
+    assert!(!app.verify_uncompressed(&fused, &mut rng)?);
+    Ok(())
+}
+
+/// Gap 1b: the fusing prover copies the child's staged hook region into its
+/// preamble, so `read_hooks` and the one-hot hold, while its nested stash
+/// keeps the commitment the child carries, which the walk folds. The step
+/// opened `q` at `x = Poseidon(h_q)` to a value `q` does not take; the root
+/// must refuse.
+///
+/// Nothing in-circuit ties a handle to the commitment it names, so on the
+/// current code the root accepts this proof: run with `--ignored` to see it
+/// fail.
+#[test]
+#[ignore = "gap 1b: no circuit binds a child's handle to its committed polynomial"]
+fn a_fusing_prover_cannot_rename_a_child_polynomial() -> Result<()> {
+    let app = renamer_app()?;
+    let mut rng = StdRng::seed_from_u64(1930);
+    let (mut child, region) = renamed(&app, &mut rng)?;
+    let query = child.application_poly_queries()[0];
+    assert_ne!(
+        query.y,
+        query.x - Fp::from(7u64),
+        "the claim is false for q"
+    );
+    child.skip_stage_check = true;
+    child.forged_hook_region = Some(region);
+    // The prover completes the fuse; the proof it produces is what must fail.
+    let fused = fuse_beside(&app, &mut rng, child)?;
+    assert!(
+        !app.verify_uncompressed(&fused, &mut rng)?,
+        "the root accepted a polynomial its step named by another polynomial's handle"
     );
     Ok(())
 }

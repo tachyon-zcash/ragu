@@ -1335,6 +1335,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             witness_polys: take!(witness_polys),
             #[cfg(test)]
             skip_stage_check: false,
+            #[cfg(test)]
+            forged_hook_region: None,
         })
     }
 }

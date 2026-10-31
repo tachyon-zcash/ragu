@@ -400,6 +400,13 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// check. Only the stage comparison is skipped; the lengths still hold.
     #[cfg(test)]
     pub(crate) skip_stage_check: bool,
+
+    /// Set by a test standing in for a fusing prover whose preamble copy of
+    /// this proof's hook region is not the one its carried commitments encode,
+    /// while its nested stash still carries those commitments. Read through
+    /// [`preamble_hook_region`](Self::preamble_hook_region).
+    #[cfg(test)]
+    pub(crate) forged_hook_region: Option<Vec<C::CircuitField>>,
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -467,8 +474,14 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     }
 
     /// The hook region a fusing prover copies into its preamble: the one the
-    /// carried hook lists encode.
+    /// carried hook lists encode. A test may forge it, standing in for a
+    /// prover whose copy disagrees with the commitments its nested stash
+    /// carries (see `forged_hook_region`).
     pub(crate) fn preamble_hook_region(&self) -> Result<Vec<C::CircuitField>> {
+        #[cfg(test)]
+        if let Some(region) = &self.forged_hook_region {
+            return Ok(region.clone());
+        }
         self.carried_hook_region()
     }
 

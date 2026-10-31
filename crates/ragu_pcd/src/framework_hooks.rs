@@ -179,6 +179,28 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
         Ok(handle)
     }
 
+    /// [`witness_polynomial`](Self::witness_polynomial), but staging `name`
+    /// as the handle while the commitment and coefficients stay the real
+    /// polynomial's, as a malicious prover could.
+    #[cfg(test)]
+    pub(crate) fn witness_polynomial_named<R: Rank>(
+        &mut self,
+        dr: &mut D,
+        polynomial: DriverValue<D, sparse::Polynomial<C::CircuitField, R>>,
+        name: DriverValue<D, [C::CircuitField; HANDLE_WIRES]>,
+    ) -> Result<PolyHandle<'dr, D, C>> {
+        let coefficients = polynomial.map(|p| p.iter_coeffs().collect());
+        let (_, commitment) =
+            PolyHandle::<'dr, D, C>::new(dr, self.params, self.commit, &coefficients)?;
+        let handle = PolyHandle::alloc(dr, name)?;
+        self.witnessed_polys.push(Witnessed {
+            handle: handle.clone(),
+            commitment,
+            coefficients,
+        });
+        Ok(handle)
+    }
+
     pub(crate) fn evaluate(
         &self,
         handle: &PolyHandle<'dr, D, C>,

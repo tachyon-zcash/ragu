@@ -95,4 +95,16 @@ where
     ) -> Result<()> {
         self.hooks.enforce_poly_query_unchecked(handle, x, y)
     }
+
+    /// [`witness_polynomial`](Self::witness_polynomial), staging `name` as
+    /// the handle of a polynomial it does not name.
+    #[cfg(test)]
+    pub(crate) fn witness_polynomial_named<R: Rank>(
+        &mut self,
+        polynomial: DriverValue<D, sparse::Polynomial<C::CircuitField, R>>,
+        name: DriverValue<D, [C::CircuitField; crate::poly_commitment::HANDLE_WIRES]>,
+    ) -> Result<PolyHandle<'dr, D, C>> {
+        self.hooks
+            .witness_polynomial_named(self.dr, polynomial, name)
+    }
 }
