@@ -51,11 +51,13 @@ A filename or Git commit ID does not replace a content digest.
 
 The `baked` feature and `pasta::baked()` retain Standard's original $2^{13}$
 vector generators per curve. The optional `baked-aggregator` feature adds
-separate $2^{14}$ tables loaded by `pasta::baked_aggregator()`. Enabling or
-loading those tables does not enlarge Standard's parameters. A setup that uses
-the larger parameters must hash and record that selected artifact and feature
-configuration in its own manifest. Existing frozen records remain descriptions
-of their original artifacts; do not rewrite them for a new configuration.
+separate $2^{15}$ tables loaded by `pasta::baked_aggregator()`. Enabling or
+loading those tables does not enlarge Standard's parameters. Compressing needs
+the larger tables whatever the profile, so a setup that compresses uses them. A
+setup that uses the larger parameters must hash and record that selected
+artifact and feature configuration in its own manifest. Existing frozen records
+remain descriptions of their original artifacts; do not rewrite them for a new
+configuration.
 
 For `ragu-setup-manifest-v1`, use JSON objects, arrays, strings, integers,
 booleans, and null; duplicate object keys and floating-point numbers are

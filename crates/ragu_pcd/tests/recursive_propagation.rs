@@ -142,7 +142,7 @@ pub(crate) mod support {
             .register(Merge::new())?
             .register(UnitLeft::new())?
             .register(UnitRight::new())?
-            .finalize(crate::pasta::baked())
+            .finalize(crate::pasta::baked_aggregator())
     }
 
     /// Reuse the deterministic registries and bootstrap proof between test

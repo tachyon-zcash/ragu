@@ -22,7 +22,10 @@ use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd, RegistryTags,
     compress::instance::Instance,
     ipa::IpaCycle,
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
+    profile::{
+        Profile, Profiled, ProfiledCycle, Shape, Standard,
+        testing::{Proving, Twin},
+    },
     step::{Encoded, Index, Step},
 };
 
@@ -345,11 +348,7 @@ where
         .register(Seed { expected })?
         .register(Sum)?
         .with_registry_tags(tags, manifest)?
-        .finalize(if Rk::RANK <= 13 {
-            crate::pasta::baked()
-        } else {
-            crate::pasta::baked_aggregator()
-        })
+        .finalize(crate::pasta::baked_aggregator())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -482,8 +481,8 @@ where
 }
 
 #[test]
-fn standard_cannot_substitute_for_aggregator() -> Result<()> {
-    check_same_shape::<Standard, Aggregator>(
+fn standard_cannot_substitute_for_a_twin_profile() -> Result<()> {
+    check_same_shape::<Standard, Twin>(
         Some(Fp::from(7)),
         Some(Fp::from(7)),
         Fp::from(7),
@@ -492,8 +491,8 @@ fn standard_cannot_substitute_for_aggregator() -> Result<()> {
 }
 
 #[test]
-fn aggregator_cannot_substitute_for_standard() -> Result<()> {
-    check_same_shape::<Aggregator, Standard>(
+fn a_twin_profile_cannot_substitute_for_standard() -> Result<()> {
+    check_same_shape::<Twin, Standard>(
         Some(Fp::from(7)),
         Some(Fp::from(7)),
         Fp::from(7),

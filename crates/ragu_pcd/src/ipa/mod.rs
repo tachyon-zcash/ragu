@@ -30,6 +30,7 @@ mod verifier;
 
 pub use msm::MSM;
 pub use prover::create_proof;
+pub(crate) use transcript::BridgePositions;
 pub use transcript::{CycleTranscript, HostSide, IpaTranscript, NestedSide};
 pub use verifier::{Accumulator, Guard, verify_proof};
 

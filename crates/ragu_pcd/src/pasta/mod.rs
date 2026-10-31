@@ -9,8 +9,10 @@
 //! `baked()` always returns the original Standard-profile tables. The optional
 //! `baked-aggregator` feature adds separate larger tables, loaded only by
 //! `baked_aggregator()`. Enabling it does not enlarge or initialize the Standard
-//! parameters. The larger capacity supports extension tests; the production
-//! Aggregator rank will be fixed with its decompression circuits.
+//! parameters. The larger tables are sized for the aggregator rank, at which
+//! the aggregator profile proves, and compression needs them whatever
+//! the profile: it bridges a proof's values at their positions in the
+//! decompression's stages at that rank, past the end of the Standard tables.
 
 pub use ragu_core::pasta::{Pasta, PastaParams};
 
@@ -22,12 +24,15 @@ pub const DEFAULT_EP_K: usize = 13;
 /// Log2 of the number of Standard-profile Vesta generators.
 pub const DEFAULT_EQ_K: usize = 13;
 
-/// Log2 of the optional Aggregator Pallas table's capacity.
+/// Log2 of the optional Aggregator Pallas table's capacity: the aggregator
+/// rank's (see [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank)).
+/// The vector generators are derived by index, so the table's first $2^{13}$
+/// are the Standard table's.
 #[cfg(feature = "baked-aggregator")]
-pub const AGGREGATOR_EP_K: usize = 14;
+pub const AGGREGATOR_EP_K: usize = 15;
 /// Log2 of the optional Aggregator Vesta table's capacity.
 #[cfg(feature = "baked-aggregator")]
-pub const AGGREGATOR_EQ_K: usize = 14;
+pub const AGGREGATOR_EQ_K: usize = 15;
 
 #[cfg(feature = "baked")]
 mod baked;

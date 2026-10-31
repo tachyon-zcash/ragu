@@ -14,7 +14,7 @@ pub(super) type R = ProductionRank;
 pub(super) const HEADER_SIZE: usize = 4;
 
 pub(super) fn app() -> Application<'static, C, R, HEADER_SIZE> {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon = Pasta::circuit_poseidon(pasta);
     ApplicationBuilder::<C, R, HEADER_SIZE>::new()
         .register(WitnessLeaf {

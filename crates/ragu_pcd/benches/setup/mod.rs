@@ -39,7 +39,7 @@ pub fn setup_seed() -> (
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })

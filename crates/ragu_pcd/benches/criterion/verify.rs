@@ -16,7 +16,7 @@ use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
 fn verify_bench(c: &mut Criterion) {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })

@@ -1,4 +1,5 @@
-//! Additional generators for Aggregator extensions above the Standard rank.
+//! Additional generators reaching the aggregator rank, for its extensions and
+//! for compression.
 
 use lazy_static::lazy_static;
 use udon::curve::{PallasAffine, VestaAffine};
@@ -18,12 +19,17 @@ lazy_static! {
     static ref PARAMETERS: PastaParams = PastaParams::new(generators(PALLAS), generators(VESTA));
 }
 
-/// Returns the optional larger parameters for Aggregator extensions.
+/// Returns the optional larger parameters, which reach the aggregator rank.
 ///
-/// Each curve has $2^{14}$ vector generators, supporting `R<14>` extension
-/// tests. Their $2^{13}$-point prefix, blinding generator and IPA generator
-/// are the Standard parameters' originals. This capacity does not fix the
-/// production Aggregator rank before its decompression circuits land.
+/// Each curve has $2^{15}$ vector generators, the aggregator rank's (see
+/// [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank)). Their
+/// $2^{13}$-point prefix, blinding generator and IPA generator are the
+/// Standard parameters' originals.
+///
+/// An application at the aggregator rank needs them, and so does any
+/// application that compresses, whatever its profile: compression bridges a
+/// proof's values at their positions in the decompression's stages at the
+/// aggregator rank, past the end of the original tables.
 ///
 /// Requires the `baked-aggregator` feature. Only calling this function loads
 /// these larger tables; [`super::baked()`] always loads the original tables.

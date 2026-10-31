@@ -30,7 +30,7 @@ fn bench_compression<B: SelectableBackend>(
     mode: &str,
     workers: usize,
 ) {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
         .with_backend::<B>()
