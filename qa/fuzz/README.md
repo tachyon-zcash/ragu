@@ -443,3 +443,28 @@ these dependencies.
   dummy circuits to arbitrary generated ones.
 - Technique references include Aztec BigField, Aztec Noir/Brillig, TU Vienna Circus,
   and zksecurity "Towards Fuzzing Zero-Knowledge Proof Circuits".
+
+### Proof wire boundaries
+
+`fuzz_proof_wire` and `fuzz_compressed_wire` decode raw bytes and bounded
+mutations of an honest leaf proof generated once per process. The proof path
+compresses and runs production compressed verification; the compressed path
+verifies directly. Every successful decode must reencode identically.
+Malformed inputs may reject at any stage; arbitrary mutations are not assumed
+invalid. The untouched seed must verify.
+
+The first input byte modulo six selects raw remaining bytes, unchanged seed,
+up to 32 five-byte `(little-endian u32 offset, XOR byte)` edits, truncation,
+append (at most 128 bytes), or a canonical scalar replacement. Offsets wrap
+within the generated wire bytes (including the envelope). The three committed files per target under
+`regressions/` are tiny control inputs, not serialized proofs; campaigns and
+coverage replay discover them alongside local seeds. No multi-megabyte fixture
+is stored in git. Proof setup is cached once per process;
+compressing a decoded proof is still a production-rank operation and can take
+seconds per input.
+
+PR CI runs the release `proof_wire::tests::decode_to_verify_smoke` regression,
+which asserts that both unmodified seeds reach production verification, then
+executes both actual target binaries on the committed control inputs. Replay
+locally with `./fuzz.sh regress fuzz_proof_wire` and
+`./fuzz.sh regress fuzz_compressed_wire`.

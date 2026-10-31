@@ -36,6 +36,8 @@ baked-aggregator = ["baked"]
 default = ["alloc"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
+# `serde::{Serialize, Deserialize}` for `Proof` and `CompressedProof`, as their wire bytes.
+serde = ["dep:serde"]
 # Exposes `Application::verify_uncompressed` as a test oracle for the crate's
 # own tests, benchmarks and the fuzz harness. Production verification goes
 # through `Application::verify_compressed`.
@@ -56,6 +58,7 @@ udon = { workspace = true }
 bench = false
 
 [dependencies]
+blake2b_simd = { workspace = true }
 ragu_acceleration = { path = "../ragu_acceleration", version = "0.0.0", default-features = false }
 udon = { workspace = true }
 bento = { workspace = true, optional = true }
@@ -67,9 +70,10 @@ ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 rand = { workspace = true }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
-blake2b_simd = { workspace = true }
+serde_json = "1"
 rand = { workspace = true, features = ["thread_rng"] }
 criterion = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc", "test-utils"] }
@@ -129,3 +133,13 @@ name = "registry_tags"
 
 [[test]]
 name = "rerandomization"
+
+[[test]]
+name = "wire"
+
+[[test]]
+name = "serde"
+required-features = ["serde"]
+
+[[test]]
+name = "compressed_wire"

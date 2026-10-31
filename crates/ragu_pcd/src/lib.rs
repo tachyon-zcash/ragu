@@ -17,6 +17,20 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`Application::proof_format`] — a versioned [`ProofFormat`] for storing
+//!   and transporting both kinds of proof, bound to trusted [`ProofContext`]
+//!   identifiers.
+//!
+//! For each payload kind, [`ProofFormat`] accepts exactly one encoded length,
+//! fixed by the profile, rank and header size, and checks envelope, schema and protocol versions,
+//! rank, header size, suite and application identifiers before decoding proof
+//! data. With the `serde` feature, [`Proof`] and [`CompressedProof`] implement
+//! `Serialize` and `Deserialize` directly, as the same payload behind a prelude
+//! recording the rank and header size, for embedding in a container that
+//! supplies its own context. Decoding is
+//! not verification: a receiver compresses a decoded proof and accepts it on
+//! [`verify_compressed`](Application::verify_compressed). See
+//! `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -51,6 +65,7 @@ pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
 mod verify;
+pub mod wire;
 
 #[cfg(test)]
 #[path = "../tests/setup_binding.rs"]
@@ -83,6 +98,7 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
+pub use wire::format::{ProofContext, ProofFormat};
 
 /// Domain separation tag for the Ragu PCD protocol.
 ///

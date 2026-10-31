@@ -71,6 +71,8 @@ jobs:
           - fuzz_staging
           - fuzz_verify_reject
           - fuzz_verify_reject_full
+          - fuzz_proof_wire
+          - fuzz_compressed_wire
           - fuzz_pcd_lifecycle
           - fuzz_witness_pinning
           - fuzz_circuit_cheat
@@ -201,6 +203,9 @@ jobs:
           INPUT_DIRS=()
           if has_input_files "corpus/${FUZZ_TARGET}"; then
             INPUT_DIRS+=("corpus/${FUZZ_TARGET}")
+          fi
+          if has_input_files "regressions/${FUZZ_TARGET}"; then
+            INPUT_DIRS+=("regressions/${FUZZ_TARGET}")
           fi
           if has_input_files "seeds/${FUZZ_TARGET}"; then
             INPUT_DIRS+=("seeds/${FUZZ_TARGET}")
