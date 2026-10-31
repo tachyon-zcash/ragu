@@ -62,8 +62,9 @@ pub struct ProofContext {
 
 /// A versioned proof format for one application's trusted context.
 ///
-/// Construct with [`Application::proof_format`] or
-/// [`Application::proof_format_with`]. Proof encodings have exactly
+/// Construct with [`Application::proof_format`],
+/// [`Application::proof_format_with`] or, without the application,
+/// [`ProofFormat::new`]. Proof encodings have exactly
 /// [`encoded_len`](Self::encoded_len) bytes; compressed encodings have exactly
 /// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Decoding checks
 /// the exact length, then the envelope, then the payload representation.
@@ -116,7 +117,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// the caller's own; see [`ProofContext`]. The profile, rank and header
     /// size come from the application either way.
     pub fn proof_format_with(&self, context: ProofContext) -> ProofFormat<C, R, HEADER_SIZE> {
-        ProofFormat {
+        ProofFormat::new(context)
+    }
+}
+
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEADER_SIZE> {
+    /// The format of the proofs of an application with these types and
+    /// identifiers, without the application itself: for a receiver that
+    /// decodes another application's proofs, as an aggregator does a
+    /// wallet's compressed proofs, or forwards bytes it does not verify.
+    /// Take the identifiers from that application's
+    /// [`proof_context`](Application::proof_context), published with it.
+    pub fn new(context: ProofContext) -> Self {
+        Self {
             context,
             marker: PhantomData,
         }

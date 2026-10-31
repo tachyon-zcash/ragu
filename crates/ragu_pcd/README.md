@@ -26,7 +26,9 @@ header size: no count or length is read from the payload, and polynomials are
 dense. For storage or transport, `Application::proof_format()` binds the
 envelope to identifiers of the suite and application setup derived from the
 application itself (`Application::proof_context`); `proof_format_with` takes
-identifiers of your own for configuration Ragu cannot see.
+identifiers of your own for configuration Ragu cannot see, and
+`ProofFormat::new` builds the format from published identifiers alone, for a
+receiver without the application.
 `ProofFormat::encode` writes the versioned envelope and proof payload;
 `ProofFormat::decode` rejects any other length before reading a byte, then
 checks versions, rank, header size, an explicit profile tag and context before

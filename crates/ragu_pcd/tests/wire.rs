@@ -184,6 +184,14 @@ fn derived_context_identifies_the_setup() {
             ..
         })
     ));
+    // A receiver without the application builds its format from the
+    // application's published identifiers.
+    let format = ragu_pcd::ProofFormat::<C, R, 4>::new(context);
+    assert_eq!(format.encoded_len(), app.proof_format().encoded_len());
+    assert_eq!(
+        format.encode(&format.decode(&bytes).unwrap()).unwrap(),
+        bytes
+    );
 }
 
 /// Reproducible local measurements; excluded from ordinary correctness tests.

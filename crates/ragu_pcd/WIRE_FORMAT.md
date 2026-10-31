@@ -1,7 +1,9 @@
 # PCD proof format: envelope v2, payload schemas v1
 
 `Application::proof_format` selects a format bound to `ProofContext`
-identifiers, derived from the application's setup or supplied by the caller. The profile, rank and header size determine each payload's length.
+identifiers, derived from the application's setup or supplied by the caller;
+`ProofFormat::new` builds the same format from the identifiers alone, for a
+receiver that decodes another application's proofs. The profile, rank and header size determine each payload's length.
 `encoded_len` gives the complete proof size; `compressed_encoded_len` gives the
 complete compressed-proof size. With the `serde` feature, `Proof` and
 `CompressedProof` also serialize directly, as the same payloads behind a short
