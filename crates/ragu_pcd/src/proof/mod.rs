@@ -14,7 +14,6 @@ mod derive;
 #[cfg(test)]
 #[path = "../../tests/malformed_proofs.rs"]
 mod malformed_proof_tests;
-mod validate;
 #[cfg(test)]
 #[path = "../../tests/wire_validation.rs"]
 mod wire_validation_tests;
@@ -1490,6 +1489,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         };
         rx.scale(C::ScalarField::ONE + C::ScalarField::ONE);
         commitment.0 = ReferenceBackend::sparse_commit_to_affine(rx, C::nested_generators(params));
+    }
+}
+
+impl<G: wire::Validate<wire::Point>> wire::Validate<CachedPoint> for Cached<G> {
+    fn valid(&self, dims: wire::Dimensions) -> bool {
+        <G as wire::Validate<wire::Point>>::valid(&self.0, dims)
     }
 }
 

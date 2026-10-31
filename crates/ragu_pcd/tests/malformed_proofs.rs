@@ -28,19 +28,6 @@ fn fixture() -> (TestApp, TestProof) {
     (app, pcd.into_parts().0)
 }
 
-/// `proof` and its deserialized counterpart, whose derived fields are not
-/// yet set, must both fail the checks that precede derivation.
-fn assert_prepare_rejects(app: &TestApp, proof: &TestProof, field: &str) {
-    let mut deserialized = proof.clone();
-    deserialized.complete = false;
-    for (proof, which) in [(proof, "in memory"), (&deserialized, "deserialized")] {
-        assert!(
-            matches!(app.prepare(proof), Err(ragu_core::Error::InvalidWitness(_))),
-            "{field} ({which}): preparation must reject before derivation"
-        );
-    }
-}
-
 // A vector of another length has no encoding (debug builds assert while
 // encoding it) and a payload of another length is rejected before a byte is
 // interpreted, so malformed shapes are checked at the in-memory boundaries.
@@ -49,7 +36,6 @@ fn assert_rejected(app: &TestApp, proof: TestProof, field: &str) {
         !proof.well_formed::<4>(),
         "{field}: the shape check must fail"
     );
-    assert_prepare_rejects(app, &proof, field);
     let result = app.verify_uncompressed(&proof.carry::<()>(()), StdRng::seed_from_u64(5678));
     assert!(
         matches!(&result, Ok(false)),
@@ -102,7 +88,6 @@ fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
         panic!("{field}: expected the decoder to reject the identity")
     };
     assert_eq!(reason, "identity point", "{field}");
-    assert_prepare_rejects(app, &proof, field);
     let result = app.verify_uncompressed(&proof.carry::<()>(()), StdRng::seed_from_u64(5678));
     assert!(
         matches!(&result, Ok(false)),
@@ -182,36 +167,4 @@ fn rejects_malformed_child_header_lengths() {
             );
         }
     }
-}
-
-#[test]
-fn prepare_rejects_out_of_domain_circuit_before_derivation_or_compression() {
-    let (app, mut proof) = fixture();
-    proof.circuit_id = ragu_circuits::registry::CircuitIndex::from_u32(u32::MAX);
-    assert_prepare_rejects(&app, &proof, "circuit id");
-    let pcd = proof.carry::<()>(());
-    assert!(matches!(
-        app.compress(&pcd, &mut StdRng::seed_from_u64(1)),
-        Err(ragu_core::Error::InvalidWitness(_))
-    ));
-    assert!(matches!(
-        app.verify_uncompressed(&pcd, StdRng::seed_from_u64(1)),
-        Ok(false)
-    ));
-}
-
-#[test]
-fn prepare_rejects_unliftable_challenges_of_an_in_memory_proof() {
-    use udon::field::Field;
-    let (app, mut proof) = fixture();
-    proof.w = -ragu_core::pasta::Fp::ONE;
-    let pcd = proof.carry::<()>(());
-    assert!(matches!(
-        app.compress(&pcd, &mut StdRng::seed_from_u64(1)),
-        Err(ragu_core::Error::InvalidWitness(_))
-    ));
-    assert!(matches!(
-        app.verify_uncompressed(&pcd, StdRng::seed_from_u64(1)),
-        Ok(false)
-    ));
 }

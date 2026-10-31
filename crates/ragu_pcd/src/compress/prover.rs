@@ -3,7 +3,7 @@
 use alloc::borrow::Cow;
 
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::{FixedGenerators, Result};
+use ragu_core::{Error, FixedGenerators, Result};
 use rand::CryptoRng;
 use udon::curve::Affine;
 
@@ -46,23 +46,27 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     ///
     /// The result carries the proof's instance and, on each curve, the
     /// messages of the revdot reduction, the batch and the IPA opening, in
-    /// place of the proof's polynomials. Compression checks the proof's shape, point slots, circuit domain and
-    /// cached challenge ranges but not its validity: [`verify_compressed`](Self::verify_compressed)
+    /// place of the proof's polynomials. Compression checks the proof's shape
+    /// but not its validity: [`verify_compressed`](Self::verify_compressed)
     /// judges the instance the proof commits to, as `verify_uncompressed`
     /// judges the proof.
     ///
     /// # Errors
     ///
-    /// Returns [`ragu_core::Error::InvalidWitness`] if the proof fails structural preflight.
+    /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
-        // A deserialized proof's derived fields are filled here, from the
-        // fields it retains, before anything reads them.
-        let (proof, _) = self.prepare(pcd.proof())?;
-        let proof = &*proof;
+        let proof = pcd.proof();
+        if !proof.well_formed::<HEADER_SIZE>() {
+            return Err(Error::InvalidWitness("malformed proof shape".into()));
+        }
+        // A deserialized proof's encoding omits the values derived from its
+        // other fields; fill them before anything reads them.
+        let pcd = self.complete(pcd)?;
+        let proof = pcd.proof();
         let instance = Instance::of::<R, HEADER_SIZE>(proof)?;
         // The challenges as the proof stores them: a cache of the fuse's own
         // squeezes, which the decider holds to the transcript. `Instance::of`

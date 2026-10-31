@@ -1,16 +1,17 @@
 //! The values a proof's encoding omits, derived from the ones it retains by
 //! the same rules the verifier holds them to.
 
-use alloc::sync::Arc;
+use alloc::{borrow::Cow, sync::Arc};
 
 use ragu_circuits::{polynomials::Rank, staging::StageExt as _};
 use ragu_core::{Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt as _, Point};
 use udon::field::Field;
 
-use super::{Cached, Proof, ProofDerived, bridge_alpha_power};
+use super::{Cached, Pcd, Proof, ProofDerived, bridge_alpha_power};
 use crate::{
     Application, RAGU_TAG, SelectableBackend,
+    header::Header,
     internal::{
         nested::{
             self, RxIndex,
@@ -24,6 +25,35 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    /// The proof-carrying data with every field of its proof set: borrowed
+    /// when the proof was built in memory, or a copy with the derived fields
+    /// filled when it was deserialized.
+    ///
+    /// Expects a proof whose shape the calling method has checked.
+    pub(crate) fn complete<'p, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &'p Pcd<C, R, H>,
+    ) -> Result<Cow<'p, Pcd<C, R, H>>> {
+        if pcd.proof.complete {
+            return Ok(Cow::Borrowed(pcd));
+        }
+        let mut pcd = pcd.clone();
+        self.derive(&mut pcd.proof)?;
+        Ok(Cow::Owned(pcd))
+    }
+
+    /// [`complete`](Self::complete) for proof-carrying data the caller gives
+    /// up, filling its proof in place.
+    pub(crate) fn complete_owned<H: Header<C::CircuitField>>(
+        &self,
+        mut pcd: Pcd<C, R, H>,
+    ) -> Result<Pcd<C, R, H>> {
+        if !pcd.proof.complete {
+            self.derive(&mut pcd.proof)?;
+        }
+        Ok(pcd)
+    }
+
     /// Fills a deserialized proof's derived fields.
     ///
     /// The challenges are squeezed from the transcript over the bridge
@@ -33,8 +63,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     /// None of these is read from the encoding, so a deserialized proof
     /// carries only values this application derives itself.
     ///
-    /// Expects a proof that passed the structural checks of
-    /// [`prepare`](Self::prepare), which precede every call.
+    /// Expects a proof whose shape the calling method has checked.
     ///
     /// # Errors
     ///

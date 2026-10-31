@@ -92,7 +92,7 @@ impl<C: ProfiledCycle> Framed for CompressedProof<C> {
             rank: u32::try_from(self.native.opening.rounds.len()).ok()?,
             header_size: self.instance.left_header.len(),
         };
-        (Self::admits(dims).is_ok() && self.well_formed_in(dims)).then_some(dims)
+        (Self::admits(dims).is_ok() && <Self as wire::Validate>::valid(self, dims)).then_some(dims)
     }
 
     fn admits(dims: Dimensions) -> Result<(), &'static str> {

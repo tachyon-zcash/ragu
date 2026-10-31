@@ -162,7 +162,10 @@ fn rejects_what_the_decider_rejects() {
         edit(&app, &mut proof);
         proof.carry::<Value>(data)
     };
-    let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 3] = [
+    let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 4] = [
+        ("circuit id out of the domain", |_, p| {
+            p.circuit_id = CircuitIndex::new(u32::MAX as usize)
+        }),
         ("left header element", |_, p| p.left_header[0] += Fp::ONE),
         ("polynomial with a stale commitment", |_, p| {
             p.native_a_poly
@@ -193,16 +196,13 @@ fn rejects_what_the_decider_rejects() {
         );
     }
 
-    let malformed_inputs: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 3] = [
-        ("circuit id out of the domain", |_, p| {
-            p.circuit_id = CircuitIndex::new(u32::MAX as usize)
-        }),
+    let malformed_headers: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 2] = [
         ("left header too long", |_, p| p.left_header.push(Fp::ZERO)),
         ("right header too short", |_, p| {
             p.right_header.pop();
         }),
     ];
-    for (case, edit) in malformed_inputs {
+    for (case, edit) in malformed_headers {
         let pcd = edited(edit);
         assert!(!decides(&app, &pcd, 2), "{case}: the decider rejects");
         assert!(
@@ -210,7 +210,7 @@ fn rejects_what_the_decider_rejects() {
                 app.compress(&pcd, &mut StdRng::seed_from_u64(3)),
                 Err(Error::InvalidWitness(_))
             ),
-            "{case}: compression rejects the malformed structure"
+            "{case}: compression rejects the malformed shape"
         );
     }
 }

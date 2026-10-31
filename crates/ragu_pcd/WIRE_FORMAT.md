@@ -295,11 +295,10 @@ prefer `ProofFormat` for storage and transport. As there, a deserialized
 The same codec declarations generate retained-field validation for proofs and
 for compressed messages. Fixed vectors check their expected length before
 traversal; point slots reject identity. Every application method that takes a
-proof (fusion, compression and verification) first runs these checks and the
-circuit-domain check, then derives a decoded proof's omitted fields: its
-challenges are reconstructed from the bridge commitments and their lifts
-checked, since they are not carried in the payload. An in-memory proof's own
-challenges have their lifts checked at the same point.
+proof (fusion, compression and verification) first checks its shape, then
+derives a decoded proof's omitted fields: its challenges are reconstructed from
+the bridge commitments, since they are not carried in the payload, and a
+decoded proof whose challenges have no lift is rejected.
 
 Malformed proof failures become `Ok(false)` at the verification boundary.
 Decoders continue to return representation errors, and application header or

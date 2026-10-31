@@ -8,7 +8,7 @@ use ragu_circuits::polynomials::Rank;
 use crate::{
     Application, CompressedProof, Proof, SelectableBackend,
     profile::{Profile, ProfiledCycle},
-    wire::{Decode, Dimensions, Encode, Error, Reader},
+    wire::{Decode, Dimensions, Encode, Error, Reader, Validate},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
@@ -104,7 +104,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
     /// BLAKE2b-256 hashes the UTF-8 bytes of [`Profile::NAME`] with
     /// personalization `ragu-profile-v1`. Names must be stable and unique as
     /// required by `Profile`; this tag does not replace the complete setup ID.
-    pub fn profile_tag(&self) -> [u8; 32] {
+    fn profile_tag(&self) -> [u8; 32] {
         let hash = blake2b_simd::Params::new()
             .hash_length(32)
             .personal(b"ragu-profile-v1")
@@ -141,7 +141,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
     /// verify the proof. Payload kind 2 distinguishes it from an uncompressed
     /// proof.
     pub fn encode_compressed(&self, proof: &CompressedProof<C>) -> Result<Vec<u8>, Error<'static>> {
-        if !proof.well_formed::<R, HEADER_SIZE>() {
+        if !<CompressedProof<C> as Validate>::valid(proof, Self::dims()) {
             return Err(Error::Invalid {
                 offset: 0,
                 bytes: &[],

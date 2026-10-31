@@ -33,9 +33,10 @@ fn decoded_proof_derives_its_omitted_fields_and_rejects_wrong_vector_lengths() {
     // The encoding holds the retained fields alone, and re-encodes to itself.
     assert!(!decoded.complete);
     assert_eq!(decoded.to_bytes(), bytes);
-    // Preparing derives every other field, equal to the original's.
-    let (prepared, _) = app.prepare(&decoded).unwrap();
-    assert_eq!(proof.test_mismatch(&prepared), None);
+    // Deriving fills every other field, equal to the original's.
+    let mut derived = decoded.clone();
+    app.derive(&mut derived).unwrap();
+    assert_eq!(proof.test_mismatch(&derived), None);
     assert!(
         app.verify_uncompressed(&decoded.carry::<()>(()), &mut rng)
             .unwrap()
