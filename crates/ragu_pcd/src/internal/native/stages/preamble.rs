@@ -203,6 +203,27 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             .map(Some)
     }
 
+    /// The [`read_hooks`] circuit's $k(y)$ over this child's application
+    /// stage: the handles, then the poly-queries, in the order the adapter
+    /// staged them, so the claim holds only if these wires are the ones the
+    /// child's stage holds. `None` for a profile that does not
+    /// [`reads_hooks`](crate::internal::native::reads_hooks).
+    ///
+    /// The claim's trace is the stage polynomial alone, which has no `ONE`
+    /// wire, so the constant term is zero rather than the usual one.
+    ///
+    /// [`read_hooks`]: super::super::circuits::read_hooks
+    pub fn hooks_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Option<Element<'dr, D>>> {
+        if !crate::internal::native::reads_hooks::<C::Profile>() {
+            return Ok(None);
+        }
+        let mut ky = Horner::new(y);
+        self.witness_polys.write(dr, &mut ky)?;
+        self.poly_queries.write(dr, &mut ky)?;
+        Element::zero(dr).write(dr, &mut ky)?;
+        Ok(Some(ky.finish(dr)))
+    }
+
     /// Returns true when the current step declared a [`Dummy`] input for
     /// this child — which only the internal [`Bootstrap`] step can, so this is
     /// exactly the base case. See [`Bootstrap`] for why that holds.

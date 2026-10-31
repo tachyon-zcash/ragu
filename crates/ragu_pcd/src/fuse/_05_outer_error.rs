@@ -156,6 +156,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_statement,
                     left_binding,
                     right_binding,
+                )
+                .with_hooks(
+                    preamble.left.hooks_ky(dr, &y)?,
+                    preamble.right.hooks_ky(dr, &y)?,
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 

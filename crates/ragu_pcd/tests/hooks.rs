@@ -9,7 +9,7 @@
 //! what the verifier's checks are for, so those cases edit a proof's fields
 //! directly.
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use ragu_circuits::polynomials::{ProductionRank, sparse};
 use ragu_core::{
@@ -218,5 +218,112 @@ fn a_poly_query_with_a_false_value_is_refused() -> Result<()> {
             proof.application_poly_queries[slot].y += Fp::from(1u64);
         })?;
     }
+    Ok(())
+}
+
+/// A seed that witnesses $p(X) = 3 + X$ and records the false opening
+/// $p(2) = 6$, skipping the prover's courtesy check as a malicious prover
+/// would. Its application stage holds that opening.
+struct Liar;
+
+impl Step<Hooked> for Liar {
+    const INDEX: Index = Index::new(1);
+    type Shared = ();
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D, Hooked>,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+        ),
+        (),
+        DriverValue<D, ()>,
+        DriverValue<D, ()>,
+    )> {
+        let handle = ctx.witness_polynomial(D::just(|| {
+            sparse::Polynomial::<Fp, R>::from_coeffs(vec![Fp::from(3u64), Fp::from(1u64)])
+        }))?;
+        let allocator = &mut Standard::new();
+        let x = Element::alloc(ctx.dr, allocator, D::just(|| Fp::from(2u64)))?;
+        let y = Element::alloc(ctx.dr, allocator, D::just(|| Fp::from(6u64)))?;
+        ctx.enforce_poly_query_unchecked(&handle, x, y)?;
+        Ok((
+            (
+                Encoded::new(ctx.dr, allocator, left)?,
+                Encoded::new(ctx.dr, allocator, right)?,
+                Encoded::new(ctx.dr, allocator, D::unit())?,
+            ),
+            (),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
+/// A fusing prover that discharges a true opening in place of the false one
+/// its child's step recorded must not produce a proof that verifies.
+///
+/// The forgery edits only what the parent reads: the child's carried
+/// poly-query takes the true value $p(2) = 5$, while the child's application
+/// stage, and with it the step the child proved, keeps the false $6$. The
+/// child is marked to skip the stage comparison in
+/// [`has_shape`](Proof::has_shape), which a malicious prover runs on itself
+/// or not at all. Below the root, only a circuit can tie the parent's copy to
+/// the child's stage: the `read_hooks` claim.
+#[test]
+fn a_parent_cannot_discharge_a_swapped_poly_query() -> Result<()> {
+    let app = ApplicationBuilder::<Hooked, R, HEADER_SIZE>::new()
+        .register(CommitAndOpen)?
+        .register(Liar)?
+        .finalize(crate::pasta::baked())?;
+    let mut rng = StdRng::seed_from_u64(930);
+    let liar = app.seed(&mut rng, Liar, ())?.0;
+    let sibling = app
+        .seed(&mut rng, CommitAndOpen, Opening::honest(&[3, 1, 4], 11))?
+        .0;
+    let opening = || Opening::honest(&[2, 7, 1], 9);
+
+    // Controls: the root refuses the false opening, and so does an honest
+    // parent, which discharges it.
+    assert!(!app.verify_uncompressed(&liar, &mut rng)?);
+    let honest = app.fuse(
+        &mut rng,
+        CommitAndOpen,
+        opening(),
+        liar.clone(),
+        sibling.clone(),
+    );
+    let honest_verifies = match honest {
+        Ok((pcd, ())) => app.verify_uncompressed(&pcd, &mut rng)?,
+        Err(_) => false,
+    };
+    assert!(!honest_verifies);
+
+    let (mut forged, ()) = liar.into_parts();
+    forged.application_poly_queries[0].y = Fp::from(5u64);
+    forged.skip_stage_check = true;
+    // The prover completes the fuse; the proof it produces is what fails.
+    let (fused, ()) = app.fuse(
+        &mut rng,
+        CommitAndOpen,
+        opening(),
+        forged.carry::<()>(()),
+        sibling,
+    )?;
+    assert!(
+        !app.verify_uncompressed(&fused, &mut rng)?,
+        "the parent discharged an opening the child's stage does not hold"
+    );
     Ok(())
 }

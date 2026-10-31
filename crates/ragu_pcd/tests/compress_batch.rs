@@ -364,6 +364,7 @@ fn native_batch_opens_through_the_ipa() {
         application: targets.application + Fp::ONE,
         statement: targets.statement,
         binding: targets.binding,
+        hooks: targets.hooks,
     };
     let (mut verifier, wrong_openings) = native_verifier(&app, proof, y, z, &wrong, &reduction);
     let (at_zero, honest) = (

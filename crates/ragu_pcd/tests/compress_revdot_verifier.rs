@@ -168,6 +168,7 @@ fn claim_targets_match_positional_ky_values() {
         application: Fp::from(7),
         statement: None,
         binding: None,
+        hooks: None,
     };
     let masked = [Masked::new(
         native::RxComponent::AbA,

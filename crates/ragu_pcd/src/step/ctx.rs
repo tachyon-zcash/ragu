@@ -83,4 +83,16 @@ where
     ) -> Result<()> {
         self.hooks.enforce_poly_query(handle, x, y)
     }
+
+    /// [`enforce_poly_query`](Self::enforce_poly_query) without the prover's
+    /// courtesy check, for tests that record a false opening.
+    #[cfg(test)]
+    pub(crate) fn enforce_poly_query_unchecked(
+        &mut self,
+        handle: &PolyHandle<'dr, D, C>,
+        x: Element<'dr, D>,
+        y: Element<'dr, D>,
+    ) -> Result<()> {
+        self.hooks.enforce_poly_query_unchecked(handle, x, y)
+    }
 }

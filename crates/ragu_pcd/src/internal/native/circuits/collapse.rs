@@ -244,6 +244,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             right_statement,
             left_binding,
             right_binding,
+        )
+        // Each child's hook-region k(y), over the preamble's copy of its
+        // hooks, so that the reader's claim over the child's application
+        // stage holds only if the copy is what the stage holds.
+        .with_hooks(
+            preamble.left.hooks_ky(dr, &y)?,
+            preamble.right.hooks_ky(dr, &y)?,
         );
         let mut ky = ky_values::<C::Profile, _>(&ky);
 

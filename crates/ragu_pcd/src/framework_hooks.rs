@@ -5,7 +5,9 @@
 //! Nothing a hook produces is enforced here. It lands in the hook region of
 //! the proof's application stage, padded to the [`HookLayout`], and the parent
 //! fuse, or the verifier for a proof that is never fused, discharges it. The
-//! parent works from its own copy of the region in its preamble.
+//! parent works from its own copy of the region in its preamble, which a
+//! `read_hooks` claim over the child's stage binds to what the child's step
+//! staged.
 
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
@@ -236,6 +238,21 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> FrameworkHooks<'dr, D, 
             }
         })?;
 
+        self.record_poly_query(handle, commitment, x, y);
+        Ok(())
+    }
+
+    /// [`enforce_poly_query`](Self::enforce_poly_query) without the prover's
+    /// courtesy check, so a test can stand in for a prover that records a
+    /// false opening.
+    #[cfg(test)]
+    pub(crate) fn enforce_poly_query_unchecked(
+        &mut self,
+        handle: &PolyHandle<'dr, D, C>,
+        x: Element<'dr, D>,
+        y: Element<'dr, D>,
+    ) -> Result<()> {
+        let commitment = self.witnessed_of(handle)?.map(|(commitment, _)| commitment);
         self.record_poly_query(handle, commitment, x, y);
         Ok(())
     }

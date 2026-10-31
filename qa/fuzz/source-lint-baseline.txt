@@ -5,7 +5,7 @@ RAGU005|crates/ragu_circuits/src/horner.rs|61|The first write seeds the accumula
 RAGU004|crates/ragu_circuits/src/raw.rs|171|The SYSTEM gate's A, B, and C wires are intentionally inaccessible; only its Extra handle initializes ONE.
 RAGU004|crates/ragu_circuits/src/raw.rs|172|The reserved extra wire is intentionally consumed only to pin it to zero.
 RAGU005|crates/ragu_core/src/drivers/emulator.rs|354|Known prediction bypasses execution only in the constraint-free Wire-equals-unit emulator.
-RAGU005|crates/ragu_pcd/src/framework_hooks.rs|273|Padding is needed only when the structural count of poly-query calls falls short of the compile-time hook layout; its two wires are allocated once and shared by every padding query.
+RAGU005|crates/ragu_pcd/src/framework_hooks.rs|290|Padding is needed only when the structural count of poly-query calls falls short of the compile-time hook layout; its two wires are allocated once and shared by every padding query.
 RAGU005|crates/ragu_pcd/src/step/encoder.rs|97|The enum structurally distinguishes a pre-encoded value from one requiring conversion.
 RAGU005|crates/ragu_pcd/src/step/internal/adapter.rs|230|The hook region's length is the structural count of hook calls checked against the compile-time hook layout before any stage wire is bound; a mismatch aborts synthesis.
 RAGU005|crates/ragu_pcd/src/step/internal/adapter.rs|247|Shared collection length is checked against the fixed wire schema after bind_shared constrains every actual wire; a mismatch aborts synthesis.
@@ -31,4 +31,5 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|254|Save behavior is selected
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is structural sponge state, not a circuit witness.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|183|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|192|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
+RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|217|Whether a profile's steps witness polynomials, and so have a hook region to read, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
+RAGU005|crates/ragu_pcd/src/internal/ky.rs|201|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.

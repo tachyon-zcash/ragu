@@ -1297,6 +1297,10 @@ fn test_extension_claims_follow_the_declaration() {
             [70, 71].into_iter()
         }
 
+        fn hooks_ky(&self) -> impl Iterator<Item = u32> {
+            core::iter::empty()
+        }
+
         fn zero(&self) -> u32 {
             0
         }

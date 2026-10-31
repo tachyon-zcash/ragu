@@ -21,7 +21,7 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, vec::Len};
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, ReadsHooks, RxComponent, RxIndex};
 use crate::{
     internal::claims::{Builder, Source, sum_polynomials},
     profile::Profile,
@@ -329,6 +329,15 @@ where
                 }
             }
 
+            // read_hooks: the application stage alone, against the hook
+            // region the parent read (k(y) = `hooks_ky`). The reader has no
+            // trace of its own.
+            ReadHooksCircuit => {
+                for stage in source.rx(Rx(RxIndex::ApplicationStage)) {
+                    processor.internal_circuit_claim(id, once(stage));
+                }
+            }
+
             // An extension bonding: a stage's mask over its rx, or a final
             // mask over its circuits' rxs
             ExtensionBonding(j) => {
@@ -463,6 +472,13 @@ pub trait KySource {
     /// computes it, and none for a profile without one.
     fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the hook-region reader: the $k(y)$ of the
+    /// hook region the verifier holds for that proof, as
+    /// [`hooks_ky`](super::stages::preamble::ProofInputs::hooks_ky)
+    /// computes it, and none for a profile that does not
+    /// [`reads_hooks`](super::reads_hooks).
+    fn hooks_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// The zero value for stage claims.
     fn zero(&self) -> Self::Ky;
 }
@@ -509,6 +525,14 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 }
             })
         })
+        .chain({
+            let hooks: Vec<S::Ky> = source.hooks_ky().collect();
+            assert!(
+                hooks.len() == source.ones().count() * ReadsHooks::<P>::len(),
+                "a profile that reads hooks takes one hook-region value per proof"
+            );
+            hooks
+        })
 }
 
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
@@ -524,6 +548,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_statement: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
     pub right_binding: Option<Element<'dr, D>>,
+    pub left_hooks: Option<Element<'dr, D>>,
+    pub right_hooks: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
@@ -557,8 +583,24 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_statement,
             left_binding,
             right_binding,
+            left_hooks: None,
+            right_hooks: None,
             one: Element::one(),
             zero: Element::zero(dr),
+        }
+    }
+
+    /// The children's hook-region $k(y)$ values, `None` for a profile that
+    /// does not [`reads_hooks`](super::reads_hooks).
+    pub fn with_hooks(
+        self,
+        left_hooks: Option<Element<'dr, D>>,
+        right_hooks: Option<Element<'dr, D>>,
+    ) -> Self {
+        Self {
+            left_hooks,
+            right_hooks,
+            ..self
         }
     }
 }
@@ -597,6 +639,13 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
         self.left_binding
             .iter()
             .chain(self.right_binding.iter())
+            .cloned()
+    }
+
+    fn hooks_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        self.left_hooks
+            .iter()
+            .chain(self.right_hooks.iter())
             .cloned()
     }
 

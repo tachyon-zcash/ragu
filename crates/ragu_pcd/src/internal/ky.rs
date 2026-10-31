@@ -66,6 +66,11 @@ pub struct NativeKy<F> {
     /// The binding circuit's $k(y)$, for a profile whose native extension
     /// has one; `None` for a profile without one.
     pub binding: Option<F>,
+    /// The hook-region reader's $k(y)$ over the proof's carried hook lists,
+    /// for a profile that
+    /// [`reads_hooks`](crate::internal::native::reads_hooks); `None`
+    /// otherwise.
+    pub hooks: Option<F>,
 }
 
 impl<F: Field> native::claims::KySource for NativeKy<F> {
@@ -97,6 +102,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
 
     fn binding_ky(&self) -> impl Iterator<Item = F> + Clone {
         self.binding.into_iter()
+    }
+
+    fn hooks_ky(&self) -> impl Iterator<Item = F> {
+        self.hooks.into_iter()
     }
 
     fn zero(&self) -> F {
@@ -264,6 +273,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, bound.as_ref().map(|b| b.as_slice()))?;
+        let hooks = proof_inputs.hooks_ky(dr, &y)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
@@ -271,6 +281,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
+            hooks: hooks.map(|ky| *ky.value().take()),
         })
     })
 }
@@ -353,6 +364,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, parts.as_ref().map(|p| p.nested_bound))?;
+        let hooks = proof_inputs.hooks_ky(dr, &y)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
@@ -360,6 +372,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
+            hooks: hooks.map(|ky| *ky.value().take()),
         })
     })
 }

@@ -120,6 +120,24 @@ impl<P: Profile> Len for NumExtensionBondings<P> {
     }
 }
 
+/// Whether profile `P`'s steps have a hook region, so that it registers
+/// [`circuits::read_hooks`] and makes one claim with it per child. A profile
+/// that declares poly-queries also witnesses polynomials (see
+/// [`Profile::check`]), since a padding poly-query has to open one.
+pub const fn reads_hooks<P: Profile>() -> bool {
+    P::WITNESS_POLYS > 0
+}
+
+/// Length type for the hook-region readers in profile `P`: one if it
+/// [`reads_hooks`], else none.
+pub struct ReadsHooks<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for ReadsHooks<P> {
+    fn len() -> usize {
+        reads_hooks::<P>() as usize
+    }
+}
+
 // Unlike `FixedVec::try_from_fn`, these value containers also propagate errors
 // other than `ragu_core::Error`. The index range fixes the length before `f` runs.
 fn try_fixed_vec<T, L: Len, E>(
@@ -220,6 +238,7 @@ pub mod circuits {
     pub mod hashes_1;
     pub mod hashes_2;
     mod poly_query;
+    pub mod read_hooks;
 }
 
 pub mod claims;
@@ -247,6 +266,10 @@ pub enum InternalCircuitIndex {
     /// A circuit of the profile's native extension (see
     /// [`Extension`](crate::profile::Extension)).
     ExtensionCircuit(u32),
+    /// The children's hook-region reader (see
+    /// [`read_hooks`](circuits::read_hooks)), registered only by a profile
+    /// that [`reads_hooks`].
+    ReadHooksCircuit,
     // Native stages
     PreambleStage,
     InnerErrorStage,
@@ -352,33 +375,47 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_INTERNAL + NumSteps::<P>::len() + P::native_extension().internal()
+        NUM_FIXED_INTERNAL
+            + NumSteps::<P>::len()
+            + P::native_extension().internal()
+            + ReadsHooks::<P>::len()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
-    /// profile's extension circuits after the walk and its bondings last.
+    /// profile's extension circuits after the walk, the hook-region reader
+    /// after them if the profile [`reads_hooks`], and its bondings last.
     pub fn all<P: Profile>() -> Vec<Self> {
         let extension = P::native_extension();
         let all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
             extension.bondings(),
+            reads_hooks::<P>(),
         );
         assert_eq!(all.len(), Self::num::<P>());
         all
     }
 
     /// [`ALL`](Self::ALL) with the walk resized to `num_steps` steps,
-    /// `circuits` extension circuits after it and `bondings` extension
-    /// bondings after the fuse's masks.
-    pub(crate) fn all_with(num_steps: usize, circuits: usize, bondings: usize) -> Vec<Self> {
-        let mut all = Vec::with_capacity(NUM_FIXED_INTERNAL + num_steps + circuits + bondings);
+    /// `circuits` extension circuits after it, the hook-region reader after
+    /// them when `reads_hooks`, and `bondings` extension bondings after the
+    /// fuse's masks.
+    pub(crate) fn all_with(
+        num_steps: usize,
+        circuits: usize,
+        bondings: usize,
+        reads_hooks: bool,
+    ) -> Vec<Self> {
+        let mut all = Vec::with_capacity(
+            NUM_FIXED_INTERNAL + num_steps + circuits + bondings + reads_hooks as usize,
+        );
         for &id in &Self::ALL {
             match id {
                 Self::EndoscalingStep(0) => {
                     all.extend((0..num_steps as u32).map(Self::EndoscalingStep));
                     all.extend((0..circuits as u32).map(Self::ExtensionCircuit));
+                    all.extend(reads_hooks.then_some(Self::ReadHooksCircuit));
                 }
                 Self::EndoscalingStep(_) => {}
                 id => all.push(id),
@@ -410,7 +447,8 @@ impl InternalCircuitIndex {
             | BindBetaCircuit
             | BindEndoscalarCircuit
             | EndoscalingStep(_)
-            | ExtensionCircuit(_) => false,
+            | ExtensionCircuit(_)
+            | ReadHooksCircuit => false,
             PreambleStage
             | InnerErrorStage
             | OuterErrorStage
@@ -453,6 +491,8 @@ pub struct InternalCircuitValues<T, P: Profile> {
     pub endoscaling_step_circuits: FixedVec<T, NumSteps<P>>,
     /// One per circuit of the profile's native extension.
     pub extension_circuits: FixedVec<T, NumExtensionCircuits<P>>,
+    /// The hook-region reader, for a profile that [`reads_hooks`].
+    pub read_hooks_circuit: FixedVec<T, ReadsHooks<P>>,
     pub preamble_stage: T,
     pub inner_error_stage: T,
     pub outer_error_stage: T,
@@ -505,6 +545,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             BindEndoscalarCircuit => &self.bind_endoscalar_circuit,
             EndoscalingStep(step) => &self.endoscaling_step_circuits[step as usize],
             ExtensionCircuit(k) => &self.extension_circuits[k as usize],
+            ReadHooksCircuit => &self.read_hooks_circuit[0],
             PreambleStage => &self.preamble_stage,
             InnerErrorStage => &self.inner_error_stage,
             OuterErrorStage => &self.outer_error_stage,
@@ -560,6 +601,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             bind_endoscalar_circuit: f(BindEndoscalarCircuit)?,
             endoscaling_step_circuits: try_fixed_vec(|step| f(EndoscalingStep(step as u32)))?,
             extension_circuits: try_fixed_vec(|k| f(ExtensionCircuit(k as u32)))?,
+            read_hooks_circuit: try_fixed_vec(|_| f(ReadHooksCircuit))?,
             preamble_stage: f(PreambleStage)?,
             inner_error_stage: f(InnerErrorStage)?,
             outer_error_stage: f(OuterErrorStage)?,
@@ -982,6 +1024,11 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 params,
             )?
             .into_registry(),
+            // `shared_size` is the application stage's size, hook region
+            // included, so the reader reserves the block the steps reserve.
+            ReadHooksCircuit => registry.register_internal_circuit(
+                circuits::read_hooks::Circuit::<C::Profile>::new(shared_size),
+            )?,
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
