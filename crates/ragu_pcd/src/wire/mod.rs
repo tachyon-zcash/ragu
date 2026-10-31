@@ -113,44 +113,78 @@ pub(crate) trait Encode<C = DefaultEncoding> {
     }
 }
 
-/// Checks the in-memory invariants enforced by a codec, before encoding or
-/// traversing untrusted proof fields. This does not establish proof validity.
+/// The in-memory invariants a codec fixes, checked before a value is encoded
+/// and before an untrusted proof's fields are traversed. Neither check
+/// establishes proof validity.
 pub(crate) trait Validate<C = DefaultEncoding> {
-    fn valid(&self, dims: Dimensions) -> bool;
+    /// Whether every vector has exactly the count the dimensions and the
+    /// codec fix, so that traversing the value cannot index a missing entry
+    /// or ignore a trailing one.
+    fn has_shape(&self, dims: Dimensions) -> bool;
+
+    /// Whether the value has an encoding: it has its shape, and no point
+    /// slot holds the identity, which the decoder rejects.
+    fn encodable(&self, dims: Dimensions) -> bool;
+}
+
+/// Whether `values` has exactly `count` elements, each passing `check`.
+fn sequence<T>(values: &[T], count: usize, check: impl Fn(&T) -> bool) -> bool {
+    values.len() == count && values.iter().all(check)
 }
 
 impl<F: Field> Validate<Scalar> for F {
-    fn valid(&self, _: Dimensions) -> bool {
+    fn has_shape(&self, _: Dimensions) -> bool {
+        true
+    }
+    fn encodable(&self, _: Dimensions) -> bool {
         true
     }
 }
 impl<G: Affine> Validate<Point> for G {
-    fn valid(&self, _: Dimensions) -> bool {
+    fn has_shape(&self, _: Dimensions) -> bool {
+        true
+    }
+    fn encodable(&self, _: Dimensions) -> bool {
         !self.is_identity()
     }
 }
 impl<T: Validate<C>, C, L: Len> Validate<FixedSequence<C, L>> for Vec<T> {
-    fn valid(&self, dims: Dimensions) -> bool {
-        self.len() == L::len() && self.iter().all(|value| value.valid(dims))
+    fn has_shape(&self, dims: Dimensions) -> bool {
+        sequence(self, L::len(), |value| T::has_shape(value, dims))
+    }
+    fn encodable(&self, dims: Dimensions) -> bool {
+        sequence(self, L::len(), |value| T::encodable(value, dims))
     }
 }
 impl<T: Validate<C>, C, D: Dimension> Validate<SizedSequence<C, D>> for Vec<T> {
-    fn valid(&self, dims: Dimensions) -> bool {
-        self.len() == D::of(dims) && self.iter().all(|value| value.valid(dims))
+    fn has_shape(&self, dims: Dimensions) -> bool {
+        sequence(self, D::of(dims), |value| T::has_shape(value, dims))
+    }
+    fn encodable(&self, dims: Dimensions) -> bool {
+        sequence(self, D::of(dims), |value| T::encodable(value, dims))
     }
 }
 impl<T: Validate> Validate for Arc<T> {
-    fn valid(&self, dims: Dimensions) -> bool {
-        T::valid(self, dims)
+    fn has_shape(&self, dims: Dimensions) -> bool {
+        T::has_shape(self, dims)
+    }
+    fn encodable(&self, dims: Dimensions) -> bool {
+        T::encodable(self, dims)
     }
 }
 impl<F: Field, R: Rank> Validate for ragu_circuits::polynomials::sparse::Polynomial<F, R> {
-    fn valid(&self, _: Dimensions) -> bool {
+    fn has_shape(&self, _: Dimensions) -> bool {
+        true
+    }
+    fn encodable(&self, _: Dimensions) -> bool {
         true
     }
 }
 impl Validate for ragu_circuits::registry::CircuitIndex {
-    fn valid(&self, _: Dimensions) -> bool {
+    fn has_shape(&self, _: Dimensions) -> bool {
+        true
+    }
+    fn encodable(&self, _: Dimensions) -> bool {
         true
     }
 }
@@ -189,11 +223,15 @@ pub(crate) trait Decode<C = DefaultEncoding>: Sized {
     }
 }
 
-/// A malformed byte encoding.
+/// A malformed byte encoding, or a value that has none.
 ///
 /// Offending byte slices borrow the input rather than copying hostile data.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error<'a> {
+    /// The value to encode has no encoding: a vector has another length than
+    /// the format fixes, or a point slot holds the identity, which no slot
+    /// admits. Decoding never reports this.
+    Unencodable,
     /// The input is not the exact encoded length of the expected value.
     Length {
         /// The length every valid encoding has.
@@ -289,19 +327,13 @@ impl<F: Field> Decode<Scalar> for F {
         let mut repr = F::ZERO.to_bytes();
         let bytes = reader.take(repr.as_ref().len())?;
         repr.as_mut().copy_from_slice(bytes);
-        let value = F::from_bytes(repr).ok_or(Error::Invalid {
+        // `Field::from_bytes` accepts the canonical representation alone, so
+        // every element has one spelling.
+        F::from_bytes(repr).ok_or(Error::Invalid {
             offset,
             bytes,
             reason: "non-canonical field element",
-        })?;
-        if Field::to_bytes(&value).as_ref() != bytes {
-            return Err(Error::Invalid {
-                offset,
-                bytes,
-                reason: "non-canonical field element",
-            });
-        }
-        Ok(value)
+        })
     }
 }
 
@@ -319,18 +351,13 @@ impl<G: Affine> Decode<Point> for G {
         let mut repr = G::identity().to_bytes();
         let bytes = reader.take(repr.as_ref().len())?;
         repr.as_mut().copy_from_slice(bytes);
+        // `Affine::from_bytes` accepts the canonical representation of a
+        // group element alone, so every point has one spelling.
         let value = G::from_bytes(repr).ok_or(Error::Invalid {
             offset,
             bytes,
             reason: "invalid compressed point",
         })?;
-        if value.to_bytes().as_ref() != bytes {
-            return Err(Error::Invalid {
-                offset,
-                bytes,
-                reason: "non-canonical compressed point",
-            });
-        }
         if value.is_identity() {
             return Err(Error::Invalid {
                 offset,
@@ -398,6 +425,10 @@ impl<T: Decode<C>, C, D: Dimension> Decode<SizedSequence<C, D>> for Vec<T> {
 impl core::fmt::Display for Error<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Unencodable => f.write_str(
+                "the value has no encoding: a vector of another length than the format fixes, \
+                 or an identity point",
+            ),
             Self::Length { expected, actual } => {
                 write!(
                     f,

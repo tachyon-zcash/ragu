@@ -447,9 +447,9 @@ these dependencies.
 ### Proof wire boundaries
 
 `fuzz_proof_wire` and `fuzz_compressed_wire` decode raw bytes and bounded
-mutations of an honest leaf proof generated once per process. The minimal path
-expands, compresses, and runs production compressed verification; the compressed
-path verifies directly. Every successful decode must reencode identically.
+mutations of an honest leaf proof generated once per process. The proof path
+compresses and runs production compressed verification; the compressed path
+verifies directly. Every successful decode must reencode identically.
 Malformed inputs may reject at any stage; arbitrary mutations are not assumed
 invalid. The untouched seed must verify.
 
@@ -460,7 +460,7 @@ within the generated wire bytes (including the envelope). The three committed fi
 `regressions/` are tiny control inputs, not serialized proofs; campaigns and
 coverage replay discover them alongside local seeds. No multi-megabyte fixture
 is stored in git. Proof setup is cached once per process;
-minimal-proof verification is still a production-rank operation and can take
+compressing a decoded proof is still a production-rank operation and can take
 seconds per input.
 
 PR CI runs the release `proof_wire::tests::decode_to_verify_smoke` regression,

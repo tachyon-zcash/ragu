@@ -25,7 +25,7 @@ use serde::{
 use crate::{
     CompressedProof, Proof,
     profile::ProfiledCycle,
-    wire::{self, Decode, Dimensions, Encode, Error, Reader},
+    wire::{self, Decode, Dimensions, Encode, Error, Reader, Validate},
 };
 
 /// The version byte and the prelude: the rank as a `u32` and the header size
@@ -42,12 +42,12 @@ const MAX_RANK: u32 = 32;
 const MAX_HEADER_SIZE: usize = 1 << 12;
 
 /// A type serialized as one framed byte string.
-trait Framed: Encode + Decode {
+trait Framed: Encode + Decode + Validate {
     /// What a deserializer expects, for its error messages.
     const EXPECTING: &'static str;
 
-    /// The dimensions this value is encoded in, or `None` if it has no
-    /// encoding.
+    /// The dimensions this value is encoded in, or `None` if the prelude
+    /// cannot record them.
     fn dims(&self) -> Option<Dimensions>;
 
     /// Rejects dimensions a prelude declares that no value of this type has.
@@ -69,7 +69,7 @@ impl<C: ProfiledCycle, R: Rank> Framed for Proof<C, R> {
             rank: R::RANK,
             header_size: self.left_header.len(),
         };
-        (Self::admits(dims).is_ok() && <Self as wire::Validate>::valid(self, dims)).then_some(dims)
+        Self::admits(dims).is_ok().then_some(dims)
     }
 
     fn admits(dims: Dimensions) -> Result<(), &'static str> {
@@ -88,7 +88,7 @@ impl<C: ProfiledCycle> Framed for CompressedProof<C> {
             rank: u32::try_from(self.native.opening.rounds.len()).ok()?,
             header_size: self.instance.left_header.len(),
         };
-        (Self::admits(dims).is_ok() && <Self as wire::Validate>::valid(self, dims)).then_some(dims)
+        Self::admits(dims).is_ok().then_some(dims)
     }
 
     fn admits(dims: Dimensions) -> Result<(), &'static str> {
@@ -154,10 +154,15 @@ fn decode_framed<T: Framed>(input: &[u8]) -> Result<T, Error<'_>> {
 }
 
 fn serialize_framed<T: Framed, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-    // A value of other dimensions than its type admits has no encoding.
     let Some(dims) = value.dims() else {
-        return Err(ser::Error::custom("proof does not have its type's shape"));
+        return Err(ser::Error::custom(
+            "proof dimensions exceed what the prelude records",
+        ));
     };
+    // A value of another shape than its dimensions fix has no encoding.
+    if !value.encodable(dims) {
+        return Err(ser::Error::custom(Error::Unencodable));
+    }
     serializer.serialize_bytes(&framed(value, dims))
 }
 

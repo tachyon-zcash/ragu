@@ -110,8 +110,7 @@ fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
 /// Decode, enforce a canonical byte round trip, and invoke the production path.
 /// A changed input may still be a valid proof: acceptance is not itself a bug.
 /// Panics, noncanonical successful decoding, or rejection of the untouched seed
-/// are bugs. Errors from derivation, compression or verification are valid
-/// rejection.
+/// are bugs. Errors from compression or verification are valid rejection.
 pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
     let bytes = candidate(kind, input);
     let app = &APP.0;

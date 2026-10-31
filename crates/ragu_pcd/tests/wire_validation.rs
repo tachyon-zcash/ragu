@@ -87,7 +87,7 @@ fn a_proof_of_another_shape_has_no_serialization() {
     let element = proof.left_header[0];
     proof.left_header.push(element);
     let error = serde_json::to_string(&proof).unwrap_err();
-    assert!(error.to_string().contains("its type's shape"), "{error}");
+    assert!(error.to_string().contains("no encoding"), "{error}");
 }
 
 #[test]

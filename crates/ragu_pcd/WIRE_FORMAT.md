@@ -91,10 +91,10 @@ an encoding of anything.
 
 Integers have their declared fixed widths; circuit indices are `u32`. Field
 elements and compressed points use the canonical representations specified by
-the suite, with decode/re-encode equality checks, so each value has one
-spelling. The identity is rejected in every point slot: the verifier allocates
-each point by its coordinates. Cached points encode only the point. An `Arc` encodes its value,
-without ownership metadata.
+the suite, whose decoders accept nothing else, so each value has one
+spelling; property tests pin that accepted bytes re-encode identically. The identity is rejected in every point slot: the verifier allocates
+each point by its coordinates. A `Cached` value encodes as the value it caches
+and an `Arc` as its value, without ownership metadata.
 
 A polynomial is its `2^rank` coefficients in ascending degree order, zeros
 included. This is independent of the sparse in-memory storage and its gap
@@ -301,13 +301,15 @@ prefer `ProofFormat` for storage and transport.
 ## Structural preflight and fuzz coverage
 
 The same codec declarations generate validation for proofs and for compressed
-messages. Fixed vectors check their expected length before traversal; point
-slots reject identity. Both encoders run it before writing, so neither emits
-bytes its decoder rejects. A decoded proof is taken like one built in memory:
-every application method that takes a proof (fusion, compression and
-verification) first checks its shape. The verifier recomputes the transcript
-challenges and the two stages derived from other fields, and rejects a proof
-whose stored values differ.
+messages: a shape check, that every vector has the count the profile, rank and
+header size fix, and an encodability check, which also rejects the identity in
+every point slot. `Proof::well_formed`, which every application method that
+takes a proof (fusion, compression and verification) runs before traversing
+it, is the schema's shape check, so no declared field escapes it. Both
+encoders run the encodability check before writing, so neither emits bytes its
+decoder rejects. A decoded proof is taken like one built in memory: the
+verifier recomputes the transcript challenges and the two stages derived from
+other fields, and rejects a proof whose stored values differ.
 
 Malformed proof failures become `Ok(false)` at the verification boundary.
 Decoders continue to return representation errors, and application header or

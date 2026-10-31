@@ -355,36 +355,6 @@ wire::proof_schema! {
 /// `Affine` type, which coherence cannot rule out for `Cached`.
 struct CachedPoint;
 
-impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
-    /// Whether the headers, polynomial vectors and commitment-cache vectors
-    /// have exactly the receiving profile's shape. Check before traversing
-    /// components so that missing entries cannot panic and trailing ones
-    /// cannot be ignored.
-    pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
-        let native_steps = native::NumSteps::<C::Profile>::len();
-        let nested_steps = nested::NumSteps::<C::Profile>::len();
-        let native_extension = C::Profile::native_extension();
-        let nested_extension = C::Profile::nested_extension();
-
-        self.left_header.len() == HEADER_SIZE
-            && self.right_header.len() == HEADER_SIZE
-            && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
-            && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
-            && self.native_endoscaling_step_rxs.len() == native_steps
-            && self.native_endoscaling_step_commitments.len() == native_steps
-            && self.native_extension_circuit_rxs.len() == native_extension.circuits.len()
-            && self.native_extension_circuit_commitments.len() == native_extension.circuits.len()
-            && self.native_extension_stage_rxs.len() == native_extension.stages
-            && self.native_extension_stage_commitments.len() == native_extension.stages
-            && self.nested_endoscaling_step_rxs.len() == nested_steps
-            && self.nested_endoscaling_step_commitments.len() == nested_steps
-            && self.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
-            && self.nested_extension_circuit_commitments.len() == nested_extension.circuits.len()
-            && self.nested_extension_stage_rxs.len() == nested_extension.stages
-            && self.nested_extension_stage_commitments.len() == nested_extension.stages
-    }
-}
-
 impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
     fn index(&self, idx: RxIndex) -> &sparse::Polynomial<C::CircuitField, R> {
@@ -1502,8 +1472,11 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 impl<G: wire::Validate<wire::Point>> wire::Validate<CachedPoint> for Cached<G> {
-    fn valid(&self, dims: wire::Dimensions) -> bool {
-        <G as wire::Validate<wire::Point>>::valid(&self.0, dims)
+    fn has_shape(&self, dims: wire::Dimensions) -> bool {
+        <G as wire::Validate<wire::Point>>::has_shape(&self.0, dims)
+    }
+    fn encodable(&self, dims: wire::Dimensions) -> bool {
+        <G as wire::Validate<wire::Point>>::encodable(&self.0, dims)
     }
 }
 
@@ -1528,8 +1501,11 @@ impl<G: Decode<wire::Point>> Decode<CachedPoint> for Cached<G> {
 
 // A cached polynomial encodes as the polynomial it caches.
 impl<T: wire::Validate> wire::Validate for Cached<T> {
-    fn valid(&self, dims: wire::Dimensions) -> bool {
-        self.0.valid(dims)
+    fn has_shape(&self, dims: wire::Dimensions) -> bool {
+        T::has_shape(&self.0, dims)
+    }
+    fn encodable(&self, dims: wire::Dimensions) -> bool {
+        T::encodable(&self.0, dims)
     }
 }
 

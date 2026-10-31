@@ -1,7 +1,7 @@
 //! Versioned application envelope over fixed-length proofs and compressed proofs.
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 
 use ragu_circuits::polynomials::Rank;
 
@@ -75,6 +75,29 @@ pub struct ProofFormat<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     marker: PhantomData<(C, R)>,
 }
 
+// By hand: derived impls would bound `C` and `R`, which only mark the type.
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Clone for ProofFormat<C, R, HEADER_SIZE> {
+    fn clone(&self) -> Self {
+        Self {
+            context: self.context,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> fmt::Debug
+    for ProofFormat<C, R, HEADER_SIZE>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofFormat")
+            .field("profile", &C::Profile::NAME)
+            .field("rank", &R::RANK)
+            .field("header_size", &HEADER_SIZE)
+            .field("context", &self.context)
+            .finish()
+    }
+}
+
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
@@ -136,16 +159,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         ENVELOPE_SIZE + <CompressedProof<C> as Decode>::encoded_len(Self::dims())
     }
 
-    /// Encodes a compressed proof of this application's shape. This does not
-    /// verify the proof. Payload kind 2 distinguishes it from an uncompressed
-    /// proof.
+    /// Encodes a compressed proof, including its version and context. This
+    /// does not verify the proof. Payload kind 2 distinguishes it from an
+    /// uncompressed proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Unencodable`] if the proof has another shape than
+    /// this application's or holds an identity point.
     pub fn encode_compressed(&self, proof: &CompressedProof<C>) -> Result<Vec<u8>, Error<'static>> {
-        if !<CompressedProof<C> as Validate>::valid(proof, Self::dims()) {
-            return Err(Error::Invalid {
-                offset: 0,
-                bytes: &[],
-                reason: "invalid compressed proof structure",
-            });
+        if !<CompressedProof<C> as Validate>::encodable(proof, Self::dims()) {
+            return Err(Error::Unencodable);
         }
         let mut bytes = Vec::with_capacity(self.compressed_encoded_len());
         self.write_envelope(PayloadKind::Compressed, &mut bytes);
@@ -165,15 +189,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEAD
         <CompressedProof<C> as Decode>::decode(&mut reader, Self::dims())
     }
 
-    /// Encodes a structurally valid proof, including its version and context.
-    /// Does not establish cryptographic validity.
+    /// Encodes a proof, including its version and context. This does not
+    /// verify the proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Unencodable`] if the proof has another shape than
+    /// this application's or holds an identity point.
     pub fn encode(&self, proof: &Proof<C, R>) -> Result<Vec<u8>, Error<'static>> {
-        if !<Proof<C, R> as Validate>::valid(proof, Self::dims()) {
-            return Err(Error::Invalid {
-                offset: 0,
-                bytes: &[],
-                reason: "invalid proof structure",
-            });
+        if !<Proof<C, R> as Validate>::encodable(proof, Self::dims()) {
+            return Err(Error::Unencodable);
         }
         let mut bytes = Vec::with_capacity(self.encoded_len());
         self.write_envelope(PayloadKind::Proof, &mut bytes);
