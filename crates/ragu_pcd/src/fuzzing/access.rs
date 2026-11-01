@@ -134,6 +134,33 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &mut self.nested_challenges_partial
     }
 
+    /// The step's `index`-th own online polynomial, mutably, or `None` past
+    /// the header's polynomials.
+    pub(crate) fn online_poly_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut sparse::Polynomial<C::CircuitField, R>> {
+        self.online_polys.get_mut(index)
+    }
+
+    /// The cached commitment of the step's `index`-th own online polynomial,
+    /// mutably, or `None` past the header's polynomials.
+    pub(crate) fn online_commitment_cache_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut C::HostCurve> {
+        self.online_commitments.0.get_mut(index)
+    }
+
+    /// The step's `slot`-th online opening, mutably, or `None` past the
+    /// slots.
+    pub(crate) fn online_query_mut(
+        &mut self,
+        slot: usize,
+    ) -> Option<&mut crate::internal::online::Query<C::CircuitField>> {
+        self.online_queries.get_mut(slot)
+    }
+
     /// The cached native commitment named by `which`, mutably.
     ///
     /// The verifier recomputes every cached commitment from its polynomial,
