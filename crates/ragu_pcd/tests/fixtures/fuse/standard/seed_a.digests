@@ -111,4 +111,3 @@ wire.proof.bytes = 24120804
 wire.proof.digest = 7a2fb9ae31b843bd9f56748f47a6381f4ad53ecd66f03f090daebb96f6799d09
 wire.compressed.bytes = 7236
 wire.compressed.digest = 13846a0ba969b4e5137fa7ffda87ac85a4657089a4e873974d7149e51220e216
-wire.suite = 83326096444418352e36a6df52743beefd7bfc349d73c2fcc91efa8b2ca25ede

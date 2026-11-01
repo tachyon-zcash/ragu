@@ -1,18 +1,17 @@
-//! Versioned application envelope over fixed-length proofs and compressed proofs.
+//! Versioned envelope over fixed-length proofs and compressed proofs.
 
 use alloc::vec::Vec;
-use core::{fmt, marker::PhantomData};
 
 use ragu_circuits::polynomials::Rank;
 
 use crate::{
-    Application, CompressedProof, Proof, SelectableBackend,
-    profile::{Profile, ProfiledCycle},
-    wire::{Decode, Dimensions, Encode, Error, Reader, Validate},
+    CompressedProof, Proof,
+    profile::ProfiledCycle,
+    wire::{Decode, Dimensions, Encode, Error, MAX_HEADER_SIZE, MAX_RANK, Reader, Validate},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
-const ENVELOPE_VERSION: u16 = 2;
+const ENVELOPE_VERSION: u16 = 3;
 /// Each proof representation has its own payload kind and schema version.
 #[derive(Clone, Copy)]
 enum PayloadKind {
@@ -39,244 +38,190 @@ const PROOF_SCHEMA_VERSION: u16 = 1;
 const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 const PROTOCOL_VERSION: u16 = 1;
-const ENVELOPE_SIZE: usize = 124;
+const ENVELOPE_SIZE: usize = 28;
 
-/// Identifiers of the cryptographic suite and the application setup, which
-/// the envelope records and decoding checks.
-///
-/// [`Application::proof_context`] derives them from the application's
-/// parameters and registries, and [`Application::proof_format`] uses those.
-/// Supply your own through [`Application::proof_format_with`] when the setup
-/// includes configuration Ragu cannot see: use collision-resistant digests of
-/// canonical manifests, assigned in your deployment and never taken from an
-/// incoming proof, and change them whenever the manifest changes. Either way,
-/// the identifiers detect context mismatches; they do not authenticate a
-/// proof.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProofContext {
-    /// Identifier of the complete cryptographic suite and parameters.
-    pub suite: [u8; 32],
-    /// Identifier of the application and registry setup.
-    pub application: [u8; 32],
-}
-
-/// A versioned proof format for one application's trusted context.
-///
-/// Construct with [`Application::proof_format`],
-/// [`Application::proof_format_with`] or, without the application,
-/// [`ProofFormat::new`]. Proof encodings have exactly
-/// [`encoded_len`](Self::encoded_len) bytes; compressed encodings have exactly
-/// [`compressed_encoded_len`](Self::compressed_encoded_len) bytes. Decoding checks
-/// the exact length, then the envelope, then the payload representation.
-///
-/// Decoding does not verify a proof. Compress a decoded [`Proof`] with
-/// [`Application::compress`] and accept it on
-/// [`Application::verify_compressed`] before using it in another proof. A
-/// decoded compressed proof can be verified directly after attaching its
-/// accompanying header data. See [`wire`](crate::wire) for the envelope
-/// layout and the version rules.
-pub struct ProofFormat<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
-    context: ProofContext,
-    marker: PhantomData<(C, R)>,
-}
-
-// By hand: derived impls would bound `C` and `R`, which only mark the type.
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Clone for ProofFormat<C, R, HEADER_SIZE> {
-    fn clone(&self) -> Self {
-        Self {
-            context: self.context,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> fmt::Debug
-    for ProofFormat<C, R, HEADER_SIZE>
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProofFormat")
-            .field("profile", &C::Profile::NAME)
-            .field("rank", &R::RANK)
-            .field("header_size", &HEADER_SIZE)
-            .field("context", &self.context)
-            .finish()
-    }
-}
-
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
-{
-    /// The byte format of this application's proofs, bound to the
-    /// identifiers [`proof_context`](Self::proof_context) derives from its
-    /// setup.
-    pub fn proof_format(&self) -> ProofFormat<C, R, HEADER_SIZE> {
-        self.proof_format_with(self.proof_context())
-    }
-
-    /// The byte format of this application's proofs, bound to identifiers of
-    /// the caller's own; see [`ProofContext`]. The profile, rank and header
-    /// size come from the application either way.
-    pub fn proof_format_with(&self, context: ProofContext) -> ProofFormat<C, R, HEADER_SIZE> {
-        ProofFormat::new(context)
-    }
-}
-
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEADER_SIZE> {
-    /// The format of the proofs of an application with these types and
-    /// identifiers, without the application itself: for a receiver that
-    /// decodes another application's proofs, as an aggregator does a
-    /// wallet's compressed proofs, or forwards bytes it does not verify.
-    /// Take the identifiers from that application's
-    /// [`proof_context`](Application::proof_context), published with it.
-    pub fn new(context: ProofContext) -> Self {
-        Self {
-            context,
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> ProofFormat<C, R, HEADER_SIZE> {
-    /// The rank and header size the envelope records, which fix the payload's
-    /// layout.
-    fn dims() -> Dimensions {
-        Dimensions::of::<R, HEADER_SIZE>()
-    }
-
-    /// Stable profile tag derived from the receiving profile's canonical name.
+impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// Encodes this proof with its version envelope. The rank comes from `R`
+    /// and the header size from the proof's child headers.
     ///
-    /// BLAKE2b-256 hashes the UTF-8 bytes of [`Profile::NAME`] with
-    /// personalization `ragu-profile-v1`. Names must be stable and unique as
-    /// required by `Profile`; this tag does not replace the complete setup ID.
-    fn profile_tag(&self) -> [u8; 32] {
-        let hash = blake2b_simd::Params::new()
-            .hash_length(32)
-            .personal(b"ragu-profile-v1")
-            .hash(C::Profile::NAME.as_bytes());
-        hash.as_bytes().try_into().expect("32-byte profile tag")
-    }
-
-    fn write_envelope(&self, payload: PayloadKind, bytes: &mut Vec<u8>) {
-        bytes.extend_from_slice(MAGIC);
-        ENVELOPE_VERSION.encode(bytes);
-        payload.tag().encode(bytes);
-        payload.schema_version().encode(bytes);
-        PROTOCOL_VERSION.encode(bytes);
-        R::RANK.encode(bytes);
-        (HEADER_SIZE as u64).encode(bytes);
-        bytes.extend_from_slice(&self.profile_tag());
-        bytes.extend_from_slice(&self.context.suite);
-        bytes.extend_from_slice(&self.context.application);
-    }
-
-    /// Exact byte length of a proof, including the envelope.
-    ///
-    /// Bound transport input to this size before buffering a proof.
-    pub fn encoded_len(&self) -> usize {
-        ENVELOPE_SIZE + <Proof<C, R> as Decode>::encoded_len(Self::dims())
-    }
-
-    /// Exact byte length of a compressed proof, including the shared envelope.
-    pub fn compressed_encoded_len(&self) -> usize {
-        ENVELOPE_SIZE + <CompressedProof<C> as Decode>::encoded_len(Self::dims())
-    }
-
-    /// Encodes a compressed proof, including its version and context. This
-    /// does not verify the proof. Payload kind 2 distinguishes it from an
-    /// uncompressed proof.
+    /// This checks representation, not proof validity. The caller selects
+    /// the expected application through its deployment or consensus rules.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Unencodable`] if the proof has another shape than
-    /// this application's or holds an identity point.
-    pub fn encode_compressed(&self, proof: &CompressedProof<C>) -> Result<Vec<u8>, Error<'static>> {
-        if !<CompressedProof<C> as Validate>::encodable(proof, Self::dims()) {
-            return Err(Error::Unencodable);
-        }
-        let mut bytes = Vec::with_capacity(self.compressed_encoded_len());
-        self.write_envelope(PayloadKind::Compressed, &mut bytes);
-        <CompressedProof<C> as Encode>::encode(proof, &mut bytes);
-        Ok(bytes)
+    /// Returns [`Error::Unencodable`] if dimensions exceed the limits in
+    /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
+    /// is the identity.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
+        let dims = Dimensions {
+            rank: R::RANK,
+            header_size: self.left_header.len(),
+        };
+        encode(self, PayloadKind::Proof, dims)
     }
 
-    /// Decodes a compressed proof after checking its exact length and context.
-    /// Attach the accompanying header data with `carry` and use
-    /// [`Application::verify_compressed`] before accepting it.
-    pub fn decode_compressed<'a>(&self, bytes: &'a [u8]) -> Result<CompressedProof<C>, Error<'a>> {
-        let mut reader = self.open(
-            bytes,
-            PayloadKind::Compressed,
-            self.compressed_encoded_len(),
-        )?;
-        <CompressedProof<C> as Decode>::decode(&mut reader, Self::dims())
+    /// The exact encoded length for the expected header size, including the
+    /// envelope. Bound transport input to this size before buffering it.
+    pub fn encoded_len<const HEADER_SIZE: usize>() -> usize {
+        ENVELOPE_SIZE + <Self as Decode>::encoded_len(Dimensions::of::<R, HEADER_SIZE>())
     }
 
-    /// Encodes a proof, including its version and context. This does not
-    /// verify the proof.
+    /// Decodes one proof, checking the envelope, bounded dimensions and exact
+    /// payload length before reading its fields. The declared rank must
+    /// match `R`; the header size comes from the envelope.
+    ///
+    /// Attach the accompanying output data with [`carry`](Self::carry),
+    /// compress with [`Application::compress`](crate::Application::compress)
+    /// and verify with
+    /// [`Application::verify_compressed`](crate::Application::verify_compressed)
+    /// before accepting the proof or using it as a child.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
+        decode(bytes, PayloadKind::Proof, Some(R::RANK))
+    }
+}
+
+impl<C: ProfiledCycle> CompressedProof<C> {
+    /// Encodes this compressed proof with its version envelope. The rank
+    /// comes from its IPA round count and the header size from its child
+    /// headers. This checks representation, not proof validity.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Unencodable`] if the proof has another shape than
-    /// this application's or holds an identity point.
-    pub fn encode(&self, proof: &Proof<C, R>) -> Result<Vec<u8>, Error<'static>> {
-        if !<Proof<C, R> as Validate>::encodable(proof, Self::dims()) {
-            return Err(Error::Unencodable);
-        }
-        let mut bytes = Vec::with_capacity(self.encoded_len());
-        self.write_envelope(PayloadKind::Proof, &mut bytes);
-        proof.encode(&mut bytes);
-        Ok(bytes)
+    /// Returns [`Error::Unencodable`] if dimensions exceed the limits in
+    /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
+    /// is the identity.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
+        let dims = Dimensions {
+            rank: self
+                .native
+                .opening
+                .rounds
+                .len()
+                .try_into()
+                .map_err(|_| Error::Unencodable)?,
+            header_size: self.instance.left_header.len(),
+        };
+        encode(self, PayloadKind::Compressed, dims)
     }
 
-    /// Decodes exactly one encoding, rejecting other lengths, unknown versions,
-    /// mismatched context and malformed representation, in that order.
-    pub fn decode<'a>(&self, bytes: &'a [u8]) -> Result<Proof<C, R>, Error<'a>> {
-        let mut reader = self.open(bytes, PayloadKind::Proof, self.encoded_len())?;
-        Proof::decode(&mut reader, Self::dims())
+    /// The exact encoded length for the expected rank and header size,
+    /// including the envelope. Bound transport input to this size before
+    /// buffering it.
+    pub fn encoded_len<R: Rank, const HEADER_SIZE: usize>() -> usize {
+        ENVELOPE_SIZE + <Self as Decode>::encoded_len(Dimensions::of::<R, HEADER_SIZE>())
     }
 
-    /// Checks the length and the envelope of one encoding of `payload`,
-    /// leaving the reader at the payload.
-    fn open<'a>(
-        &self,
-        bytes: &'a [u8],
-        payload: PayloadKind,
-        expected: usize,
-    ) -> Result<Reader<'a>, Error<'a>> {
-        if bytes.len() != expected {
-            return Err(Error::Length {
-                expected,
-                actual: bytes.len(),
+    /// Decodes one compressed proof, checking the envelope, bounded dimensions
+    /// and exact payload length before reading its fields. The rank and header
+    /// size come from the envelope; verification checks the application's shape.
+    /// The caller selects the expected application and parameters through
+    /// its deployment or consensus rules.
+    ///
+    /// Attach the accompanying output data with [`carry`](Self::carry) and
+    /// use [`Application::verify_compressed`](crate::Application::verify_compressed)
+    /// before accepting the proof.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
+        decode(bytes, PayloadKind::Compressed, None)
+    }
+}
+
+fn write_envelope(payload: PayloadKind, dims: Dimensions, bytes: &mut Vec<u8>) {
+    bytes.extend_from_slice(MAGIC);
+    ENVELOPE_VERSION.encode(bytes);
+    payload.tag().encode(bytes);
+    payload.schema_version().encode(bytes);
+    PROTOCOL_VERSION.encode(bytes);
+    dims.rank.encode(bytes);
+    (dims.header_size as u64).encode(bytes);
+}
+
+fn encode<T: Encode + Decode + Validate>(
+    proof: &T,
+    payload: PayloadKind,
+    dims: Dimensions,
+) -> Result<Vec<u8>, Error<'static>> {
+    if dims.rank > MAX_RANK || dims.header_size > MAX_HEADER_SIZE || !proof.encodable(dims) {
+        return Err(Error::Unencodable);
+    }
+    let mut bytes = Vec::with_capacity(ENVELOPE_SIZE + T::encoded_len(dims));
+    write_envelope(payload, dims, &mut bytes);
+    proof.encode(&mut bytes);
+    Ok(bytes)
+}
+
+fn decode<T: Decode>(
+    bytes: &[u8],
+    payload: PayloadKind,
+    rank: Option<u32>,
+) -> Result<T, Error<'_>> {
+    let (mut reader, dims) = open(bytes, payload, rank)?;
+    let expected = ENVELOPE_SIZE + T::encoded_len(dims);
+    if bytes.len() != expected {
+        return Err(Error::Length {
+            expected,
+            actual: bytes.len(),
+        });
+    }
+    T::decode(&mut reader, dims)
+}
+
+/// Checks the envelope and bounds its dimensions before allocating any payload.
+fn open<'a>(
+    bytes: &'a [u8],
+    payload: PayloadKind,
+    expected_rank: Option<u32>,
+) -> Result<(Reader<'a>, Dimensions), Error<'a>> {
+    let mut reader = Reader::new(bytes);
+    let envelope = reader.take(ENVELOPE_SIZE)?;
+    let mut known = Vec::with_capacity(ENVELOPE_SIZE);
+    write_envelope(payload, Dimensions::default(), &mut known);
+    // Report the exact rejected component. Every check precedes payload decoding.
+    for (start, end, reason) in [
+        (0, 8, "invalid proof magic"),
+        (8, 10, "unsupported proof envelope version"),
+        (10, 12, "proof payload kind mismatch"),
+        (12, 14, "unsupported proof schema version"),
+        (14, 16, "unsupported proof protocol version"),
+    ] {
+        if envelope[start..end] != known[start..end] {
+            return Err(Error::Invalid {
+                offset: start,
+                bytes: &envelope[start..end],
+                reason,
             });
         }
-        let mut reader = Reader::new(bytes);
-        let envelope = reader.take(ENVELOPE_SIZE)?;
-        let mut known = Vec::with_capacity(ENVELOPE_SIZE);
-        self.write_envelope(payload, &mut known);
-        // Report the exact rejected envelope component. All checks precede
-        // payload decoding, including rejection of a future schema version.
-        for (start, end, reason) in [
-            (0, 8, "invalid proof magic"),
-            (8, 10, "unsupported proof envelope version"),
-            (10, 12, "proof payload kind mismatch"),
-            (12, 14, "unsupported proof schema version"),
-            (14, 16, "unsupported proof protocol version"),
-            (16, 20, "proof rank mismatch"),
-            (20, 28, "proof header size mismatch"),
-            (28, 60, "proof profile mismatch"),
-            (60, 92, "proof suite mismatch"),
-            (92, 124, "proof application mismatch"),
-        ] {
-            if envelope[start..end] != known[start..end] {
-                return Err(Error::Invalid {
-                    offset: start,
-                    bytes: &envelope[start..end],
-                    reason,
-                });
-            }
-        }
-        Ok(reader)
     }
+    let rank_bytes = &envelope[16..20];
+    let rank = u32::from_le_bytes(rank_bytes.try_into().expect("4-byte rank"));
+    let reason = match expected_rank {
+        Some(expected) if rank != expected => Some("proof rank mismatch"),
+        Some(_) if rank > MAX_RANK => Some("proof rank exceeds the limit"),
+        None if rank > MAX_RANK => Some("compressed proof rank exceeds the limit"),
+        _ => None,
+    };
+    if let Some(reason) = reason {
+        return Err(Error::Invalid {
+            offset: 16,
+            bytes: rank_bytes,
+            reason,
+        });
+    }
+    let header_bytes = &envelope[20..28];
+    let header_size = u64::from_le_bytes(header_bytes.try_into().expect("8-byte header size"));
+    if header_size > MAX_HEADER_SIZE as u64 {
+        return Err(Error::Invalid {
+            offset: 20,
+            bytes: header_bytes,
+            reason: "proof header size exceeds the limit",
+        });
+    }
+    Ok((
+        reader,
+        Dimensions {
+            rank,
+            header_size: header_size as usize,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -314,7 +259,7 @@ mod tests {
         // Every polynomial of the shape, with `2^rank` coefficients each; a
         // commitment per polynomial plus the nested challenges partial; two
         // headers; the bridge alpha and nine challenges; one circuit index.
-        // The envelope adds 124 bytes.
+        // The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
             let polynomials = Shape::of::<Standard>().polynomials();
             polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 10 * 32 + 4
@@ -330,82 +275,85 @@ mod tests {
             <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank, 1>()),
             payload::<TestRank, 1>()
         );
-        let format = ProofFormat::<Pasta, ProductionRank, 4> {
-            context: ProofContext {
-                suite: [0; 32],
-                application: [0; 32],
-            },
-            marker: PhantomData,
-        };
-        assert_eq!(format.encoded_len(), 124 + payload::<ProductionRank, 4>());
+        assert_eq!(
+            Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
+            28 + payload::<ProductionRank, 4>()
+        );
         // 93 instance points; 27 instance scalars; per side 6+2R points,
         // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
-            format.compressed_encoded_len(),
-            124 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
+            CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
+            28 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 
     #[test]
-    fn profile_tag_rejects_same_shape_with_identical_context() {
-        use crate::profile::{Aggregator, Profiled};
-        let context = ProofContext {
-            suite: [1; 32],
-            application: [2; 32],
-        };
-        let standard = ProofFormat::<Pasta, TestRank, 4> {
-            context,
-            marker: PhantomData,
-        };
-        let aggregator = ProofFormat::<Profiled<Pasta, Aggregator>, TestRank, 4> {
-            context,
-            marker: PhantomData,
-        };
-        assert_eq!(
-            standard.profile_tag(),
-            [
-                0x82, 0xcf, 0xab, 0x66, 0x41, 0x72, 0x3d, 0x59, 0x14, 0x59, 0x7a, 0xbc, 0x3f, 0x2f,
-                0xea, 0xcd, 0x8c, 0xe0, 0x62, 0x57, 0x46, 0x73, 0xab, 0x7e, 0xc8, 0x7f, 0xab, 0x3a,
-                0x24, 0x2f, 0xfd, 0x12
-            ]
-        );
-        assert_ne!(standard.profile_tag(), aggregator.profile_tag());
-        for (kind, length, other_length) in [
+    fn rejects_other_envelope_versions() {
+        let dims = Dimensions::of::<TestRank, 4>();
+        for (kind, length) in [
             (
                 PayloadKind::Proof,
-                standard.encoded_len(),
-                aggregator.encoded_len(),
+                Proof::<Pasta, TestRank>::encoded_len::<4>(),
             ),
             (
                 PayloadKind::Compressed,
-                standard.compressed_encoded_len(),
-                aggregator.compressed_encoded_len(),
+                CompressedProof::<Pasta>::encoded_len::<TestRank, 4>(),
             ),
         ] {
-            assert_eq!(length, other_length, "test requires equal profile shapes");
             let mut bytes = Vec::with_capacity(length);
-            standard.write_envelope(kind, &mut bytes);
+            write_envelope(kind, dims, &mut bytes);
             bytes.resize(length, 0);
-            assert!(matches!(
-                aggregator.open(&bytes, kind, other_length),
-                Err(Error::Invalid {
-                    offset: 28,
-                    reason: "proof profile mismatch",
-                    ..
-                })
-            ));
-            // A v1 envelope cannot be reinterpreted as the new layout, even
-            // when padded to the receiving type's expected length.
-            bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
-            assert!(matches!(
-                standard.open(&bytes, kind, length),
-                Err(Error::Invalid {
-                    offset: 8,
-                    reason: "unsupported proof envelope version",
-                    ..
-                })
-            ));
+            // Old layouts and future versions cannot be reinterpreted, even
+            // when their input has the receiving type's expected length.
+            for version in [1u16, 2, 4] {
+                bytes[8..10].copy_from_slice(&version.to_le_bytes());
+                assert!(matches!(
+                    open(&bytes, kind, Some(TestRank::RANK)),
+                    Err(Error::Invalid {
+                        offset: 8,
+                        reason: "unsupported proof envelope version",
+                        ..
+                    })
+                ));
+            }
         }
+    }
+
+    #[test]
+    fn dimensions_are_bounded_before_payload_decoding() {
+        for (kind, expected_rank) in [
+            (PayloadKind::Proof, Some(TestRank::RANK)),
+            (PayloadKind::Compressed, None),
+        ] {
+            for header_size in [MAX_HEADER_SIZE as u64 + 1, u64::MAX] {
+                let mut bytes = Vec::new();
+                write_envelope(kind, Dimensions::of::<TestRank, 4>(), &mut bytes);
+                bytes[20..28].copy_from_slice(&header_size.to_le_bytes());
+                assert!(matches!(
+                    open(&bytes, kind, expected_rank),
+                    Err(Error::Invalid {
+                        offset: 20,
+                        reason: "proof header size exceeds the limit",
+                        ..
+                    })
+                ));
+            }
+        }
+        let mut bytes = Vec::new();
+        write_envelope(
+            PayloadKind::Compressed,
+            Dimensions::of::<TestRank, 4>(),
+            &mut bytes,
+        );
+        bytes[16..20].copy_from_slice(&(MAX_RANK + 1).to_le_bytes());
+        assert!(matches!(
+            open(&bytes, PayloadKind::Compressed, None),
+            Err(Error::Invalid {
+                offset: 16,
+                reason: "compressed proof rank exceeds the limit",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -1,35 +1,31 @@
-//! Byte round trips of production-rank proofs through the application's
-//! versioned envelope.
+//! Byte round trips of production-rank proofs through the versioned envelope.
 
 use ragu_pcd::wire::Error;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
+use super::{ENVELOPE, TestCompressed, TestProof};
 use crate::nontrivial_support::{C, R, app, leaf};
-
-/// The envelope ahead of every payload.
-const ENVELOPE: usize = 124;
 
 #[test]
 fn seed_proof_round_trips() {
     let app = app();
-    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, _) = leaf(&app, &mut rng, 7).into_parts();
-    let bytes = format.encode(&proof).unwrap();
-    assert_eq!(bytes.len(), format.encoded_len());
-    let decoded = format.decode(&bytes).unwrap();
-    assert_eq!(format.encode(&decoded).unwrap(), bytes);
+    let bytes = proof.to_bytes().unwrap();
+    assert_eq!(bytes.len(), TestProof::encoded_len::<4>());
+    let decoded = TestProof::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.to_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn decoded_proof_verifies_and_compresses() {
     let app = app();
-    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
-    let decoded = format
-        .decode(&format.encode(&proof).unwrap())
+    let bytes = proof.to_bytes().unwrap();
+    // The application used below infers the cycle and rank.
+    let decoded = ragu_pcd::Proof::from_bytes(&bytes)
         .unwrap()
         .carry::<LeafNode>(data);
     assert!(app.verify_uncompressed(&decoded, &mut rng).unwrap());
@@ -40,11 +36,10 @@ fn decoded_proof_verifies_and_compresses() {
 #[test]
 fn decoded_proof_verifies_and_a_tampered_one_does_not() {
     let app = app();
-    let format = app.proof_format();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
-    let bytes = format.encode(&proof).unwrap();
-    let decoded = format.decode(&bytes).unwrap();
+    let bytes = proof.to_bytes().unwrap();
+    let decoded = TestProof::from_bytes(&bytes).unwrap();
     assert!(
         app.verify_uncompressed(&decoded.carry::<LeafNode>(data), &mut rng)
             .unwrap()
@@ -55,7 +50,7 @@ fn decoded_proof_verifies_and_a_tampered_one_does_not() {
     let mut tampered = bytes;
     tampered[ENVELOPE..ENVELOPE + 32].fill(0);
     tampered[ENVELOPE] = 2;
-    let decoded = format.decode(&tampered).unwrap();
+    let decoded = TestProof::from_bytes(&tampered).unwrap();
     assert!(
         !app.verify_uncompressed(&decoded.carry::<LeafNode>(data), &mut rng)
             .unwrap()
@@ -63,20 +58,19 @@ fn decoded_proof_verifies_and_a_tampered_one_does_not() {
 }
 
 #[test]
-fn application_envelope_rejects_mismatches_before_payload_decoding() {
+fn envelope_rejects_mismatches_before_payload_decoding() {
     let app = app();
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
-    let format = app.proof_format();
-    let bytes = format.encode(&proof).unwrap();
-    assert_eq!(bytes.len(), format.encoded_len());
+    let bytes = proof.to_bytes().unwrap();
+    assert_eq!(bytes.len(), TestProof::encoded_len::<4>());
     assert_eq!(&bytes[..8], b"RAGUPCD\0");
     assert_eq!(
         &bytes[8..28],
-        &[2, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
+        &[3, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
     );
-    let decoded = format.decode(&bytes).unwrap();
-    assert_eq!(format.encode(&decoded).unwrap(), bytes);
+    let decoded = TestProof::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.to_bytes().unwrap(), bytes);
     assert!(
         app.verify_uncompressed(
             &decoded.carry::<LeafNode>(data),
@@ -92,83 +86,77 @@ fn application_envelope_rejects_mismatches_before_payload_decoding() {
         (12, "unsupported proof schema version"),
         (14, "unsupported proof protocol version"),
         (16, "proof rank mismatch"),
-        (20, "proof header size mismatch"),
-        (28, "proof profile mismatch"),
-        (60, "proof suite mismatch"),
-        (92, "proof application mismatch"),
     ] {
         let mut invalid = bytes.clone();
         invalid[offset] = invalid[offset].wrapping_add(1);
-        assert!(matches!(format.decode(&invalid),
+        assert!(matches!(TestProof::from_bytes(&invalid),
             Err(Error::Invalid { offset: actual, reason: why, .. }) if actual == offset && why == reason));
     }
-    // Any other length is rejected before the envelope is read, so a short
-    // input with a bad magic reports its length, not the magic.
-    for end in [0, 8, 123, 124, bytes.len() - 1] {
-        let mut short = bytes[..end].to_vec();
-        if end > 0 {
-            short[0] = 0;
-        }
+    // A short envelope is rejected before reading dimensions. Once the
+    // envelope is available, its dimensions fix the exact payload length.
+    for end in [0, 8, ENVELOPE - 1] {
         assert!(matches!(
-            format.decode(&short),
-            Err(Error::Length { actual, .. }) if actual == end
+            TestProof::from_bytes(&bytes[..end]),
+            Err(Error::Truncated { .. })
         ));
+    }
+    for end in [ENVELOPE, bytes.len() - 1] {
+        assert!(matches!(TestProof::from_bytes(&bytes[..end]),
+            Err(Error::Length { actual, .. }) if actual == end));
     }
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert!(matches!(
-        format.decode(&trailing),
+        TestProof::from_bytes(&trailing),
         Err(Error::Length { .. })
     ));
-    // The payload without its envelope is another length.
-    assert!(matches!(
-        format.decode(&bytes[ENVELOPE..]),
-        Err(Error::Length { .. })
-    ));
-    // The application's header size is part of the type, so another
-    // application's format decodes nothing of this one.
-    let other = ragu_pcd::ApplicationBuilder::<C, R, 3>::new()
-        .finalize(ragu_pcd::pasta::baked())
-        .unwrap()
-        .proof_format();
-    assert!(matches!(other.decode(&bytes), Err(Error::Length { .. })));
+    // A payload alone has no version envelope.
+    assert!(TestProof::from_bytes(&bytes[ENVELOPE..]).is_err());
 }
 
 #[test]
-fn derived_context_identifies_the_setup() {
-    let trivial = || {
-        ragu_pcd::ApplicationBuilder::<C, R, 4>::new()
-            .finalize(ragu_pcd::pasta::baked())
+fn verification_uses_the_receiving_application() {
+    use ragu_core::Cycle;
+    use ragu_pcd::{ApplicationBuilder, RegistryTags};
+    use ragu_testing::pcd::nontrivial::WitnessLeaf;
+
+    let params = ragu_pcd::pasta::baked();
+    let build = |beacon| {
+        let manifest = [0x24; 20];
+        ApplicationBuilder::<C, R, 4>::new()
+            .with_registry_tags(
+                RegistryTags::from_beacon(&[beacon; 32], &manifest),
+                &manifest,
+            )
+            .unwrap()
+            .register(WitnessLeaf::<C> {
+                poseidon_params: C::circuit_poseidon(params),
+            })
+            .unwrap()
+            .finalize(params)
             .unwrap()
     };
-    // Another build of the same setup derives the same identifiers.
-    let other = trivial();
-    assert_eq!(other.proof_context(), trivial().proof_context());
-    // An application with other steps shares the suite and nothing else, so
-    // its format decodes none of this one's proofs.
-    let app = app();
-    let context = app.proof_context();
-    assert_eq!(other.proof_context().suite, context.suite);
-    assert_ne!(other.proof_context().application, context.application);
+    let sender = build(0x42);
+    let receiver = build(0x43);
     let mut rng = StdRng::seed_from_u64(0x5eed);
-    let bytes = app
-        .proof_format()
-        .encode(leaf(&app, &mut rng, 7).proof())
-        .unwrap();
-    assert!(matches!(
-        other.proof_format().decode(&bytes),
-        Err(Error::Invalid {
-            offset: 92,
-            reason: "proof application mismatch",
-            ..
-        })
-    ));
-    // A receiver without the application builds its format from the
-    // application's published identifiers.
-    let format = ragu_pcd::ProofFormat::<C, R, 4>::new(context);
-    assert_eq!(format.encoded_len(), app.proof_format().encoded_len());
-    assert_eq!(
-        format.encode(&format.decode(&bytes).unwrap()).unwrap(),
-        bytes
-    );
+    let proof = leaf(&sender, &mut rng, 7);
+    let data = *proof.data();
+    let bytes = proof.proof().to_bytes().unwrap();
+    let compressed = sender.compress(&proof, &mut rng).unwrap();
+    assert!(sender.verify_compressed(&compressed).unwrap());
+    let compressed_bytes = compressed.proof().to_bytes().unwrap();
+
+    // Both setups have the same layout. Decoding succeeds and re-encodes
+    // identically, while verification checks the selected registry setup.
+    let decoded = TestProof::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.to_bytes().unwrap(), bytes);
+    let decoded = decoded.carry::<LeafNode>(data);
+    assert!(sender.verify_uncompressed(&decoded, &mut rng).unwrap());
+    assert!(!receiver.verify_uncompressed(&decoded, &mut rng).unwrap());
+
+    let decoded = TestCompressed::from_bytes(&compressed_bytes).unwrap();
+    assert_eq!(decoded.to_bytes().unwrap(), compressed_bytes);
+    let decoded = decoded.carry::<LeafNode>(data);
+    assert!(sender.verify_compressed(&decoded).unwrap());
+    assert!(!receiver.verify_compressed(&decoded).unwrap());
 }

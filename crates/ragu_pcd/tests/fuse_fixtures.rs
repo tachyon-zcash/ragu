@@ -35,8 +35,8 @@
 //!   that drifted, and the file's diff in a pull request reads as the list
 //!   of stages the change touched. The `wire.*` lines then pin the wire
 //!   format (see `crate::wire`): the codec's field order, the length and
-//!   digest of the proof's and the compressed proof's payload bytes, and the
-//!   suite identifier. A change to the proof's fields, their order, a codec
+//!   digest of the proof's and the compressed proof's payload bytes. A change
+//!   to the proof's fields, their order, a codec
 //!   or an element's spelling fails them until the fixtures are regenerated
 //!   and the schema version bumped.
 //! - `<scenario>.fingerprint`: the verifier's run on the `.proof`: digests of
@@ -1111,7 +1111,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     lines.push("rng.fuse.words", tape.consumed());
     lines.push("rng.compress.words", compress_rng.consumed());
     lines.push("proof.bytes", proof.0.len());
-    wire_lines(app, pcd.proof(), compressed.proof(), &mut lines);
+    wire_lines(pcd.proof(), compressed.proof(), &mut lines);
 
     if writing() {
         fixtures.write(name, "rng-u64s-le", &tape.bytes());
@@ -1273,10 +1273,9 @@ fn prover_fixtures<C: FixtureCycle>() {
 }
 
 /// The `wire.*` lines: the codec's field order, the length and digest of
-/// each payload as the wire format encodes it, and the suite identifier.
+/// each payload as the wire format encodes it.
 /// These pin the wire format itself, apart from the fixture encoding above.
 fn wire_lines<C: FixtureCycle>(
-    app: &App<C>,
     proof: &Proof<C, R>,
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
@@ -1292,13 +1291,6 @@ fn wire_lines<C: FixtureCycle>(
     <CompressedProof<C> as Encode>::encode(compressed, &mut payload);
     lines.push("wire.compressed.bytes", payload.len());
     lines.push("wire.compressed.digest", digest(|d| d.bytes(&payload)));
-    let suite: String = app
-        .proof_context()
-        .suite
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    lines.push("wire.suite", suite);
 }
 
 /// Decodes a `.proof` file: header data, then the compressed proof, with

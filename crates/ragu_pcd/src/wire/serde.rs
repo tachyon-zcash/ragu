@@ -2,15 +2,15 @@
 //! one byte string, so every serde data format carries the same bytes and the
 //! same decoding checks apply.
 //!
-//! The string is the codec version byte; a prelude recording the rank, as a
-//! little-endian `u32`, and the header size, as a little-endian `u64`, which
-//! neither type carries; and then the payload, in the layout
-//! [`ProofFormat`](crate::ProofFormat) envelopes. The prelude fixes the
+//! The string starts with the codec version byte, the rank as a little-endian
+//! `u32` and the header size as a little-endian `u64`, followed by the same
+//! payload [`Proof::to_bytes`] writes after its envelope. The prelude fixes the
 //! payload's exact length, which deserialization checks before decoding it,
 //! and formats without a bytes type are buffered only up to that length.
 //!
-//! The prelude is not a trusted context and identifies no application: use
-//! `ProofFormat` for an envelope bound to an application's identifiers.
+//! The caller selects the expected application and cryptographic parameters
+//! through its deployment or consensus rules, as with [`Proof::from_bytes`].
+//! Deserialization checks representation; verification uses that application.
 
 use alloc::vec::Vec;
 use core::{fmt, marker::PhantomData};
@@ -25,21 +25,12 @@ use serde::{
 use crate::{
     CompressedProof, Proof,
     profile::ProfiledCycle,
-    wire::{self, Decode, Dimensions, Encode, Error, Reader, Validate},
+    wire::{self, Decode, Dimensions, Encode, Error, MAX_HEADER_SIZE, MAX_RANK, Reader, Validate},
 };
 
 /// The version byte and the prelude: the rank as a `u32` and the header size
 /// as a `u64`, as the envelope records them.
 const PRELUDE_LEN: usize = 1 + 4 + 8;
-
-/// The largest rank a compressed proof's prelude may declare. A compressed
-/// proof's rank fixes its IPA rounds, one per bit, so this bounds the length
-/// a prelude implies; a proof's rank is its type's.
-const MAX_RANK: u32 = 32;
-
-/// The largest header size a prelude may declare, bounding the length it
-/// implies.
-const MAX_HEADER_SIZE: usize = 1 << 12;
 
 /// A type serialized as one framed byte string.
 trait Framed: Encode + Decode + Validate {
@@ -292,7 +283,7 @@ mod tests {
     #[test]
     fn sequence_buffer_stops_at_the_length_the_prelude_implies() {
         let dims = Dimensions::of::<ProductionRank, 4>();
-        let limit = PRELUDE_LEN + TestCompressed::encoded_len(dims);
+        let limit = PRELUDE_LEN + <TestCompressed as Decode>::encoded_len(dims);
         let prelude = prelude_bytes(dims.rank, dims.header_size as u64);
         let input = |extra: usize| {
             prelude

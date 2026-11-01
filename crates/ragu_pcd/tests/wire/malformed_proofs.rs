@@ -73,10 +73,10 @@ fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
         !<TestProof as wire::Validate>::encodable(&proof, Dimensions::of::<ProductionRank, 4>()),
         "{field}: the codec check must reject identity"
     );
-    assert!(app.proof_format().encode(&proof).is_err());
-    let bytes = proof.to_bytes();
+    assert!(proof.to_bytes().is_err());
+    let bytes = Encode::to_bytes(&proof);
     let Err(wire::Error::Invalid { reason, .. }) =
-        TestProof::from_bytes(&bytes, Dimensions::of::<ProductionRank, 4>())
+        <TestProof as Decode>::from_bytes(&bytes, Dimensions::of::<ProductionRank, 4>())
     else {
         panic!("{field}: expected the decoder to reject the identity")
     };

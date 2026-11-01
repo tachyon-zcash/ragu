@@ -17,18 +17,18 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
-//! - [`Application::proof_format`] — a versioned [`ProofFormat`] for storing
-//!   and transporting both kinds of proof, bound to [`ProofContext`]
-//!   identifiers derived from the application's setup.
+//! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
+//!   counterparts — versioned byte encodings for storing and transporting proofs.
 //!
-//! For each payload kind, [`ProofFormat`] accepts exactly one encoded length,
-//! fixed by the profile, rank and header size, and checks envelope, schema and protocol versions,
-//! rank, header size, suite and application identifiers before decoding proof
-//! data. With the `serde` feature, [`Proof`] and [`CompressedProof`] implement
-//! `Serialize` and `Deserialize` directly, as the same payload behind a prelude
+//! For each payload kind, decoding checks envelope, schema and protocol
+//! versions, bounds the declared dimensions, then checks the exact length
+//! fixed by the profile, rank and header size before decoding proof data. The
+//! caller selects the expected application and cryptographic parameters
+//! through its deployment or consensus rules. With the `serde` feature, [`Proof`]
+//! and [`CompressedProof`] implement `Serialize` and `Deserialize` directly,
+//! as the same payload behind a prelude
 //! recording the rank and header size, for embedding in a container that
-//! supplies its own context. Decoding is
-//! not verification: a receiver compresses a decoded proof and accepts it on
+//! supplies its own context. A receiver compresses a decoded proof and accepts it on
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
 //! the envelope layout and the version rules.
 
@@ -98,7 +98,6 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
-pub use wire::format::{ProofContext, ProofFormat};
 
 /// Domain separation tag for the Ragu PCD protocol.
 ///
@@ -457,7 +456,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             bootstrap: None,
             seeded_trivial: OnceCell::new(),
-            proof_context: OnceCell::new(),
             context,
             _marker: PhantomData,
         };
@@ -572,9 +570,6 @@ pub struct Application<
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
     seeded_trivial: OnceCell<Proof<C, R>>,
-    /// The identifiers of this setup, derived on first use; see
-    /// [`proof_context`](Self::proof_context).
-    proof_context: OnceCell<ProofContext>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 

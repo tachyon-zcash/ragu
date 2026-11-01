@@ -1,8 +1,8 @@
 //! Canonical byte encoding for proof data.
 //!
-//! The encoding itself is internal: proofs reach bytes through
-//! `ProofFormat`'s versioned envelope or through the optional `serde`
-//! adapters. [`Error`] is what both report when bytes are malformed.
+//! Proofs reach bytes through their `to_bytes` and `from_bytes` methods with a
+//! versioned envelope, or through the optional `serde` adapters. [`Error`] is
+//! what both report when bytes are malformed.
 //!
 //! This is separate from the in-circuit element stream in
 //! `ragu_primitives::io`. Every value has a fixed encoded length, determined by
@@ -18,26 +18,27 @@
 //!
 //! # Envelope
 //!
-//! `ProofFormat` writes a 124-byte envelope ahead of a payload, every integer
+//! `to_bytes` writes a 28-byte envelope ahead of a payload, every integer
 //! little-endian:
 //!
 //! | Offset | Size | Meaning |
 //! | --- | --- | --- |
 //! | 0 | 8 | Magic: `RAGUPCD` and a NUL |
-//! | 8 | 2 | Envelope version: 2 |
+//! | 8 | 2 | Envelope version: 3 |
 //! | 10 | 2 | Payload kind: 1 proof, 2 compressed proof |
 //! | 12 | 2 | Schema version of that payload kind: 1 |
 //! | 14 | 2 | Protocol version: 1 (`ragu-pcd-v1`) |
 //! | 16 | 4 | Rank |
 //! | 20 | 8 | Header size, in field elements |
-//! | 28 | 32 | Profile tag: BLAKE2b-256 of `Profile::NAME`, personalized `ragu-profile-v1` |
-//! | 60 | 32 | Suite identifier |
-//! | 92 | 32 | Application identifier |
 //!
-//! Decoding checks the exact total length first, then each component in
-//! this order against the receiving application's, rejecting at the first
-//! mismatch: an unknown version is never reinterpreted or downgraded. The
-//! two identifiers are a `ProofContext`'s.
+//! Decoding checks the envelope and its dimensions, then the exact total
+//! length those dimensions imply, before decoding the payload. Headers are
+//! limited to 4096 field elements and compressed ranks to 32, so hostile
+//! dimensions are rejected before allocating the payload. An ordinary proof's
+//! declared rank must match its type. Unknown versions are never reinterpreted
+//! or downgraded. The caller selects the expected application, profile and cryptographic
+//! parameters through its deployment or consensus rules. They are not
+//! identified in the encoding; the receiving types fix the payload layout.
 //!
 //! # Versions
 //!
@@ -61,8 +62,7 @@ use ragu_primitives::vec::Len;
 use udon::{curve::Affine, field::Field};
 
 mod compressed;
-mod context;
-pub(crate) mod format;
+mod format;
 mod polynomial;
 mod registry;
 #[cfg(feature = "serde")]
@@ -74,6 +74,11 @@ mod tests;
 /// with. Nested payloads have no envelope.
 #[cfg(any(test, feature = "serde"))]
 pub(crate) const VERSION: u8 = 1;
+
+/// Largest compressed rank admitted by the byte formats.
+pub(crate) const MAX_RANK: u32 = 32;
+/// Largest child header admitted by the byte formats, in field elements.
+pub(crate) const MAX_HEADER_SIZE: usize = 1 << 12;
 
 /// The dimensions a payload's layout takes from its proof rather than from
 /// its type: the rank, which fixes a compressed proof's IPA rounds, and the

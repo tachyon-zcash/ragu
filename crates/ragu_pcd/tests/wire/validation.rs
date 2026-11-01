@@ -10,14 +10,10 @@ use rand::{SeedableRng, rngs::StdRng};
 use super::Proof;
 use crate::{
     ApplicationBuilder,
-    wire::{Decode, Dimensions, Encode, Error},
+    wire::{Encode, Error},
 };
 
 type TestProof = Proof<Pasta, ProductionRank>;
-
-fn dims() -> Dimensions {
-    Dimensions::of::<ProductionRank, 4>()
-}
 
 #[test]
 fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
@@ -28,11 +24,11 @@ fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
     let pcd = app.bootstrap_pcd();
     assert!(app.verify_uncompressed(&pcd, &mut rng).unwrap());
     let (proof, ()) = pcd.into_parts();
-    let bytes = proof.to_bytes();
-    let decoded = TestProof::from_bytes(&bytes, dims()).unwrap();
+    let bytes = proof.to_bytes().unwrap();
+    let decoded = TestProof::from_bytes(&bytes).unwrap();
     // Decoding restores every field, and the proof re-encodes to itself.
     assert_eq!(proof.test_mismatch(&decoded), None);
-    assert_eq!(decoded.to_bytes(), bytes);
+    assert_eq!(decoded.to_bytes().unwrap(), bytes);
     assert!(
         app.verify_uncompressed(&decoded.carry::<()>(()), &mut rng)
             .unwrap()
@@ -56,7 +52,7 @@ fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
                     malformed.truncate(malformed.len() - element.len());
                 }
                 assert!(
-                    matches!(TestProof::from_bytes(&malformed, dims()),
+                    matches!(TestProof::from_bytes(&malformed),
                         Err(Error::Length { expected, actual })
                             if expected == bytes.len() && actual == malformed.len()),
                     "{} (extra: {extra})", stringify!($field),
@@ -101,7 +97,7 @@ fn decoded_child_remains_usable_by_fuse() {
         let mut rng = StdRng::seed_from_u64(0xdec0de);
         let (child, ()) = app.seed(&mut rng, Seed::new(), Fp::from(7)).unwrap();
         let (proof, data) = child.into_parts();
-        let decoded = TestProof::from_bytes(&proof.to_bytes(), dims()).unwrap();
+        let decoded = TestProof::from_bytes(&proof.to_bytes().unwrap()).unwrap();
         let child = decoded.carry::<Value>(data);
         let compressed_child = app.compress(&child, &mut rng).unwrap();
         assert!(app.verify_compressed(&compressed_child).unwrap());

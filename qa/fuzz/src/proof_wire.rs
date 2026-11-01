@@ -5,6 +5,7 @@
 //! Raw inputs still exercise the decoder independently of the seed generator.
 use std::sync::LazyLock;
 
+use ragu_pcd::{CompressedProof, Proof};
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -15,13 +16,12 @@ static SEED: LazyLock<Seed> = LazyLock::new(|| {
     let app = &APP.0;
     let mut rng = StdRng::seed_from_u64(0x77697265);
     let proof = pcd::seed(app, &mut rng, 42);
-    let format = app.proof_format();
     let compressed = app.compress(&proof, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
     Seed {
         data: *proof.data(),
-        proof: format.encode(proof.proof()).unwrap(),
-        compressed: format.encode_compressed(compressed.proof()).unwrap(),
+        proof: proof.proof().to_bytes().unwrap(),
+        compressed: compressed.proof().to_bytes().unwrap(),
     }
 });
 
@@ -86,10 +86,10 @@ fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
         }),
         // Zero is canonical in the first proof scalar (bridge alpha) and
         // final compressed scalar (nested IPA c). These edits reach beyond
-        // representation checks. The envelope is version 2 (124 bytes).
+        // representation checks. The envelope is version 3 (28 bytes).
         5 => {
             let offset = match kind {
-                Kind::Proof => 124,
+                Kind::Proof => 28,
                 Kind::Compressed => bytes.len() - 32,
             };
             bytes[offset..offset + 32].fill(0);
@@ -106,14 +106,13 @@ fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
 pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
     let bytes = candidate(kind, input);
     let app = &APP.0;
-    let format = app.proof_format();
     let mut outcome = Outcome::default();
     match kind {
         Kind::Proof => {
-            if let Ok(decoded) = format.decode(&bytes) {
+            if let Ok(decoded) = Proof::from_bytes(&bytes) {
                 outcome.decoded = true;
                 assert!(
-                    format.encode(&decoded).unwrap() == bytes,
+                    decoded.to_bytes().unwrap() == bytes,
                     "noncanonical proof encoding"
                 );
                 let mut rng = StdRng::seed_from_u64(0xdec0de);
@@ -125,10 +124,10 @@ pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
             }
         }
         Kind::Compressed => {
-            if let Ok(decoded) = format.decode_compressed(&bytes) {
+            if let Ok(decoded) = CompressedProof::from_bytes(&bytes) {
                 outcome.decoded = true;
                 assert!(
-                    format.encode_compressed(&decoded).unwrap() == bytes,
+                    decoded.to_bytes().unwrap() == bytes,
                     "noncanonical compressed encoding"
                 );
                 outcome.verified = Some(
