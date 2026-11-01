@@ -34,6 +34,14 @@ fn integer_and_fixed_sequence_known_bytes() {
         <Vec<u16> as Encode<Pair>>::encode(&vec![1u16], &mut output, DIMS),
         Err(Error::Unencodable)
     );
+    // An array encodes as the same elements: its length is its type's.
+    let values = [0x0102u16, 0x0304];
+    let bytes = <[u16; 2] as Encode<Array<DefaultEncoding>>>::to_bytes(&values, DIMS);
+    assert_eq!(bytes, [2, 1, 4, 3]);
+    assert_eq!(
+        <[u16; 2] as Decode<Array<DefaultEncoding>>>::from_bytes(&bytes, DIMS).unwrap(),
+        values
+    );
 }
 
 #[test]

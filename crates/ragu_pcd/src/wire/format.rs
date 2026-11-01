@@ -34,8 +34,8 @@ impl PayloadKind {
         }
     }
 }
-const PROOF_SCHEMA_VERSION: u16 = 1;
-const COMPRESSED_SCHEMA_VERSION: u16 = 1;
+const PROOF_SCHEMA_VERSION: u16 = 2;
+const COMPRESSED_SCHEMA_VERSION: u16 = 2;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 const PROTOCOL_VERSION: u16 = 1;
 pub(crate) const ENVELOPE_SIZE: usize = 28;
@@ -266,37 +266,42 @@ mod tests {
     use udon::field::Field;
 
     use super::*;
-    use crate::profile::{Shape, Standard};
+    use crate::{
+        header::HEADER_POLYNOMIALS,
+        profile::{Shape, Standard},
+    };
 
-    // Schema v1 is the standard profile's shape under `ragu-pcd-v1`. A
+    // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
+    // the online polynomials (see `internal::online`) in the batch. A
     // change to either moves the layout or the verifier semantics and needs
     // a new schema or protocol version, not a silent re-pin.
     #[test]
-    fn schema_v1_pins_protocol_and_shape() {
+    fn schema_v2_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
         assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 45,
-                nested_points: 105,
-                nested_steps: 26,
-                nested_rx: 39,
-                native_points: 93,
-                native_steps: 23,
+                native_rx: 46,
+                nested_points: 113,
+                nested_steps: 28,
+                nested_rx: 41,
+                native_points: 97,
+                native_steps: 24,
             }
         );
     }
 
     #[test]
     fn encoded_length_is_a_function_of_profile_rank_and_header_size() {
-        // Every polynomial of the shape, with `2^rank` coefficients each; a
-        // commitment per polynomial plus the nested challenges partial; two
-        // headers; the bridge alpha and nine challenges; one circuit index.
-        // The envelope adds 28 bytes.
+        // Every polynomial of the shape and the step's own online
+        // polynomials, with `2^rank` coefficients each; a commitment per
+        // polynomial plus the nested challenges partial; two headers; the
+        // bridge alpha and nine challenges; one circuit index. The envelope
+        // adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
-            let polynomials = Shape::of::<Standard>().polynomials();
+            let polynomials = Shape::of::<Standard>().polynomials() + HEADER_POLYNOMIALS;
             polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 10 * 32 + 4
         }
         assert_eq!(
@@ -314,11 +319,11 @@ mod tests {
             Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
-        // 93 instance points; 27 instance scalars; per side 6+2R points,
+        // 98 instance points; 27 instance scalars; per side 6+2R points,
         // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (98 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

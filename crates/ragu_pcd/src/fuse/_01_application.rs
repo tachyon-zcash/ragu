@@ -10,6 +10,7 @@ use rand::CryptoRng;
 
 use crate::{
     Application, Header, Pcd, Proof,
+    internal::online,
     profile::ProfiledCycle,
     proof::ProofBuilder,
     step::{Step, internal::adapter::Adapter},
@@ -49,6 +50,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_left_header(left_header.into_inner());
         builder.set_right_header(right_header.into_inner());
         builder.set_native_application_rx(rx);
+        // Until steps commit their own polynomials, every output slot is
+        // padding.
+        builder.set_online_polys(core::array::from_fn(|_| online::padding()));
 
         Ok((left_proof, right_proof, output_data, step_aux))
     }

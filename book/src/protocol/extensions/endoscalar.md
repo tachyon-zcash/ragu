@@ -198,10 +198,10 @@ The following conservative local degree ledger is derived from the
 implementation's constants, which the `print_ledger_parameters` test in
 `crates/ragu_pcd/src/internal/tests.rs` prints: $D=8192$, nested registry
 domain size $K=64$, revdot group size and group count $M=7$, $N=14$ on the
-native side and $M=8$, $N=10$ on the nested side, $T=138$ nested PCS
-queries (the 18 static openings, each child's 39 rx polynomials at
-$x_n z_n$, and the registry restriction at each of the 42 nested internal
-circuits' $\omega^j$), and point folds of 93 native and 105 nested terms.
+native side and $M=8$, $N=10$ on the nested side, $T=144$ nested PCS
+queries (the 18 static openings, each child's 41 rx polynomials at
+$x_n z_n$, and the registry restriction at each of the 44 nested internal
+circuits' $\omega^j$), and point folds of 97 native and 113 nested terms.
 One challenge set drives both fields' revdot folds, so each fold challenge
 is charged for both sides. The entries bound the number of roots charged to
 a challenge, conditional on the relevant discrepancy being a nonzero
@@ -221,12 +221,12 @@ has $m-1$ coefficients and must be committed before the folding challenge.
 | $\mu_n$ | Inner revdot quotient folds on both sides | $2N(M-1)$ each: $168+140=308$ |
 | $\mu'_n$ | Outer revdot quotient folds on both sides | $2(N-1)$ each: $26+18=44$ |
 | $x_n$ | Two folded-polynomial checks and registry restriction | $3(D-1)=24573$ |
-| $\alpha_n$ | Batching the $T$ opening claims | $T-1=137$ |
-| $u_n$ | Quotient identity, clearing at most $T$ denominators | $D+T-1=8329$ |
-| $\beta$ | Both point folds, with 93 and 105 terms | $92+104=196$ |
+| $\alpha_n$ | Batching the $T$ opening claims | $T-1=143$ |
+| $u_n$ | Quotient identity, clearing at most $T$ denominators | $D+T-1=8335$ |
+| $\beta$ | Both point folds, with 97 and 113 terms | $96+112=208$ |
 
 Counting the comparisons separately, rather than relying on the gist's
-six-check shorthand, gives $66477/2^{143} \approx 2^{-126.98}$ for this
+six-check shorthand, gives $66501/2^{143} \approx 2^{-126.98}$ for this
 local ledger. In particular, the lower-degree challenges must not be
 omitted, even though they do not change the rounded estimate of about
 127 bits. The $u_n$ entry conservatively clears the quotient denominators;

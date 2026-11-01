@@ -24,8 +24,8 @@ use crate::{
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
-        Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, HeaderSize, Point,
-        Reader, Rounds, Scalar, SizedSequence, field_len,
+        Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, HeaderSize,
+        Point, Reader, Rounds, Scalar, SizedSequence, field_len,
     },
 };
 
@@ -128,6 +128,7 @@ codec!([C: ProfiledCycle] Instance<C> {
     native => FixedSequence<Point, Native<C::Profile>>,
     native_registry_xy => Point,
     native_p => Point,
+    online_commitments => Array<Point>,
     nested => FixedSequence<Point, Nested<C::Profile>>,
     nested_registry_xy => Point,
     nested_p => Point,

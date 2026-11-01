@@ -228,16 +228,16 @@ fn test_internal_circuit_constraint_counts() {
     check_constraints!(Hashes1Circuit,              mul = 1818, lin = 3085);
     check_constraints!(Hashes2Circuit,              mul = 1875, lin = 2984);
     check_constraints!(CollapseCircuit,             mul = 1364, lin = 1893);
-    check_constraints!(ComputeVCircuit,             mul = 1853, lin = 2749);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2017, lin = 3054);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2022, lin = 3064);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2022, lin = 3064);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2033, lin = 3086);
+    check_constraints!(ComputeVCircuit,             mul = 1880, lin = 2791);
+    check_constraints!(BindChallengesCircuit(0),    mul = 2023, lin = 3054);
+    check_constraints!(BindChallengesCircuit(1),    mul = 2028, lin = 3064);
+    check_constraints!(BindChallengesCircuit(2),    mul = 2028, lin = 3064);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2039, lin = 3086);
     check_constraints!(BindBetaCircuit,             mul = 1891, lin = 3114);
-    check_constraints!(BindEndoscalarCircuit,       mul = 903,  lin = 1697);
+    check_constraints!(BindEndoscalarCircuit,       mul = 920,  lin = 1725);
     // Every native endoscaling step walks four points and lays out the same.
     for step in 0..native::NUM_ENDOSCALING_STEPS as u32 {
-        check_constraints!(EndoscalingStep(step),   mul = 1985, lin = 3502);
+        check_constraints!(EndoscalingStep(step),   mul = 1990, lin = 3502);
     }
 }
 
@@ -255,13 +255,13 @@ fn test_internal_stage_parameters() {
     check_stage!(Preamble, skip = 27, num = 347);
     check_stage!(OuterError, skip = 374, num = 19);
     check_stage!(InnerError, skip = 393, num = 42);
-    check_stage!(Query, skip = 374, num = 75);
-    check_stage!(Eval, skip = 449, num = 55);
-    check_stage!(PointsChildren, skip = 27, num = 60);
-    check_stage!(PointsRegistryWx, skip = 87, num = 2);
-    check_stage!(PointsAb, skip = 89, num = 3);
-    check_stage!(PointsF, skip = 92, num = 2);
-    check_stage!(PointsWalk, skip = 94, num = 142);
+    check_stage!(Query, skip = 374, num = 77);
+    check_stage!(Eval, skip = 451, num = 59);
+    check_stage!(PointsChildren, skip = 27, num = 64);
+    check_stage!(PointsRegistryWx, skip = 91, num = 2);
+    check_stage!(PointsAb, skip = 93, num = 3);
+    check_stage!(PointsF, skip = 96, num = 2);
+    check_stage!(PointsWalk, skip = 98, num = 143);
 }
 
 /// Every native internal circuit's claim in [`native::claims`] composes its
@@ -700,11 +700,11 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2000, 3501)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2010, 3501)));
     }
-    expected.push((nested::InternalCircuitIndex::Collapse, (1493, 2338)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1397, 1737)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (527,  211)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1560, 2442)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1458, 1815)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (550,  227)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -726,16 +726,16 @@ fn test_nested_stage_parameters() {
     }
 
     check_stage!(endoscalar::EndoscalarStage, skip = 1, num = 119);
-    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 120, num = 131);
-    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 251, num = 106);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 357, num = 3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 360, num = 37);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 397, num = 11);
-    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 408, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 411, num = 67);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 478, num = 2);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 480, num = 47);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 527, num = 10);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 120, num = 141);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 261, num = 114);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 375, num = 3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 378, num = 37);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 415, num = 11);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 426, num = 3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 429, num = 70);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 499, num = 2);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 501, num = 49);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 550, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -1413,8 +1413,8 @@ fn test_fold_groups_follow_the_profile() {
         profile::{Standard, testing::Wider},
     };
 
-    assert_eq!(native::num_claims::<Standard>(), 86);
-    assert_eq!(nested::num_claims::<Standard>(), 72);
+    assert_eq!(native::num_claims::<Standard>(), 88);
+    assert_eq!(nested::num_claims::<Standard>(), 76);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS
