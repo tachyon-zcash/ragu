@@ -31,7 +31,7 @@ use crate::{
         run::Sides,
         support::{HEADER_SIZE, Setup, TestR},
     },
-    header::{Header, Suffix},
+    header::{Dummy, Header, Suffix},
     profile::{
         Aggregator, BondingSlot, CircuitSlot, Decompression, Profile, Profiled, Shape, Standard,
     },
@@ -346,6 +346,91 @@ fn decompresses_a_wallet_proof() {
         !matches!(app.verify_uncompressed(&relabelled, &mut rng), Ok(true)),
         "a relabelled decompression fails"
     );
+}
+
+/// Two chunk circuits that load the same stages do not stand in for each
+/// other: with the stages as they are, a proof whose polynomials for two
+/// such circuits are swapped fails both verifiers, on either side.
+#[test]
+fn chunk_circuits_sharing_stages_are_not_interchangeable() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(31);
+    let decompression = Decompression::new(wallet(), &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, decompression)
+        .unwrap();
+    let (leaf, _) = app.seed(&mut rng, Leaf, Fp::from(5)).unwrap();
+    assert!(app.verify_uncompressed(&leaf, &mut rng).unwrap());
+
+    let rejected = |pcd: crate::Pcd<Profiled<Pasta, P>, AggregatorRank, Value>,
+                    rng: &mut StdRng,
+                    case: &str| {
+        assert!(
+            !matches!(app.verify_uncompressed(&pcd, &mut *rng), Ok(true)),
+            "{case}: the decider"
+        );
+        let compressed = app
+            .compress(&pcd, rng)
+            .and_then(|compressed| app.verify_compressed(&compressed));
+        assert!(
+            !matches!(compressed, Ok(true)),
+            "{case}: the compressed verifier"
+        );
+    };
+    // Two work-stage chunk circuits of the circuit-field side, after the
+    // transcript ones.
+    let first = P::native_circuits(HEADER_SIZE).transcript;
+    let (mut proof, data) = leaf.clone().into_parts();
+    proof.native_extension_circuit_rxs.swap(first, first + 1);
+    rejected(
+        proof.carry::<Value>(data),
+        &mut rng,
+        "circuit-field chunk circuits swapped",
+    );
+    // Two work-stage chunk circuits of the scalar-field side.
+    let (mut proof, data) = leaf.into_parts();
+    proof.nested_extension_circuit_rxs.swap(0, 1);
+    rejected(
+        proof.carry::<Value>(data),
+        &mut rng,
+        "scalar-field chunk circuits swapped",
+    );
+}
+
+/// The decompression step cannot output the dummy header, whose suffix
+/// would let a decompressed proof stand as the base case: the step's
+/// uniform encoding holds the suffix wire away from it, so no proof of the
+/// step with that header exists, whatever the chunks verified.
+#[test]
+fn a_decompression_cannot_output_the_dummy_suffix() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(37);
+    let wallet = wallet();
+    let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(42)).unwrap();
+    let compressed = wallet.compress(&leaf, &mut rng).unwrap();
+    let decompression = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, decompression)
+        .unwrap();
+    let decompressed = app.context().prepare(&compressed).unwrap();
+    match app.fuse_with_source(
+        &mut rng,
+        Decompress::<Dummy>::new(),
+        (),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+        Some(&decompressed),
+    ) {
+        Err(_) => {}
+        Ok((forged, ())) => assert!(
+            !matches!(app.verify_uncompressed(&forged, &mut rng), Ok(true)),
+            "a decompression under the dummy header fails"
+        ),
+    }
 }
 
 /// A decompression whose circuit-field side was prepared from one

@@ -927,21 +927,34 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
+    let extension = C::Profile::native_extension();
+    let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
+    let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
-            ExtensionCircuit(k) => C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
-                k as usize,
-                CircuitSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
-            ExtensionBonding(j) => C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
-                j as usize,
-                BondingSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
+            ExtensionCircuit(k) => {
+                let (registry, registration) =
+                    C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
+                        k as usize,
+                        CircuitSlot::new(registry),
+                        params,
+                    )?
+                    .into_parts();
+                extension_circuits.push(registration);
+                registry
+            }
+            ExtensionBonding(j) => {
+                let (registry, registration) =
+                    C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
+                        j as usize,
+                        BondingSlot::new(registry),
+                        params,
+                    )?
+                    .into_parts();
+                extension_bondings.push(registration);
+                registry
+            }
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
@@ -1065,6 +1078,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             }
         };
     }
+    extension.check_registered("native", &extension_circuits, &extension_bondings)?;
 
     assert_eq!(
         registry.num_internal_circuits(),

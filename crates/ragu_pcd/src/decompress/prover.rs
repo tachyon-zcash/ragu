@@ -72,8 +72,9 @@ where
     /// bootstrap proof, compressed and run through both sides' chunks.
     ///
     /// `wallet` must be the network's wallet application, built from the
-    /// same steps and parameters as every wallet's. Nothing checks this yet;
-    /// see the decompression module's *What remains*.
+    /// same steps and parameters as every wallet's. TODO: check this, by
+    /// pinning the wallet registry to the aggregator's setup; see the
+    /// decompression module's *What remains*.
     ///
     /// # Errors
     ///

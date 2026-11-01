@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stages, statement and cross-cycle bindings, and endoscaling work.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
   profile-specific prover context. The extension API is experimental while
-  decompression is integrated; the built-in profiles currently add no extensions.
+  decompression is integrated. `finalize` checks a profile's declaration
+  against what its hooks register: a staged circuit through
+  `CircuitSlot::register_staged` and a stage's masks through
+  `BondingSlot::register_mask` and `register_final_mask`.
 - Added optional `baked-aggregator` parameters through
   `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
   the aggregator profile proves at. Standard's `baked()` keeps its original

@@ -59,6 +59,16 @@ artifact and feature configuration in its own manifest. Existing frozen records
 remain descriptions of their original artifacts; do not rewrite them for a new
 configuration.
 
+TODO: when the decompression circuits freeze, freeze the complete Aggregator
+setup with them: its versioned description, the approved Standard manifest and
+tag record it verifies against, and the beacon-selection rule, publicly
+committed before sampling fresh native and nested tags and publishing a new
+deployment record. Record in that description that Standard and the Aggregator
+assign the same encoding and meaning, field order and padding included, to
+every decompressed header suffix the Aggregator accepts; the statement claim
+compares field elements and does not check this agreement between the two
+applications.
+
 For `ragu-setup-manifest-v1`, use JSON objects, arrays, strings, integers,
 booleans, and null; duplicate object keys and floating-point numbers are
 not allowed. Canonical bytes are the ASCII output of Python's `json.dumps`
