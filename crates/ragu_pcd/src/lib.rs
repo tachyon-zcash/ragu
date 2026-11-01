@@ -655,8 +655,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// internal bootstrap step, the only step whose inputs are dummies and
     /// hence the only fuse treated as the base case. The result verifies, so
     /// [`seed`](Self::seed) consumes it as an ordinary child. It attests
-    /// nothing and carries no secrets: the bootstrap step skips its children's
-    /// claims and outputs the data-less unit header.
+    /// nothing, and its own witness is empty: the bootstrap step skips its
+    /// children's claims and outputs the data-less unit header.
     ///
     /// The proof is fixed by the application's configuration: its registries
     /// and public parameters, its profile, rank and header size, the circuits
@@ -665,6 +665,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// [`Proof::to_bytes`], and supply it to later applications of the same
     /// configuration with [`ApplicationBuilder::with_bootstrap`], so that
     /// their finalization skips the bootstrap fuse.
+    ///
+    /// Like every uncompressed proof, this one is not zero-knowledge: for a
+    /// profile with an extension it holds the extension's polynomials,
+    /// computed over the prover context at finalization. Store or ship it
+    /// only if that context holds nothing confidential. The built-in profiles
+    /// have no extension, so their bootstrap proof reveals nothing.
     pub fn bootstrap_proof(&self) -> &Proof<C, R> {
         self.bootstrap
             .as_ref()

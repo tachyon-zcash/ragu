@@ -138,7 +138,11 @@ applications of the same configuration with `with_bootstrap`, whose
 finalization then skips the fuse. The supplied proof is checked for shape and
 for coming from the bootstrap step, not for validity: a proof from another
 configuration is installed, and every proof built on it then fails
-verification, so a stored proof must be keyed by what fixes it.
+verification, so a stored proof must be keyed by what fixes it. Like every
+uncompressed proof it is not zero-knowledge: for a profile with an extension
+it holds the extension's polynomials over the prover context, so store it
+only if that context holds nothing confidential. The built-in profiles have no
+extension.
 
 ### `fuse`
 
