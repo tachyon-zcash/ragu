@@ -2,13 +2,18 @@
 
 mod encoder;
 pub(crate) mod internal;
+pub mod oracles;
+
+use alloc::vec::Vec;
 
 pub use encoder::Encoded;
+pub use oracles::{Oracles, Slot};
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
 };
+use udon::field::Field;
 
 use super::header::Header;
 use crate::{internal::native::InternalCircuitIndex, profile::Profile};
@@ -140,8 +145,29 @@ impl Index {
     }
 }
 
+/// A header's data with the polynomials it carries: what a step's
+/// [`polynomials`](Step::polynomials) phase reads of each input.
+pub struct HeaderInput<'a, F: Field, H: Header<F>> {
+    /// The header's data, as the step's [`witness`](Step::witness) phase
+    /// also receives it.
+    pub data: &'a H::Data,
+    /// The coefficients of each of the header's declared polynomials, in
+    /// ascending degree with trailing zeros stripped: one vector per
+    /// polynomial of [`NUM_POLYNOMIALS`](Header::NUM_POLYNOMIALS).
+    pub polynomials: &'a [Vec<F>],
+}
+
 /// Represents a node in the computational graph (or the proof-carrying data
 /// tree) that represents the merging of two pieces of proof-carrying data.
+///
+/// A step proves in two phases. Before its challenge is drawn,
+/// [`polynomials`](Self::polynomials) commits the polynomials its output
+/// header carries, from the witness and the inputs' data and polynomials.
+/// After the challenge $\zeta$ is drawn, [`witness`](Self::witness)
+/// synthesizes the circuit, with [`Oracles`] standing for the three headers'
+/// polynomials: the step may open each once, at $\zeta$ or at any wire, and
+/// relate the values in its constraints. Ragu proves the openings; see
+/// [`oracles`].
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
@@ -166,13 +192,35 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// used to pipeline witness input to later steps.
     type Aux<'source>: Send;
 
-    /// Emits the constraints that check the validity of this merging step.
+    /// The polynomials the output header carries, computed before the
+    /// step's challenge is drawn: one coefficient vector, ascending in
+    /// degree, per polynomial of
+    /// [`Output::NUM_POLYNOMIALS`](Header::NUM_POLYNOMIALS), none by
+    /// default. Ragu commits them; the parent opens them as its left or
+    /// right slots, and this step's [`witness`](Self::witness) may open them
+    /// as its output slots.
+    ///
+    /// A polynomial may have at most as many coefficients as the
+    /// application's rank holds, and must not be zero.
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, Self::Left>,
+        right: HeaderInput<'_, C::CircuitField, Self::Right>,
+    ) -> Result<Vec<Vec<C::CircuitField>>> {
+        let _ = (witness, left, right);
+        Ok(Vec::new())
+    }
+
+    /// Emits the constraints that check the validity of this merging step,
+    /// with the step's online oracles at hand.
     ///
     /// Returns the encoded headers (left, right, output), the data to be
     /// carried in the resulting PCD, and any auxiliary witness data.
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

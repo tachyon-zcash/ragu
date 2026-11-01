@@ -1012,7 +1012,7 @@ pub(crate) mod testing {
     use super::*;
     use crate::{
         internal::ky,
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Oracles, Step},
     };
 
     /// A step with unit headers and no witness.
@@ -1034,6 +1034,7 @@ pub(crate) mod testing {
         >(
             &self,
             dr: &mut D,
+            _: &mut Oracles<'_, 'dr, D>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, ()>,
             right: DriverValue<D, ()>,

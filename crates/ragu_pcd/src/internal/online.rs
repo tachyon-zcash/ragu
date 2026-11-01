@@ -4,7 +4,7 @@
 //!
 //! Each header carries [`HEADER_POLYNOMIALS`] polynomials beside its field
 //! data. A step's online slots are its headers' polynomials in the fixed
-//! order `[L0, L1, R0, R1, O0, O1]`: the left and right slots
+//! order `[L0, L1, R0, R1, O0, O1]` (see [`Slot`]): the left and right slots
 //! are the children's output polynomials, which the children committed and
 //! exported, and the output slots are the step's own, committed before $w$
 //! is squeezed and exported for the parent. Every slot holds a polynomial:
@@ -50,6 +50,106 @@ pub type QueriesLen = ConstLen<NUM_ONLINE_QUERIES>;
 
 /// Length type for one header's polynomials.
 pub type HeaderLen = ConstLen<HEADER_POLYNOMIALS>;
+
+/// The headers of a step whose polynomials fill its online slots, in slot
+/// order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Position {
+    /// The left input header.
+    Left,
+    /// The right input header.
+    Right,
+    /// The output header.
+    Output,
+}
+
+impl Position {
+    /// The positions in slot order.
+    pub const ALL: [Self; 3] = [Self::Left, Self::Right, Self::Output];
+}
+
+/// An online slot: one of a header's polynomials.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot {
+    position: Position,
+    index: usize,
+}
+
+impl Slot {
+    /// The `index`-th polynomial of the header at `position`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is not below [`HEADER_POLYNOMIALS`].
+    pub const fn new(position: Position, index: usize) -> Self {
+        assert!(
+            index < HEADER_POLYNOMIALS,
+            "a header carries at most HEADER_POLYNOMIALS polynomials"
+        );
+        Slot { position, index }
+    }
+
+    /// The `index`-th polynomial of the left header.
+    pub const fn left(index: usize) -> Self {
+        Self::new(Position::Left, index)
+    }
+
+    /// The `index`-th polynomial of the right header.
+    pub const fn right(index: usize) -> Self {
+        Self::new(Position::Right, index)
+    }
+
+    /// The `index`-th polynomial of the output header.
+    pub const fn output(index: usize) -> Self {
+        Self::new(Position::Output, index)
+    }
+
+    /// The header this slot belongs to.
+    pub const fn position(self) -> Position {
+        self.position
+    }
+
+    /// The slot's index among its header's polynomials.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+
+    /// The slot's index among the step's [`NUM_ONLINE_QUERIES`] slots.
+    pub const fn offset(self) -> usize {
+        let header = match self.position {
+            Position::Left => 0,
+            Position::Right => 1,
+            Position::Output => 2,
+        };
+        header * HEADER_POLYNOMIALS + self.index
+    }
+
+    /// Every slot, in slot order.
+    pub fn all() -> impl Iterator<Item = Self> {
+        Position::ALL.into_iter().flat_map(|position| {
+            (0..HEADER_POLYNOMIALS).map(move |index| Self::new(position, index))
+        })
+    }
+}
+
+/// The coefficients of the first `declared` of `polys`, ascending in degree
+/// with trailing zeros stripped: how a step's first phase reads a header's
+/// polynomials.
+pub fn coefficients<F: Field, R: Rank>(
+    polys: &[sparse::Polynomial<F, R>; HEADER_POLYNOMIALS],
+    declared: usize,
+) -> alloc::vec::Vec<alloc::vec::Vec<F>> {
+    polys[..declared]
+        .iter()
+        .map(|poly| {
+            let mut coeffs: alloc::vec::Vec<F> = poly.iter_coeffs().collect();
+            while coeffs.last() == Some(&F::ZERO) {
+                coeffs.pop();
+            }
+            coeffs
+        })
+        .collect()
+}
 
 /// A step's online polynomials in slot order: the children's exported
 /// polynomials as its left and right slots, then its own, `own`.
@@ -137,6 +237,43 @@ mod tests {
     use ragu_core::pasta::Fp;
 
     use super::*;
+
+    #[test]
+    fn slots_are_laid_out_in_header_order() {
+        let offsets: alloc::vec::Vec<usize> = Slot::all().map(Slot::offset).collect();
+        assert_eq!(
+            offsets,
+            (0..NUM_ONLINE_QUERIES).collect::<alloc::vec::Vec<_>>()
+        );
+        assert_eq!(Slot::left(1).offset(), 1);
+        assert_eq!(Slot::right(0).offset(), HEADER_POLYNOMIALS);
+        assert_eq!(Slot::output(0).offset(), 2 * HEADER_POLYNOMIALS);
+        assert_eq!(Slot::output(0).position(), Position::Output);
+        assert_eq!(Slot::output(1).index(), 1);
+    }
+
+    #[test]
+    fn coefficients_strip_trailing_zeros() {
+        let polys = [
+            sparse::Polynomial::<Fp, TestRank>::from_coeffs(alloc::vec![
+                Fp::from(3),
+                Fp::ZERO,
+                Fp::from(5),
+            ]),
+            padding(),
+        ];
+        assert_eq!(
+            coefficients(&polys, 2),
+            alloc::vec![
+                alloc::vec![Fp::from(3), Fp::ZERO, Fp::from(5)],
+                alloc::vec![Fp::ONE]
+            ]
+        );
+        assert_eq!(
+            coefficients(&polys, 0),
+            alloc::vec::Vec::<alloc::vec::Vec<Fp>>::new()
+        );
+    }
 
     #[test]
     fn padding_is_the_constant_one() {

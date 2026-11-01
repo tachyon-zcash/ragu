@@ -366,6 +366,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "a Step cannot declare the Dummy header: only the internal Bootstrap step may, \
                  and its fuse is the base case"
             );
+            assert!(
+                <S::Left as Header<C::CircuitField>>::NUM_POLYNOMIALS <= header::HEADER_POLYNOMIALS
+                    && <S::Right as Header<C::CircuitField>>::NUM_POLYNOMIALS
+                        <= header::HEADER_POLYNOMIALS
+                    && <S::Output as Header<C::CircuitField>>::NUM_POLYNOMIALS
+                        <= header::HEADER_POLYNOMIALS,
+                "a Header carries at most HEADER_POLYNOMIALS polynomials"
+            );
         }
 
         S::INDEX.assert_index(self.num_application_steps)?;

@@ -13,7 +13,7 @@ use udon::field::Field;
 use super::*;
 use crate::{
     ApplicationBuilder,
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Oracles, Step},
 };
 
 type TestR = ProductionRank;
@@ -61,6 +61,7 @@ impl Step<Pasta> for UnitSeed {
     >(
         &self,
         _: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -108,6 +109,7 @@ impl Step<Pasta> for UnitStep {
     >(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
