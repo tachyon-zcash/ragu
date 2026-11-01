@@ -606,8 +606,8 @@ pub fn apply(
 /// Neither verifier may panic: an internal error is a rejection, not a crash.
 /// `verify_uncompressed` must never accept a corruption that bound it, and
 /// `compress` followed by `verify_compressed` must never accept one that bound
-/// the compressed statement — every binding edit but a stored challenge's,
-/// which the compressed proof does not carry.
+/// the compressed verification path. This includes stored challenges, which
+/// compression checks before proving the statement that omits them.
 pub fn assert_rejected(
     app: &Application<'_, C, R, HEADER_SIZE>,
     fixture: &Fixture,

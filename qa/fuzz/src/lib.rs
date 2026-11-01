@@ -26,6 +26,7 @@ pub mod internal_patcher;
 pub mod params;
 pub mod patcher_analysis;
 pub mod pcd;
+pub mod proof_wire;
 pub mod source_shape;
 pub mod substrate;
 

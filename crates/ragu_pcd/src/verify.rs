@@ -602,13 +602,8 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// uncompressed verdict. The two must agree on acceptance: a proof one
     /// verifier accepts and the other rejects is a defect in a verifier, not
     /// in the proof. `Ok(false)` and an error are both rejections, as is
-    /// compression refusing the proof's shape.
-    ///
-    /// Agreement is expected of every proof but one whose stored challenges
-    /// were edited: the compressed statement does not carry them, so only the
-    /// uncompressed verifier holds them to the transcript (the fuzzing
-    /// module's `Binding::MustRejectUncompressed`). Check such a proof with
-    /// each verifier separately.
+    /// compression refusing a malformed shape, an out-of-domain circuit index
+    /// or inconsistent stored challenges.
     ///
     /// # Panics
     ///

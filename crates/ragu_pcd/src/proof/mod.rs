@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+mod codec;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are

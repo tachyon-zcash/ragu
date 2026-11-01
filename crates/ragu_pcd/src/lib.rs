@@ -17,6 +17,21 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
+//!   counterparts — versioned byte encodings for storing and transporting
+//!   proofs.
+//!
+//! For each payload kind, decoding checks envelope, schema and protocol
+//! versions, bounds the declared dimensions, then checks the exact length
+//! fixed by the profile, rank and header size before decoding proof data. The
+//! caller selects the expected application and cryptographic parameters
+//! through its deployment or consensus rules. With the `serde` feature,
+//! [`Proof`] and [`CompressedProof`] implement `Serialize` and `Deserialize`
+//! directly, as the byte string `to_bytes` writes, envelope included.
+//! A receiver compresses a decoded proof and accepts it on
+//! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
+//! the envelope layout, version rules and input size limits, including the
+//! limits callers must apply to Serde backends before they allocate buffers.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -51,6 +66,7 @@ pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
 mod verify;
+pub mod wire;
 
 #[cfg(test)]
 #[path = "../tests/setup_binding.rs"]

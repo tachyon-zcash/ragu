@@ -15,10 +15,10 @@ use super::{
     transcript,
 };
 use crate::{
-    Application, Pcd, SelectableBackend,
+    Application, Pcd, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{ky, native, nested},
-    ipa::{self, IpaCycle, IpaProof, IpaTranscript, Params},
+    ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
     profile::ProfiledCycle,
 };
 
@@ -46,14 +46,17 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     ///
     /// The result carries the proof's instance and, on each curve, the
     /// messages of the revdot reduction, the batch and the IPA opening, in
-    /// place of the proof's polynomials. Compression checks the proof's shape
-    /// but not its validity: [`verify_compressed`](Self::verify_compressed)
-    /// judges the instance the proof commits to, as `verify_uncompressed`
-    /// judges the proof.
+    /// place of the proof's polynomials. Compression checks the proof's shape,
+    /// circuit index and stored transcript challenges. Accept the result only
+    /// after [`verify_compressed`](Self::verify_compressed) succeeds.
+    /// Together these checks also validate the original proof for reuse as a
+    /// child.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed.
+    /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed,
+    /// its circuit index is outside this application's registry domain, or
+    /// its stored challenges differ from the replayed transcript.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
@@ -63,15 +66,31 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         if !proof.well_formed::<HEADER_SIZE>() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));
         }
+        if !self.native_registry.circuit_in_domain(proof.circuit_id()) {
+            return Err(Error::InvalidWitness(
+                "proof circuit index is outside the registry domain".into(),
+            ));
+        }
         let instance = Instance::of::<R, HEADER_SIZE>(proof)?;
-        // The challenges as the proof stores them: a cache of the fuse's own
-        // squeezes, which the decider holds to the transcript. `Instance::of`
-        // reads the stored `u` for `v` and `v_n` the same way. The verifier
-        // reads neither; it replays the challenges from the bridge
-        // commitments through `Instance::challenges`. Should the stored
-        // challenges ever be more than that cache, replay them here too and
-        // evaluate `v` and `v_n` at the replayed `u`.
-        let challenges = proof.challenges();
+        // The compressed statement omits the stored challenges, but a parent
+        // consumes them from the original proof. Hold every cached challenge
+        // to the same transcript the verifier replays before proving anything.
+        // This also checks the stored `u` used by `Instance::of` for v and v_n.
+        // A later refactor may have `fuse` rederive a child's challenges from
+        // its bridge commitments and treat the stored ones as a cache it
+        // refreshes; then nothing reads the cache and this check can go.
+        let mut fuse_transcript =
+            CycleTranscript::<C, <B as SelectableBackend>::Verifier>::new(self.params, RAGU_TAG)?;
+        let challenges = instance.challenges(&mut fuse_transcript)?.ok_or_else(|| {
+            Error::InvalidWitness(
+                "proof transcript challenge is outside the endoscalar range".into(),
+            )
+        })?;
+        if challenges.in_order() != proof.challenges().in_order() {
+            return Err(Error::InvalidWitness(
+                "stored proof challenges differ from the transcript".into(),
+            ));
+        }
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
         let mut transcript = transcript::<C, B>(self.params, &instance, &output_header)?;
         let native_sampled = Sampled::squeeze(&mut transcript.host())?;

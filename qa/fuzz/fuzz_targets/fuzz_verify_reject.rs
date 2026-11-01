@@ -11,10 +11,10 @@
 //! Invariant: neither verifier panics. `verify_uncompressed` never accepts a
 //! corruption that bound it, and the compressed verifier never accepts one
 //! that bound the compressed statement (`Ok(false)` or `Err` are both
-//! rejections). A stored challenge binds the decider alone, since the
-//! compressed proof does not carry it. No-op edits are still exercised, but
-//! their verdict is not asserted. Every effective coefficient edit leaves a
-//! stale commitment and requires rejection by both; see
+//! rejections). Compression checks stored challenges against the transcript
+//! even though the compressed statement omits them. No-op edits are still
+//! exercised, but their verdict is not asserted. Every effective coefficient
+//! edit leaves a stale commitment and requires rejection by both; see
 //! [`ragu_pcd::fuzzing::corrupt`] for the classification.
 //!
 //! This target used to corrupt Ragu's synthesized dummy proof. That fixture is
