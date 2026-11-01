@@ -16,10 +16,13 @@ feature enables `alloc` and supports `no_std`.
 
 ## Proof serialization
 
-Serialization lives entirely in this crate: a private schema macro declares
-each `Proof` field with its codec, generating the codec and the shape check
-from one declaration, and an internal `wire` module owns the byte codecs. A proof's encoding holds every field, so decoding yields a `Proof`
-that the application takes like one it built itself.
+Serialization lives entirely in this crate: `proof/codec.rs` lists each
+`Proof` field with its codec, beside the struct rather than in it, and an
+internal `wire` module owns the byte codecs. Decoding builds the struct from
+that list, so a field missing from it is a build error, and the fuse fixtures
+pin the encoded bytes, so any other change to the format fails a test until
+the fixtures are regenerated. A proof's encoding holds every field, so
+decoding yields a `Proof` that the application takes like one it built itself.
 
 Every encoding has one length, fixed by the application's profile, rank and
 header size: no count or length is read from the payload, and polynomials are

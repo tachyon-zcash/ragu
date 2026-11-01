@@ -95,7 +95,7 @@ fn a_proof_of_another_shape_has_no_serialization() {
 fn decoded_child_remains_usable_by_fuse() {
     use ragu_core::pasta::Fp;
 
-    use super::recursive_propagation_tests::support::{Merge, Seed, Value, with_app};
+    use crate::proof::recursive_propagation_tests::support::{Merge, Seed, Value, with_app};
 
     with_app(|app| {
         let mut rng = StdRng::seed_from_u64(0xdec0de);

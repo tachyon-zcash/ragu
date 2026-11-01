@@ -33,7 +33,12 @@
 //!   length. The uncompressed proof is over ten megabytes at production
 //!   rank, so this stands in for committing it: a mismatch names the fields
 //!   that drifted, and the file's diff in a pull request reads as the list
-//!   of stages the change touched.
+//!   of stages the change touched. The `wire.*` lines then pin the wire
+//!   format of `WIRE_FORMAT.md`: the codec's field order, the length and
+//!   digest of the proof's and the compressed proof's payload bytes, and the
+//!   suite identifier. A change to the proof's fields, their order, a codec
+//!   or an element's spelling fails them until the fixtures are regenerated
+//!   and the schema version bumped.
 //! - `<scenario>.fingerprint`: the verifier's run on the `.proof`: digests of
 //!   what its transcript absorbed and squeezed, with counts, and of each
 //!   curve's final IPA MSM, every scalar and proof-dependent base.
@@ -1106,6 +1111,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     lines.push("rng.fuse.words", tape.consumed());
     lines.push("rng.compress.words", compress_rng.consumed());
     lines.push("proof.bytes", proof.0.len());
+    wire_lines(app, pcd.proof(), compressed.proof(), &mut lines);
 
     if writing() {
         fixtures.write(name, "rng-u64s-le", &tape.bytes());
@@ -1264,6 +1270,35 @@ fn prover_fixtures<C: FixtureCycle>() {
         "the fuse fixtures changed:\n  {}\n\nIf the change is intended, regenerate them with\n    {REGENERATE}\nand review the diff.",
         failures.join("\n  ")
     );
+}
+
+/// The `wire.*` lines: the codec's field order, the length and digest of
+/// each payload as the wire format encodes it, and the suite identifier.
+/// These pin the wire format itself, apart from the fixture encoding above.
+fn wire_lines<C: FixtureCycle>(
+    app: &App<C>,
+    proof: &Proof<C, R>,
+    compressed: &CompressedProof<C>,
+    lines: &mut Lines,
+) {
+    use crate::wire::Encode;
+
+    lines.push("wire.fields", super::codec::WIRE_FIELDS.join(","));
+    let mut payload = Vec::new();
+    <Proof<C, R> as Encode>::encode(proof, &mut payload);
+    lines.push("wire.proof.bytes", payload.len());
+    lines.push("wire.proof.digest", digest(|d| d.bytes(&payload)));
+    let mut payload = Vec::new();
+    <CompressedProof<C> as Encode>::encode(compressed, &mut payload);
+    lines.push("wire.compressed.bytes", payload.len());
+    lines.push("wire.compressed.digest", digest(|d| d.bytes(&payload)));
+    let suite: String = app
+        .proof_context()
+        .suite
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    lines.push("wire.suite", suite);
 }
 
 /// Decodes a `.proof` file: header data, then the compressed proof, with

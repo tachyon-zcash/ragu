@@ -86,6 +86,13 @@ Preserve the envelope tests when adding versions. Supporting an old schema
 requires an explicit migration path and compatibility tests; an unsupported
 old version must fail closed.
 
+The fuse fixtures (`tests/fuse_fixtures.rs`) pin the payload bytes: for each
+scenario, the `wire.*` lines of its `.digests` file record the codec's field
+order and the length and digest of the proof's and the compressed proof's
+payloads. Any change to the fields, their order, a codec or an element
+encoding fails those tests until the fixtures are regenerated, which is the
+moment to bump the schema version.
+
 ## Payload codecs
 
 No length or count appears in the payload. The schema fixes the field order,
@@ -312,13 +319,13 @@ prefer `ProofFormat` for storage and transport.
 The same codec declarations generate validation for proofs and for compressed
 messages: a shape check, that every vector has the count the profile, rank and
 header size fix, and an encodability check, which also rejects the identity in
-every point slot. `Proof::well_formed`, which every application method that
-takes a proof (fusion, compression and verification) runs before traversing
-it, is the schema's shape check, so no declared field escapes it. Both
-encoders run the encodability check before writing, so neither emits bytes its
-decoder rejects. A decoded proof is taken like one built in memory: the
-verifier recomputes the transcript challenges and the two stages derived from
-other fields, and rejects a proof whose stored values differ.
+every point slot. Both encoders run the encodability check before writing, so
+neither emits bytes its decoder rejects. Every application method that takes a
+proof (fusion, compression and verification) first runs `Proof::well_formed`,
+the same count check written by hand, before traversing it. A decoded proof is
+taken like one built in memory: the verifier recomputes the transcript
+challenges and the two stages derived from other fields, and rejects a proof
+whose stored values differ.
 
 Malformed proof failures become `Ok(false)` at the verification boundary.
 Decoders continue to return representation errors, and application header or

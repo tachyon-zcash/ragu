@@ -28,13 +28,10 @@ mod context;
 pub(crate) mod format;
 mod polynomial;
 mod registry;
-mod schema;
 #[cfg(feature = "serde")]
 mod serde;
 #[cfg(test)]
 mod tests;
-
-pub(crate) use schema::proof_schema;
 
 /// Version of the low-level codec framing, which the `serde` adapters lead
 /// with. Nested payloads have no envelope.
@@ -188,6 +185,13 @@ impl Validate for ragu_circuits::registry::CircuitIndex {
     fn encodable(&self, _: Dimensions) -> bool {
         true
     }
+}
+
+/// The encoded length of the field `project` selects, for a codec listed
+/// apart from its struct, whose type `encoded_len` cannot infer from a
+/// value. `project` is never called.
+pub(crate) fn field_len<S, T: Decode<C>, C>(_: fn(&S) -> &T, dims: Dimensions) -> usize {
+    T::encoded_len(dims)
 }
 
 /// Decodes a value using codec `C`.
