@@ -27,10 +27,11 @@
 //! suffix included, so the suffix is what selects which of this application's
 //! header types a decompressed statement is taken as. The application must
 //! register, at each suffix a decompressed header can carry, a header type
-//! with the inner application's encoding and meaning; nothing checks that
-//! agreement, which the setup description a profile's tags cover must
-//! record. TODO: verify it, field order and padding included, and record
-//! it in the setup manifest.
+//! with the inner application's encoding and meaning: the wallet's own
+//! header type, which [`finalize_with`] checks is registered at every
+//! suffix the wallet's steps output ([`Profile::check_context`]), so that
+//! the two read the statement alike, field order and padding included.
+//! The setup description a profile's tags cover records those types.
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its
@@ -39,6 +40,8 @@
 //! binding both ways.
 //!
 //! [`Rerandomize`]: super::rerandomize::Rerandomize
+//! [`finalize_with`]: crate::ApplicationBuilder::finalize_with
+//! [`Profile::check_context`]: crate::profile::Profile::check_context
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 //! [`Dummy`]: crate::header::Dummy
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
