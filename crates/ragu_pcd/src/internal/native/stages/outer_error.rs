@@ -31,6 +31,9 @@ pub struct ChildKyValues<F> {
     pub unified: F,
     /// k(y) for the header-unified binding.
     pub unified_bridge: F,
+    /// k(y) for the `compute_v` circuit: the unified instance with the
+    /// child's online openings.
+    pub compute_v_bridge: F,
 }
 
 /// $k(Y)$ evaluation values computed during fuse operation.
@@ -75,6 +78,10 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
     /// k(y) for the header-unified binding.
     #[ragu(gadget)]
     pub unified_bridge: Element<'dr, D>,
+    /// k(y) for the `compute_v` circuit: the unified instance with the
+    /// child's online openings.
+    #[ragu(gadget)]
+    pub compute_v_bridge: Element<'dr, D>,
 }
 
 /// Prover-internal output gadget for the outer error stage.
@@ -119,10 +126,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
     fn values() -> usize {
-        // N - 1 quotient coefficients + N collapsed values + 6 ky values + sponge state elements
+        // N - 1 quotient coefficients + N collapsed values + 8 ky values + sponge state elements
         NumErrorTerms::<FP::NumGroups>::len()
             + FP::NumGroups::len()
-            + 6
+            + 8
             + PoseidonStateLen::<C::CircuitField, C::CircuitPoseidon>::len()
     }
 
@@ -153,6 +160,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
                 allocator,
                 witness.as_ref().map(|w| w.ky.left.unified_bridge),
             )?,
+            compute_v_bridge: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|w| w.ky.left.compute_v_bridge),
+            )?,
         };
         let right = ChildKyOutputs {
             application: Element::alloc(
@@ -165,6 +177,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
                 dr,
                 allocator,
                 witness.as_ref().map(|w| w.ky.right.unified_bridge),
+            )?,
+            compute_v_bridge: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|w| w.ky.right.compute_v_bridge),
             )?,
         };
         let sponge_state = SpongeState::from_elements(FixedVec::try_from_fn(|i| {

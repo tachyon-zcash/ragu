@@ -47,7 +47,11 @@ where
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub const HEADER_SIZE: usize = 103;
+//
+// The largest header the production rank fits: the challenge binders load
+// the preamble, query and eval stages, and with the online openings in all
+// three the last binder sits a few gates under the gate budget here.
+pub const HEADER_SIZE: usize = 99;
 
 // Number of trivial application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
@@ -225,14 +229,14 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1818, lin = 3085);
-    check_constraints!(Hashes2Circuit,              mul = 1875, lin = 2984);
-    check_constraints!(CollapseCircuit,             mul = 1364, lin = 1893);
-    check_constraints!(ComputeVCircuit,             mul = 1880, lin = 2791);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2023, lin = 3054);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2028, lin = 3064);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2028, lin = 3064);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2039, lin = 3086);
+    check_constraints!(Hashes1Circuit,              mul = 1803, lin = 3045);
+    check_constraints!(Hashes2Circuit,              mul = 1876, lin = 2984);
+    check_constraints!(CollapseCircuit,             mul = 1441, lin = 2047);
+    check_constraints!(ComputeVCircuit,             mul = 1904, lin = 2839);
+    check_constraints!(BindChallengesCircuit(0),    mul = 2029, lin = 3054);
+    check_constraints!(BindChallengesCircuit(1),    mul = 2034, lin = 3064);
+    check_constraints!(BindChallengesCircuit(2),    mul = 2034, lin = 3064);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2045, lin = 3086);
     check_constraints!(BindBetaCircuit,             mul = 1891, lin = 3114);
     check_constraints!(BindEndoscalarCircuit,       mul = 920,  lin = 1725);
     // Every native endoscaling step walks four points and lays out the same.
@@ -253,10 +257,10 @@ fn test_internal_stage_parameters() {
 
     check_stage!(PointsBinding, skip = 1, num = 26);
     check_stage!(Preamble, skip = 27, num = 347);
-    check_stage!(OuterError, skip = 374, num = 19);
-    check_stage!(InnerError, skip = 393, num = 42);
-    check_stage!(Query, skip = 374, num = 77);
-    check_stage!(Eval, skip = 451, num = 59);
+    check_stage!(OuterError, skip = 374, num = 20);
+    check_stage!(InnerError, skip = 394, num = 42);
+    check_stage!(Query, skip = 374, num = 83);
+    check_stage!(Eval, skip = 457, num = 59);
     check_stage!(PointsChildren, skip = 27, num = 64);
     check_stage!(PointsRegistryWx, skip = 91, num = 2);
     check_stage!(PointsAb, skip = 93, num = 3);
@@ -1194,6 +1198,10 @@ fn test_extension_claims_follow_the_declaration() {
             [30, 31].into_iter()
         }
 
+        fn compute_v_bridge_ky(&self) -> impl Iterator<Item = u32> {
+            [50, 51].into_iter()
+        }
+
         fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [40, 41].into_iter()
         }
@@ -1375,8 +1383,8 @@ fn test_extension_hooks_register_without_a_prover() {
         .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
 
-    // The 143-bit challenge binders leave the last binder fifteen gates under
-    // the bound at the standard header, and the fixture's extension stage
+    // The 143-bit challenge binders leave the last binder three gates under
+    // the bound at the census header, and the fixture's extension stage
     // costs it thirteen more; a smaller header makes room to reach the
     // missing-prover check this test is about.
     const FITTING_HEADER_SIZE: usize = HEADER_SIZE - 8;

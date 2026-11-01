@@ -96,6 +96,7 @@ use crate::{
         endoscalar::EndoscalarStage,
         native::{self, stages::points as native_points, total_circuit_counts},
         nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
+        online,
         transcript::Transcript,
     },
     profile::ProfiledCycle,
@@ -441,6 +442,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
+        let online_queries = {
+            let polys = online::polys(&left, &right, builder.online_polys());
+            online::queries_at(*w.value().take(), |slot, x| B::sparse_eval(polys[slot], x))
+        };
+        builder.set_online_queries(online_queries);
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry
@@ -818,7 +824,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         // collapse checks both fold layers and the children's application
-        // k(y) values. Only the final c comparison is waived at bootstrap.
+        // and compute_v bridge k(y) values. Only the final c comparison is
+        // waived at bootstrap.
         let collapse = native::circuits::collapse::Circuit::<
             C,
             R,
@@ -852,7 +859,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                             Ok(stage
                                 .collapsed
                                 .iter()
-                                .chain([&stage.left.application, &stage.right.application])
+                                .chain([
+                                    &stage.left.application,
+                                    &stage.left.compute_v_bridge,
+                                    &stage.right.application,
+                                    &stage.right.compute_v_bridge,
+                                ])
                                 .map(|e| *e.wire())
                                 .collect())
                         },

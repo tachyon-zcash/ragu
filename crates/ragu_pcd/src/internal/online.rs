@@ -17,13 +17,26 @@
 //! batch; the polynomials themselves are native, evaluated at $u$ in the
 //! `eval` stage and folded into $p$ in the same order. Each slot is opened
 //! once, at the point the step queried it, or at $\zeta = w$ with the
-//! polynomial's value there when the step did not.
+//! polynomial's value there when the step did not; the `query` stage holds
+//! the openings and `compute_v` folds them into the batch and exports them
+//! in its bridge instance for the parent.
 
 use alloc::vec;
 
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::Cycle;
-use ragu_primitives::vec::ConstLen;
+use ragu_core::{
+    Cycle, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Gadget,
+    maybe::Maybe,
+};
+use ragu_primitives::{
+    Element,
+    allocator::Allocator,
+    consistent::Consistent,
+    io::Write,
+    vec::{ConstLen, FixedVec},
+};
 use udon::field::Field;
 
 use crate::Proof;
@@ -67,6 +80,57 @@ pub fn padding<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(vec![F::ONE])
 }
 
+/// One opening claim $f(x) = y$ on an online slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Query<F> {
+    /// The point.
+    pub x: F,
+    /// The claimed evaluation.
+    pub y: F,
+}
+
+/// A step's online openings, one per slot in slot order. The point every
+/// unqueried slot is opened at is the step's $\zeta = w$, which the
+/// instance does not repeat.
+pub type Queries<F> = [Query<F>; NUM_ONLINE_QUERIES];
+
+/// The openings of a step that queried nothing: every slot at `zeta`, with
+/// `evaluate(slot, zeta)` the slot's value there.
+pub fn queries_at<F: Field>(zeta: F, mut evaluate: impl FnMut(usize, F) -> F) -> Queries<F> {
+    core::array::from_fn(|slot| Query {
+        x: zeta,
+        y: evaluate(slot, zeta),
+    })
+}
+
+/// The opening of one slot, as wires.
+#[derive(Gadget, Write, Consistent)]
+pub struct QueryOutput<'dr, D: Driver<'dr>> {
+    /// The point.
+    #[ragu(gadget)]
+    pub x: Element<'dr, D>,
+    /// The claimed evaluation.
+    #[ragu(gadget)]
+    pub y: Element<'dr, D>,
+}
+
+/// A step's online openings, as wires, in slot order.
+pub type QueriesOutput<'dr, D> = FixedVec<QueryOutput<'dr, D>, QueriesLen>;
+
+/// Allocates the openings' wires from their values.
+pub fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
+    dr: &mut D,
+    allocator: &mut A,
+    queries: DriverValue<D, &Queries<D::F>>,
+) -> Result<QueriesOutput<'dr, D>> {
+    FixedVec::try_from_fn(|i| {
+        Ok(QueryOutput {
+            x: Element::alloc(dr, allocator, queries.as_ref().map(|q| q[i].x))?,
+            y: Element::alloc(dr, allocator, queries.as_ref().map(|q| q[i].y))?,
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use ragu_circuits::polynomials::TestRank;
@@ -79,5 +143,7 @@ mod tests {
         let padding = padding::<Fp, TestRank>();
         assert_eq!(padding.eval(Fp::from(17)), Fp::ONE);
         assert_eq!(padding.eval(Fp::ZERO), Fp::ONE);
+        let queries = queries_at(Fp::from(5), |_, x| padding.eval(x));
+        assert!(queries.iter().all(|q| q.x == Fp::from(5) && q.y == Fp::ONE));
     }
 }

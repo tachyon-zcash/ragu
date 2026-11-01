@@ -104,6 +104,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     header::{Header, Suffix},
+    internal::online,
     ipa::{
         IpaCycle, IpaProof,
         fingerprint::{self, Event},
@@ -523,6 +524,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_points_f_rx,
         native_points_walk_rx,
         online_polys,
+        online_queries,
         bridge_preamble_rx,
         bridge_s_prime_rx,
         bridge_inner_error_rx,
@@ -634,6 +636,13 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.poly("native_points_f_rx", native_points_f_rx);
     lines.poly("native_points_walk_rx", native_points_walk_rx);
     lines.polys("online_polys", online_polys);
+    lines.fields(
+        "online_queries",
+        &online_queries
+            .iter()
+            .flat_map(|query| [query.x, query.y])
+            .collect::<Vec<_>>(),
+    );
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
     lines.poly("bridge_s_prime_rx", bridge_s_prime_rx);
@@ -791,6 +800,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         circuit_id,
         left_header,
         right_header,
+        online,
         native: native_commitments,
         native_registry_xy,
         native_p,
@@ -816,6 +826,10 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.u32(usize::from(*circuit_id));
     out.fields(left_header);
     out.fields(right_header);
+    for query in online {
+        out.field(&query.x);
+        out.field(&query.y);
+    }
     out.points(native_commitments);
     out.point(native_registry_xy);
     out.point(native_p);
@@ -902,6 +916,16 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let circuit_id = CircuitIndex::new(cursor.u32()?);
     let left_header = cursor.fields()?;
     let right_header = cursor.fields()?;
+    let mut online = [online::Query {
+        x: C::CircuitField::ZERO,
+        y: C::CircuitField::ZERO,
+    }; online::NUM_ONLINE_QUERIES];
+    for query in &mut online {
+        *query = online::Query {
+            x: cursor.field()?,
+            y: cursor.field()?,
+        };
+    }
     let native_commitments = cursor.points()?;
     let native_registry_xy = cursor.point()?;
     let native_p = cursor.point()?;
@@ -940,6 +964,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         circuit_id,
         left_header,
         right_header,
+        online,
         native: native_commitments,
         native_registry_xy,
         native_p,

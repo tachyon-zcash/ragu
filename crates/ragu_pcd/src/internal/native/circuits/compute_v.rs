@@ -10,10 +10,19 @@
 //! - Compute $a(xz)$ and $b(x)$ via two-layer revdot folding of evaluation claims
 //!
 //! ### $f(u)$ computation
-//! - Compute inverse denominators $(u - x_i)^{-1}$ for all evaluation points
+//! - Compute inverse denominators $(u - x_i)^{-1}$ for all evaluation points,
+//!   the online openings' points among them
 //! - Iterate polynomial queries $(p(u), v, (u - x_i)^{-1})$ in prover order
 //! - Accumulate $f(u) = \sum_i \alpha^{n-1-i} \cdot (p_i(u) - v_i) / (u - x_i)$ via Horner
 //!   (first query receives highest $\alpha$ power)
+//!
+//! ### Online openings
+//! The step's online openings $(x_i, y_i)$ are `query` stage wires. The
+//! circuit folds them into $f(u)$ as any other opening, which is what proves
+//! each slot's polynomial takes the value $y_i$ at $x_i$, and exports the
+//! pairs in its instance so that the parent can hold the application
+//! circuit's instance to the openings this step verified (see
+//! [`online`](crate::internal::online)).
 //!
 //! ### $v$ computation
 //! - Extract endoscalar from [$\beta$] and compute effective beta via lift
@@ -30,7 +39,11 @@
 //!
 //! ## Instance
 //!
-//! Uses [`unified::Output`] as its instance via [`unified::InternalOutputKind`].
+//! The [`unified::Output`] followed by the online openings and the zero
+//! suffix ([`Output`]): $k(Y) = \mathrm{Horner}(\mathit{unified}, x_0, y_0,
+//! \ldots, 0, 1)$, which the parent's preamble recomputes as
+//! [`compute_v_bridge_ky`](native_preamble::ProofInputs::compute_v_bridge_ky),
+//! the way `hashes_1` exports the child headers.
 //!
 //! [`preamble`]: super::super::stages::preamble
 //! [`query`]: super::super::stages::query
@@ -53,10 +66,13 @@ use ragu_circuits::{
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, Endoscalar, EndoscalarChallenge, GadgetExt, allocator::Standard};
+use ragu_primitives::{
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, WithSuffix, allocator::Standard,
+    io::Write, vec::FixedVec,
+};
 
 use super::super::{
     InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, STATIC_F_QUERIES,
@@ -74,9 +90,23 @@ use crate::{
         fold_revdot::{EvaluationFolder, Parameters},
         inverter::Inverter,
         native::RevdotParameters,
+        online,
     },
     profile::{Profile, ProfiledCycle},
 };
+
+/// Public output of the compute-v circuit: the unified instance and the
+/// step's online openings, which the parent holds the application circuit's
+/// instance to.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+    /// The unified instance shared across internal circuits.
+    #[ragu(gadget)]
+    pub unified: unified::Output<'dr, D, C>,
+    /// The online openings, in slot order, as the `query` stage holds them.
+    #[ragu(gadget)]
+    pub online: online::QueriesOutput<'dr, D>,
+}
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
 ///
@@ -123,7 +153,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
-    type Output = unified::InternalOutputKind<C>;
+    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C>>];
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -215,7 +245,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
                 let denominators =
-                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
+                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble, &query)?;
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     eval,
@@ -245,8 +275,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             unified_output.v.provide(computed_v);
         }
 
-        let (output, aux) = unified_output.finish(dr, allocator)?;
-        Ok(WithAux::new(output, aux))
+        // The online openings join the instance, read straight off the
+        // query stage, for the parent to hold the application circuit's
+        // instance to.
+        let (unified, aux) = unified_output.finish_no_suffix(dr, allocator)?;
+        let output = Output {
+            unified,
+            online: query.online,
+        };
+        let zero = Element::zero(dr);
+        Ok(WithAux::new(WithSuffix::new(output, zero), aux))
     }
 }
 
@@ -276,11 +314,13 @@ struct ChallengeDenominators<'dr, D: Driver<'dr>> {
 /// - `left`/`right`: Child proof evaluation points ($u$, $y$, $x$, circuit\_id)
 /// - `challenges`: Current step challenge points ($w$, $x$, $y$, $xz$)
 /// - `internal`: Internal circuit $\omega^j$ evaluation points
+/// - `online`: The online openings' points, one per slot
 struct Denominators<'dr, D: Driver<'dr>, P: Profile> {
     left: ChildDenominators<'dr, D>,
     right: ChildDenominators<'dr, D>,
     challenges: ChallengeDenominators<'dr, D>,
     internal: InternalCircuitValues<Element<'dr, D>, P>,
+    online: FixedVec<Element<'dr, D>, online::QueriesLen>,
 }
 
 impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
@@ -292,6 +332,7 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
+        query: &native_query::Output<'dr, D, P>,
     ) -> Result<Self> {
         let xz = x.mul(dr, z)?;
 
@@ -312,6 +353,13 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
 
         let circuit_indices = InternalCircuitValues::<_, P>::try_from_fn(|id| {
             inverter.add_circuit(dr, id.circuit_index::<C::Profile>())
+        })?;
+        // The online points are witness wires of the query stage, so each
+        // is its own denominator even when it equals a challenge: the
+        // circuit cannot know which, and that is what lets a step open a
+        // slot anywhere.
+        let online = FixedVec::<usize, online::QueriesLen>::try_from_fn(|i| {
+            inverter.add(dr, &query.online[i].x)
         })?;
 
         let inverted = inverter.invert(dr)?;
@@ -338,6 +386,7 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
             internal: InternalCircuitValues::<_, P>::from_fn(|id| {
                 inverted[*circuit_indices.get(id)].clone()
             }),
+            online: FixedVec::from_fn(|i| inverted[online[i]].clone()),
         })
     }
 }
@@ -553,6 +602,8 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
 /// 6. **Internal circuit registry evaluations** - $m(\omega^j, x, y)$ for each
 ///    internal index
+/// 7. **Online openings** - each slot's polynomial at the point the step
+///    opened it, both read off the `query` stage
 ///
 /// The static query prefix is defined by [`STATIC_F_QUERIES`] and consumed by
 /// both this circuit and the prover's [`compute_f`] path. The ordering affects
@@ -654,5 +705,9 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
     // m(\omega^j, x, y) evaluations for each internal index j
     .chain(InternalCircuitIndex::all::<C::Profile>().into_iter().map(move |id| {
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
+    }))
+    // The online openings, in slot order.
+    .chain((0..online::NUM_ONLINE_QUERIES).map(move |i| {
+        (&eval.online[i], &query.online[i].y, &d.online[i])
     }))
 }

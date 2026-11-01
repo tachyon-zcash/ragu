@@ -222,6 +222,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         circuit_id: native.circuit_id,
         left_header: native.left_header.clone(),
         right_header: native.right_header.clone(),
+        online: native.online,
         native: native.native.clone(),
         native_registry_xy: native.native_registry_xy,
         native_p: native.native_p,

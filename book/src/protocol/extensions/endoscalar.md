@@ -149,15 +149,16 @@ instead of chaining through the `outer_error` stage, whose wires it never
 read. Its claim contains `BindBeta`, `PointsBinding`, and `Preamble`; the
 new `PreambleFinalStaged` mask bonds `BindBeta`, which is removed from the
 `OuterErrorFinalStaged` bonding claim. Registration includes the new mask.
-The internal registry therefore has 49 native and 42 nested entries,
-including masks, one native entry more than before. The 23 native and 26
-nested walk steps are unchanged.
+The internal registry therefore has 50 native and 44 nested entries,
+including masks, with 24 native and 28 nested walk steps once the online
+polynomials of the headers join the batch.
 
-The constraint census uses production rank `R<13>`, a 103-element header,
+The constraint census uses production rank `R<13>`, a 99-element header,
 and 6000 placeholder application circuits. In that fixture the largest
-`bind_challenges` variant uses 2033 of 2048 gates, leaving fifteen gates of
-headroom. The census tests pin that count; extending the binder requires
-rechecking its capacity.
+`bind_challenges` variant uses 2045 of 2048 gates, leaving three gates of
+headroom; the binders load the preamble, query and eval stages, each of
+which now carries the online openings. The census tests pin that count;
+extending the binder requires rechecking its capacity.
 
 The exceptional-case invariant is explicit in the integer model: every
 accumulator has Eisenstein norm at least four, while every digit has norm
