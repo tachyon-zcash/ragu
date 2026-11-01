@@ -120,6 +120,9 @@ required-features = ["unstable-fuzzing"]
 name = "nontrivial"
 
 [[test]]
+name = "online_oracles"
+
+[[test]]
 name = "pasta_parameters"
 
 [[test]]
