@@ -169,3 +169,43 @@ fn a_supplied_bootstrap_proof_replaces_the_bootstrap_fuse() {
             .is_err()
     );
 }
+
+/// A well-formed bootstrap proof from another configuration is installed as
+/// supplied: `with_bootstrap` checks shape and step, not validity. Proofs
+/// built on it are rejected by both verifiers, and rerandomizing one reports
+/// no error either; keying a stored proof by its configuration is the
+/// application's job.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
+fn a_mismatched_bootstrap_proof_is_installed_and_fails_verification_later() {
+    use ragu_core::pasta::Fp;
+
+    use crate::proof::recursive_propagation_tests::support::{Seed, app_builder};
+
+    // The bootstrap proof of an application with no steps registered: the
+    // same shape and bootstrap circuit index, over another registry.
+    let other = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let stored = other.bootstrap_proof().to_bytes().unwrap();
+
+    let app = app_builder()
+        .unwrap()
+        .with_bootstrap(TestProof::from_bytes(&stored).unwrap())
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    assert_eq!(app.bootstrap_proof().to_bytes().unwrap(), stored);
+
+    let mut rng = StdRng::seed_from_u64(0xbad);
+    let (leaf, _) = app.seed(&mut rng, Seed::new(), Fp::from(7)).unwrap();
+    assert!(
+        !app.verify_differential(&leaf, &mut rng).unwrap(),
+        "a seed over a mismatched bootstrap proof must not verify"
+    );
+    let rerandomized = app.rerandomize(leaf, &mut rng).unwrap();
+    assert!(
+        !app.verify_differential(&rerandomized, &mut rng).unwrap(),
+        "rerandomizing it must not make it verify"
+    );
+}
