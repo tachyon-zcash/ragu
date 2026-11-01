@@ -38,6 +38,7 @@ use crate::{
         nested::{
             self, challenge as nested_challenge, stages as nested_stages, unified as nested_unified,
         },
+        online,
     },
     ipa::{CycleTranscript, IpaTranscript},
     profile::ProfiledCycle,
@@ -70,6 +71,9 @@ pub(crate) struct Instance<C: Cycle> {
     pub circuit_id: CircuitIndex,
     pub left_header: Vec<C::CircuitField>,
     pub right_header: Vec<C::CircuitField>,
+    /// The online openings the proof's `compute_v` exported, which its
+    /// application circuit's instance is held to.
+    pub online: online::Queries<C::CircuitField>,
 
     /// The native commitments in [`native_components`] order.
     pub native: Vec<C::HostCurve>,
@@ -193,6 +197,7 @@ impl<C: ProfiledCycle> Instance<C> {
             circuit_id: proof.circuit_id(),
             left_header: proof.left_header().to_vec(),
             right_header: proof.right_header().to_vec(),
+            online: *proof.online_queries(),
             native: native_components::<C::Profile>()
                 .map(|component| proof.native_commitment(component))
                 .collect(),
@@ -254,9 +259,10 @@ impl<C: ProfiledCycle> Instance<C> {
         self.nested_commitment(nested::RxComponent::Rx(index))
     }
 
-    /// Absorbs the instance into `transcript`: the circuit id and the
-    /// headers, then every commitment and scalar of each curve, so that
-    /// every challenge squeezed afterwards depends on all of it.
+    /// Absorbs the instance into `transcript`: the circuit id, the headers
+    /// and the online openings, then every commitment and scalar of each
+    /// curve, so that every challenge squeezed afterwards depends on all of
+    /// it.
     pub(crate) fn absorb<B: SelectableBackend>(
         &self,
         transcript: &mut CycleTranscript<'_, C, B>,
@@ -265,6 +271,10 @@ impl<C: ProfiledCycle> Instance<C> {
         host.write_scalar(self.circuit_id.omega_j())?;
         for &element in self.left_header.iter().chain(&self.right_header) {
             host.write_scalar(element)?;
+        }
+        for query in &self.online {
+            host.write_scalar(query.x)?;
+            host.write_scalar(query.y)?;
         }
         for &point in self
             .native
@@ -458,6 +468,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     left_header: &self.left_header,
                     right_header: &self.right_header,
                     output_header,
+                    online: &self.online,
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,

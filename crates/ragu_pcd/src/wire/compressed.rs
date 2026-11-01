@@ -21,6 +21,7 @@ use crate::{
             native_components, nested_components,
         },
     },
+    internal::online,
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
@@ -66,6 +67,10 @@ macro_rules! codec {
         }
     }
 }
+codec!([F: Field] online::Query<F> {
+    x => Scalar,
+    y => Scalar,
+});
 codec!([F: Field] Child<F> {
     x => Scalar,
     y => Scalar,
@@ -125,6 +130,7 @@ codec!([C: ProfiledCycle] Instance<C> {
     circuit_id => DefaultEncoding,
     left_header => SizedSequence<Scalar, HeaderSize>,
     right_header => SizedSequence<Scalar, HeaderSize>,
+    online => Array<DefaultEncoding>,
     native => FixedSequence<Point, Native<C::Profile>>,
     native_registry_xy => Point,
     native_p => Point,

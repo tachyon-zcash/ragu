@@ -37,7 +37,7 @@ use udon::field::Field;
 
 use crate::{
     Application, Pcd, RAGU_TAG,
-    internal::{nested, transcript::Transcript},
+    internal::{nested, online, transcript::Transcript},
     profile::ProfiledCycle,
     proof::ProofBuilder,
     step::Step,
@@ -106,6 +106,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
+        // Until steps query their slots, every slot is opened at zeta = w.
+        let online_queries = {
+            let polys = online::polys(&left, &right, builder.online_polys());
+            online::queries_at(*w.value().take(), |slot, x| B::sparse_eval(polys[slot], x))
+        };
+        builder.set_online_queries(online_queries);
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry

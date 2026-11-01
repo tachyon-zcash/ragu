@@ -18,7 +18,11 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 
 use super::{Cached, Proof};
-use crate::{header::HEADER_POLYNOMIALS, internal::nested, profile::ProfiledCycle};
+use crate::{
+    header::HEADER_POLYNOMIALS,
+    internal::{nested, online},
+    profile::ProfiledCycle,
+};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -251,6 +255,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     // The step's own online polynomials, with their commitments cached.
     online_polys: Option<[sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS]>,
     online_commitments: OnceCell<[C::HostCurve; HEADER_POLYNOMIALS]>,
+    online_queries: Option<online::Queries<C::CircuitField>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -401,6 +406,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_walk_rx: None,
             online_polys: None,
             online_commitments: OnceCell::new(),
+            online_queries: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
             bridge_s_prime_rx: None,
@@ -583,6 +589,17 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         online_polys,
         online_polys,
         [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS]
+    );
+
+    setter!(
+        set_online_queries,
+        online_queries,
+        online::Queries<C::CircuitField>
+    );
+    ref_getter!(
+        online_queries,
+        online_queries,
+        online::Queries<C::CircuitField>
     );
 
     /// Lazily computes and caches the commitments of the step's own online
@@ -1163,6 +1180,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: take!(native_points_f_rx),
             native_points_walk_rx: take!(native_points_walk_rx),
             online_polys: take!(online_polys),
+            online_queries: take!(online_queries),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),

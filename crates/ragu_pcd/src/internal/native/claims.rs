@@ -27,23 +27,30 @@ use crate::{
     profile::Profile,
 };
 
-/// Number of circuits using unified $k(y)$ in [`build`].
+/// Number of circuits using unified $k(y)$ in [`build`] before
+/// [`compute_v`]: [`hashes_2`] and [`collapse`].
 ///
-/// These circuits use [`unified::InternalOutputKind`]:
-/// [`hashes_2`], [`collapse`], [`compute_v`], the
-/// [`NUM_BINDERS`] `bind_challenges` circuits, `bind_beta` and
-/// `bind_endoscalar`.
-///
-/// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
-/// inputs include child proof headers (see [`hashes_1::Output`]).
+/// These circuits use [`unified::InternalOutputKind`]. [`hashes_1`] comes
+/// before them and uses `unified_bridge_ky`, because its public inputs
+/// include the child proof headers (see [`hashes_1::Output`]), and
+/// [`compute_v`] uses `compute_v_bridge_ky`, because its public inputs
+/// include the step's online openings (see [`compute_v::Output`]).
 ///
 /// [`hashes_1`]: crate::internal::native::circuits::hashes_1
 /// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
 /// [`hashes_2`]: crate::internal::native::circuits::hashes_2
 /// [`collapse`]: crate::internal::native::circuits::collapse
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
+/// [`compute_v::Output`]: crate::internal::native::circuits::compute_v::Output
 /// [`unified::InternalOutputKind`]: crate::internal::native::unified::InternalOutputKind
-const NUM_UNIFIED_CIRCUITS: usize = 5 + NUM_BINDERS;
+const NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V: usize = 2;
+
+/// Number of circuits using unified $k(y)$ in [`build`] after
+/// [`compute_v`]: the [`NUM_BINDERS`] `bind_challenges` circuits,
+/// `bind_beta` and `bind_endoscalar`.
+///
+/// [`compute_v`]: crate::internal::native::circuits::compute_v
+const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 2 + NUM_BINDERS;
 
 /// The points stages the walk's inputs are committed in, in chain order.
 const POINTS_INPUT_STAGES: [RxIndex; 5] = [
@@ -418,9 +425,14 @@ pub trait KySource {
     /// Iterator over unified bridge $k(y)$ values.
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
+    /// Iterator over the `compute_v` bridge $k(y)$ values: the unified
+    /// instance followed by the step's online openings.
+    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// Base iterator over unified $k(y)$ values.
     ///
-    /// Will be repeated [`NUM_UNIFIED_CIRCUITS`] times.
+    /// Will be repeated [`NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V`] times,
+    /// then [`NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V`] times.
     /// The `+ Clone` bound is required for `repeat_n` in [`ky_prefix`].
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
@@ -456,13 +468,17 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
 /// the stage claims' zeros. The endoscaling targets follow profile `P`.
 ///
 /// The unified values come from
-/// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values).
+/// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values),
+/// and the `compute_v` bridge values from
+/// [`ProofInputs::compute_v_bridge_ky`](super::stages::preamble::ProofInputs::compute_v_bridge_ky).
 pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
         .chain(source.application_ky())
         .chain(source.unified_bridge_ky())
-        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS).flatten())
+        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V).flatten())
+        .chain(source.compute_v_bridge_ky())
+        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V).flatten())
         .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
         .chain({
             let extension = P::native_extension();
@@ -497,6 +513,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_app: Element<'dr, D>,
     pub left_bridge: Element<'dr, D>,
     pub right_bridge: Element<'dr, D>,
+    pub left_compute_v_bridge: Element<'dr, D>,
+    pub right_compute_v_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
     pub left_statement: Option<Element<'dr, D>>,
@@ -530,6 +548,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_app: right_ky.application.clone(),
             left_bridge: left_ky.unified_bridge.clone(),
             right_bridge: right_ky.unified_bridge.clone(),
+            left_compute_v_bridge: left_ky.compute_v_bridge.clone(),
+            right_compute_v_bridge: right_ky.compute_v_bridge.clone(),
             left_unified: left_ky.unified.clone(),
             right_unified: right_ky.unified.clone(),
             left_statement,
@@ -555,6 +575,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
         once(self.left_bridge.clone()).chain(once(self.right_bridge.clone()))
+    }
+
+    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_compute_v_bridge.clone()).chain(once(self.right_compute_v_bridge.clone()))
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

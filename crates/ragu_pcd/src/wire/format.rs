@@ -268,6 +268,7 @@ mod tests {
     use super::*;
     use crate::{
         header::HEADER_POLYNOMIALS,
+        internal::online::NUM_ONLINE_QUERIES,
         profile::{Shape, Standard},
     };
 
@@ -298,11 +299,16 @@ mod tests {
         // Every polynomial of the shape and the step's own online
         // polynomials, with `2^rank` coefficients each; a commitment per
         // polynomial plus the nested challenges partial; two headers; the
-        // bridge alpha and nine challenges; one circuit index. The envelope
-        // adds 28 bytes.
+        // online openings; the bridge alpha and nine challenges; one
+        // circuit index. The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
             let polynomials = Shape::of::<Standard>().polynomials() + HEADER_POLYNOMIALS;
-            polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 10 * 32 + 4
+            polynomials * R::num_coeffs() * 32
+                + (polynomials + 1) * 32
+                + 2 * H * 32
+                + 2 * NUM_ONLINE_QUERIES * 32
+                + 10 * 32
+                + 4
         }
         assert_eq!(
             <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
@@ -319,11 +325,12 @@ mod tests {
             Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
-        // 98 instance points; 27 instance scalars; per side 6+2R points,
-        // 21 scalars; plus the circuit index and common envelope.
+        // 98 instance points; 27 instance scalars and the 12 online
+        // openings; per side 6+2R points, 21 scalars; plus the circuit
+        // index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (98 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (98 + 27 + 12 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

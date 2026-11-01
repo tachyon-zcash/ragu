@@ -601,6 +601,7 @@ fn check_compressed_proofs_match(
         circuit_id: _,
         left_header: _,
         right_header: _,
+        online: _,
         native: _,
         native_registry_xy: _,
         native_p: _,
@@ -1342,6 +1343,7 @@ mod proof_equivalence {
                 native_points_f_rx: _,
                 native_points_walk_rx: _,
                 online_polys: _,
+                online_queries: _,
                 bridge_preamble_rx: _,
                 bridge_s_prime_rx: _,
                 bridge_inner_error_rx: _,
@@ -1475,6 +1477,9 @@ mod proof_equivalence {
                 || self.online_commitments != other.online_commitments
             {
                 return Some("online polynomials");
+            }
+            if self.online_queries != other.online_queries {
+                return Some("online openings");
             }
             if nested::RxIndex::ALL
                 .into_iter()

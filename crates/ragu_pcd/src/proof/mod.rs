@@ -227,6 +227,10 @@ pub struct Proof<C: Cycle, R: Rank> {
     // the constant one (see `internal::online`). Committed before `w` and
     // exported for the parent, which opens them as its left or right slots.
     pub(crate) online_polys: [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS],
+    // The step's online openings, one per slot (see `internal::online`):
+    // the claims its batch opened, which its `compute_v` exported and its
+    // parent reads into the native preamble.
+    pub(crate) online_queries: online::Queries<C::CircuitField>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -608,6 +612,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// proof's nested instance exports.
     pub(crate) fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
         self.online_commitments.0
+    }
+
+    /// The step's online openings, one per slot, which its `compute_v`
+    /// circuit exported.
+    pub(crate) fn online_queries(&self) -> &online::Queries<C::CircuitField> {
+        &self.online_queries
     }
 
     /// The native challenges of this proof, in challenge-stage order.
@@ -1161,8 +1171,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_b_poly(ones_host.clone(), host_commitment);
         builder.set_native_query_rx(ones_host.clone());
         builder.set_native_registry_xy_poly(registry_xy_poly);
-        // The unit header carries no polynomial: every online slot is padding.
+        // The unit header carries no polynomial: every online slot is
+        // padding, opened at the all-one challenge to its value one.
         builder.set_online_polys(core::array::from_fn(|_| online::padding()));
+        builder.set_online_queries(online::queries_at(C::CircuitField::ONE, |_, _| {
+            C::CircuitField::ONE
+        }));
         // The eval stage carries the binding partial sums over the challenge
         // lifts, and the instance their completion; a dummy proof's are
         // those of the all-one challenges.
