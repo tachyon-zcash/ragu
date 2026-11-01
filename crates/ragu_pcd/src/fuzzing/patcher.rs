@@ -89,7 +89,7 @@ use ragu_primitives::{
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::claims::{NativeFuseProofSource, NestedFuseProofSource};
+use super::{orchestrator::FuseOrchestrator, side::CurveSideFuse};
 use crate::{
     Application, Pcd, RAGU_TAG,
     internal::{
@@ -432,6 +432,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (left, right, _application_data, _application_aux) =
             self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
 
+        let sides = FuseOrchestrator::new(self, &left, &right);
+
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
@@ -441,17 +443,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
-        let native_registry = self.native_registry.at(*w.value().take());
-        let nested_registry = self
-            .nested_registry
-            .at(nested::challenge::<C>(*w.value().take())?);
+        let native_registry = sides.native.registry_at(*w.value().take())?;
+        let nested_registry = sides.nested.registry_at(*w.value().take())?;
 
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
             &nested_registry,
-            &left,
-            &right,
+            &sides.native,
+            &sides.nested,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -459,15 +459,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
         let y = transcript.challenge(&mut dr)?;
         let z = transcript.challenge(&mut dr)?;
-
-        let native_source = NativeFuseProofSource {
-            left: &left,
-            right: &right,
-        };
-        let nested_source = NestedFuseProofSource {
-            left: &left,
-            right: &right,
-        };
 
         let (
             native_inner_error_witness,
@@ -482,8 +473,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry,
             &y,
             &z,
-            &native_source,
-            &nested_source,
+            &sides.native,
+            &sides.nested,
             &mut builder,
         )?;
         let bridge_inner_error_commitment =
@@ -515,7 +506,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_claims,
             &nested_inner_error_witness,
             nested_claims,
-            &nested_source,
+            &sides.native,
+            &sides.nested,
             &nested_preamble,
             &y,
             &mu,
@@ -534,7 +526,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_a,
             nested_b,
             &nested_registry_wy,
-            &native_source,
+            &sides.native,
+            &sides.nested,
             &mu_prime,
             &mut builder,
         )?;

@@ -1,106 +1,146 @@
-# A minimal fuse generalization for #288
+# Curve-side fusion and coordination for #288
 
-This experiment starts at main commit
-2ed70cf9ff883b61c01b9b12e28fabee4ead01d2 and addresses the duplication question in
-[issue #288](https://github.com/tachyon-zcash/ragu/issues/288).
+This branch implements a private, phase-oriented design for
+[issue #288](https://github.com/tachyon-zcash/ragu/issues/288). The comparison
+revision is 74575d54d70499c3b8978be3cd45a0aed1bfee14, the earlier s-prime
+extraction, based on main at 2ed70cf9ff883b61c01b9b12e28fabee4ead01d2.
 
-## The existing hierarchy
+Application::fuse now prepares the application proof and hands the recursive
+work to FuseOrchestrator. The orchestrator holds a NativeSideFuse and a
+NestedSideFuse, asks each side for the current phase's data, commits the
+necessary stages and bridges, and then derives the next shared challenge.
 
-Current `Application::fuse` already coordinates both sides of the curve cycle.
-It owns one native-field transcript and advances both sides through successive
-commitment and challenge rounds. Its phase methods, such as `compute_s_prime`,
-select each side's data and construct the bridges between them. Shared arithmetic
-already lives in `internal::claims`, `internal::fold_revdot`, and `ragu_backend`.
-
-That gives a useful hierarchy to extend:
-
-```text
-Application::fuse                 transcript and phase order
-  compute_s_prime                side selection and bridge commitments
-    SPrime<HostCurve>::compute    registry restrictions and commitments
-    SPrime<NestedCurve>::compute  the same computation in the other field
+```mermaid
+flowchart TD
+    A["Application::fuse: preflight and application proof"] --> O["FuseOrchestrator: round order and transcript"]
+    O --> N["NativeSideFuse: native registry and child view"]
+    O --> S["NestedSideFuse: nested registry and child view"]
+    N --> I["CurveSideFuse: common accumulation phases"]
+    S --> I
+    I --> K["Backend and two-layer folding kernels"]
+    O --> B["Stage/bridge commitments, PCS phases and circuit witnesses"]
 ```
 
-The last two calls are the change demonstrated here. Later phases need their
-own assessment of which computations have the same inputs and meaning.
+## The shared interface
 
-## The working change
+CurveSideFuse lives in crates/ragu_pcd/src/fuse/side.rs. Its associated types
+select the field, commitment curve, generators, fold parameters, claim
+representation, and folded A representation. Both implementations use its
+shared methods for:
 
-The Rust change is confined to `crates/ragu_pcd/src/fuse/_03_s_prime.rs`:
+- Evaluating the registry at the transcript's w challenge.
+- Computing the s-prime registry restrictions and commitments.
+- Constructing claims and their first-layer error terms.
+- Computing and committing the registry restriction at y.
+- Folding claim groups at mu and computing their second-layer error terms.
+- Folding the groups at mu_prime into the accumulator polynomials.
 
-1. Replace the two copies of the s-prime data structure with `SPrime<G, R>`,
-   where `G: Affine` determines the commitment curve and `G::Scalar` determines
-   the polynomial field.
-2. Keep `NativeSPrime<C, R>` and `NestedSPrime<C, R>` as aliases, so the later
-   phases retain their existing signatures and field access.
-3. Move the duplicated registry restriction and batched commitment computation
-   into `SPrime::compute<B>`. Both instantiations use the selected backend.
+The side provides its challenge conversion, child x values, claim enumeration,
+and the first-layer fold of A. NativeSideFuse uses tracked polynomials so A's
+commitment decomposition survives both layers. NestedSideFuse borrows the
+children's polynomials when building claims and produces ordinary owned
+polynomials when folding them. Each side selects its profile's own group counts
+and group sizes.
 
-The two calls differ in their supplied values:
+A side view borrows its registry, generators, and the same pair of child
+proofs. Creating the views copies no proof or polynomial. The common operations
+retain static backend dispatch.
 
-| Input | Native | Nested |
-| --- | --- | --- |
-| Curve | `C::HostCurve` | `C::NestedCurve` |
-| Polynomial field | `C::CircuitField` | `C::ScalarField` |
-| Registry | native registry at `w` | nested registry at lifted `w` |
-| Child evaluation points | child `x` values | lifted child `x` values |
-| Generators | host generators | nested generators |
+## Coordination and specialization
 
-The generic computation receives evaluation points already in its scalar field.
-The phase method performs the nested challenge conversion, then commits the
-native points stage and the s-prime bridge in their existing order. The helper
-uses static dispatch and needs neither a transcript nor an RNG.
+FuseOrchestrator, in crates/ragu_pcd/src/fuse/orchestrator.rs, owns the complete
+recursive round sequence. The public entry point in fuse/mod.rs retains child
+shape validation, initial randomness, the application Step, and the return of
+its output data and auxiliary value. The coordinator finishes the ProofBuilder
+and returns the resulting proof to that entry point.
 
-## Where specialization belongs
+The shared transcript fixes the order:
 
-`Application::fuse` remains the coordinator. A whole-side `fuse_curve_side`
-method would need to yield at the shared transcript's commitment/challenge
-boundaries: neither side can independently run its complete pipeline first.
-An orchestration interface would therefore need to express phases and their
-dependencies.
+| Commitment absorbed | Challenges derived next |
+| --- | --- |
+| Preamble bridge | w |
+| S-prime bridge | y, z |
+| Inner-error bridge | mu |
+| Outer-error bridge | mu_prime |
+| AB bridge | x |
+| Query bridge | alpha |
+| F bridge | u |
+| Eval bridge | pre_beta, using the existing rejection sampling |
 
-The existing code also has concrete asymmetries. Native `A` tracks a decomposition
-to obtain its commitment from child commitments; nested `A` commits the folded
-polynomial directly. Native circuits replay the transcript and bind nested
-challenges. Bridges encode points across the fields, and the native and nested
-claim sets have different layouts. These belong in their respective phase
-methods and circuit modules.
+Both sides advance within each round. Their complete pipelines cannot run one
+after the other, because the bridges bind results from the two sides before the
+next challenge. The side interface therefore exposes accumulation phases and
+leaves the transcript with the coordinator.
 
-For this first step, `Affine` and `Backend` express everything the common
-computation needs. A private phase-level trait becomes useful when another
-orchestration path actually needs to select between implementations. The next
-small extraction to assess is the registry-at-`y` computation in
-`_04_inner_error.rs`, with its challenge conversion and stage witnesses kept in
-the phase method.
+The existing phase modules retain stage witness construction, bridge encoding,
+PCS query layouts, endoscaling walks, and circuit tracing. Their registered
+relations have different responsibilities on the two sides. Native A's
+commitment still uses the tracked child commitments; nested A's commitment still
+comes from the folded polynomial. Native hash circuits still replay the same
+transcript, and nested challenge binding still includes the parent's completion
+of beta. The parent or terminal verifier consumes the same accumulated claims.
+
+The fuzzing patcher constructs the same pair of side views and uses the same
+phase methods. Its deliberately instrumented transcript path remains available
+for circuit capture and corruption tests.
+
+This is a private implementation interface. Applications continue to call the
+same fuse method with the same Step and child types. There is no public custom
+fuser registration API in this change.
 
 ## Validation
 
-The intended invariant is identical registry restrictions and commitments,
-backend batching, challenge order, and RNG consumption. Existing nontrivial
-recursive proving/compression tests, profile tests, and backend-equivalence tests
-exercise the changed path. Their results are finite regression evidence. This
-experiment generalizes one phase's computation and data; a complete
-interchangeable side-fuser API would need additional work.
+Checks completed with Rust 1.97.1 on aarch64-apple-darwin:
 
-Validation completed with Rust 1.97.1:
+- Library compilation in the default and all-features configurations: passed.
+- All-features library Clippy with warnings denied: passed, including the fuzzing
+  patcher. Pinned-nightly formatting and the diff whitespace check passed.
+- Backend, decompression-statement, profile-substitution, extension-binding,
+  verifier-setup, and recursive base-case regressions: 40 tests passed. The
+  property-test environment set PROPTEST_CASES=2 and PROPTEST_RNG_SEED=288.
+- Serial nontrivial proving/compression and built-in profile integrations:
+  2 tests passed.
+- The ignored nested PCS batch-opening property: 1 test passed, with
+  PROPTEST_CASES=1 and PROPTEST_RNG_SEED=288.
 
-- Library check: passed.
-- Clippy with warnings denied: passed.
-- Formatting with the repository's pinned nightly: passed.
-- Nontrivial recursive proving/compression and profile integration tests:
-  2 passed, 0 failed.
-- Backend-equivalence suite: 19 passed, 0 failed, 0 ignored. The environment set
-  `PROPTEST_CASES=2`, `PROPTEST_RNG_SEED=288`, and `RAYON_NUM_THREADS=4`.
+An additional independent-build comparison against 74575d54d matched all 60
+fingerprint checkpoints: two built-in profiles, three backends, and one/four
+workers, each producing two leaves, a parent, a grandparent, and a compressed
+grandparent. The probe hashes all 106 ordinary proof fields, the compressed
+proof's data, and records the output header and four subsequent RNG draws at
+each checkpoint. It uses seed 288 and leaf witnesses 42 and 43; the four RNG
+samples are consumed between checkpoints in both executions. Each proof is
+also checked by its verifier. The two independently rebuilt test executables
+have different SHA-256 hashes.
 
-Run from the worktree root:
+The built-in profiles currently have the same base layout. Separate regression
+tests above exercise nonempty native and nested extensions and reject profile
+substitution. These are finite compatibility and rejection checks, not a formal
+protocol-equivalence or soundness proof.
+
+The comparison used an identical temporary probe mounted beneath the private
+proof module in both snapshots. That mount was removed before committing;
+Proof itself has no diff. Local probe sources, complete logs, executable hashes,
+retained executables, and the comparison record are in
+/private/tmp/ragu-fuse-288-evidence-20261031. The source comparison also matched
+all 17 bridge-write and challenge statements in order.
+
+The repository regression commands, run from the worktree root, are:
 
 ```sh
 cargo check -p ragu_pcd --lib --locked --offline
-cargo clippy -p ragu_pcd --lib --locked --offline -- -D warnings
+cargo check -p ragu_pcd --lib --locked --offline --all-features
+cargo clippy -p ragu_pcd --lib --locked --offline --all-features -- -D warnings
 cargo +nightly-2026-05-23 fmt --all -- --config-path rustfmt.nightly.toml --check
-RAYON_NUM_THREADS=4 cargo test --release -p ragu_pcd --locked --offline \
-  --features multicore --test nontrivial --test profiles -- --test-threads=1
 PROPTEST_CASES=2 PROPTEST_RNG_SEED=288 RAYON_NUM_THREADS=4 \
   cargo test --release -p ragu_pcd --locked --offline --features multicore \
-  --lib backend_equivalence:: -- --test-threads=1
+  --lib -- --test-threads=1 backend_equivalence:: \
+  decompress_statement_tests:: profile_substitution_tests:: \
+  noncanonical_unit_children_reject_through_two_generations
+PROPTEST_CASES=1 PROPTEST_RNG_SEED=288 RAYON_NUM_THREADS=4 \
+  cargo test --release -p ragu_pcd --locked --offline --features multicore \
+  --lib fuse::pcs_tests::nested_batch_opens_what_it_claims \
+  -- --ignored --exact --test-threads=1
+cargo test --release -p ragu_pcd --locked --offline --no-default-features \
+  --test nontrivial --test profiles -- --test-threads=1
 ```

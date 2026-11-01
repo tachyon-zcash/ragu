@@ -50,7 +50,8 @@ use udon::curve::Affine;
 
 use super::{
     _04_inner_error::NestedRegistryWy,
-    claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
+    claims::{FoldKey, TrackedPoly},
+    side::{CurveSideFuse, NativeSideFuse, NestedSideFuse},
 };
 use crate::{
     Application,
@@ -77,15 +78,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        native_source: &NativeFuseProofSource<'_, C, R>,
+        native_fuser: &NativeSideFuse<'_, '_, C, R>,
+        nested_fuser: &NestedSideFuse<'_, '_, C, R>,
         mu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        self.compute_native_ab(native_a, native_b, native_source, mu_prime, builder)?;
-        self.compute_nested_ab(nested_a, nested_b, mu_prime, builder)?;
+        self.compute_native_ab(native_a, native_b, native_fuser, mu_prime, builder)?;
+        self.compute_nested_ab(nested_a, nested_b, nested_fuser, mu_prime, builder)?;
         self.commit_native_points_ab(
             rng,
             nested_registry_wy.commitment,
@@ -106,22 +108,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        nested_fuser: &NestedSideFuse<'_, '_, C, R>,
         native_mu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
-
-        let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            a,
-            nested_mu_prime,
-        );
-        let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            b,
-            nested_mu_prime,
-        );
+        let (a_poly, b_poly) = nested_fuser.accumulate(a, b, *native_mu_prime.value().take())?;
 
         builder.set_nested_a_poly(a_poly);
         builder.set_nested_b_poly(b_poly);
@@ -133,23 +127,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
-        native_source: &NativeFuseProofSource<'_, C, R>,
+        native_fuser: &NativeSideFuse<'_, '_, C, R>,
         mu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let mu_prime = *mu_prime.value().take();
-
-        let TrackedPoly {
-            poly: a_poly,
-            decomp: a_decomp,
-        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
+        let (
+            TrackedPoly {
+                poly: a_poly,
+                decomp: a_decomp,
+            },
+            b_poly,
+        ) = native_fuser.accumulate(a, b, *mu_prime.value().take())?;
         let a_poly = a_poly.into_owned();
-
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
         let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known
@@ -170,7 +162,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
             let mut msm: Vec<(C::CircuitField, C::HostCurve)> = Vec::with_capacity(entries.len());
             for (key, coeff) in entries {
-                let commitment = native_source.get(key);
+                let commitment = native_fuser.source.get(key);
                 msm.push((coeff, commitment));
             }
 

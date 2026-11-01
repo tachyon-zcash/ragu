@@ -26,8 +26,9 @@ use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::claims::{
-    FoldKey, NativeFuseBuilder, NestedFuseBuilder, NestedFuseProofSource, TrackedPoly,
+use super::{
+    claims::{FoldKey, NativeFuseBuilder, NestedFuseBuilder, TrackedPoly},
+    side::{CurveSideFuse, FoldedClaims, NativeSideFuse, NestedSideFuse},
 };
 use crate::{
     Application,
@@ -61,7 +62,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native_claims: NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
-        nested_source: &NestedFuseProofSource<'rx, C, R>,
+        native_fuser: &NativeSideFuse<'_, 'rx, C, R>,
+        nested_fuser: &NestedSideFuse<'_, 'rx, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
@@ -83,15 +85,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     {
         let y = *y.value().take();
         let mu = *mu.value().take();
-        let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.a,
-            mu,
-        );
-        let native_b = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.b,
-            mu,
-        );
-        drop(native_claims);
+        let FoldedClaims {
+            a: native_a,
+            b: native_b,
+            ..
+        } = native_fuser.fold_claims::<B>(native_claims, mu)?;
 
         let (ky, collapsed) = Emulator::emulate_wireless(
             (
@@ -189,12 +187,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
         )?;
 
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
-            B,
-            _,
-            R,
-            native::RevdotParameters<C::Profile>,
-        >(&native_a, &native_b);
+        let error_terms = native_fuser.outer_errors::<B>(&native_a, &native_b);
 
         let native_outer_error_witness =
             native::stages::outer_error::Witness::<C, native::RevdotParameters<C::Profile>> {
@@ -211,7 +204,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             rng,
             nested_inner_error_witness,
             nested_claims,
-            nested_source,
+            nested_fuser,
             nested_preamble,
             y,
             mu,
@@ -270,7 +263,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
-        nested_source: &NestedFuseProofSource<'_, C, R>,
+        nested_fuser: &NestedSideFuse<'_, '_, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         native_y: C::CircuitField,
         native_mu: C::CircuitField,
@@ -281,26 +274,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
     )> {
         let nested_y = nested::challenge::<C>(native_y)?;
-        let nested_mu = nested::challenge::<C>(native_mu)?;
-
-        let a = fold_revdot::fold_inner::<
-            sparse::Polynomial<C::ScalarField, R>,
-            _,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.a, nested_mu);
-        let b = fold_revdot::fold_inner::<
-            sparse::Polynomial<C::ScalarField, R>,
-            _,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.b, nested_mu);
-        drop(nested_claims);
+        let FoldedClaims {
+            a,
+            b,
+            mu: nested_mu,
+        } = nested_fuser.fold_claims::<B>(nested_claims, native_mu)?;
 
         let collapsed = NestedFuseEmulator::<C>::emulate_wireless(
             (
                 (&nested_inner_error_witness.error_terms, nested_y, nested_mu),
                 (
-                    nested_source.left.nested_c(),
-                    nested_source.right.nested_c(),
+                    nested_fuser.source.left.nested_c(),
+                    nested_fuser.source.right.nested_c(),
                 ),
                 nested_preamble,
             ),
@@ -370,12 +355,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
         )?;
 
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
-            B,
-            _,
-            R,
-            nested::RevdotParameters<C::Profile>,
-        >(&a, &b);
+        let error_terms = nested_fuser.outer_errors::<B>(&a, &b);
 
         let bridge = nested::stages::outer_error::Witness {
             native_outer_error: builder.native_outer_error_commitment(),
