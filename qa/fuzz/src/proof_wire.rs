@@ -156,27 +156,15 @@ mod tests {
     #[ignore = "production-rank proof generation; run in release in CI"]
     fn decode_to_verify_smoke() {
         initialize();
-        for (kind, inputs) in [
-            (
-                Kind::Proof,
-                [
-                    include_bytes!("../regressions/fuzz_proof_wire/raw").as_slice(),
-                    include_bytes!("../regressions/fuzz_proof_wire/valid").as_slice(),
-                    include_bytes!("../regressions/fuzz_proof_wire/scalar").as_slice(),
-                ],
-            ),
-            (
-                Kind::Compressed,
-                [
-                    include_bytes!("../regressions/fuzz_compressed_wire/raw").as_slice(),
-                    include_bytes!("../regressions/fuzz_compressed_wire/valid").as_slice(),
-                    include_bytes!("../regressions/fuzz_compressed_wire/scalar").as_slice(),
-                ],
-            ),
-        ] {
-            assert!(!exercise(kind, inputs[0]).decoded);
-            assert_eq!(exercise(kind, inputs[1]).verified, Some(true));
-            assert!(exercise(kind, inputs[2]).decoded);
+        // The control inputs: raw bytes that are no proof, the unchanged seed
+        // and a canonical scalar replacement.
+        const RAW: &[u8] = b"\x00bad proof";
+        const VALID: &[u8] = &[1];
+        const SCALAR: &[u8] = &[5];
+        for kind in [Kind::Proof, Kind::Compressed] {
+            assert!(!exercise(kind, RAW).decoded);
+            assert_eq!(exercise(kind, VALID).verified, Some(true));
+            assert!(exercise(kind, SCALAR).decoded);
             assert!(!exercise(kind, &[3]).decoded);
             assert!(!exercise(kind, &[4]).decoded);
             assert!(!exercise(kind, &[2, 0, 0, 0, 0, 1]).decoded);
