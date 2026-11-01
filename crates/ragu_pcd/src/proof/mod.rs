@@ -133,6 +133,14 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
         (self.proof, self.data)
     }
+
+    /// The polynomials the header carries, one coefficient vector in
+    /// ascending degree per polynomial of
+    /// [`H::NUM_POLYNOMIALS`](Header::NUM_POLYNOMIALS), as the step that
+    /// produced this proof committed them.
+    pub fn polynomials(&self) -> Vec<Vec<C::CircuitField>> {
+        online::coefficients(self.proof.online_polys(), H::NUM_POLYNOMIALS)
+    }
 }
 
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {

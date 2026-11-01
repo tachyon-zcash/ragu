@@ -23,7 +23,7 @@ use crate::{
     compress::instance::Instance,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Oracles, Step},
 };
 
 const HEADER_SIZE: usize = 4;
@@ -243,6 +243,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Seed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Fp>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -289,6 +290,7 @@ impl<Cy: Cycle<CircuitField = Fp>> Step<Cy> for Sum {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,

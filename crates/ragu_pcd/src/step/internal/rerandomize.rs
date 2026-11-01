@@ -7,6 +7,11 @@
 //! a witness wire rather than a constant. The right header is the unit header
 //! carried by the cached proof.
 //!
+//! The output header's polynomials are copies of the left input's, which
+//! the circuit holds equal at $\zeta$ slot by slot, padding included so the
+//! circuit stays uniform: the parent sees only the output slots, so a copy
+//! alone would let a rerandomizing prover swap the polynomial.
+//!
 //! That witnessed suffix is the one input suffix outside the bootstrap step
 //! that a prover chooses, and so the one place a prover could try to
 //! present the [`Dummy`] suffix and take the base case: the decompression
@@ -21,6 +26,7 @@
 //! [`Dummy`]: crate::header::Dummy
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_core::{
@@ -28,11 +34,11 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::allocator::Standard;
+use ragu_primitives::{GadgetExt, allocator::Standard};
 
-use super::super::{Encoded, Index, Step};
-use crate::Header;
+use super::super::{Encoded, HeaderInput, Index, Oracles, Slot, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
+use crate::{Header, header::HEADER_POLYNOMIALS};
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -56,9 +62,23 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     type Right = ();
     type Output = H;
 
+    /// The output carries copies of the left input's polynomials. A copy
+    /// here is prover data, not a constraint: the parent sees only the
+    /// output slots, so [`witness`](Step::witness) proves each output
+    /// polynomial equals the left one at $\zeta$.
+    fn polynomials<'source>(
+        &self,
+        _: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, H>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+    ) -> Result<Vec<Vec<C::CircuitField>>> {
+        Ok(left.polynomials.to_vec())
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -80,6 +100,16 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // seeded proof.
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
         let right_encoded = Encoded::new(dr, allocator, right)?;
+
+        // The output polynomials are the left input's: open both slots of
+        // each at zeta and hold them equal. Padding slots are opened too,
+        // so the circuit stays the same whatever the header declares; the
+        // right input's slots, the unit header's padding, go unqueried.
+        for i in 0..HEADER_POLYNOMIALS {
+            let left = oracles.query_at_zeta(dr, Slot::left(i))?;
+            let output = oracles.query_at_zeta(dr, Slot::output(i))?;
+            output.enforce_equal(dr, &left)?;
+        }
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization
@@ -185,6 +215,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
+                oracles: &mut Oracles<'_, 'dr, D>,
                 _: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -201,6 +232,11 @@ mod tests {
                 let left_encoded =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, left.clone())?;
                 let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
+                for i in 0..HEADER_POLYNOMIALS {
+                    let left = oracles.query_at_zeta(dr, Slot::left(i))?;
+                    let output = oracles.query_at_zeta(dr, Slot::output(i))?;
+                    output.enforce_equal(dr, &left)?;
+                }
                 Ok((
                     (left_encoded.clone(), right_encoded, left_encoded),
                     left,

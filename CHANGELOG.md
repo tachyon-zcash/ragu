@@ -12,9 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
+- Online polynomial oracles: a `Header` may carry up to `HEADER_POLYNOMIALS`
+  polynomials (`Header::NUM_POLYNOMIALS`), a step commits its output header's
+  through `Step::polynomials` before its challenge is drawn, and
+  `Step::witness` opens any header's polynomials through `step::Oracles` at
+  the challenge or at any wire. Ragu proves the openings in the step's own
+  batch. `Pcd::polynomials` reads a header's polynomials back.
 
 ### Changed
 
+- `Step::witness` takes the step's `Oracles` after the driver, and the
+  application circuit's instance is prefixed by the challenge and the six
+  online openings. Every proof carries two more polynomials and their
+  commitments; the native and nested walks grow by one and two steps.
 - Registry tags are supplied by the application from a randomness beacon;
   `ApplicationBuilder::finalize` requires them unless the test-only
   `insecure-test-registry-tag` feature is enabled.

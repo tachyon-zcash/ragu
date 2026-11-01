@@ -135,11 +135,17 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         ))
     }
 
-    /// Compute k(y) for the application circuit instance.
-    ///
-    /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
+    /// Compute k(y) for the application circuit instance: k(y) for
+    /// `(zeta, online, children.left, children.right, output_header)`, where
+    /// the child's `zeta` is its `w` and `online` its openings, both as the
+    /// unified instance and the `compute_v` bridge hold them, so that the
+    /// instance the child's step circuit satisfied is held to the openings
+    /// its batch proved by construction (see
+    /// [`Adapter`](crate::step::internal::adapter::Adapter)).
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
+        self.unified.w.write(dr, &mut ky)?;
+        self.online.write(dr, &mut ky)?;
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;

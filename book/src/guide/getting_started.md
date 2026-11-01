@@ -118,7 +118,7 @@ This step creates leaf proofs from raw values:
 
 ```rust
 use ragu_core::Cycle;
-use ragu_pcd::step::{Encoded, Index, Step};
+use ragu_pcd::step::{Encoded, Index, Oracles, Step};
 use ragu_primitives::poseidon::Sponge;
 
 struct CreateLeaf<'params, C: Cycle> {
@@ -137,6 +137,7 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,  // No header carries a polynomial
         witness: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         _: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -209,6 +210,7 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

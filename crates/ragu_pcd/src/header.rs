@@ -106,6 +106,17 @@ pub trait Header<F: Field>: Send + Sync + Any {
     /// use a reserved internal suffix.
     const SUFFIX: Suffix;
 
+    /// The polynomials this header carries beside its data, at most
+    /// [`HEADER_POLYNOMIALS`]; none by default.
+    ///
+    /// A step whose output header declares `n` polynomials returns `n`
+    /// coefficient vectors from [`Step::polynomials`](crate::step::Step::polynomials);
+    /// Ragu commits them before the step's challenge and opens them, in this
+    /// step's circuit or the parent's, at points those circuits choose (see
+    /// [`Oracles`](crate::step::Oracles)). The slots a header leaves
+    /// undeclared hold the constant one.
+    const NUM_POLYNOMIALS: usize = 0;
+
     /// The witness input needed to encode a header.
     type Data: Send + Clone;
 

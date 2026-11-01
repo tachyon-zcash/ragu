@@ -30,9 +30,19 @@ pub trait Step<C: Cycle> {
     type Right: Header<C::CircuitField>;
     type Output: Header<C::CircuitField>;
 
+    // Optional: the polynomials the output header carries, committed before
+    // the step's challenge is drawn. Defaults to none.
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, Self::Left>,
+        right: HeaderInput<'_, C::CircuitField, Self::Right>,
+    ) -> Result<Vec<Vec<C::CircuitField>>>;
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -89,8 +99,21 @@ type Output = InternalNode;  // What this step creates
 This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
 2. Receives left/right header data as `DriverValue`s
-3. Performs computation (constraints)
-4. Returns encoded proofs and auxiliary output
+3. Receives the step's polynomial oracles (see
+   [Polynomial Oracles](#polynomial-oracles)); a step whose headers carry no
+   polynomials ignores them
+4. Performs computation (constraints)
+5. Returns encoded proofs and auxiliary output
+
+### 4. The polynomials Function
+
+A header may carry up to two polynomials beside its field data, by setting
+`Header::NUM_POLYNOMIALS`. A step whose output header declares polynomials
+implements `polynomials`, which runs before the step's challenge is drawn and
+returns the output polynomials' coefficients, computed from the witness and
+from the inputs' data and polynomials. Ragu commits them, and they travel
+with the proof. The default returns none, which is right for headers without
+polynomials.
 
 ## Two Types of Steps
 
@@ -154,13 +177,43 @@ let left_data = left.as_gadget();
 let right_data = right.as_gadget();
 ```
 
+## Polynomial Oracles
+
+A step can relate the polynomials its headers carry without putting their
+coefficients in the circuit. Each of the three headers has two polynomial
+slots, `Slot::left(i)`, `Slot::right(i)` and `Slot::output(i)`; a header
+that declares fewer polynomials has the constant one in the rest. The
+`Oracles` argument of `witness` lets the circuit open each slot once:
+
+```rust
+// A random point squeezed after every slot's polynomial was committed.
+let zeta = oracles.zeta().clone();
+// The value of the left header's first polynomial at zeta, as a wire.
+let l0 = oracles.query_at_zeta(dr, Slot::left(0))?;
+// The output polynomial at the same point.
+let o0 = oracles.query_at_zeta(dr, Slot::output(0))?;
+// Enforce O0(zeta) = L0(zeta) * (zeta - t), the relation the step proves.
+o0.enforce_equal(dr, &l0.mul(dr, &zeta.sub(dr, &t))?)?;
+// A slot may also be opened at any wire, such as a witnessed nullifier.
+let membership = oracles.query(dr, Slot::left(1), &nullifier)?;
+```
+
+The returned wire is a witness: nothing in the circuit checks that it is the
+polynomial's value at the point. Ragu's polynomial commitment scheme proves
+every opening, in the same batch as the rest of the step's claims, and the
+parent step holds the circuit's instance to the openings that were proved. A
+slot the circuit does not query is opened at `zeta` to the polynomial's value
+there, so every step pays for all six openings whether it uses them or not.
+
 ## Working with Headers
 
 Headers define what data flows through the proof tree. Each header
 implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 (the native Rust value), an `Output` type (the circuit gadget
-representation), and an `encode` function that converts `Data` into
-`Output` by allocating circuit elements.
+representation), an `encode` function that converts `Data` into
+`Output` by allocating circuit elements, and optionally `NUM_POLYNOMIALS`,
+the polynomials it carries beside its data (see
+[Polynomial Oracles](#polynomial-oracles)).
 
 For a complete example with multiple header types, see
 [Getting Started — Define Header Types](getting_started.md#step-1-define-header-types).

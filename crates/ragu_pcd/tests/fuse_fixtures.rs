@@ -110,7 +110,7 @@ use crate::{
         fingerprint::{self, Event},
     },
     profile::{Aggregator, Profile, Profiled, ProfiledCycle},
-    step::{Encoded, Index, Step, internal::bootstrap::Bootstrap},
+    step::{Encoded, Index, Oracles, Step, internal::bootstrap::Bootstrap},
 };
 
 type R = ProductionRank;
@@ -181,6 +181,7 @@ where
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, L::Data>,
         right: DriverValue<D, H::Data>,

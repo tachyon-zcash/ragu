@@ -37,7 +37,7 @@ use udon::field::Field;
 
 use crate::{
     Application, Pcd, RAGU_TAG,
-    internal::{nested, online, transcript::Transcript},
+    internal::{nested, transcript::Transcript},
     profile::ProfiledCycle,
     proof::ProofBuilder,
     step::Step,
@@ -94,8 +94,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, application_data, application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
+        // The step's first phase: the headers, circuit id and own online
+        // polynomials the preamble bridge commits.
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        self.begin_application_proof(
+            &step,
+            &witness,
+            (&left, &left_data),
+            (&right, &right_data),
+            &mut builder,
+        )?;
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
@@ -106,12 +115,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
-        // Until steps query their slots, every slot is opened at zeta = w.
-        let online_queries = {
-            let polys = online::polys(&left, &right, builder.online_polys());
-            online::queries_at(*w.value().take(), |slot, x| B::sparse_eval(polys[slot], x))
-        };
-        builder.set_online_queries(online_queries);
+
+        // The step's second phase: its circuit, with zeta = w and every
+        // slot's polynomial at hand, whose openings the batch below proves.
+        let (application_data, application_aux) = self.compute_application_proof(
+            rng,
+            step,
+            witness,
+            (&left, left_data),
+            (&right, right_data),
+            *w.value().take(),
+            &mut builder,
+        )?;
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry

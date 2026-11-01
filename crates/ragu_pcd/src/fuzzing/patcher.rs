@@ -96,7 +96,6 @@ use crate::{
         endoscalar::EndoscalarStage,
         native::{self, stages::points as native_points, total_circuit_counts},
         nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
-        online,
         transcript::Transcript,
     },
     profile::ProfiledCycle,
@@ -430,8 +429,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, _application_data, _application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        self.begin_application_proof(
+            &step,
+            &witness,
+            (&left, &left_data),
+            (&right, &right_data),
+            &mut builder,
+        )?;
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
@@ -442,11 +448,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
-        let online_queries = {
-            let polys = online::polys(&left, &right, builder.online_polys());
-            online::queries_at(*w.value().take(), |slot, x| B::sparse_eval(polys[slot], x))
-        };
-        builder.set_online_queries(online_queries);
+        self.compute_application_proof(
+            rng,
+            step,
+            witness,
+            (&left, left_data),
+            (&right, right_data),
+            *w.value().take(),
+            &mut builder,
+        )?;
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry

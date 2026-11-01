@@ -36,7 +36,7 @@ use crate::{
         Side, native,
         nested::{self, stages::challenges},
     },
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Oracles, Step},
 };
 
 /// Preserve ordinary unit headers through successive fuses.
@@ -54,6 +54,7 @@ impl Step<C> for UnitStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

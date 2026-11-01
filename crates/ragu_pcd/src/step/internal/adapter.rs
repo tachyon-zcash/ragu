@@ -9,22 +9,30 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element,
+    Element, GadgetExt,
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::super::Step;
-use crate::Header;
+use super::super::{
+    Step,
+    oracles::{self, OnlineWitness, Oracles},
+};
+use crate::{Header, internal::online};
 
-/// Represents triple a length determined at compile time.
-pub struct TripleConstLen<const N: usize>;
+/// The length of an application circuit's instance: $\zeta$, the online
+/// openings and the three padded headers.
+pub struct InstanceLen<const HEADER_SIZE: usize>;
 
-impl<const N: usize> Len for TripleConstLen<N> {
+impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        N * 3
+        1 + 2 * online::NUM_ONLINE_QUERIES + 3 * HEADER_SIZE
     }
 }
 
+/// Adapts a [`Step`] to a [`Circuit`] whose instance is
+/// `[zeta, x_0, y_0, ..., x_5, y_5, left, right, output]`: the step's
+/// challenge, its online openings in slot order and its three padded headers
+/// (see [`online`]).
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
     _marker: PhantomData<(C, R)>,
@@ -51,8 +59,9 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
+        OnlineWitness<C::CircuitField, R>,
     );
-    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, TripleConstLen<HEADER_SIZE>>];
+    type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
     type Aux<'source> = (
         (
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
@@ -60,6 +69,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         ),
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
+        online::Queries<C::CircuitField>,
     );
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -78,24 +88,30 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     where
         Self: 'dr,
     {
-        let (left, right, witness) = witness.cast();
+        let (left, right, witness, online) = witness.cast();
 
-        let ((left, right, output), output_data, step_aux) = self
-            .step
-            .witness::<_, HEADER_SIZE>(dr, witness, left, right)?;
+        let mut oracles = Oracles::alloc(dr, online.as_ref())?;
+        let ((left, right, output), output_data, step_aux) =
+            self.step
+                .witness::<_, HEADER_SIZE>(dr, &mut oracles, witness, left, right)?;
+        let (zeta, queries) = oracles.finish(dr)?;
+        let query_values = oracles::values(&queries);
 
-        let mut elements = Vec::with_capacity(HEADER_SIZE * 3);
+        let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
+        elements.push(zeta);
+        queries.write(dr, &mut elements)?;
+        let headers = elements.len();
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
         output.write(dr, &mut elements)?;
 
         let adapter_aux = D::try_just(|| {
-            let left_header = elements[0..HEADER_SIZE]
+            let left_header = elements[headers..headers + HEADER_SIZE]
                 .iter()
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
-            let right_header = elements[HEADER_SIZE..HEADER_SIZE * 2]
+            let right_header = elements[headers + HEADER_SIZE..headers + 2 * HEADER_SIZE]
                 .iter()
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
@@ -104,6 +120,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 (left_header, right_header),
                 output_data.take(),
                 step_aux.take(),
+                query_values.take(),
             ))
         })?;
 
@@ -113,7 +130,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::TestRank;
+    use ragu_circuits::polynomials::{TestRank, sparse};
     use ragu_core::{
         drivers::emulator::Emulator,
         gadgets::{Bound, Kind},
@@ -121,11 +138,12 @@ mod tests {
         pasta::{Fp, Pasta},
     };
     use ragu_primitives::allocator::{Allocator, Standard};
+    use udon::field::Field;
 
     use super::*;
     use crate::{
         header::{Header, Suffix},
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Oracles, Slot, Step},
     };
 
     type TestR = TestRank;
@@ -160,6 +178,7 @@ mod tests {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
             dr: &mut D,
+            oracles: &mut Oracles<'_, 'dr, D>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -181,6 +200,10 @@ mod tests {
             let output_elem = left_elem.add(dr, &right_elem);
             let output_val = output_elem.value().map(|v| *v);
 
+            // Open the first left slot at the left header's value, leaving
+            // the other slots to be opened at zeta.
+            oracles.query(dr, Slot::left(0), &left_elem)?;
+
             let left_enc = Encoded::from_gadget(left_elem);
             let right_enc = Encoded::from_gadget(right_elem);
             let output_enc = Encoded::from_gadget(output_elem);
@@ -189,11 +212,28 @@ mod tests {
         }
     }
 
+    /// An online witness over distinct small polynomials, so that a slot's
+    /// value tells which polynomial it was opened on.
+    fn online(zeta: u64) -> OnlineWitness<Fp, TestR> {
+        OnlineWitness {
+            zeta: Fp::from(zeta),
+            polys: core::array::from_fn(|slot| {
+                // Slot i holds X + i.
+                sparse::Polynomial::from_coeffs(alloc::vec![Fp::from(slot as u64), Fp::ONE])
+            }),
+        }
+    }
+
     #[test]
-    fn triple_const_len_returns_3n() {
-        assert_eq!(TripleConstLen::<1>::len(), 3);
-        assert_eq!(TripleConstLen::<4>::len(), 12);
-        assert_eq!(TripleConstLen::<10>::len(), 30);
+    fn instance_len_counts_zeta_openings_and_headers() {
+        assert_eq!(
+            InstanceLen::<1>::len(),
+            1 + 2 * online::NUM_ONLINE_QUERIES + 3
+        );
+        assert_eq!(
+            InstanceLen::<4>::len(),
+            1 + 2 * online::NUM_ONLINE_QUERIES + 12
+        );
     }
 
     #[test]
@@ -202,15 +242,21 @@ mod tests {
         let dr = &mut dr;
 
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
+        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), (), online(7)));
 
         let output = adapter
             .witness(dr, witness)
             .expect("witness should succeed")
             .into_output();
 
-        // Output should have 3 * HEADER_SIZE elements (left + right + output headers)
-        assert_eq!(output.len(), HEADER_SIZE * 3);
+        // zeta, the openings, then the three padded headers
+        assert_eq!(output.len(), InstanceLen::<HEADER_SIZE>::len());
+        let values: alloc::vec::Vec<Fp> = output.iter().map(|e| *e.value().take()).collect();
+        assert_eq!(values[0], Fp::from(7u64));
+        let headers = 1 + 2 * online::NUM_ONLINE_QUERIES;
+        assert_eq!(values[headers], Fp::from(10u64));
+        assert_eq!(values[headers + HEADER_SIZE], Fp::from(20u64));
+        assert_eq!(values[headers + 2 * HEADER_SIZE], Fp::from(30u64));
     }
 
     #[test]
@@ -219,14 +265,14 @@ mod tests {
         let dr = &mut dr;
 
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), ()));
+        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), (), online(7)));
 
         let aux = adapter
             .witness(dr, witness)
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux) = aux.take();
+        let ((left_header, right_header), output_data, _step_aux, queries) = aux.take();
 
         // Left header should start with 10
         assert_eq!(left_header[0], Fp::from(10u64));
@@ -234,5 +280,37 @@ mod tests {
         assert_eq!(right_header[0], Fp::from(20u64));
         // Step aux should be 10 + 20 = 30
         assert_eq!(output_data, Fp::from(30u64));
+
+        // The step opened slot 0 at the left value, 10, where X + 0 is 10;
+        // every other slot was opened at zeta = 7, where X + i is 7 + i.
+        assert_eq!(queries[0].x, Fp::from(10u64));
+        assert_eq!(queries[0].y, Fp::from(10u64));
+        for (i, query) in queries.iter().enumerate().skip(1) {
+            assert_eq!(query.x, Fp::from(7u64));
+            assert_eq!(query.y, Fp::from(7 + i as u64));
+        }
+    }
+
+    #[test]
+    fn a_slot_is_queried_at_most_once() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+        let witness = online(3);
+        let mut oracles = Oracles::alloc(dr, Always::maybe_just(|| &witness)).unwrap();
+        let x = Element::alloc(dr, &mut (), Always::maybe_just(|| Fp::from(5u64))).unwrap();
+        assert_eq!(
+            *oracles
+                .query(dr, Slot::output(1), &x)
+                .unwrap()
+                .value()
+                .take(),
+            Fp::from(5 + 5u64)
+        );
+        assert!(oracles.query(dr, Slot::output(1), &x).is_err());
+        assert!(oracles.query_at_zeta(dr, Slot::output(0)).is_ok());
+        let (zeta, queries) = oracles.finish(dr).unwrap();
+        assert_eq!(*zeta.value().take(), Fp::from(3u64));
+        assert_eq!(*queries[0].x.value().take(), Fp::from(3u64));
+        assert_eq!(*queries[5].x.value().take(), Fp::from(5u64));
     }
 }
