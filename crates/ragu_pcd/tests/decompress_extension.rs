@@ -264,6 +264,57 @@ impl Header<Fp> for Value {
     }
 }
 
+/// A header of another type at [`Value`]'s suffix.
+struct Other;
+
+impl Header<Fp> for Other {
+    const SUFFIX: Suffix = Suffix::new(7);
+    type Data = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness)
+    }
+}
+
+/// A seed step outputting its witness as an [`Other`] header.
+struct OtherLeaf;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for OtherLeaf {
+    const INDEX: Index = Index::new(0);
+    type Witness<'source> = Fp;
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = Other;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Fp>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, Other, H>,
+        ),
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let left = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        let output = Encoded::new(dr, allocator, witness.clone())?;
+        Ok(((left, right, output), witness, D::unit()))
+    }
+}
+
 /// A seed step outputting its witness as a [`Value`] header.
 struct Leaf;
 
@@ -431,6 +482,95 @@ fn a_decompression_cannot_output_the_dummy_suffix() {
             "a decompression under the dummy header fails"
         ),
     }
+}
+
+/// The chunk circuits use the generators at the aggregator rank, so a
+/// wallet application over tables that stop short of it, the Standard
+/// ones, is refused a decompression with an error rather than a panic.
+#[test]
+fn a_wallet_short_of_the_aggregator_rank_is_refused() {
+    let wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let decompression = Decompression::<Pasta, AggregatorRank, HEADER_SIZE, _>::new(
+        wallet,
+        &mut StdRng::seed_from_u64(40),
+    );
+    assert!(matches!(decompression, Err(Error::Initialization(_))));
+}
+
+/// The aggregator reads a decompressed statement with the wallet's own
+/// header type: an application registering another type at a suffix the
+/// wallet's steps output, or no header there, does not build; nor does one
+/// over other parameters than its wallet application's, whose traces the
+/// chunk circuits registered over its own would not match.
+#[test]
+fn the_aggregator_reads_statements_with_the_wallets_headers() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(41);
+    let other_params = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(
+            crate::pasta::baked(),
+            Decompression::new(wallet(), &mut rng).unwrap(),
+        );
+    assert!(
+        matches!(other_params, Err(Error::Initialization(_))),
+        "other parameters than the wallet's"
+    );
+    let other = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(OtherLeaf)
+        .unwrap()
+        .finalize_with(pasta, Decompression::new(wallet(), &mut rng).unwrap());
+    assert!(
+        matches!(other, Err(Error::Initialization(_))),
+        "another header type at the wallet's suffix"
+    );
+    let none = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(crate::profile::testing::UnitStep)
+        .unwrap()
+        .finalize_with(pasta, Decompression::new(wallet(), &mut rng).unwrap());
+    assert!(
+        matches!(none, Err(Error::Initialization(_))),
+        "no header at the wallet's suffix"
+    );
+}
+
+/// Decompressed wallet proofs recurse: two fuse under a step of the
+/// aggregator's own, and the result fuses with a third, each level
+/// verifying uncompressed and the last compressed too.
+#[test]
+fn decompressed_proofs_recurse() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(43);
+    let wallet = wallet();
+    let mut compressed = |value: u64| {
+        let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(value)).unwrap();
+        wallet.compress(&leaf, &mut rng).unwrap()
+    };
+    let (a, b, c) = (compressed(41), compressed(42), compressed(43));
+    let decompression = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .register(Join)
+        .unwrap()
+        .finalize_with(pasta, decompression)
+        .unwrap();
+    let a = app.decompress(&mut rng, &a).unwrap();
+    let b = app.decompress(&mut rng, &b).unwrap();
+    let c = app.decompress(&mut rng, &c).unwrap();
+    let (ab, ()) = app.fuse(&mut rng, Join, (), a, b).unwrap();
+    assert_eq!(*ab.data(), Fp::from(83));
+    assert!(app.verify_uncompressed(&ab, &mut rng).unwrap());
+    let (abc, ()) = app.fuse(&mut rng, Join, (), ab, c).unwrap();
+    assert_eq!(*abc.data(), Fp::from(126));
+    assert!(app.verify_uncompressed(&abc, &mut rng).unwrap());
+    let compressed = app.compress(&abc, &mut rng).unwrap();
+    assert!(app.verify_compressed(&compressed).unwrap());
 }
 
 /// A decompression whose circuit-field side was prepared from one

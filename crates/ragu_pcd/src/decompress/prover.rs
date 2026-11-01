@@ -23,7 +23,7 @@ use ragu_circuits::{
     registry::Registry,
     staging::StageExt,
 };
-use ragu_core::Result;
+use ragu_core::{Error, FixedGenerators, Result};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -72,18 +72,33 @@ where
     /// bootstrap proof, compressed and run through both sides' chunks.
     ///
     /// `wallet` must be the network's wallet application, built from the
-    /// same steps and parameters as every wallet's. TODO: check this, by
-    /// pinning the wallet registry to the aggregator's setup; see the
-    /// decompression module's *What remains*.
+    /// same steps as every wallet's and finalized over the aggregator's own
+    /// parameters, whose tables reach rank `R`, such as
+    /// `baked_aggregator()`: their prefix is the Standard tables, so its
+    /// proofs are those of a wallet over `baked()`. `finalize_with` holds
+    /// the aggregator's parameters and header types to its, and the
+    /// registry check the decompression module's *What remains* waits on
+    /// will hold the proofs it decompresses to its registry.
     ///
     /// # Errors
     ///
-    /// Fails if the compression or its verification fails, which a
-    /// finalized application's bootstrap does not.
+    /// Fails if `wallet`'s tables stop short of rank `R`, whose stage
+    /// generators the chunk circuits use, or if the compression or its
+    /// verification fails, which a finalized application's bootstrap does
+    /// not.
     pub fn new(
         wallet: Application<'params, C, ProductionRank, HEADER_SIZE, B>,
         rng: &mut impl CryptoRng,
     ) -> Result<Self> {
+        let reach = R::num_coeffs();
+        if C::host_generators(wallet.params).g().len() < reach
+            || C::nested_generators(wallet.params).g().len() < reach
+        {
+            return Err(Error::Initialization(
+                "the wallet application's tables stop short of the aggregator rank, whose stage generators the decompression's chunk circuits use: finalize it over the aggregator's parameters, such as `baked_aggregator()`"
+                    .into(),
+            ));
+        }
         let bootstrap = wallet
             .bootstrap
             .clone()

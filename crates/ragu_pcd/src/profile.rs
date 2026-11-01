@@ -49,7 +49,7 @@
 //! manifest digest is a mix-up check; the setup procedure must authenticate the
 //! manifest and its artifacts independently.
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::{
     any::{TypeId, type_name},
     fmt,
@@ -81,6 +81,7 @@ pub use crate::decompress::{
 use crate::{
     SelectableBackend,
     decompress::extension,
+    header::{NUM_INTERNAL_SUFFIXES, Suffix},
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
 };
@@ -175,6 +176,29 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
+
+    /// Checks the prover context an application takes at
+    /// [`finalize_with`](crate::ApplicationBuilder::finalize_with) against
+    /// the application: `params` are the parameters it finalizes over and
+    /// `headers` maps each suffix it registers to the header type
+    /// registered at it. The default accepts any context.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the context does not fit the application.
+    fn check_context<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        params: &Base::Params,
+        headers: &BTreeMap<Suffix, TypeId>,
+    ) -> Result<()>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, params, headers);
+        Ok(())
+    }
 
     /// The circuits and stages the profile adds on the native side.
     ///
@@ -1054,6 +1078,59 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
+
+    /// The chunk circuits are registered over the parameters the
+    /// application finalizes over, and their traces built over the wallet
+    /// application's, so the two must be the same parameters. A
+    /// decompressed statement is the wallet's output header, which this
+    /// application reads through the header type it registers at the
+    /// statement's suffix: it must be the wallet's own type, so that the
+    /// two assign the statement the same encoding and meaning, field order
+    /// and padding included. The unit header is the crate's.
+    fn check_context<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        params: &Base::Params,
+        headers: &BTreeMap<Suffix, TypeId>,
+    ) -> Result<()>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        if !core::ptr::eq(params, context.wallet().params) {
+            return Err(Error::Initialization(
+                "the aggregator finalizes over other parameters than its wallet application: the chunk circuits registered over the aggregator's must match the traces built over the wallet's"
+                    .into(),
+            ));
+        }
+        for (suffix, wallet) in context.wallet().output_headers() {
+            if suffix.get() < u64::from(NUM_INTERNAL_SUFFIXES) {
+                continue;
+            }
+            match headers.get(suffix) {
+                Some(ours) if ours == wallet => {}
+                Some(_) => {
+                    return Err(Error::Initialization(
+                        alloc::format!(
+                            "the aggregator registers another header type at suffix {} than the wallet application outputs there: a decompressed statement is read with the wallet's own header type",
+                            suffix.get()
+                        )
+                        .into(),
+                    ));
+                }
+                None => {
+                    return Err(Error::Initialization(
+                        alloc::format!(
+                            "the aggregator registers no header at suffix {}, which the wallet application outputs: a decompressed statement is read with the wallet's own header type, registered there",
+                            suffix.get()
+                        )
+                        .into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 
     fn native_extension() -> Extension {
         extension::native_layout(Self::native_circuits(HEADER_SIZE))

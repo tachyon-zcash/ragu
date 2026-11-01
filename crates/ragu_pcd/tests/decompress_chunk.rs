@@ -23,7 +23,10 @@ use ragu_core::{
 use ragu_primitives::vec::{ConstLen, FixedVec};
 use ragu_testing::registry::TestRegistryBuilder;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use udon::field::Field;
+use udon::{
+    curve::{Affine as _, Projective as _},
+    field::Field,
+};
 
 use super::{BindingCircuit, Circuit, DigitsCircuit, StatementCircuit, TranscriptCircuit, last};
 use crate::decompress::{
@@ -336,21 +339,39 @@ fn rejects_tampered_stages() {
 
 /// A chunk that scales by a challenge taken from bits holds those bits to
 /// the lifts stage. The scalar-field side is re-run with other bits for
-/// the host curve's $\beta$, which only point chains scale by, so every
-/// chunk is consistent with the other bits; the lifts stage alone is
-/// restored to the honest lifts. A circuit that runs no lift chunk then
-/// fails: the chains' bits cannot differ from the lift chunk's.
+/// the host curve's $\beta$, which only point chains scale by, and with
+/// the $G'$ a prover choosing those bits would pick, since nothing binds
+/// it yet: the one that keeps the IPA's final equality. Every chunk is
+/// then consistent with the other bits; the lifts stage alone is restored
+/// to the honest lifts. A circuit that runs no lift chunk then fails: the
+/// chains' bits cannot differ from the lift chunk's.
 #[test]
 fn chains_hold_their_bits_to_the_lifts_stage() {
     let setup = Setup::new();
+    let params = crate::pasta::baked_aggregator();
     let mut sides = sides::<SmallR>(&setup);
     let nested = &mut sides.nested;
     let honest_lifts = nested.lifts.clone();
     let beta = challenges_per_curve::<TestR>() + 3 + squeezed::BETA;
     nested.aux.challenge_bits[beta] = nested.aux.challenge_bits[beta].flip_bit(5);
-    nested
-        .run::<TestR, HEADER_SIZE>(crate::pasta::baked_aggregator())
-        .unwrap();
+    nested.run::<TestR, HEADER_SIZE>(params).unwrap();
+    // The final equality is $\text{left} = v G_0 + c G' + c b z U$: solve
+    // it for $G'$ under the other bits' left-hand side.
+    let (ipa_left, g_prime) = (
+        nested.schedule.regions.ipa_left,
+        nested.schedule.regions.g_prime,
+    );
+    let [v, c, cbz] = [
+        nested.aux.foreign[0],
+        nested.aux.foreign[1],
+        nested.aux.foreign[2],
+    ];
+    let left = nested.work.points[ipa_left].to_projective();
+    let g_0 = <Nested as Side<Pasta>>::generators(params)[0];
+    let u = <Nested as Side<Pasta>>::u(params);
+    let scaled = (left - g_0 * v - u * cbz).to_affine();
+    nested.work.points[g_prime] = (scaled * c.invert().expect("c is nonzero")).to_affine();
+    nested.run::<TestR, HEADER_SIZE>(params).unwrap();
     nested.lifts = honest_lifts;
 
     let schedule = circuit_schedule::<Nested, SmallR>();
@@ -366,6 +387,60 @@ fn chains_hold_their_bits_to_the_lifts_stage() {
                 .is_ok_and(|report| report.satisfied)
         }),
         "a chain over other bits than the lifts stage's fails a chunk"
+    );
+}
+
+/// A chunk that scales a point by a full-width scalar of the other field
+/// takes the scalar's digits as witnesses and sums their generators into
+/// its recomputation of the other side's digits stage. The scalar-field
+/// side is re-run with another $v$ for the host curve's final check, and
+/// with the $G'$ that keeps the IPA's final equality under it, since
+/// nothing binds $G'$ yet: every chunk circuit is then satisfied, and what
+/// the side exposes for the circuit-field side's digits stage is no longer
+/// that stage's commitment, so the binding claim is what fails.
+#[test]
+fn scalings_hold_their_digits_to_the_other_sides_stage() {
+    type R = AggregatorRank;
+    let setup = Setup::new();
+    let params = crate::pasta::baked_aggregator();
+    let mut sides = sides::<R>(&setup);
+    let (_, of_native) = bound_commitments(&sides);
+    assert_eq!(exposed(&sides.nested), of_native);
+
+    let nested = &mut sides.nested;
+    nested.aux.foreign[0] += Fp::ONE;
+    nested.run::<TestR, HEADER_SIZE>(params).unwrap();
+    // The final equality is $\text{left} = v G_0 + c G' + c b z U$: solve
+    // it for $G'$ under the other $v$.
+    let (ipa_left, g_prime) = (
+        nested.schedule.regions.ipa_left,
+        nested.schedule.regions.g_prime,
+    );
+    let [v, c, cbz] = [
+        nested.aux.foreign[0],
+        nested.aux.foreign[1],
+        nested.aux.foreign[2],
+    ];
+    let left = nested.work.points[ipa_left].to_projective();
+    let g_0 = <Nested as Side<Pasta>>::generators(params)[0];
+    let u = <Nested as Side<Pasta>>::u(params);
+    let scaled = (left - g_0 * v - u * cbz).to_affine();
+    nested.work.points[g_prime] = (scaled * c.invert().expect("c is nonzero")).to_affine();
+    nested.run::<TestR, HEADER_SIZE>(params).unwrap();
+
+    let schedule = circuit_schedule::<Nested, R>();
+    let mut rng = StdRng::seed_from_u64(19);
+    for index in 0..schedule.circuits.len() {
+        let report = run_circuit::<Nested, R>(&schedule, index, nested, &mut rng).unwrap();
+        assert!(
+            report.satisfied,
+            "circuit {index} is satisfied under the other digits"
+        );
+    }
+    assert_ne!(
+        exposed(nested),
+        of_native,
+        "the recomputed digits stage is no longer the circuit-field side's"
     );
 }
 

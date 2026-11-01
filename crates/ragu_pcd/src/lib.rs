@@ -240,6 +240,10 @@ pub struct ApplicationBuilder<
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
     /// which finalization installs instead of building one.
     bootstrap: Option<Proof<C, R>>,
+    /// The header type each registered step outputs, by suffix: what a
+    /// profile's context is checked against (see
+    /// [`Profile::check_context`]).
+    output_headers: BTreeMap<header::Suffix, TypeId>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -262,6 +266,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: 0,
             header_map: BTreeMap::new(),
             bootstrap: None,
+            output_headers: BTreeMap::new(),
             _marker: PhantomData,
         }
     }
@@ -344,6 +349,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             header_map: self.header_map,
             bootstrap: self.bootstrap,
+            output_headers: self.output_headers,
             _marker: PhantomData,
         }
     }
@@ -374,6 +380,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
+        self.output_headers.insert(
+            <S::Output as Header<C::CircuitField>>::SUFFIX,
+            TypeId::of::<S::Output>(),
+        );
 
         self.native_registry =
             self.native_registry
@@ -442,6 +452,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
+        C::Profile::check_context(&context, params, &self.header_map)?;
 
         // Build the native registry:
         // 1. Application circuits (already registered)
@@ -495,6 +506,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            output_headers: self.output_headers,
             bootstrap: self.bootstrap,
             seeded_trivial: OnceCell::new(),
             context,
@@ -601,6 +613,8 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// The header type each registered step outputs, by suffix.
+    output_headers: BTreeMap<header::Suffix, TypeId>,
     /// The profile's prover context: what its prover holds across proofs
     /// (see [`Profile::Context`]).
     context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
@@ -628,6 +642,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// holding the wallet application it aggregates.
     pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
         &self.context
+    }
+
+    /// The header type each registered step outputs, by suffix: the headers
+    /// the application's statements carry.
+    pub(crate) fn output_headers(&self) -> &BTreeMap<header::Suffix, TypeId> {
+        &self.output_headers
     }
 
     /// Seed a new computation by running a [`Step`] declaring `()` for both of
