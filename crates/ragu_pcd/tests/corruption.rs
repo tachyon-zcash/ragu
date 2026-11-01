@@ -3,9 +3,8 @@
 //! `qa/fuzz`'s `fuzz_verify_reject`, `fuzz_verify_reject_full` and
 //! `fuzz_pcd_lifecycle` all rest on one contract: when
 //! [`Proof::corrupt`](ragu_pcd::Proof::corrupt) reports a [`Binding`], the
-//! verifiers it names must not accept — `verify_uncompressed` for
-//! [`Binding::MustRejectUncompressed`], and `compress` followed by
-//! `verify_compressed` as well for [`Binding::MustReject`]. A wrong
+//! verification paths must not accept — `verify_uncompressed`, and `compress`
+//! followed by `verify_compressed` for [`Binding::MustReject`]. A wrong
 //! classification can either skip a required rejection check or report a false
 //! positive.
 //!
@@ -72,7 +71,7 @@ impl Fixture {
     }
 
     /// The compressed verifier's verdict: compress, then verify. Compression
-    /// refusing the proof's shape is a rejection; any other error fails the
+    /// refusing malformed proof data is a rejection; any other error fails the
     /// test, as for the decider.
     fn verify_compressed(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
         fn judge<H: Header<Fp>>(
@@ -411,39 +410,30 @@ macro_rules! corruption_tests {
 corruption_tests!(leaf, Shape::Leaf);
 corruption_tests!(deep, Shape::Deep);
 
-/// Stored challenges bind the decider alone. The compressed statement does not
-/// carry them, so the compressed verifier judges a proof with a stale stored
-/// challenge by what the compressor made of it: the compressor reads the stored
-/// `w`, `x`, `y` and `u`, so those four compress into proofs it rejects, and
-/// the other seven into proofs of the honest instance, which it accepts.
+/// A stale stored challenge must fail both verification paths. Compression
+/// checks every stored challenge even though the compressed statement omits
+/// them, because recursive reuse consumes the original proof's caches.
 #[test]
 #[ignore = "corruption suite: run by the Linux corruption job"]
-fn stored_challenge_edits_bind_the_decider_alone() {
+fn stored_challenge_edits_bind_both_verification_paths() {
     let app = app();
     for shape in [Shape::Leaf, Shape::Deep] {
         let fixture = fixture(&app, shape);
+        assert!(fixture.clone().verify(&app, 1234));
+        assert!(fixture.clone().verify_compressed(&app, 1234));
         for which in Challenge::ALL {
             let mut corrupted = fixture.clone();
             let binding = corrupted
                 .proof
                 .corrupt(Corruption::Challenge(which, Fp::from(0xc0ffee_u64)));
-            assert_eq!(
-                binding,
-                Binding::MustRejectUncompressed,
-                "{shape:?}: {which:?}"
-            );
+            assert_eq!(binding, Binding::MustReject, "{shape:?}: {which:?}");
             assert!(
                 !corrupted.clone().verify(&app, 1234),
                 "the decider accepted a {shape:?} proof with a stale stored {which:?}",
             );
-            let consumed = matches!(
-                which,
-                Challenge::W | Challenge::X | Challenge::Y | Challenge::U
-            );
-            assert_eq!(
-                corrupted.verify_compressed(&app, 1234),
-                !consumed,
-                "{shape:?}: the compressed verifier's verdict on a stale stored {which:?}",
+            assert!(
+                !corrupted.verify_compressed(&app, 1234),
+                "the compressed verification path accepted a {shape:?} proof with a stale stored {which:?}",
             );
         }
     }
@@ -501,10 +491,9 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
     let second = both
         .proof
         .corrupt(Corruption::Challenge(Challenge::Mu, Fp::from(0xbadu64)));
-    // The header edit binds both verifiers; the stored challenge binds the
-    // decider alone. The composed edit binds both, since the header edit does.
+    // Both effective edits bind both verification paths, as does their composition.
     assert_eq!(first, Binding::MustReject);
-    assert_eq!(second, Binding::MustRejectUncompressed);
+    assert_eq!(second, Binding::MustReject);
     assert_eq!(first.max(second), Binding::MustReject);
     assert!(
         !both.clone().verify(&app, 99),

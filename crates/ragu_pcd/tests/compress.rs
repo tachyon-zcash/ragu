@@ -21,7 +21,7 @@ use ragu_primitives::{
     Element,
     allocator::{Allocator, Standard},
 };
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, TryCryptoRng, TryRng, rngs::StdRng};
 use udon::field::Field;
 
 use super::{CompressedPcd, CompressedProof};
@@ -162,10 +162,7 @@ fn rejects_what_the_decider_rejects() {
         edit(&app, &mut proof);
         proof.carry::<Value>(data)
     };
-    let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 4] = [
-        ("circuit id out of the domain", |_, p| {
-            p.circuit_id = CircuitIndex::new(u32::MAX as usize)
-        }),
+    let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 3] = [
         ("left header element", |_, p| p.left_header[0] += Fp::ONE),
         ("polynomial with a stale commitment", |_, p| {
             p.native_a_poly
@@ -216,22 +213,63 @@ fn rejects_what_the_decider_rejects() {
 }
 
 #[test]
-fn accepts_a_stale_stored_challenge_the_decider_rejects() {
-    // Intended: the decider holds a proof's stored challenges to its
-    // transcript, but the stored challenges are not part of the statement.
-    // The instance carries none, and the compressed verifier rederives them
-    // from the bridge commitments, so a proof whose polynomials were built
-    // under the transcript's challenges compresses into a proof of the
-    // honest instance. The compressor itself reads the stored `w`, `x`, `y`
-    // and `u` for the wire bindings, the openings and $v$, so this holds for
-    // a stored challenge it does not consume; a stale one of those four
-    // compresses into a proof the verifier rejects instead.
+fn rejects_decoded_circuit_indices_and_challenge_caches_before_proving() {
+    // A malformed proof must be refused before either IPA draws randomness.
+    struct NoRandomness;
+    impl TryRng for NoRandomness {
+        type Error = core::convert::Infallible;
+
+        fn try_next_u32(&mut self) -> core::result::Result<u32, Self::Error> {
+            panic!("compression used randomness before rejecting the proof")
+        }
+
+        fn try_next_u64(&mut self) -> core::result::Result<u64, Self::Error> {
+            panic!("compression used randomness before rejecting the proof")
+        }
+
+        fn try_fill_bytes(&mut self, _: &mut [u8]) -> core::result::Result<(), Self::Error> {
+            panic!("compression used randomness before rejecting the proof")
+        }
+    }
+    impl TryCryptoRng for NoRandomness {}
+
     let app = app();
-    let (mut proof, ()) = app.bootstrap_pcd().into_parts();
-    proof.mu += Fp::ONE;
-    let pcd = proof.carry::<()>(());
-    assert!(!decides(&app, &pcd, 2));
-    assert!(accepts(&app, &compress(&app, &pcd, 3)));
+    let honest = app.bootstrap_pcd();
+    let bytes = honest.proof().to_bytes().unwrap();
+    let decoded = Proof::from_bytes(&bytes).unwrap().carry::<()>(());
+    assert!(decides(&app, &decoded, 2));
+    assert!(accepts(&app, &compress(&app, &decoded, 3)));
+
+    let edits: [(&str, fn(&mut Proof<Pasta, TestR>)); 10] = [
+        ("circuit index", |p| {
+            p.circuit_id = CircuitIndex::from_u32(u32::MAX)
+        }),
+        ("w", |p| p.w += Fp::ONE),
+        ("y", |p| p.y += Fp::ONE),
+        ("z", |p| p.z += Fp::ONE),
+        ("mu", |p| p.mu += Fp::ONE),
+        ("mu_prime", |p| p.mu_prime += Fp::ONE),
+        ("x", |p| p.x += Fp::ONE),
+        ("alpha", |p| p.alpha += Fp::ONE),
+        ("u", |p| p.u += Fp::ONE),
+        ("pre_beta", |p| p.pre_beta += Fp::ONE),
+    ];
+    for (name, edit) in edits {
+        let (mut proof, ()) = honest.clone().into_parts();
+        edit(&mut proof);
+        // These changes preserve canonical field representations and layout;
+        // decoding alone cannot reject them. Compression needs the application.
+        let bytes = proof.to_bytes().unwrap();
+        let decoded = Proof::from_bytes(&bytes).unwrap().carry::<()>(());
+        assert!(!decides(&app, &decoded, 2), "{name}");
+        assert!(
+            matches!(
+                app.compress(&decoded, &mut NoRandomness),
+                Err(Error::InvalidWitness(_))
+            ),
+            "compression accepted a decoded proof with an invalid {name}",
+        );
+    }
 }
 
 #[test]

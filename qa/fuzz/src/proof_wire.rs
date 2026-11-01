@@ -2,7 +2,9 @@
 //!
 //! A tiny control input mutates a valid proof generated once per process. This
 //! reaches beyond the fixed envelope without committing a multi-megabyte proof.
-//! Raw inputs still exercise the decoder independently of the seed generator.
+//! Raw inputs exercise envelope and dimension checks independently of the seed
+//! generator. Full raw payload decoding also needs an input limit large enough
+//! for the encoded proof; mutation modes reach payloads beyond that limit.
 use std::sync::LazyLock;
 
 use ragu_pcd::{CompressedProof, Proof};
@@ -52,7 +54,8 @@ pub struct Outcome {
 
 // The first byte selects raw bytes, unchanged seed, sparse XOR edits, truncation,
 // append, or a canonical scalar replacement. Only 32 edits / 128 appended bytes
-// are admitted. No input can request an unbounded allocation or fresh proof tree.
+// are admitted. Raw mode copies at most the fuzzer's input limit; mutation modes
+// copy a fixed-size seed. No input can request a fresh proof tree.
 fn candidate(kind: Kind, input: &[u8]) -> Vec<u8> {
     let seed = match kind {
         Kind::Proof => &SEED.proof,

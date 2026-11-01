@@ -28,7 +28,7 @@ fn fixture() -> (TestApp, TestProof) {
     (app, pcd.into_parts().0)
 }
 
-// A vector of another length has no encoding (debug builds assert while
+// A vector of another length has no encoding (fixed counts assert while
 // encoding it) and a payload of another length is rejected before a byte is
 // interpreted, so malformed shapes are checked at the in-memory boundaries.
 fn assert_rejected(app: &TestApp, proof: TestProof, field: &str) {

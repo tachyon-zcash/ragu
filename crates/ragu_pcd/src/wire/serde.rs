@@ -7,6 +7,8 @@
 //! payload [`Proof::to_bytes`] writes after its envelope. The prelude fixes the
 //! payload's exact length, which deserialization checks before decoding it,
 //! and formats without a bytes type are buffered only up to that length.
+//! A deserializer may allocate its own byte buffer before calling the visitor;
+//! callers must limit that allocation through the backend or its input.
 //!
 //! The caller selects the expected application and cryptographic parameters
 //! through its deployment or consensus rules, as with [`Proof::from_bytes`].

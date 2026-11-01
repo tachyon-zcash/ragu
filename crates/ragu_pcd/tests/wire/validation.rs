@@ -36,7 +36,7 @@ fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
 
     // Each vector has a protocol-fixed length, so a vector of another length
     // changes the total and is rejected before any byte is interpreted.
-    // Debug builds assert the length while encoding; use the raw byte layout.
+    // Encoding asserts the fixed counts; use the raw byte layout.
     macro_rules! reject_lengths {
         ($($field:ident),* $(,)?) => {$(
             let element = {
@@ -106,5 +106,6 @@ fn decoded_child_remains_usable_by_fuse() {
             .unwrap();
         let compressed_parent = app.compress(&parent, &mut rng).unwrap();
         assert!(app.verify_compressed(&compressed_parent).unwrap());
+        assert!(app.verify_uncompressed(&parent, &mut rng).unwrap());
     });
 }

@@ -12,13 +12,10 @@
 //!
 //! Some requested edits make no change: a zero delta, an out-of-range
 //! coefficient index, or an assignment of the value already present. These
-//! return [`Binding::Unbound`]. An edit to a stored challenge binds the
-//! uncompressed verifier alone, since the compressed statement does not carry
-//! stored challenges; it returns [`Binding::MustRejectUncompressed`]. Every
-//! other effective edit returns [`Binding::MustReject`], and a harness asserts
-//! rejection by each verifier the binding names. Classification describes one
-//! edit to an otherwise valid proof. Composed edits can cancel, so their final
-//! effect must be considered separately.
+//! return [`Binding::Unbound`]. Every effective edit returns
+//! [`Binding::MustReject`], and a harness asserts rejection by both verification
+//! paths. Classification describes one edit to an otherwise valid proof.
+//! Composed edits can cancel, so their final effect must be considered separately.
 //!
 //! The classification is derived, not guessed:
 //!
@@ -31,15 +28,11 @@
 //!   challenge or bridge commitment is caught earlier still: the verifier
 //!   rederives every challenge from the transcript over the bridge
 //!   commitments.
-//! * **A stored challenge** is an instance edit for the uncompressed verifier
-//!   only. A compressed proof carries no stored challenges: the compressed
-//!   verifier rederives every challenge from the bridge commitments, so a
-//!   proof whose polynomials were built under the transcript's challenges
-//!   compresses into a proof of the honest instance. The compressor itself
-//!   reads the stored $w$, $x$, $y$ and $u$ for the wire bindings, the
-//!   openings and $v$, so a stale one of those four compresses into a proof
-//!   the compressed verifier rejects; a stale one of the other seven
-//!   compresses into one it accepts.
+//! * **A stored challenge** is compared with the replayed transcript by both
+//!   the uncompressed verifier and the compressor. A compressed proof carries
+//!   no stored challenges, but compression rejects any stale cache before
+//!   proving its statement, so accepting that statement also holds the
+//!   original proof's challenges to the transcript for recursive reuse.
 //! * **A polynomial coefficient or cached commitment** — native or nested,
 //!   the walked $P$ and $P_n$ included — is bound by the verifier's
 //!   commitment checks. Every effective coefficient edit leaves its cache
@@ -320,15 +313,6 @@ pub enum Binding {
     /// The edit made no change, such as a zero delta or an out-of-range
     /// coefficient index. It creates no obligation to reject.
     Unbound,
-    /// The corruption moved a stored challenge, which the uncompressed proof
-    /// carries and the compressed statement does not.
-    /// [`verify_uncompressed`](crate::Application::verify_uncompressed) holds
-    /// the stored challenges to the transcript and must not accept;
-    /// [`verify_compressed`](crate::Application::verify_compressed) rederives
-    /// the challenges from the bridge commitments and is under no obligation.
-    /// Whether the compressed proof verifies depends on which stored
-    /// challenges the compressor consumed.
-    MustRejectUncompressed,
     /// The corruption moved a value some check of both verifiers binds, so
     /// neither [`verify_uncompressed`](crate::Application::verify_uncompressed)
     /// nor [`compress`](crate::Application::compress) followed by
@@ -759,7 +743,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     return Binding::Unbound;
                 }
                 *slot = value;
-                Binding::MustRejectUncompressed
+                Binding::MustReject
             }
 
             Corruption::NegateBridgeCommitment(which) => {

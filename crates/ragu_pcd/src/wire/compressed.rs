@@ -49,9 +49,6 @@ impl<P: Profile> Len for Nested<P> {
 macro_rules! codec {
     ([$($generics:tt)*] $ty:ty { $($field:ident => $enc:ty),* $(,)? }) => {
         impl<$($generics)*> Validate for $ty {
-            fn has_shape(&self, dims: Dimensions) -> bool {
-                true $( && <_ as Validate<$enc>>::has_shape(&self.$field, dims) )*
-            }
             fn encodable(&self, dims: Dimensions) -> bool {
                 true $( && <_ as Validate<$enc>>::encodable(&self.$field, dims) )*
             }
@@ -102,9 +99,6 @@ codec!([P: Affine] Batch<P> {
 });
 struct RoundPair;
 impl<P: Affine> Validate<RoundPair> for (P, P) {
-    fn has_shape(&self, _: Dimensions) -> bool {
-        true
-    }
     fn encodable(&self, dims: Dimensions) -> bool {
         <P as Validate<Point>>::encodable(&self.0, dims)
             && <P as Validate<Point>>::encodable(&self.1, dims)

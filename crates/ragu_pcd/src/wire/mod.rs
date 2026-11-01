@@ -1,11 +1,13 @@
 //! Canonical byte encoding for proof data.
 //!
-//! Proofs reach bytes through their `to_bytes` and `from_bytes` methods with a
-//! versioned envelope, or through the optional `serde` adapters. [`Error`] is
-//! what both report when bytes are malformed.
+//! Proofs reach bytes through [`Proof::to_bytes`](crate::Proof::to_bytes) and
+//! [`Proof::from_bytes`](crate::Proof::from_bytes), and the corresponding
+//! [`CompressedProof`](crate::CompressedProof) methods, with a versioned
+//! envelope, or through the optional `serde` adapters. [`Error`] reports
+//! malformed byte encodings.
 //!
 //! This is separate from the in-circuit element stream in
-//! `ragu_primitives::io`. Every value has a fixed encoded length, determined by
+//! [`ragu_primitives::io`]. Every value has a fixed encoded length, determined by
 //! its type and by the payload's dimensions: the rank, the header size and the
 //! protocol's vector counts fix the layout, so no length is read from the
 //! payload itself. Neither the rank of a compressed proof nor the header size
@@ -36,23 +38,35 @@
 //! limited to 4096 field elements and compressed ranks to 32, so hostile
 //! dimensions are rejected before allocating the payload. An ordinary proof's
 //! declared rank must match its type. Unknown versions are never reinterpreted
-//! or downgraded. The caller selects the expected application, profile and cryptographic
-//! parameters through its deployment or consensus rules. They are not
-//! identified in the encoding; the receiving types fix the payload layout.
+//! or downgraded. The caller selects the expected application, profile and
+//! cryptographic parameters through its deployment or consensus rules. They
+//! are not identified in the encoding; the receiving types fix the payload
+//! layout.
 //!
 //! # Versions
 //!
-//! The schema version fixes a payload: the field order the codec lists give
-//! (`proof/codec.rs` for a proof, `compressed.rs` here for a compressed
-//! proof), each field's codec and the profile's vector counts. The envelope
-//! version fixes the layout above. The protocol version follows the
-//! verification semantics the transcript tags (`RAGU_TAG`, `IPA_TAG`)
-//! identify. Changing any of these means a new version and explicit
-//! dispatch in the decoder, with either a migration path and compatibility
-//! tests or failing closed on the old one; a crate release or an
+//! The schema version fixes a payload's field order, each field's codec and
+//! the profile's vector counts. The envelope version fixes the layout above.
+//! The protocol version follows the verification semantics identified by the
+//! transcript domain tags. Changing any of these means a new version and
+//! explicit dispatch in the decoder, with either a migration path and
+//! compatibility tests or failing closed on the old one; a crate release or an
 //! implementation change alone changes none of them. The fuse fixtures pin
 //! the payload bytes of every scenario, so a change to the format fails them
 //! until they are regenerated, which is the moment to bump the version.
+//!
+//! # Input limits
+//!
+//! Bound transport input before buffering it. The versioned byte encoding's
+//! expected lengths are available from
+//! [`Proof::encoded_len`](crate::Proof::encoded_len) and
+//! [`CompressedProof::encoded_len`](crate::CompressedProof::encoded_len).
+//! With `serde`, also configure the deserializer's size limit or
+//! bound its input externally: a backend may allocate its byte buffer before
+//! handing it to Ragu. Ragu bounds its own sequence buffer and checks the
+//! framed payload's exact length, but cannot limit those earlier backend
+//! allocations. A deserializer borrowing from an existing slice can avoid
+//! that buffer allocation.
 
 use alloc::{sync::Arc, vec::Vec};
 use core::{marker::PhantomData, mem::size_of};
@@ -153,15 +167,10 @@ pub(crate) trait Encode<C = DefaultEncoding> {
     }
 }
 
-/// The in-memory invariants a codec fixes, checked before a value is encoded
-/// and before an untrusted proof's fields are traversed. Neither check
-/// establishes proof validity.
+/// The in-memory invariants a codec fixes, checked before a value is encoded.
+/// This does not establish proof validity; application methods separately
+/// check the shape before traversing an untrusted proof's fields.
 pub(crate) trait Validate<C = DefaultEncoding> {
-    /// Whether every vector has exactly the count the dimensions and the
-    /// codec fix, so that traversing the value cannot index a missing entry
-    /// or ignore a trailing one.
-    fn has_shape(&self, dims: Dimensions) -> bool;
-
     /// Whether the value has an encoding: it has its shape, and no point
     /// slot holds the identity, which the decoder rejects.
     fn encodable(&self, dims: Dimensions) -> bool;
@@ -173,57 +182,36 @@ fn sequence<T>(values: &[T], count: usize, check: impl Fn(&T) -> bool) -> bool {
 }
 
 impl<F: Field> Validate<Scalar> for F {
-    fn has_shape(&self, _: Dimensions) -> bool {
-        true
-    }
     fn encodable(&self, _: Dimensions) -> bool {
         true
     }
 }
 impl<G: Affine> Validate<Point> for G {
-    fn has_shape(&self, _: Dimensions) -> bool {
-        true
-    }
     fn encodable(&self, _: Dimensions) -> bool {
         !self.is_identity()
     }
 }
 impl<T: Validate<C>, C, L: Len> Validate<FixedSequence<C, L>> for Vec<T> {
-    fn has_shape(&self, dims: Dimensions) -> bool {
-        sequence(self, L::len(), |value| T::has_shape(value, dims))
-    }
     fn encodable(&self, dims: Dimensions) -> bool {
         sequence(self, L::len(), |value| T::encodable(value, dims))
     }
 }
 impl<T: Validate<C>, C, D: Dimension> Validate<SizedSequence<C, D>> for Vec<T> {
-    fn has_shape(&self, dims: Dimensions) -> bool {
-        sequence(self, D::of(dims), |value| T::has_shape(value, dims))
-    }
     fn encodable(&self, dims: Dimensions) -> bool {
         sequence(self, D::of(dims), |value| T::encodable(value, dims))
     }
 }
 impl<T: Validate> Validate for Arc<T> {
-    fn has_shape(&self, dims: Dimensions) -> bool {
-        T::has_shape(self, dims)
-    }
     fn encodable(&self, dims: Dimensions) -> bool {
         T::encodable(self, dims)
     }
 }
 impl<F: Field, R: Rank> Validate for ragu_circuits::polynomials::sparse::Polynomial<F, R> {
-    fn has_shape(&self, _: Dimensions) -> bool {
-        true
-    }
     fn encodable(&self, _: Dimensions) -> bool {
         true
     }
 }
 impl Validate for ragu_circuits::registry::CircuitIndex {
-    fn has_shape(&self, _: Dimensions) -> bool {
-        true
-    }
     fn encodable(&self, _: Dimensions) -> bool {
         true
     }
@@ -436,7 +424,7 @@ impl<T: Decode> Decode for Arc<T> {
 // encoding, and encoding one is a programming error rather than a wire case.
 impl<T: Encode<C>, C, L: Len> Encode<FixedSequence<C, L>> for Vec<T> {
     fn encode(&self, output: &mut Vec<u8>) {
-        debug_assert_eq!(self.len(), L::len(), "fixed sequence length");
+        assert_eq!(self.len(), L::len(), "fixed sequence length");
         for value in self {
             value.encode(output);
         }

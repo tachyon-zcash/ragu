@@ -36,9 +36,6 @@ macro_rules! codec {
         // Each field against its codec: the counts the dimensions fix, and
         // points other than the identity, which has no encoding.
         impl<C: ProfiledCycle, R: Rank> wire::Validate for Proof<C, R> {
-            fn has_shape(&self, dims: wire::Dimensions) -> bool {
-                true $( && <_ as wire::Validate<$codec>>::has_shape(&self.$field, dims) )*
-            }
             fn encodable(&self, dims: wire::Dimensions) -> bool {
                 true $( && <_ as wire::Validate<$codec>>::encodable(&self.$field, dims) )*
             }
@@ -231,9 +228,6 @@ codec! {
 struct CachedPoint;
 
 impl<G: wire::Validate<wire::Point>> wire::Validate<CachedPoint> for Cached<G> {
-    fn has_shape(&self, dims: wire::Dimensions) -> bool {
-        <G as wire::Validate<wire::Point>>::has_shape(&self.0, dims)
-    }
     fn encodable(&self, dims: wire::Dimensions) -> bool {
         <G as wire::Validate<wire::Point>>::encodable(&self.0, dims)
     }
@@ -260,9 +254,6 @@ impl<G: Decode<wire::Point>> Decode<CachedPoint> for Cached<G> {
 
 // A cached polynomial encodes as the polynomial it caches.
 impl<T: wire::Validate> wire::Validate for Cached<T> {
-    fn has_shape(&self, dims: wire::Dimensions) -> bool {
-        T::has_shape(&self.0, dims)
-    }
     fn encodable(&self, dims: wire::Dimensions) -> bool {
         T::encodable(&self.0, dims)
     }

@@ -209,10 +209,10 @@ constraint system reject it. The no-execution front end is described in
 challenge to its existing value. Every effective coefficient edit requires
 rejection because it leaves a stale cached commitment, even if the coefficient
 is a blinding term or the derived `c` or `v` is unchanged. The harness asserts
-rejection by each verifier a binding names: `MustReject` binds both,
-`MustRejectUncompressed` — a stored challenge, which the compressed proof does
-not carry — the decider alone. `crates/ragu_pcd/tests/corruption.rs` checks both
-the classification and the verifiers' responses against real proofs.
+rejection by both verification paths for `MustReject`. Compression also checks
+stored challenges against the transcript before proving its statement, so
+challenge edits require rejection too. `crates/ragu_pcd/tests/corruption.rs`
+checks both the classification and the verifiers' responses against real proofs.
 
 These targets used to corrupt Ragu's synthesized dummy proof. That fixture is
 the placeholder the internal Bootstrap step consumes, and `verify_uncompressed`
@@ -461,6 +461,14 @@ in git for these targets: the control inputs are a byte or two, written
 inline by the smoke test and the CI step. Proof setup is cached once per process;
 compressing a decoded proof is still a production-rank operation and can take
 seconds per input.
+
+Raw mode reaches envelope and dimension checks with short inputs. The main and
+careful campaigns' 1024-byte input cap cannot hold either complete proof payload;
+the exhaustion campaign's 16384-byte cap can hold the compressed payload plus
+its mode byte. Mutation modes exercise full ordinary proof payloads without
+increasing these input caps. The cached proofs and their compression still
+count toward the campaign's time and memory limits; caching bounds fixture
+generation, not the cost of each compression.
 
 PR CI runs the release `proof_wire::tests::decode_to_verify_smoke` regression,
 which asserts that both unmodified seeds reach production verification, then

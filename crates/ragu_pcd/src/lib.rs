@@ -24,13 +24,14 @@
 //! versions, bounds the declared dimensions, then checks the exact length
 //! fixed by the profile, rank and header size before decoding proof data. The
 //! caller selects the expected application and cryptographic parameters
-//! through its deployment or consensus rules. With the `serde` feature, [`Proof`]
-//! and [`CompressedProof`] implement `Serialize` and `Deserialize` directly,
-//! as the same payload behind a prelude
-//! recording the rank and header size, for embedding in a container that
-//! supplies its own context. A receiver compresses a decoded proof and accepts it on
+//! through its deployment or consensus rules. With the `serde` feature,
+//! [`Proof`] and [`CompressedProof`] implement `Serialize` and `Deserialize`
+//! directly, as the same payload behind a prelude recording the rank and
+//! header size, for embedding in a container that supplies its own context.
+//! A receiver compresses a decoded proof and accepts it on
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
-//! the envelope layout and the version rules.
+//! the envelope layout, version rules and input size limits, including the
+//! limits callers must apply to Serde backends before they allocate buffers.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
