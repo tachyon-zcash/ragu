@@ -15,18 +15,21 @@ final MSMs must match the committed record.
 
 ## Profiles
 
-The wallet's standard profile and the aggregator profile both check the same
-fixtures in `standard/`. Until the aggregator's decompression circuits land,
-the profile declares nothing and produces identical proofs, so storing a
-second copy adds no coverage. Both profiles independently reproduce the
-snapshots and check the verifier fingerprints and tampered proofs. When the
-profiles diverge, the aggregator will need its own expected outputs.
+The wallet's standard profile checks the fixtures in `standard/` and the
+aggregator profile those in `aggregator/`. The aggregator's proofs carry the
+decompression circuits' polynomials, at the aggregator rank, run over the
+canonical compressed proof of the wallet application the aggregator holds as
+its context: the fixtures' own wallet application, its bootstrap proof
+compressed under a fixed seed. Each profile reproduces its snapshots and checks
+its verifier fingerprints and tampered proofs.
 
 ## Scenarios
 
 Six fixtures from a fixed tree of fuses over the harness's own steps
 (`Seed`, `Merge`, `UnitLeft`, and `UnitRight`, which is registered but never
-fused), at production rank with header size 4, on the baked Pasta parameters:
+fused), with header size 4, on the aggregator-rank Pasta parameters, which
+compressing needs and whose prefix is the Standard tables; the wallet at
+production rank and the aggregator at the aggregator rank:
 
 | Scenario      | Header  | Fuses                                   |
 | ------------- | ------- | --------------------------------------- |
