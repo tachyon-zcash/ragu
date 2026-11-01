@@ -168,17 +168,54 @@ fn short_reader_reports_the_missing_value() {
     assert_eq!(bytes, [1, 2, 3]);
 }
 
+/// `payload` behind the version byte.
+fn framed(payload: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![VERSION];
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+/// The re-encoding of `payload` as a scalar, if it decodes as one.
+fn scalar_spelling<F: Field>(payload: &[u8]) -> Option<Vec<u8>> {
+    <F as Decode<Scalar>>::from_bytes(&framed(payload), DIMS)
+        .ok()
+        .map(|value| <F as Encode<Scalar>>::to_bytes(&value))
+}
+
+/// The re-encoding of `payload` as a point, if it decodes as one, and
+/// whether the point is the identity.
+fn point_spelling<G: Affine>(payload: &[u8]) -> Option<(Vec<u8>, bool)> {
+    <G as Decode<Point>>::from_bytes(&framed(payload), DIMS)
+        .ok()
+        .map(|value| (<G as Encode<Point>>::to_bytes(&value), value.is_identity()))
+}
+
 proptest! {
+    // About a quarter of random payloads are canonical scalars and a quarter
+    // decode as points, so each run exercises both outcomes.
     #[test]
-    fn pairs_roundtrip(values in proptest::collection::vec(any::<u64>(), 2)) {
-        let bytes = <Vec<u64> as Encode<Pair>>::to_bytes(&values);
-        prop_assert_eq!(<Vec<u64> as Decode<Pair>>::from_bytes(&bytes, DIMS).unwrap(), values);
+    fn accepted_scalar_bytes_have_one_spelling(payload in proptest::collection::vec(any::<u8>(), 32)) {
+        for spelling in [scalar_spelling::<Fp>(&payload), scalar_spelling::<Fq>(&payload)].into_iter().flatten() {
+            prop_assert_eq!(spelling, framed(&payload));
+        }
     }
 
     #[test]
-    fn accepted_bytes_have_one_spelling(bytes in proptest::collection::vec(any::<u8>(), 17)) {
-        if let Ok(value) = <Vec<u64> as Decode<Pair>>::from_bytes(&bytes, DIMS) {
-            prop_assert_eq!(<Vec<u64> as Encode<Pair>>::to_bytes(&value), bytes);
+    fn accepted_point_bytes_have_one_spelling_and_are_not_the_identity(payload in proptest::collection::vec(any::<u8>(), 32)) {
+        for (spelling, identity) in [point_spelling::<EpAffine>(&payload), point_spelling::<EqAffine>(&payload)].into_iter().flatten() {
+            prop_assert_eq!(spelling, framed(&payload));
+            prop_assert!(!identity);
         }
+    }
+
+    #[test]
+    fn scalar_sequences_roundtrip(seed in proptest::collection::vec(any::<u8>(), 64)) {
+        let seed: [u8; 64] = seed.try_into().unwrap();
+        let values = vec![Fp::from_uniform_bytes(&seed), -Fp::from_uniform_bytes(&seed)];
+        let bytes = <Vec<Fp> as Encode<FixedSequence<Scalar, ConstLen<2>>>>::to_bytes(&values);
+        prop_assert_eq!(
+            <Vec<Fp> as Decode<FixedSequence<Scalar, ConstLen<2>>>>::from_bytes(&bytes, DIMS).unwrap(),
+            values
+        );
     }
 }

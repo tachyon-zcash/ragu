@@ -1,9 +1,8 @@
 //! The production compressed-proof transport path and hostile byte boundaries.
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
-#[allow(dead_code)]
-mod nontrivial_support;
-use nontrivial_support::{app, leaf};
+
+use crate::nontrivial_support::{app, leaf};
 
 #[test]
 fn compressed_transport_roundtrip_and_rejection() {

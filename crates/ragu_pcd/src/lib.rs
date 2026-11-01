@@ -29,8 +29,8 @@
 //! recording the rank and header size, for embedding in a container that
 //! supplies its own context. Decoding is
 //! not verification: a receiver compresses a decoded proof and accepts it on
-//! [`verify_compressed`](Application::verify_compressed). See
-//! `crates/ragu_pcd/WIRE_FORMAT.md` for the compatibility contract.
+//! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
+//! the envelope layout and the version rules.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]

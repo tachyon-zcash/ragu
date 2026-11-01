@@ -7,9 +7,7 @@ use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, de::value::BorrowedBytesDeserializer};
 
-#[allow(dead_code)]
-mod nontrivial_support;
-use nontrivial_support::{C, R, app, leaf};
+use crate::nontrivial_support::{C, R, app, leaf};
 
 /// The codec version byte, then the rank as a `u32` and the header size as a
 /// `u64`, little-endian: 13 and 4 for these proofs.

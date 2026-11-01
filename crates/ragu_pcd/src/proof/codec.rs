@@ -6,10 +6,10 @@
 //! lives beneath it rather than in `wire`.
 
 #[cfg(test)]
-#[path = "../../tests/malformed_proofs.rs"]
+#[path = "../../tests/wire/malformed_proofs.rs"]
 mod malformed_proof_tests;
 #[cfg(test)]
-#[path = "../../tests/wire_validation.rs"]
+#[path = "../../tests/wire/validation.rs"]
 mod wire_validation_tests;
 
 use alloc::vec::Vec;

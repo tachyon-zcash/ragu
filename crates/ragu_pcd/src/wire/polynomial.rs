@@ -154,7 +154,9 @@ mod tests {
         }
 
         #[test]
-        fn accepted_bytes_are_canonical(bytes in proptest::collection::vec(any::<u8>(), 1 + Poly::encoded_len(DIMS))) {
+        fn accepted_bytes_are_canonical(payload in proptest::collection::vec(any::<u8>(), Poly::encoded_len(DIMS))) {
+            let mut bytes = vec![VERSION];
+            bytes.extend_from_slice(&payload);
             if let Ok(poly) = Poly::from_bytes(&bytes, DIMS) {
                 prop_assert_eq!(poly.to_bytes(), bytes);
             }

@@ -15,6 +15,43 @@
 //! Integers are little-endian with their declared widths. Scalar and point
 //! representations are specified by their respective types. Explicit scalar
 //! and point codecs avoid overlapping blanket impls.
+//!
+//! # Envelope
+//!
+//! `ProofFormat` writes a 124-byte envelope ahead of a payload, every integer
+//! little-endian:
+//!
+//! | Offset | Size | Meaning |
+//! | --- | --- | --- |
+//! | 0 | 8 | Magic: `RAGUPCD` and a NUL |
+//! | 8 | 2 | Envelope version: 2 |
+//! | 10 | 2 | Payload kind: 1 proof, 2 compressed proof |
+//! | 12 | 2 | Schema version of that payload kind: 1 |
+//! | 14 | 2 | Protocol version: 1 (`ragu-pcd-v1`) |
+//! | 16 | 4 | Rank |
+//! | 20 | 8 | Header size, in field elements |
+//! | 28 | 32 | Profile tag: BLAKE2b-256 of `Profile::NAME`, personalized `ragu-profile-v1` |
+//! | 60 | 32 | Suite identifier |
+//! | 92 | 32 | Application identifier |
+//!
+//! Decoding checks the exact total length first, then each component in
+//! this order against the receiving application's, rejecting at the first
+//! mismatch: an unknown version is never reinterpreted or downgraded. The
+//! two identifiers are a `ProofContext`'s.
+//!
+//! # Versions
+//!
+//! The schema version fixes a payload: the field order the codec lists give
+//! (`proof/codec.rs` for a proof, `compressed.rs` here for a compressed
+//! proof), each field's codec and the profile's vector counts. The envelope
+//! version fixes the layout above. The protocol version follows the
+//! verification semantics the transcript tags (`RAGU_TAG`, `IPA_TAG`)
+//! identify. Changing any of these means a new version and explicit
+//! dispatch in the decoder, with either a migration path and compatibility
+//! tests or failing closed on the old one; a crate release or an
+//! implementation change alone changes none of them. The fuse fixtures pin
+//! the payload bytes of every scenario, so a change to the format fails them
+//! until they are regenerated, which is the moment to bump the version.
 
 use alloc::{sync::Arc, vec::Vec};
 use core::{marker::PhantomData, mem::size_of};

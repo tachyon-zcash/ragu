@@ -73,8 +73,8 @@ pub struct ProofContext {
 /// [`Application::compress`] and accept it on
 /// [`Application::verify_compressed`] before using it in another proof. A
 /// decoded compressed proof can be verified directly after attaching its
-/// accompanying header data. See the crate's `WIRE_FORMAT.md` for the
-/// version and compatibility contract.
+/// accompanying header data. See [`wire`](crate::wire) for the envelope
+/// layout and the version rules.
 pub struct ProofFormat<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     context: ProofContext,
     marker: PhantomData<(C, R)>,

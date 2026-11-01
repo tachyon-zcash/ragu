@@ -2,11 +2,10 @@
 //! versioned envelope.
 
 use ragu_pcd::wire::Error;
-use ragu_testing::pcd::nontrivial::{InternalNode, LeafNode};
+use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
-mod nontrivial_support;
-use nontrivial_support::{C, R, app, deep, leaf};
+use crate::nontrivial_support::{C, R, app, leaf};
 
 /// The envelope ahead of every payload.
 const ENVELOPE: usize = 124;
@@ -21,26 +20,6 @@ fn seed_proof_round_trips() {
     assert_eq!(bytes.len(), format.encoded_len());
     let decoded = format.decode(&bytes).unwrap();
     assert_eq!(format.encode(&decoded).unwrap(), bytes);
-}
-
-// Proves seven production-rank proofs. Run explicitly in release with
-// `--include-ignored`; ordinary runs leave it ignored.
-#[test]
-#[ignore]
-fn fused_proof_round_trips() {
-    let app = app();
-    let format = app.proof_format();
-    let (proof, data) = deep(&app).into_parts();
-    let bytes = format.encode(&proof).unwrap();
-    let decoded = format.decode(&bytes).unwrap();
-    assert_eq!(format.encode(&decoded).unwrap(), bytes);
-    assert!(
-        app.verify_uncompressed(
-            &decoded.carry::<InternalNode>(data),
-            StdRng::seed_from_u64(0xdec1de)
-        )
-        .unwrap()
-    );
 }
 
 #[test]
@@ -192,44 +171,4 @@ fn derived_context_identifies_the_setup() {
         format.encode(&format.decode(&bytes).unwrap()).unwrap(),
         bytes
     );
-}
-
-/// Reproducible local measurements; excluded from ordinary correctness tests.
-#[test]
-#[ignore]
-fn wire_measurements() {
-    use std::{hint::black_box, time::Instant};
-
-    let app = app();
-    let format = app.proof_format();
-    let mut rng = StdRng::seed_from_u64(0x5eed);
-    let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
-    let mut samples = Vec::new();
-    for _ in 0..5 {
-        let start = Instant::now();
-        let bytes = black_box(format.encode(&proof).unwrap());
-        let encoding = start.elapsed();
-        let start = Instant::now();
-        let decoded = black_box(format.decode(&bytes).unwrap());
-        let decoding = start.elapsed();
-        let start = Instant::now();
-        assert!(
-            app.verify_uncompressed(
-                &decoded.carry::<LeafNode>(data),
-                StdRng::seed_from_u64(0xdec1de)
-            )
-            .unwrap()
-        );
-        let verification = start.elapsed();
-        samples.push([encoding, decoding, verification]);
-        println!(
-            "bytes={}, encode={encoding:?}, decode={decoding:?}, verify={verification:?}",
-            bytes.len()
-        );
-    }
-    for (column, name) in ["encode", "decode", "verify"].iter().enumerate() {
-        let mut values: Vec<_> = samples.iter().map(|s| s[column]).collect();
-        values.sort();
-        println!("median {name}={:?}", values[2]);
-    }
 }

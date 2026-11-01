@@ -14,43 +14,6 @@ Bento; `pasta::baked()` adapts them once into Udon's parameter containers withou
 decoding coordinates. The derivation preserves Ragu's existing generators. The
 feature enables `alloc` and supports `no_std`.
 
-## Proof serialization
-
-Serialization lives entirely in this crate: `proof/codec.rs` lists each
-`Proof` field with its codec, beside the struct rather than in it, and an
-internal `wire` module owns the byte codecs. Decoding builds the struct from
-that list, so a field missing from it is a build error, and the fuse fixtures
-pin the encoded bytes, so any other change to the format fails a test until
-the fixtures are regenerated. A proof's encoding holds every field, so
-decoding yields a `Proof` that the application takes like one it built itself.
-
-Every encoding has one length, fixed by the application's profile, rank and
-header size: no count or length is read from the payload, and polynomials are
-dense. For storage or transport, `Application::proof_format()` binds the
-envelope to identifiers of the suite and application setup derived from the
-application itself (`Application::proof_context`); `proof_format_with` takes
-identifiers of your own for configuration Ragu cannot see, and
-`ProofFormat::new` builds the format from published identifiers alone, for a
-receiver without the application.
-`ProofFormat::encode` writes the versioned envelope and proof payload;
-`ProofFormat::decode` rejects any other length before reading a byte, then
-checks versions, rank, header size, an explicit profile tag and context before
-allocating proof data. A receiver then compresses the decoded proof and accepts
-it on `Application::verify_compressed`.
-
-[WIRE_FORMAT.md](WIRE_FORMAT.md) specifies schema v1, version changes, context
-requirements and the length formula. `ProofFormat::encode_compressed` and
-`decode_compressed` carry the IPA representation under payload kind 2 in the
-same envelope. Attach the accompanying data with `carry` and verify with
-`verify_compressed`. `compressed_encoded_len` gives the exact transport size
-before reading.
-
-With the `serde` feature, `Proof` and `CompressedProof` implement `Serialize`
-and `Deserialize` directly: the same payload behind a short prelude recording
-the rank and header size, for embedding in a container that supplies its own
-context. Deserialization accepts exactly the length the prelude implies and
-ignores untrusted sequence size hints.
-
 ## License
 
 This library is distributed under the terms of both the MIT license and the Apache License (Version 2.0). See [LICENSE-APACHE](./LICENSE-APACHE), [LICENSE-MIT](./LICENSE-MIT) and [COPYRIGHT](./COPYRIGHT).

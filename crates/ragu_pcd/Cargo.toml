@@ -136,10 +136,3 @@ name = "rerandomization"
 
 [[test]]
 name = "wire"
-
-[[test]]
-name = "serde"
-required-features = ["serde"]
-
-[[test]]
-name = "compressed_wire"

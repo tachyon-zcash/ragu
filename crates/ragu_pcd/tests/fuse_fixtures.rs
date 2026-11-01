@@ -34,7 +34,7 @@
 //!   rank, so this stands in for committing it: a mismatch names the fields
 //!   that drifted, and the file's diff in a pull request reads as the list
 //!   of stages the change touched. The `wire.*` lines then pin the wire
-//!   format of `WIRE_FORMAT.md`: the codec's field order, the length and
+//!   format (see `crate::wire`): the codec's field order, the length and
 //!   digest of the proof's and the compressed proof's payload bytes, and the
 //!   suite identifier. A change to the proof's fields, their order, a codec
 //!   or an element's spelling fails them until the fixtures are regenerated
