@@ -31,6 +31,7 @@ use super::revdot::{
 };
 use crate::{
     Proof, SelectableBackend,
+    header::HEADER_POLYNOMIALS,
     internal::{
         ky::{self, NativeKy, NestedKy},
         native::{self, stages as native_stages, unified as native_unified},
@@ -74,6 +75,9 @@ pub(crate) struct Instance<C: Cycle> {
     pub native: Vec<C::HostCurve>,
     pub native_registry_xy: C::HostCurve,
     pub native_p: C::HostCurve,
+    /// The commitments of the step's own online polynomials, which its
+    /// nested instance exports.
+    pub online_commitments: [C::HostCurve; HEADER_POLYNOMIALS],
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.
@@ -194,6 +198,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 .collect(),
             native_registry_xy: proof.native_registry_xy_commitment(),
             native_p: proof.native_p_commitment(),
+            online_commitments: proof.online_commitments(),
             nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -265,6 +270,7 @@ impl<C: ProfiledCycle> Instance<C> {
             .native
             .iter()
             .chain([&self.native_registry_xy, &self.native_p])
+            .chain(&self.online_commitments)
         {
             host.write_point(point)?;
         }
@@ -425,6 +431,8 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),
+                self.online_commitments[0],
+                self.online_commitments[1],
             ],
             coverage: Default::default(),
         })

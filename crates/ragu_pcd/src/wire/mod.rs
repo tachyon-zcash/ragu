@@ -27,7 +27,7 @@
 //! | 0 | 8 | Magic: `RAGUPCD` and a NUL |
 //! | 8 | 2 | Envelope version: 3 |
 //! | 10 | 2 | Payload kind: 1 proof, 2 compressed proof |
-//! | 12 | 2 | Schema version of that payload kind: 1 |
+//! | 12 | 2 | Schema version of that payload kind: 2 |
 //! | 14 | 2 | Protocol version: 1 (`ragu-pcd-v1`) |
 //! | 16 | 4 | Rank |
 //! | 20 | 8 | Header size, in field elements |
@@ -129,6 +129,9 @@ pub(crate) struct FixedSequence<C, L>(PhantomData<(C, L)>);
 /// A vector of exactly the count [`Dimensions`] fix along dimension `D`, using
 /// codec `C`, with no count on the wire.
 pub(crate) struct SizedSequence<C, D>(PhantomData<(C, D)>);
+/// An array, each element using codec `C`. Its length is in its type, so
+/// nothing is on the wire but the elements.
+pub(crate) struct Array<C>(PhantomData<C>);
 
 /// A count [`Dimensions`] fix.
 pub(crate) trait Dimension {
@@ -422,6 +425,26 @@ impl<T: Decode<C>, C, D: Dimension> Decode<SizedSequence<C, D>> for Vec<T> {
     }
     fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
         (0..D::of(dims)).map(|_| T::decode(reader, dims)).collect()
+    }
+}
+
+// An array's length is its type's; every array has an encoding.
+impl<T: Encode<C>, C, const N: usize> Encode<Array<C>> for [T; N] {
+    fn encode(&self, output: &mut Vec<u8>, dims: Dimensions) -> Result<(), Error<'static>> {
+        encode_sequence(self, N, output, dims)
+    }
+}
+impl<T: Decode<C>, C, const N: usize> Decode<Array<C>> for [T; N] {
+    fn encoded_len(dims: Dimensions) -> usize {
+        N * T::encoded_len(dims)
+    }
+    fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
+        let elements: Vec<T> = (0..N)
+            .map(|_| T::decode(reader, dims))
+            .collect::<Result<_, _>>()?;
+        Ok(elements
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("exactly N elements were decoded")))
     }
 }
 

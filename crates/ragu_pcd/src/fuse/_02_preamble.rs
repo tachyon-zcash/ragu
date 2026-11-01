@@ -6,7 +6,9 @@
 //! The children's nested-curve commitments are committed here as well, in
 //! the native points binding and children stages the endoscaling walk reads
 //! them from; the preamble bridge carries those stages' commitments, so the
-//! points are fixed before $w$ is squeezed.
+//! points are fixed before $w$ is squeezed. The step's own online
+//! polynomials' commitments go into the preamble bridge directly, beside the
+//! children's exported ones it stashes, for the same reason.
 
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::Result;
@@ -77,6 +79,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
             native_points_children: builder.native_points_children_commitment(),
+            online: builder.online_commitments(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };

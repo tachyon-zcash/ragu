@@ -225,6 +225,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         native: native.native.clone(),
         native_registry_xy: native.native_registry_xy,
         native_p: native.native_p,
+        online_commitments: native.online_commitments,
         c: native.c,
         v: native.v,
         left: native.left,

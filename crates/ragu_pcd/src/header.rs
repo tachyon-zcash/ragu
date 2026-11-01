@@ -26,6 +26,14 @@ use udon::field::Field;
 /// [`Step`]: crate::step::Step
 pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 
+/// The polynomial commitments a [`Header`] carries beside its field data.
+///
+/// A step's six online slots are its three headers' polynomials, in the
+/// order left, right, output; a header declaring fewer fills the rest with
+/// the constant one. The slots are opened by the step's own batch, so every
+/// step pays for all of them whether its headers use them or not.
+pub const HEADER_POLYNOMIALS: usize = 2;
+
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
 /// application suffixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]

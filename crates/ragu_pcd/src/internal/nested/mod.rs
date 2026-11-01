@@ -46,9 +46,10 @@ use crate::{
 /// The number of curve points the nested walk folds for a native batch of
 /// `native_rx` rx polynomials: `f`'s commitment, then for each child its
 /// native rx commitments, $a$, $b$, `registry_xy` and $p$, then the current
-/// step's two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`.
+/// step's two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`,
+/// then the step's online slots (see [`online`](super::online)).
 pub const fn num_endoscaling_points(native_rx: usize) -> usize {
-    1 + 2 * (native_rx + 4) + 6
+    1 + 2 * (native_rx + 4) + 6 + super::online::NUM_ONLINE_QUERIES
 }
 
 /// Number of curve points accumulated during `compute_p` for nested field

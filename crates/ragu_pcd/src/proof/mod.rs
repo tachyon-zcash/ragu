@@ -68,21 +68,25 @@ mod access;
 use alloc::{sync::Arc, vec, vec::Vec};
 
 pub(crate) use builder::ProofBuilder;
+use ragu_backend::Backend;
 use ragu_circuits::{
     CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
     staging::{MultiStage, StageExt},
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, FixedGenerators, Result};
 use ragu_primitives::{
     Uendo, extract_endoscalar, lift_endoscalar,
     vec::{FixedVec, Len},
 };
-use udon::field::Field;
+use udon::{
+    curve::{EndomorphismAffine, Projective},
+    field::Field,
+};
 
 use crate::{
-    header::Header,
+    header::{HEADER_POLYNOMIALS, Header},
     internal::{
         endoscalar::EndoscalarStage,
         native::{
@@ -93,6 +97,7 @@ use crate::{
             self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
             PointsWitness,
         },
+        online,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -218,6 +223,11 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_points_f_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R>,
 
+    // The step's own online polynomials: its output header's, padded with
+    // the constant one (see `internal::online`). Committed before `w` and
+    // exported for the parent, which opens them as its left or right slots.
+    pub(crate) online_polys: [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS],
+
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -325,6 +335,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_points_ab_commitment: Cached<C::HostCurve>,
     native_points_f_commitment: Cached<C::HostCurve>,
     native_points_walk_commitment: Cached<C::HostCurve>,
+    online_commitments: Cached<[C::HostCurve; HEADER_POLYNOMIALS]>,
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -447,6 +458,36 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for Proof<C, R> {
     }
 }
 
+/// Whether `commitments` are the commitments of `polys` under `generators`,
+/// as one batch: the Horner combination of the polynomials under `r` must
+/// commit to the same combination of the points, which a mismatch in any
+/// pair breaks unless `r` is a root of the difference.
+pub(crate) fn commitments_match<B, F, P, R, G>(
+    polys: &[&sparse::Polynomial<F, R>],
+    commitments: &[P],
+    r: F,
+    generators: &G,
+) -> bool
+where
+    B: Backend,
+    F: Field,
+    P: EndomorphismAffine<Scalar = F>,
+    R: Rank,
+    G: FixedGenerators<P>,
+{
+    assert_eq!(polys.len(), commitments.len());
+    let folded = sparse::Polynomial::fold(polys.iter().copied(), r);
+    let expected = B::sparse_commit_to_affine(&folded, generators);
+
+    // Polynomial i carries r^{n-1-i}; so does its commitment.
+    let n = commitments.len();
+    let mut weights = alloc::vec![F::ONE; n];
+    for i in (0..n.saturating_sub(1)).rev() {
+        weights[i] = weights[i + 1] * r;
+    }
+    B::msm(weights.iter(), commitments.iter()).to_affine() == expected
+}
+
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
@@ -548,9 +589,25 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
+                self.online_commitments.0[0],
+                self.online_commitments.0[1],
             ],
             coverage: Default::default(),
         })
+    }
+
+    /// The step's own online polynomials: its output header's, in slot
+    /// order, padded with the constant one.
+    pub(crate) fn online_polys(
+        &self,
+    ) -> &[sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS] {
+        &self.online_polys
+    }
+
+    /// The commitments of [`online_polys`](Self::online_polys), which this
+    /// proof's nested instance exports.
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.online_commitments.0
     }
 
     /// The native challenges of this proof, in challenge-stage order.
@@ -1104,6 +1161,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_b_poly(ones_host.clone(), host_commitment);
         builder.set_native_query_rx(ones_host.clone());
         builder.set_native_registry_xy_poly(registry_xy_poly);
+        // The unit header carries no polynomial: every online slot is padding.
+        builder.set_online_polys(core::array::from_fn(|_| online::padding()));
         // The eval stage carries the binding partial sums over the challenge
         // lifts, and the instance their completion; a dummy proof's are
         // those of the all-one challenges.
@@ -1315,6 +1374,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             };
             let registry_xy_commitment = builder.native_registry_xy_commitment();
             let registry_xy = builder.native_registry_xy_poly();
+            let online_commitments = builder.online_commitments();
+            let online = builder.online_polys();
 
             // Initial: native_f commitment.
             push(host_commitment, &ones_host);
@@ -1339,6 +1400,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             push(host_commitment, &ones_host); // a
             push(host_commitment, &ones_host); // b
             push(registry_xy_commitment, registry_xy); // native_registry_xy
+            // The six online slots: every one is this proof's own padding,
+            // as the children of the bootstrap fuse that opens them hold it.
+            for _ in 0..3 {
+                for i in 0..HEADER_POLYNOMIALS {
+                    push(online_commitments[i], &online[i]);
+                }
+            }
 
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let (commitment, _) = self
@@ -1388,6 +1456,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_points_registry_wx: host_commitment,
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
+                stashed_online: builder.online_commitments(),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
                 nested: nested::stages::preamble::NestedValues {
@@ -1404,6 +1473,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
                     native_points_children: builder.native_points_children_commitment(),
+                    online: builder.online_commitments(),
                     left: trivial_child_witness.clone(),
                     right: trivial_child_witness,
                 },

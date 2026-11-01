@@ -11,7 +11,9 @@
 //!   `eval`, $a$, $b$, `registry_xy` and $P$, then the five native points
 //!   stages holding the walk's inputs, the native stages besides those whose
 //!   contents must be fixed before a challenge is squeezed (see
-//!   [`native::stages::points`](crate::internal::native::stages::points)).
+//!   [`native::stages::points`](crate::internal::native::stages::points)),
+//!   and the step's own online polynomials', which the parent opens as its
+//!   left or right slots (see [`online`](crate::internal::online)).
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage. Its
 //! [`collapse`](super::circuits::collapse) circuit computes the expected
@@ -43,10 +45,11 @@ use ragu_primitives::{
 };
 use udon::curve::EndomorphismAffine as Affine;
 
-use crate::internal::native::unified::Slot;
+use crate::internal::{native::unified::Slot, online::HEADER_POLYNOMIALS};
 
-/// The host-curve commitments the instance exports, in [`Write`] order.
-pub const NUM_EXPORTED: usize = 14;
+/// The host-curve commitments the instance exports, in [`Write`] order:
+/// the fourteen stage commitments and the step's own online commitments.
+pub const NUM_EXPORTED: usize = 14 + HEADER_POLYNOMIALS;
 
 /// Length type for the exported commitments.
 pub type ExportedLen = ConstLen<NUM_EXPORTED>;

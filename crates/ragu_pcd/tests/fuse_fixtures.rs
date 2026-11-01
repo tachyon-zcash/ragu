@@ -522,6 +522,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_points_ab_rx,
         native_points_f_rx,
         native_points_walk_rx,
+        online_polys,
         bridge_preamble_rx,
         bridge_s_prime_rx,
         bridge_inner_error_rx,
@@ -590,6 +591,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_points_ab_commitment: _,
         native_points_f_commitment: _,
         native_points_walk_commitment: _,
+        online_commitments: _,
         bridge_preamble_commitment: _,
         bridge_s_prime_commitment: _,
         bridge_inner_error_commitment: _,
@@ -631,6 +633,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.poly("native_points_ab_rx", native_points_ab_rx);
     lines.poly("native_points_f_rx", native_points_f_rx);
     lines.poly("native_points_walk_rx", native_points_walk_rx);
+    lines.polys("online_polys", online_polys);
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
     lines.poly("bridge_s_prime_rx", bridge_s_prime_rx);
@@ -791,6 +794,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         native: native_commitments,
         native_registry_xy,
         native_p,
+        online_commitments,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -815,6 +819,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.points(native_commitments);
     out.point(native_registry_xy);
     out.point(native_p);
+    out.points(online_commitments);
     out.points(nested_commitments);
     out.point(nested_registry_xy);
     out.point(nested_p);
@@ -900,6 +905,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let native_commitments = cursor.points()?;
     let native_registry_xy = cursor.point()?;
     let native_p = cursor.point()?;
+    let online_commitments = cursor.points()?.try_into().ok()?;
     let nested_commitments = cursor.points()?;
     let nested_registry_xy = cursor.point()?;
     let nested_p = cursor.point()?;
@@ -937,6 +943,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         native: native_commitments,
         native_registry_xy,
         native_p,
+        online_commitments,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,

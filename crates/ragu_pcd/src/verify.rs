@@ -14,7 +14,8 @@
 //!
 //! - every cached commitment is checked against its polynomial, native and
 //!   nested alike, batched per curve under a fresh scalar; this includes
-//!   the batch commitments $P$ and $P_n$;
+//!   the batch commitments $P$ and $P_n$ and the step's own online
+//!   polynomials' commitments;
 //! - the challenges are rederived from the transcript over the bridge
 //!   commitments, in the fuse's schedule;
 //! - the `ab` bridge stage and the nested challenge stage, whose contents
@@ -47,14 +48,10 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::{StageExt, StageReader, stage_wire_indices, wires_of},
 };
-use ragu_core::{Cycle, Error, FixedGenerators, Result, drivers::emulator::Emulator, maybe::Maybe};
+use ragu_core::{Cycle, Error, Result, drivers::emulator::Emulator, maybe::Maybe};
 use ragu_primitives::{GadgetExt as _, Point, extract_endoscalar};
 use rand::CryptoRng;
-use udon::{
-    curve::{Affine as _, EndomorphismAffine as Affine, Projective},
-    fft::bit_reverse,
-    field::Field,
-};
+use udon::{curve::Affine as _, fft::bit_reverse, field::Field};
 
 use crate::{
     Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
@@ -71,6 +68,7 @@ use crate::{
     },
     ipa::IpaCycle,
     profile::ProfiledCycle,
+    proof::commitments_match,
 };
 
 /// The backend whose kernels [`Application::verify_uncompressed`] consults for
@@ -271,6 +269,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 points.push(proof.native_registry_xy_commitment());
                 polys.push(proof.native_p_poly());
                 points.push(proof.native_p_commitment());
+                for (poly, point) in proof.online_polys().iter().zip(proof.online_commitments()) {
+                    polys.push(poly);
+                    points.push(point);
+                }
                 commitments_match::<Verifier<B>, _, _, R, _>(
                     &polys,
                     &points,
@@ -690,36 +692,6 @@ pub(crate) fn nested_points_match<C: ProfiledCycle, R: Rank>(proof: &Proof<C, R>
         expected.extend_from_slice(&[x, y]);
     }
     Ok(held.eq(expected))
-}
-
-/// Whether `commitments` are the commitments of `polys` under `generators`,
-/// as one batch: the Horner combination of the polynomials under `r` must
-/// commit to the same combination of the points, which a mismatch in any
-/// pair breaks unless `r` is a root of the difference.
-fn commitments_match<B, F, P, R, G>(
-    polys: &[&sparse::Polynomial<F, R>],
-    commitments: &[P],
-    r: F,
-    generators: &G,
-) -> bool
-where
-    B: Backend,
-    F: Field,
-    P: Affine<Scalar = F>,
-    R: Rank,
-    G: FixedGenerators<P>,
-{
-    assert_eq!(polys.len(), commitments.len());
-    let folded = sparse::Polynomial::fold(polys.iter().copied(), r);
-    let expected = B::sparse_commit_to_affine(&folded, generators);
-
-    // Polynomial i carries r^{n-1-i}; so does its commitment.
-    let n = commitments.len();
-    let mut weights = alloc::vec![F::ONE; n];
-    for i in (0..n.saturating_sub(1)).rev() {
-        weights[i] = weights[i + 1] * r;
-    }
-    B::msm(weights.iter(), commitments.iter()).to_affine() == expected
 }
 
 mod native {

@@ -16,6 +16,8 @@
 //!   revdot claims
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
+//! - [`online`] — the online polynomials a step's headers carry and its
+//!   batch opens
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
 //! - [`const_fns`] — compile-time helper functions for array construction
@@ -28,6 +30,7 @@ pub mod inverter;
 pub mod ky;
 pub mod native;
 pub mod nested;
+pub mod online;
 pub mod transcript;
 
 /// Identifies which of the two child proofs a component came from.

@@ -604,6 +604,7 @@ fn check_compressed_proofs_match(
         native: _,
         native_registry_xy: _,
         native_p: _,
+        online_commitments: _,
         nested: _,
         nested_registry_xy: _,
         nested_p: _,
@@ -1340,6 +1341,7 @@ mod proof_equivalence {
                 native_points_ab_rx: _,
                 native_points_f_rx: _,
                 native_points_walk_rx: _,
+                online_polys: _,
                 bridge_preamble_rx: _,
                 bridge_s_prime_rx: _,
                 bridge_inner_error_rx: _,
@@ -1408,6 +1410,7 @@ mod proof_equivalence {
                 native_points_ab_commitment: _,
                 native_points_f_commitment: _,
                 native_points_walk_commitment: _,
+                online_commitments: _,
                 bridge_preamble_commitment: _,
                 bridge_s_prime_commitment: _,
                 bridge_inner_error_commitment: _,
@@ -1463,6 +1466,15 @@ mod proof_equivalence {
             ) || !polynomial_eq(&self.native_p_poly, &other.native_p_poly)
             {
                 return Some("native protocol polynomials");
+            }
+            if self
+                .online_polys
+                .iter()
+                .zip(&other.online_polys)
+                .any(|(ours, theirs)| !polynomial_eq(ours, theirs))
+                || self.online_commitments != other.online_commitments
+            {
+                return Some("online polynomials");
             }
             if nested::RxIndex::ALL
                 .into_iter()
