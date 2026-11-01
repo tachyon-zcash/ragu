@@ -50,12 +50,18 @@
 //! manifest and its artifacts independently.
 
 use alloc::vec::Vec;
-use core::{any::type_name, fmt, marker::PhantomData};
+use core::{
+    any::{TypeId, type_name},
+    fmt,
+    marker::PhantomData,
+    ops::Range,
+};
 
 use ragu_circuits::{
-    BondingObject, Circuit, WithAux,
+    Circuit, WithAux,
     polynomials::{AggregatorRank, ProductionRank, Rank, sparse},
     registry::{Registry, RegistryBuilder},
+    staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 #[cfg(feature = "baked")]
 use ragu_core::pasta::Pasta;
@@ -136,8 +142,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// Whether this is one of the crate's own profiles, which carry the
     /// built-in names [`check`](Self::check) refuses on any other profile.
-    /// [`BuiltIn`] has no public constructor, so no other profile can claim
-    /// it.
+    /// [`BuiltIn`] has no public constructor and names the type it was made
+    /// for, which `check` compares with the profile's own: a profile that
+    /// copies a built-in profile's token carries that profile's type, and
+    /// is still refused the built-in names.
     #[doc(hidden)]
     const BUILT_IN: Option<BuiltIn> = None;
 
@@ -349,7 +357,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
         }
-        if Self::BUILT_IN.is_none() {
+        if !Self::BUILT_IN.is_some_and(BuiltIn::is::<Self>) {
             for name in [Standard::NAME, AGGREGATOR_NAME] {
                 if Self::NAME == name {
                     return Err(Error::Initialization(
@@ -402,10 +410,19 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 }
 
-/// The token the crate's own profiles carry in [`Profile::BUILT_IN`]. Its
-/// field is private, so only this crate constructs one.
+/// The token the crate's own profiles carry in [`Profile::BUILT_IN`]: the
+/// type it was made for, as the function that names it. Its field is
+/// private, so only this crate constructs one, and a copy names the type
+/// it was made for rather than the profile that copied it.
 #[derive(Clone, Copy, Debug)]
-pub struct BuiltIn(());
+pub struct BuiltIn(fn() -> TypeId);
+
+impl BuiltIn {
+    /// Whether the token was made for `P`.
+    fn is<P: 'static>(self) -> bool {
+        (self.0)() == TypeId::of::<P>()
+    }
+}
 
 /// A registry slot a profile's circuit hook fills with one internal circuit.
 ///
@@ -446,7 +463,35 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
     ) -> Result<Registered<'params, F, R>> {
         self.0
             .register_internal_circuit(Suffixed(circuit))
-            .map(Registered)
+            .map(|registry| Registered {
+                registry,
+                registration: Registration::Circuit,
+            })
+    }
+
+    /// Registers the staged `circuit` as [`register`](Self::register) does
+    /// and records the stages it loads, in gate order, for the registry to
+    /// check against the profile's declaration
+    /// ([`Extension::circuits`]): an extension circuit declared to load
+    /// stages must be registered through this method.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the registry's error.
+    pub fn register_staged<X: MultiStageCircuit<F, R>>(
+        self,
+        circuit: MultiStage<F, R, X>,
+    ) -> Result<Registered<'params, F, R>>
+    where
+        MultiStage<F, R, X>: 'params,
+    {
+        let stages = X::Last::gate_ranges();
+        self.0
+            .register_internal_circuit(Suffixed(circuit))
+            .map(|registry| Registered {
+                registry,
+                registration: Registration::Staged(stages),
+            })
     }
 }
 
@@ -454,8 +499,9 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
 /// stage's mask or a final mask.
 ///
 /// The hook receives the slot and returns it [`Registered`], which only
-/// [`register`](Self::register) produces, so a hook registers one bonding
-/// and nothing else.
+/// [`register_mask`](Self::register_mask) and
+/// [`register_final_mask`](Self::register_final_mask) produce, so a hook
+/// registers one bonding and nothing else.
 pub struct BondingSlot<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
 
 impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
@@ -464,20 +510,77 @@ impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
         BondingSlot(registry)
     }
 
-    /// Registers `bonding` as the slot's bonding.
-    pub fn register(self, bonding: BondingObject<'params, F, R>) -> Registered<'params, F, R> {
-        Registered(self.0.register_bonding(bonding))
+    /// Registers stage `S`'s mask as the slot's bonding and records the
+    /// stage's gates for the registry to check against the profile's
+    /// declaration ([`Extension::stages`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`StageExt::mask`]'s error.
+    pub fn register_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
+        Ok(Registered {
+            registry: self.0.register_bonding(S::mask()?),
+            registration: Registration::Mask(stage_gates::<F, R, S>()),
+        })
+    }
+
+    /// Registers the final mask of the circuits whose last stage is `S` as
+    /// the slot's bonding and records the gate it starts at for the
+    /// registry to check against the profile's declaration
+    /// ([`Extension::final_masks`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`StageExt::final_mask`]'s error.
+    pub fn register_final_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
+        Ok(Registered {
+            registry: self.0.register_bonding(S::final_mask()?),
+            registration: Registration::FinalMask(stage_gates::<F, R, S>().end),
+        })
     }
 }
 
-/// A slot a hook filled: the registry with the slot's one entry registered.
-pub struct Registered<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
+/// Stage `S`'s gates: what its mask covers and its final mask starts after.
+fn stage_gates<F: Field, R: Rank, S: Stage<F, R>>() -> Range<usize> {
+    S::skip_gates()..S::skip_gates() + S::num_gates()
+}
+
+/// A slot a hook filled: the registry with the slot's one entry registered,
+/// and what the entry is, for the registry to check against the profile's
+/// declaration.
+pub struct Registered<'params, F: Field, R: Rank> {
+    registry: RegistryBuilder<'params, F, R>,
+    registration: Registration,
+}
 
 impl<'params, F: Field, R: Rank> Registered<'params, F, R> {
     /// The registry, with the entry.
+    #[cfg(test)]
     pub(crate) fn into_registry(self) -> RegistryBuilder<'params, F, R> {
-        self.0
+        self.registry
     }
+
+    /// The registry, with the entry, and what the entry is.
+    pub(crate) fn into_parts(self) -> (RegistryBuilder<'params, F, R>, Registration) {
+        (self.registry, self.registration)
+    }
+}
+
+/// What a hook registered in its slot, as the registry checks it against
+/// the profile's declaration ([`Extension::check_registered`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Registration {
+    /// A circuit whose stages the registry cannot see
+    /// ([`CircuitSlot::register`]).
+    Circuit,
+    /// A staged circuit, with the gates of each stage it loads in gate
+    /// order ([`CircuitSlot::register_staged`]).
+    Staged(Vec<Range<usize>>),
+    /// A stage's mask, over the stage's gates
+    /// ([`BondingSlot::register_mask`]).
+    Mask(Range<usize>),
+    /// A final mask, from a gate on ([`BondingSlot::register_final_mask`]).
+    FinalMask(usize),
 }
 
 /// A circuit with a constant zero appended to its public output; see
@@ -714,6 +817,107 @@ impl Extension {
                     .is_some_and(|first| last.all(|stage| stage == first))
             })
     }
+
+    /// Checks what the profile's hooks registered for this extension
+    /// against the declaration: bonding `j` below [`stages`](Self::stages)
+    /// is stage `j`'s mask and every later one a final mask; a circuit
+    /// declared to load stages was registered as a staged circuit whose
+    /// stages are the declared ones in order, each over the gates its mask
+    /// covers, under the final mask that starts where its last stage ends;
+    /// and a circuit declared to load none loads none. `circuits` and
+    /// `bondings` are the registrations in the declaration's order; `side`
+    /// names the extension in the error.
+    ///
+    /// What a circuit does with its stages, and whether the statement and
+    /// binding circuits expose what their claims assume, is not checked
+    /// here: see [`Binding`].
+    ///
+    /// # Errors
+    ///
+    /// Fails on the first disagreement.
+    pub(crate) fn check_registered(
+        &self,
+        side: &str,
+        circuits: &[Registration],
+        bondings: &[Registration],
+    ) -> Result<()> {
+        let refuse = |what: alloc::string::String| {
+            Err(Error::Initialization(
+                alloc::format!("the profile's {side} extension {what}").into(),
+            ))
+        };
+        if circuits.len() != self.circuits.len() || bondings.len() != self.bondings() {
+            return refuse(alloc::format!(
+                "registers {} circuits and {} bondings but declares {} and {}",
+                circuits.len(),
+                bondings.len(),
+                self.circuits.len(),
+                self.bondings()
+            ));
+        }
+        let mut masks = Vec::with_capacity(self.stages);
+        for (j, registration) in bondings.iter().enumerate() {
+            match registration {
+                Registration::Mask(gates) if j < self.stages => masks.push(gates.clone()),
+                Registration::FinalMask(_) if j >= self.stages => {}
+                _ if j < self.stages => {
+                    return refuse(alloc::format!(
+                        "registers bonding {j} as something other than stage {j}'s mask"
+                    ));
+                }
+                _ => {
+                    return refuse(alloc::format!(
+                        "registers bonding {j} as something other than a final mask"
+                    ));
+                }
+            }
+        }
+        for (k, (registration, declared)) in circuits.iter().zip(&self.circuits).enumerate() {
+            let loaded = match registration {
+                Registration::Staged(loaded) => loaded,
+                Registration::Circuit if declared.is_empty() => continue,
+                Registration::Circuit => {
+                    return refuse(alloc::format!(
+                        "declares that circuit {k} loads stages but registers it as one that loads none"
+                    ));
+                }
+                _ => return refuse(alloc::format!("registers circuit {k} as a bonding")),
+            };
+            let mut expected = Vec::with_capacity(declared.len());
+            for &stage in declared {
+                match masks.get(stage as usize) {
+                    Some(gates) => expected.push(gates.clone()),
+                    None => {
+                        return refuse(alloc::format!(
+                            "declares that circuit {k} loads a stage it does not have"
+                        ));
+                    }
+                }
+            }
+            if *loaded != expected {
+                return refuse(alloc::format!(
+                    "declares that circuit {k} loads the stages over gates {expected:?} but registers one over {loaded:?}"
+                ));
+            }
+            let Some(last) = loaded.last() else {
+                continue;
+            };
+            let Some(mask) = self
+                .final_masks
+                .iter()
+                .position(|mask| mask.contains(&(k as u32)))
+            else {
+                return refuse(alloc::format!("names circuit {k} in no final mask"));
+            };
+            if bondings[self.stages + mask] != Registration::FinalMask(last.end) {
+                return refuse(alloc::format!(
+                    "registers circuit {k}'s final mask elsewhere than at gate {}, where its last stage ends",
+                    last.end
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The standard profile: the fuse alone.
@@ -722,7 +926,7 @@ pub struct Standard;
 
 impl Profile for Standard {
     const NAME: &'static str = "standard";
-    const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(()));
+    const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(TypeId::of::<Self>));
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
 
@@ -833,7 +1037,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 
 impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = AGGREGATOR_NAME;
-    const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(()));
+    const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(TypeId::of::<Self>));
     // The chunk circuits, the statement and binding circuits and the
     // stages on the native side; the chunk circuits, the binding circuit
     // and the stages on the nested side.
@@ -1363,8 +1567,8 @@ pub(crate) mod testing {
     }
 
     /// `CIRCUITS` native circuits and one nested circuit, each side's over
-    /// one stage under one final mask, with hooks that register the fuse's
-    /// own circuits and stages as stand-ins.
+    /// one stage under one final mask, with hooks that register a one-stage
+    /// test circuit ([`DigitsCircuit`]) and its stage as stand-ins.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Hooked<const CIRCUITS: usize = 1>;
 
@@ -1409,7 +1613,9 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert!(circuit < CIRCUITS);
-            slot.register(native::circuits::bind_endoscalar::Circuit::<Base, R>::new())
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
+                PhantomData,
+            )))
         }
 
         fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
@@ -1420,13 +1626,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            type Stage<C, R, const H: usize> = native::stages::eval::Stage<C, R, H>;
-            let mask = match bonding {
-                0 => Stage::<Base, R, HEADER_SIZE>::mask()?,
-                1 => Stage::<Base, R, HEADER_SIZE>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
 
         fn register_nested_circuit<'params, Base, R: Rank>(
@@ -1438,9 +1642,9 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            let circuit =
-                nested::circuits::collapse::Circuit::<Base::HostCurve, R, Standard>::new();
-            slot.register(MultiStage::new(circuit))
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(
+                PhantomData,
+            )))
         }
 
         fn register_nested_bonding<'params, Base, R: Rank>(
@@ -1451,13 +1655,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            type Stage<C, R> = nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, Standard>;
-            let mask = match bonding {
-                0 => Stage::<Base, R>::mask()?,
-                1 => Stage::<Base, R>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
     }
 
@@ -1979,7 +2181,7 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            slot.register(MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(
                 PhantomData,
             )))
         }
@@ -1992,12 +2194,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            let mask = match bonding {
-                0 => DigitsStage::<Base::ScalarField, R>::mask()?,
-                1 => DigitsStage::<Base::ScalarField, R>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
@@ -2103,7 +2304,7 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            slot.register(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
                 PhantomData,
             )))
         }
@@ -2116,12 +2317,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            let mask = match bonding {
-                0 => DigitsStage::<Base::CircuitField, R>::mask()?,
-                1 => DigitsStage::<Base::CircuitField, R>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
 
         fn register_nested_circuit<'params, Base, R: Rank>(
@@ -2242,6 +2442,86 @@ mod tests {
         converges::<4, 4>();
         // Validation must not overflow when multiplying the counts.
         converges::<{ usize::MAX }, { usize::MAX }>();
+    }
+
+    /// What the hooks register is held to the declaration: each stage's
+    /// mask at its bonding and a final mask at each later one, each staged
+    /// circuit over its declared stages' gates under the final mask that
+    /// starts where its last stage ends, and no stages for a circuit that
+    /// declares none.
+    #[test]
+    fn registrations_are_held_to_the_declaration() {
+        use alloc::vec;
+
+        use Registration::*;
+        let single = |gates: Range<usize>| Staged(vec![gates]);
+        let extension = Extension {
+            circuits: vec![vec![0, 1], vec![], vec![0]],
+            stages: 2,
+            final_masks: vec![vec![0], vec![2]],
+            statement: None,
+            binding: None,
+        };
+        assert!(extension.is_consistent());
+        let bondings = vec![Mask(1..4), Mask(4..9), FinalMask(9), FinalMask(4)];
+        let circuits = vec![Staged(vec![1..4, 4..9]), Circuit, single(1..4)];
+        assert!(
+            extension
+                .check_registered("native", &circuits, &bondings)
+                .is_ok()
+        );
+        let refused = |circuits: Vec<Registration>, bondings: Vec<Registration>| {
+            matches!(
+                extension.check_registered("native", &circuits, &bondings),
+                Err(Error::Initialization(_))
+            )
+        };
+        // A circuit over other gates than its stages', in another order, or
+        // short of a stage.
+        assert!(refused(
+            vec![Staged(vec![1..4, 4..10]), Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        assert!(refused(
+            vec![Staged(vec![4..9, 1..4]), Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        assert!(refused(
+            vec![single(1..4), Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        // A circuit declared over stages but registered without, and one
+        // declared without but registered over one.
+        assert!(refused(
+            vec![Circuit, Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        assert!(refused(
+            vec![Staged(vec![1..4, 4..9]), single(1..4), single(1..4)],
+            bondings.clone()
+        ));
+        // A final mask elsewhere than where its circuits' last stage ends, a
+        // stage's mask over other gates than its circuits load, and bondings
+        // of the wrong kind.
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), Mask(4..9), FinalMask(10), FinalMask(4)]
+        ));
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), Mask(4..8), FinalMask(9), FinalMask(4)]
+        ));
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), FinalMask(9), FinalMask(9), FinalMask(4)]
+        ));
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), Mask(4..9), Mask(9..12), FinalMask(4)]
+        ));
+        // Other counts than the declaration's.
+        assert!(refused(circuits[..2].to_vec(), bondings.clone()));
+        assert!(refused(circuits.clone(), bondings[..3].to_vec()));
     }
 
     #[test]
@@ -2491,6 +2771,33 @@ mod tests {
         named!(StandardImpostor, "standard");
         named!(AggregatorImpostor, "aggregator");
         named!(Named, "named");
+
+        // A profile that copies a built-in profile's token still carries
+        // that profile's type, and is refused its name.
+        macro_rules! forged {
+            ($profile:ident, $name:expr, $from:ty) => {
+                #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+                struct $profile;
+
+                impl Profile for $profile {
+                    const NAME: &'static str = $name;
+                    const BUILT_IN: Option<BuiltIn> = <$from as Profile>::BUILT_IN;
+                    const NATIVE_EXTENSION: usize = 0;
+                    const NESTED_EXTENSION: usize = 0;
+
+                    type Context<'params, Base, R, B>
+                        = ()
+                    where
+                        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                        R: Rank,
+                        B: SelectableBackend;
+                }
+            };
+        }
+        forged!(StandardForger, "standard", Standard);
+        forged!(AggregatorForger, "aggregator", Aggregator<4>);
+        assert!(StandardForger::check().is_err());
+        assert!(AggregatorForger::check().is_err());
 
         assert!(Nameless::check().is_err());
         assert!(StandardImpostor::check().is_err());

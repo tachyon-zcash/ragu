@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alias for `R<15>`, for extension circuits that exceed the production rank's
   capacity. `ProductionRank` remains `R<13>`.
 - Added iteration over the stored coefficients of sparse polynomials.
+- Added `Stage::gate_ranges`, the gates of a stage and of every stage before
+  it, for a registry to check a circuit's declared stages against.
 - Added `Tag::from_beacon` and `RegistryBuilder::with_tag` for caller-supplied
   tags chosen after the circuits are fixed. Finalization requires a tag;
   `insecure-test-registry-tag` enables a fixed fallback for tests only.

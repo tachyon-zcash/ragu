@@ -29,7 +29,7 @@
 use alloc::{sync::Arc, vec, vec::Vec};
 use core::iter::repeat_n;
 
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
 
 use super::{
@@ -320,13 +320,13 @@ where
         return Err(Error::Initialization("no such circuit".into()));
     }
     match last(&schedule, circuit) {
-        Last::Transcript => slot.register(
+        Last::Transcript => slot.register_staged(
             chunk::TranscriptCircuit::<C, S, K, R, HEADER_SIZE>::new(circuit, schedule, params),
         ),
-        Last::Digits => slot.register(chunk::DigitsCircuit::<C, S, K, R, HEADER_SIZE>::new(
+        Last::Digits => slot.register_staged(chunk::DigitsCircuit::<C, S, K, R, HEADER_SIZE>::new(
             circuit, schedule, params,
         )),
-        Last::Work => slot.register(chunk::Circuit::<C, S, K, R, HEADER_SIZE>::new(
+        Last::Work => slot.register_staged(chunk::Circuit::<C, S, K, R, HEADER_SIZE>::new(
             circuit, schedule, params,
         )),
     }
@@ -362,33 +362,30 @@ where
     } as u32;
     let digits = digits_stage(with_transcript);
     let bonding = bonding as u32;
-    let mask = match bonding {
-        INSTANCE => <Instance<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::mask()?,
-        MESSAGES => <Messages<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::mask()?,
-        LIFTS => <Lifts<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::mask()?,
-        WORK => <Work<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::mask()?,
+    match bonding {
+        INSTANCE => slot.register_mask::<Instance<C, S, K, R, HEADER_SIZE>>(),
+        MESSAGES => slot.register_mask::<Messages<C, S, K, R, HEADER_SIZE>>(),
+        LIFTS => slot.register_mask::<Lifts<C, S, K, R, HEADER_SIZE>>(),
+        WORK => slot.register_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
         TRANSCRIPT if with_transcript => {
-            <Transcript<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::mask()?
+            slot.register_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == digits => <Digits<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::mask()?,
-        index if index == stages => {
-            <Work<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
-        }
+        index if index == digits => slot.register_mask::<Digits<C, S, K, R, HEADER_SIZE>>(),
+        index if index == stages => slot.register_final_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
         index if index == stages + 1 && with_transcript => {
-            <Transcript<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
+            slot.register_final_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
         }
         index if index == stages + 1 && !with_transcript => {
-            <Digits<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
+            slot.register_final_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
         }
         index if index == stages + 2 && with_transcript => {
-            <Digits<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
+            slot.register_final_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
         }
         index if index == stages + 3 && with_transcript => {
-            <Instance<C, S, K, R, HEADER_SIZE> as StageExt<S::F, R>>::final_mask()?
+            slot.register_final_mask::<Instance<C, S, K, R, HEADER_SIZE>>()
         }
-        _ => return Err(Error::Initialization("no such bonding".into())),
-    };
-    Ok(slot.register(mask))
+        _ => Err(Error::Initialization("no such bonding".into())),
+    }
 }
 
 /// Registers native circuit `circuit` of a side declared at `pinned`
@@ -408,12 +405,13 @@ where
 {
     if circuit == pinned.chunks {
         let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
-        return slot
-            .register(chunk::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new(schedule));
+        return slot.register_staged(
+            chunk::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new(schedule),
+        );
     }
     if circuit == pinned.chunks + 1 {
         let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
-        return slot.register(chunk::BindingCircuit::<C, Native, K, R, HEADER_SIZE>::new(
+        return slot.register_staged(chunk::BindingCircuit::<C, Native, K, R, HEADER_SIZE>::new(
             schedule,
         ));
     }
@@ -449,7 +447,7 @@ where
 {
     if circuit == pinned.chunks {
         let schedule = pinned_schedule::<C, Nested, K, R, HEADER_SIZE>(pinned)?;
-        return slot.register(chunk::BindingCircuit::<C, Nested, K, R, HEADER_SIZE>::new(
+        return slot.register_staged(chunk::BindingCircuit::<C, Nested, K, R, HEADER_SIZE>::new(
             schedule,
         ));
     }

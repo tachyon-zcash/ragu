@@ -182,10 +182,18 @@
 //! The two are independent and land in either order; the aggregator's
 //! proofs are sound against a dishonest prover once both have.
 //!
-//! TODO: complete [`profile`](crate::profile)'s isolation follow-up: enforce the
-//! outer aggregator's and inner wallet's expected setups, preserve Standard's
-//! transcript domains, and test proof substitution through the recursive and
-//! compressed verifiers. Setup identity does not replace the checks above.
+//! TODO: pin the decompressed proof to the approved Standard setup: the
+//! registry evaluations above through #821's hooks, or a digest of the
+//! wallet registry in the aggregator's registry tag, so that a Standard
+//! proof of another wallet application is refused in the inner role. The
+//! outer role's substitutions are tested; the inner role's is Standard by
+//! type alone. Setup identity does not replace the checks above.
+//!
+//! TODO: validate the tests with disposable variants that disable a stage
+//! or folding check, and run the recursive properties over the aggregator
+//! profile. The controls with the real circuits cover a wallet proof's
+//! decompression, a relabelled one, mixed sides, swapped chunk circuits
+//! and the dummy suffix.
 
 // The chunk circuits use the gadgets piecewise. The whole-side verifier in
 // `circuit` and the entry points only it calls, such as the transcript
