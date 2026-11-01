@@ -110,3 +110,62 @@ fn decoded_child_remains_usable_by_fuse() {
         assert!(app.verify_uncompressed(&parent, &mut rng).unwrap());
     });
 }
+
+/// A stored bootstrap proof, decoded and supplied to a new application, is
+/// installed as given instead of being built, and proofs built on it verify.
+/// A proof of another shape or of another step is refused.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
+fn a_supplied_bootstrap_proof_replaces_the_bootstrap_fuse() {
+    use ragu_core::pasta::Fp;
+
+    use crate::{
+        proof::recursive_propagation_tests::support::{Seed, app_builder},
+        step::internal::bootstrap::Bootstrap,
+    };
+
+    // A valid bootstrap proof other than the one finalization builds, from
+    // another seed, so the installed proof can be told from a built one.
+    let source = app_builder()
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let (other, ()) = source
+        .fuse(
+            &mut StdRng::seed_from_u64(1),
+            Bootstrap::new(),
+            (),
+            source.dummy_pcd(),
+            source.dummy_pcd(),
+        )
+        .unwrap();
+    let stored = other.into_parts().0.to_bytes().unwrap();
+    assert_ne!(stored, source.bootstrap_proof().to_bytes().unwrap());
+
+    let app = app_builder()
+        .unwrap()
+        .with_bootstrap(TestProof::from_bytes(&stored).unwrap())
+        .unwrap()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    assert_eq!(
+        app.bootstrap_proof().to_bytes().unwrap(),
+        stored,
+        "finalization installs the supplied proof as given"
+    );
+
+    let mut rng = StdRng::seed_from_u64(0xb007);
+    let (leaf, _) = app.seed(&mut rng, Seed::new(), Fp::from(7)).unwrap();
+    assert!(app.verify_differential(&leaf, &mut rng).unwrap());
+
+    // Refused: a proof of another shape, and a proof of another step.
+    let mut short = TestProof::from_bytes(&stored).unwrap();
+    short.left_header.pop();
+    assert!(app_builder().unwrap().with_bootstrap(short).is_err());
+    assert!(
+        app_builder()
+            .unwrap()
+            .with_bootstrap(leaf.into_parts().0)
+            .is_err()
+    );
+}
