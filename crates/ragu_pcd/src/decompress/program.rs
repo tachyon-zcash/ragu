@@ -55,8 +55,8 @@
 //! [`Side::sizes`]: super::side::Side::sizes
 //! [`Side::schedule`]: super::side::Side::schedule
 
-use alloc::{vec, vec::Vec};
-use core::iter::once;
+use alloc::{sync::Arc, vec, vec::Vec};
+use core::{iter::once, marker::PhantomData};
 
 use ragu_circuits::{
     polynomials::Rank,
@@ -70,7 +70,7 @@ use super::{
     circuit::AbValue,
     side::{Native, Nested, Side},
     stages::{
-        AB_TERMS, Layout, MESSAGE_SCALARS, StageShape, digits_degrees, lifts_degrees,
+        AB_TERMS, Layout, MESSAGE_SCALARS, Sizes, StageShape, digits_degrees, lifts_degrees,
         native_scalars, nested_scalars, num_runs,
     },
 };
@@ -2240,6 +2240,116 @@ fn nested_schedule_with<
 
     let front = <Nested as Side<C>>::front_shapes::<K, HEADER_SIZE>();
     Ok(b.finish(claims, bindings, ab_terms, &front))
+}
+
+/// The values a schedule is the pure function of its types for, built once
+/// and kept: under `std`, one process-wide map from the [`TypeId`] of a key
+/// type, which names the function and its type parameters, to the value
+/// built for it; without `std`, rebuilt on each request, which costs time
+/// alone. Only a successful build is kept. The build runs outside the lock,
+/// since building a schedule asks for the other side's sizes, so callers
+/// racing on a first request may each build; every one returns the value
+/// kept first.
+///
+/// [`TypeId`]: core::any::TypeId
+#[cfg(feature = "std")]
+fn memo<Key: 'static, T: Clone + Send + Sync + 'static>(
+    build: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    use core::any::{Any, TypeId};
+    use std::{
+        boxed::Box,
+        collections::BTreeMap,
+        sync::{Mutex, OnceLock, PoisonError},
+    };
+    static MEMO: OnceLock<Mutex<BTreeMap<TypeId, Box<dyn Any + Send + Sync>>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let key = TypeId::of::<Key>();
+    let kept = memo
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&key)
+        .map(|value| {
+            value
+                .downcast_ref::<T>()
+                .expect("a key names one type")
+                .clone()
+        });
+    if let Some(value) = kept {
+        return Ok(value);
+    }
+    let value = build()?;
+    Ok(memo
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(key)
+        .or_insert_with(|| Box::new(value))
+        .downcast_ref::<T>()
+        .expect("a key names one type")
+        .clone())
+}
+
+#[cfg(not(feature = "std"))]
+#[allow(
+    clippy::extra_unused_type_parameters,
+    reason = "the key names the kept value, which only the std build keeps"
+)]
+fn memo<Key: 'static, T>(build: impl FnOnce() -> Result<T>) -> Result<T> {
+    build()
+}
+
+/// The key of side `S`'s schedule for proofs at rank `K` in chunk circuits
+/// at rank `R`, the full one or its sizes alone by `Which`.
+struct Memo<Which, C, S, K, R, const HEADER_SIZE: usize>(PhantomData<fn() -> (Which, C, S, K, R)>);
+
+/// The full schedule, as [`Side::schedule`] builds it.
+struct Full;
+
+/// The sizes, as [`Side::sizes`] fixes them.
+struct Sized;
+
+/// Side `S`'s schedule for proofs at rank `K` in chunk circuits at rank
+/// `R`, built once ([`memo`]): what the hooks register every chunk
+/// circuit of the side over and the prover runs the chunks by.
+///
+/// # Errors
+///
+/// As [`Side::schedule`].
+pub(crate) fn schedule<C, S, K, R, const HEADER_SIZE: usize>() -> Result<Arc<Schedule>>
+where
+    C: Cycle,
+    S: Side<C>,
+    K: Rank,
+    R: Rank,
+{
+    memo::<Memo<Full, C, S, K, R, HEADER_SIZE>, _>(|| {
+        S::schedule::<K, R, HEADER_SIZE>().map(Arc::new)
+    })
+}
+
+/// The sizes side `S`'s schedule fixes, built once ([`memo`]): what the
+/// stages' lengths read each time a chunk circuit is synthesized.
+///
+/// # Panics
+///
+/// Panics if the side's schedule for its sizes fails, which a schedule of
+/// the proof system's constants does not.
+pub(crate) fn sizes<C, S, K, R, const HEADER_SIZE: usize>() -> Sizes
+where
+    C: Cycle,
+    S: Side<C>,
+    K: Rank,
+    R: Rank,
+{
+    memo::<Memo<Sized, C, S, K, R, HEADER_SIZE>, _>(|| {
+        let schedule = S::sizes::<K, R, HEADER_SIZE>()?;
+        Ok(Sizes {
+            work_points: schedule.points,
+            work_elements: schedule.elements,
+            states: schedule.states,
+        })
+    })
+    .expect("the schedule is a function of the proof system's constants")
 }
 
 /// The number of chunks of each side for a proof at rank `K` in chunk

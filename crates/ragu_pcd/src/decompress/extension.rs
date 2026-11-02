@@ -268,7 +268,7 @@ where
     K: Rank,
     R: Rank,
 {
-    let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
+    let schedule = super::program::schedule::<C, S, K, R, HEADER_SIZE>()?;
     let circuits = schedule.circuits.len();
     let kind = |index: usize| last(&schedule, index);
     let transcript = (0..circuits)
@@ -372,7 +372,7 @@ where
             "the schedule's circuits are not the declared ones".into(),
         ));
     }
-    Ok(Arc::new(S::schedule::<K, R, HEADER_SIZE>()?))
+    super::program::schedule::<C, S, K, R, HEADER_SIZE>()
 }
 
 /// Registers chunk circuit `circuit` of side `S` into `slot`, by the kind

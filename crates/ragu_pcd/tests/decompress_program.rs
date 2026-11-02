@@ -8,8 +8,10 @@ use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
 use ragu_core::{Cycle, PoseidonPermutation, pasta::Pasta};
 
 use super::{
-    Chunk, ElementSrc, Last, Limits, Op, PointSrc, Schedule, Step, native_schedule, nested_schedule,
+    Chunk, ElementSrc, Last, Limits, Native, Nested, Op, PointSrc, Schedule, Step, native_schedule,
+    native_sizes, nested_schedule, nested_sizes, schedule, sizes,
 };
+use crate::decompress::stages::Sizes;
 
 const HEADER_SIZE: usize = 4;
 /// The sponge state's width.
@@ -379,4 +381,42 @@ fn circuits_pack_the_chunks<R: Rank>() {
 #[test]
 fn aggregator_rank_circuits_pack_the_chunks() {
     circuits_pack_the_chunks::<AggregatorRank>();
+}
+
+/// Each side's schedule is built once and kept under `std`: the hooks and
+/// the prover share one, equal to a fresh build, and the sizes the stages'
+/// lengths read are a fresh sizes build's. Without `std` each request
+/// rebuilds, so only the equalities hold.
+#[test]
+fn schedules_are_built_once() {
+    type K = ProductionRank;
+    type R = AggregatorRank;
+    let native = schedule::<Pasta, Native, K, R, HEADER_SIZE>().unwrap();
+    let again = schedule::<Pasta, Native, K, R, HEADER_SIZE>().unwrap();
+    #[cfg(feature = "std")]
+    assert!(alloc::sync::Arc::ptr_eq(&native, &again), "built once");
+    #[cfg(not(feature = "std"))]
+    assert_eq!(native, again);
+    assert_eq!(
+        *native,
+        native_schedule::<Pasta, K, R, HEADER_SIZE>().unwrap()
+    );
+    let nested = schedule::<Pasta, Nested, K, R, HEADER_SIZE>().unwrap();
+    assert_eq!(
+        *nested,
+        nested_schedule::<Pasta, K, R, HEADER_SIZE>().unwrap()
+    );
+    let fresh = |schedule: Schedule| Sizes {
+        work_points: schedule.points,
+        work_elements: schedule.elements,
+        states: schedule.states,
+    };
+    assert_eq!(
+        sizes::<Pasta, Native, K, R, HEADER_SIZE>(),
+        fresh(native_sizes::<Pasta, K, R, HEADER_SIZE>().unwrap())
+    );
+    assert_eq!(
+        sizes::<Pasta, Nested, K, R, HEADER_SIZE>(),
+        fresh(nested_sizes::<Pasta, K, R, HEADER_SIZE>().unwrap())
+    );
 }

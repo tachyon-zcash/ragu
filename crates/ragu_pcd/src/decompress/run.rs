@@ -844,7 +844,7 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         witness: &Witness<C>,
     ) -> Result<Self> {
         let instance = &witness.proof.instance;
-        let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
+        let schedule = (*super::program::schedule::<C, S, K, R, HEADER_SIZE>()?).clone();
         // The schedule reads the ab bridge's layout off the stage's wires and
         // the witness off the stage polynomial; they name the same generators.
         let mut layout = schedule.ab_terms.clone();

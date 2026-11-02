@@ -786,6 +786,7 @@ where
 /// application circuit, so computed for a placeholder, and from the
 /// schedule built for its sizes alone ([`Side::sizes`]), which the digits
 /// stage's layout needs before the other side's schedule exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Sizes {
     pub work_points: usize,
     pub work_elements: usize,
@@ -793,14 +794,9 @@ pub(crate) struct Sizes {
 }
 
 impl Sizes {
+    /// Side `S`'s, built once ([`program::sizes`](super::program::sizes)).
     pub(crate) fn of<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Self {
-        let schedule = S::sizes::<K, R, HEADER_SIZE>()
-            .expect("the schedule is a function of the proof system's constants");
-        Sizes {
-            work_points: schedule.points,
-            work_elements: schedule.elements,
-            states: schedule.states,
-        }
+        super::program::sizes::<C, S, K, R, HEADER_SIZE>()
     }
 
     /// The work stage's shape.
