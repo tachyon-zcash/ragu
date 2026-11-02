@@ -370,10 +370,16 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D
         [left, right].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, Self::Rx)> {
         [
-            &self.left.current_registry_xy_at_child_circuit_id,
-            &self.right.current_registry_xy_at_child_circuit_id,
+            (
+                &self.left.current_registry_xy_at_child_circuit_id,
+                self.left.rx.get(RxIndex::Application),
+            ),
+            (
+                &self.right.current_registry_xy_at_child_circuit_id,
+                self.right.rx.get(RxIndex::Application),
+            ),
         ]
         .into_iter()
     }

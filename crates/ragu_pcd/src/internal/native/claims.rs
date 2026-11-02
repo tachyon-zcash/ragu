@@ -170,7 +170,7 @@ where
     }
 
     // App circuits (interleaved per proof)
-    for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
+    for (app_id, rx) in source.applications() {
         processor.circuit_claim(app_id, rx);
     }
 

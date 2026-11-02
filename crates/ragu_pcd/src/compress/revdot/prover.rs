@@ -128,8 +128,11 @@ impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {
         once(&self.0[component])
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        once(self.0.circuit_id())
+    fn applications(&self) -> impl Iterator<Item = (CircuitIndex, Self::Rx)> {
+        once((
+            self.0.circuit_id(),
+            &self.0[native::RxComponent::Rx(native::RxIndex::Application)],
+        ))
     }
 }
 
@@ -145,7 +148,7 @@ impl<'a, C: Cycle, R: Rank> Source for NestedPolys<'a, C, R> {
         once(&self.0[component])
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn applications(&self) -> impl Iterator<Item = ((), Self::Rx)> {
         empty()
     }
 }

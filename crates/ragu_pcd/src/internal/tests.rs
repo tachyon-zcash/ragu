@@ -293,8 +293,8 @@ fn claimed_stages_lie_on_each_circuits_chain() {
             once(component)
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = ()> {
-            once(())
+        fn applications(&self) -> impl Iterator<Item = ((), RxComponent)> {
+            once(((), RxComponent::Rx(native::RxIndex::Application)))
         }
     }
 
@@ -1090,8 +1090,10 @@ fn test_extension_claims_follow_the_declaration() {
             [(0, component), (1, component)].into_iter()
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-            [CircuitIndex::new(0), CircuitIndex::new(1)].into_iter()
+        fn applications(&self) -> impl Iterator<Item = (CircuitIndex, Self::Rx)> {
+            self.rx(RxComponent::Rx(native::RxIndex::Application))
+                .zip([CircuitIndex::new(0), CircuitIndex::new(1)])
+                .map(|(rx, id)| (id, rx))
         }
     }
 
