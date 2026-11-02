@@ -47,6 +47,7 @@ use ragu_pcd::{
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2};
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 /// Which header a fixture's proof carries, so it can be verified again after
 /// corruption.
@@ -250,8 +251,9 @@ fn vocabulary() -> Vec<Corruption<C>> {
     }
 
     // The step's own online polynomials, their commitments and every
-    // opening's point and value; one of each past the end, for the no-op.
-    for index in 0..=HEADER_POLYNOMIALS {
+    // opening's point and value. The out-of-range ones are in
+    // `no_op_edits`.
+    for index in 0..HEADER_POLYNOMIALS {
         for coeff in coeffs {
             out.push(Corruption::OnlineCoeff {
                 index,
@@ -261,7 +263,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
         }
         out.push(Corruption::NegateOnlineCommitment(index));
     }
-    for slot in 0..=NUM_ONLINE_QUERIES {
+    for slot in 0..NUM_ONLINE_QUERIES {
         for value in [false, true] {
             out.push(Corruption::OnlineQuery { slot, value, delta });
         }
@@ -387,8 +389,8 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
     );
 }
 
-/// The edits that make no change: zero deltas and out-of-range coefficient
-/// indices.
+/// The edits that make no change: zero deltas, out-of-range coefficient
+/// indices, and online polynomials, commitments and openings past the end.
 fn no_op_edits() -> Vec<Corruption<C>> {
     let mut out = Vec::new();
     for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
@@ -401,6 +403,30 @@ fn no_op_edits() -> Vec<Corruption<C>> {
             index: NestedRx::BridgeEval,
             coeff,
             delta: Fq::from(delta),
+        });
+        out.push(Corruption::OnlineCoeff {
+            index: 0,
+            coeff,
+            delta: Fp::from(delta),
+        });
+    }
+    let delta = Fp::from(7u64);
+    out.push(Corruption::OnlineCoeff {
+        index: HEADER_POLYNOMIALS,
+        coeff: 0,
+        delta,
+    });
+    out.push(Corruption::NegateOnlineCommitment(HEADER_POLYNOMIALS));
+    for value in [false, true] {
+        out.push(Corruption::OnlineQuery {
+            slot: 0,
+            value,
+            delta: Fp::ZERO,
+        });
+        out.push(Corruption::OnlineQuery {
+            slot: NUM_ONLINE_QUERIES,
+            value,
+            delta,
         });
     }
     out
