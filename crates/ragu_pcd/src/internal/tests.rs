@@ -1529,3 +1529,142 @@ fn test_fold_groups_follow_the_profile() {
     assert!(capacity::<nested::RevdotParameters<Wider>>() >= nested::num_claims::<Wider>());
     assert!(nested::NumFoldGroups::<Wider>::len() > nested::NUM_FOLD_GROUPS);
 }
+
+/// The gates of every internal circuit whose size a hooked profile moves,
+/// for profile `P` at header size `HS`: each native and nested circuit, and
+/// the first endoscaling step of each walk, which every step but the last
+/// matches. A circuit that fails to synthesize prints the failure.
+fn print_capacity<P: crate::profile::Profile, const HS: usize>() {
+    use alloc::{format, string::String};
+    use std::println;
+
+    use ragu_core::pasta::EqAffine;
+    use ragu_primitives::vec::Len;
+
+    type C<P> = crate::profile::Profiled<Pasta, P>;
+    fn native_gates(circuit: impl Circuit<Fp>) -> String {
+        match ragu_circuits::testing::synthesis_counts(&circuit) {
+            Ok(counts) => format!("{}", counts.num_gates),
+            Err(error) => format!("failed: {error}"),
+        }
+    }
+    fn nested_gates(circuit: impl Circuit<Fq>) -> String {
+        match ragu_circuits::testing::synthesis_counts(&circuit) {
+            Ok(counts) => format!("{}", counts.num_gates),
+            Err(error) => format!("failed: {error}"),
+        }
+    }
+
+    let pasta = crate::pasta::baked();
+    let (_, log2_circuits) = native::total_circuit_counts::<P>(NUM_APP_STEPS);
+    println!("\n// {}, HEADER_SIZE = {HS}", core::any::type_name::<P>());
+    println!(
+        "native walk: {} points, {} steps; nested walk: {} points, {} steps",
+        native::NumPoints::<P>::len(),
+        native::NumSteps::<P>::len(),
+        nested::NumPoints::<P>::len(),
+        nested::NumSteps::<P>::len(),
+    );
+    println!(
+        "native claims: {}, fold groups: {}",
+        native::num_claims::<P>(),
+        native::NumFoldGroups::<P>::len()
+    );
+    let rows = [
+        (
+            "hashes_1",
+            native_gates(native::circuits::hashes_1::Circuit::<
+                C<P>,
+                R,
+                HS,
+                RevdotParameters<P>,
+            >::new(pasta, log2_circuits)),
+        ),
+        (
+            "hashes_2",
+            native_gates(native::circuits::hashes_2::Circuit::<
+                C<P>,
+                R,
+                HS,
+                RevdotParameters<P>,
+            >::new(pasta)),
+        ),
+        (
+            "collapse",
+            native_gates(native::circuits::collapse::Circuit::<
+                C<P>,
+                R,
+                HS,
+                RevdotParameters<P>,
+            >::new()),
+        ),
+        (
+            "compute_v",
+            native_gates(native::circuits::compute_v::Circuit::<C<P>, R, HS>::new()),
+        ),
+        (
+            "bind_beta",
+            native_gates(native::circuits::bind_beta::Circuit::<C<P>, R, HS>::new(
+                pasta,
+            )),
+        ),
+        (
+            "bind_endoscalar",
+            native_gates(native::circuits::bind_endoscalar::Circuit::<C<P>, R>::new()),
+        ),
+        (
+            "native endoscaling step 0",
+            native_gates(native::circuits::endoscaling_step::Circuit::<C<P>, R>::new(
+                0,
+            )),
+        ),
+        (
+            "nested endoscaling step 0",
+            nested_gates(MultiStage::new(
+                nested::EndoscalingStep::<EqAffine, R, P>::new(0),
+            )),
+        ),
+        (
+            "nested collapse",
+            nested_gates(MultiStage::new(nested::circuits::collapse::Circuit::<
+                EqAffine,
+                R,
+                P,
+            >::new())),
+        ),
+        (
+            "nested compute_v",
+            nested_gates(MultiStage::new(nested::circuits::compute_v::Circuit::<
+                EqAffine,
+                R,
+                P,
+            >::new())),
+        ),
+        (
+            "nested loading",
+            nested_gates(MultiStage::new(nested::circuits::loading::Circuit::<
+                EqAffine,
+                R,
+                P,
+            >::new())),
+        ),
+    ];
+    for (name, gates) in rows {
+        println!("{name:<28} {gates}");
+    }
+    for k in 0..native::NUM_BINDERS {
+        let gates = crate::with_binder!(k, C<P>, R, HS, pasta, |circuit| native_gates(circuit));
+        println!("{:<28} {gates}", format!("bind_challenges({k})"));
+    }
+}
+
+/// The capacity of Tachyon's busiest step's layout, six witnessed
+/// polynomials and eight poly-queries under an 11-element header, beside the
+/// standard profile and the smallest hooked one at the same header size.
+/// Run with: `cargo test -p ragu_pcd --release print_hooked_capacity -- --nocapture`
+#[test]
+fn print_hooked_capacity() {
+    print_capacity::<crate::profile::Standard, 11>();
+    print_capacity::<AppHooks<1, 2>, 11>();
+    print_capacity::<AppHooks<6, 8>, 11>();
+}
