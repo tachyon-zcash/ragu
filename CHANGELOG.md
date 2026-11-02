@@ -12,12 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
-- Online polynomial oracles: a `Header` may carry up to `HEADER_POLYNOMIALS`
-  polynomials (`Header::NUM_POLYNOMIALS`), a step commits its output header's
-  through `Step::polynomials` before its challenge is drawn, and
-  `Step::witness` opens any header's polynomials through `step::Oracles` at
-  the challenge or at any wire. Ragu proves the openings in the step's own
-  batch. `Pcd::polynomials` reads a header's polynomials back.
+- Online polynomial oracles: every `Header` carries `HEADER_POLYNOMIALS`
+  polynomials, a parameter of the protocol rather than of the header type; a
+  step commits its output header's through `Step::polynomials` before its
+  challenge is drawn, the constant one by default, and `Step::witness` opens
+  any header's polynomials through `step::Oracles` at the challenge or at
+  any wire. Ragu proves the openings in the step's own batch. What a slot
+  means is the application's convention for the header, constrained by the
+  producing steps' circuits. `Pcd::polynomials` reads a header's
+  polynomials back.
 
 ### Changed
 

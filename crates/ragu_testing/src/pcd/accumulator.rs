@@ -16,7 +16,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
+    header::{HEADER_POLYNOMIALS, Header, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_primitives::{
@@ -26,13 +26,12 @@ use ragu_primitives::{
 use udon::field::Field;
 
 /// The accumulator header: the number of accumulated elements as its data,
-/// and the accumulator polynomial $\prod_i (X - r_i)$ as its one
-/// polynomial.
+/// and the accumulator polynomial $\prod_i (X - r_i)$ in its first slot;
+/// its second slot holds the constant one.
 pub struct Accumulator;
 
 impl<F: Field> Header<F> for Accumulator {
     const SUFFIX: Suffix = Suffix::new(10);
-    const NUM_POLYNOMIALS: usize = 1;
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -93,8 +92,8 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
         roots: &Self::Witness<'source>,
         _: HeaderInput<'_, C::CircuitField, ()>,
         _: HeaderInput<'_, C::CircuitField, ()>,
-    ) -> Result<Vec<Vec<C::CircuitField>>> {
-        Ok(vec![vanishing(roots)])
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
+        Ok([vanishing(roots), vec![C::CircuitField::ONE]])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
@@ -163,8 +162,11 @@ impl<C: Cycle> Step<C> for ExtendAccumulator {
         root: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Accumulator>,
         _: HeaderInput<'_, C::CircuitField, ()>,
-    ) -> Result<Vec<Vec<C::CircuitField>>> {
-        Ok(vec![multiply_linear(&left.polynomials[0], *root)])
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
+        Ok([
+            multiply_linear(&left.polynomials[0], *root),
+            vec![C::CircuitField::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
@@ -221,8 +223,11 @@ impl<C: Cycle> Step<C> for MergeAccumulators {
         _: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Accumulator>,
         right: HeaderInput<'_, C::CircuitField, Accumulator>,
-    ) -> Result<Vec<Vec<C::CircuitField>>> {
-        Ok(vec![multiply(&left.polynomials[0], &right.polynomials[0])])
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
+        Ok([
+            multiply(&left.polynomials[0], &right.polynomials[0]),
+            vec![C::CircuitField::ONE],
+        ])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(

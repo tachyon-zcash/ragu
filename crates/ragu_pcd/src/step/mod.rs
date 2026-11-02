@@ -4,7 +4,7 @@ mod encoder;
 pub(crate) mod internal;
 pub mod oracles;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 pub use encoder::Encoded;
 pub use oracles::{Oracles, Slot};
@@ -15,7 +15,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::header::Header;
+use super::header::{HEADER_POLYNOMIALS, Header};
 use crate::{internal::native::InternalCircuitIndex, profile::Profile};
 
 #[derive(Copy, Clone)]
@@ -151,10 +151,10 @@ pub struct HeaderInput<'a, F: Field, H: Header<F>> {
     /// The header's data, as the step's [`witness`](Step::witness) phase
     /// also receives it.
     pub data: &'a H::Data,
-    /// The coefficients of each of the header's declared polynomials, in
-    /// ascending degree with trailing zeros stripped: one vector per
-    /// polynomial of [`NUM_POLYNOMIALS`](Header::NUM_POLYNOMIALS).
-    pub polynomials: &'a [Vec<F>],
+    /// The coefficients of each of the header's [`HEADER_POLYNOMIALS`]
+    /// polynomials, in ascending degree with trailing zeros stripped, as
+    /// the step that produced the input committed them.
+    pub polynomials: &'a [Vec<F>; HEADER_POLYNOMIALS],
 }
 
 /// Represents a node in the computational graph (or the proof-carrying data
@@ -194,11 +194,12 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
 
     /// The polynomials the output header carries, computed before the
     /// step's challenge is drawn: one coefficient vector, ascending in
-    /// degree, per polynomial of
-    /// [`Output::NUM_POLYNOMIALS`](Header::NUM_POLYNOMIALS), none by
-    /// default. Ragu commits them; the parent opens them as its left or
-    /// right slots, and this step's [`witness`](Self::witness) may open them
-    /// as its output slots.
+    /// degree, for each of the header's [`HEADER_POLYNOMIALS`] slots. Ragu
+    /// commits them; the parent opens them as its left or right slots, and
+    /// this step's [`witness`](Self::witness) may open them as its output
+    /// slots. The default puts the constant one in every slot, which is
+    /// what a step whose output needs fewer polynomials returns for the
+    /// slots it leaves unused.
     ///
     /// A polynomial may have at most as many coefficients as the
     /// application's rank holds, and must not be zero.
@@ -207,9 +208,9 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         witness: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Self::Left>,
         right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<Vec<Vec<C::CircuitField>>> {
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
         let _ = (witness, left, right);
-        Ok(Vec::new())
+        Ok(core::array::from_fn(|_| vec![C::CircuitField::ONE]))
     }
 
     /// Emits the constraints that check the validity of this merging step,

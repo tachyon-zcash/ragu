@@ -1,8 +1,8 @@
 //! The online polynomial oracles a step queries while its circuit is
 //! synthesized.
 //!
-//! A step's three headers carry up to [`HEADER_POLYNOMIALS`] polynomials
-//! each, committed before the step's challenge $\zeta$ is squeezed: the
+//! A step's three headers carry [`HEADER_POLYNOMIALS`] polynomials each,
+//! committed before the step's challenge $\zeta$ is squeezed: the
 //! children's in their proofs, the step's own by its
 //! [`polynomials`](super::Step::polynomials) phase. In the step's
 //! [`witness`](super::Step::witness) phase, [`Oracles`] stands for those six
@@ -14,9 +14,10 @@
 //! slot the step does not query is opened at $\zeta$ to its value there.
 //!
 //! The slots are the headers' polynomials in order `[L0, L1, R0, R1, O0,
-//! O1]`; a header that declares fewer than [`HEADER_POLYNOMIALS`]
-//! polynomials fills the rest with the constant one, which may be queried
-//! like any other slot and evaluates to one.
+//! O1]`. Every slot holds whatever polynomial the step that produced the
+//! header committed, the constant one where that step used fewer; what a
+//! slot means is the application's convention for the header, which the
+//! producing steps' circuits constrain, as they do the header's fields.
 
 use core::marker::PhantomData;
 

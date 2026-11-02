@@ -22,7 +22,6 @@ use udon::field::Field;
 
 use crate::{
     Application, Header, Proof,
-    header::HEADER_POLYNOMIALS,
     internal::{ky, online},
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -39,9 +38,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// # Errors
     ///
     /// Propagates the step's errors, and returns [`Error::InvalidWitness`]
-    /// if the step returns other than its output header's declared number
-    /// of polynomials, one with more coefficients than the rank holds, or
-    /// the zero polynomial, whose commitment the walk cannot take.
+    /// if the step returns a polynomial with more coefficients than the
+    /// rank holds, or the zero polynomial, whose commitment the walk cannot
+    /// take.
     pub(super) fn begin_application_proof<'source, S: Step<C>>(
         &self,
         step: &S,
@@ -58,8 +57,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right.1.clone(),
         )?);
 
-        let left_polys = online::coefficients(left.0.online_polys(), S::Left::NUM_POLYNOMIALS);
-        let right_polys = online::coefficients(right.0.online_polys(), S::Right::NUM_POLYNOMIALS);
+        let left_polys = online::coefficients(left.0.online_polys());
+        let right_polys = online::coefficients(right.0.online_polys());
         let polys = step.polynomials(
             witness,
             HeaderInput {
@@ -71,12 +70,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 polynomials: &right_polys,
             },
         )?;
-        if polys.len() != S::Output::NUM_POLYNOMIALS {
-            return Err(Error::InvalidWitness(
-                "a step must return exactly its output header's declared polynomials".into(),
-            ));
-        }
-        let mut own: Vec<_> = polys
+        let own: Vec<_> = polys
             .into_iter()
             .map(|coeffs| {
                 if coeffs.len() > R::num_coeffs() {
@@ -94,10 +88,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 ))
             })
             .collect::<Result<_>>()?;
-        own.resize_with(HEADER_POLYNOMIALS, online::padding);
-        builder.set_online_polys(own.try_into().map_err(|_| {
-            Error::InvalidWitness("the online polynomials do not fill the header's slots".into())
-        })?);
+        builder.set_online_polys(
+            own.try_into().unwrap_or_else(|_| {
+                unreachable!("the step returned HEADER_POLYNOMIALS polynomials")
+            }),
+        );
         Ok(())
     }
 

@@ -8,9 +8,9 @@
 //! carried by the cached proof.
 //!
 //! The output header's polynomials are copies of the left input's, which
-//! the circuit holds equal at $\zeta$ slot by slot, padding included so the
-//! circuit stays uniform: the parent sees only the output slots, so a copy
-//! alone would let a rerandomizing prover swap the polynomial.
+//! the circuit holds equal at $\zeta$ slot by slot: the parent sees only
+//! the output slots, so a copy alone would let a rerandomizing prover swap
+//! the polynomial.
 //!
 //! That witnessed suffix is the one input suffix outside the bootstrap step
 //! that a prover chooses, and so the one place a prover could try to
@@ -71,8 +71,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         _: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, H>,
         _: HeaderInput<'_, C::CircuitField, ()>,
-    ) -> Result<Vec<Vec<C::CircuitField>>> {
-        Ok(left.polynomials.to_vec())
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
+        Ok(left.polynomials.clone())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
@@ -102,9 +102,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         let right_encoded = Encoded::new(dr, allocator, right)?;
 
         // The output polynomials are the left input's: open both slots of
-        // each at zeta and hold them equal. Padding slots are opened too,
-        // so the circuit stays the same whatever the header declares; the
-        // right input's slots, the unit header's padding, go unqueried.
+        // each at zeta and hold them equal. The right input's slots, the
+        // unit header's, go unqueried.
         for i in 0..HEADER_POLYNOMIALS {
             let left = oracles.query_at_zeta(dr, Slot::left(i))?;
             let output = oracles.query_at_zeta(dr, Slot::output(i))?;
