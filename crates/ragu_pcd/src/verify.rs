@@ -776,8 +776,15 @@ mod native {
             .into_iter()
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-            core::iter::once(self.proof.circuit_id())
+        fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
+            use crate::internal::native::RxIndex;
+            core::iter::once((
+                self.proof.circuit_id(),
+                [
+                    &self.proof[RxComponent::Rx(RxIndex::Application)],
+                    &self.proof[RxComponent::Rx(RxIndex::ApplicationStage)],
+                ],
+            ))
         }
     }
 }
@@ -801,7 +808,7 @@ mod nested {
             core::iter::once(&self.proof[component])
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+        fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
             core::iter::empty()
         }
     }

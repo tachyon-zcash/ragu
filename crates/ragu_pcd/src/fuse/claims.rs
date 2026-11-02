@@ -29,7 +29,7 @@ use crate::{
     internal::{
         claims::{Builder, Source},
         fold_revdot::{self, Foldable},
-        native::{InternalCircuitIndex, RxComponent, claims::Processor},
+        native::{InternalCircuitIndex, RxComponent, RxIndex, claims::Processor},
         nested,
     },
     profile::Profile,
@@ -214,8 +214,11 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
         .into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-        [self.left.circuit_id(), self.right.circuit_id()].into_iter()
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
+        self.rx(RxComponent::Rx(RxIndex::Application))
+            .zip(self.rx(RxComponent::Rx(RxIndex::ApplicationStage)))
+            .zip([self.left.circuit_id(), self.right.circuit_id()])
+            .map(|((own, stage), id)| (id, [own, stage]))
     }
 }
 
@@ -287,7 +290,7 @@ impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {
         [&self.left[component], &self.right[component]].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
         core::iter::empty()
     }
 }

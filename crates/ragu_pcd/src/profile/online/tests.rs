@@ -578,8 +578,14 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
         fn rx(&self, component: Self::Rx) -> impl Iterator<Item = Self::Rx> {
             core::iter::once(component)
         }
-        fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-            core::iter::once(CircuitIndex::new(0))
+        fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [Self::Rx; 2])> {
+            core::iter::once((
+                CircuitIndex::new(0),
+                [
+                    native::RxComponent::Rx(native::RxIndex::Application),
+                    native::RxComponent::Rx(native::RxIndex::ApplicationStage),
+                ],
+            ))
         }
     }
     #[derive(Default)]
