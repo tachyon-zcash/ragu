@@ -327,6 +327,7 @@ where
             targets,
             restrictions,
             bindings: self.bindings(dr)?,
+            #[cfg(test)]
             sigma: self.lift(regions.lifts[squeezed::SIGMA]),
         })
     }
@@ -629,14 +630,8 @@ where
         } => {
             let width = Digits::<'dr, D>::width::<S::Other>();
             let point = ctx.point(dr, *point)?;
-            let digits = match *scalar {
-                ScalarRef::Bits(id) => Digits::alloc_range(dr, ctx.foreign(id), *lo..*hi)?,
-                ScalarRef::Element(src) => {
-                    assert_eq!((*lo, *hi), (0, width), "an element's digits are not cut");
-                    let element = ctx.element(dr, src)?;
-                    Digits::alloc_bound(dr, &element)?
-                }
-            };
+            let ScalarRef::Bits(id) = *scalar;
+            let digits = Digits::alloc_range(dr, ctx.foreign(id), *lo..*hi)?;
             let init = init.map(|slot| ctx.loaded.work.points[slot].clone());
             let offset = ctx.fixed(*offset);
             let scaled = NonzeroBank::scope(dr, |dr, bank| {
@@ -826,17 +821,6 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
     ) -> Result<Self> {
         let instance = &witness.proof.instance;
         let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
-        // The schedule reads the ab bridge's layout off the stage's wires and
-        // the witness off the stage polynomial; they name the same generators.
-        let mut layout = schedule.ab_terms.clone();
-        layout.sort_by_key(|term| term.0);
-        let mut actual = witness.ab_terms.clone();
-        actual.sort_by_key(|term| term.0);
-        if layout != actual {
-            return Err(Error::InvalidWitness(
-                "the ab bridge stage's coefficients are not at the wires the schedule names".into(),
-            ));
-        }
         let placeholder = S::generators(params)[0];
         let mut work = Values::blank(schedule.points, schedule.elements, placeholder);
         supply(

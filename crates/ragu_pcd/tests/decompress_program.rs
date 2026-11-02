@@ -4,11 +4,25 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
-use ragu_core::{Cycle, PoseidonPermutation, pasta::Pasta};
+use ragu_circuits::{
+    polynomials::{AggregatorRank, ProductionRank, Rank},
+    staging::StageExt,
+};
+use ragu_core::{
+    Cycle, FixedGenerators, PoseidonPermutation,
+    pasta::{Fq, Pasta},
+};
+use udon::{curve::Affine as _, field::Field};
 
 use super::{
-    Chunk, ElementSrc, Last, Limits, Op, PointSrc, Schedule, Step, native_schedule, nested_schedule,
+    Chunk, ElementSrc, Last, Limits, Op, PointSrc, Schedule, Step, ab_layout, native_schedule,
+    nested_schedule,
+};
+use crate::{
+    decompress::circuit::AbValue,
+    internal::nested::{self, stages::ab},
+    profile::Standard,
+    proof::bridge_alpha_power,
 };
 
 const HEADER_SIZE: usize = 4;
@@ -375,4 +389,46 @@ fn production_rank_circuits_pack_the_chunks() {
 #[test]
 fn aggregator_rank_circuits_pack_the_chunks() {
     circuits_pack_the_chunks::<AggregatorRank>();
+}
+
+/// The `ab` bridge's layout, read off the stage type, names the generator
+/// of every nonzero coefficient of the stage polynomial the native verifier
+/// recomputes, each holding the value the layout says: the witness takes
+/// the layout from the type alone.
+#[test]
+fn ab_layout_is_the_stage_polynomials() {
+    type K = ProductionRank;
+    type EqAffine = <Pasta as Cycle>::HostCurve;
+    let g = Pasta::host_generators(crate::pasta::baked()).g();
+    let witness = ab::Witness {
+        a: g[3],
+        b: g[4],
+        native_points_ab: g[5],
+    };
+    let alpha = bridge_alpha_power(Fq::from(7), nested::RxIndex::BridgeAB);
+    let stage = ab::Stage::<EqAffine, K, Standard>::rx(alpha, &witness).unwrap();
+    let coordinates = |point: EqAffine| -> [Fq; 2] {
+        let (x, y) = point
+            .coordinates()
+            .expect("a generator is not the identity");
+        [x, y]
+    };
+    let value = |which: AbValue| match which {
+        AbValue::A(i) => coordinates(witness.a)[i],
+        AbValue::B(i) => coordinates(witness.b)[i],
+        AbValue::PointsAb(i) => coordinates(witness.native_points_ab)[i],
+        AbValue::Alpha => alpha,
+    };
+    let mut expected: Vec<(usize, Fq)> = ab_layout::<Pasta, K>()
+        .unwrap()
+        .into_iter()
+        .map(|(index, which)| (index, value(which)))
+        .collect();
+    expected.sort_by_key(|&(index, _)| index);
+    let actual: Vec<(usize, Fq)> = stage
+        .iter_coeffs()
+        .enumerate()
+        .filter(|&(_, coefficient)| coefficient != Fq::ZERO)
+        .collect();
+    assert_eq!(actual, expected);
 }

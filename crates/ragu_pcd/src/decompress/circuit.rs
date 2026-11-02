@@ -24,6 +24,9 @@
 //! wires nothing yet checks, and each side's IPA takes its $G'$ as a
 //! witness point nothing yet binds; the module's *What remains* records
 //! both.
+//!
+//! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
+//! [`stages`]: super::stages
 
 use alloc::{vec, vec::Vec};
 use core::iter::once;
@@ -32,15 +35,23 @@ use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{CircuitIndex, Registry},
-    staging::StageExt,
 };
-use ragu_core::{Cycle, Error, FixedGenerators, Result, drivers::Driver};
-use ragu_primitives::{Element, Endoscalar, GadgetExt, NonzeroBank, Point};
+#[cfg(test)]
+use ragu_core::FixedGenerators;
+use ragu_core::{Cycle, Error, Result, drivers::Driver};
+use ragu_primitives::Element;
+#[cfg(test)]
+use ragu_primitives::{Endoscalar, GadgetExt, NonzeroBank, Point};
+#[cfg(test)]
+use udon::curve::Affine as _;
 use udon::{
-    curve::{Affine as _, EndomorphismAffine as Affine, Projective},
+    curve::{EndomorphismAffine as Affine, Projective},
     field::Field,
 };
 
+#[cfg(test)]
+use super::program::ab_layout;
+#[cfg(test)]
 use super::{
     batch, derive,
     derive::{Digits, Fixed},
@@ -53,31 +64,35 @@ use crate::{
     Application, CompressedPcd, CompressedProof, RAGU_TAG, SelectableBackend,
     compress::{
         Lifted, Messages, Sampled,
-        instance::Instance,
         revdot::{
-            OpeningClaim, Openings,
+            Openings,
             claims::{self, Kind},
-            fold::{Derived, Weights},
-            native_components, native_position, nested_components, nested_position,
+            fold::Weights,
+            native_position, nested_position,
         },
         transcript as compression_transcript,
     },
-    header::{Header, Suffix},
+    header::Header,
     internal::{
         ky,
-        native::{
-            self,
-            claims::KySource as NativeKySource,
-            stages::{eval::generator_index, preamble::ProofInputs},
-        },
-        nested::{
-            self, claims::KySource as NestedKySource, stages::challenges as challenge_stage,
-            unified as nested_unified,
-        },
-        transcript::Transcript,
+        native::claims::KySource as NativeKySource,
+        nested::{self, claims::KySource as NestedKySource},
     },
     ipa::{CycleTranscript, IpaCycle, IpaTranscript, MSM, Params},
     profile::{ProfiledCycle, Standard},
+};
+#[cfg(test)]
+use crate::{
+    compress::revdot::{OpeningClaim, fold::Derived, native_components, nested_components},
+    header::Suffix,
+    internal::{
+        native::{
+            self,
+            stages::{eval::generator_index, preamble::ProofInputs},
+        },
+        nested::{stages::challenges as challenge_stage, unified as nested_unified},
+        transcript::Transcript,
+    },
     proof::bridge_alpha_power,
 };
 
@@ -177,10 +192,10 @@ impl<F: Field> Squeezed<F> {
 
 /// What one curve's side of the verifier needs beyond the proof: the
 /// claims' kinds and public values, the IPA's witness points, and the
-/// challenges raw, for their endoscalars, and lifted, as the side uses
-/// them.
+/// challenges raw, for their endoscalars.
 #[derive(Clone)]
 pub(crate) struct SideWitness<P: Affine> {
+    #[cfg(test)]
     pub kinds: Vec<Kind>,
     /// Each named circuit's wiring restriction at the lifted $(r, y)$.
     pub restrictions: Vec<(CircuitIndex, P::Scalar)>,
@@ -193,9 +208,9 @@ pub(crate) struct SideWitness<P: Affine> {
     /// The IPA's witness points: each $u_j^{-1} L_j$, and $G'$.
     pub inverse_scaled: Vec<P>,
     pub g_prime: P,
+    #[cfg(test)]
     pub fixed: Fixed<P>,
     pub raw: Squeezed<P::Scalar>,
-    pub lifted: Squeezed<P::Scalar>,
     /// The batched claim's value and the IPA's $c b z$, the full-width
     /// scalars the other side scales by beside the proof's $c$.
     pub v: P::Scalar,
@@ -224,8 +239,11 @@ pub(crate) struct Witness<C: Cycle> {
     pub fuse: nested::Challenges<C::CircuitField>,
     pub native: SideWitness<C::HostCurve>,
     pub nested: SideWitness<C::NestedCurve>,
-    /// The `ab` bridge stage's nonzero coefficients: the generator each
-    /// lands on and the value it holds.
+    /// The `ab` bridge stage's nonzero coefficients, as [`ab_layout`] lays
+    /// the stage out: the generator each lands on and the value it holds.
+    /// The chunk circuits read the layout off the schedule; the whole-side
+    /// circuits the tests run read it here.
+    #[cfg(test)]
     pub ab_terms: Vec<(usize, AbValue)>,
 }
 
@@ -391,7 +409,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
             )?
         };
 
-        let ab_terms = ab_terms::<C, K>(instance)?;
+        #[cfg(test)]
+        let ab_terms = ab_layout::<C, K>()?;
 
         Ok(Witness {
             proof,
@@ -399,6 +418,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
             fuse,
             native,
             nested,
+            #[cfg(test)]
             ab_terms,
         })
     }
@@ -522,12 +542,14 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
         .collect::<Result<Vec<_>>>()?;
 
     Ok(SideWitness {
+        #[cfg(test)]
         kinds,
         restrictions,
         masked,
         restriction_at_w,
         inverse_scaled,
         g_prime,
+        #[cfg(test)]
         fixed: Fixed {
             g_0: params.g[0],
             u: params.u,
@@ -535,62 +557,12 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
         },
         raw: raw_squeezed,
         cbz: messages.opening.c * b * lifted_squeezed.ipa_z,
-        lifted: lifted_squeezed,
         v: claim.value,
     })
 }
 
-/// The `ab` bridge stage's nonzero coefficients, read off the stage
-/// polynomial the native verifier recomputes: its layout is the stage's,
-/// so the circuit learns it from the polynomial rather than restating it.
-fn ab_terms<C: ProfiledCycle<Profile = Standard>, K: Rank>(
-    instance: &Instance<C>,
-) -> Result<Vec<(usize, AbValue)>> {
-    let a = instance.native_commitment(native::RxComponent::AbA);
-    let b = instance.native_commitment(native::RxComponent::AbB);
-    let points_ab = instance.native_commitment(native::RxComponent::Rx(native::RxIndex::PointsAb));
-    let alpha = bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB);
-    let stage = nested::stages::ab::Stage::<C::HostCurve, K, Standard>::rx(
-        alpha,
-        &nested::stages::ab::Witness {
-            a,
-            b,
-            native_points_ab: points_ab,
-        },
-    )?;
-    let coordinates = |point: C::HostCurve| -> Result<[C::ScalarField; 2]> {
-        let (x, y) = point
-            .coordinates()
-            .ok_or_else(|| Error::InvalidWitness("a commitment is the identity".into()))?;
-        Ok([x, y])
-    };
-    let values = [
-        (AbValue::A(0), coordinates(a)?[0]),
-        (AbValue::A(1), coordinates(a)?[1]),
-        (AbValue::B(0), coordinates(b)?[0]),
-        (AbValue::B(1), coordinates(b)?[1]),
-        (AbValue::PointsAb(0), coordinates(points_ab)?[0]),
-        (AbValue::PointsAb(1), coordinates(points_ab)?[1]),
-        (AbValue::Alpha, alpha),
-    ];
-    let mut terms = Vec::new();
-    for (index, coefficient) in stage.iter_coeffs().enumerate() {
-        if coefficient == C::ScalarField::ZERO {
-            continue;
-        }
-        let (which, _) = values
-            .iter()
-            .find(|(_, value)| *value == coefficient)
-            .ok_or_else(|| {
-                Error::InvalidWitness("the ab bridge stage holds an unexpected coefficient".into())
-            })?;
-        terms.push((index, *which));
-    }
-    Ok(terms)
-}
-
 /// The native targets as elements, for
-/// [`ky_values`](native::claims::ky_values).
+/// [`ky_values`](crate::internal::native::claims::ky_values).
 pub(crate) struct NativeTargets<'dr, D: Driver<'dr>> {
     pub c: Element<'dr, D>,
     pub application: Element<'dr, D>,
@@ -672,6 +644,7 @@ impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
     }
 }
 
+#[cfg(test)]
 fn elements<'dr, D: Driver<'dr>>(
     dr: &mut D,
     values: impl IntoIterator<Item = D::F>,
@@ -682,10 +655,12 @@ fn elements<'dr, D: Driver<'dr>>(
         .collect()
 }
 
+#[cfg(test)]
 fn element<'dr, D: Driver<'dr>>(dr: &mut D, value: D::F) -> Result<Element<'dr, D>> {
     Element::alloc(dr, &mut (), D::just(|| value))
 }
 
+#[cfg(test)]
 fn points<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     values: impl IntoIterator<Item = P>,
@@ -696,6 +671,7 @@ fn points<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
         .collect()
 }
 
+#[cfg(test)]
 fn point<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     value: P,
@@ -705,12 +681,14 @@ fn point<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 
 /// The endoscalar of a raw challenge, allocated from its bits on the side
 /// that did not squeeze it.
+#[cfg(test)]
 fn endoscalar<'dr, D: Driver<'dr>, F: Field>(dr: &mut D, raw: F) -> Result<Endoscalar<'dr, D>> {
     let endo = ragu_primitives::extract_endoscalar(raw)?;
     Endoscalar::alloc(dr, D::just(|| endo))
 }
 
 /// A point's coordinates as elements.
+#[cfg(test)]
 fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     point: &Point<'dr, D, P>,
@@ -725,6 +703,7 @@ fn coordinates<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 
 /// The wire bindings as the revdot gadget takes them, from the side
 /// witness's masked lists.
+#[cfg(test)]
 fn bindings<'dr, D: Driver<'dr>>(
     dr: &mut D,
     masked: &[(usize, Vec<usize>, Vec<D::F>)],
@@ -742,6 +721,7 @@ fn bindings<'dr, D: Driver<'dr>>(
 
 /// Binds the elements at `positions` of `binding`'s expected values to
 /// `gadgets`: the values the instance supplies rather than the registry.
+#[cfg(test)]
 fn bind_expected<'dr, D: Driver<'dr>>(
     dr: &mut D,
     binding: &revdot::Binding<'dr, D>,
@@ -758,6 +738,7 @@ fn bind_expected<'dr, D: Driver<'dr>>(
 /// restriction at the compression's $w$, the batch polynomial at the
 /// fuse's $u$ and the accumulator's $a$ and $b$ there, with the values the
 /// side holds.
+#[cfg(test)]
 fn instance_claims<'dr, D: Driver<'dr>>(
     base: usize,
     w: &Element<'dr, D>,
@@ -783,6 +764,7 @@ fn instance_claims<'dr, D: Driver<'dr>>(
 /// What one side's scalar checks leave: the batched claim's value, the
 /// prover's $c$ and the IPA's $c b z$, the full-width scalars the other
 /// side scales by.
+#[cfg(test)]
 struct ScalarChecks<'dr, D: Driver<'dr>> {
     v: Element<'dr, D>,
     c: Element<'dr, D>,
@@ -791,6 +773,7 @@ struct ScalarChecks<'dr, D: Driver<'dr>> {
 
 /// One side's scalar checks: the reduction, the instance's openings, the
 /// batch and the IPA's scalars, over the challenges' lifts.
+#[cfg(test)]
 fn scalar_checks<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     public: &revdot::Public<'dr, D>,
@@ -854,6 +837,7 @@ fn scalar_checks<'dr, D: Driver<'dr>, K: Rank>(
 /// endoscalars, with `reduction` the fold's two error commitments and $p$
 /// and $q$, and `extra` the instance's four opened commitments.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn point_checks<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
     dr: &mut D,
     claims: Vec<derive::Claim<'dr, D, P>>,
@@ -881,6 +865,7 @@ fn point_checks<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 }
 
 /// The circuit-field side of the decompressed verifier.
+#[cfg(test)]
 pub(crate) fn circuit_field_side<'dr, D, C, K, const HEADER_SIZE: usize>(
     dr: &mut D,
     params: &'dr C::Params,
@@ -1028,6 +1013,17 @@ where
         bridge_at(BridgeQuery).enforce_equal(dr, &out.bridge_query_commitment)?;
         bridge_at(BridgeF).enforce_equal(dr, &out.bridge_f_commitment)?;
         bridge_at(BridgeEval).enforce_equal(dr, &out.bridge_eval_commitment)?;
+        allocated
+            .nested_challenges_partial
+            .enforce_equal(dr, &out.nested_challenges_partial)?;
+        allocated
+            .nested_p
+            .enforce_equal(dr, &out.nested_p_commitment)?;
+        nested_at(nested::RxComponent::AbA).enforce_equal(dr, &out.nested_a_commitment)?;
+        nested_at(nested::RxComponent::AbB).enforce_equal(dr, &out.nested_b_commitment)?;
+        allocated
+            .nested_registry_xy
+            .enforce_equal(dr, &out.nested_registry_xy_commitment)?;
         fuse[0].raw.enforce_equal(dr, &out.w)?;
         fuse[1].raw.enforce_equal(dr, &out.y)?;
         fuse[2].raw.enforce_equal(dr, &out.z)?;
@@ -1360,6 +1356,7 @@ where
 }
 
 /// The scalar-field side of the decompressed verifier.
+#[cfg(test)]
 pub(crate) fn scalar_field_side<'dr, D, C, K>(dr: &mut D, witness: &Witness<C>) -> Result<()>
 where
     D: Driver<'dr, F = C::ScalarField>,

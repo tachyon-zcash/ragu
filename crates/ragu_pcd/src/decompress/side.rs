@@ -40,7 +40,6 @@ use super::{
 use crate::{
     CompressedProof,
     compress::{
-        Messages,
         instance::Instance,
         revdot::{native_components, native_position, nested_components, nested_position},
     },
@@ -78,6 +77,7 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// circuit (see [`CircuitSlot::register`](crate::profile::CircuitSlot::register)).
     type Output: GadgetKind<Self::F> + Write<Self::F>;
 
+    #[cfg(test)]
     const NAME: &'static str;
     /// The points the side's binding circuit exposes: its recomputations
     /// of the other side's stage commitments, in the order the profile's
@@ -120,8 +120,6 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q>;
     /// The witness of the reduction whose points the side checks.
     fn other(witness: &Witness<C>) -> &SideWitness<Self::P>;
-    /// The messages of the reduction whose points the side checks.
-    fn other_messages(proof: &CompressedProof<C>) -> &Messages<Self::P>;
     /// The other field's full-width scalars the side scales by, in the
     /// schedule's [`ScalarRef::Bits`](program::ScalarRef::Bits) order.
     fn foreign(witness: &Witness<C>, schedule: &Schedule) -> Result<Vec<Self::Other>>;
@@ -176,6 +174,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     type Extra = NativeExtra<C>;
     type Output = Kind![C::CircuitField; ()];
 
+    #[cfg(test)]
     const NAME: &'static str = "circuit-field";
     // The scalar-field side's instance, messages, lifts and digits stages.
     const EXPOSED: usize = 4;
@@ -283,10 +282,6 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
 
     fn other(witness: &Witness<C>) -> &SideWitness<Self::P> {
         &witness.nested
-    }
-
-    fn other_messages(proof: &CompressedProof<C>) -> &Messages<Self::P> {
-        &proof.nested
     }
 
     fn foreign(witness: &Witness<C>, schedule: &Schedule) -> Result<Vec<Self::Other>> {
@@ -454,6 +449,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     type Extra = NestedExtra<C>;
     type Output = Kind![C::ScalarField; ()];
 
+    #[cfg(test)]
     const NAME: &'static str = "scalar-field";
     // The circuit-field side's digits stage.
     const EXPOSED: usize = 1;
@@ -529,10 +525,6 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
 
     fn other(witness: &Witness<C>) -> &SideWitness<Self::P> {
         &witness.native
-    }
-
-    fn other_messages(proof: &CompressedProof<C>) -> &Messages<Self::P> {
-        &proof.native
     }
 
     fn foreign(witness: &Witness<C>, _: &Schedule) -> Result<Vec<Self::Other>> {

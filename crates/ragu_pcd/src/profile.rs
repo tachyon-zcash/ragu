@@ -1030,7 +1030,9 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     ///
     /// # Panics
     ///
-    /// Panics, in constant evaluation, for a header size without a pin.
+    /// Panics, in constant evaluation, for a header size without a pin,
+    /// so that an aggregator over an unpinned header size does not compile.
+    /// The internal tests' header size is pinned in the tests alone.
     pub const fn native_circuits(header_size: usize) -> Counts {
         match header_size {
             4 => Counts {
@@ -1038,6 +1040,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
                 transcript: 8,
                 digits: 1,
             },
+            #[cfg(test)]
             103 => Counts {
                 chunks: 56,
                 transcript: 13,
@@ -1063,7 +1066,9 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     pub const ENDOSCALINGS_PER_STEP: usize = 14;
 
     /// Checks that the hooks register at the aggregator rank for the
-    /// profile's header size.
+    /// profile's header size. The hooks are generic over the rank and the
+    /// header size the application declares, which [`Profile`] cannot tie
+    /// to the profile's own, so the check runs when the hooks do.
     fn accepts<R: Rank>(header_size: usize) -> Result<()> {
         if R::RANK != AggregatorRank::RANK {
             return Err(Error::Initialization(
