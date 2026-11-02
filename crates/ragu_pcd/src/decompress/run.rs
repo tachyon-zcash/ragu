@@ -8,7 +8,7 @@
 //! The chunk kinds are the same on both sides; what differs, the targets
 //! and their order, goes through the [`Side`].
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 
 use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
 use ragu_core::{
@@ -134,7 +134,7 @@ pub(crate) struct Aux<G> {
 /// transcript and digits stages filled, the auxiliary witnesses and the
 /// schedule.
 pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
-    pub schedule: Schedule,
+    pub schedule: Arc<Schedule>,
     pub instance: Values<S::F, S::P>,
     pub messages: Values<S::F, S::P>,
     pub lifts: Values<S::F, S::P>,
@@ -844,7 +844,7 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         witness: &Witness<C>,
     ) -> Result<Self> {
         let instance = &witness.proof.instance;
-        let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
+        let schedule = super::program::schedule::<C, S, K, R, HEADER_SIZE>()?;
         let placeholder = S::generators(params)[0];
         let mut work = Values::blank(schedule.points, schedule.elements, placeholder);
         supply(

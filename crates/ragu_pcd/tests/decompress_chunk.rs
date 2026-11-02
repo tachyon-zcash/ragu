@@ -747,7 +747,7 @@ fn measure_chunks<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     let mut failures = Vec::new();
     // The stages alone: a circuit of no chunks of each kind.
     let kinds = [Last::Work, Last::Transcript, Last::Digits];
-    let mut empty = prepared.schedule.clone();
+    let mut empty = Schedule::clone(&prepared.schedule);
     empty.circuits = kinds
         .iter()
         .map(|&last| CircuitPlan {
@@ -774,7 +774,7 @@ fn measure_chunks<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     }
     let load = |last: Last| loading[kinds.iter().position(|&k| k == last).unwrap()];
     // Every chunk alone.
-    let mut single = prepared.schedule.clone();
+    let mut single = Schedule::clone(&prepared.schedule);
     single.circuits = (0..prepared.schedule.chunks.len())
         .map(|i| CircuitPlan {
             chunks: alloc::vec![i],

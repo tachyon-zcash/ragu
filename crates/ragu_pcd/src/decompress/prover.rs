@@ -165,7 +165,7 @@ where
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
         let prepared = &self.sides(source).native;
-        let schedule = Arc::new(prepared.schedule.clone());
+        let schedule = prepared.schedule.clone();
         let params = self.wallet.params;
         let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
         for index in 0..schedule.circuits.len() {
@@ -223,7 +223,7 @@ where
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
         let prepared: &Prepared<C, Nested> = &self.sides(source).nested;
-        let schedule = Arc::new(prepared.schedule.clone());
+        let schedule = prepared.schedule.clone();
         let params = self.wallet.params;
         let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
         for index in 0..schedule.circuits.len() {
