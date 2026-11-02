@@ -3,14 +3,18 @@
 //! application circuit chooses.
 //!
 //! Each header carries [`HEADER_POLYNOMIALS`] polynomials beside its field
-//! data. A step's online slots are its headers' polynomials in the fixed
-//! order `[L0, L1, R0, R1, O0, O1]` (see [`Slot`]): the left and right slots
-//! are the children's output polynomials, which the children committed and
+//! data, a parameter of the protocol rather than of the header type. A
+//! step's online slots are its headers' polynomials in the fixed order
+//! `[L0, L1, R0, R1, O0, O1]` (see [`Slot`]): the left and right slots are
+//! the children's output polynomials, which the children committed and
 //! exported, and the output slots are the step's own, committed before $w$
-//! is squeezed and exported for the parent. Every slot holds a polynomial:
-//! a header that declares fewer than [`HEADER_POLYNOMIALS`] fills the rest
-//! with [`padding`], the constant one, whose commitment is a fixed
-//! generator and whose evaluation at any point is one.
+//! is squeezed and exported for the parent. Every slot holds a polynomial
+//! the producing step chose; a step that needs fewer puts [`padding`], the
+//! constant one, in the rest, whose commitment is a fixed generator and
+//! whose evaluation at any point is one. What a slot means is the
+//! application's convention for the header, constrained by the circuits of
+//! the steps that produce it, as the header's fields are; Ragu proves only
+//! that every opening is of the committed polynomial.
 //!
 //! The commitments live on the nested side, in the `preamble` bridge stage,
 //! and the nested walk folds them into $P$ with the rest of the native
@@ -132,23 +136,18 @@ impl Slot {
     }
 }
 
-/// The coefficients of the first `declared` of `polys`, ascending in degree
-/// with trailing zeros stripped: how a step's first phase reads a header's
-/// polynomials.
+/// The coefficients of `polys`, ascending in degree with trailing zeros
+/// stripped: how a step's first phase reads a header's polynomials.
 pub fn coefficients<F: Field, R: Rank>(
     polys: &[sparse::Polynomial<F, R>; HEADER_POLYNOMIALS],
-    declared: usize,
-) -> alloc::vec::Vec<alloc::vec::Vec<F>> {
-    polys[..declared]
-        .iter()
-        .map(|poly| {
-            let mut coeffs: alloc::vec::Vec<F> = poly.iter_coeffs().collect();
-            while coeffs.last() == Some(&F::ZERO) {
-                coeffs.pop();
-            }
-            coeffs
-        })
-        .collect()
+) -> [alloc::vec::Vec<F>; HEADER_POLYNOMIALS] {
+    core::array::from_fn(|i| {
+        let mut coeffs: alloc::vec::Vec<F> = polys[i].iter_coeffs().collect();
+        while coeffs.last() == Some(&F::ZERO) {
+            coeffs.pop();
+        }
+        coeffs
+    })
 }
 
 /// A step's online polynomials in slot order: the children's exported
@@ -173,9 +172,9 @@ pub fn commitments<C: Cycle, R: Rank>(
     core::array::from_fn(|slot| headers[slot / HEADER_POLYNOMIALS][slot % HEADER_POLYNOMIALS])
 }
 
-/// The polynomial of an unused slot: the constant one, whose commitment is
-/// a fixed generator (never the identity, which the walk cannot take) and
-/// whose evaluation at any point is one.
+/// The polynomial of a slot a step leaves unused: the constant one, whose
+/// commitment is a fixed generator (never the identity, which the walk
+/// cannot take) and whose evaluation at any point is one.
 pub fn padding<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(vec![F::ONE])
 }
@@ -263,15 +262,11 @@ mod tests {
             padding(),
         ];
         assert_eq!(
-            coefficients(&polys, 2),
-            alloc::vec![
+            coefficients(&polys),
+            [
                 alloc::vec![Fp::from(3), Fp::ZERO, Fp::from(5)],
                 alloc::vec![Fp::ONE]
             ]
-        );
-        assert_eq!(
-            coefficients(&polys, 0),
-            alloc::vec::Vec::<alloc::vec::Vec<Fp>>::new()
         );
     }
 

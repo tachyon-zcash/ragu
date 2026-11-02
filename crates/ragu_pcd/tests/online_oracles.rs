@@ -16,7 +16,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd,
-    header::Header,
+    header::{HEADER_POLYNOMIALS, Header},
     step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_primitives::{Element, GadgetExt, allocator::Standard};
@@ -50,13 +50,15 @@ fn roots(from: u64) -> Vec<Fp> {
 }
 
 /// `pcd` verifies under both verifiers and carries `expected`'s
-/// accumulator polynomial.
+/// accumulator polynomial in its first slot, or the constant one in both
+/// slots when it carries no accumulator.
 fn check<H: Header<Fp>>(app: &App, pcd: &Pcd<C, R, H>, expected: Option<&[Fp]>, seed: u64) {
     let mut rng = StdRng::seed_from_u64(seed);
     assert!(app.verify_differential(pcd, &mut rng).unwrap());
+    let one = vec![Fp::ONE];
     match expected {
-        Some(expected) => assert_eq!(pcd.polynomials(), vec![expected.to_vec()]),
-        None => assert!(pcd.polynomials().is_empty()),
+        Some(expected) => assert_eq!(pcd.polynomials(), [expected.to_vec(), one]),
+        None => assert_eq!(pcd.polynomials(), [one.clone(), one]),
     }
 }
 
@@ -132,7 +134,9 @@ fn app_unit(app: &App) -> Result<Pcd<C, R, ()>> {
     Ok(app.seed(&mut rng, UnitSeed, ())?.0)
 }
 
-/// A seed with no polynomials, registered after the accumulator steps.
+/// A seed with no polynomials, registered after the accumulator steps. Its
+/// circuit pins the convention for the unit header it consumes and
+/// produces: every slot holds the constant one, which it opens at zeta.
 struct UnitSeed;
 
 impl Step<C> for UnitSeed {
@@ -145,8 +149,8 @@ impl Step<C> for UnitSeed {
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -159,6 +163,10 @@ impl Step<C> for UnitSeed {
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )> {
+        for slot in Slot::all() {
+            let value = oracles.query_at_zeta(dr, slot)?;
+            value.enforce_equal(dr, &Element::one())?;
+        }
         Ok((
             (
                 Encoded::from_gadget(()),
@@ -176,8 +184,6 @@ impl Step<C> for UnitSeed {
 /// own so the failure is the step's.
 struct Faulty<const FAULT: u8>;
 
-/// Returns no polynomial although the header declares one.
-const MISSING: u8 = 0;
 /// Returns the zero polynomial, whose commitment the walk cannot take.
 const ZERO: u8 = 1;
 /// Returns the input polynomial unchanged while the circuit claims the
@@ -198,12 +204,12 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
         _: &Fp,
         left: HeaderInput<'_, Fp, Accumulator>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Vec<Fp>>> {
-        Ok(match FAULT {
-            MISSING => vec![],
-            ZERO => vec![vec![Fp::ZERO; 4]],
-            _ => vec![left.polynomials[0].clone()],
-        })
+    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+        let first = match FAULT {
+            ZERO => vec![Fp::ZERO; 4],
+            _ => left.polynomials[0].clone(),
+        };
+        Ok([first, vec![Fp::ONE]])
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -296,11 +302,10 @@ fn refused<H: Header<Fp>>(app: &App, attempt: Result<Pcd<C, R, H>>, what: &str) 
     }
 }
 
-/// A step whose first phase returns other than its header's declared
-/// polynomials, or a zero polynomial, cannot prove; and one whose committed
-/// polynomial is not the one its circuit claims yields a proof the
-/// verifiers reject, because the oracle answers for the committed
-/// polynomial and the circuit's relation then fails.
+/// A step whose first phase returns a zero polynomial cannot prove; and
+/// one whose committed polynomial is not the one its circuit claims yields
+/// a proof the verifiers reject, because the oracle answers for the
+/// committed polynomial and the circuit's relation then fails.
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn a_misstated_polynomial_cannot_prove() -> Result<()> {
@@ -314,10 +319,6 @@ fn a_misstated_polynomial_cannot_prove() -> Result<()> {
             .map(|(pcd, ())| pcd);
         (app, attempt)
     }
-    assert!(matches!(
-        attempt::<MISSING>().1,
-        Err(Error::InvalidWitness(_))
-    ));
     assert!(matches!(attempt::<ZERO>().1, Err(Error::InvalidWitness(_))));
     let (app, stale) = attempt::<STALE>();
     refused(&app, stale, "stale polynomial");

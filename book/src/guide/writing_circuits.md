@@ -107,13 +107,15 @@ This is where the circuit logic is implemented. The function:
 
 ### 4. The polynomials Function
 
-A header may carry up to two polynomials beside its field data, by setting
-`Header::NUM_POLYNOMIALS`. A step whose output header declares polynomials
-implements `polynomials`, which runs before the step's challenge is drawn and
-returns the output polynomials' coefficients, computed from the witness and
-from the inputs' data and polynomials. Ragu commits them, and they travel
-with the proof. The default returns none, which is right for headers without
-polynomials.
+Every header carries `HEADER_POLYNOMIALS` (two) polynomials beside its field
+data; the count is a parameter of the protocol, not of the header type. A
+step whose output header uses them implements `polynomials`, which runs
+before the step's challenge is drawn and returns the output polynomials'
+coefficients, one vector per slot, computed from the witness and from the
+inputs' data and polynomials. Ragu commits them, and they travel with the
+proof. The default puts the constant one in every slot, which is right for
+headers without polynomials; a step that uses one slot returns the constant
+one for the other.
 
 ## Two Types of Steps
 
@@ -181,9 +183,12 @@ let right_data = right.as_gadget();
 
 A step can relate the polynomials its headers carry without putting their
 coefficients in the circuit. Each of the three headers has two polynomial
-slots, `Slot::left(i)`, `Slot::right(i)` and `Slot::output(i)`; a header
-that declares fewer polynomials has the constant one in the rest. The
-`Oracles` argument of `witness` lets the circuit open each slot once:
+slots, `Slot::left(i)`, `Slot::right(i)` and `Slot::output(i)`, holding
+whatever the step that produced the header committed. What a slot means is
+your convention for that header, as the meaning of its fields is: the
+circuits of the steps that produce the header constrain it, and Ragu proves
+that every opening is of the committed polynomial. The `Oracles` argument
+of `witness` lets the circuit open each slot once:
 
 ```rust
 // A random point squeezed after every slot's polynomial was committed.
@@ -211,8 +216,8 @@ Headers define what data flows through the proof tree. Each header
 implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 (the native Rust value), an `Output` type (the circuit gadget
 representation), an `encode` function that converts `Data` into
-`Output` by allocating circuit elements, and optionally `NUM_POLYNOMIALS`,
-the polynomials it carries beside its data (see
+`Output` by allocating circuit elements. Every header also carries
+`HEADER_POLYNOMIALS` polynomials beside its data (see
 [Polynomial Oracles](#polynomial-oracles)).
 
 For a complete example with multiple header types, see

@@ -135,11 +135,10 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     /// The polynomials the header carries, one coefficient vector in
-    /// ascending degree per polynomial of
-    /// [`H::NUM_POLYNOMIALS`](Header::NUM_POLYNOMIALS), as the step that
-    /// produced this proof committed them.
-    pub fn polynomials(&self) -> Vec<Vec<C::CircuitField>> {
-        online::coefficients(self.proof.online_polys(), H::NUM_POLYNOMIALS)
+    /// ascending degree per slot, as the step that produced this proof
+    /// committed them.
+    pub fn polynomials(&self) -> [Vec<C::CircuitField>; HEADER_POLYNOMIALS] {
+        online::coefficients(self.proof.online_polys())
     }
 }
 

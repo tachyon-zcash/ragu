@@ -26,12 +26,25 @@ use udon::field::Field;
 /// [`Step`]: crate::step::Step
 pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 
-/// The polynomial commitments a [`Header`] carries beside its field data.
+/// The polynomial commitments every [`Header`] carries beside its field
+/// data.
 ///
-/// A step's six online slots are its three headers' polynomials, in the
-/// order left, right, output; a header declaring fewer fills the rest with
-/// the constant one. The slots are opened by the step's own batch, so every
-/// step pays for all of them whether its headers use them or not.
+/// This is a parameter of the protocol, not of a header type: every header
+/// carries exactly this many polynomials, every step commits this many for
+/// its output through [`Step::polynomials`](crate::step::Step::polynomials)
+/// and may open any of its three headers' through
+/// [`Oracles`](crate::step::Oracles). A step's six online slots are its
+/// headers' polynomials in the order left, right, output; they are opened
+/// by the step's own batch, so every step pays for all of them whether its
+/// headers use them or not.
+///
+/// What a slot holds is the application's convention for that header, as
+/// the meaning of its fields is: a step whose output needs fewer
+/// polynomials puts the constant one in the rest, and a step that relies on
+/// a slot's content relies on the circuits of the steps that produce the
+/// header, which are registered. Ragu proves only that every opening is of
+/// the polynomial the producing step committed; no header type can change
+/// how many a proof carries or which its slots are.
 pub const HEADER_POLYNOMIALS: usize = 2;
 
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
@@ -105,17 +118,6 @@ pub trait Header<F: Field>: Send + Sync + Any {
     /// headers. Application headers must use [`Suffix::new`]; only `()` may
     /// use a reserved internal suffix.
     const SUFFIX: Suffix;
-
-    /// The polynomials this header carries beside its data, at most
-    /// [`HEADER_POLYNOMIALS`]; none by default.
-    ///
-    /// A step whose output header declares `n` polynomials returns `n`
-    /// coefficient vectors from [`Step::polynomials`](crate::step::Step::polynomials);
-    /// Ragu commits them before the step's challenge and opens them, in this
-    /// step's circuit or the parent's, at points those circuits choose (see
-    /// [`Oracles`](crate::step::Oracles)). The slots a header leaves
-    /// undeclared hold the constant one.
-    const NUM_POLYNOMIALS: usize = 0;
 
     /// The witness input needed to encode a header.
     type Data: Send + Clone;
