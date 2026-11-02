@@ -10,9 +10,7 @@
 //! `baked-aggregator` feature adds separate larger tables, loaded only by
 //! `baked_aggregator()`. Enabling it does not enlarge or initialize the Standard
 //! parameters. The larger tables are sized for the aggregator rank, at which
-//! the aggregator profile proves, and compression needs them whatever
-//! the profile: it bridges a proof's values at their positions in the
-//! decompression's stages at that rank, past the end of the Standard tables.
+//! the aggregator profile proves.
 
 pub use ragu_core::pasta::{Pasta, PastaParams};
 
@@ -33,6 +31,19 @@ pub const AGGREGATOR_EP_K: usize = 15;
 /// Log2 of the optional Aggregator Vesta table's capacity.
 #[cfg(feature = "baked-aggregator")]
 pub const AGGREGATOR_EQ_K: usize = 15;
+
+/// The gates of a stage trace at the aggregator rank whose nested
+/// generators `baked()` carries past the Standard table: the compression's
+/// transcript commits each run of scalar-field values at the generators the
+/// run's stage lands them on in the proof's decompression, which lie past
+/// the Standard table's $2^{13}$, so the Standard parameters carry the
+/// generators of the first `STAGE_REACH` gates after the SYSTEM gate, far
+/// more than the runs take (see
+/// [`IpaCycle::nested_generator`](crate::ipa::IpaCycle::nested_generator)).
+/// It caps the runs: a profile whose runs take more gates cannot compress
+/// over `baked()`, and the stages tests hold the Standard runs under it.
+/// The build script's derivation carries its own copy.
+pub const STAGE_REACH: usize = 256;
 
 #[cfg(feature = "baked")]
 mod baked;

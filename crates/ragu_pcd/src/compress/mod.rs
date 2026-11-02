@@ -46,7 +46,15 @@
 //! transcript draws a nonzero degree-$d$ residual in one challenge
 //! vanishes with probability at most $d/2^{143}$, with $143$ the
 //! endoscalar's width. These fresh compression challenges are checked by
-//! the terminal verifier.
+//! the terminal verifier. What lies in the scalar field, the host curve's
+//! points and the nested curve's scalars, the transcript absorbs as one
+//! nested-curve commitment per run of them before a challenge, over the
+//! generators the run's stage takes in the proof's decompression at the
+//! aggregator rank (see [`CycleTranscript`]), so that each challenge is a
+//! function of every message before it, which a circuit over the circuit
+//! field absorbs as a witness point the proof's consumer holds to that
+//! stage. Every profile's runs are laid out so, whether or not the profile
+//! has a decompression.
 //!
 //! Like an uncompressed proof, a compressed proof is not hiding: the
 //! openings it carries are evaluations of the witness polynomials.
@@ -65,8 +73,9 @@ use self::{
 };
 use crate::{
     SelectableBackend,
+    decompress::stages::run_bases,
     header::Header,
-    ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
+    ipa::{CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript},
     profile::ProfiledCycle,
 };
 
@@ -209,31 +218,26 @@ impl<C: Affine, T: IpaTranscript<C>> IpaTranscript<C> for Lifted<T> {
     }
 }
 
-/// The compression's transcript for a proof at rank `R` with the statement
-/// absorbed: the instance, then the output header. Every host-curve point
-/// and scalar-field value it bridges lands at its position in the
-/// scalar-field side's stages of the proof's decompression
-/// ([`bridge_positions`](crate::decompress::stages::bridge_positions)), so
-/// that the decompression's circuit-field side can sum the bridges it
-/// absorbed into those stages' commitments.
+/// The compression's transcript for a proof at rank `K`, committing the
+/// scalar field's runs with the backend `B`, with the statement absorbed:
+/// the instance, then the output header.
 ///
 /// # Errors
 ///
-/// Fails if `params`' nested generators stop short of those positions,
-/// which the Standard tables do: compressing needs tables that reach the
-/// aggregator rank (see
-/// [`check_bridge_generators`](crate::decompress::stages::check_bridge_generators)).
-pub(crate) fn transcript<'params, C: ProfiledCycle, B: SelectableBackend, R: Rank>(
+/// Fails if `params` stops short of a run's generators, or if the
+/// instance holds an identity commitment.
+pub(crate) fn transcript<'params, C, B, K>(
     params: &'params C::Params,
     instance: &Instance<C>,
     output_header: &[C::CircuitField],
-) -> Result<CycleTranscript<'params, C, B>> {
-    crate::decompress::stages::check_bridge_generators::<C, C::Profile, R>(params)?;
-    let mut transcript = CycleTranscript::<C, B>::positioned(
-        params,
-        IPA_TAG,
-        crate::decompress::stages::bridge_positions::<C, C::Profile, R>()?,
-    )?;
+) -> Result<CycleTranscript<'params, C, B>>
+where
+    C: IpaCycle + ProfiledCycle,
+    B: SelectableBackend,
+    K: Rank,
+{
+    let mut transcript =
+        CycleTranscript::<C, B>::with_runs(params, IPA_TAG, run_bases::<C, K>(params)?)?;
     instance.absorb(&mut transcript)?;
     for &element in output_header {
         transcript.host().write_scalar(element)?;

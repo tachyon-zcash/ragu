@@ -104,3 +104,47 @@ fn baked_ipa_generators_are_pinned() {
         "53ae67b2466d46ac35933f2e2f8ada4e66b67b88bfba180473eaab3cfca7e3ae"
     );
 }
+
+/// The stage reach baked into the Standard parameters: the nested
+/// generators of the first `STAGE_REACH` gates of a stage trace at the
+/// aggregator rank, which the compression's runs land on past the Standard
+/// table, pinned in full and, under the Aggregator tables, the same points
+/// as the table's at those indices.
+#[test]
+fn stage_reach_is_pinned() {
+    use ragu_pcd::pasta::STAGE_REACH;
+
+    let params = ragu_pcd::pasta::baked();
+    let n = 1usize << 13;
+    let indices: Vec<usize> = (2 * n - 1 - STAGE_REACH..2 * n - 1)
+        .chain(4 * n - 1 - STAGE_REACH..4 * n - 1)
+        .collect();
+    let mut loaded = Vec::new();
+    for &index in &indices {
+        let point = Pasta::nested_generator(params, index).expect("within the stage reach");
+        let (x, y) = point.coordinates().expect("nonidentity generator");
+        loaded.extend_from_slice(x.to_bytes().as_ref());
+        loaded.extend_from_slice(y.to_bytes().as_ref());
+    }
+    assert_eq!(loaded.len(), 2 * STAGE_REACH * 64);
+    assert_eq!(Pasta::nested_generator(params, 2 * n - 1), None);
+    assert_eq!(Pasta::nested_generator(params, 4 * n - 1), None);
+    assert_eq!(
+        Pasta::nested_generator(params, 2 * n - 2 - STAGE_REACH),
+        None
+    );
+
+    let digest = blake2b_simd::Params::new().hash_length(32).hash(&loaded);
+    assert_eq!(
+        digest.to_hex().as_str(),
+        "8dfdb0d3662c659dac55b3cc6cc9e24fc5b6f64a65df83ac663bed7a0b40105c"
+    );
+
+    #[cfg(feature = "baked-aggregator")]
+    {
+        let table = Pasta::nested_generators(ragu_pcd::pasta::baked_aggregator()).g();
+        for &index in &indices {
+            assert_eq!(Pasta::nested_generator(params, index), Some(table[index]));
+        }
+    }
+}

@@ -63,6 +63,7 @@ fn rejects_tampering() {
             native: honest.native.clone(),
             nested: honest.nested.clone(),
             ab_terms: honest.ab_terms.clone(),
+            runs: honest.runs.clone(),
         };
         tamper(&mut tampered.proof);
         assert!(run(&tampered).is_err(), "a tampered proof fails a side");
@@ -75,6 +76,7 @@ fn rejects_tampering() {
         native: honest.native.clone(),
         nested: honest.nested.clone(),
         ab_terms: honest.ab_terms.clone(),
+        runs: honest.runs.clone(),
     };
     tampered.header[0] += Fp::ONE;
     assert!(run(&tampered).is_err(), "a tampered statement fails a side");

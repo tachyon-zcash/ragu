@@ -54,7 +54,7 @@ impl Setup {
             .expect("compress should not error")
             .into_parts()
             .0;
-        let mut fuse = Transcript::new(crate::pasta::baked(), RAGU_TAG).unwrap();
+        let mut fuse = Transcript::fuse(crate::pasta::baked(), RAGU_TAG).unwrap();
         let challenges = proof
             .instance
             .challenges(&mut fuse)
@@ -73,7 +73,7 @@ impl Setup {
     /// any challenge is sampled.
     pub fn absorbed(&self) -> Transcript {
         transcript::<Pasta, ReferenceBackend, TestR>(
-            crate::pasta::baked_aggregator(),
+            crate::pasta::baked(),
             &self.proof.instance,
             &self.header,
         )

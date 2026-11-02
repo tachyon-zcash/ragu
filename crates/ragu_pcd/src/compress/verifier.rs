@@ -33,7 +33,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// The registry and polynomial evaluations and the recomputed stage
     /// commitments go through the sealed [`SelectableBackend::Verifier`] of
     /// the selected backend, as in `verify_uncompressed`. This also applies to
-    /// transcript bridges, batch commitment combinations, and IPA MSMs.
+    /// batch commitment combinations and IPA MSMs.
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
@@ -69,7 +69,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         // The fuse's challenges, from the bridge commitments in the fuse's
         // schedule, with pre_beta in the endoscalar range; and the nested
         // stages the decider recomputes from public data.
-        let mut fuse_transcript = CycleTranscript::<C, Verifier<B>>::new(self.params, RAGU_TAG)?;
+        let mut fuse_transcript = CycleTranscript::<C>::fuse(self.params, RAGU_TAG)?;
         let Some(challenges) = proof_check!(instance.challenges(&mut fuse_transcript)) else {
             return Ok(false);
         };
@@ -84,7 +84,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         let mut transcript = proof_check!(transcript::<C, Verifier<B>, R>(
             self.params,
             instance,
-            &output_header,
+            &output_header
         ));
         let native_sampled = proof_check!(Sampled::squeeze(&mut Lifted(transcript.host())));
         let nested_sampled = proof_check!(Sampled::squeeze(&mut Lifted(transcript.nested())));

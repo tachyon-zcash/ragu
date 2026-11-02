@@ -33,7 +33,7 @@ use super::{
     derive::{self, Digits},
     ipa,
     program::{
-        APPLICATION, ChainChunk, ChallengeRef, Chunk, ElementSrc, Op, PointSrc, ScalarRef,
+        APPLICATION, Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, Op, PointSrc, ScalarRef,
         Schedule, Step, squeezed,
     },
     revdot,
@@ -172,7 +172,6 @@ where
         Ok(match src {
             PointSrc::Instance(i) => l.instance.points[i].clone(),
             PointSrc::Message(i) => l.messages.points[i].clone(),
-            PointSrc::Bridge(i) => l.transcript.points[i].clone(),
             PointSrc::Work(slot) => l.work.points[slot].clone(),
             PointSrc::Generator(i) => Point::constant(dr, self.generators[i])?,
             PointSrc::U => Point::constant(dr, self.u)?,
@@ -447,6 +446,40 @@ where
     }
 }
 
+/// The part of the other side's digits stage commitment over `digits`:
+/// each digit's generator, `bind` names them, added or subtracted by its
+/// bit, from the accumulator at `bind.init` or from nothing.
+fn bind_sum<'dr, D, C, S>(
+    dr: &mut D,
+    ctx: &Ctx<'_, '_, 'dr, D, C, S>,
+    digits: &Digits<'dr, D>,
+    bind: &Bind,
+) -> Result<Point<'dr, D, S::P>>
+where
+    D: Driver<'dr>,
+    C: Cycle,
+    S: Side<C, F = D::F>,
+{
+    assert_eq!(
+        bind.generators.len(),
+        digits.len(),
+        "one generator per digit"
+    );
+    let mut acc = bind.init.map(|slot| ctx.loaded.work.points[slot].clone());
+    NonzeroBank::scope(dr, |dr, bank| {
+        for (bit, &generator) in digits.bits().iter().zip(&bind.generators) {
+            let base = Point::constant(dr, ctx.generators[generator])?;
+            let negate = bit.not(dr);
+            let term = base.conditional_negate(dr, &negate)?;
+            acc = Some(match acc.take() {
+                None => term,
+                Some(acc) => acc.add_incomplete(dr, &term, bank)?,
+            });
+        }
+        acc.ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))
+    })
+}
+
 /// Runs one chunk of side `S`, returning what it writes.
 pub(crate) fn execute<'dr, D, C, S, K, const HEADER_SIZE: usize>(
     dr: &mut D,
@@ -644,28 +677,9 @@ where
             })?;
             writes.push(Write::Point(*out, scaled));
             // The same digits' part of the other side's digits stage
-            // commitment: each digit's generator, added or subtracted by
-            // its bit, over the digits scaled by.
+            // commitment, over the digits scaled by.
             if let Some(bind) = bind {
-                assert_eq!(
-                    bind.generators.len(),
-                    digits.len(),
-                    "one generator per digit"
-                );
-                let mut acc = bind.init.map(|slot| ctx.loaded.work.points[slot].clone());
-                let sum = NonzeroBank::scope(dr, |dr, bank| {
-                    for (bit, &generator) in digits.bits().iter().zip(&bind.generators) {
-                        let base = Point::constant(dr, ctx.generators[generator])?;
-                        let negate = bit.not(dr);
-                        let term = base.conditional_negate(dr, &negate)?;
-                        acc = Some(match acc.take() {
-                            None => term,
-                            Some(acc) => acc.add_incomplete(dr, &term, bank)?,
-                        });
-                    }
-                    acc.ok_or_else(|| Error::InvalidWitness("a scalar has a digit".into()))
-                })?;
-                writes.push(Write::Point(bind.out, sum));
+                writes.push(Write::Point(bind.out, bind_sum(dr, ctx, &digits, bind)?));
             }
         }
         Chunk::Sign { generator, out } => {
@@ -762,18 +776,28 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
 }
 
 /// Stores the prover-supplied slots of a side's work stage: the registry
-/// values, the restrictions and the IPA's witness points.
+/// values, the restrictions, the IPA's witness points and the transcript's
+/// run commitments, `runs`.
 fn supply<F: Field, P, Q>(
     schedule: &Schedule,
     circuit_id: CircuitIndex,
     own: &SideWitness<Q>,
     other: &SideWitness<P>,
+    runs: &[P],
     work: &mut Values<F, P>,
 ) where
     P: Affine,
     Q: Affine<Scalar = F>,
 {
     let regions = &schedule.regions;
+    assert_eq!(
+        regions.runs.len(),
+        runs.len(),
+        "one commitment per run the schedule absorbs"
+    );
+    for (slot, run) in regions.runs.iter().zip(runs) {
+        work.points[*slot] = *run;
+    }
     for (claim, slot) in schedule.claims.iter().zip(&regions.restrictions) {
         if let (Kind::Circuit(circuit) | Kind::Bonding(circuit), Some(slot)) = (claim.kind, slot) {
             let circuit = if circuit == APPLICATION {
@@ -828,11 +852,12 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             instance.circuit_id,
             S::own(witness),
             S::other(witness),
+            &S::runs(witness),
             &mut work,
         );
         let lifts = Values::blank(0, schedule.layout.lifts, placeholder);
         let digits = Values::blank(0, schedule.layout.digits, placeholder);
-        let mut transcript = S::transcript::<K>(params, instance, &witness.proof)?;
+        let mut transcript = S::transcript();
         transcript.elements = alloc::vec![S::F::ZERO; schedule.states];
         let mut challenge_bits = bits(&S::own(witness).raw.in_order())?;
         challenge_bits.extend(bits(&[witness.fuse.x, witness.fuse.y, witness.fuse.u])?);

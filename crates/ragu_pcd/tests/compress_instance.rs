@@ -46,7 +46,7 @@ fn setup() -> (
 
 /// The fuse's challenges, replayed on a transcript under the fuse's tag.
 fn replay(instance: &Instance<Pasta>) -> nested::Challenges<Fp> {
-    let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
+    let mut transcript = CycleTranscript::<Pasta>::fuse(crate::pasta::baked(), RAGU_TAG).unwrap();
     instance
         .challenges(&mut transcript)
         .unwrap()

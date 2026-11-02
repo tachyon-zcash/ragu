@@ -14,8 +14,11 @@
 //! fuse as witness data rather than as a child, so the two shapes never have
 //! to agree, and only the aggregator's proofs carry the extra polynomials.
 //! The aggregator's circuits verify proofs of the standard profile, so the
-//! aggregator depends on it; the standard profile knows nothing of the
-//! aggregator.
+//! aggregator depends on it. The standard profile knows nothing of the
+//! aggregator but where its compression commits the transcript's runs: at
+//! the generators the runs' stages take at the aggregator rank, which the
+//! Standard tables carry (`pasta::STAGE_REACH`), so the run layout is part
+//! of the standard profile's wire format (see `compress::runs`).
 //!
 //! A cycle names its profile through [`ProfiledCycle`], so every generic item
 //! in this crate reaches the shape through the cycle it already carries, and
@@ -80,7 +83,7 @@ pub use crate::decompress::{
 };
 use crate::{
     SelectableBackend,
-    decompress::extension,
+    decompress::{extension, stages::num_runs},
     header::{NUM_INTERNAL_SUFFIXES, Suffix},
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
@@ -995,9 +998,9 @@ impl Profile for Standard {
 /// ([`decompress`](crate::Application::decompress)) and outputs that
 /// proof's header. The extension's statement circuit exposes the header
 /// the chunks verified, and its claim's $k(y)$ holds a proof of the
-/// decompression step to it; each side's binding circuit exposes its
-/// recomputation of the other side's stages, and its claim's $k(y)$ holds
-/// the two sides to one compressed proof.
+/// decompression step to it; each side's binding circuit exposes the other
+/// side's stage commitments it absorbed or recomputed, and its claim's
+/// $k(y)$ holds the two sides to one compressed proof.
 ///
 /// The aggregator and its wallet application share one parameters
 /// instance: [`finalize_with`](crate::ApplicationBuilder::finalize_with)
@@ -1036,14 +1039,14 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     pub const fn native_circuits(header_size: usize) -> Counts {
         match header_size {
             4 => Counts {
-                chunks: 51,
-                transcript: 8,
+                chunks: 49,
+                transcript: 6,
                 digits: 1,
             },
             #[cfg(test)]
             103 => Counts {
-                chunks: 56,
-                transcript: 13,
+                chunks: 53,
+                transcript: 10,
                 digits: 1,
             },
             _ => panic!("the aggregator profile pins no circuit counts for this header size"),
@@ -1092,7 +1095,8 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // and the stages on the nested side.
     const NATIVE_EXTENSION: usize =
         Self::native_circuits(HEADER_SIZE).chunks + 2 + extension::NATIVE_STAGES;
-    const NESTED_EXTENSION: usize = Self::NESTED_CIRCUITS.chunks + 1 + extension::NESTED_STAGES;
+    const NESTED_EXTENSION: usize =
+        Self::NESTED_CIRCUITS.chunks + 1 + extension::nested_stages(num_runs::<ProductionRank>());
 
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
@@ -1158,11 +1162,14 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     }
 
     fn native_extension() -> Extension {
-        extension::native_layout(Self::native_circuits(HEADER_SIZE))
+        extension::native_layout(
+            Self::native_circuits(HEADER_SIZE),
+            num_runs::<ProductionRank>(),
+        )
     }
 
     fn nested_extension() -> Extension {
-        extension::nested_layout(Self::NESTED_CIRCUITS)
+        extension::nested_layout(Self::NESTED_CIRCUITS, num_runs::<ProductionRank>())
     }
 
     fn register_native_circuit<'params, Base, R: Rank, const H: usize>(
@@ -1360,6 +1367,10 @@ impl<C: IpaCycle, P: Profile> IpaCycle for Profiled<C, P> {
 
     fn nested_u(params: &Self::Params) -> &Self::NestedCurve {
         C::nested_u(params)
+    }
+
+    fn nested_generator(params: &Self::Params, index: usize) -> Option<Self::NestedCurve> {
+        C::nested_generator(params, index)
     }
 }
 
@@ -3025,17 +3036,19 @@ mod tests {
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
         let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
+        let nested_stages = extension::nested_stages(num_runs::<ProductionRank>());
+        assert_eq!(nested_stages, 27, "a stage per run, then four");
         assert_eq!(
             shape,
-            Shape::solve(51 + 2 + 6, 36 + 1 + 5, per_step, per_step)
+            Shape::solve(49 + 2 + 6, 36 + 1 + nested_stages, per_step, per_step)
         );
         assert_eq!(
             Shape::of::<Aggregator<103>>(),
-            Shape::solve(56 + 2 + 6, 36 + 1 + 5, per_step, per_step)
+            Shape::solve(53 + 2 + 6, 36 + 1 + nested_stages, per_step, per_step)
         );
         // The knob: at the production rank's four per step the walks are
         // far longer.
-        assert!(shape.polynomials() < Shape::solve(51 + 2 + 6, 36 + 1 + 5, 4, 4).polynomials());
+        assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 4, 4).polynomials());
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
         std::println!(
             "aggregator at header size 4: {shape:?}, {} polynomials",

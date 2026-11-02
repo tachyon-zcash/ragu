@@ -50,12 +50,18 @@ parameter bytes and identify their generator and encoding in the frozen code.
 A filename or Git commit ID does not replace a content digest.
 
 The `baked` feature and `pasta::baked()` retain Standard's original $2^{13}$
-vector generators per curve. The optional `baked-aggregator` feature adds
-separate $2^{15}$ tables loaded by `pasta::baked_aggregator()`. Enabling or
-loading those tables does not enlarge Standard's parameters. Compressing needs
-the larger tables whatever the profile, so a setup that compresses uses them. A
-setup that uses the larger parameters must hash and record that selected
-artifact and feature configuration in its own manifest. Existing frozen records
+vector generators per curve, and add a stage-reach artifact: the 512
+nested-curve generators of the first `pasta::STAGE_REACH` gates past them at
+the aggregator rank, at which Standard's compression commits each run of
+scalar-field values. A Standard setup that compresses or verifies compressed
+proofs must hash and record that artifact beside the $2^{13}$ tables; its
+digest is pinned in `crates/ragu_pcd/tests/pasta_parameters.rs`. Compressed
+proofs made before the runs were committed this way do not verify. The
+optional `baked-aggregator` feature adds separate $2^{15}$ tables loaded by
+`pasta::baked_aggregator()`, which hold the same points. Enabling or loading
+those tables does not enlarge Standard's parameters. A setup that uses the
+larger parameters must hash and record that selected artifact and feature
+configuration in its own manifest. Existing frozen records
 remain descriptions of their original artifacts; do not rewrite them for a new
 configuration.
 

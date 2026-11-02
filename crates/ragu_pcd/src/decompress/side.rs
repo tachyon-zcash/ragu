@@ -9,9 +9,11 @@
 //! verifier's arithmetic in its field, the scalar checks of the other
 //! curve's reduction and the point checks of its own curve's, so the two
 //! sides are mirror images up to how they obtain their inputs: the
-//! circuit-field side replays the transcripts and holds the other field's
-//! values through bridges, the scalar-field side takes its challenges from
-//! their bits and derives its targets from the nested unified instance.
+//! circuit-field side replays the transcripts, absorbing the other field's
+//! values as the commitments of their runs, which it holds to the
+//! scalar-field side's run stages; the scalar-field side takes its
+//! challenges from their bits and derives its targets from the nested
+//! unified instance.
 
 use alloc::vec::Vec;
 
@@ -33,8 +35,8 @@ use super::{
     program::{self, Schedule, squeezed},
     run::Ctx,
     stages::{
-        self, Bridger, Layout, Values, message_points_of, message_scalars, native_scalars,
-        nested_scalars,
+        self, Layout, StageShape, Values, message_points_of, message_scalars, native_scalars,
+        nested_front, nested_scalars, num_runs,
     },
 };
 use crate::{
@@ -79,10 +81,19 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
 
     #[cfg(test)]
     const NAME: &'static str;
-    /// The points the side's binding circuit exposes: its recomputations
-    /// of the other side's stage commitments, in the order the profile's
-    /// [`Binding`](crate::profile::Binding) names the stages.
-    const EXPOSED: usize;
+
+    /// The points the side's binding circuit exposes for a proof at rank
+    /// `K`: the other side's stage commitments it absorbed or recomputed,
+    /// in the order the profile's [`Binding`](crate::profile::Binding)
+    /// names the stages.
+    fn exposed<K: Rank>() -> usize;
+    /// The shapes of the side's front stages, in chain order (see
+    /// [`Front`](super::stages::Front)).
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape>;
+    /// The transcript's run commitments the side's work stage carries,
+    /// prover-supplied, in [`Regions::runs`](program::Regions::runs)
+    /// order: the circuit-field side's; none on the scalar-field side.
+    fn runs(witness: &Witness<C>) -> Vec<Self::P>;
 
     /// The fixed generators of `P`.
     fn generators(params: &C::Params) -> &[Self::P];
@@ -105,17 +116,14 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     ) -> Values<Self::F, Self::P>;
     /// The messages stage's values.
     fn messages(params: &C::Params, proof: &CompressedProof<C>) -> Values<Self::F, Self::P>;
-    /// The transcript stage's points, the bridges of a proof at rank `K`;
-    /// its elements, the sponge states, the prover's run fills.
-    ///
-    /// # Errors
-    ///
-    /// Fails if a bridged point is the identity.
-    fn transcript<K: Rank>(
-        params: &C::Params,
-        instance: &Instance<C>,
-        proof: &CompressedProof<C>,
-    ) -> Result<Values<Self::F, Self::P>>;
+    /// The transcript stage's values before the prover's run fills the
+    /// sponge states: none.
+    fn transcript() -> Values<Self::F, Self::P> {
+        Values {
+            points: Vec::new(),
+            elements: Vec::new(),
+        }
+    }
     /// The witness of the reduction the side checks in its field.
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q>;
     /// The witness of the reduction whose points the side checks.
@@ -176,8 +184,21 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
 
     #[cfg(test)]
     const NAME: &'static str = "circuit-field";
-    // The scalar-field side's instance, messages, lifts and digits stages.
-    const EXPOSED: usize = 4;
+
+    /// The scalar-field side's run stages, then its lifts and digits
+    /// stages.
+    fn exposed<K: Rank>() -> usize {
+        num_runs::<K>() + 2
+    }
+
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
+        let layout = <Self as Side<C>>::layout::<K, HEADER_SIZE>();
+        alloc::vec![layout.instance_shape(), layout.messages_shape()]
+    }
+
+    fn runs(witness: &Witness<C>) -> Vec<Self::P> {
+        witness.runs.clone()
+    }
 
     fn generators(params: &C::Params) -> &[Self::P] {
         C::nested_generators(params).g()
@@ -239,41 +260,6 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             points: message_points_of(&proof.nested),
             elements: message_scalars(&proof.native),
         }
-    }
-
-    fn transcript<K: Rank>(
-        params: &C::Params,
-        instance: &Instance<C>,
-        proof: &CompressedProof<C>,
-    ) -> Result<Values<Self::F, Self::P>> {
-        // The bridges as the compression forms them, each value at its
-        // position in the scalar-field side's stages: the host
-        // commitments and the scalar field's instance values in the
-        // instance stage, the host point messages and the scalar field's
-        // message values in the messages stage.
-        let mut bridger = Bridger::<C>::new::<Standard, K>(params)?;
-        let mut points: Vec<C::NestedCurve> = Vec::new();
-        for point in instance
-            .native
-            .iter()
-            .copied()
-            .chain([instance.native_registry_xy, instance.native_p])
-        {
-            points.push(bridger.point(point)?);
-        }
-        for value in Nested::instance(params, instance, &[]).elements {
-            points.push(bridger.scalar(value)?);
-        }
-        for point in message_points_of(&proof.native) {
-            points.push(bridger.point(point)?);
-        }
-        for value in message_scalars(&proof.nested) {
-            points.push(bridger.scalar(value)?);
-        }
-        Ok(Values {
-            points,
-            elements: Vec::new(),
-        })
     }
 
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q> {
@@ -451,8 +437,23 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
 
     #[cfg(test)]
     const NAME: &'static str = "scalar-field";
-    // The circuit-field side's digits stage.
-    const EXPOSED: usize = 1;
+
+    /// The circuit-field side's digits stage.
+    fn exposed<K: Rank>() -> usize {
+        1
+    }
+
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
+        let layout = <Self as Side<C>>::layout::<K, HEADER_SIZE>();
+        nested_front::<K>(&layout)
+            .iter()
+            .map(|source| source.shape())
+            .collect()
+    }
+
+    fn runs(_: &Witness<C>) -> Vec<Self::P> {
+        Vec::new()
+    }
 
     fn generators(params: &C::Params) -> &[Self::P] {
         C::host_generators(params).g()
@@ -506,17 +507,6 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
             points: message_points_of(&proof.native),
             elements: message_scalars(&proof.nested),
         }
-    }
-
-    fn transcript<K: Rank>(
-        _: &C::Params,
-        _: &Instance<C>,
-        _: &CompressedProof<C>,
-    ) -> Result<Values<Self::F, Self::P>> {
-        Ok(Values {
-            points: Vec::new(),
-            elements: Vec::new(),
-        })
     }
 
     fn own(witness: &Witness<C>) -> &SideWitness<Self::Q> {

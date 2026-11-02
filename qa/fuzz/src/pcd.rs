@@ -105,7 +105,7 @@ pub fn nontrivial_app(steps: usize) -> SyncApp {
     }
     SyncApp(
         builder
-            .finalize(ragu_pcd::pasta::baked_aggregator())
+            .finalize(ragu_pcd::pasta::baked())
             .expect("the nontrivial application must build"),
     )
 }

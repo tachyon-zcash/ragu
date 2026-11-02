@@ -9,6 +9,8 @@
 //! header; one relabelled on the way fails, and so does one whose two
 //! sides were prepared from different compressed proofs.
 
+use alloc::vec::Vec;
+
 use ragu_circuits::{
     polynomials::{AggregatorRank, ProductionRank, Rank},
     registry::RegistryBuilder,
@@ -29,6 +31,7 @@ use crate::{
     decompress::{
         prover::Decompressed,
         run::Sides,
+        stages::num_runs,
         support::{HEADER_SIZE, Setup, TestR},
     },
     header::{Dummy, Header, Suffix},
@@ -43,8 +46,9 @@ type P = Aggregator<HEADER_SIZE>;
 /// The pinned layouts are the schedules' at the aggregator rank, for the
 /// test header size and for the internal tests', and lay out as the
 /// module says: transcript chunks first and digits chunks last, over six
-/// native stages and five nested ones, with the statement and binding
-/// circuits after the chunks.
+/// native stages and, on the nested side, a stage per run, the trailing
+/// stage and the lifts, work and digits stages, with the statement and
+/// binding circuits after the chunks.
 #[test]
 fn pinned_layout_is_the_schedules() {
     assert_eq!(
@@ -102,9 +106,14 @@ fn pinned_layout_is_the_schedules() {
     assert_eq!(native.circuits[chunks], [0]);
     assert_eq!(native.circuits[chunks + 1], [0, 1, 2, 3]);
     assert_eq!(native.statement, Some(chunks as u32));
+    let runs = num_runs::<ProductionRank>() as u32;
     let binding = native.binding.as_ref().expect("the native side binds");
     assert_eq!(binding.circuit, chunks as u32 + 1);
-    assert_eq!(binding.stages, [0, 1, 2, 4]);
+    assert_eq!(
+        binding.stages,
+        (0..runs).chain([runs + 1, runs + 3]).collect::<Vec<_>>(),
+        "the run stages, then the lifts and digits stages"
+    );
     assert_eq!(native.final_masks.len(), 4);
     assert_eq!(
         native.final_masks[0].len(),
@@ -119,18 +128,20 @@ fn pinned_layout_is_the_schedules() {
     let counts = P::NESTED_CIRCUITS;
     let (chunks, digits) = (counts.chunks, counts.digits);
     assert_eq!(nested.circuits.len(), chunks + 1);
-    assert_eq!(nested.stages, 5);
+    assert_eq!(nested.stages as u32, runs + 4);
+    let common: Vec<u32> = (0..runs + 3).collect();
+    let with_digits: Vec<u32> = (0..runs + 4).collect();
     assert!(
         nested.circuits[..chunks - digits]
             .iter()
-            .all(|c| c == &[0, 1, 2, 3])
+            .all(|c| c == &common)
     );
     assert!(
         nested.circuits[chunks - digits..chunks]
             .iter()
-            .all(|c| c == &[0, 1, 2, 3, 4])
+            .all(|c| c == &with_digits)
     );
-    assert_eq!(nested.circuits[chunks], [0, 1, 2, 3]);
+    assert_eq!(nested.circuits[chunks], common);
     assert_eq!(nested.final_masks.len(), 2);
     assert_eq!(nested.final_masks[0].len(), chunks - digits + 1);
     assert_eq!(nested.final_masks[1].len(), digits);

@@ -15,15 +15,14 @@
 //!
 //! Between the sides pass the endoscalars of every challenge, the digits
 //! of the full-width scalars each side's IPA check needs the other to
-//! scale by, and the scalar field's values the circuit-field transcript
-//! absorbs through bridges. The chunk circuits make each a stage the
-//! other side recomputes (see [`stages`]); here, in the
-//! whole-side circuits the tests run, the [`Witness`] carries them and
+//! scale by, and the commitments of the runs of the scalar field's values
+//! the circuit-field transcript absorbs. The chunk circuits make each a
+//! stage the other side recomputes or absorbs (see [`stages`]); here, in
+//! the whole-side circuits the tests run, the [`Witness`] carries them and
 //! the two sides allocate them from it, with each side's own $v$ and
-//! $c b z$ held to the witness's. The registry's evaluations arrive as
-//! wires nothing yet checks, and each side's IPA takes its $G'$ as a
-//! witness point nothing yet binds; the module's *What remains* records
-//! both.
+//! $c b z$ held to the witness's. The registry's evaluations arrive as wires nothing yet
+//! checks, and each side's IPA takes its $G'$ as a witness point nothing
+//! yet binds; the module's *What remains* records both.
 //!
 //! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
 //! [`stages`]: super::stages
@@ -51,13 +50,12 @@ use udon::{
 
 #[cfg(test)]
 use super::program::ab_layout;
+use super::stages::num_runs;
 #[cfg(test)]
 use super::{
     batch, derive,
     derive::{Digits, Fixed},
-    ipa, revdot, stages,
-    stages::Bridger,
-    transcript,
+    ipa, revdot, transcript,
     transcript::{Absorb, Challenge, RawChallenge},
 };
 use crate::{
@@ -245,6 +243,10 @@ pub(crate) struct Witness<C: Cycle> {
     /// circuits the tests run read it here.
     #[cfg(test)]
     pub ab_terms: Vec<(usize, AbValue)>,
+    /// The transcript's run commitments, in [`Run`](super::stages::Run)
+    /// order: what the circuit-field side absorbs for the scalar field's
+    /// values and holds to the scalar-field side's run stages.
+    pub runs: Vec<C::NestedCurve>,
 }
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
@@ -267,7 +269,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
         let instance = &proof.instance;
         let header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
 
-        let mut fuse_transcript = CycleTranscript::<C, Verifier<B>>::new(app.params, RAGU_TAG)?;
+        let mut fuse_transcript = CycleTranscript::<C>::fuse(app.params, RAGU_TAG)?;
         let fuse = instance
             .challenges(&mut fuse_transcript)?
             .ok_or_else(|| Error::InvalidWitness("pre_beta is out of range".into()))?;
@@ -411,6 +413,12 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
 
         #[cfg(test)]
         let ab_terms = ab_layout::<C, K>()?;
+        let runs = lifted.runs().to_vec();
+        if runs.len() != num_runs::<K>() {
+            return Err(Error::InvalidWitness(
+                "the transcript absorbed other runs than the proof has".into(),
+            ));
+        }
 
         Ok(Witness {
             proof,
@@ -420,6 +428,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
             nested,
             #[cfg(test)]
             ab_terms,
+            runs,
         })
     }
 }
@@ -880,63 +889,20 @@ where
     let instance = &witness.proof.instance;
     let nested_generators = C::nested_generators(params);
 
-    // The instance, allocated as the transcript absorbs it: the scalar
-    // field's values through the bridges the native transcript forms,
-    // each at its position in the scalar-field side's stages, in
-    // absorption order.
-    let mut bridger = Bridger::<C>::new::<Standard, K>(params)?;
-    let mut native_bridges = Vec::with_capacity(instance.native.len());
-    for &commitment in &instance.native {
-        native_bridges.push(point(dr, bridger.point(commitment)?)?);
-    }
-    let native_registry_xy = point(dr, bridger.point(instance.native_registry_xy)?)?;
-    let native_p = point(dr, bridger.point(instance.native_p)?)?;
-    let [
-        bridge_alpha,
-        nested_c,
-        nested_v,
-        nested_left_x,
-        nested_left_y,
-        nested_right_x,
-        nested_right_y,
-        nested_a_at_u,
-        nested_b_at_u,
-    ] = {
-        let mut bridged = Vec::with_capacity(stages::NESTED_SCALARS);
-        for value in [
-            instance.bridge_alpha,
-            instance.nested_c,
-            instance.nested_v,
-            instance.nested_left.x,
-            instance.nested_left.y,
-            instance.nested_right.x,
-            instance.nested_right.y,
-            instance.nested_a_at_u,
-            instance.nested_b_at_u,
-        ] {
-            bridged.push(point(dr, bridger.scalar(value)?)?);
-        }
-        bridged
-            .try_into()
-            .map_err(|_| Error::InvalidWitness("nine bridged values".into()))?
-    };
+    // The instance, allocated as the transcript absorbs it: the circuit
+    // field's values as elements and the nested commitments as points. The
+    // scalar field's values are in the transcript's run commitments.
     let nested_points = points(dr, instance.nested.iter().copied())?;
     let allocated = transcript::Instance {
         circuit_id: element(dr, instance.circuit_id.omega_j())?,
         left_header: elements(dr, instance.left_header.iter().copied())?,
         right_header: elements(dr, instance.right_header.iter().copied())?,
-        native: native_bridges,
-        native_registry_xy,
-        native_p,
         nested: nested_points,
         nested_registry_xy: point(dr, instance.nested_registry_xy)?,
         nested_p: point(dr, instance.nested_p)?,
         nested_challenges_partial: point(dr, instance.nested_challenges_partial)?,
-        bridge_alpha,
         c: element(dr, instance.c)?,
         v: element(dr, instance.v)?,
-        nested_c,
-        nested_v,
         left: transcript::Child {
             x: element(dr, instance.left.x)?,
             y: element(dr, instance.left.y)?,
@@ -949,16 +915,6 @@ where
         },
         a_at_u: element(dr, instance.a_at_u)?,
         b_at_u: element(dr, instance.b_at_u)?,
-        nested_left: transcript::NestedChild {
-            x: nested_left_x,
-            y: nested_left_y,
-        },
-        nested_right: transcript::NestedChild {
-            x: nested_right_x,
-            y: nested_right_y,
-        },
-        nested_a_at_u,
-        nested_b_at_u,
     };
     let header = elements(dr, witness.header.iter().copied())?;
     let nested_at = |component| &allocated.nested[nested_position::<Standard>(component)];
@@ -1049,75 +1005,37 @@ where
     }
 
     // The compression's transcript over the statement and both curves'
-    // messages, the host curve's points and the scalar field's values
-    // bridged in the order the transcript absorbs them.
+    // messages: the host curve's scalars and the nested curve's points,
+    // the rest through the runs' commitments, witness points here.
     let native_messages = {
         let m = &witness.proof.native;
-        let inner = point(dr, bridger.point(m.reduction.fold.inner)?)?;
-        let outer = point(dr, bridger.point(m.reduction.fold.outer)?)?;
-        let p = point(dr, bridger.point(m.reduction.p)?)?;
-        let q = point(dr, bridger.point(m.reduction.q)?)?;
-        let f = point(dr, bridger.point(m.batch.f)?)?;
-        let s_commitment = point(dr, bridger.point(m.opening.s_commitment)?)?;
-        let mut rounds = Vec::with_capacity(m.opening.rounds.len());
-        for &(l, r) in &m.opening.rounds {
-            let l = point(dr, bridger.point(l)?)?;
-            let r = point(dr, bridger.point(r)?)?;
-            rounds.push((l, r));
-        }
-        transcript::Messages {
-            inner,
-            outer,
+        transcript::NativeMessages {
             inner_epsilon: element(dr, m.reduction.fold.inner_epsilon)?,
             outer_epsilon: element(dr, m.reduction.fold.outer_epsilon)?,
-            p,
-            q,
             openings: elements(dr, m.reduction.openings.iter().copied())?,
             p_at_inverse_r: element(dr, m.reduction.p_at_inverse_r)?,
             q_at_r: element(dr, m.reduction.q_at_r)?,
-            f,
             evaluations: elements(dr, m.batch.evaluations.iter().copied())?,
-            s_commitment,
-            rounds,
             c: element(dr, m.opening.c)?,
         }
     };
     let nested_messages = {
         let m = &witness.proof.nested;
-        let inner_epsilon = point(dr, bridger.scalar(m.reduction.fold.inner_epsilon)?)?;
-        let outer_epsilon = point(dr, bridger.scalar(m.reduction.fold.outer_epsilon)?)?;
-        let mut openings = Vec::with_capacity(m.reduction.openings.len());
-        for &opened in &m.reduction.openings {
-            openings.push(point(dr, bridger.scalar(opened)?)?);
-        }
-        let p_at_inverse_r = point(dr, bridger.scalar(m.reduction.p_at_inverse_r)?)?;
-        let q_at_r = point(dr, bridger.scalar(m.reduction.q_at_r)?)?;
-        let mut evaluations = Vec::with_capacity(m.batch.evaluations.len());
-        for &value in &m.batch.evaluations {
-            evaluations.push(point(dr, bridger.scalar(value)?)?);
-        }
-        let c = point(dr, bridger.scalar(m.opening.c)?)?;
         let mut rounds = Vec::with_capacity(m.opening.rounds.len());
         for &(l, r) in &m.opening.rounds {
             rounds.push((point(dr, l)?, point(dr, r)?));
         }
-        transcript::Messages {
+        transcript::NestedMessages {
             inner: point(dr, m.reduction.fold.inner)?,
             outer: point(dr, m.reduction.fold.outer)?,
-            inner_epsilon,
-            outer_epsilon,
             p: point(dr, m.reduction.p)?,
             q: point(dr, m.reduction.q)?,
-            openings,
-            p_at_inverse_r,
-            q_at_r,
             f: point(dr, m.batch.f)?,
-            evaluations,
             s_commitment: point(dr, m.opening.s_commitment)?,
             rounds,
-            c,
         }
     };
+    let runs = points(dr, witness.runs.iter().copied())?;
     let (native_challenges, nested_challenges) = transcript::replay(
         dr,
         poseidon,
@@ -1125,6 +1043,7 @@ where
         &header,
         &native_messages,
         &nested_messages,
+        &runs,
     )?;
 
     // The host curve's field checks.

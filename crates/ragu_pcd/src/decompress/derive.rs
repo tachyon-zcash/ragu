@@ -481,7 +481,7 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
     }
 
     /// The bits of $B = (k + 2^n - 1) / 2$ for the scalar $k$.
-    fn bits_of<S: Field>(scalar: S) -> Vec<bool> {
+    pub(crate) fn bits_of<S: Field>(scalar: S) -> Vec<bool> {
         let n = S::CAPACITY as usize + 1;
         let two = S::ONE.double();
         let b =

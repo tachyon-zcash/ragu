@@ -26,16 +26,18 @@
 //! the targets, the reduction, the batch and the IPA's scalars; the
 //! claims' points; the fold, batch and IPA chains as Horner steps; the
 //! full-width scalings; the recomputed stages; and the digits of the
-//! scalars the other side scales by. The two sides share everything from
-//! the targets on ([`body`]); they differ in how they obtain their
-//! challenges and in the stages each recomputes of the other's: the
-//! circuit-field side sums the bridges it absorbed into the scalar-field
-//! side's instance and messages stage commitments, endoscales the lifts
+//! scalars the other side scales by. The two sides share
+//! everything from the targets on ([`body`]); they differ in how they
+//! obtain their challenges and in the stages each recomputes of the
+//! other's: the circuit-field side absorbs each run of the scalar field's
+//! values the transcript covers as the run stage's commitment, a work
+//! point the prover supplies ([`Regions::runs`]), endoscales the lifts
 //! stage's generators by the challenges it squeezed, and, as it scales by
 //! the scalar-field side's digits, sums their generators by sign into the
 //! digits stage's commitment; the scalar-field side does the last for the
-//! circuit-field side's digits. Each side's recomputations end in work
-//! slots its binding circuit exposes ([`Regions::exposed`]).
+//! circuit-field side's digits. The absorbed run commitments and each
+//! side's recomputations of the lifts and digits stages end in work slots
+//! its binding circuit exposes ([`Regions::exposed`]).
 //!
 //! Each side's schedule names the generators of the other side's digits
 //! stage, which comes after that side's work stage, whose size that
@@ -66,7 +68,7 @@ use super::{
     side::{Native, Nested},
     stages::{
         AB_TERMS, Layout, MESSAGE_SCALARS, digits_degrees, lifts_degrees, native_scalars,
-        nested_scalars,
+        nested_scalars, num_runs,
     },
 };
 use crate::{
@@ -97,9 +99,6 @@ pub(crate) enum PointSrc {
     /// A messages stage point, by position in the side's
     /// [`MessagesLayout`](super::stages::MessagesLayout).
     Message(usize),
-    /// A transcript stage point, a bridge, by position in the side's
-    /// [`TranscriptLayout`](super::stages::TranscriptLayout).
-    Bridge(usize),
     /// A work stage point slot.
     Work(usize),
     /// A fixed generator of the side's curve.
@@ -285,9 +284,9 @@ pub(crate) struct Bind {
 }
 
 /// The last stage a chunk needs, which sets the circuit kind it is packed
-/// into: every chunk loads the instance, messages, lifts and work stages,
-/// the transcript chunks and the bridge sums the transcript stage after
-/// them, and the digits chunks the digits stage.
+/// into: every chunk loads the side's front, lifts and work stages, the
+/// transcript chunks the transcript stage after them, and the digits
+/// chunks the digits stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Last {
     Work,
@@ -301,17 +300,6 @@ impl Chunk {
         match self {
             Chunk::Transcript { .. } => Last::Transcript,
             Chunk::Digits { .. } => Last::Digits,
-            Chunk::Sums { sums } => {
-                if sums
-                    .iter()
-                    .flat_map(|(_, terms)| terms)
-                    .any(|term| matches!(term, PointSrc::Bridge(_)))
-                {
-                    Last::Transcript
-                } else {
-                    Last::Work
-                }
-            }
             _ => Last::Work,
         }
     }
@@ -404,10 +392,12 @@ pub(crate) struct Regions {
     /// `ab` bridge commitment.
     pub challenge_stage: usize,
     pub ab_bridge: usize,
-    /// Circuit-field side: the sums of the bridges of the scalar-field
-    /// side's instance and messages stages' values, its recomputation of
-    /// those stages' commitments.
-    pub bridge_sums: [usize; 2],
+    /// Circuit-field side: the commitments of the transcript's runs, by
+    /// run ([`Run`](super::stages::Run)), work points the prover supplies,
+    /// which the transcript absorbs and the binding circuit exposes for the
+    /// proof's consumer to hold to the run stages. Empty on the
+    /// scalar-field side, whose stages they are.
+    pub runs: Vec<usize>,
     /// Circuit-field side: the recomputed commitment of the scalar-field
     /// side's lifts stage.
     pub lifts_sum: usize,
@@ -415,7 +405,8 @@ pub(crate) struct Regions {
     pub digits_sum: usize,
     /// The work points the side's binding circuit exposes, in the order
     /// the profile's [`Binding`](crate::profile::Binding) names the
-    /// stages they recompute.
+    /// stages they hold to: on the circuit-field side the runs'
+    /// commitments, then the recomputed lifts and digits stages.
     pub exposed: Vec<usize>,
 }
 
@@ -717,6 +708,67 @@ fn tag_ops(tag: &[u8]) -> Vec<Op> {
             Op::AbsorbConst(u128::from_le_bytes(bytes))
         }))
         .collect()
+}
+
+/// Builds a transcript's ops in the native verifier's order, with the
+/// commitment the verifier absorbs for a run of scalar-field values before
+/// whatever ends the run: [`foreign`](Self::foreign) marks that such values
+/// were absorbed, and the next absorption or squeeze absorbs the next of
+/// `runs`, the work points the prover supplies, when they were.
+struct Ops<'a> {
+    ops: Vec<Op>,
+    runs: &'a [usize],
+    next: usize,
+    pending: bool,
+}
+
+impl<'a> Ops<'a> {
+    /// A transcript under `tag`, absorbing the commitments at `runs` in
+    /// order.
+    fn new(tag: &[u8], runs: &'a [usize]) -> Self {
+        Ops {
+            ops: tag_ops(tag),
+            runs,
+            next: 0,
+            pending: false,
+        }
+    }
+
+    fn absorb(&mut self, src: ElementSrc) {
+        self.flush();
+        self.ops.push(Op::Absorb(src));
+    }
+
+    fn absorb_point(&mut self, point: PointSrc) {
+        self.flush();
+        absorb_point(&mut self.ops, point);
+    }
+
+    /// Scalar-field values absorbed: the run's commitment covers them.
+    fn foreign(&mut self) {
+        self.pending = true;
+    }
+
+    /// Absorbs the run's commitment, if a run is pending.
+    fn flush(&mut self) {
+        if self.pending {
+            absorb_point(&mut self.ops, PointSrc::Work(self.runs[self.next]));
+            self.next += 1;
+            self.pending = false;
+        }
+    }
+
+    fn squeeze(&mut self, slot: usize) {
+        self.flush();
+        self.ops.push(Op::Squeeze(slot));
+    }
+
+    /// The ops, every run absorbed. Values pending at the end precede no
+    /// challenge and are not absorbed, as the verifier leaves them.
+    fn finish(self) -> Vec<Op> {
+        assert_eq!(self.next, self.runs.len(), "every run is absorbed");
+        self.ops
+    }
 }
 
 /// Cuts transcript `ops` into chunks at the sponge's legal boundaries, by
@@ -1576,7 +1628,7 @@ pub(crate) fn native_schedule<
         K,
         R,
         HEADER_SIZE,
-    >()?))
+    >()))
 }
 
 /// The circuit-field side's schedule for its sizes alone (see
@@ -1611,7 +1663,6 @@ fn native_schedule_with<
     let rounds = K::RANK as usize;
     let instance = layout.instance;
     let messages = layout.messages;
-    let transcript = layout.transcript;
     let commitment = |p: usize| PointSrc::Instance(instance.commitments.at(p));
     let scalar = |i: usize| ElementSrc::Instance(instance.scalars.at(i));
 
@@ -1619,156 +1670,135 @@ fn native_schedule_with<
     b.regions.fuse = b.slots.elements(challenge_stage::NUM + 1);
     {
         use nested::RxIndex::*;
-        let mut ops = tag_ops(RAGU_TAG);
-        let fuse = &b.regions.fuse;
-        let squeeze = |ops: &mut Vec<Op>, i: usize| ops.push(Op::Squeeze(fuse[i]));
+        let mut t = Ops::new(RAGU_TAG, &[]);
+        let fuse = b.regions.fuse.clone();
         let nested_bridge =
             |index| commitment(nested_position::<Standard>(nested::RxComponent::Rx(index)));
-        absorb_point(&mut ops, nested_bridge(BridgePreamble));
-        squeeze(&mut ops, 0);
-        absorb_point(&mut ops, nested_bridge(BridgeSPrime));
-        squeeze(&mut ops, 1);
-        squeeze(&mut ops, 2);
-        absorb_point(&mut ops, nested_bridge(BridgeInnerError));
-        squeeze(&mut ops, 3);
-        absorb_point(&mut ops, nested_bridge(BridgeOuterError));
-        squeeze(&mut ops, 4);
-        absorb_point(&mut ops, nested_bridge(BridgeAB));
-        squeeze(&mut ops, 5);
-        absorb_point(&mut ops, nested_bridge(BridgeQuery));
-        squeeze(&mut ops, 6);
-        absorb_point(&mut ops, nested_bridge(BridgeF));
-        squeeze(&mut ops, 7);
-        absorb_point(&mut ops, nested_bridge(BridgeEval));
-        squeeze(&mut ops, 8);
-        let chunks =
-            transcript_chunks::<P<C>, C::CircuitField>(ops, &mut b.slots, b.limits.permutations);
+        t.absorb_point(nested_bridge(BridgePreamble));
+        t.squeeze(fuse[0]);
+        t.absorb_point(nested_bridge(BridgeSPrime));
+        t.squeeze(fuse[1]);
+        t.squeeze(fuse[2]);
+        t.absorb_point(nested_bridge(BridgeInnerError));
+        t.squeeze(fuse[3]);
+        t.absorb_point(nested_bridge(BridgeOuterError));
+        t.squeeze(fuse[4]);
+        t.absorb_point(nested_bridge(BridgeAB));
+        t.squeeze(fuse[5]);
+        t.absorb_point(nested_bridge(BridgeQuery));
+        t.squeeze(fuse[6]);
+        t.absorb_point(nested_bridge(BridgeF));
+        t.squeeze(fuse[7]);
+        t.absorb_point(nested_bridge(BridgeEval));
+        t.squeeze(fuse[8]);
+        let chunks = transcript_chunks::<P<C>, C::CircuitField>(
+            t.finish(),
+            &mut b.slots,
+            b.limits.permutations,
+        );
         b.chunks.extend(chunks);
     }
 
+    // The transcript's runs: the commitment of each run of the scalar
+    // field's values, prover-supplied, which the transcript absorbs before
+    // the challenge that follows the run and the binding circuit exposes.
+    b.regions.runs = b.slots.points(num_runs::<K>());
+
     // The compression's transcript: the statement, both curves' sampled
-    // challenges, then each curve's messages.
+    // challenges, then each curve's messages, the scalar field's values
+    // among them as the run's commitment before the next challenge.
     let per_curve = challenges_per_curve::<K>();
     b.regions.squeezed = b.slots.elements(per_curve);
     b.regions.other_squeezed = b.slots.elements(per_curve);
     {
-        let mut ops = tag_ops(IPA_TAG);
-        ops.push(Op::Absorb(scalar(native_scalars::OMEGA_J)));
-        ops.extend(
-            instance
-                .left_header
-                .positions()
-                .chain(instance.right_header.positions())
-                .map(ElementSrc::Instance)
-                .map(Op::Absorb),
-        );
-        for p in transcript.commitment_bridges.positions() {
-            absorb_point(&mut ops, PointSrc::Bridge(p));
+        let runs = b.regions.runs.clone();
+        let mut t = Ops::new(IPA_TAG, &runs);
+        t.absorb(scalar(native_scalars::OMEGA_J));
+        for p in instance
+            .left_header
+            .positions()
+            .chain(instance.right_header.positions())
+        {
+            t.absorb(ElementSrc::Instance(p));
         }
-        ops.extend(
-            (native_scalars::C..=native_scalars::B_AT_U)
-                .map(scalar)
-                .map(Op::Absorb),
-        );
+        // The host commitments.
+        t.foreign();
+        for i in native_scalars::C..=native_scalars::B_AT_U {
+            t.absorb(scalar(i));
+        }
         for p in instance.commitments.positions() {
-            absorb_point(&mut ops, PointSrc::Instance(p));
+            t.absorb_point(PointSrc::Instance(p));
         }
-        for p in transcript.bridged.positions() {
-            absorb_point(&mut ops, PointSrc::Bridge(p));
-        }
-        ops.extend(
-            instance
-                .output_header
-                .positions()
-                .map(ElementSrc::Instance)
-                .map(Op::Absorb),
-        );
-        for i in 0..4 {
-            ops.push(Op::Squeeze(b.regions.squeezed[i]));
+        // The scalar field's instance values.
+        t.foreign();
+        for p in instance.output_header.positions() {
+            t.absorb(ElementSrc::Instance(p));
         }
         for i in 0..4 {
-            ops.push(Op::Squeeze(b.regions.other_squeezed[i]));
+            t.squeeze(b.regions.squeezed[i]);
         }
-        let side_ops = |ops: &mut Vec<Op>,
+        for i in 0..4 {
+            t.squeeze(b.regions.other_squeezed[i]);
+        }
+        let side_ops = |t: &mut Ops<'_>,
                         squeezed: &[usize],
-                        point: &dyn Fn(usize) -> PointSrc,
-                        scalar: &dyn Fn(&mut Vec<Op>, usize)| {
+                        point: &dyn Fn(&mut Ops<'_>, usize),
+                        scalar: &dyn Fn(&mut Ops<'_>, usize)| {
             use squeezed::*;
 
             use super::stages::message_points::*;
-            absorb_point(ops, point(INNER));
-            ops.push(Op::Squeeze(squeezed[MU]));
-            ops.push(Op::Squeeze(squeezed[NU]));
-            absorb_point(ops, point(OUTER));
-            ops.push(Op::Squeeze(squeezed[MU_PRIME]));
-            ops.push(Op::Squeeze(squeezed[NU_PRIME]));
-            scalar(ops, 0);
-            scalar(ops, 1);
-            ops.push(Op::Squeeze(squeezed[RHO]));
-            absorb_point(ops, point(P));
-            absorb_point(ops, point(Q));
-            ops.push(Op::Squeeze(squeezed[R]));
+            point(t, INNER);
+            t.squeeze(squeezed[MU]);
+            t.squeeze(squeezed[NU]);
+            point(t, OUTER);
+            t.squeeze(squeezed[MU_PRIME]);
+            t.squeeze(squeezed[NU_PRIME]);
+            scalar(t, 0);
+            scalar(t, 1);
+            t.squeeze(squeezed[RHO]);
+            point(t, P);
+            point(t, Q);
+            t.squeeze(squeezed[R]);
             for i in 2..2 + Derived::ALL.len() + 2 {
-                scalar(ops, i);
+                scalar(t, i);
             }
-            ops.push(Op::Squeeze(squeezed[ALPHA]));
-            absorb_point(ops, point(F));
-            ops.push(Op::Squeeze(squeezed[U]));
+            t.squeeze(squeezed[ALPHA]);
+            point(t, F);
+            t.squeeze(squeezed[U]);
             let evaluations = 4 + Derived::ALL.len();
             for i in evaluations..evaluations + Derived::ALL.len() + 2 + OPENED {
-                scalar(ops, i);
+                scalar(t, i);
             }
-            ops.push(Op::Squeeze(squeezed[BETA]));
-            absorb_point(ops, point(S_COMMITMENT));
-            ops.push(Op::Squeeze(squeezed[XI]));
-            ops.push(Op::Squeeze(squeezed[IPA_Z]));
+            t.squeeze(squeezed[BETA]);
+            point(t, S_COMMITMENT);
+            t.squeeze(squeezed[XI]);
+            t.squeeze(squeezed[IPA_Z]);
             for j in 0..rounds {
-                absorb_point(ops, point(l(j)));
-                absorb_point(ops, point(r(j)));
-                ops.push(Op::Squeeze(squeezed[ROUNDS + j]));
+                point(t, l(j));
+                point(t, r(j));
+                t.squeeze(squeezed[ROUNDS + j]);
             }
-            scalar(ops, MESSAGE_SCALARS - 1);
+            scalar(t, MESSAGE_SCALARS - 1);
         };
-        side_ops(
-            &mut ops,
-            &b.regions.squeezed,
-            &|i| PointSrc::Bridge(transcript.point_bridges.at(i)),
-            &|ops, i| ops.push(Op::Absorb(ElementSrc::Message(messages.scalars.at(i)))),
-        );
-        side_ops(
-            &mut ops,
-            &b.regions.other_squeezed,
-            &|i| PointSrc::Message(messages.points_of_curve.at(i)),
-            &|ops, i| absorb_point(ops, PointSrc::Bridge(transcript.scalar_bridges.at(i))),
-        );
-        let chunks =
-            transcript_chunks::<P<C>, C::CircuitField>(ops, &mut b.slots, b.limits.permutations);
-        b.chunks.extend(chunks);
-    }
-
-    // The bridges summed by the stage of the scalar-field side they commit
-    // to: the instance stage's, the host commitments' and the scalar
-    // field's instance values', then the messages stage's, the host point
-    // messages' and the scalar field's message values'.
-    b.regions.bridge_sums = [b.slots.point(), b.slots.point()];
-    for (out, spans) in [
-        (
-            b.regions.bridge_sums[0],
-            [transcript.commitment_bridges, transcript.bridged],
-        ),
-        (
-            b.regions.bridge_sums[1],
-            [transcript.point_bridges, transcript.scalar_bridges],
-        ),
-    ] {
-        let terms: Vec<PointSrc> = spans
-            .into_iter()
-            .flat_map(|span| span.positions())
-            .map(PointSrc::Bridge)
-            .collect();
-        b.chunks.push(Chunk::Sums {
-            sums: vec![(out, terms)],
+        // The host curve's: its points are the scalar field's, its scalars
+        // this field's.
+        side_ops(&mut t, &b.regions.squeezed, &|t, _| t.foreign(), &|t, i| {
+            t.absorb(ElementSrc::Message(messages.scalars.at(i)))
         });
+        // The nested curve's: its points this field's, its scalars the
+        // scalar field's.
+        side_ops(
+            &mut t,
+            &b.regions.other_squeezed,
+            &|t, i| t.absorb_point(PointSrc::Message(messages.points_of_curve.at(i))),
+            &|t, _| t.foreign(),
+        );
+        let chunks = transcript_chunks::<P<C>, C::CircuitField>(
+            t.finish(),
+            &mut b.slots,
+            b.limits.permutations,
+        );
+        b.chunks.extend(chunks);
     }
 
     // The lifts of the host curve's challenges, whose reduction this side
@@ -1932,7 +1962,7 @@ fn native_schedule_with<
     // curve's.
     b.regions.lifts_sum = b.slots.point();
     {
-        let generators = lifts_degrees::<C, Nested, K, R, HEADER_SIZE>()?;
+        let generators = lifts_degrees::<C, Nested, K, R, HEADER_SIZE>();
         let raw: Vec<usize> = b
             .regions
             .other_squeezed
@@ -1966,14 +1996,16 @@ fn native_schedule_with<
     }
 
     // The scalar-field side's digits stage, from the scalings' parts, and
-    // this side's digits for it, last of all.
+    // this side's digits for it, last of all. The binding circuit exposes
+    // the runs' commitments, then the two recomputed stages.
     b.digits_sum();
-    b.regions.exposed = vec![
-        b.regions.bridge_sums[0],
-        b.regions.bridge_sums[1],
-        b.regions.lifts_sum,
-        b.regions.digits_sum,
-    ];
+    b.regions.exposed = b
+        .regions
+        .runs
+        .iter()
+        .copied()
+        .chain([b.regions.lifts_sum, b.regions.digits_sum])
+        .collect();
     b.digits(digits);
 
     Ok(b.finish(claims, bindings, ab_terms))
@@ -1993,7 +2025,7 @@ pub(crate) fn nested_schedule<
         K,
         R,
         HEADER_SIZE,
-    >()?))
+    >()))
 }
 
 /// The scalar-field side's schedule for its sizes alone (see
@@ -2096,7 +2128,7 @@ fn nested_schedule_with<
     // coordinates of the host curve's A, B and points-ab commitments and
     // the blinding, bridge_alpha squared.
     let ab_terms = ab_layout::<C, K>()?;
-    let extra_digits = {
+    let extra_digits: Vec<ElementSrc> = {
         let ab_a = commitment(native_position::<Standard>(native::RxComponent::AbA));
         let ab_b = commitment(native_position::<Standard>(native::RxComponent::AbB));
         let points_ab = commitment(native_position::<Standard>(native::RxComponent::Rx(

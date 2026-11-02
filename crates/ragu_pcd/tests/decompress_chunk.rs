@@ -1,19 +1,18 @@
 //! The chunk circuits on a real compressed proof, as the prover and the
 //! decider would see them: every circuit of both sides fits the gate
-//! budget with its stages loaded, at the smallest rank the digits stage
-//! leaves room at and at the aggregator rank, its stage polynomials are
-//! well formed under their masks, its trace satisfies the circuit with
-//! the honest stages, and a stage value tampered with after the prover's
-//! run fails some circuit. Each side's binding circuit exposes the other
-//! side's actual stage commitments, and not those of another proof's
-//! side.
+//! budget with its stages loaded at the aggregator rank, its stage
+//! polynomials are well formed under their masks, its trace satisfies the
+//! circuit with the honest stages, and a stage value tampered with after
+//! the prover's run fails some circuit. Each side's binding circuit exposes
+//! the other side's actual stage commitments, the run stages' the
+//! transcript absorbed among them, and not those of another proof's side.
 
 use alloc::{format, string::String, sync::Arc, vec::Vec};
 
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     BondingObject, CircuitExt,
-    polynomials::{AggregatorRank, R, Rank, sparse},
+    polynomials::{AggregatorRank, Rank, sparse},
     staging::{MultiStage, MultiStageCircuit, StageExt},
 };
 use ragu_core::{
@@ -29,21 +28,25 @@ use udon::{
 };
 
 use super::{BindingCircuit, Circuit, DigitsCircuit, StatementCircuit, TranscriptCircuit, last};
-use crate::decompress::{
-    program::{Chunk, Last, Schedule, challenges_per_curve, squeezed},
-    run::{Prepared, Sides},
-    side::{Native, Nested, Side},
-    stages::{
-        DigitsStage, InstanceStage, LiftsStage, MessagesStage, TranscriptStage, WorkStage,
-        native_scalars,
+use crate::{
+    decompress::{
+        circuit::Witness,
+        program::{Chunk, Last, Schedule, challenges_per_curve, squeezed},
+        run::{Prepared, Sides},
+        side::{Native, Nested, Side},
+        stages::{
+            DigitsStage, Front, InstanceStage, LiftsStage, Run, TranscriptStage, WorkStage,
+            native_scalars, num_runs, runs,
+        },
+        support::{HEADER_SIZE, Setup, TestR},
     },
-    support::{HEADER_SIZE, Setup, TestR},
+    ipa::convert_challenge,
 };
 
-/// The smallest rank the chunk circuits fit at with their stages loaded:
-/// the scalar-field side's digits stage alone reserves more than half the
-/// production rank's gates.
-type SmallR = R<14>;
+/// The rank the chunk circuits are checked at: the aggregator's
+/// configuration, the chunks at the aggregator rank over a production-rank
+/// proof.
+type SmallR = AggregatorRank;
 
 /// Both sides prepared for chunk circuits at rank `R`.
 fn sides<R: Rank>(setup: &Setup) -> Sides<Pasta> {
@@ -147,33 +150,48 @@ where
     Ok(Report { gates, satisfied })
 }
 
+/// The polynomials and masks of the stages every circuit of side `S`
+/// loads, unblinded: the front, the lifts and the work stages.
+#[allow(clippy::type_complexity)]
+fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
+    prepared: &Prepared<Pasta, S>,
+) -> crate::Result<(
+    Vec<sparse::Polynomial<S::F, R>>,
+    Vec<BondingObject<'static, S::F, R>>,
+)> {
+    type Lifts<S, R> = LiftsStage<Pasta, S, TestR, R, HEADER_SIZE>;
+    type Work<S, R> = WorkStage<Pasta, S, TestR, R, HEADER_SIZE>;
+    let zero = S::F::ZERO;
+    let mut stages = Vec::new();
+    let mut masks = Vec::new();
+    for index in 0..S::stages() {
+        stages.push(S::rx(index, zero, prepared)?);
+        masks.push(S::mask(index)?);
+    }
+    stages.extend([
+        <Lifts<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.lifts)?,
+        <Work<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.work)?,
+    ]);
+    masks.extend([
+        <Lifts<S, R> as StageExt<S::F, R>>::mask()?,
+        <Work<S, R> as StageExt<S::F, R>>::mask()?,
+    ]);
+    Ok((stages, masks))
+}
+
 /// Runs circuit `index` of side `S` at rank `R` over `prepared`.
-fn run_circuit<S: Side<Pasta>, R: Rank>(
+fn run_circuit<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     schedule: &Arc<Schedule>,
     index: usize,
     prepared: &Prepared<Pasta, S>,
     rng: &mut StdRng,
 ) -> crate::Result<Report> {
-    type Instance<S, R> = InstanceStage<Pasta, S, TestR, R, HEADER_SIZE>;
-    type Messages<S, R> = MessagesStage<Pasta, S, TestR, R, HEADER_SIZE>;
-    type Lifts<S, R> = LiftsStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Work<S, R> = WorkStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Transcript<S, R> = TranscriptStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Digits<S, R> = DigitsStage<Pasta, S, TestR, R, HEADER_SIZE>;
     let params = crate::pasta::baked_aggregator();
     let zero = S::F::ZERO;
-    let mut stages = alloc::vec![
-        <Instance<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.instance)?,
-        <Messages<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.messages)?,
-        <Lifts<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.lifts)?,
-        <Work<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.work)?,
-    ];
-    let mut masks = alloc::vec![
-        <Instance<S, R> as StageExt<S::F, R>>::mask()?,
-        <Messages<S, R> as StageExt<S::F, R>>::mask()?,
-        <Lifts<S, R> as StageExt<S::F, R>>::mask()?,
-        <Work<S, R> as StageExt<S::F, R>>::mask()?,
-    ];
+    let (mut stages, mut masks) = common_stages::<S, R>(prepared)?;
     match last(schedule, index) {
         Last::Transcript => {
             let circuit = TranscriptCircuit::<Pasta, S, TestR, R, HEADER_SIZE>::new(
@@ -214,15 +232,17 @@ fn run_circuit<S: Side<Pasta>, R: Rank>(
 
 /// Every circuit of side `S` at rank `R` fits the budget and is satisfied
 /// by `prepared`, reporting every circuit that is not.
-fn check_side<S: Side<Pasta>, R: Rank>(prepared: &Prepared<Pasta, S>) {
+fn check_side<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(prepared: &Prepared<Pasta, S>) {
     let schedule = circuit_schedule::<S, R>();
     let mut rng = StdRng::seed_from_u64(7);
     let mut failures: Vec<String> = Vec::new();
     let mut largest: Vec<(String, usize, usize)> = Vec::new();
+    let mut all: Vec<(usize, String, usize)> = Vec::new();
     for index in 0..schedule.circuits.len() {
         let kind = describe(&schedule, index);
         match run_circuit::<S, R>(&schedule, index, prepared, &mut rng) {
             Ok(report) => {
+                all.push((index, kind.clone(), report.gates));
                 if report.gates > R::n() {
                     failures.push(format!(
                         "circuit {index} ({kind}) uses {} gates of {}",
@@ -256,6 +276,10 @@ fn check_side<S: Side<Pasta>, R: Rank>(prepared: &Prepared<Pasta, S>) {
     for (kind, index, gates) in &largest {
         std::println!("  {kind}: circuit {index} at {gates} gates");
     }
+    std::println!("every circuit:");
+    for (index, kind, gates) in &all {
+        std::println!("  {index}: {kind} ({gates} gates)");
+    }
     assert!(
         failures.is_empty(),
         "{} side:\n{}",
@@ -272,18 +296,53 @@ fn every_chunk_fits_and_is_satisfied() {
     check_side::<Nested, SmallR>(&sides.nested);
 }
 
-/// The aggregator's configuration: the chunks at the aggregator rank over
-/// a production-rank proof.
+/// The transcript chunks squeeze the native verifier's challenges: the
+/// prover's run of the chunks leaves, at the schedule's fuse and squeezed
+/// slots, the raw challenges the native verifier reads off its own
+/// transcript, which the witness carries. The chunk circuits hold their
+/// squeezes to those slots, so this pins the chunked transcript to
+/// `verify_compressed`'s directly, challenge by challenge.
 #[test]
-fn every_chunk_fits_at_the_aggregator_rank() {
+fn transcript_chunks_squeeze_the_native_verifiers_challenges() {
     let setup = Setup::new();
-    let sides = sides::<AggregatorRank>(&setup);
-    check_side::<Native, AggregatorRank>(&sides.native);
-    check_side::<Nested, AggregatorRank>(&sides.nested);
+    let pcd = setup.proof.clone().carry(());
+    let witness = Witness::prepare::<TestR, HEADER_SIZE, _, ()>(&setup.app, &pcd)
+        .expect("the proof verifies");
+    let native =
+        Prepared::<Pasta, Native>::new::<TestR, SmallR, HEADER_SIZE>(setup.app.params, &witness)
+            .expect("the native side prepares");
+    let regions = &native.schedule.regions;
+    let squeezed = |slots: &[usize]| -> Vec<Fp> {
+        slots
+            .iter()
+            .map(|&slot| native.work.elements[slot])
+            .collect()
+    };
+    assert_eq!(
+        squeezed(&regions.fuse),
+        witness.fuse.in_order().to_vec(),
+        "the fuse's challenges"
+    );
+    assert_eq!(
+        squeezed(&regions.squeezed),
+        witness.native.raw.in_order(),
+        "the host curve's compression challenges"
+    );
+    // The nested curve's raw challenges are the squeezes' canonical
+    // integers in the scalar field.
+    let nested: Vec<Fq> = squeezed(&regions.other_squeezed)
+        .into_iter()
+        .map(|raw| convert_challenge(raw).expect("a squeeze is in range"))
+        .collect();
+    assert_eq!(
+        nested,
+        witness.nested.raw.in_order(),
+        "the nested curve's compression challenges"
+    );
 }
 
 /// Some circuit of side `S` rejects `prepared`.
-fn rejected<S: Side<Pasta>>(prepared: &Prepared<Pasta, S>) -> bool {
+fn rejected<S: Front<Pasta, TestR, SmallR, HEADER_SIZE>>(prepared: &Prepared<Pasta, S>) -> bool {
     let schedule = circuit_schedule::<S, SmallR>();
     let mut rng = StdRng::seed_from_u64(11);
     (0..schedule.circuits.len()).any(|index| {
@@ -498,10 +557,11 @@ fn statement_circuit_exposes_the_output_header() {
     );
 }
 
-/// The commitments of the stages the other side's binding circuit
-/// recomputes, unblinded, at the aggregator rank: the scalar-field side's
-/// instance, messages, lifts and digits stages, and the circuit-field
-/// side's digits stage.
+/// The commitments of the stages the other side's binding circuit exposes,
+/// unblinded, at the aggregator rank: the scalar-field side's run stages,
+/// which the transcript absorbed, and its lifts and digits stages, which
+/// the circuit-field side recomputes; and the circuit-field side's digits
+/// stage.
 fn bound_commitments(
     sides: &Sides<Pasta>,
 ) -> (
@@ -509,8 +569,6 @@ fn bound_commitments(
     Vec<<Pasta as Cycle>::HostCurve>,
 ) {
     type R = AggregatorRank;
-    type NestedInstance = InstanceStage<Pasta, Nested, TestR, R, HEADER_SIZE>;
-    type NestedMessages = MessagesStage<Pasta, Nested, TestR, R, HEADER_SIZE>;
     type NestedLifts = LiftsStage<Pasta, Nested, TestR, R, HEADER_SIZE>;
     type NestedDigits = DigitsStage<Pasta, Nested, TestR, R, HEADER_SIZE>;
     type NativeDigits = DigitsStage<Pasta, Native, TestR, R, HEADER_SIZE>;
@@ -519,16 +577,18 @@ fn bound_commitments(
     let nested_commit = |rx: &sparse::Polynomial<Fq, R>| {
         ReferenceBackend::sparse_commit_to_affine(rx, Pasta::nested_generators(params))
     };
-    let of_nested = alloc::vec![
-        nested_commit(
-            &<NestedInstance as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.instance).unwrap()
-        ),
-        nested_commit(
-            &<NestedMessages as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.messages).unwrap()
-        ),
+    let mut of_nested: Vec<_> = (0..num_runs::<TestR>())
+        .map(|run| {
+            nested_commit(
+                &<Nested as Front<Pasta, TestR, R, HEADER_SIZE>>::rx(run, Fq::ZERO, nested)
+                    .unwrap(),
+            )
+        })
+        .collect();
+    of_nested.extend([
         nested_commit(&<NestedLifts as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.lifts).unwrap()),
         nested_commit(&<NestedDigits as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.digits).unwrap()),
-    ];
+    ]);
     let of_native = alloc::vec![ReferenceBackend::sparse_commit_to_affine(
         &<NativeDigits as StageExt<Fp, R>>::rx(Fp::ZERO, &sides.native.digits).unwrap(),
         Pasta::host_generators(params),
@@ -581,24 +641,8 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     let y = Fp::random(|bytes| rng.fill_bytes(bytes));
     let mut rx = registry.assemble(&trace, handle, Fp::ZERO).unwrap();
     assert_eq!(rx.revdot(&registry.y(final_mask, y)), Fp::ZERO);
-    for stage in [
-        <InstanceStage<Pasta, Native, TestR, R, HEADER_SIZE> as StageExt<Fp, R>>::rx(
-            Fp::ZERO,
-            &prepared.instance,
-        )
-        .unwrap(),
-        <MessagesStage<Pasta, Native, TestR, R, HEADER_SIZE> as StageExt<Fp, R>>::rx(
-            Fp::ZERO,
-            &prepared.messages,
-        )
-        .unwrap(),
-        <LiftsStage<Pasta, Native, TestR, R, HEADER_SIZE> as StageExt<Fp, R>>::rx(
-            Fp::ZERO,
-            &prepared.lifts,
-        )
-        .unwrap(),
-        <NativeWork as StageExt<Fp, R>>::rx(Fp::ZERO, &prepared.work).unwrap(),
-    ] {
+    let (stages, _) = common_stages::<Native, R>(prepared).unwrap();
+    for stage in stages {
         rx.add_assign(&stage);
     }
     let own = FixedVec::try_from(of_nested.clone()).unwrap();
@@ -607,7 +651,7 @@ fn binding_circuits_expose_the_other_sides_commitments() {
         circuit.ky(own, y).unwrap()
     );
     let mut other = of_nested.clone();
-    other[2] = -other[2];
+    other[0] = -other[0];
     let other = FixedVec::try_from(other).unwrap();
     assert_ne!(
         rx.revdot(&registry.y(handle, y)),
@@ -615,7 +659,11 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     );
 
     // Another compression of the same proof: the sides prepared from it
-    // recompute its commitments, not this one's.
+    // expose its commitments, not this one's. The runs before the first
+    // blinded message are functions of the proof and the challenges the
+    // instance fixes, and agree; from that message on, by the IPA's
+    // masking commitment at the latest, every run differs, and so do the
+    // lifts and the digits.
     let other = setup
         .app
         .compress(&setup.app.bootstrap_pcd(), &mut StdRng::seed_from_u64(2))
@@ -623,13 +671,23 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     let other = Sides::prepare::<TestR, R, HEADER_SIZE, _, ()>(&setup.app, &other).unwrap();
     let (other_nested, other_native) = bound_commitments(&other);
     let ours = exposed(&sides.native);
-    assert_eq!(ours[0], other_nested[0], "the instance is the proof's");
+    let first = ours
+        .iter()
+        .zip(&other_nested)
+        .position(|(ours, theirs)| ours != theirs)
+        .expect("the compressions differ");
+    let masking = runs::<TestR>()
+        .iter()
+        .position(|run| *run == Run::SCommitment)
+        .expect("the IPA's masking commitment is a run");
+    assert!(first >= 2, "the instance's runs agree");
+    assert!(first <= masking, "the IPA's masking commitment is blinded");
     assert!(
-        ours[1..]
+        ours[first..]
             .iter()
-            .zip(&other_nested[1..])
+            .zip(&other_nested[first..])
             .all(|(ours, theirs)| ours != theirs),
-        "the messages, lifts and digits differ between compressions"
+        "every run from the first blinded message on, the lifts and the digits differ between compressions"
     );
     assert_ne!(exposed(&sides.nested), other_native);
 }
