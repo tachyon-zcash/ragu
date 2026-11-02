@@ -20,7 +20,7 @@ use core::{array, marker::PhantomData};
 use ragu_backend::Backend;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
-    Cycle, Error, Result,
+    Cycle, Error, FixedGenerators, Result,
     drivers::{Driver, DriverValue},
     gadgets::Gadget,
     maybe::Maybe,
@@ -100,6 +100,35 @@ pub(crate) fn name<C: Cycle, R: Rank, B: Backend>(
     Ok([x, y])
 }
 
+/// The handle a step is handed for the polynomial committed in `commitment`:
+/// the affine coordinates of $C_x H_0 + C_y H_1 + H_2$, where $H_i$ are the
+/// first nested generators of `params`.
+///
+/// The name depends on the commitment and the cycle's parameters alone. A
+/// commitment depends on the application's rank and backend, so
+/// [`Application::poly_handle`](crate::Application::poly_handle) names a
+/// polynomial as that application commits it.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidWitness`] for the identity, the commitment of the
+/// zero polynomial, which cannot be witnessed.
+pub fn poly_name<C: Cycle>(
+    commitment: C::HostCurve,
+    params: &C::Params,
+) -> Result<[C::CircuitField; HANDLE_WIRES]> {
+    let (x, y) = commitment
+        .coordinates()
+        .ok_or_else(|| Error::InvalidWitness("the identity commitment has no name".into()))?;
+    let g = C::nested_generators(params).g();
+    let named: C::NestedCurve =
+        ragu_core::msm(vec![x, y, C::ScalarField::ONE], vec![g[0], g[1], g[2]]).into();
+    let (x, y) = named
+        .coordinates()
+        .ok_or_else(|| Error::InvalidWitness("a name is never the identity".into()))?;
+    Ok([x, y])
+}
+
 /// A cross-field handle for a polynomial commitment: its name.
 #[derive(Gadget, Write, Consistent)]
 pub struct PolyHandle<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
@@ -173,6 +202,7 @@ mod tests {
         );
         let (x, y) = nested.coordinates().expect("not the identity");
         assert_eq!(name::<Pasta, R, ReferenceBackend>(host, params)?, [x, y]);
+        assert_eq!(poly_name::<Pasta>(host, params)?, [x, y]);
 
         let (cx, cy) = host.coordinates().expect("not the identity");
         let u = Fq::from(17u64);
@@ -201,6 +231,10 @@ mod tests {
         let identity = committed(&[]);
         assert!(matches!(
             name::<Pasta, R, ReferenceBackend>(identity, crate::pasta::baked()),
+            Err(Error::InvalidWitness(_))
+        ));
+        assert!(matches!(
+            poly_name::<Pasta>(identity, crate::pasta::baked()),
             Err(Error::InvalidWitness(_))
         ));
     }

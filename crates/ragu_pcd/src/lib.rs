@@ -81,7 +81,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 pub use framework_hooks::HookLayout;
 use header::Header;
-pub use poly_commitment::{HANDLE_WIRES, PolyHandle};
+pub use poly_commitment::{HANDLE_WIRES, PolyHandle, poly_name};
 pub use profile::AppHooks;
 use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
@@ -677,14 +677,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// name of its commitment, so an off-circuit party can compare a handle
     /// a header carries with a polynomial it holds.
     ///
-    /// The commitment, and so the name, is this application's: the
-    /// polynomial is committed at its rank `R` through its backend `B`. A
-    /// name made at another rank or backend does not match.
+    /// The commitment is this application's: the polynomial is committed at
+    /// its rank `R` through its backend `B`. A name made from a commitment at
+    /// another rank or backend does not match. [`poly_name`] names a
+    /// commitment directly.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness)
-    /// for the zero polynomial, whose commitment has no name.
+    /// Returns [`Error::InvalidWitness`] for the zero polynomial, whose
+    /// commitment has no name.
     pub fn poly_handle(
         &self,
         polynomial: &sparse::Polynomial<C::CircuitField, R>,
