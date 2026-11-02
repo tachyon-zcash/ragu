@@ -424,12 +424,28 @@ pub struct Proof<C: Cycle, R: Rank> {
     #[cfg(test)]
     pub(crate) skip_stage_check: bool,
 
-    /// Set by a test standing in for a fusing prover whose preamble copy of
-    /// this proof's hook region is not the one its carried commitments encode,
-    /// while its nested stash still carries those commitments. Read through
-    /// [`preamble_hook_region`](Self::preamble_hook_region).
+    /// Set by a test standing in for a fusing prover whose copy of this
+    /// proof's names is not the carried commitments', while its nested stash
+    /// still carries those commitments. Read through
+    /// [`copied_names`](Self::copied_names) and
+    /// [`batched_name_commitments`](Self::batched_name_commitments).
     #[cfg(test)]
-    pub(crate) forged_hook_region: Option<Vec<C::CircuitField>>,
+    pub(crate) forged_names: Option<ForgedNames<C::HostCurve>>,
+}
+
+/// A fusing prover's forged copy of a child's names, slot by slot: the
+/// host commitments it names and their names. The child's nested stash keeps
+/// the commitments the child carries.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct ForgedNames<H: udon::curve::Affine> {
+    pub commitments: Vec<H>,
+    pub names: Vec<[H::Scalar; HANDLE_WIRES]>,
+    /// Whether the prover's nested batch also folds the forged names'
+    /// polynomials, so that its $P_n$ matches the walk over the copy and
+    /// only $v_n$, computed from the stash, disagrees; or the stash's, as an
+    /// honest nested batch does, so that $P_n$ disagrees with the walk.
+    pub in_batch: bool,
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -504,16 +520,56 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
         )
     }
 
-    /// The hook region a fusing prover copies into its preamble: the one the
-    /// carried hook lists encode. A test may forge it, standing in for a
-    /// prover whose copy disagrees with the commitments its nested stash
-    /// carries (see `forged_hook_region`).
-    pub(crate) fn preamble_hook_region(&self) -> Result<Vec<C::CircuitField>> {
+    /// The names a fusing prover copies into its binding stage, slot by slot:
+    /// the cached names of the carried commitments. A test may forge them,
+    /// standing in for a prover whose copy disagrees with the commitments its
+    /// nested stash carries (see `forged_names`).
+    pub(crate) fn copied_names(&self) -> &[[C::CircuitField; HANDLE_WIRES]] {
         #[cfg(test)]
-        if let Some(region) = &self.forged_hook_region {
-            return Ok(region.clone());
+        if let Some(forged) = &self.forged_names {
+            return &forged.names;
         }
-        self.carried_hook_region()
+        self.witness_poly_names()
+    }
+
+    /// [`copied_names`](Self::copied_names) as the nested-curve points the
+    /// parent's walk folds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness)
+    /// for a name that is not a point of the nested curve.
+    pub(crate) fn walked_names(&self) -> Result<Vec<C::NestedCurve>> {
+        self.copied_names()
+            .iter()
+            .map(|&[x, y]| {
+                <C::NestedCurve as udon::curve::Affine>::from_xy(x, y).ok_or_else(|| {
+                    ragu_core::Error::InvalidWitness("a name is not a nested-curve point".into())
+                })
+            })
+            .collect()
+    }
+
+    /// The commitments whose name polynomials the parent's nested batch
+    /// folds, slot by slot: the carried ones, as the nested stash holds
+    /// them. A test's forged copy may replace them (see `forged_names`).
+    pub(crate) fn batched_name_commitments(&self) -> &[C::HostCurve] {
+        #[cfg(test)]
+        if let Some(forged) = self.forged_names.as_ref().filter(|forged| forged.in_batch) {
+            return &forged.commitments;
+        }
+        self.witness_poly_commitments()
+    }
+
+    /// The hook region a fusing prover copies: its names (see
+    /// [`copied_names`](Self::copied_names)), then each carried poly-query
+    /// with the copied name of the slot it opens.
+    pub(crate) fn preamble_hook_region(&self) -> Result<Vec<C::CircuitField>> {
+        hook_region::<C>(
+            self.witness_poly_commitments(),
+            self.copied_names(),
+            self.application_poly_queries(),
+        )
     }
 
     /// Whether the headers, polynomial vectors and commitment-cache vectors
@@ -1014,6 +1070,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
+            &left.walked_names()?,
+            &right.walked_names()?,
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
             C::NestedCurve,
@@ -1376,6 +1434,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
+            // The names a parent of this placeholder's children walks: the
+            // padding polynomial's, in every slot.
+            let name_poly = poly_commitment::name_polynomial::<C, R>(padding_com)
+                .expect("the padding commitment is a host-curve point");
+            let name_point =
+                B::sparse_commit_to_affine(&name_poly, C::nested_generators(self.params));
             let mut points = Vec::with_capacity(native::NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> =
                 Vec::with_capacity(native::NumPoints::<C::Profile>::len());
@@ -1400,6 +1464,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             push(nested_commitment, &ones_nested); // a
             push(nested_commitment, &ones_nested); // b
             push(registry_xy_commitment, registry_xy); // registry_xy
+            for _ in 0..2 * layout.witness_polys {
+                push(name_point, &name_poly); // a child's name
+            }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let inputs = Inputs::from_walk(&points);
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)

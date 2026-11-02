@@ -1028,7 +1028,7 @@ impl Shape {
         let nested_points = nested::num_endoscaling_points(native_rx, witness_polys);
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
-        let native_points = nested::pcs::num_batched_points(nested_rx);
+        let native_points = nested::pcs::num_batched_points(nested_rx, witness_polys);
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
             native_rx,

@@ -125,6 +125,7 @@ fn check_batch<H: Header<Fp>>(
         registry_xy: parent.nested_registry_xy_poly(),
         a: &parent.nested_a_poly,
         b: &parent.nested_b_poly,
+        names: pcs::Names::of(left, right).expect("the children's names"),
     };
     let commit = |poly: &Poly| {
         ReferenceBackend::sparse_commit_to_affine(poly, C::nested_generators(app.params))

@@ -90,7 +90,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right,
         )?;
         let nested = {
-            let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+            let batch =
+                self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right)?;
             let challenges = self.nested_challenges(w, x, y, z, left, right)?;
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
             self.compute_nested_f(&batch, challenges, alpha)
@@ -294,8 +295,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &'a NestedRegistryWy<C, R>,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
-    ) -> pcs::Batch<'a, C, R> {
-        pcs::Batch {
+    ) -> Result<pcs::Batch<'a, C, R>> {
+        Ok(pcs::Batch {
             left,
             right,
             registry_wx0: &nested_s_prime.registry_wx0_poly,
@@ -304,7 +305,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_xy: builder.nested_registry_xy_poly(),
             a: builder.nested_a_poly(),
             b: builder.nested_b_poly(),
-        }
+            names: pcs::Names::of(left, right)?,
+        })
     }
 
     /// The nested challenges this step's openings are at, derived from the

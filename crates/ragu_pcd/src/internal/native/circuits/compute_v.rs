@@ -111,6 +111,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_S
 pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
+    /// Witness for the points binding stage (provides the children's names,
+    /// which poly-query selection matches handles against).
+    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides child proof data).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
     /// Witness for the query stage (provides registry and polynomial evaluations).
@@ -150,9 +153,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let builder = builder
-            .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
-            )?;
+        // The binding stage is loaded, and so in the circuit's claim, only for
+        // a profile that reads hooks: the circuit reads the children's names
+        // from it and nothing else.
+        type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
+        let (binding, builder) = if super::super::reads_hooks::<C::Profile>() {
+            let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
+            (Some(binding), builder)
+        } else {
+            (
+                None,
+                builder.skip_stage::<Binding<C::NestedCurve, C::Profile>>()?,
+            )
+        };
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
@@ -162,6 +175,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         // Preamble is enforced because it contains child proof data that must
         // be validated (Points, Booleans, etc.).
         let preamble = preamble.enforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
+        // The names' curve membership is `bind_endoscalar`'s, as every
+        // points stage's is.
+        let binding = match binding {
+            Some(binding) => Some(binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?),
+            None => None,
+        };
 
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
@@ -219,7 +238,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let u = unified_output.u.read(dr, allocator)?;
                 let denominators =
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
-                let selected = poly_query::select_evaluations(dr, allocator, eval, &preamble)?;
+                let selected = match &binding {
+                    Some(binding) => {
+                        poly_query::select_evaluations(dr, allocator, eval, binding, &preamble)?
+                    }
+                    None => [Vec::new(), Vec::new()],
+                };
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     eval,

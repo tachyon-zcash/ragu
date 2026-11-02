@@ -64,6 +64,7 @@ use udon::curve::EndomorphismAffine as Affine;
 use super::super::NumPoints;
 pub use super::super::NumSteps;
 use crate::{
+    framework_hooks::WitnessPolys,
     internal::{
         Side,
         endoscalar::{InputsLen, PointsWitness},
@@ -107,8 +108,15 @@ impl<P: Profile> Len for ChildrenLen<P> {
     }
 }
 
-/// The number of the current step's points at the walk's tail.
+/// The number of the current step's points after the children's.
 const NUM_CURRENT_POINTS: usize = 6;
+
+/// The names a child contributes to the walk's tail in profile `P`: one per
+/// polynomial its step witnessed (see
+/// [`poly_commitment`](crate::poly_commitment)).
+pub fn num_child_names<P: Profile>() -> usize {
+    P::WITNESS_POLYS
+}
 
 /// The position of a child's $P_n$ among its points: the last, as
 /// [`nested::pcs::child_commitments`] orders them.
@@ -151,13 +159,17 @@ pub enum InputSource {
     AbB,
     /// The `registry_xy` point of [`FStage`].
     RegistryXy,
+    /// A child's name for the polynomial its step witnessed in a slot, in
+    /// [`BindingStage`].
+    Name(Side, usize),
 }
 
 /// The source of the walk's `i`-th input (the initial $F_n$ aside), in the
 /// order [`nested::pcs::Batch::commitments`] fixes: for each child its
 /// nested rx commitments in [`nested::RxIndex::all`] order, then its $a_n$,
 /// $b_n$, `registry_xy` and $P_n$; then the current step's two
-/// `registry_wx`, `registry_wy`, $A_n$, $B_n$ and `registry_xy`.
+/// `registry_wx`, `registry_wy`, $A_n$, $B_n$ and `registry_xy`; then each
+/// child's names, left first, in slot order.
 ///
 /// # Panics
 ///
@@ -217,7 +229,15 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
         3 => InputSource::AbA,
         4 => InputSource::AbB,
         5 => InputSource::RegistryXy,
-        _ => panic!("input {i} is past the walk"),
+        k => {
+            let slot = k - NUM_CURRENT_POINTS;
+            let names = num_child_names::<P>();
+            match slot / names.max(1) {
+                0 if slot < names => InputSource::Name(Side::Left, slot),
+                1 if slot < 2 * names => InputSource::Name(Side::Right, slot - names),
+                _ => panic!("input {i} is past the walk"),
+            }
+        }
     }
 }
 
@@ -233,6 +253,9 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
     pub p: C,
     /// The child's nested extension stage commitments, by stage.
     pub extension: FixedVec<C, nested::NumExtensionStages<P>>,
+    /// The names of the polynomials the child's step witnessed, by slot:
+    /// the parent's copy of the child's handles.
+    pub names: FixedVec<C, WitnessPolys<P>>,
 }
 
 /// Witness of [`BindingStage`]: the points tied to each child's instance
@@ -302,20 +325,23 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 
 /// Splits the two children's points, each in the order
 /// [`nested::pcs::child_commitments`] fixes, into the binding and children
-/// stages' witnesses.
+/// stages' witnesses, with each child's names in slot order.
 ///
 /// # Panics
 ///
-/// Panics if either child has other than [`num_child_points`] points.
+/// Panics if either child has other than [`num_child_points`] points or
+/// [`num_child_names`] names.
 pub fn children_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
+    left_names: &[C],
+    right_names: &[C],
 ) -> (BindingWitness<C, P>, ChildrenWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
     assert_eq!(left.len(), num_child_points);
     assert_eq!(right.len(), num_child_points);
-    let bound = |points: &[C]| ChildBindingWitness {
+    let bound = |points: &[C], names: &[C]| ChildBindingWitness {
         bridges: core::array::from_fn(|i| points[nested::RxIndex::BRIDGES[i].position::<P>()]),
         challenges: points[child_challenges::<P>()],
         a: points[nested_rx],
@@ -325,6 +351,7 @@ pub fn children_witnesses<C: Affine, P: Profile>(
         extension: FixedVec::from_fn(|j| {
             points[nested::RxIndex::ExtensionStage(j as u32).position::<P>()]
         }),
+        names: FixedVec::new(names.to_vec()).expect("num_child_names names"),
     };
     let rest = |points: &[C]| {
         points
@@ -338,8 +365,8 @@ pub fn children_witnesses<C: Affine, P: Profile>(
     points.extend(rest(right));
     (
         BindingWitness {
-            left: bound(left),
-            right: bound(right),
+            left: bound(left, left_names),
+            right: bound(right, right_names),
         },
         ChildrenWitness {
             points: FixedVec::new(points).expect("num_children_points points"),
@@ -366,17 +393,21 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     /// Panics if `points.len() != NumPoints::<P>::len()`.
     pub fn from_walk(points: &[C]) -> Self {
         let num_child_points = num_child_points::<P>();
+        let num_child_names = num_child_names::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         assert_eq!(
             NumPoints::<P>::len(),
-            1 + 2 * num_child_points + NUM_CURRENT_POINTS,
+            1 + 2 * num_child_points + NUM_CURRENT_POINTS + 2 * num_child_names,
             "the walk's layout does not match the nested batch"
         );
+        let current = &points[1 + 2 * num_child_points..][..NUM_CURRENT_POINTS];
+        let names = &points[1 + 2 * num_child_points + NUM_CURRENT_POINTS..];
         let (binding, children) = children_witnesses::<C, P>(
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
+            &names[..num_child_names],
+            &names[num_child_names..],
         );
-        let current = &points[1 + 2 * num_child_points..];
         Self {
             binding,
             children,
@@ -417,6 +448,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::AbA => self.ab.a,
             InputSource::AbB => self.ab.b,
             InputSource::RegistryXy => self.f.registry_xy,
+            InputSource::Name(side, k) => child(side).names[k],
         }
     }
 
@@ -448,6 +480,12 @@ pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>
     /// The child's nested extension stage commitments, by stage.
     #[ragu(gadget)]
     pub extension: FixedVec<Point<'dr, D, C>, nested::NumExtensionStages<P>>,
+    /// The names of the polynomials the child's step witnessed, by slot.
+    /// The walk folds them, and the parent's nested batch opens them against
+    /// the commitments its nested preamble stashes, so a name here that is
+    /// not the stashed commitment's fails the nested accumulator.
+    #[ragu(gadget)]
+    pub names: FixedVec<Point<'dr, D, C>, WitnessPolys<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, D, C, P> {
@@ -463,6 +501,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
             p: Point::alloc(dr, witness.as_ref().map(|w| w.p))?,
             extension: FixedVec::try_from_fn(|j| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.extension[j]))
+            })?,
+            names: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.names[k]))
             })?,
         })
     }
@@ -567,6 +608,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::AbA => &self.ab.a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
+            InputSource::Name(side, k) => &child(side).names[k],
         }
     }
 }
@@ -621,7 +663,8 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     type OutputKind = Kind![C::Base; Binding<'_, _, C, P>];
 
     fn values() -> usize {
-        4 * num_child_bindings::<P>()
+        // (x, y) per point, per child: its bindings, then its names.
+        4 * (num_child_bindings::<P>() + num_child_names::<P>())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -739,6 +782,7 @@ mod tests {
     fn stage_values_match_wire_counts() {
         let _: PhantomData<EpAffine> = PhantomData::<C>;
         assert_stage_values::<_, R, _>(&BindingStage::<C, Standard>::default());
+        assert_stage_values::<_, R, _>(&BindingStage::<C, crate::AppHooks<2, 1>>::default());
         assert_stage_values::<_, R, _>(&ChildrenStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&RegistryWxStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&AbStage::<C, Standard>::default());
@@ -747,27 +791,34 @@ mod tests {
     }
 
     /// Every input has exactly one source, and splitting the walk into the
-    /// stages and reading it back is the identity.
+    /// stages and reading it back is the identity: in the standard profile,
+    /// and in one whose children's names close the walk.
     #[test]
     fn walk_round_trips_through_the_stages() {
+        walk_round_trips::<Standard>();
+        walk_round_trips::<crate::AppHooks<2, 1>>();
+    }
+
+    fn walk_round_trips<P: Profile>() {
         use rand::{Rng, SeedableRng, rngs::StdRng};
         use udon::{curve::Projective, field::Field};
         let mut rng = StdRng::seed_from_u64(7);
-        let points: Vec<C> = (0..crate::internal::native::NUM_ENDOSCALING_POINTS)
+        let points: Vec<C> = (0..NumPoints::<P>::len())
             .map(|_| {
                 (ragu_core::pasta::Ep::generator()
                     * ragu_core::pasta::Fq::random(|bytes| rng.fill_bytes(bytes)))
                 .to_affine()
             })
             .collect();
-        let inputs = Inputs::<C, Standard>::from_walk(&points);
+        let inputs = Inputs::<C, P>::from_walk(&points);
         assert_eq!(inputs.walk(), points);
 
-        let mut children = alloc::vec![false; num_children_points::<Standard>()];
+        let mut children = alloc::vec![false; num_children_points::<P>()];
         let mut sources = Vec::new();
         let mut bindings = 0;
-        for i in 0..NumInputs::<Standard>::len() {
-            let source = input_source::<Standard>(i);
+        let mut names = 0;
+        for i in 0..NumInputs::<P>::len() {
+            let source = input_source::<P>(i);
             assert!(
                 !sources.contains(&source),
                 "input source {source:?} used twice"
@@ -785,10 +836,18 @@ mod tests {
                     assert!(!children[k], "child point {k} sourced twice");
                     children[k] = true;
                 }
+                InputSource::Name(..) => {
+                    assert!(
+                        i >= NumInputs::<P>::len() - 2 * num_child_names::<P>(),
+                        "names close the walk"
+                    );
+                    names += 1;
+                }
                 _ => {}
             }
         }
-        assert_eq!(bindings, 2 * num_child_bindings::<Standard>());
+        assert_eq!(bindings, 2 * num_child_bindings::<P>());
+        assert_eq!(names, 2 * num_child_names::<P>());
         assert!(children.iter().all(|&c| c));
     }
 

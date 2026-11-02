@@ -171,11 +171,38 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let beta = &stages.challenges.beta.lift;
         stages.endoscalar.lift(dr)?.enforce_equal(dr, beta)?;
 
-        // v_n = beta_n-weighted sum of f_n(u_n) and the evaluations at u_n.
+        // v_n = beta_n-weighted sum of f_n(u_n) and the evaluations at u_n,
+        // then each child's name polynomials at u_n, which are not witnessed:
+        // n_C(u_n) = C_x + C_y u_n + u_n^2 for each commitment C the
+        // preamble stashes, so that the name the native walk folds in this
+        // position is opened against the stashed commitment.
         let computed_v = {
+            let u = lift(challenges::U);
             let mut horner = Horner::new(beta);
             fu.write(dr, &mut horner)?;
             eval.write(dr, &mut horner)?;
+            // Squared only for a profile with names, so that one without
+            // keeps its gate count.
+            let u_squared = if P::WITNESS_POLYS > 0 {
+                Some(u.square(dr)?)
+            } else {
+                None
+            };
+            for child in [&stages.preamble.left, &stages.preamble.right] {
+                for stashed in child.stashed_witness_polys.iter() {
+                    let mut coordinates = Vec::with_capacity(2);
+                    stashed.write(dr, &mut coordinates)?;
+                    let [x, y]: [Element<'dr, D>; 2] = coordinates.try_into().map_err(|_| {
+                        ragu_core::Error::InvalidWitness("a point is two wires".into())
+                    })?;
+                    let u_squared = u_squared
+                        .as_ref()
+                        .expect("squared for a profile with names");
+                    let yu = y.mul(dr, u)?;
+                    let named = x.add(dr, &yu).add(dr, u_squared);
+                    named.write(dr, &mut horner)?;
+                }
+            }
             horner.finish(dr)
         };
         unified.v.provide(computed_v);

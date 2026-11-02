@@ -1427,7 +1427,7 @@ mod proof_equivalence {
                 witness_poly_names: _,
                 // Test-only forgery markers, not proof content.
                 skip_stage_check: _,
-                forged_hook_region: _,
+                forged_names: _,
             } = self;
 
             if self.bridge_alpha != other.bridge_alpha {

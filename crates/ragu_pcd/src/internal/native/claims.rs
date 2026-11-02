@@ -21,7 +21,9 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, vec::Len};
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, ReadsHooks, RxComponent, RxIndex};
+use super::{
+    InternalCircuitIndex, NUM_BINDERS, NumSteps, ReadsHooks, RxComponent, RxIndex, reads_hooks,
+};
 use crate::{
     internal::claims::{Builder, Source, sum_polynomials},
     profile::Profile,
@@ -209,9 +211,10 @@ where
 
             // collapse: Collapse + Preamble + InnerError + OuterError,
             // and PointsBinding for a profile whose native extension binds,
-            // whose binding k(y) the circuit takes from that stage.
+            // whose binding k(y) the circuit takes from that stage, or that
+            // reads hooks, whose names it takes from there.
             CollapseCircuit => {
-                let bound = P::native_extension().binding.is_some();
+                let bound = P::native_extension().binding.is_some() || reads_hooks::<P>();
                 for ((((pc, pb), pre), em), en) in source
                     .rx(Rx(Collapse))
                     .zip(source.rx(Rx(PointsBinding)))
@@ -229,15 +232,25 @@ where
                 }
             }
 
-            // compute_v: ComputeV + Preamble + Query + Eval
+            // compute_v: ComputeV + Preamble + Query + Eval, and
+            // PointsBinding for a profile that reads hooks, whose names
+            // poly-query selection takes from that stage.
             ComputeVCircuit => {
-                for (((cv, pre), q), e) in source
+                let named = reads_hooks::<P>();
+                for ((((cv, pb), pre), q), e) in source
                     .rx(Rx(ComputeV))
+                    .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(Query)))
                     .zip(source.rx(Rx(Eval)))
                 {
-                    processor.internal_circuit_claim(id, [cv, pre, q, e].into_iter());
+                    let mut rxs = Vec::with_capacity(5);
+                    rxs.push(cv);
+                    if named {
+                        rxs.push(pb);
+                    }
+                    rxs.extend([pre, q, e]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 

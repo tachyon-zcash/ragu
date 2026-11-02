@@ -1369,7 +1369,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             #[cfg(test)]
             skip_stage_check: false,
             #[cfg(test)]
-            forged_hook_region: None,
+            forged_names: None,
         })
     }
 }

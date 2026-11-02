@@ -158,8 +158,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_binding,
                 )
                 .with_hooks(
-                    preamble.left.hooks_ky(dr, &y)?,
-                    preamble.right.hooks_ky(dr, &y)?,
+                    {
+                        let names = native::stages::preamble::alloc_names(
+                            dr,
+                            preamble_witness.as_ref().map(|w| w.left.proof),
+                        )?;
+                        preamble.left.hooks_ky(dr, &names, &y)?
+                    },
+                    {
+                        let names = native::stages::preamble::alloc_names(
+                            dr,
+                            preamble_witness.as_ref().map(|w| w.right.proof),
+                        )?;
+                        preamble.right.hooks_ky(dr, &names, &y)?
+                    },
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 

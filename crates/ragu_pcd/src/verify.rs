@@ -81,6 +81,10 @@ use crate::{
 /// acceptance is fixed by the sealed [`SelectableBackend::Verifier`] mapping.
 type Verifier<B> = <B as SelectableBackend>::Verifier;
 
+/// The named checks [`Application::verify_uncompressed`] takes the
+/// conjunction of.
+const NUM_UNCOMPRESSED_CONJUNCTS: usize = 12;
+
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
@@ -109,29 +113,51 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub fn verify_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
-        mut rng: RNG,
+        rng: RNG,
     ) -> Result<bool> {
+        Ok(self
+            .uncompressed_conjuncts(pcd, rng)?
+            .is_some_and(|conjuncts| conjuncts.iter().all(|&(_, holds)| holds)))
+    }
+
+    /// The conjuncts [`verify_uncompressed`](Self::verify_uncompressed) takes
+    /// the conjunction of, by name, or `None` for a proof refused before any
+    /// of them is computed. A test pins which check refused a forgery.
+    #[cfg(test)]
+    pub(crate) fn verify_uncompressed_conjuncts<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
+        rng: RNG,
+    ) -> Result<Option<[(&'static str, bool); NUM_UNCOMPRESSED_CONJUNCTS]>> {
+        self.uncompressed_conjuncts(pcd, rng)
+    }
+
+    fn uncompressed_conjuncts<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
+        mut rng: RNG,
+    ) -> Result<Option<[(&'static str, bool); NUM_UNCOMPRESSED_CONJUNCTS]>> {
         // Translate only proof-dependent failures. Header encoding may use
         // InvalidWitness for application errors and runs outside this check.
         macro_rules! proof_check {
             ($result:expr) => {
                 match $result {
                     Ok(value) => value,
-                    Err(Error::InvalidWitness(_)) => return Ok(false),
+                    Err(Error::InvalidWitness(_)) => return Ok(None),
                     Err(error) => return Err(error),
                 }
             };
         }
 
         if !pcd.proof().well_formed::<HEADER_SIZE>() {
-            return Ok(false);
+            return Ok(None);
         }
 
         // Reject wrong hook-list lengths, and an application stage whose hook
         // region the carried lists do not encode, up front, so a malformed
         // proof yields `Ok(false)` rather than `Err` from the pipeline below.
         if !pcd.proof().has_shape() {
-            return Ok(false);
+            return Ok(None);
         }
 
         // Sample verification challenges w, y, and z.
@@ -154,7 +180,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             .native_registry
             .circuit_in_domain(pcd.proof().circuit_id())
         {
-            return Ok(false);
+            return Ok(None);
         }
 
         // Every nested challenge is the lift of a native one, which exists
@@ -162,7 +188,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         // output lies outside it with negligible probability; a proof
         // carrying one is malformed rather than an internal error.
         let Ok(lifts) = pcd.proof().challenges().lifts::<C>() else {
-            return Ok(false);
+            return Ok(None);
         };
 
         // Compute unified k(y), unified_bridge k(y), and application k(y).
@@ -445,18 +471,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 })
         };
 
-        Ok(native_revdot_claims
-            && nested_revdot_claims
-            && registry_xy_claim
-            && nested_registry_xy_claim
-            && nested_challenges_claim
-            && commitments_claim
-            && nested_points_claim
-            && transcript_claim
-            && ab_bridge_claim
-            && mesh_claim
-            && names_claim
-            && poly_query_claims)
+        Ok(Some([
+            ("native_revdot_claims", native_revdot_claims),
+            ("nested_revdot_claims", nested_revdot_claims),
+            ("registry_xy_claim", registry_xy_claim),
+            ("nested_registry_xy_claim", nested_registry_xy_claim),
+            ("nested_challenges_claim", nested_challenges_claim),
+            ("commitments_claim", commitments_claim),
+            ("nested_points_claim", nested_points_claim),
+            ("transcript_claim", transcript_claim),
+            ("ab_bridge_claim", ab_bridge_claim),
+            ("mesh_claim", mesh_claim),
+            ("names_claim", names_claim),
+            ("poly_query_claims", poly_query_claims),
+        ]))
     }
 
     /// The native mesh claim: see

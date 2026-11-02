@@ -24,7 +24,7 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 use super::{
     native::{
         self,
-        stages::preamble::{ProofInputs, encode_output_header},
+        stages::preamble::{ProofInputs, alloc_names, encode_output_header},
         unified as native_unified,
     },
     nested::{self, unified as nested_unified},
@@ -264,15 +264,21 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         let bound = proof
             .as_ref()
             .map(|proof| native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index)));
-        let proof_inputs =
-            ProofInputs::<_, C, HEADER_SIZE>::alloc::<R>(dr, proof, output_header.as_ref())?;
+        let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc::<R>(
+            dr,
+            proof.as_ref().map(|p| *p),
+            output_header.as_ref(),
+        )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, bound.as_ref().map(|b| b.as_slice()))?;
-        let hooks = proof_inputs.hooks_ky(dr, &y)?;
+        // The root's own names, which `verify_uncompressed` holds to its
+        // carried commitments.
+        let names = alloc_names(dr, proof)?;
+        let hooks = proof_inputs.hooks_ky(dr, &names, &y)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),
@@ -343,8 +349,19 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
     parts: NativeParts<'_, C>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
-    Emulator::emulate_wireless((parts, y), |dr, witness| {
-        let (parts, y) = witness.cast();
+    // The names lead the hook region, a coordinate pair each.
+    let names = parts
+        .hook_region
+        .chunks_exact(2)
+        .take(C::Profile::WITNESS_POLYS)
+        .map(|name| {
+            <C::NestedCurve as udon::curve::Affine>::from_xy(name[0], name[1]).ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("a name is not a nested-curve point".into())
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Emulator::emulate_wireless((parts, names, y), |dr, witness| {
+        let (parts, names, y) = witness.cast();
         let y = Element::alloc(dr, &mut (), y)?;
         let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc_from_parts(
             dr,
@@ -361,7 +378,10 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, parts.as_ref().map(|p| p.nested_bound))?;
-        let hooks = proof_inputs.hooks_ky(dr, &y)?;
+        let names = ragu_primitives::vec::FixedVec::try_from_fn(|k| {
+            Point::alloc(dr, names.as_ref().map(|names| names[k]))
+        })?;
+        let hooks = proof_inputs.hooks_ky(dr, &names, &y)?;
         Ok(NativeKy {
             c: None,
             unified: *unified.value().take(),

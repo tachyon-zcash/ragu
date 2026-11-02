@@ -158,10 +158,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     {
         type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
         // The binding stage is loaded, and so in the circuit's claim, only
-        // for a profile whose native extension binds: the circuit reads
-        // its extension points for the binding k(y) and nothing else.
+        // for a profile whose native extension binds or that reads hooks:
+        // the circuit reads its extension points for the binding k(y) and
+        // the children's names for the hook-region k(y), and nothing else.
         let extension = C::Profile::native_extension();
-        let (binding, builder) = if extension.binding.is_some() {
+        let loads_binding =
+            extension.binding.is_some() || super::super::reads_hooks::<C::Profile>();
+        let (binding, builder) = if loads_binding {
             let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
             (Some(binding), builder)
         } else {
@@ -245,12 +248,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             left_binding,
             right_binding,
         )
-        // Each child's hook-region k(y), over the preamble's copy of its
-        // hooks, so that the reader's claim over the child's application
+        // Each child's hook-region k(y), over the parent's copy of its hooks
+        // (its names in the binding stage, its poly-queries in the
+        // preamble), so that the reader's claim over the child's application
         // stage holds only if the copy is what the stage holds.
         .with_hooks(
-            preamble.left.hooks_ky(dr, &y)?,
-            preamble.right.hooks_ky(dr, &y)?,
+            match &binding {
+                Some(binding) => preamble.left.hooks_ky(dr, &binding.left.names, &y)?,
+                None => None,
+            },
+            match &binding {
+                Some(binding) => preamble.right.hooks_ky(dr, &binding.right.names, &y)?,
+                None => None,
+            },
         );
         let mut ky = ky_values::<C::Profile, _>(&ky);
 

@@ -91,8 +91,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         builder: &ProofBuilder<'_, C, R, B>,
-    ) -> NativeInputs<C> {
-        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+    ) -> Result<NativeInputs<C>> {
+        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right)?;
         let current = pcs::CurrentCommitments {
             registry_wx0: nested_s_prime.registry_wx0_commitment,
             registry_wx1: nested_s_prime.registry_wx1_commitment,
@@ -108,7 +108,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             points.len(),
             crate::internal::native::NumPoints::<C::Profile>::len()
         );
-        Inputs::from_walk(&points)
+        Ok(Inputs::from_walk(&points))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -153,7 +153,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left,
             right,
             builder,
-        );
+        )?;
         let native_walk = self.compute_nested_p(
             rng,
             beta_endo,
@@ -281,7 +281,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<NativeWalk<C>> {
         let beta: C::ScalarField = lift_endoscalar(beta_endo);
-        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right)?;
 
         let mut poly = nested_f.poly.clone();
         for evaluated in batch.evaluated() {

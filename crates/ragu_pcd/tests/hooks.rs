@@ -23,8 +23,9 @@ use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
     AppHooks, Application, ApplicationBuilder, HookLayout, Pcd, Proof,
-    poly_commitment::HANDLE_WIRES,
+    poly_commitment::{self, HANDLE_WIRES},
     profile::Profiled,
+    proof::ForgedNames,
     step::{Encoded, Index, Step, StepCtx},
 };
 
@@ -402,27 +403,94 @@ impl Step<Hooked> for Renamer {
     }
 }
 
+/// A seed that witnesses `polynomial` honestly, and opens it honestly at
+/// 11, but stages `name` as its handle: a child-side rename the parent's
+/// copy can follow past `read_hooks`.
+struct Misnamer;
+
+impl Step<Hooked> for Misnamer {
+    const INDEX: Index = Index::new(2);
+    type Shared = ();
+    type Witness<'source> = (Vec<u64>, [Fp; HANDLE_WIRES]);
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        ctx: &mut StepCtx<'_, 'dr, D, Hooked>,
+        witness: DriverValue<D, (Vec<u64>, [Fp; HANDLE_WIRES])>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+        ),
+        (),
+        DriverValue<D, ()>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut Standard::new();
+        let (coeffs, name) = witness.cast();
+        let polynomial = coeffs.map(|c| Opening::honest(&c, 11).polynomial());
+        let handle = ctx.witness_polynomial_named(polynomial, name)?;
+        let x = Element::constant(ctx.dr, Fp::from(11u64));
+        let y = ctx.evaluate(&handle, D::just(|| Fp::from(11u64)))?;
+        let y = Element::alloc(ctx.dr, allocator, y)?;
+        ctx.enforce_poly_query(&handle, x, y)?;
+        Ok((
+            (
+                Encoded::new(ctx.dr, allocator, left)?,
+                Encoded::new(ctx.dr, allocator, right)?,
+                Encoded::new(ctx.dr, allocator, D::unit())?,
+            ),
+            (),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
 fn renamer_app() -> Result<App> {
     ApplicationBuilder::<Hooked, R, HEADER_SIZE>::new()
         .register(CommitAndOpen)?
         .register(Renamer)?
+        .register(Misnamer)?
         .finalize(crate::pasta::baked())
 }
 
-/// The renamer's proof and the hook region its stage holds: its one handle,
-/// then each query's handle, `x` and `y`, all naming `h_q`.
-fn renamed(app: &App, rng: &mut StdRng) -> Result<(Proof<Hooked, R>, Vec<Fp>)> {
-    let q = sparse::Polynomial::<Fp, R>::from_coeffs(vec![-Fp::from(7u64), Fp::from(1u64)]);
-    let h_q = app.poly_handle(&q)?;
-    let (proof, ()) = app.seed(rng, Renamer, h_q)?.0.into_parts();
-    let mut region = Vec::new();
-    region.extend(h_q);
-    for query in proof.application_poly_queries() {
-        region.extend(h_q);
-        region.push(query.x);
-        region.push(query.y);
-    }
-    Ok((proof, region))
+/// A commitment beside its name, at the application's rank and backend.
+fn named(
+    commitment: <Hooked as Cycle>::HostCurve,
+) -> Result<ForgedNames<<Hooked as Cycle>::HostCurve>> {
+    Ok(ForgedNames {
+        commitments: vec![commitment],
+        names: vec![poly_commitment::name::<
+            Hooked,
+            R,
+            ragu_backend::ReferenceBackend,
+        >(commitment, crate::pasta::baked())?],
+        in_batch: false,
+    })
+}
+
+/// The renamer's proof, and the copy of its names a fusing prover takes
+/// from its stage: `h_q`, the name of `q`'s commitment.
+fn renamed(
+    app: &App,
+    rng: &mut StdRng,
+) -> Result<(Proof<Hooked, R>, ForgedNames<<Hooked as Cycle>::HostCurve>)> {
+    let q = [-Fp::from(7u64), Fp::from(1u64)];
+    let c_q = poly_commitment::commit::<Hooked, R, ragu_backend::ReferenceBackend>(
+        &q,
+        crate::pasta::baked(),
+    );
+    let copy = named(c_q)?;
+    let (proof, ()) = app.seed(rng, Renamer, copy.names[0])?.0.into_parts();
+    Ok((proof, copy))
 }
 
 /// Fuses `child` beside an honest seed under an honest step.
@@ -439,39 +507,62 @@ fn fuse_beside(app: &App, rng: &mut StdRng, child: Proof<Hooked, R>) -> Result<P
         .0)
 }
 
+/// The [`verify_uncompressed`](Application::verify_uncompressed) checks that
+/// refuse `pcd`, by name. Panics for a proof refused before any check runs,
+/// since the forgeries here must reach the checks.
+fn refusing(app: &App, pcd: &Pcd<Hooked, R, ()>, rng: &mut StdRng) -> Result<Vec<&'static str>> {
+    let conjuncts = app
+        .verify_uncompressed_conjuncts(pcd, rng)?
+        .expect("the proof reaches the verifier's checks");
+    Ok(conjuncts
+        .into_iter()
+        .filter(|&(_, holds)| !holds)
+        .map(|(name, _)| name)
+        .collect())
+}
+
 /// Control for [`a_fusing_prover_cannot_rename_a_child_polynomial`]: the
 /// renamed child under an honest parent, whose copy of the handles comes from
 /// the carried commitments. `read_hooks` refuses the copy against the child's
 /// stage, so a child-side rename alone never reaches the handle-to-commitment
-/// seam.
+/// seam: the native revdot claims refuse it, and nothing else does.
 #[test]
 fn a_child_side_rename_is_refused_by_read_hooks() -> Result<()> {
     let app = renamer_app()?;
     let mut rng = StdRng::seed_from_u64(1931);
     let (mut child, _) = renamed(&app, &mut rng)?;
-    // The root refuses the renamer itself.
-    assert!(!app.verify_uncompressed(&child.clone().carry::<()>(()), &mut rng)?);
+    // The root refuses the renamer itself, up front: its stage's hook region
+    // is not the one its carried commitments encode.
+    assert!(
+        app.verify_uncompressed_conjuncts(&child.clone().carry::<()>(()), &mut rng)?
+            .is_none()
+    );
     child.skip_stage_check = true;
     let fused = fuse_beside(&app, &mut rng, child)?;
-    assert!(!app.verify_uncompressed(&fused, &mut rng)?);
+    assert_eq!(refusing(&app, &fused, &mut rng)?, ["native_revdot_claims"]);
     Ok(())
 }
 
-/// Gap 1b: the fusing prover copies the child's staged hook region into its
-/// preamble, so `read_hooks` and the one-hot hold, while its nested stash
-/// keeps the commitment the child carries, which the walk folds. The step
-/// opened `q` at `x = Poseidon(h_q)` to a value `q` does not take; the root
-/// must refuse.
+/// Gap 1b: the fusing prover copies the child's staged names into its
+/// binding stage, so `read_hooks` and the one-hot hold, while its nested
+/// stash keeps the commitment the child carries. The step opened `q` at
+/// `x = Poseidon(h_q)` to a value `q` does not take; the root must refuse.
 ///
-/// Nothing in-circuit ties a handle to the commitment it names, so on the
-/// current code the root accepts this proof: run with `--ignored` to see it
-/// fail.
-#[test]
-#[ignore = "gap 1b: no circuit binds a child's handle to its committed polynomial"]
-fn a_fusing_prover_cannot_rename_a_child_polynomial() -> Result<()> {
-    let app = renamer_app()?;
-    let mut rng = StdRng::seed_from_u64(1930);
-    let (mut child, region) = renamed(&app, &mut rng)?;
+/// The walk folds the copy, `h_q`, into $P_n$, and nested `compute_v`
+/// evaluates the name polynomial of the stashed commitment, $C_{p'}$, at
+/// $u_n$. `in_batch` chooses which name polynomial the prover's nested batch
+/// folds: the stash's, so that $P_n$ is not the commitment of $p_n$ (T1a), or
+/// the copy's, so that $P_n$ matches and only $v_n$ disagrees (T1b).
+///
+/// Returns the forged proof and the checks that refuse it. The native revdot
+/// claims hold, `read_hooks`'s among them: the copy is what the child's stage
+/// holds, so the forgery is the strongest one the parent can make.
+fn fusing_rename(
+    app: &App,
+    rng: &mut StdRng,
+    in_batch: bool,
+) -> Result<(Pcd<Hooked, R, ()>, Vec<&'static str>)> {
+    let (mut child, copy) = renamed(app, rng)?;
     let query = child.application_poly_queries()[0];
     assert_ne!(
         query.y,
@@ -479,12 +570,107 @@ fn a_fusing_prover_cannot_rename_a_child_polynomial() -> Result<()> {
         "the claim is false for q"
     );
     child.skip_stage_check = true;
-    child.forged_hook_region = Some(region);
+    child.forged_names = Some(ForgedNames { in_batch, ..copy });
     // The prover completes the fuse; the proof it produces is what must fail.
-    let fused = fuse_beside(&app, &mut rng, child)?;
+    let fused = fuse_beside(app, rng, child)?;
+    let refused = refusing(app, &fused, rng)?;
     assert!(
-        !app.verify_uncompressed(&fused, &mut rng)?,
+        !refused.is_empty(),
         "the root accepted a polynomial its step named by another polynomial's handle"
+    );
+    assert!(
+        !refused.contains(&"native_revdot_claims"),
+        "the native revdot claims refused it: {refused:?}"
+    );
+    Ok((fused, refused))
+}
+
+/// The check that refuses [`fusing_rename`]'s proof: with the stash's name
+/// polynomial in the batch, the walk's $P_n$ is not the commitment of $p_n$;
+/// with the copy's, $P_n$ is, and the nested `compute_v` claim refuses the
+/// $v_n$ it computes from the stash.
+fn refuses_rename(in_batch: bool) -> &'static str {
+    if in_batch {
+        "nested_revdot_claims"
+    } else {
+        "commitments_claim"
+    }
+}
+
+/// T1a: [`fusing_rename`], the nested batch folding the stash's name.
+#[test]
+fn a_fusing_prover_cannot_rename_a_child_polynomial() -> Result<()> {
+    let app = renamer_app()?;
+    let (_, refused) = fusing_rename(&app, &mut StdRng::seed_from_u64(1930), false)?;
+    assert_eq!(refused, [refuses_rename(false)]);
+    Ok(())
+}
+
+/// T1b: [`fusing_rename`], the nested batch folding the copy's name.
+#[test]
+fn a_fusing_prover_cannot_rename_a_child_polynomial_in_its_batch() -> Result<()> {
+    let app = renamer_app()?;
+    let (_, refused) = fusing_rename(&app, &mut StdRng::seed_from_u64(1932), true)?;
+    assert_eq!(refused, [refuses_rename(true)]);
+    Ok(())
+}
+
+/// T2: the rename's obligation outlives the fuse that made it. An honest
+/// grandparent folds the forged parent, and its root is refused, by the same
+/// check as the parent's, though the grandparent's own names and queries are
+/// honest; an honest grandparent of an honest parent verifies.
+#[test]
+fn a_renamed_polynomial_is_refused_a_level_up() -> Result<()> {
+    let app = renamer_app()?;
+    let mut rng = StdRng::seed_from_u64(1933);
+
+    let leaf = seeded(&app, &mut rng, &[2, 7, 1])?.into_parts().0;
+    let parent = fuse_beside(&app, &mut rng, leaf)?;
+    let grandparent = fuse_beside(&app, &mut rng, parent.into_parts().0)?;
+    assert!(app.verify_uncompressed(&grandparent, &mut rng)?);
+
+    for in_batch in [false, true] {
+        let (forged, _) = fusing_rename(&app, &mut rng, in_batch)?;
+        // The grandparent's prover completes; the proof it produces is what
+        // must fail.
+        let grandparent = fuse_beside(&app, &mut rng, forged.into_parts().0)?;
+        assert_eq!(
+            refusing(&app, &grandparent, &mut rng)?,
+            [refuses_rename(in_batch)],
+            "the grandparent root, in_batch = {in_batch}"
+        );
+    }
+    Ok(())
+}
+
+/// T4: a child stages the name of $-C$ for a polynomial committed in $C$,
+/// a valid point, and a fusing prover copies it, folding $n_{-C}$ in its
+/// nested batch. $-C$'s name is not $C$'s (its $C_y$ differs), so $v_n$,
+/// computed from the stashed $C$, disagrees with $p_n(u_n)$.
+#[test]
+fn the_negated_commitments_name_is_refused() -> Result<()> {
+    let app = renamer_app()?;
+    let mut rng = StdRng::seed_from_u64(1934);
+    let coeffs = vec![3, 1, 4, 1, 5];
+    let c = poly_commitment::commit::<Hooked, R, ragu_backend::ReferenceBackend>(
+        &coeffs.iter().map(|&c| Fp::from(c)).collect::<Vec<_>>(),
+        crate::pasta::baked(),
+    );
+    let copy = named(-c)?;
+    let (mut child, ()) = app
+        .seed(&mut rng, Misnamer, (coeffs, copy.names[0]))?
+        .0
+        .into_parts();
+    child.skip_stage_check = true;
+    child.forged_names = Some(ForgedNames {
+        in_batch: true,
+        ..copy
+    });
+    let fused = fuse_beside(&app, &mut rng, child)?;
+    assert_eq!(
+        refusing(&app, &fused, &mut rng)?,
+        [refuses_rename(true)],
+        "the root accepted the name of a negated commitment"
     );
     Ok(())
 }

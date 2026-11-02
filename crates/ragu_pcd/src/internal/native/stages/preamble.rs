@@ -13,7 +13,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt,
+    Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
@@ -98,13 +98,11 @@ pub struct ProofInputs<
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
     /// The child's poly-queries; positions it left unused hold the padding
-    /// query.
+    /// query. The names of the child's witnessed polynomials are in the
+    /// [`BindingStage`](super::points::BindingStage), where the walk folds
+    /// them.
     #[ragu(gadget)]
     pub poly_queries: FixedVec<instance::PolyQuery<'dr, D, C>, PolyQueries<C::Profile>>,
-    /// The handles of the child's witnessed polynomials; positions it left
-    /// unused hold the padding polynomial's.
-    #[ragu(gadget)]
-    pub witness_polys: FixedVec<PolyHandle<'dr, D, C>, WitnessPolys<C::Profile>>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -203,21 +201,27 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
     }
 
     /// The [`read_hooks`] circuit's $k(y)$ over this child's application
-    /// stage: the handles, then the poly-queries, in the order the adapter
-    /// staged them, so the claim holds only if these wires are the ones the
-    /// child's stage holds. `None` for a profile that does not
+    /// stage: the child's `names`, as the parent's binding stage holds them,
+    /// then the poly-queries, in the order the adapter staged them, so the
+    /// claim holds only if these wires are the ones the child's stage holds.
+    /// `None` for a profile that does not
     /// [`reads_hooks`](crate::internal::native::reads_hooks).
     ///
     /// The claim's trace is the stage polynomial alone, which has no `ONE`
     /// wire, so the constant term is zero rather than the usual one.
     ///
     /// [`read_hooks`]: super::super::circuits::read_hooks
-    pub fn hooks_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Option<Element<'dr, D>>> {
+    pub fn hooks_ky(
+        &self,
+        dr: &mut D,
+        names: &FixedVec<Point<'dr, D, C::NestedCurve>, WitnessPolys<C::Profile>>,
+        y: &Element<'dr, D>,
+    ) -> Result<Option<Element<'dr, D>>> {
         if !crate::internal::native::reads_hooks::<C::Profile>() {
             return Ok(None);
         }
         let mut ky = Horner::new(y);
-        self.witness_polys.write(dr, &mut ky)?;
+        names.write(dr, &mut ky)?;
         self.poly_queries.write(dr, &mut ky)?;
         Element::zero(dr).write(dr, &mut ky)?;
         Ok(Some(ky.finish(dr)))
@@ -242,17 +246,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SIZE: usize>
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
-    /// Allocates a child's hook region, padded positions included: each
-    /// witnessed polynomial's handle, then each poly-query's handle, `x` and
-    /// `y` (see [`hook_region`](crate::proof::hook_region)).
-    #[allow(clippy::type_complexity)]
+    /// Allocates the poly-queries of a child's hook region, padded positions
+    /// included: each poly-query's handle, `x` and `y`, after the names (see
+    /// [`hook_region`](crate::proof::hook_region)), which the binding stage
+    /// holds.
     fn alloc_hook_region(
         dr: &mut D,
         region: DriverValue<D, Vec<C::CircuitField>>,
-    ) -> Result<(
-        FixedVec<PolyHandle<'dr, D, C>, WitnessPolys<C::Profile>>,
-        FixedVec<instance::PolyQuery<'dr, D, C>, PolyQueries<C::Profile>>,
-    )> {
+    ) -> Result<FixedVec<instance::PolyQuery<'dr, D, C>, PolyQueries<C::Profile>>> {
         let layout = HookLayout::of::<C::Profile>();
         D::try_just(|| {
             if region.as_ref().take().len() == layout.poly_query_instance_len() {
@@ -265,18 +266,15 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         })?;
         let pair = |at: usize| region.as_ref().map(|r| [r[at], r[at + 1]]);
         let one = |at: usize| region.as_ref().map(|r| r[at]);
-        let witness_polys =
-            FixedVec::try_from_fn(|i| PolyHandle::alloc(dr, pair(HANDLE_WIRES * i)))?;
         let queries_at = HANDLE_WIRES * layout.witness_polys;
-        let poly_queries = FixedVec::try_from_fn(|i| {
+        FixedVec::try_from_fn(|i| {
             let at = queries_at + (HANDLE_WIRES + 2) * i;
             Ok(instance::PolyQuery {
                 com: PolyHandle::alloc(dr, pair(at))?,
                 x: Element::alloc(dr, &mut (), one(at + HANDLE_WIRES))?,
                 y: Element::alloc(dr, &mut (), one(at + HANDLE_WIRES + 1))?,
             })
-        })?;
-        Ok((witness_polys, poly_queries))
+        })
     }
 
     /// Allocate ProofInputs from a proof reference and pre-computed output
@@ -328,7 +326,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         let output_header = alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?;
         // The one cast a `Proof` cannot avoid: it records commitments, and the
         // native circuit can only hold wires.
-        let (witness_polys, poly_queries) = Self::alloc_hook_region(
+        let poly_queries = Self::alloc_hook_region(
             dr,
             D::try_just(|| proof.as_ref().take().preamble_hook_region())?,
         )?;
@@ -336,7 +334,6 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             children,
             output_header,
             poly_queries,
-            witness_polys,
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -383,17 +380,26 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             right: alloc_header(dr, right_header)?,
         };
         let output_header = alloc_header(dr, output_header)?;
-        let (witness_polys, poly_queries) =
-            Self::alloc_hook_region(dr, hook_region.map(|region| region.to_vec()))?;
+        let poly_queries = Self::alloc_hook_region(dr, hook_region.map(|region| region.to_vec()))?;
         Ok(ProofInputs {
             children,
             output_header,
             poly_queries,
-            witness_polys,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
         })
     }
+}
+
+/// Allocates a child's names as the parent's binding stage holds them (see
+/// [`Proof::walked_names`]), for computing its hook-region $k(y)$ outside
+/// the circuits that load that stage.
+pub fn alloc_names<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, R: Rank>(
+    dr: &mut D,
+    proof: DriverValue<D, &Proof<C, R>>,
+) -> Result<FixedVec<Point<'dr, D, C::NestedCurve>, WitnessPolys<C::Profile>>> {
+    let names = D::try_just(|| proof.take().walked_names())?;
+    FixedVec::try_from_fn(|k| Point::alloc(dr, names.as_ref().map(|names| names[k])))
 }
 
 /// Encodes a header's data as the step's padded output header: the
@@ -469,10 +475,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + the hook region + 1
-        // circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE
-            + HookLayout::of::<C::Profile>().poly_query_instance_len()
+        // 2 proofs * (3 headers * HEADER_SIZE + the hook region's
+        // poly-queries + 1 circuit_id + unified instance wires); the
+        // region's names are in the binding stage
+        let layout = HookLayout::of::<C::Profile>();
+        2 * (3 * HEADER_SIZE + layout.poly_query_instance_len()
+            - HANDLE_WIRES * layout.witness_polys
             + 1
             + unified::NUM_WIRES)
     }

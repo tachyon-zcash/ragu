@@ -174,7 +174,7 @@ fn copy_proof_payload<
             witness_poly_commitments,
             witness_poly_names,
             skip_stage_check,
-            forged_hook_region,
+            forged_names,
         }
     )
 }

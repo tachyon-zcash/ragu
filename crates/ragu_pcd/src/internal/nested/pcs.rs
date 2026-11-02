@@ -12,6 +12,8 @@
 //!
 //! [`compute_v`]: super::circuits::compute_v
 
+use alloc::vec::Vec;
+
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Cycle, Result};
 use udon::field::Field;
@@ -94,16 +96,18 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
 ];
 
 /// The number of nested-curve points the batch folds into $P_n$ for a nested
-/// batch of `nested_rx` rx polynomials: $f_n$, then for each child its own
-/// rx commitments, $a$, $b$, `registry_xy` and $p$, then the current step's
-/// two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`.
-pub const fn num_batched_points(nested_rx: usize) -> usize {
-    1 + 2 * (nested_rx + 4) + 6
+/// batch of `nested_rx` rx polynomials whose children witness
+/// `witness_polys` polynomials each: $f_n$, then for each child its own rx
+/// commitments, $a$, $b$, `registry_xy` and $p$, then the current step's two
+/// `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`, then each
+/// child's names.
+pub const fn num_batched_points(nested_rx: usize, witness_polys: usize) -> usize {
+    1 + 2 * (nested_rx + 4) + 6 + 2 * witness_polys
 }
 
 /// Number of nested-curve points the batch folds into $P_n$, per
 /// [`num_batched_points`]. See [`Batch::evaluated`] for the order.
-pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM);
+pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM, 0);
 
 /// A child's nested-curve commitments in the order the batch walks them:
 /// its rx commitments in [`RxIndex::all`] order, then $a$, $b$,
@@ -170,6 +174,44 @@ pub struct Batch<'a, C: Cycle, R: Rank> {
     pub a: &'a sparse::Polynomial<C::ScalarField, R>,
     /// Current accumulator $b$.
     pub b: &'a sparse::Polynomial<C::ScalarField, R>,
+    /// The children's names, left first, slot by slot (see [`Names::of`]).
+    pub names: Names<C, R>,
+}
+
+/// The children's names a fuse step's nested batch opens: the polynomials
+/// $n_{C_k}$ of the commitments the nested preamble stashes, which $p_n$
+/// folds and $v_n$ evaluates, and the names the native binding stage holds,
+/// which the walk folds into $P_n$. An honest prover's are the same
+/// polynomials and their commitments; a name the stash's commitment does not
+/// take makes $P_n$ commit to something other than $p_n$, or $p_n(u_n)$
+/// differ from $v_n$.
+pub struct Names<C: Cycle, R: Rank> {
+    pub polys: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    pub points: Vec<C::NestedCurve>,
+}
+
+impl<C: Cycle, R: Rank> Names<C, R> {
+    /// The two children's names, left first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness) if
+    /// a commitment is the identity or a copied name is not a nested-curve
+    /// point.
+    pub fn of(left: &Proof<C, R>, right: &Proof<C, R>) -> Result<Self>
+    where
+        C: ProfiledCycle,
+    {
+        let mut polys = Vec::new();
+        let mut points = Vec::new();
+        for proof in [left, right] {
+            for &commitment in proof.batched_name_commitments() {
+                polys.push(crate::poly_commitment::name_polynomial::<C, R>(commitment)?);
+            }
+            points.extend(proof.walked_names()?);
+        }
+        Ok(Self { polys, points })
+    }
 }
 
 impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
@@ -227,13 +269,12 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
     /// after $f_n$, in that order: for each child its rx polynomials,
     /// $a$, $b$, `registry_xy` and $p$; then the current step's
     /// `registry_wx0`, `registry_wx1`, `registry_wy`, $a$, $b$ and
-    /// `registry_xy`.
+    /// `registry_xy`; then each child's name polynomials, left first.
     ///
-    /// The nested `eval` bridge stage writes its values in this order, and
-    /// [`Batch::commitments`] lists the matching commitments.
-    pub fn evaluated(
-        &self,
-    ) -> impl Iterator<Item = &'a sparse::Polynomial<C::ScalarField, R>> + '_ {
+    /// The nested `eval` bridge stage writes the values of all but the names
+    /// in this order, and nested `compute_v` computes the names' from the
+    /// stash; [`Batch::commitments`] lists the matching commitments.
+    pub fn evaluated(&self) -> impl Iterator<Item = &sparse::Polynomial<C::ScalarField, R>> + '_ {
         [self.left, self.right]
             .into_iter()
             .flat_map(|proof| {
@@ -255,6 +296,7 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                 self.b,
                 self.registry_xy,
             ])
+            .chain(&self.names.polys)
     }
 
     /// The commitments of [`Batch::evaluated`], in the same order, given the
@@ -274,6 +316,7 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                 current.b,
                 current.registry_xy,
             ])
+            .chain(self.names.points.iter().copied())
     }
 }
 

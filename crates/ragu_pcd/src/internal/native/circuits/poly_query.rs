@@ -9,12 +9,13 @@ use alloc::vec::Vec;
 use core::array;
 
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
-use ragu_primitives::{Boolean, Element, allocator::Allocator};
+use ragu_primitives::{Boolean, Element, GadgetExt, allocator::Allocator};
 
-use super::super::stages::{eval as native_eval, preamble as native_preamble};
+use super::super::stages::{eval as native_eval, points, preamble as native_preamble};
 use crate::{poly_commitment::HANDLE_WIRES, profile::ProfiledCycle};
 
-/// In `[left, right]` order, matching the fold's trailing block.
+/// In `[left, right]` order, matching the fold's trailing block. Each
+/// child's handles are its names in the binding stage, which the walk folds.
 pub(super) fn select_evaluations<
     'dr,
     D: Driver<'dr>,
@@ -25,19 +26,28 @@ pub(super) fn select_evaluations<
     dr: &mut D,
     allocator: &mut A,
     eval: &native_eval::Evaluations<'dr, D, C::Profile>,
+    binding: &points::Binding<'dr, D, C::NestedCurve, C::Profile>,
     preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
 ) -> Result<[Vec<Element<'dr, D>>; 2]> {
     let mut selected: [Vec<Element<'dr, D>>; 2] = [Vec::new(), Vec::new()];
-    for (side, (child_eval, child_preamble)) in
-        [(&eval.left, &preamble.left), (&eval.right, &preamble.right)]
-            .into_iter()
-            .enumerate()
+    for (side, (child_eval, (child_binding, child_preamble))) in [
+        (&eval.left, (&binding.left, &preamble.left)),
+        (&eval.right, (&binding.right, &preamble.right)),
+    ]
+    .into_iter()
+    .enumerate()
     {
-        let handles: Vec<_> = child_preamble
-            .witness_polys
+        let handles = child_binding
+            .names
             .iter()
-            .map(|poly| poly.wires())
-            .collect();
+            .map(|name| {
+                let mut coordinates = Vec::with_capacity(HANDLE_WIRES);
+                name.write(dr, &mut coordinates)?;
+                coordinates
+                    .try_into()
+                    .map_err(|_| ragu_core::Error::InvalidWitness("a name is two wires".into()))
+            })
+            .collect::<Result<Vec<[Element<'dr, D>; HANDLE_WIRES]>>>()?;
         for query in child_preamble.poly_queries.iter() {
             selected[side].push(select_evaluation(
                 dr,
@@ -52,8 +62,8 @@ pub(super) fn select_evaluations<
 }
 
 /// The evaluation of the polynomial `com` names, selected by a one-hot over
-/// `handles`. Booleanity, sum-to-one, and `Σ b_j · limb_j == limb` in every
-/// limb position are all load-bearing.
+/// `handles`. Booleanity, sum-to-one, and `Σ b_j · h_j == h` in both of a
+/// handle's coordinates are all load-bearing.
 ///
 /// The one-hot is witnessed rather than structural because query `i` of step
 /// `S` opens whichever polynomial *that step* chose, and this is one circuit
@@ -215,7 +225,7 @@ mod tests {
         Ok(())
     }
 
-    /// The equality is per limb, so a handle cannot be half-matched.
+    /// The equality is per coordinate, so a handle cannot be half-matched.
     #[test]
     fn a_commitment_matching_one_limb_only_is_refused() {
         let [lo, _] = handle_of(7);
