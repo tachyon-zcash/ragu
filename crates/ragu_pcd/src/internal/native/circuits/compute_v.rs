@@ -22,7 +22,7 @@
 //! each slot's polynomial takes the value $y_i$ at $x_i$, and exports the
 //! pairs in its instance so that the parent can hold the application
 //! circuit's instance to the openings this step verified (see
-//! [`online`](crate::internal::online)).
+//! [`online`]).
 //!
 //! ### $v$ computation
 //! - Extract endoscalar from [$\beta$] and compute effective beta via lift
