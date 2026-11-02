@@ -378,7 +378,7 @@ pub(crate) fn batched<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 
 /// A full-width scalar $k$ of the other field as signed digits: the bits
 /// $b_i$ of $B = (k + 2^n - 1) / 2$ in that field, $n$ one more than its
-/// capacity, so that $\sum_{i < n} (2 b_i - 1) 2^i = k$ there. The circuit
+/// capacity, so that $\sum\_{i < n} (2 b_i - 1) 2^i = k$ there. The circuit
 /// over that field binds $B$'s bits to $k$ by that linear relation; here
 /// they are witnesses.
 pub(crate) struct Digits<'dr, D: Driver<'dr>> {
@@ -387,7 +387,7 @@ pub(crate) struct Digits<'dr, D: Driver<'dr>> {
 
 /// The digit count of a scalar of the field `S`: one more than its
 /// capacity, so that every scalar is a signed-digit sum
-/// $\sum_{i < n} (2 b_i - 1) 2^i$ of that many bits.
+/// $\sum\_{i < n} (2 b_i - 1) 2^i$ of that many bits.
 pub(crate) fn digit_width<S: Field>() -> usize {
     S::CAPACITY as usize + 1
 }

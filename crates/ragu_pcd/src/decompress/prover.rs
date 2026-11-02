@@ -52,6 +52,9 @@ pub struct Decompressed<C: IpaCycle + ProfiledCycle<Profile = Standard>>(pub(cra
 /// The aggregator's prover context: the wallet application whose proofs
 /// the aggregator decompresses and a canonical decompression, prepared
 /// for chunk circuits at rank `R` with `HEADER_SIZE`-element headers.
+///
+/// The aggregator profile is not yet sound against a dishonest prover; see
+/// [`Aggregator`]'s *Soundness*.
 pub struct Decompression<'params, C, R, const HEADER_SIZE: usize, B>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -325,6 +328,12 @@ where
     ///
     /// Fails if the wallet application's verifier would reject `pcd`, or
     /// if proving fails.
+    ///
+    /// # Soundness
+    ///
+    /// The proof attests a decompression an honest prover ran: the
+    /// aggregator profile is not yet sound against a dishonest one (see
+    /// [`Aggregator`]'s *Soundness*).
     pub fn decompress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         rng: &mut RNG,

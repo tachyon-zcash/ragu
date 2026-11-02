@@ -11,7 +11,7 @@
 //! over their base field forms the multi-scalar multiplication and checks
 //! that it is the identity.
 //!
-//! With $k$ rounds, $s(X) = \prod_{i < k} (1 + u_{k-1-i} X^{2^i})$: $G'$
+//! With $k$ rounds, $s(X) = \prod\_{i < k} (1 + u\_{k-1-i} X^{2^i})$: $G'$
 //! is the commitment to $s$ over the same generators and $b = s(x)$.
 //! [`s_at`] evaluates $s$ wherever a circuit needs it, in $2k - 1$ gates,
 //! which is how the polynomial standing for $s$ will be checked against
@@ -54,7 +54,7 @@ pub(crate) struct Scalars<'dr, D: Driver<'dr>> {
     pub g_prime: Element<'dr, D>,
 }
 
-/// $s(\text{point}) = \prod_{i < k} (1 + u_{k-1-i} \cdot \text{point}^{2^i})$
+/// $s(\text{point}) = \prod\_{i < k} (1 + u\_{k-1-i} \cdot \text{point}^{2^i})$
 /// over the `rounds`' challenges $u_j$.
 pub(crate) fn s_at<'dr, D: Driver<'dr>>(
     dr: &mut D,

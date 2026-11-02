@@ -980,10 +980,14 @@ impl Profile for Standard {
 /// pinned per header size ([`native_circuits`](Self::native_circuits))
 /// rather than computed from the schedule, and the hooks check the pins
 /// against the schedule they register. A header size without a pin does
-/// not compile; pin it from the counts the schedule's tests report.
+/// not compile; pin it from the counts the schedule's tests report. Only
+/// 4-element headers are pinned outside the crate's tests, so
+/// `Aggregator<4>` is the one aggregator that compiles.
 ///
 /// Every proof of the profile carries the chunk circuits' polynomials, so
-/// every fuse runs the chunks over a compressed proof. The application
+/// every fuse runs the chunks over a compressed proof, a step that
+/// decompresses nothing included (see the decompression module's *What
+/// remains*). The application
 /// holds a [`Decompression`] of the wallet application it aggregates, taken
 /// at [`finalize_with`](crate::ApplicationBuilder::finalize_with), whose
 /// canonical compressed proof every fuse decompresses, except the
@@ -994,6 +998,22 @@ impl Profile for Standard {
 /// decompression step to it; each side's binding circuit exposes its
 /// recomputation of the other side's stages, and its claim's $k(y)$ holds
 /// the two sides to one compressed proof.
+///
+/// The aggregator and its wallet application share one parameters
+/// instance: [`finalize_with`](crate::ApplicationBuilder::finalize_with)
+/// compares the two by reference, not by their generators, so finalize
+/// both over one table, such as the one `baked_aggregator()` returns.
+///
+/// # Soundness
+///
+/// The profile is not yet sound against a dishonest prover. The chunk
+/// circuits take the wallet registry's evaluations from the prover
+/// unchecked, and the IPA's final generator $G'$ as a free witness point,
+/// so a dishonest prover can have the aggregator accept a compressed proof
+/// the wallet application's verifier rejects. Both close through the
+/// polynomial-query hooks
+/// [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes; until
+/// then an aggregator proof attests a decompression an honest prover ran.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
