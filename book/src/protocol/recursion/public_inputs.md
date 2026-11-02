@@ -12,10 +12,9 @@ A circuit's public inputs are encoded as a polynomial $k(Y)$, introduced in the
 [NARK](../core/nark.md) chapter. The verifier evaluates $k(y)$ at a random point
 $y$ and checks it against the revdot claim.
 
-Recursion instantiates $k(Y)$ four times: once for the values the internal
-circuits share, once for those same values bound to the child headers, once for
-those same values bound to the step's online openings, and once for the
-application's own step circuit.
+Recursion instantiates $k(Y)$ three times: once for the values the internal
+circuits share, once for those same values bound to the step's own output
+header and circuit id, and once for the application's own step circuit.
 
 ### `unified_ky`
 
@@ -36,25 +35,18 @@ enforce those constraints instead.
 
 ### `unified_bridge_ky`
 
-The same wires, extended with both child headers:
+The same wires, extended with the step's own output header and circuit id:
 
-$$k_\text{bridge}(Y) = \text{Horner}(\texttt{unified\_output} \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, 0 \,\|\, 1, \; Y)$$
+$$k_\text{bridge}(Y) = \text{Horner}(\texttt{unified\_output} \,\|\, \texttt{output\_header} \,\|\, \texttt{circuit\_id} \,\|\, 0 \,\|\, 1, \; Y)$$
 
-Binding the headers is what stops a proof from claiming one pair of headers
-while proving a different pair. `hashes_1` uses this rather than
-$k_\text{unified}(y)$, because it is the circuit that binds child headers.
-
-### `compute_v_bridge_ky`
-
-The same wires, extended with the step's online openings: the point and the
-claimed value of each of its six online slots, as the `query` stage holds them.
-
-$$k_\text{compute\_v}(Y) = \text{Horner}(\texttt{unified\_output} \,\|\, x_0 \,\|\, y_0 \,\|\, \cdots \,\|\, x_5 \,\|\, y_5 \,\|\, 0 \,\|\, 1, \; Y)$$
-
-`compute_v` folds those openings into the batch it verifies, so exporting them
-is what lets the parent hold the step's application instance to the openings
-the step actually proved. `compute_v` uses this rather than
-$k_\text{unified}(y)$ for the same reason `hashes_1` uses $k_\text{bridge}(y)$.
+A step folds its own application claim against the output header and
+circuit id its preamble witnesses, and `hashes_1` exports those same wires.
+The step that consumes the proof holds its own copies, its input header and
+the child's circuit id, to this instance when it folds the child's
+`hashes_1` claim. Every header therefore has one copy checked by the step
+that produced it and one by the step that consumes it, and this instance
+bridges the two: it is what stops a proof from presenting one output header
+to its parent while having proved another.
 
 ### `application_ky`
 
@@ -64,10 +56,12 @@ coordinates of its bridge hash $H^{bridge}(O_1)$ and its three headers.
 
 $$k_\text{app}(Y) = \text{Horner}(\zeta \,\|\, x_0 \,\|\, y_0 \,\|\, \cdots \,\|\, x_5 \,\|\, y_5 \,\|\, \texttt{h\_O1} \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
 
-The parent computes it from the wires it already holds: $\zeta$ is the
-child's $w$ in the unified output, the openings are the ones the
-`compute_v` bridge carries, and the bridge hash is the unified output's
-`bridge_hash_commitment`. The step circuit's instance is therefore held to
+The step computes it in its own `collapse`, from wires it already holds:
+$\zeta$ is its $w$ and the bridge hash its `bridge_hash_commitment`, both in
+the unified output; the openings, its input headers and its output header
+are in its preamble. The input headers are its children's output headers,
+read from the wires their bridges bind. `compute_v` folds the same opening
+wires into the batch, so the instance the step circuit satisfied is held to
 the openings the step proved, with nothing exported for the purpose. The
 online prefix has a fixed size, so the headers keep their positions and the
 output header's suffix stays the linear term.
@@ -104,8 +98,7 @@ recursive verifier actually checks, carried through the $k(Y)$ mechanism above.
 The shared `Output` structure holds 39 wires: fourteen nested-curve commitments
 at two wires each, and eleven field elements covering the Fiat-Shamir
 challenges and the final values $c$ and $v$. `hashes_1` emits a wider structure
-that adds the two child headers, and `compute_v` one that adds the step's
-online openings.
+that adds the step's own output header and circuit id.
 
 Each circuit constrains the wires it is responsible for and reads the rest from
 witness data, so every wire is constrained exactly once and no circuit repeats
@@ -115,12 +108,14 @@ The verifier then checks:
 
 1. The raw $c$ value from the $AB$ component, directly — this is the folded
    revdot scalar rather than a $k(y)$ evaluation.
-2. $k_\text{app}(y)$ against the application circuit's claim.
-3. $k_\text{bridge}(y)$ against the bridge claim.
-4. $k_\text{compute\_v}(y)$ against the `compute_v` claim.
-5. $k_\text{unified}(y)$ against the claims of the internal circuits that
+2. $k_\text{bridge}(y)$ against the bridge claim, with the proof's own output
+   header and circuit id.
+3. $k_\text{unified}(y)$ against the claims of the internal circuits that
    share it.
-6. Stage and final-staged mask claims against zero.
+4. Stage and final-staged mask claims against zero.
+
+There is no application claim among them: the proof folded its own, so it
+is part of the accumulator the raw $c$ and the `collapse` claim check.
 
 ## Substitution {#substitution}
 
