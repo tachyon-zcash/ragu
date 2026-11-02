@@ -4,7 +4,7 @@
 //! [`Proof::corrupt`] applies it and reports whether the verifier is obliged
 //! to notice. The vocabulary covers what
 //! [`verify_uncompressed`](crate::Application::verify_uncompressed) actually
-//! reads: the application metadata, every challenge and bridge commitment the
+//! reads: the circuit id, every challenge and bridge commitment the
 //! unified instance carries, and an individual coefficient of any native or
 //! nested polynomial a revdot claim folds.
 //!
@@ -19,8 +19,8 @@
 //!
 //! The classification is derived, not guessed:
 //!
-//! * **Instance edits** — challenges, bridge commitments, headers, the
-//!   circuit id, and anything that moves the derived $c = \operatorname{revdot}(A, B)$
+//! * **Instance edits** — challenges, bridge commitments, the circuit id,
+//!   and anything that moves the derived $c = \operatorname{revdot}(A, B)$
 //!   or $v = p(u)$ — change $k(y)$, which the verifier evaluates by Horner at
 //!   a $y$ it samples fresh. The polynomials the claims fold do not move with
 //!   it, so the claim breaks unless the fresh $y$ is a root of the difference:
@@ -119,17 +119,6 @@ pub use crate::{header::NUM_ONLINE_POLYNOMIALS, internal::online::NUM_ONLINE_QUE
 // `crate::proof::fuzz` match these exhaustively, so a variant added to
 // `internal` without a counterpart here fails to build.
 
-/// Identifies which of the two child proofs a component came from.
-///
-/// Mirrors `internal::Side`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Side {
-    /// The left child.
-    Left,
-    /// The right child.
-    Right,
-}
-
 /// A native-field polynomial component of a proof.
 ///
 /// Mirrors `internal::native::RxComponent`.
@@ -148,10 +137,6 @@ pub enum RxComponent {
 /// Mirrors `internal::native::RxIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeRx {
-    /// The application circuit's rx polynomial.
-    Application,
-    /// The application stage's rx polynomial.
-    ApplicationStage,
     /// The `hashes_1` circuit's rx polynomial.
     Hashes1,
     /// The `hashes_2` circuit's rx polynomial.
@@ -225,7 +210,7 @@ impl NativeRx {
 
     const fn derive_all() -> [Self; Self::NUM] {
         let src = crate::internal::native::RxIndex::ALL;
-        let mut out = [Self::Application; Self::NUM];
+        let mut out = [Self::Hashes1; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
             out[i] = Self::from_internal(src[i]);
@@ -239,8 +224,6 @@ impl NativeRx {
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),
-            I::Application => Self::Application,
-            I::ApplicationStage => Self::ApplicationStage,
             I::Hashes1 => Self::Hashes1,
             I::Hashes2 => Self::Hashes2,
             I::Collapse => Self::Collapse,
@@ -539,26 +522,6 @@ pub enum Corruption<C: Cycle> {
     /// rejected outright; in-domain ones move `omega_j` in the instance and
     /// select a different wiring polynomial.
     CircuitId(u32),
-    /// Add `delta` to one element of a child header.
-    HeaderElement {
-        /// Which child header to edit.
-        side: Side,
-        /// The element's position; out of range is a no-op.
-        index: usize,
-        /// What to add.
-        delta: C::CircuitField,
-    },
-    /// Resize a child header to the given length, which the verifier checks
-    /// against `HEADER_SIZE`.
-    HeaderLen {
-        /// Which child header to resize.
-        side: Side,
-        /// The new length.
-        len: usize,
-    },
-    /// Exchange the left and right child headers, which reorders both
-    /// `application_ky` and `unified_bridge_ky`.
-    SwapHeaders,
     /// Overwrite a verifier challenge.
     Challenge(Challenge, C::CircuitField),
     /// Negate a bridge commitment, moving its $y$ coordinate in the instance.
@@ -646,29 +609,12 @@ pub enum Corruption<C: Cycle> {
     /// Negate the cached commitment of one of the step's own online
     /// polynomials, which the nested instance exports.
     NegateOnlineCommitment(usize),
-    /// Add `delta` to the point or the value of one online opening, moving
-    /// the application circuit's and the `compute_v` bridge's $k(y)$.
-    OnlineQuery {
-        /// Which slot; out of range is a no-op.
-        slot: usize,
-        /// The value rather than the point.
-        value: bool,
-        /// What to add.
-        delta: C::CircuitField,
-    },
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Corruption::CircuitId(id) => write!(f, "CircuitId({id})"),
-            Corruption::HeaderElement { side, index, .. } => {
-                write!(f, "HeaderElement {{ side: {side:?}, index: {index} }}")
-            }
-            Corruption::HeaderLen { side, len } => {
-                write!(f, "HeaderLen {{ side: {side:?}, len: {len} }}")
-            }
-            Corruption::SwapHeaders => write!(f, "SwapHeaders"),
             Corruption::Challenge(which, _) => write!(f, "Challenge({which:?})"),
             Corruption::NegateBridgeCommitment(which) => {
                 write!(f, "NegateBridgeCommitment({which:?})")
@@ -713,9 +659,6 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             Corruption::NegateOnlineCommitment(index) => {
                 write!(f, "NegateOnlineCommitment({index})")
             }
-            Corruption::OnlineQuery { slot, value, .. } => {
-                write!(f, "OnlineQuery {{ slot: {slot}, value: {value} }}")
-            }
         }
     }
 }
@@ -744,40 +687,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     return Binding::Unbound;
                 }
                 self.circuit_id = id;
-                Binding::MustReject
-            }
-
-            Corruption::HeaderElement { side, index, delta } => {
-                let header = match side {
-                    Side::Left => &mut self.left_header,
-                    Side::Right => &mut self.right_header,
-                };
-                match header.get_mut(index) {
-                    Some(element) if delta != C::CircuitField::ZERO => {
-                        *element += delta;
-                        Binding::MustReject
-                    }
-                    _ => Binding::Unbound,
-                }
-            }
-
-            Corruption::HeaderLen { side, len } => {
-                let header = match side {
-                    Side::Left => &mut self.left_header,
-                    Side::Right => &mut self.right_header,
-                };
-                if header.len() == len {
-                    return Binding::Unbound;
-                }
-                header.resize(len, C::CircuitField::ZERO);
-                Binding::MustReject
-            }
-
-            Corruption::SwapHeaders => {
-                if self.left_header == self.right_header {
-                    return Binding::Unbound;
-                }
-                core::mem::swap(&mut self.left_header, &mut self.right_header);
                 Binding::MustReject
             }
 
@@ -968,21 +877,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                     return Binding::Unbound;
                 }
                 *point = negated;
-                Binding::MustReject
-            }
-
-            Corruption::OnlineQuery { slot, value, delta } => {
-                let Some(query) = self.online_opening_mut(slot) else {
-                    return Binding::Unbound;
-                };
-                if delta == C::CircuitField::ZERO {
-                    return Binding::Unbound;
-                }
-                if value {
-                    query.y += delta;
-                } else {
-                    query.x += delta;
-                }
                 Binding::MustReject
             }
         }

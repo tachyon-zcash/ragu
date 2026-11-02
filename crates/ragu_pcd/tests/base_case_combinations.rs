@@ -181,10 +181,9 @@ fn check_signs(app: &support::App, inputs: &support::Inputs) -> Result<()> {
             let mut right_header = vec![inputs.right; HEADER_SIZE];
             left_header[HEADER_SIZE - 1] = Fp::from(left_suffix);
             right_header[HEADER_SIZE - 1] = Fp::from(right_suffix);
-            let witness = challenges::Witness::new::<_, HEADER_SIZE>(
+            let witness = challenges::Witness::new(
                 [Fq::ZERO; challenges::NUM],
-                &left_header,
-                &right_header,
+                challenges::takes_base_case::<_, HEADER_SIZE>(&left_header, &right_header),
                 Fq::ZERO,
             );
             assert_eq!(
@@ -733,7 +732,7 @@ fn noncanonical_unit_children_reject_through_two_generations() {
         ("raw dummy retyped as unit", app.dummy_proof()),
         ("valid bootstrap unit", honest.into_parts().0),
     ] {
-        for (nested, mutation) in [(true, "nested p"), (false, "application trace")] {
+        for (nested, mutation) in [(true, "nested p"), (false, "hashes_1 trace")] {
             let mut proof = original.clone();
             // Repair the changed polynomial's commitment so rejection must
             // enforce the child's claim beyond checking its cached commitment.
@@ -747,10 +746,10 @@ fn noncanonical_unit_children_reject_through_two_generations() {
                 );
             } else {
                 proof
-                    .native_application_rx
+                    .native_hashes_1_rx
                     .add_assign(&sparse::Polynomial::from_coeffs(vec![Fp::ONE]));
-                proof.native_application_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &proof.native_application_rx,
+                proof.native_hashes_1_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+                    &proof.native_hashes_1_rx,
                     C::host_generators(app.params),
                 );
             }

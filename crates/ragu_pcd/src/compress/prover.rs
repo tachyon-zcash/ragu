@@ -73,7 +73,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
         let proof = pcd.proof();
-        if !proof.well_formed::<HEADER_SIZE>() {
+        if !proof.well_formed() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));
         }
         if !self.native_registry.circuit_in_domain(proof.circuit_id()) {

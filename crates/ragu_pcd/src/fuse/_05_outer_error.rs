@@ -22,7 +22,7 @@ use ragu_core::{
     },
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{Element, vec::FixedVec};
+use ragu_primitives::{Element, Point, vec::FixedVec};
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -63,6 +63,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
+        w: &Element<'dr, D>,
         y: &Element<'dr, D>,
         mu: &Element<'dr, D>,
         sponge_state_elements: FixedVec<
@@ -81,8 +82,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
+        let w = *w.value().take();
         let y = *y.value().take();
         let mu = *mu.value().take();
+        let bridge_hash = builder.bridge_hash_commitment();
         let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
             &native_claims.a,
             mu,
@@ -97,11 +100,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (
                 preamble_witness,
                 &native_inner_error_witness.error_terms,
+                w,
+                bridge_hash,
                 y,
                 mu,
             ),
             |dr, witness| {
-                let (preamble_witness, inner_error_terms, y, mu) = witness.cast();
+                let (preamble_witness, inner_error_terms, w, bridge_hash, y, mu) = witness.cast();
                 let allocator = &mut ();
 
                 let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
@@ -114,17 +119,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     preamble.right.unified_ky_values(dr, &y)?;
 
                 let left_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.left.application_ky(dr, &y)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
-                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y)?,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.right.application_ky(dr, &y)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
-                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y)?,
                 };
+                // The step's own application k(y), as collapse computes it
+                // from the same preamble wires, its w and its bridge hash.
+                let zeta = Element::alloc(dr, allocator, w)?;
+                let bridge_hash = Point::alloc(dr, bridge_hash)?;
+                let application_ky = preamble.application_ky(dr, &y, &zeta, &bridge_hash)?;
 
                 let mu = Element::alloc(dr, allocator, mu)?;
 
@@ -152,6 +158,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     dr,
                     preamble.left.unified.c.clone(),
                     preamble.right.unified.c.clone(),
+                    application_ky,
                     &left_ky,
                     &right_ky,
                     left_statement,
@@ -176,16 +183,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
                 let ky = KyValues {
                     left: ChildKyValues {
-                        application: *left_ky.application.value().take(),
                         unified: *left_ky.unified.value().take(),
                         unified_bridge: *left_ky.unified_bridge.value().take(),
-                        compute_v_bridge: *left_ky.compute_v_bridge.value().take(),
                     },
                     right: ChildKyValues {
-                        application: *right_ky.application.value().take(),
                         unified: *right_ky.unified.value().take(),
                         unified_bridge: *right_ky.unified_bridge.value().take(),
-                        compute_v_bridge: *right_ky.compute_v_bridge.value().take(),
                     },
                 };
 

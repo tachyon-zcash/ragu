@@ -178,7 +178,6 @@ enum VerifierDecision {
 const TEST_HEADER_SIZE: usize = 4;
 const RNG_FINGERPRINT_WORDS: usize = 4;
 const MAX_DUMMY_CIRCUITS: usize = 3;
-const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
 type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
 type TestPcd = Pcd<Pasta, ProductionRank, ()>;
@@ -328,8 +327,6 @@ struct CorruptionInputs {
     challenge_u_delta: Fp,
     challenge_x_delta: Fp,
     challenge_y_delta: Fp,
-    left_header_len: usize,
-    right_header_len: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -341,8 +338,6 @@ enum ProofMutation<F> {
     ChallengeU(F),
     ChallengeX(F),
     ChallengeY(F),
-    LeftHeaderLen(usize),
-    RightHeaderLen(usize),
 }
 
 fn apply_proof_mutation<C: Cycle, R: Rank>(
@@ -368,24 +363,11 @@ fn apply_proof_mutation<C: Cycle, R: Rank>(
         ProofMutation::ChallengeU(value) => proof.u = value,
         ProofMutation::ChallengeX(value) => proof.x = value,
         ProofMutation::ChallengeY(value) => proof.y = value,
-        ProofMutation::LeftHeaderLen(len) => {
-            proof.left_header.resize(len, C::CircuitField::ZERO);
-        }
-        ProofMutation::RightHeaderLen(len) => {
-            proof.right_header.resize(len, C::CircuitField::ZERO);
-        }
     }
 }
 
 fn arb_dummy_circuit_count() -> impl Strategy<Value = usize> {
     bounded_edge_usize(MAX_DUMMY_CIRCUITS)
-}
-
-fn arb_invalid_header_len() -> impl Strategy<Value = usize> {
-    bounded_edge_usize(MAX_CORRUPTED_HEADER_LEN).prop_filter(
-        "header length differs from the application header size",
-        |len| *len != TEST_HEADER_SIZE,
-    )
 }
 
 fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
@@ -397,8 +379,6 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
         nonzero_prime_field_element(),
         nonzero_prime_field_element(),
         nonzero_prime_field_element(),
-        arb_invalid_header_len(),
-        arb_invalid_header_len(),
     )
         .prop_map(
             |(
@@ -409,8 +389,6 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
                 challenge_u_delta,
                 challenge_x_delta,
                 challenge_y_delta,
-                left_header_len,
-                right_header_len,
             )| CorruptionInputs {
                 p_blind_delta,
                 p_eval_delta,
@@ -419,8 +397,6 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
                 challenge_u_delta,
                 challenge_x_delta,
                 challenge_y_delta,
-                left_header_len,
-                right_header_len,
             },
         )
 }
@@ -483,14 +459,6 @@ fn corruptions(
         (
             "challenge y",
             ProofMutation::ChallengeY(proof.y() + inputs.challenge_y_delta),
-        ),
-        (
-            "left header",
-            ProofMutation::LeftHeaderLen(inputs.left_header_len),
-        ),
-        (
-            "right header",
-            ProofMutation::RightHeaderLen(inputs.right_header_len),
         ),
     ]
 }
@@ -600,9 +568,6 @@ fn check_compressed_proofs_match(
     } = expected;
     let Instance {
         circuit_id: _,
-        left_header: _,
-        right_header: _,
-        online: _,
         native: _,
         native_registry_xy: _,
         native_p: _,
@@ -616,8 +581,8 @@ fn check_compressed_proofs_match(
         v: _,
         nested_c: _,
         nested_v: _,
-        left: Child { x: _, y: _, id: _ },
-        right: Child { x: _, y: _, id: _ },
+        left: Child { x: _, y: _ },
+        right: Child { x: _, y: _ },
         a_at_u: _,
         b_at_u: _,
         nested_left: NestedChild { x: _, y: _ },
@@ -663,8 +628,6 @@ fn check_compressed_proofs_match(
 
     compare_fields!(
         instance.circuit_id,
-        instance.left_header,
-        instance.right_header,
         instance.native,
         instance.native_registry_xy,
         instance.native_p,
@@ -679,10 +642,8 @@ fn check_compressed_proofs_match(
         instance.nested_v,
         instance.left.x,
         instance.left.y,
-        instance.left.id,
         instance.right.x,
         instance.right.y,
-        instance.right.id,
         instance.a_at_u,
         instance.b_at_u,
         instance.nested_left.x,
@@ -1315,10 +1276,6 @@ mod proof_equivalence {
             let Self {
                 bridge_alpha: _,
                 circuit_id: _,
-                left_header: _,
-                right_header: _,
-                native_application_rx: _,
-                native_application_stage_rx: _,
                 native_preamble_rx: _,
                 native_inner_error_rx: _,
                 native_outer_error_rx: _,
@@ -1345,7 +1302,6 @@ mod proof_equivalence {
                 native_points_f_rx: _,
                 native_points_walk_rx: _,
                 online_polynomials: _,
-                online_openings: _,
                 bridge_preamble_rx: _,
                 bridge_hash_rx: _,
                 bridge_s_prime_rx: _,
@@ -1389,8 +1345,6 @@ mod proof_equivalence {
                 alpha: _,
                 u: _,
                 pre_beta: _,
-                native_application_commitment: _,
-                native_application_stage_commitment: _,
                 native_preamble_commitment: _,
                 native_inner_error_commitment: _,
                 native_outer_error_commitment: _,
@@ -1433,9 +1387,6 @@ mod proof_equivalence {
             }
             if self.circuit_id != other.circuit_id {
                 return Some("circuit id");
-            }
-            if self.left_header != other.left_header || self.right_header != other.right_header {
-                return Some("headers");
             }
 
             if native::RxIndex::ALL
@@ -1482,9 +1433,6 @@ mod proof_equivalence {
                 || self.online_commitments != other.online_commitments
             {
                 return Some("online polynomials");
-            }
-            if self.online_openings != other.online_openings {
-                return Some("online openings");
             }
             if nested::RxIndex::ALL
                 .into_iter()

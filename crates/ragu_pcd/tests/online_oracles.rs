@@ -1020,19 +1020,6 @@ fn every_slot_proves_and_verifies() -> Result<()> {
                 "{what} must be rejected"
             );
         };
-        for slot in 0..6 {
-            for value in [false, true] {
-                rejected(
-                    Corruption::OnlineQuery {
-                        slot,
-                        value,
-                        delta: Fp::ONE,
-                    },
-                    &format!("slot {slot}'s {}", if value { "value" } else { "point" }),
-                    &mut rng,
-                );
-            }
-        }
         for index in 0..NUM_ONLINE_POLYNOMIALS {
             rejected(
                 Corruption::OnlineCoeff {

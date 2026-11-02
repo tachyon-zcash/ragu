@@ -7,14 +7,21 @@
 //! the native points binding and children stages the endoscaling walk reads
 //! them from; the preamble bridge carries those stages' commitments, so the
 //! points are fixed before $w$ is squeezed. The step's own online
-//! polynomials' commitments go into the preamble bridge directly, beside the
-//! children's exported ones it stashes, for the same reason.
+//! polynomials' commitments and its application stage's go into the preamble
+//! bridge directly, beside the children's exported ones it stashes, for the
+//! same reason.
+//!
+//! The native preamble stage is committed later, after the step's circuit
+//! ran: it holds the step's own output header and online openings, which the
+//! circuit fixes at $\zeta = w$ (see [`native::stages::preamble`]). The
+//! `s_prime` bridge carries its commitment.
 
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::Result;
 use rand::CryptoRng;
 use udon::field::Field;
 
+use super::_01_application::NativeApplicationStage;
 use crate::{
     Application, Proof,
     header::NUM_ONLINE_POLYNOMIALS,
@@ -26,26 +33,26 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Commits the native and bridge preamble stages, returning both
-    /// witnesses: the native one for the native circuits, the bridge one for
-    /// the nested fold and circuits.
-    pub(super) fn compute_preamble<'a, RNG: CryptoRng>(
+    /// Commits the native points children stage and the bridge preamble
+    /// stage, which carries `stage`'s commitment, returning the bridge
+    /// witness for the nested fold and circuits.
+    pub(super) fn compute_preamble<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &Proof<C, R>,
+        right: &Proof<C, R>,
+        stage: &NativeApplicationStage<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(
-        native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
-        nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
-    )> {
-        let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
+    ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
         self.commit_native_points_children(rng, left, right, builder)?;
-        let bridge_witness = self.compute_bridge_preamble(rng, left, right, builder)?;
-        Ok((preamble_witness, bridge_witness))
+        self.compute_bridge_preamble(rng, left, right, stage, builder)
     }
 
-    fn compute_native_preamble<'a, RNG: CryptoRng>(
+    /// Commits the native preamble stage from the children's output headers
+    /// and the step's own output header, circuit id and online openings,
+    /// all on the builder by now, returning its witness for the native
+    /// circuits.
+    pub(super) fn compute_native_preamble<'a, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         left: &'a Proof<C, R>,
@@ -57,6 +64,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right,
             builder.left_header(),
             builder.right_header(),
+            builder.output_header(),
+            builder.circuit_id(),
+            *builder.online_openings(),
         )?;
 
         let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
@@ -74,14 +84,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        stage: &NativeApplicationStage<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
         let bridge_witness = nested::stages::preamble::Witness {
-            native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
             native_points_children: builder.native_points_children_commitment(),
             online_commitments: builder.online_commitments(),
-            application_stage: builder.native_application_stage_commitment(),
+            application_stage: stage.commitment,
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };

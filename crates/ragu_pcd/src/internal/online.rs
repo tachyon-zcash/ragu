@@ -24,9 +24,11 @@
 //! batch; the polynomials themselves are native, evaluated at $u$ in the
 //! `eval` stage and folded into $p$ in the same order. Each slot is opened
 //! once, at the point the step queried it, or at $\zeta = w$ with the
-//! polynomial's value there when the step did not; the `query` stage holds
-//! the openings and `compute_v` folds them into the batch and exports them
-//! in its bridge instance for the parent.
+//! polynomial's value there when the step did not; the native `preamble`
+//! stage holds the openings, committed after the step's circuit ran,
+//! `compute_v` folds them into the batch, and `collapse` folds the step's
+//! own application claim over the same wires, which is what holds the
+//! instance the step circuit satisfied to the openings the batch proves.
 
 use alloc::vec;
 
@@ -200,15 +202,6 @@ pub struct Query<F> {
 /// instance does not repeat.
 pub type Queries<F> = [Query<F>; NUM_ONLINE_QUERIES];
 
-/// The openings of a step that queried nothing: every slot at `zeta`, with
-/// `evaluate(slot, zeta)` the slot's value there.
-pub fn queries_at<F: Field>(zeta: F, mut evaluate: impl FnMut(usize, F) -> F) -> Queries<F> {
-    core::array::from_fn(|slot| Query {
-        x: zeta,
-        y: evaluate(slot, zeta),
-    })
-}
-
 /// The opening of one slot, as wires.
 #[derive(Gadget, Write, Consistent)]
 pub struct QueryOutput<'dr, D: Driver<'dr>> {
@@ -282,7 +275,5 @@ mod tests {
         let padding = padding::<Fp, TestRank>();
         assert_eq!(padding.eval(Fp::from(17)), Fp::ONE);
         assert_eq!(padding.eval(Fp::ZERO), Fp::ONE);
-        let queries = queries_at(Fp::from(5), |_, x| padding.eval(x));
-        assert!(queries.iter().all(|q| q.x == Fp::from(5) && q.y == Fp::ONE));
     }
 }

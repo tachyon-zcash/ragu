@@ -1,5 +1,4 @@
 //! The production compressed-proof transport path and hostile byte boundaries.
-use ragu_pcd::header::NUM_ONLINE_POLYNOMIALS;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -16,7 +15,7 @@ fn compressed_transport_roundtrip_and_rejection() {
     let bytes = compressed.proof().to_bytes().unwrap();
     assert_eq!(
         bytes.len(),
-        TestCompressed::encoded_len::<crate::nontrivial_support::R, 4>()
+        TestCompressed::encoded_len::<crate::nontrivial_support::R>()
     );
     let decoded = TestCompressed::from_bytes(&bytes).unwrap();
     assert_eq!(decoded.to_bytes().unwrap(), bytes);
@@ -42,39 +41,23 @@ fn compressed_transport_roundtrip_and_rejection() {
             "envelope offset {offset}"
         );
     }
-    // First native point: the circuit id, the two fixed four-element headers
-    // and the online openings precede it.
-    let point = ENVELOPE + 4 + 2 * 4 * 32 + 2 * 3 * NUM_ONLINE_POLYNOMIALS * 32;
+    // First native point: only the circuit id precedes it.
+    let point = ENVELOPE + 4;
     for value in [0, 0xff] {
         let mut bad = bytes.clone();
         bad[point..point + 32].fill(value);
         assert!(TestCompressed::from_bytes(&bad).is_err());
     }
-    let mut bad = bytes.clone();
-    let header = ENVELOPE + 4;
-    bad[header..header + 32].fill(0xff);
-    assert!(
-        TestCompressed::from_bytes(&bad).is_err(),
-        "noncanonical header scalar"
-    );
 
-    // A different bounded header size can describe a canonical encoding.
-    // Application consumers enforce the configured shape after decoding.
-    let mut other_header = uncompressed.clone();
-    other_header[20..28].copy_from_slice(&0u64.to_le_bytes());
-    other_header.drain(ENVELOPE + 36..ENVELOPE + 36 + 2 * 4 * 32);
-    let decoded = TestProof::from_bytes(&other_header)
-        .unwrap()
-        .carry::<LeafNode>(data);
-    assert!(app.compress(&decoded, &mut rng).is_err());
-
-    let mut other_header = bytes.clone();
-    other_header[20..28].copy_from_slice(&0u64.to_le_bytes());
-    other_header.drain(ENVELOPE + 4..ENVELOPE + 4 + 2 * 4 * 32);
-    let decoded = TestCompressed::from_bytes(&other_header)
-        .unwrap()
-        .carry::<LeafNode>(data);
-    assert!(!app.verify_compressed(&decoded).unwrap());
+    // Neither payload carries a header, so a nonzero header size has no
+    // canonical encoding, even with a payload of the length it would imply.
+    for encoding in [&uncompressed, &bytes] {
+        let mut other_header = encoding.clone();
+        other_header[20..28].copy_from_slice(&4u64.to_le_bytes());
+        other_header.extend(core::iter::repeat_n(0u8, 2 * 4 * 32));
+        assert!(TestProof::from_bytes(&other_header).is_err());
+        assert!(TestCompressed::from_bytes(&other_header).is_err());
+    }
 
     // A canonical but false final IPA coefficient is representation-valid,
     // and must fail production verification rather than decoding.

@@ -63,10 +63,6 @@ fn copy_proof_payload<
         Proof {
             bridge_alpha,
             circuit_id,
-            left_header,
-            right_header,
-            native_application_rx,
-            native_application_stage_rx,
             native_preamble_rx,
             native_inner_error_rx,
             native_outer_error_rx,
@@ -93,7 +89,6 @@ fn copy_proof_payload<
             native_points_f_rx,
             native_points_walk_rx,
             online_polynomials,
-            online_openings,
             bridge_preamble_rx,
             bridge_hash_rx,
             bridge_s_prime_rx,
@@ -137,8 +132,6 @@ fn copy_proof_payload<
             alpha,
             u,
             pre_beta,
-            native_application_commitment,
-            native_application_stage_commitment,
             native_preamble_commitment,
             native_inner_error_commitment,
             native_outer_error_commitment,
@@ -198,9 +191,6 @@ fn copy_compressed_payload<
         instance,
         Instance {
             circuit_id,
-            left_header,
-            right_header,
-            online,
             native,
             native_registry_xy,
             native_p,
@@ -452,7 +442,7 @@ where
         let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
             .carry::<Value>(foreign_value);
         assert!(
-            foreign.proof().well_formed::<HEADER_SIZE>(),
+            foreign.proof().well_formed(),
             "same-shape substitution must reach the claim checks"
         );
         let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
@@ -565,7 +555,7 @@ where
 
     let foreign =
         copy_proof_payload::<C<S>, C<T>, R<14>>(source.into_parts().0).carry::<Value>(Fp::from(7));
-    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!foreign.proof().well_formed());
     assert!(!receiver.verify_uncompressed(&foreign, &mut rng)?);
     assert!(matches!(
         receiver.compress(&foreign, &mut rng),

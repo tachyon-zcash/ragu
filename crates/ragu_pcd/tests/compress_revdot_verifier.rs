@@ -165,8 +165,7 @@ fn claim_targets_match_positional_ky_values() {
         c: Some(Fp::from(2)),
         unified: Fp::from(3),
         unified_bridge: Fp::from(5),
-        compute_v_bridge: Fp::from(13),
-        application: Fp::from(7),
+        application: None,
         statement: None,
         binding: None,
     };
@@ -176,8 +175,7 @@ fn claim_targets_match_positional_ky_values() {
         vec![Fp::ONE],
         Fp::ONE,
     )];
-    let shapes =
-        claims::native_shapes::<Standard, _>(CircuitIndex::new(0), Fp::from(11), &masked).unwrap();
+    let shapes = claims::native_shapes::<Standard, _>(Fp::from(11), &masked).unwrap();
     assert_eq!(
         claim_targets(
             &shapes,

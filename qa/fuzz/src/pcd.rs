@@ -24,9 +24,8 @@ use ragu_core::{Cycle, Result, pasta::Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_POLYNOMIALS,
-        NUM_ONLINE_QUERIES, NativeCommitment, NativeRx, NestedCommitment, NestedRx, RxComponent,
-        Side,
+        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_POLYNOMIALS, NativeCommitment,
+        NativeRx, NestedCommitment, NestedRx, RxComponent,
     },
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, WitnessLeaf};
@@ -315,26 +314,6 @@ pub enum FuzzCorruption {
         /// there and the id would never reach the instance.
         in_domain: bool,
     },
-    /// Perturb one element of a child header.
-    HeaderElement {
-        /// Right child rather than left.
-        right: bool,
-        /// Which element, resolved modulo twice the header size so both
-        /// in-range and out-of-range indices come up.
-        index: u8,
-        /// What to add.
-        delta: u64,
-    },
-    /// Resize a child header.
-    HeaderLen {
-        /// Right child rather than left.
-        right: bool,
-        /// The new length, resolved modulo twice the header size so it
-        /// straddles the length the verifier demands.
-        len: u8,
-    },
-    /// Exchange the two child headers.
-    SwapHeaders,
     /// Overwrite a verifier challenge.
     Challenge {
         /// Which challenge.
@@ -420,15 +399,6 @@ pub enum FuzzCorruption {
         /// Which polynomial, resolved modulo the proof's online polynomials.
         index: u8,
     },
-    /// Perturb the point or the value of one online opening.
-    OnlineQuery {
-        /// Which slot, resolved modulo the slots.
-        slot: u8,
-        /// The value rather than the point.
-        value: bool,
-        /// What to add.
-        delta: u64,
-    },
 }
 
 /// The native polynomials a corruption can address, in a stable order.
@@ -456,12 +426,6 @@ fn coeff_index(raw: u16, bound: bool) -> usize {
     raw as usize % modulus
 }
 
-/// Resolves a header index or length, modulo twice the header size so that
-/// roughly half the draws land in range and the rest probe past it.
-fn header_index(raw: u8) -> usize {
-    raw as usize % (2 * HEADER_SIZE)
-}
-
 /// Resolves a circuit id, either into the registry's domain or left wild.
 ///
 /// The domain is not exposed, so `in_domain` folds into a range comfortably
@@ -483,11 +447,6 @@ impl FuzzCorruption {
     pub fn target(&self) -> (u8, usize) {
         match *self {
             FuzzCorruption::CircuitId { .. } => (0, 0),
-            FuzzCorruption::HeaderElement { right, index, .. } => {
-                (1, usize::from(right) << 16 | header_index(index))
-            }
-            FuzzCorruption::HeaderLen { right, .. } => (2, usize::from(right)),
-            FuzzCorruption::SwapHeaders => (3, 0),
             FuzzCorruption::Challenge { which, .. } => (4, which as usize % Challenge::ALL.len()),
             FuzzCorruption::NegateBridgeCommitment { which } => {
                 (5, which as usize % BridgeCommitment::ALL.len())
@@ -528,34 +487,15 @@ impl FuzzCorruption {
             FuzzCorruption::NegateOnlineCommitment { index } => {
                 (16, index as usize % NUM_ONLINE_POLYNOMIALS)
             }
-            FuzzCorruption::OnlineQuery { slot, value, .. } => (
-                17,
-                (usize::from(value) << 16) | (slot as usize % NUM_ONLINE_QUERIES),
-            ),
         }
     }
 
     /// Resolve this choice into a [`Corruption`] over the Pasta cycle.
     pub fn resolve(&self) -> Corruption<C> {
-        let side = |right: bool| if right { Side::Right } else { Side::Left };
         match *self {
             FuzzCorruption::CircuitId { raw, in_domain } => {
                 Corruption::CircuitId(circuit_id(raw, in_domain))
             }
-            FuzzCorruption::HeaderElement {
-                right,
-                index,
-                delta,
-            } => Corruption::HeaderElement {
-                side: side(right),
-                index: header_index(index),
-                delta: nonzero(delta),
-            },
-            FuzzCorruption::HeaderLen { right, len } => Corruption::HeaderLen {
-                side: side(right),
-                len: header_index(len),
-            },
-            FuzzCorruption::SwapHeaders => Corruption::SwapHeaders,
             FuzzCorruption::Challenge { which, value } => Corruption::Challenge(
                 Challenge::ALL[which as usize % Challenge::ALL.len()],
                 NativeField::from(value),
@@ -619,11 +559,6 @@ impl FuzzCorruption {
             FuzzCorruption::NegateOnlineCommitment { index } => {
                 Corruption::NegateOnlineCommitment(index as usize % NUM_ONLINE_POLYNOMIALS)
             }
-            FuzzCorruption::OnlineQuery { slot, value, delta } => Corruption::OnlineQuery {
-                slot: slot as usize % NUM_ONLINE_QUERIES,
-                value,
-                delta: nonzero(delta),
-            },
         }
     }
 }

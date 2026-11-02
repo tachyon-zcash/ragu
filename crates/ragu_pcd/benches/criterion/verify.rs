@@ -67,7 +67,7 @@ fn verify_bench(c: &mut Criterion) {
             (
                 "verify_corrupted_native_coefficient",
                 Corruption::NativeCoeff {
-                    component: RxComponent::Rx(NativeRx::Application),
+                    component: RxComponent::Rx(NativeRx::Hashes1),
                     coeff: 0,
                     delta: Fp::from(7u64),
                 },

@@ -6,10 +6,11 @@
 //!
 //! Each polynomial entering the claims pipeline is tagged with a [`FoldKey`]
 //! key — a `(`[`Side`]`, `[`RxComponent`]`)` pair identifying which child
-//! proof and component it came from. As polynomials are summed and folded,
-//! the corresponding [`CommitmentDecomposition`] accumulates the linear
-//! combination of those keys, so the final commitment can be resolved
-//! directly from the child proofs.
+//! proof and component it came from, or the step's own application trace.
+//! As polynomials are summed and folded, the corresponding
+//! [`CommitmentDecomposition`] accumulates the linear combination of those
+//! keys, so the final commitment can be resolved directly from the child
+//! proofs and the step's own application commitment.
 //!
 //! The nested source supplies polynomial references; its folded commitments
 //! are computed from the resulting polynomials directly.
@@ -29,7 +30,7 @@ use crate::{
     internal::{
         claims::{Builder, Source},
         fold_revdot::{self, Foldable},
-        native::{InternalCircuitIndex, RxComponent, RxIndex, claims::Processor},
+        native::{InternalCircuitIndex, RxComponent, claims::Processor},
         nested,
     },
     profile::Profile,
@@ -169,29 +170,41 @@ impl<K: Copy, F: Field, R: Rank> Clone for Atom<'_, K, F, R> {
 }
 impl<K: Copy, F: Field, R: Rank> Copy for Atom<'_, K, F, R> {}
 
+use super::_01_application::NativeApplication;
 use crate::internal::Side;
 
 /// Key identifying a polynomial and its corresponding commitment within the
-/// fuse pipeline: which child proof, and which component of that proof.
-pub(super) type FoldKey = (Side, RxComponent);
+/// fuse pipeline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FoldKey {
+    /// A component of one of the child proofs.
+    Child(Side, RxComponent),
+    /// The step's own application trace.
+    Application,
+    /// The step's own application stage.
+    ApplicationStage,
+}
 
-/// The two child proofs being fused. Provides [`Atom`]-tagged rx values
-/// for claim building, and resolves [`FoldKey`] keys back to their
-/// commitments for the MSM in `_06_ab`.
+/// The two child proofs being fused, and the step's own application
+/// polynomials. Provides [`Atom`]-tagged rx values for claim building, and
+/// resolves [`FoldKey`] keys back to their commitments for the MSM in
+/// `_06_ab`.
 pub(super) struct NativeFuseProofSource<'rx, C: Cycle, R: Rank> {
     pub(super) left: &'rx Proof<C, R>,
     pub(super) right: &'rx Proof<C, R>,
+    pub(super) application: &'rx NativeApplication<C, R>,
 }
 
 impl<'rx, C: Cycle, R: Rank> NativeFuseProofSource<'rx, C, R> {
-    /// Look up the commitment for a [`FoldKey`] in the corresponding child
-    /// proof.
-    pub(super) fn get(&self, (side, component): FoldKey) -> C::HostCurve {
-        let proof = match side {
-            Side::Left => self.left,
-            Side::Right => self.right,
-        };
-        proof.native_commitment(component)
+    /// Look up the commitment for a [`FoldKey`]: in the corresponding child
+    /// proof, or one of the step's own application commitments.
+    pub(super) fn get(&self, key: FoldKey) -> C::HostCurve {
+        match key {
+            FoldKey::Child(Side::Left, component) => self.left.native_commitment(component),
+            FoldKey::Child(Side::Right, component) => self.right.native_commitment(component),
+            FoldKey::Application => self.application.commitment,
+            FoldKey::ApplicationStage => self.application.stage.commitment,
+        }
     }
 }
 
@@ -203,11 +216,11 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
     fn rx(&self, component: RxComponent) -> impl Iterator<Item = Self::Rx> {
         [
             Atom {
-                key: (Side::Left, component),
+                key: FoldKey::Child(Side::Left, component),
                 poly: &self.left[component],
             },
             Atom {
-                key: (Side::Right, component),
+                key: FoldKey::Child(Side::Right, component),
                 poly: &self.right[component],
             },
         ]
@@ -215,10 +228,19 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
     }
 
     fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
-        self.rx(RxComponent::Rx(RxIndex::Application))
-            .zip(self.rx(RxComponent::Rx(RxIndex::ApplicationStage)))
-            .zip([self.left.circuit_id(), self.right.circuit_id()])
-            .map(|((own, stage), id)| (id, [own, stage]))
+        core::iter::once((
+            self.application.circuit_id,
+            [
+                Atom {
+                    key: FoldKey::Application,
+                    poly: &self.application.rx,
+                },
+                Atom {
+                    key: FoldKey::ApplicationStage,
+                    poly: &self.application.stage.rx,
+                },
+            ],
+        ))
     }
 }
 

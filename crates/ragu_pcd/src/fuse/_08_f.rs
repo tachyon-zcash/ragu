@@ -29,6 +29,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use super::{
+    _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
 };
@@ -74,6 +75,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
     ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -89,6 +91,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             builder,
             left,
             right,
+            application,
         )?;
         let nested = {
             let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
@@ -141,6 +144,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
     ) -> Result<NativeF<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -195,13 +199,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 StaticFQuery::RegistryXyAtW => {
                     divide_linear_rev(builder.native_registry_xy_poly().iter_coeffs(), w)
                 }
-                StaticFQuery::RegistryXyAtLeftCircuitId => divide_linear_rev(
+                StaticFQuery::RegistryXyAtCircuitId => divide_linear_rev(
                     builder.native_registry_xy_poly().iter_coeffs(),
-                    left.circuit_id().omega_j(),
-                ),
-                StaticFQuery::RegistryXyAtRightCircuitId => divide_linear_rev(
-                    builder.native_registry_xy_poly().iter_coeffs(),
-                    right.circuit_id().omega_j(),
+                    application.circuit_id.omega_j(),
                 ),
                 StaticFQuery::LeftAbAAtXz => {
                     divide_linear_rev(left[RxComponent::AbA].iter_coeffs(), xz)
@@ -220,6 +220,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 }
                 StaticFQuery::CurrentBAtX => {
                     divide_linear_rev(builder.native_b_poly().iter_coeffs(), x)
+                }
+                StaticFQuery::CurrentApplicationAtXz => {
+                    divide_linear_rev(application.rx.iter_coeffs(), xz)
+                }
+                StaticFQuery::CurrentApplicationStageAtXz => {
+                    divide_linear_rev(application.stage.rx.iter_coeffs(), xz)
                 }
             })
             .collect();

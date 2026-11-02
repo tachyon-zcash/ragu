@@ -93,7 +93,7 @@ fn recomputed_stages_match() {
     let generators = Pasta::nested_generators(crate::pasta::baked());
     assert!(
         instance
-            .stages_match::<TestR, ReferenceBackend, HEADER_SIZE>(&challenges, generators)
+            .stages_match::<TestR, ReferenceBackend>(&challenges, generators)
             .unwrap()
     );
 
@@ -101,7 +101,7 @@ fn recomputed_stages_match() {
     tampered.bridge_alpha += Fq::ONE;
     assert!(
         !tampered
-            .stages_match::<TestR, ReferenceBackend, HEADER_SIZE>(&challenges, generators)
+            .stages_match::<TestR, ReferenceBackend>(&challenges, generators)
             .unwrap()
     );
 }
@@ -162,9 +162,7 @@ fn wire_bindings_hold() {
     // The shapes append the bindings after the decider's claims, each over
     // its stage polynomial alone.
     let z = Fp::random(|bytes| rng.fill_bytes(bytes));
-    let shapes =
-        claims::native_shapes::<crate::profile::Standard, _>(instance.circuit_id, z, &native)
-            .unwrap();
+    let shapes = claims::native_shapes::<crate::profile::Standard, _>(z, &native).unwrap();
     let tail = &shapes[shapes.len() - native.len()..];
     for ((m, shape), masked) in tail.iter().enumerate().zip(&native) {
         assert_eq!(shape.kind, Kind::Masked(m));

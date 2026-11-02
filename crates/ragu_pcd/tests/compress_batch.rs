@@ -249,7 +249,6 @@ fn native_verifier(
 ) -> (CycleTranscript<'static, Pasta>, Openings<EqAffine>) {
     let mut t = transcript();
     let openings = revdot::verify_native::<Pasta, TestR, ReferenceBackend>(
-        proof.circuit_id(),
         |component| proof.native_commitment(component),
         &app.native_registry,
         y,
@@ -360,9 +359,8 @@ fn native_batch_opens_through_the_ipa() {
     let wrong = NativeKy {
         c: targets.c,
         unified: targets.unified,
-        unified_bridge: targets.unified_bridge,
-        compute_v_bridge: targets.compute_v_bridge,
-        application: targets.application + Fp::ONE,
+        unified_bridge: targets.unified_bridge + Fp::ONE,
+        application: targets.application,
         statement: targets.statement,
         binding: targets.binding,
     };

@@ -8,10 +8,12 @@
 //!
 //! This is separate from the in-circuit element stream in
 //! [`ragu_primitives::io`]. Every value has a fixed encoded length, determined
-//! by its type and by the payload's dimensions: the rank, the header size and
-//! the protocol's vector counts fix the layout, so no length is read from the
-//! payload itself. Neither the rank of a compressed proof nor the header size
-//! of any proof is part of its type, so the envelope supplies them.
+//! by its type and by the payload's dimensions: the rank and the protocol's
+//! vector counts fix the layout, so no length is read from the payload
+//! itself. The rank of a compressed proof is not part of its type, so the
+//! envelope supplies it. No payload carries a header: a proof's output header
+//! is encoded from the data it carries, and it does not carry its input
+//! headers.
 //!
 //! Integers are little-endian with their declared widths. Scalar and point
 //! representations are specified by their respective types. Explicit scalar
@@ -27,14 +29,14 @@
 //! | 0 | 8 | Magic: `RAGUPCD` and a NUL |
 //! | 8 | 2 | Envelope version: 3 |
 //! | 10 | 2 | Payload kind: 1 proof, 2 compressed proof |
-//! | 12 | 2 | Schema version of that payload kind: 2 |
+//! | 12 | 2 | Schema version of that payload kind: 3 |
 //! | 14 | 2 | Protocol version: 1 (`ragu-pcd-v1`) |
 //! | 16 | 4 | Rank |
-//! | 20 | 8 | Header size, in field elements |
+//! | 20 | 8 | Header size, in field elements: 0, as no schema 3 payload carries a header |
 //!
 //! Decoding checks the envelope and its dimensions, then the exact total
-//! length those dimensions imply, before decoding the payload. Headers are
-//! limited to 4096 field elements and compressed ranks to 32, so hostile
+//! length those dimensions imply, before decoding the payload. Compressed
+//! ranks are limited to 32 and the header size must be zero, so hostile
 //! dimensions are rejected before allocating the payload. An ordinary proof's
 //! declared rank must match its type. Unknown versions are never reinterpreted
 //! or downgraded. The caller selects the expected application, profile and
@@ -60,8 +62,8 @@
 //! expected lengths are available from
 //! [`Proof::encoded_len`](crate::Proof::encoded_len) and
 //! [`CompressedProof::encoded_len`](crate::CompressedProof::encoded_len).
-//! A compressed proof's length does not fix its rank and header size;
-//! verification checks the application's shape.
+//! A compressed proof's length does not fix its rank; verification checks
+//! the application's shape.
 //! With `serde`, also configure the deserializer's size limit or
 //! bound its input externally: a backend may allocate its byte buffer before
 //! handing it to Ragu. Ragu bounds its own sequence buffer and checks the
@@ -90,27 +92,19 @@ pub(crate) use format::ENVELOPE_SIZE;
 
 /// Largest compressed rank admitted by the byte formats.
 pub(crate) const MAX_RANK: u32 = 32;
-/// Largest child header admitted by the byte formats, in field elements.
-pub(crate) const MAX_HEADER_SIZE: usize = 1 << 12;
 
 /// The dimensions a payload's layout takes from its proof rather than from
-/// its type: the rank, which fixes a compressed proof's IPA rounds, and the
-/// header size, which fixes every child header.
+/// its type: the rank, which fixes a compressed proof's IPA rounds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Dimensions {
     /// The rank, one IPA round per bit.
     pub(crate) rank: u32,
-    /// The number of elements in each child header.
-    pub(crate) header_size: usize,
 }
 
 impl Dimensions {
     /// The dimensions of an application's proofs.
-    pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>() -> Self {
-        Self {
-            rank: R::RANK,
-            header_size: HEADER_SIZE,
-        }
+    pub(crate) fn of<R: Rank>() -> Self {
+        Self { rank: R::RANK }
     }
 }
 
@@ -137,14 +131,6 @@ pub(crate) struct Array<C>(PhantomData<C>);
 pub(crate) trait Dimension {
     /// The count in `dims`.
     fn of(dims: Dimensions) -> usize;
-}
-
-/// The number of elements in a child header.
-pub(crate) struct HeaderSize;
-impl Dimension for HeaderSize {
-    fn of(dims: Dimensions) -> usize {
-        dims.header_size
-    }
 }
 
 /// The number of IPA rounds, one per bit of the rank.

@@ -110,30 +110,45 @@ pub struct Witness<F> {
 }
 
 impl<F: Field> Witness<F> {
-    /// Creates the witness from the lifts and the children's native output
-    /// headers. The sign mirrors the native preamble's base-case predicate;
-    /// the last native binding circuit derives that predicate independently
-    /// from its header wires. The beta lift is filled once `pre_beta` is known.
-    pub fn new<N: Field, const HEADER_SIZE: usize>(
-        lifts: [F; NUM],
-        left_header: &[N],
-        right_header: &[N],
-        beta: F,
-    ) -> Self {
-        let dummy_suffix =
-            N::from(<crate::header::Dummy as crate::header::Header<N>>::SUFFIX.get());
-        let is_dummy =
-            |header: &[N]| header.len() == HEADER_SIZE && header.last() == Some(&dummy_suffix);
+    /// Creates the witness from the lifts and whether the step takes the
+    /// base case. The sign mirrors the native preamble's base-case
+    /// predicate; the last native binding circuit derives that predicate
+    /// independently from its header wires. The beta lift is filled once
+    /// `pre_beta` is known.
+    ///
+    /// The prover knows the step's input headers ([`takes_base_case`]). A
+    /// verifier of a proof does not, and reads the base case off the proof's
+    /// circuit id instead ([`is_bootstrap`]): the base case pins the circuit
+    /// id to the bootstrap step's, and a bootstrap proof outside the base
+    /// case has its own application claim, which declares `Dummy` inputs,
+    /// enforced.
+    pub fn new(lifts: [F; NUM], base_case: bool, beta: F) -> Self {
         Self {
             lifts: FixedVec::new(lifts.into()).expect("NUM lifts"),
-            base_case_sign: if is_dummy(left_header) && is_dummy(right_header) {
-                F::ONE
-            } else {
-                -F::ONE
-            },
+            base_case_sign: if base_case { F::ONE } else { -F::ONE },
             beta,
         }
     }
+}
+
+/// Whether a step whose input headers are `left_header` and `right_header`
+/// takes the base case: both carry the `Dummy` suffix.
+pub fn takes_base_case<N: Field, const HEADER_SIZE: usize>(
+    left_header: &[N],
+    right_header: &[N],
+) -> bool {
+    let dummy_suffix = N::from(<crate::header::Dummy as crate::header::Header<N>>::SUFFIX.get());
+    let is_dummy =
+        |header: &[N]| header.len() == HEADER_SIZE && header.last() == Some(&dummy_suffix);
+    is_dummy(left_header) && is_dummy(right_header)
+}
+
+/// Whether a proof of `circuit_id` took the base case: whether it is a
+/// proof of the bootstrap step (see [`Witness::new`]).
+pub fn is_bootstrap<P: crate::profile::Profile>(
+    circuit_id: ragu_circuits::registry::CircuitIndex,
+) -> ragu_core::Result<bool> {
+    Ok(circuit_id == crate::step::InternalStepIndex::Bootstrap.circuit_index::<P>()?)
 }
 
 /// Prover-internal output gadget for this stage: each lift followed by the
@@ -232,8 +247,7 @@ mod tests {
         type F = ragu_core::pasta::Fq;
         let lifts: [F; NUM] = core::array::from_fn(|i| F::from(3 + i as u64));
         let beta = F::from(99);
-        let header = [ragu_core::pasta::Fp::from(crate::header::Suffix::new(0).get()); 4];
-        let witness = Witness::new::<_, 4>(lifts, &header, &header, beta);
+        let witness = Witness::new(lifts, false, beta);
         let rx = <Stage<EqAffine, R, Standard> as StageExt<F, R>>::rx(F::from(11), &witness)?;
         let reader = StageReader::<F, R>::new(&rx);
 
