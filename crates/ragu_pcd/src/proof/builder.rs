@@ -480,6 +480,26 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     setter!(set_circuit_id, circuit_id, CircuitIndex);
     getter!(circuit_id, circuit_id, CircuitIndex);
+
+    /// Replaces the suffix of both input headers with the `Dummy` suffix,
+    /// for a test playing a prover that forges the base case.
+    #[cfg(test)]
+    pub(crate) fn forge_dummy_inputs(&mut self) {
+        use crate::header::{Dummy, Header};
+        let dummy = C::CircuitField::from(<Dummy as Header<C::CircuitField>>::SUFFIX.get());
+        for header in [&mut self.left_header, &mut self.right_header] {
+            *header
+                .as_mut()
+                .and_then(|header| header.last_mut())
+                .expect("input headers are set") = dummy;
+        }
+    }
+
+    /// Replaces the circuit id, for a test playing a prover that forges it.
+    #[cfg(test)]
+    pub(crate) fn forge_circuit_id(&mut self, circuit_id: CircuitIndex) {
+        self.circuit_id = Some(circuit_id);
+    }
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
     setter!(set_right_header, right_header, Vec<C::CircuitField>);
     setter!(set_output_header, output_header, Vec<C::CircuitField>);

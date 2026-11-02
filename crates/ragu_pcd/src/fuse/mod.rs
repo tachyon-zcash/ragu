@@ -79,6 +79,47 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |_, _| {})
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that witnesses its own application
+    /// data in place of the step's: `forge` sets the input header suffixes
+    /// to the [`Dummy`](crate::header::Dummy) suffix, which takes the base
+    /// case, and, if given, the circuit id. The step's application trace is
+    /// left as the step computed it, so its claim no longer matches the
+    /// data the preamble witnesses; the base case leaves the folded claim
+    /// free, so only the base-case pin in `collapse` can reject the proof.
+    #[cfg(test)]
+    pub(crate) fn fuse_forging_dummy_inputs<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        circuit_id: Option<ragu_circuits::registry::CircuitIndex>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |builder, application| {
+            builder.forge_dummy_inputs();
+            if let Some(circuit_id) = circuit_id {
+                builder.forge_circuit_id(circuit_id);
+                application.circuit_id = circuit_id;
+            }
+        })
+    }
+
+    /// [`fuse`](Self::fuse), with `edit` applied to the step's application
+    /// data before anything commits to it. Only tests edit anything: `fuse`
+    /// passes an edit that does nothing.
+    fn fuse_with<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        edit: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier
         // refuses it, rather than read past its ends.
@@ -93,8 +134,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, application_data, application_aux, application) =
+        let (left, right, application_data, application_aux, mut application) =
             self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
+        edit(&mut builder, &mut application);
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
