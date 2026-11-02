@@ -2,7 +2,7 @@
 //! profile declares to carry them and the hooks that register them.
 //!
 //! On the native side the extension is the circuit-field side's chunk
-//! circuits, one per run of chunks of its schedule, over its six stages:
+//! circuits, one per group of chunks of its schedule, over its six stages:
 //! the instance, messages, lifts and work stages every chunk loads, the
 //! transcript stage the transcript chunks load after them, and the digits
 //! stage the digits chunks load after the work stage instead. Three final
@@ -125,7 +125,7 @@ pub(crate) const fn nested_stages(runs: usize) -> usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Counts {
     /// The chunk circuits.
-    pub chunks: usize,
+    pub circuits: usize,
     /// How many of them, first, run transcript chunks.
     pub transcript: usize,
     /// How many of them, last, run digits chunks.
@@ -135,7 +135,7 @@ pub struct Counts {
 impl Counts {
     /// The chunk circuits that load no stage past the work stage.
     const fn work(self) -> usize {
-        self.chunks - self.transcript - self.digits
+        self.circuits - self.transcript - self.digits
     }
 }
 
@@ -153,17 +153,17 @@ impl Counts {
 ///
 /// # Panics
 ///
-/// Panics if the transcript and digits counts exceed the chunks.
+/// Panics if the transcript and digits counts exceed the chunk circuits.
 pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
     assert!(
-        counts.transcript + counts.digits <= counts.chunks,
-        "the transcript and digits chunks are among the chunks"
+        counts.transcript + counts.digits <= counts.circuits,
+        "the transcript and digits circuits are among the chunk circuits"
     );
     let indices = Indices::native();
     let nested = Indices::nested(runs);
-    let statement = counts.chunks as u32;
+    let statement = counts.circuits as u32;
     let binding = statement + 1;
-    let mut circuits = Vec::with_capacity(counts.chunks + 2);
+    let mut circuits = Vec::with_capacity(counts.circuits + 2);
     circuits.extend(repeat_n(
         indices
             .common()
@@ -214,21 +214,21 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
 ///
 /// # Panics
 ///
-/// Panics if `counts` has transcript chunks or more digits chunks than
-/// chunks.
+/// Panics if `counts` has transcript circuits or more digits circuits
+/// than chunk circuits.
 pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
     assert_eq!(
         counts.transcript, 0,
         "the scalar-field side runs no transcript chunks"
     );
     assert!(
-        counts.digits <= counts.chunks,
-        "the digits chunks are among the chunks"
+        counts.digits <= counts.circuits,
+        "the digits circuits are among the chunk circuits"
     );
     let indices = Indices::nested(runs);
-    let binding = counts.chunks as u32;
+    let binding = counts.circuits as u32;
     let work = counts.work() as u32;
-    let mut circuits = Vec::with_capacity(counts.chunks + 1);
+    let mut circuits = Vec::with_capacity(counts.circuits + 1);
     circuits.extend(repeat_n(indices.common(), counts.work()));
     circuits.extend(repeat_n(
         indices
@@ -269,22 +269,22 @@ where
     R: Rank,
 {
     let schedule = S::schedule::<K, R, HEADER_SIZE>()?;
-    let chunks = schedule.circuits.len();
+    let circuits = schedule.circuits.len();
     let kind = |index: usize| last(&schedule, index);
-    let transcript = (0..chunks)
+    let transcript = (0..circuits)
         .take_while(|&index| kind(index) == Last::Transcript)
         .count();
-    let digits = (0..chunks)
+    let digits = (0..circuits)
         .rev()
         .take_while(|&index| kind(index) == Last::Digits)
         .count();
-    if (transcript..chunks - digits).any(|index| kind(index) != Last::Work) {
+    if (transcript..circuits - digits).any(|index| kind(index) != Last::Work) {
         return Err(Error::Initialization(
             "the circuits are not in transcript, work, digits order".into(),
         ));
     }
     Ok(Counts {
-        chunks,
+        circuits,
         transcript,
         digits,
     })
@@ -474,13 +474,13 @@ where
     K: Rank,
     R: Rank,
 {
-    if circuit == pinned.chunks {
+    if circuit == pinned.circuits {
         let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
         return slot.register_staged(
             chunk::StatementCircuit::<C, Native, K, R, HEADER_SIZE>::new(schedule),
         );
     }
-    if circuit == pinned.chunks + 1 {
+    if circuit == pinned.circuits + 1 {
         let schedule = pinned_schedule::<C, Native, K, R, HEADER_SIZE>(pinned)?;
         return slot.register_staged(chunk::BindingCircuit::<C, Native, K, R, HEADER_SIZE>::new(
             schedule,
@@ -516,7 +516,7 @@ where
     K: Runs,
     R: Rank,
 {
-    if circuit == pinned.chunks {
+    if circuit == pinned.circuits {
         let schedule = pinned_schedule::<C, Nested, K, R, HEADER_SIZE>(pinned)?;
         return slot.register_staged(chunk::BindingCircuit::<C, Nested, K, R, HEADER_SIZE>::new(
             schedule,

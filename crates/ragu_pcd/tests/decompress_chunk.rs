@@ -59,8 +59,8 @@ fn circuit_schedule<S: Side<Pasta>, R: Rank>() -> Arc<Schedule> {
 /// The kinds of the chunks circuit `index` runs, as `kind+kind×n`.
 fn describe(schedule: &Schedule, index: usize) -> String {
     let mut parts: Vec<(&'static str, usize)> = Vec::new();
-    for chunk in &schedule.chunks[schedule.circuits[index].chunks.clone()] {
-        let kind = kind(chunk);
+    for &chunk in &schedule.circuits[index].chunks {
+        let kind = kind(&schedule.chunks[chunk]);
         match parts.last_mut() {
             Some((last, count)) if *last == kind => *count += 1,
             _ => parts.push((kind, 1)),
@@ -387,9 +387,10 @@ fn chains_hold_their_bits_to_the_lifts_stage() {
     let schedule = circuit_schedule::<Nested, SmallR>();
     let mut rng = StdRng::seed_from_u64(17);
     let without_lift_chunks = (0..schedule.circuits.len()).filter(|&index| {
-        !schedule.chunks[schedule.circuits[index].chunks.clone()]
+        !schedule.circuits[index]
+            .chunks
             .iter()
-            .any(|chunk| matches!(chunk, Chunk::Lift { .. }))
+            .any(|&chunk| matches!(schedule.chunks[chunk], Chunk::Lift { .. }))
     });
     assert!(
         without_lift_chunks.into_iter().any(|index| {
@@ -587,4 +588,141 @@ fn binding_circuits_expose_the_other_sides_commitments() {
         "every run from the first blinded message on, the lifts and the digits differ between compressions"
     );
     assert_ne!(exposed(&sides.nested), other_native);
+}
+
+/// The gates every chunk of side `S` takes on its own at rank `R`, beyond
+/// the stages its circuit loads, against the schedule's estimate of it,
+/// each chunk synthesized as a circuit of its own; and the stages each kind
+/// of circuit loads, synthesized as a circuit of no chunks, against the
+/// schedule's count of them. The table is printed. Returns what fails: an
+/// estimate below a chunk's measure, which the packer would overfill a
+/// circuit by, or estimates more than a twentieth above the side's
+/// measures in all, which would leave every aggregator proof carrying
+/// circuits it need not.
+fn measure_chunks<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
+    prepared: &Prepared<Pasta, S>,
+) -> Vec<String> {
+    use crate::decompress::program::{CircuitPlan, gates};
+    let params = crate::pasta::baked_aggregator();
+    let synthesize = |schedule: &Arc<Schedule>, index: usize| -> usize {
+        match last(schedule, index) {
+            Last::Transcript => {
+                ragu_circuits::testing::synthesis_counts(&TranscriptCircuit::<
+                    Pasta,
+                    S,
+                    TestR,
+                    R,
+                    HEADER_SIZE,
+                >::new(
+                    index, schedule.clone(), params
+                ))
+            }
+            Last::Digits => {
+                ragu_circuits::testing::synthesis_counts(&DigitsCircuit::<
+                    Pasta,
+                    S,
+                    TestR,
+                    R,
+                    HEADER_SIZE,
+                >::new(
+                    index, schedule.clone(), params
+                ))
+            }
+            Last::Work => {
+                ragu_circuits::testing::synthesis_counts(
+                    &Circuit::<Pasta, S, TestR, R, HEADER_SIZE>::new(
+                        index,
+                        schedule.clone(),
+                        params,
+                    ),
+                )
+            }
+        }
+        .unwrap()
+        .num_gates
+    };
+    let mut failures = Vec::new();
+    // The stages alone: a circuit of no chunks of each kind.
+    let kinds = [Last::Work, Last::Transcript, Last::Digits];
+    let mut empty = prepared.schedule.clone();
+    empty.circuits = kinds
+        .iter()
+        .map(|&last| CircuitPlan {
+            chunks: Vec::new(),
+            last,
+        })
+        .collect();
+    let empty = Arc::new(empty);
+    let loading: Vec<usize> = (0..kinds.len()).map(|i| synthesize(&empty, i)).collect();
+    for (i, &last) in kinds.iter().enumerate() {
+        let counted = prepared.schedule.stage_gates(last);
+        std::println!(
+            "{} {last:?} stages: {} gates, counted {counted}",
+            S::NAME,
+            loading[i]
+        );
+        if counted != loading[i] {
+            failures.push(format!(
+                "{} {last:?} circuits load {} gates of stages, counted {counted}",
+                S::NAME,
+                loading[i]
+            ));
+        }
+    }
+    let load = |last: Last| loading[kinds.iter().position(|&k| k == last).unwrap()];
+    // Every chunk alone.
+    let mut single = prepared.schedule.clone();
+    single.circuits = (0..prepared.schedule.chunks.len())
+        .map(|i| CircuitPlan {
+            chunks: alloc::vec![i],
+            last: prepared.schedule.chunks[i].last(),
+        })
+        .collect();
+    let single = Arc::new(single);
+    let mut by_kind: Vec<(&'static str, usize, usize, usize)> = Vec::new();
+    let (mut measured_total, mut estimated_total) = (0, 0);
+    for (i, chunk) in prepared.schedule.chunks.iter().enumerate() {
+        let measured = synthesize(&single, i) - load(chunk.last());
+        let estimate = gates(chunk);
+        measured_total += measured;
+        estimated_total += estimate;
+        match by_kind.iter_mut().find(|(k, _, _, _)| *k == kind(chunk)) {
+            Some(entry) => {
+                entry.1 += 1;
+                entry.2 += measured;
+                entry.3 += estimate;
+            }
+            None => by_kind.push((kind(chunk), 1, measured, estimate)),
+        }
+        if estimate < measured {
+            failures.push(format!(
+                "{} chunk {i} ({}) measures {measured} gates, estimated {estimate}",
+                S::NAME,
+                kind(chunk)
+            ));
+        }
+    }
+    std::println!(
+        "{} chunks by kind (count, measured, estimated): {by_kind:?}; in all {measured_total} measured, {estimated_total} estimated",
+        S::NAME
+    );
+    if estimated_total > measured_total + measured_total / 20 {
+        failures.push(format!(
+            "{} chunks measure {measured_total} gates in all, estimated {estimated_total}",
+            S::NAME
+        ));
+    }
+    failures
+}
+
+/// The packer's estimates hold to what the chunks and stages measure, on
+/// both sides: an upper bound on every chunk, within a twentieth in all,
+/// and the stages' gates exactly.
+#[test]
+fn estimates_cover_every_chunk() {
+    let setup = Setup::new();
+    let sides = sides::<SmallR>(&setup);
+    let mut failures = measure_chunks::<Native, SmallR>(&sides.native);
+    failures.extend(measure_chunks::<Nested, SmallR>(&sides.nested));
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

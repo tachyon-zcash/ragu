@@ -85,8 +85,8 @@ fn pinned_layout_is_the_schedules() {
 
     let native = P::native_extension();
     let counts = P::native_circuits(HEADER_SIZE);
-    let (chunks, transcript, digits) = (counts.chunks, counts.transcript, counts.digits);
-    assert_eq!(native.circuits.len(), chunks + 2);
+    let (chunk_circuits, transcript, digits) = (counts.circuits, counts.transcript, counts.digits);
+    assert_eq!(native.circuits.len(), chunk_circuits + 2);
     assert_eq!(native.stages, 6);
     assert!(
         native.circuits[..transcript]
@@ -94,21 +94,21 @@ fn pinned_layout_is_the_schedules() {
             .all(|c| c == &[0, 1, 2, 3, 4])
     );
     assert!(
-        native.circuits[transcript..chunks - digits]
+        native.circuits[transcript..chunk_circuits - digits]
             .iter()
             .all(|c| c == &[0, 1, 2, 3])
     );
     assert!(
-        native.circuits[chunks - digits..chunks]
+        native.circuits[chunk_circuits - digits..chunk_circuits]
             .iter()
             .all(|c| c == &[0, 1, 2, 3, 5])
     );
-    assert_eq!(native.circuits[chunks], [0]);
-    assert_eq!(native.circuits[chunks + 1], [0, 1, 2, 3]);
-    assert_eq!(native.statement, Some(chunks as u32));
+    assert_eq!(native.circuits[chunk_circuits], [0]);
+    assert_eq!(native.circuits[chunk_circuits + 1], [0, 1, 2, 3]);
+    assert_eq!(native.statement, Some(chunk_circuits as u32));
     let runs = num_runs::<ProductionRank>() as u32;
     let binding = native.binding.as_ref().expect("the native side binds");
-    assert_eq!(binding.circuit, chunks as u32 + 1);
+    assert_eq!(binding.circuit, chunk_circuits as u32 + 1);
     assert_eq!(
         binding.stages,
         (0..runs).chain([runs + 1, runs + 3]).collect::<Vec<_>>(),
@@ -117,37 +117,37 @@ fn pinned_layout_is_the_schedules() {
     assert_eq!(native.final_masks.len(), 4);
     assert_eq!(
         native.final_masks[0].len(),
-        chunks - transcript - digits + 1
+        chunk_circuits - transcript - digits + 1
     );
     assert_eq!(native.final_masks[1].len(), transcript);
     assert_eq!(native.final_masks[2].len(), digits);
-    assert_eq!(native.final_masks[3], [chunks as u32]);
+    assert_eq!(native.final_masks[3], [chunk_circuits as u32]);
     assert!(native.is_consistent());
 
     let nested = P::nested_extension();
     let counts = P::NESTED_CIRCUITS;
-    let (chunks, digits) = (counts.chunks, counts.digits);
-    assert_eq!(nested.circuits.len(), chunks + 1);
+    let (chunk_circuits, digits) = (counts.circuits, counts.digits);
+    assert_eq!(nested.circuits.len(), chunk_circuits + 1);
     assert_eq!(nested.stages as u32, runs + 4);
     let common: Vec<u32> = (0..runs + 3).collect();
     let with_digits: Vec<u32> = (0..runs + 4).collect();
     assert!(
-        nested.circuits[..chunks - digits]
+        nested.circuits[..chunk_circuits - digits]
             .iter()
             .all(|c| c == &common)
     );
     assert!(
-        nested.circuits[chunks - digits..chunks]
+        nested.circuits[chunk_circuits - digits..chunk_circuits]
             .iter()
             .all(|c| c == &with_digits)
     );
-    assert_eq!(nested.circuits[chunks], common);
+    assert_eq!(nested.circuits[chunk_circuits], common);
     assert_eq!(nested.final_masks.len(), 2);
-    assert_eq!(nested.final_masks[0].len(), chunks - digits + 1);
+    assert_eq!(nested.final_masks[0].len(), chunk_circuits - digits + 1);
     assert_eq!(nested.final_masks[1].len(), digits);
     assert_eq!(nested.statement, None);
     let binding = nested.binding.as_ref().expect("the nested side binds");
-    assert_eq!(binding.circuit, chunks as u32);
+    assert_eq!(binding.circuit, chunk_circuits as u32);
     assert_eq!(binding.stages, [5]);
     assert!(nested.is_consistent());
     P::check().unwrap();

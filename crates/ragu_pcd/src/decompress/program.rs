@@ -14,12 +14,15 @@
 //! `R`, the chunk circuits', sets how much work a chunk takes
 //! ([`Limits`]).
 //!
-//! A circuit runs a run of consecutive chunks: the chunks are cut to
-//! pieces of half a circuit's budget, then packed in order into circuits
-//! by an estimate of their gates ([`gates`]) up to the budget's fill
-//! ([`Limits::fill`]), transcript chunks among themselves since they load
-//! a stage the others do not ([`Schedule::circuits`]). The estimate is
-//! pessimistic; the chunk tests measure the circuits.
+//! A circuit runs a group of chunks: the chunks are cut to pieces of half
+//! a circuit's budget, then packed into circuits by an estimate of their
+//! gates ([`gates`]) up to the budget's fill ([`Limits::fill`]), the
+//! largest first into the first circuit with room, chunks of one last
+//! stage among themselves since a stage the others do not load comes with
+//! them ([`Schedule::circuits`]). Every chunk reads the stages and holds
+//! its results to them, never to another chunk's wires, so which chunks
+//! share a circuit is free. The estimate is fitted to the gates each kind
+//! of chunk measures, and the chunk tests hold it to them.
 //!
 //! The chunks' kinds mirror the verifier's parts: the two transcripts,
 //! sliced at the sponge's permutation boundaries; the challenges' lifts;
@@ -65,10 +68,10 @@ use udon::field::Field;
 
 use super::{
     circuit::AbValue,
-    side::{Native, Nested},
+    side::{Native, Nested, Side},
     stages::{
-        AB_TERMS, Layout, MESSAGE_SCALARS, digits_degrees, lifts_degrees, native_scalars,
-        nested_scalars, num_runs,
+        AB_TERMS, Layout, MESSAGE_SCALARS, StageShape, digits_degrees, lifts_degrees,
+        native_scalars, nested_scalars, num_runs,
     },
 };
 use crate::{
@@ -414,7 +417,7 @@ pub(crate) struct Regions {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Schedule {
     pub chunks: Vec<Chunk>,
-    /// The circuits: each a run of consecutive chunks, in order, every
+    /// The circuits: each a group of chunks of one last stage, every
     /// chunk in exactly one, the transcript chunks' circuits first and
     /// the digits chunks' last.
     pub circuits: Vec<CircuitPlan>,
@@ -433,108 +436,171 @@ pub(crate) struct Schedule {
     /// lands on, in the side's foreign scalars' order after $v$, $c$ and
     /// $c b z$.
     pub ab_terms: Vec<(usize, AbValue)>,
+    /// The gates of the side's front stages, which every circuit loads
+    /// first (see [`Front`](super::stages::Front)).
+    pub front_gates: usize,
 }
 
-/// The circuit a run of chunks makes.
+impl Schedule {
+    /// The gates a circuit whose last stage is `last` takes to load its
+    /// stages: the SYSTEM gate, then every stage it loads at two values a
+    /// gate, as a stage reserves them.
+    pub(crate) fn stage_gates(&self, last: Last) -> usize {
+        let gates = |values: usize| values.div_ceil(2);
+        let common = 1
+            + self.front_gates
+            + gates(self.layout.lifts)
+            + gates(2 * self.points + self.elements);
+        common
+            + match last {
+                Last::Work => 0,
+                Last::Transcript => gates(self.states),
+                Last::Digits => gates(self.layout.digits),
+            }
+    }
+}
+
+/// The circuit a group of chunks makes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CircuitPlan {
-    /// The chunks' indices, consecutive.
-    pub chunks: core::ops::Range<usize>,
-    /// The last stage the chunks need, which every chunk of the run
+    /// The chunks' indices, in schedule order.
+    pub chunks: Vec<usize>,
+    /// The last stage the chunks need, which every chunk of the circuit
     /// shares.
     pub last: Last,
 }
 
-/// The gates a circuit pays before its chunks: loading the stages every
-/// chunk loads, with room for the estimate's error. A digits circuit pays
-/// its digits stage on top ([`pack`]).
-const OVERHEAD: usize = 400;
+/// The gate costs [`gates`] estimates a chunk from, fitted to what each
+/// operation measures at the aggregator rank over Pasta and rounded up, so
+/// that the estimate covers every chunk, which the chunk tests check, and
+/// circuits packed to the budget by it fit.
+mod cost {
+    /// An endoscaling of a point and the addition after it.
+    pub const ENDOSCALING: usize = 490;
+    /// An incomplete point addition alone, its scope's nonzero check
+    /// included.
+    pub const ADD: usize = 10;
+    /// A sum's own scope, whatever its terms.
+    pub const SUM: usize = 1;
+    /// A term added to a sum, the scope's nonzero check shared.
+    pub const SUM_TERM: usize = 4;
+    /// Reading a squeezed challenge's endoscalar: its range-checked
+    /// decomposition into bits.
+    pub const EXTRACT: usize = 260;
+    /// Allocating a challenge's bits.
+    pub const ALLOC_BITS: usize = 145;
+    /// Lifting an endoscalar's bits into the field.
+    pub const LIFT: usize = 100;
+    /// A digit of a full-width scaling, the part of the other side's digits
+    /// stage commitment it sums with it included.
+    pub const SCALE_DIGIT: usize = 14;
+    /// A sponge permutation.
+    pub const PERMUTATION: usize = 290;
+    /// The signed digits of a full-width scalar, bound to it.
+    pub const DIGITS: usize = 256;
+    /// What any chunk pays beyond its operations.
+    pub const BASE: usize = 10;
+}
 
-/// The gates a chunk's work takes, estimated from each kind's measured
-/// cost per item, over the circuit's [`OVERHEAD`]. Pessimistic by a few
-/// percent, so that circuits packed to the fill by it stay within the
-/// budget; the chunk tests measure the circuits.
+/// The gates reading `challenge`'s endoscalar takes in a chunk: its
+/// squeeze decomposed, or its bits allocated and their lift held to the
+/// lifts stage.
+fn read(challenge: ChallengeRef) -> usize {
+    match challenge {
+        ChallengeRef::Raw(_) => cost::EXTRACT,
+        ChallengeRef::Bits(_) => cost::ALLOC_BITS + cost::LIFT,
+    }
+}
+
+/// The gates a chunk's work takes beyond the stages its circuit loads,
+/// estimated from the operations it performs ([`cost`]): each challenge it
+/// scales by is read once, as the chunk reads it. An upper bound, so that
+/// circuits packed to the budget by it fit; the chunk tests measure every
+/// chunk against it.
 pub(crate) fn gates(chunk: &Chunk) -> usize {
-    match chunk {
-        Chunk::Transcript {
-            ops, permutations, ..
-        } => 100 + 320 * permutations + 4 * ops.len(),
-        Chunk::Lift { pairs } => 330 * pairs.len(),
-        Chunk::Targets { .. } => 200,
-        Chunk::RevdotWeights { .. } => 1500,
-        Chunk::Bindings { .. } => 1150,
-        Chunk::RevdotPublic { .. } => 400,
-        Chunk::BatchIpa { .. } => 150,
-        Chunk::Digits { scalars } => 420 * scalars.len(),
-        Chunk::Sums { sums } => {
-            60 + sums
-                .iter()
-                .map(|(_, terms)| 10 + 6 * terms.len())
-                .sum::<usize>()
-        }
+    use cost::*;
+    BASE + match chunk {
+        Chunk::Transcript { permutations, .. } => PERMUTATION * permutations,
+        Chunk::Lift { pairs } => pairs
+            .iter()
+            .map(|&(challenge, _)| match challenge {
+                ChallengeRef::Raw(_) => EXTRACT + LIFT,
+                ChallengeRef::Bits(_) => ALLOC_BITS + LIFT,
+            })
+            .sum(),
+        // The one-off chunks, at the larger of the two sides' measures.
+        Chunk::Targets { .. } => 130,
+        Chunk::RevdotWeights { .. } => 1370,
+        Chunk::Bindings { .. } => 1035,
+        Chunk::RevdotPublic { .. } => 345,
+        Chunk::BatchIpa { .. } => 115,
+        Chunk::Digits { scalars } => DIGITS * scalars.len(),
+        Chunk::Sums { sums } => sums
+            .iter()
+            .map(|(_, terms)| SUM + SUM_TERM * terms.len().saturating_sub(1))
+            .sum(),
         Chunk::Chain(chain) => {
-            50 + chain
+            let mut read_once: Vec<ChallengeRef> = Vec::new();
+            chain
                 .steps
                 .iter()
-                .map(|step| match step {
-                    Step::Horner { scale_by, .. }
-                    | Step::AddScaled {
-                        scale_by: Some(scale_by),
-                        ..
-                    } => scaling(*scale_by),
-                    Step::AddScaled { scale_by: None, .. } => 20,
+                .map(|step| {
+                    let scale_by = match *step {
+                        Step::Horner { scale_by, .. } => Some(scale_by),
+                        Step::AddScaled { scale_by, .. } => scale_by,
+                    };
+                    match scale_by {
+                        Some(challenge) if read_once.contains(&challenge) => ENDOSCALING,
+                        Some(challenge) => {
+                            read_once.push(challenge);
+                            read(challenge) + ENDOSCALING
+                        }
+                        None => ADD,
+                    }
                 })
-                .sum::<usize>()
+                .sum()
         }
-        Chunk::Checks { checks } => checks.iter().map(|&(_, by, _)| scaling(by)).sum(),
-        Chunk::Scale { digits, bind, .. } => {
-            150 + (10 + if bind.is_some() { 8 } else { 0 }) * (digits.1 - digits.0)
-        }
-        Chunk::Sign { .. } => 60,
-        Chunk::Equal { .. } => 40,
+        Chunk::Checks { checks } => checks
+            .iter()
+            .map(|&(_, by, _)| read(by) + ENDOSCALING)
+            .sum(),
+        Chunk::Scale { digits, .. } => SCALE_DIGIT * (digits.1 - digits.0),
+        Chunk::Sign { .. } | Chunk::Equal { .. } => 0,
     }
 }
 
-/// The gates a scaling by `challenge` takes: the endoscalar read off its
-/// squeeze or allocated from its bits and the point scaled, and for a
-/// challenge from bits the lift that holds the bits to the lifts stage.
-fn scaling(challenge: ChallengeRef) -> usize {
-    match challenge {
-        ChallengeRef::Raw(_) => 730,
-        ChallengeRef::Bits(_) => 840,
-    }
-}
-
-/// Packs `chunks`, in order, into circuits of at most `fill` gates by
-/// [`gates`], a chunk that exceeds the fill alone in its circuit, and
-/// chunks of different last stages never together. A digits circuit
-/// reserves its digits stage's gates, `digits` wires at two per gate,
-/// which the others do not.
-fn pack(chunks: &[Chunk], fill: usize, digits: usize) -> Vec<CircuitPlan> {
-    let overhead = |last: Last| match last {
-        Last::Digits => OVERHEAD + digits.div_ceil(2),
-        Last::Work | Last::Transcript => OVERHEAD,
-    };
+/// Packs `chunks` into circuits, first fit by decreasing estimate
+/// ([`gates`]) within each last stage: the largest chunk first, each into
+/// the first circuit of its kind whose stages and chunks it fits beside
+/// within `fill`, and into a new circuit when none has room. A circuit's
+/// stages cost `stage_gates` of its last stage. The circuits come
+/// transcript first, then work, then digits, each kind's in the order
+/// they were opened, each running its chunks in schedule order: a chunk
+/// reads the stages and holds its writes to them, never another chunk's
+/// wires, so which chunks share a circuit is free. A pure function of the
+/// chunks, ties broken by schedule order.
+fn pack(chunks: &[Chunk], fill: usize, stage_gates: impl Fn(Last) -> usize) -> Vec<CircuitPlan> {
     let mut circuits = Vec::new();
-    let mut start = 0;
-    let mut used = overhead(chunks[0].last());
-    for (index, chunk) in chunks.iter().enumerate() {
-        let cost = gates(chunk);
-        if index > start && (chunk.last() != chunks[start].last() || used + cost > fill) {
-            circuits.push(CircuitPlan {
-                chunks: start..index,
-                last: chunks[start].last(),
-            });
-            start = index;
-            used = overhead(chunk.last());
+    for last in [Last::Transcript, Last::Work, Last::Digits] {
+        let mut order: Vec<usize> = (0..chunks.len())
+            .filter(|&index| chunks[index].last() == last)
+            .collect();
+        order.sort_by_key(|&index| (core::cmp::Reverse(gates(&chunks[index])), index));
+        let mut bins: Vec<(Vec<usize>, usize)> = Vec::new();
+        for index in order {
+            let cost = gates(&chunks[index]);
+            match bins.iter_mut().find(|(_, used)| used + cost <= fill) {
+                Some((members, used)) => {
+                    members.push(index);
+                    *used += cost;
+                }
+                None => bins.push((vec![index], stage_gates(last) + cost)),
+            }
         }
-        used += cost;
-    }
-    if start < chunks.len() {
-        circuits.push(CircuitPlan {
-            chunks: start..chunks.len(),
-            last: chunks[start].last(),
-        });
+        circuits.extend(bins.into_iter().map(|(mut chunks, _)| {
+            chunks.sort_unstable();
+            CircuitPlan { chunks, last }
+        }));
     }
     circuits
 }
@@ -612,8 +678,8 @@ pub(crate) struct Limits {
     pub digits: usize,
     /// The parts a full-width scaling is cut into.
     pub scale_parts: usize,
-    /// The gates a circuit's chunks are packed up to, as [`gates`]
-    /// estimates them.
+    /// The gates a circuit's stages and chunks are packed up to, as
+    /// [`gates`] and [`Schedule::stage_gates`] estimate them.
     pub fill: usize,
 }
 
@@ -621,10 +687,10 @@ pub(crate) struct Limits {
 /// $2^{11}$.
 const FITTED_GATES: usize = 1 << 11;
 
-/// The part of a budget a circuit packs up to: the rest covers the
-/// estimate's error.
+/// The part of a budget a circuit packs up to: all of it but a sixty-fourth,
+/// which covers an estimate fitted at one configuration meeting another.
 const fn fill_of(budget: usize) -> usize {
-    budget / 8 * 7
+    budget - budget / 64
 }
 
 impl Limits {
@@ -1035,7 +1101,7 @@ pub(crate) fn nested_claims() -> Result<Vec<ClaimPlan>> {
 /// per value in the side's foreign scalars' order, or only how many
 /// scalars it holds. A schedule built from the count alone has every
 /// slot the full one has and no generator
-/// ([`Side::sizes`](super::side::Side::sizes)): the stages'
+/// ([`Side::sizes`]): the stages'
 /// lengths take it, so that the other side's digits stage, which comes
 /// after its work stage, can be laid out from it without the two sides'
 /// schedules each waiting on the other.
@@ -1385,11 +1451,14 @@ impl Builder {
             .collect()
     }
 
+    /// The schedule, its chunks packed into circuits over stages whose
+    /// front, `front`, the side lays out.
     fn finish(
         self,
         claims: Vec<ClaimPlan>,
         bindings: Vec<BindingPlan>,
         ab_terms: Vec<(usize, AbValue)>,
+        front: &[StageShape],
     ) -> Schedule {
         assert_eq!(
             self.slots.lifts, self.layout.lifts,
@@ -1399,10 +1468,9 @@ impl Builder {
             self.slots.digits, self.layout.digits,
             "the digits stage holds every digit"
         );
-        let circuits = pack(&self.chunks, self.limits.fill, self.layout.digits);
-        Schedule {
+        let mut schedule = Schedule {
             chunks: self.chunks,
-            circuits,
+            circuits: Vec::new(),
             layout: self.layout,
             elements: self.slots.elements,
             points: self.slots.points,
@@ -1411,7 +1479,12 @@ impl Builder {
             bindings,
             regions: self.regions,
             ab_terms,
-        }
+            front_gates: front.iter().map(|shape| shape.gates()).sum(),
+        };
+        schedule.circuits = pack(&schedule.chunks, self.limits.fill, |last| {
+            schedule.stage_gates(last)
+        });
+        schedule
     }
 }
 
@@ -1997,7 +2070,8 @@ fn native_schedule_with<
         .collect();
     b.digits(digits);
 
-    Ok(b.finish(claims, bindings, ab_terms))
+    let front = <Native as Side<C>>::front_shapes::<K, HEADER_SIZE>();
+    Ok(b.finish(claims, bindings, ab_terms, &front))
 }
 
 /// The scalar-field side's schedule for a proof at rank `K`, cut for
@@ -2164,7 +2238,8 @@ fn nested_schedule_with<
     );
     b.digits(digits);
 
-    Ok(b.finish(claims, bindings, ab_terms))
+    let front = <Nested as Side<C>>::front_shapes::<K, HEADER_SIZE>();
+    Ok(b.finish(claims, bindings, ab_terms, &front))
 }
 
 /// The number of chunks of each side for a proof at rank `K` in chunk
