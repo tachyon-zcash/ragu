@@ -21,9 +21,9 @@ circuits:
 
 | Circuit | Role |
 |---------|------|
-| `hashes_1` | Re-derives $w, y, z$ from the transcript (first half) |
+| `hashes_1` | Re-derives $w, y, z$ from the transcript (first half) and exports the step's own output header and circuit id |
 | `hashes_2` | Re-derives $\mu, \mu', x, \alpha, u, \text{pre\_beta}$ from the saved transcript state (second half) |
-| `collapse` | Checks the children's application $k(y)$ values and both quotient-fold layers under $\mu$ and $\mu'$, with the final claim check waived at bootstrap |
+| `collapse` | Computes the step's own application $k(y)$ and checks both quotient-fold layers under $\mu$ and $\mu'$; at bootstrap the final claim check is waived and the step's circuit id and output header are pinned to the bootstrap step's |
 | `compute_v` | Derives effective $\beta$ from $\text{pre\_beta}$ via endoscalar extraction and checks the batched evaluation $v$ |
 | `bind_challenges` | Binds the lifted nested challenges and base-case flag, two challenges per circuit |
 | `bind_beta` | Binds the walked child commitments and completes their challenge bindings |
@@ -40,9 +40,9 @@ layers and binds its unified instance's exported values to their stages.
 The `hashes_2`, `collapse`, `compute_v`, `bind_challenges`, `bind_beta`
 and `bind_endoscalar` circuits share a common set of public-input wires
 defined by the `Output` structure. The `hashes_1` circuit extends this
-structure with the left and right child proof output headers, since it
-additionally binds the proof to specific header data. The shared wires
-include:
+structure with the step's own output header and circuit id, since it
+additionally binds the proof to the header its own application claim was
+folded against. The shared wires include:
 
 - Nested curve commitments from each proof component (preamble, $s'$,
   `inner_error`, `outer_error`, $AB$, query, $f$, eval)

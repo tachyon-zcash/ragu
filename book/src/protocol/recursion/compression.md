@@ -17,7 +17,7 @@ $\operatorname{revdot}(a,b)=\sum_i a_i b_{D-1-i}$.
 sequenceDiagram
     participant P as Prover
     participant V as Verifier
-    Note over P: Circuit id, child headers,<br/>commitments, claimed scalars
+    Note over P: Circuit id, commitments,<br/>claimed scalars
     P->>V: Instance (both curves)
     Note over V: Check lengths and circuit domain<br/>Replay Fuse and range-check pre_beta<br/>Check nested challenge and<br/>AB-bridge stage commitments
     V->>P: Native w, y, z, σ
