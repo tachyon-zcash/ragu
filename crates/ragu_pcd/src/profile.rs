@@ -1039,14 +1039,14 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     pub const fn native_circuits(header_size: usize) -> Counts {
         match header_size {
             4 => Counts {
-                chunks: 49,
-                transcript: 6,
+                circuits: 31,
+                transcript: 4,
                 digits: 1,
             },
             #[cfg(test)]
             103 => Counts {
-                chunks: 53,
-                transcript: 10,
+                circuits: 34,
+                transcript: 7,
                 digits: 1,
             },
             _ => panic!("the aggregator profile pins no circuit counts for this header size"),
@@ -1057,7 +1057,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// header size: none run transcript chunks, and the digits chunks come
     /// last.
     pub const NESTED_CIRCUITS: Counts = Counts {
-        chunks: 36,
+        circuits: 18,
         transcript: 0,
         digits: 1,
     };
@@ -1094,9 +1094,9 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // stages on the native side; the chunk circuits, the binding circuit
     // and the stages on the nested side.
     const NATIVE_EXTENSION: usize =
-        Self::native_circuits(HEADER_SIZE).chunks + 2 + extension::NATIVE_STAGES;
+        Self::native_circuits(HEADER_SIZE).circuits + 2 + extension::NATIVE_STAGES;
     const NESTED_EXTENSION: usize =
-        Self::NESTED_CIRCUITS.chunks + 1 + extension::nested_stages(num_runs::<ProductionRank>());
+        Self::NESTED_CIRCUITS.circuits + 1 + extension::nested_stages(num_runs::<ProductionRank>());
 
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
@@ -3040,11 +3040,11 @@ mod tests {
         assert_eq!(nested_stages, 27, "a stage per run, then four");
         assert_eq!(
             shape,
-            Shape::solve(49 + 2 + 6, 36 + 1 + nested_stages, per_step, per_step)
+            Shape::solve(31 + 2 + 6, 18 + 1 + nested_stages, per_step, per_step)
         );
         assert_eq!(
             Shape::of::<Aggregator<103>>(),
-            Shape::solve(53 + 2 + 6, 36 + 1 + nested_stages, per_step, per_step)
+            Shape::solve(34 + 2 + 6, 18 + 1 + nested_stages, per_step, per_step)
         );
         // The knob: at the production rank's four per step the walks are
         // far longer.

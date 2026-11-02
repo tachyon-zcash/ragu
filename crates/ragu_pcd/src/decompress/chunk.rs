@@ -1,6 +1,6 @@
-//! The chunk circuits: one circuit per run of chunks of a side's schedule
-//! ([`Schedule::circuits`]), loading the side's stages and holding the
-//! chunks' results to their wires.
+//! The chunk circuits: one circuit per group of chunks of a side's
+//! schedule ([`Schedule::circuits`]), loading the side's stages and
+//! holding the chunks' results to their wires.
 //!
 //! Every chunk circuit of a side has the same shape: the stages loaded
 //! unenforced, as the fuse's endoscaling steps load theirs, then its
@@ -119,7 +119,8 @@ impl<'p, C: Cycle> Inner<'p, C> {
             witness,
         };
         let plan = &self.schedule.circuits[self.index];
-        for chunk in &self.schedule.chunks[plan.chunks.clone()] {
+        for &index in &plan.chunks {
+            let chunk = &self.schedule.chunks[index];
             let writes = run::execute::<_, C, S, K, HEADER_SIZE>(dr, chunk, &ctx)?;
             run::enforce(dr, loaded, writes)?;
         }

@@ -293,7 +293,7 @@ fn aggregator_rank_schedules_are_consistent() {
 
 /// The production rank's limits are the fitted ones; the aggregator rank's
 /// hold twice the work per chunk, a full-width scaling in one chunk, and
-/// pack circuits to seven eighths of the budget.
+/// pack circuits to all of the budget but a sixty-fourth.
 #[test]
 fn limits_scale_with_the_rank() {
     assert_eq!(Limits::at::<ProductionRank>(), Limits::FITTED);
@@ -308,7 +308,7 @@ fn limits_scale_with_the_rank() {
             sums: 2 * fitted.sums,
             digits: 2 * fitted.digits,
             scale_parts: 1,
-            fill: AggregatorRank::n() / 8 * 7,
+            fill: AggregatorRank::n() - AggregatorRank::n() / 64,
         }
     );
 }
@@ -331,8 +331,10 @@ fn native_counts_follow_the_header_size() {
     assert_eq!(nested_large, nested_small);
 }
 
-/// The circuits partition the chunks in order, the transcript circuits
-/// first and holding transcript chunks alone, and the counts are reported.
+/// The circuits partition the chunks, each circuit's in schedule order
+/// and of one last stage, the transcript circuits first and the digits
+/// circuits last, each within the budget by the estimate, and the counts
+/// are reported.
 fn circuits_pack_the_chunks<R: Rank>() {
     for (name, schedule) in [
         (
@@ -344,16 +346,23 @@ fn circuits_pack_the_chunks<R: Rank>() {
             nested_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap(),
         ),
     ] {
-        let mut next = 0;
+        let mut placed = alloc::vec![false; schedule.chunks.len()];
         let mut seen = Last::Transcript;
         for circuit in &schedule.circuits {
-            assert_eq!(circuit.chunks.start, next, "{name}: consecutive");
             assert!(!circuit.chunks.is_empty(), "{name}: no empty circuit");
-            next = circuit.chunks.end;
             assert!(
-                schedule.chunks[circuit.chunks.clone()]
+                circuit.chunks.windows(2).all(|pair| pair[0] < pair[1]),
+                "{name}: a circuit's chunks in schedule order"
+            );
+            for &chunk in &circuit.chunks {
+                assert!(!placed[chunk], "{name}: chunk {chunk} in one circuit");
+                placed[chunk] = true;
+            }
+            assert!(
+                circuit
+                    .chunks
                     .iter()
-                    .all(|chunk| chunk.last() == circuit.last),
+                    .all(|&chunk| schedule.chunks[chunk].last() == circuit.last),
                 "{name}: a circuit's chunks share their last stage"
             );
             // Transcript circuits first, then work, then digits.
@@ -368,7 +377,7 @@ fn circuits_pack_the_chunks<R: Rank>() {
             );
             seen = circuit.last;
         }
-        assert_eq!(next, schedule.chunks.len(), "{name}: every chunk");
+        assert!(placed.iter().all(|&placed| placed), "{name}: every chunk");
         let count = |last: Last| schedule.circuits.iter().filter(|c| c.last == last).count();
         std::println!(
             "{name} at rank {}: {} circuits ({} transcript, {} digits) over {} chunks",
