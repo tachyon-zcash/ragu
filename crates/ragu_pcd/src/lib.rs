@@ -318,7 +318,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// profile's shape or is not a proof of the bootstrap step.
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
         let bootstrap = step::InternalStepIndex::Bootstrap.circuit_index::<C::Profile>()?;
-        if !proof.well_formed::<HEADER_SIZE>() || proof.circuit_id() != bootstrap {
+        if !proof.well_formed() || proof.circuit_id() != bootstrap {
             return Err(Error::Initialization(
                 "the supplied proof is not a bootstrap proof of this profile's shape".into(),
             ));

@@ -25,16 +25,18 @@
 //!
 //! This circuit also enforces the children's unified $k(y)$ values against
 //! the [`outer_error`][super::super::stages::outer_error] stage, using the
-//! $y$ it just derived. The application $k(y)$ checks remain in
-//! [`collapse`][super::collapse]; splitting the checks keeps
+//! $y$ it just derived. The step's own application $k(y)$ is computed in
+//! [`collapse`][super::collapse]; splitting the work keeps
 //! both circuits within their gate budgets as the unified instance grows.
 //!
-//! ### Valid circuit IDs
+//! ### Valid circuit ID
 //!
-//! The circuit IDs in the [`preamble`][super::super::stages::preamble] are
-//! enforced to be valid roots of unity in the registry domain (the domain over
-//! which circuits are indexed). Other circuits can thus assume this check has
-//! been performed.
+//! The step's own circuit ID in the [`preamble`][super::super::stages::preamble]
+//! is enforced to be a valid root of unity in the registry domain (the domain
+//! over which circuits are indexed). Other circuits can thus assume this check
+//! has been performed. A child's circuit ID is its own step's, checked by that
+//! step and bound to this step's preamble through the child's exported
+//! instance.
 //!
 //! ## Staging
 //!
@@ -47,14 +49,17 @@
 //! ## Instance
 //!
 //! The instance is special for this internal circuit: it contains a
-//! concatenation of the unified instance and the `left` and `right` child
-//! proofs' output headers from the [`preamble`][super::super::stages::preamble]
-//! stage (i.e., the headers that the
-//! child steps produced, not the headers they consumed). This allows the
-//! verifier to ensure consistency with the headers enforced on the application
-//! (step) circuit. The other internal circuits mainly use the unified instance
-//! only to avoid the extra overhead of witnessing the `left`/`right` output
-//! headers in circuits that do not use the preamble stage.
+//! concatenation of the unified instance and the step's own output header and
+//! circuit ID from the [`preamble`][super::super::stages::preamble] stage. The
+//! step folds its own application claim against those wires, so its output
+//! header is bound inside the step; the parent, which reads this proof's
+//! output header and circuit ID as one of its children's, binds its preamble
+//! copies to this instance when it folds this circuit's claim. That is the
+//! header-carry check: each edge's header is checked once by the step that
+//! produced it and once by the step that consumes it, and this instance
+//! bridges the two. The other internal circuits mainly use the unified
+//! instance only, to avoid the overhead of witnessing the header in circuits
+//! that do not use the preamble stage.
 //!
 //! The output is wrapped in a [`WithSuffix`] with a zero element appended. This
 //! ensures the instance serialization matches the $k(y)$ computation for
@@ -103,10 +108,10 @@ use crate::{
 
 /// Public output of the first hash circuit.
 ///
-/// This circuit uniquely includes the `left` and `right` output headers from
-/// the child proofs alongside the unified instance. The headers are needed as
-/// instance data so the verifier can check consistency with the application
-/// (step) circuit's headers.
+/// This circuit uniquely includes the step's own output header and circuit
+/// ID alongside the unified instance. They are needed as instance data so
+/// the step that consumes this proof can check its copies of them against
+/// the ones this step's application claim was folded with.
 ///
 /// Other internal circuits use only the [`unified::Output`] to avoid the
 /// overhead of witnessing headers in circuits that do not require them.
@@ -115,12 +120,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
-    /// The left child proof's output header.
+    /// The step's own output header.
     #[ragu(gadget)]
-    pub left_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
-    /// The right child proof's output header.
+    pub output_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+    /// The step's own circuit ID, as its domain point.
     #[ragu(gadget)]
-    pub right_header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>>,
+    pub circuit_id: Element<'dr, D>,
 }
 
 /// First hash circuit for Fiat-Shamir challenge derivation.
@@ -169,8 +174,9 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize, FP: fold_rev
     /// Witness for the [`preamble`](super::super::stages::preamble) stage
     /// (unenforced).
     ///
-    /// Provides output headers (included in this circuit's instance) and
-    /// circuit IDs for the root-of-unity check.
+    /// Provides the step's own output header and circuit ID (included in
+    /// this circuit's instance, the circuit ID also for the root-of-unity
+    /// check).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
 
     /// Witness for the [`outer_error`](super::super::stages::outer_error) stage
@@ -223,13 +229,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let outer_error =
             outer_error.unenforced(dr, witness.as_ref().map(|w| w.outer_error_witness))?;
 
-        // Verify circuit IDs are valid roots of unity in the registry domain.
+        // Verify the step's circuit ID is a valid root of unity in the
+        // registry domain.
         preamble
-            .left
-            .circuit_id
-            .enforce_root_of_unity(dr, self.log2_circuits)?;
-        preamble
-            .right
+            .own
             .circuit_id
             .enforce_root_of_unity(dr, self.log2_circuits)?;
 
@@ -286,14 +289,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
                 .enforce_equal(dr, &outer_error.sponge_state)?;
         }
 
-        // Output headers from preamble + unified instance. Verification with
-        // `unified_bridge_ky` ensures preamble headers match ApplicationProof
-        // headers.
+        // The step's own output header and circuit ID from the preamble +
+        // unified instance. The parent's `unified_bridge_ky` for this proof
+        // holds its preamble copies to these wires.
         let (unified, updated) = unified_output.finish_no_suffix(dr, allocator)?;
         let output = Output {
-            left_header: preamble.left.output_header,
-            right_header: preamble.right.output_header,
             unified,
+            output_header: preamble.own.output_header,
+            circuit_id: preamble.own.circuit_id,
         };
 
         let zero = Element::zero(dr);

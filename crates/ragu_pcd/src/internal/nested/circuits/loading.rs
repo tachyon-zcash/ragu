@@ -139,6 +139,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
 
         walker.enforce_equal(dr, &s_prime.registry_wx0)?;
         walker.enforce_equal(dr, &s_prime.registry_wx1)?;
+        walker.enforce_equal(dr, &s_prime.native_application)?;
         walker.enforce_equal(dr, &inner_error.registry_wy)?;
         walker.enforce_equal(dr, &ab.a)?;
         walker.enforce_equal(dr, &ab.b)?;

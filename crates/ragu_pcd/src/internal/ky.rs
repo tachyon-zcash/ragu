@@ -55,10 +55,12 @@ pub struct NativeKy<F> {
     /// The unified internal circuits' $k(y)$.
     pub unified: F,
     /// The `hashes_1` circuit's $k(y)$, over the unified instance and the
-    /// child headers.
+    /// proof's own output header and circuit id.
     pub unified_bridge: F,
-    /// The application circuit's $k(y)$.
-    pub application: F,
+    /// The application circuit's $k(y)$, or `None` to omit the application
+    /// claim: a proof folds its own application claim, so a verifier of the
+    /// proof itself has none to check, and only the fuse does.
+    pub application: Option<F>,
     /// The statement circuit's $k(y)$, for a profile whose native extension
     /// has one; `None` for a profile without one.
     pub statement: Option<F>,
@@ -75,7 +77,7 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
     }
 
     fn application_ky(&self) -> impl Iterator<Item = F> {
-        once(self.application)
+        self.application.into_iter()
     }
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
@@ -259,7 +261,6 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             ProofInputs::<_, C, HEADER_SIZE>::alloc::<R>(dr, proof, output_header.as_ref())?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, bound.as_ref().map(|b| b.as_slice()))?;
@@ -267,7 +268,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
-            application: *application.value().take(),
+            application: None,
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
         })
@@ -309,8 +310,6 @@ pub fn output_header<C: Cycle, H: Header<C::CircuitField>, const HEADER_SIZE: us
 /// as a compressed proof's instance carries them, the output header as
 /// [`output_header`] encodes it.
 pub struct NativeParts<'a, C: Cycle> {
-    pub left_header: &'a [C::CircuitField],
-    pub right_header: &'a [C::CircuitField],
     pub output_header: &'a [C::CircuitField],
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
@@ -331,15 +330,12 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         let y = Element::alloc(dr, &mut (), y)?;
         let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc_from_parts(
             dr,
-            parts.as_ref().map(|p| p.left_header),
-            parts.as_ref().map(|p| p.right_header),
             parts.as_ref().map(|p| p.output_header),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, parts.as_ref().map(|p| p.nested_bound))?;
@@ -347,7 +343,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
-            application: *application.value().take(),
+            application: None,
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
         })

@@ -1,11 +1,14 @@
 //! Preamble stage for native fuse operations.
 //!
-//! Verifies child proof headers and computes the Ky term.
+//! Witnesses what each child proof exposes to the step that consumes it
+//! (its output header, its circuit id and its unified instance), and the
+//! step's own output header and circuit id, from which the step's own
+//! application $k(y)$ is computed.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{horner::Horner, polynomials::Rank, staging};
+use ragu_circuits::{horner::Horner, polynomials::Rank, registry::CircuitIndex, staging};
 use ragu_core::{
     Cycle, Error, Result,
     drivers::{Driver, DriverValue},
@@ -37,24 +40,40 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub proof: &'a Proof<C, R>,
 }
 
+/// The step's own application data: its encoded output header and its
+/// circuit id.
+pub struct OwnWitness<F, const HEADER_SIZE: usize> {
+    /// The step's output header, as its application circuit encodes it.
+    pub output_header: FixedVec<F, ConstLen<HEADER_SIZE>>,
+    /// The step's application circuit.
+    pub circuit_id: CircuitIndex,
+}
+
 /// Witness for the native preamble stage.
 ///
-/// Contains references to the left and right proofs, plus output headers
-/// computed outside the circuit.
+/// Contains references to the left and right proofs, their output headers
+/// computed outside the circuit, and the step's own output header and
+/// circuit id.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Left child proof witness.
     pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
     /// Right child proof witness.
     pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
+    /// The step's own application data.
+    pub own: OwnWitness<C::CircuitField, HEADER_SIZE>,
 }
 
 impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
-    /// Create a witness from child proof references and pre-computed output headers.
+    /// Create a witness from child proof references, the children's
+    /// pre-computed output headers and the step's own output header and
+    /// circuit id.
     pub fn new(
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
         left_output_header: &[C::CircuitField],
         right_output_header: &[C::CircuitField],
+        output_header: &[C::CircuitField],
+        circuit_id: CircuitIndex,
     ) -> Result<Self> {
         Ok(Witness {
             left: ChildWitness {
@@ -65,28 +84,22 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
                 output_header: FixedVec::try_from(right_output_header.to_vec())?,
                 proof: right,
             },
+            own: OwnWitness {
+                output_header: FixedVec::try_from(output_header.to_vec())?,
+                circuit_id,
+            },
         })
     }
 }
 
-/// Headers claimed by a child proof for its own left and right children.
-#[derive(Gadget, Consistent)]
-pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
-    /// Left child header (grandchild from current perspective).
-    #[ragu(gadget)]
-    pub left: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// Right child header (grandchild from current perspective).
-    #[ragu(gadget)]
-    pub right: HeaderVec<'dr, D, HEADER_SIZE>,
-}
-
-/// Processed inputs from a single child proof in the preamble stage.
+/// What a proof exposes to the step that consumes it: its output header,
+/// its circuit id and its unified instance.
+///
+/// The preamble holds one per child. A verifier of a proof with no parent
+/// allocates one for that proof, from its own output header and circuit id.
 #[derive(Gadget, Consistent)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
 {
-    /// Headers this child proof claimed for its own children.
-    #[ragu(gadget)]
-    pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
@@ -94,6 +107,19 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+}
+
+/// The step's own output header and circuit id: the application slots the
+/// step's `hashes_1` exports for its parent, and that its own application
+/// claim is checked against.
+#[derive(Gadget, Consistent)]
+pub struct OwnInputs<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
+    /// The step's own output header.
+    #[ragu(gadget)]
+    pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// The step's own application circuit id, as its domain point.
+    #[ragu(gadget)]
+    pub circuit_id: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
@@ -104,7 +130,8 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ///
     /// Returns `(unified_ky, unified_bridge_ky)` where:
     /// - `unified_ky` = k(y) for `(unified, 0)`
-    /// - `unified_bridge_ky` = k(y) for `(unified, children.left, children.right, 0)`
+    /// - `unified_bridge_ky` = k(y) for `(unified, output_header, circuit_id, 0)`,
+    ///   the instance this proof's `hashes_1` exported
     ///
     /// The Horner evaluation order and trailing zero here define the numerical
     /// values that [`ky_values`](super::super::claims::ky_values) must produce
@@ -124,23 +151,12 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 ky.finish_ky(dr)?
             }),
             ({
-                self.children.left.write(dr, &mut ky)?;
-                self.children.right.write(dr, &mut ky)?;
+                self.output_header.write(dr, &mut ky)?;
+                self.circuit_id.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
                 ky.finish_ky(dr)?
             }),
         ))
-    }
-
-    /// Compute k(y) for the application circuit instance.
-    ///
-    /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
-    pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
-        let mut ky = Horner::new(y);
-        self.children.left.write(dr, &mut ky)?;
-        self.children.right.write(dr, &mut ky)?;
-        self.output_header.write(dr, &mut ky)?;
-        ky.finish_ky(dr)
     }
 
     /// The statement circuit's $k(y)$ for this child, when profile `P`'s
@@ -234,10 +250,6 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
         let allocator = &mut ();
         Ok(ProofInputs {
-            children: ChildHeaders {
-                left: alloc_header(dr, allocator, proof.as_ref().map(|p| p.left_header()))?,
-                right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
-            },
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
             circuit_id: Element::alloc(
                 dr,
@@ -249,12 +261,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 
     /// Allocate ProofInputs from the parts a proof's instance carries: the
-    /// child headers, the encoded output header, the circuit id as its
-    /// domain point, and the unified instance's values.
+    /// encoded output header, the circuit id as its domain point, and the
+    /// unified instance's values.
     pub fn alloc_from_parts(
         dr: &mut D,
-        left_header: DriverValue<D, &[D::F]>,
-        right_header: DriverValue<D, &[D::F]>,
         output_header: DriverValue<D, &[D::F]>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
@@ -277,10 +287,6 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         }
 
         Ok(ProofInputs {
-            children: ChildHeaders {
-                left: alloc_header(dr, left_header)?,
-                right: alloc_header(dr, right_header)?,
-            },
             output_header: alloc_header(dr, output_header)?,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
@@ -320,6 +326,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
     #[ragu(gadget)]
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    #[ragu(gadget)]
+    pub own: OwnInputs<'dr, D, HEADER_SIZE>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
@@ -337,6 +345,51 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
         let left_is_dummy = self.left.is_dummy_input(dr, allocator)?;
         let right_is_dummy = self.right.is_dummy_input(dr, allocator)?;
         left_is_dummy.and(dr, &right_is_dummy)
+    }
+
+    /// Compute k(y) for the step's own application circuit instance.
+    ///
+    /// Returns `application_ky` = k(y) for `(left.output_header,
+    /// right.output_header, own.output_header)`: the step's inputs are its
+    /// children's output headers, read from the same wires their
+    /// `unified_bridge_ky` values bind to the children's exports.
+    pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
+        let mut ky = Horner::new(y);
+        self.left.output_header.write(dr, &mut ky)?;
+        self.right.output_header.write(dr, &mut ky)?;
+        self.own.output_header.write(dr, &mut ky)?;
+        ky.finish_ky(dr)
+    }
+
+    /// Enforces that a step taking the base case is the bootstrap step with
+    /// the unit output header: when `is_base_case` holds, the own circuit
+    /// id must be [`Bootstrap`]'s and the own output header the unit
+    /// header's encoding.
+    ///
+    /// The base case leaves the step's folded claim unconstrained, and that
+    /// claim includes the step's own application claim. Without this, a
+    /// step could witness [`Dummy`] inputs and export any output header and
+    /// circuit id through its `hashes_1`. The constraint lives in the
+    /// calling circuit, whose own claim the parent (or the decider)
+    /// enforces, so it holds whatever the step's folded claim is.
+    ///
+    /// [`Bootstrap`]: crate::step::internal::bootstrap
+    /// [`Dummy`]: crate::header::Dummy
+    pub fn enforce_base_case_is_bootstrap<P: Profile>(
+        &self,
+        dr: &mut D,
+        allocator: &mut impl Allocator<'dr, D>,
+        is_base_case: &Boolean<'dr, D>,
+    ) -> Result<()> {
+        let bootstrap = InternalStepIndex::Bootstrap.circuit_index::<P>()?;
+        let bootstrap = Element::constant(dr, bootstrap.omega_j());
+        is_base_case.conditional_enforce_equal(dr, allocator, &self.own.circuit_id, &bootstrap)?;
+        let unit = ky::output_header::<C, (), HEADER_SIZE>(())?;
+        for (wire, value) in self.own.output_header.iter().zip(unit) {
+            let value = Element::constant(dr, value);
+            is_base_case.conditional_enforce_equal(dr, allocator, wire, &value)?;
+        }
+        Ok(())
     }
 }
 
@@ -356,9 +409,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified
-        // instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (output header + 1 circuit_id + unified instance
+        // wires), then the own output header and circuit_id
+        2 * (HEADER_SIZE + 1 + unified::NUM_WIRES) + HEADER_SIZE + 1
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -381,7 +434,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             witness.as_ref().map(|w| &w.right.output_header),
         )?;
 
-        Ok(Output { left, right })
+        let own = OwnInputs {
+            output_header: FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    witness.as_ref().map(|w| w.own.output_header[i]),
+                )
+            })?,
+            circuit_id: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|w| w.own.circuit_id.omega_j()),
+            )?,
+        };
+
+        Ok(Output { left, right, own })
     }
 }
 

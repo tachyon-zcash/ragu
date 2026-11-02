@@ -56,12 +56,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         let instance = &proof.instance;
 
         // The proof's circuit_id must be in the registry's domain, for the
-        // reason `verify_uncompressed` gives, and the headers must have the
-        // declared size; and the messages must have the shape read below.
-        if !self.native_registry.circuit_in_domain(instance.circuit_id)
-            || instance.left_header.len() != HEADER_SIZE
-            || instance.right_header.len() != HEADER_SIZE
-            || !proof.well_formed::<R>()
+        // reason `verify_uncompressed` gives, and the messages must have the
+        // shape read below.
+        if !self.native_registry.circuit_in_domain(instance.circuit_id) || !proof.well_formed::<R>()
         {
             return Ok(false);
         }
@@ -73,10 +70,10 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         let Some(challenges) = proof_check!(instance.challenges(&mut fuse_transcript)) else {
             return Ok(false);
         };
-        if !proof_check!(instance.stages_match::<R, Verifier<B>, HEADER_SIZE>(
-            &challenges,
-            C::nested_generators(self.params),
-        )) {
+        if !proof_check!(
+            instance
+                .stages_match::<R, Verifier<B>>(&challenges, C::nested_generators(self.params),)
+        ) {
             return Ok(false);
         }
 
@@ -104,7 +101,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 sigma,
             )?;
             let Some(mut openings) = proof_check!(revdot::verify_native::<C, R, Verifier<B>>(
-                instance.circuit_id,
                 |component| instance.native_commitment(component),
                 registry,
                 y,

@@ -362,63 +362,70 @@ impl<C: Cycle> InternalCircuitVisitor<C> for CaptureChecker {
 /// These pins cover the consolidated collapse circuits and four challenge binders.
 fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
-        "hashes_1" => (190, 5464, 46, 12, 0, 12, 108),
-        "hashes_2" => (190, 8040, 38, 5, 1, 5, 98),
-        "collapse" if point == "bootstrap" => (274, 1879, 38, 16, 0, 16, 158),
-        "collapse" if point == "leaves" || point == "nodes" => (274, 1879, 38, 17, 0, 17, 156),
-        "compute_v" => (412, 6863, 38, 1, 0, 1, 460),
-        "bind_challenges_0" => (412, 7751, 38, 2, 0, 2, 714),
-        "bind_challenges_1" => (412, 7772, 38, 2, 0, 2, 714),
-        "bind_challenges_2" => (412, 7772, 38, 2, 0, 2, 714),
-        "bind_challenges_3" if point == "bootstrap" => (412, 7821, 38, 2, 0, 2, 715),
+        // The instance is the unified one plus the step's own output header
+        // and circuit id: 38 + 4 + 1.
+        "hashes_1" => (178, 5397, 43, 12, 0, 12, 102),
+        "hashes_2" => (178, 8016, 38, 5, 1, 5, 92),
+        // At the base case the step's own output header and circuit id,
+        // pinned to the bootstrap step's, replace c among the outputs.
+        "collapse" if point == "bootstrap" => (262, 1823, 38, 19, 0, 19, 149),
+        "collapse" if point == "leaves" || point == "nodes" => (262, 1823, 38, 15, 0, 15, 147),
+        "compute_v" => (400, 6805, 38, 1, 0, 1, 454),
+        "bind_challenges_0" => (400, 7727, 38, 2, 0, 2, 708),
+        "bind_challenges_1" => (400, 7748, 38, 2, 0, 2, 708),
+        "bind_challenges_2" => (400, 7748, 38, 2, 0, 2, 708),
+        "bind_challenges_3" if point == "bootstrap" => (400, 7797, 38, 2, 0, 2, 709),
         "bind_challenges_3" if point == "leaves" || point == "nodes" => {
-            (412, 7821, 38, 2, 0, 2, 713)
+            (400, 7797, 38, 2, 0, 2, 707)
         }
-        "bind_beta" => (152, 7250, 38, 52, 0, 52, 608),
-        "bind_endoscalar" if point == "bootstrap" => (470, 2954, 38, 245, 0, 245, 487),
-        "bind_endoscalar" if point == "leaves" || point == "nodes" => {
-            (470, 2954, 38, 245, 0, 245, 484)
-        }
+        "bind_beta" => (142, 7230, 38, 52, 0, 52, 603),
+        "bind_endoscalar" => (470, 2954, 38, 245, 0, 245, 488),
         // The native steps end their output in the internal suffix, a constant
         // zero element, which adds one wire and one instance wire.
-        "native_endoscaling_step_0" if point == "leaves" => (470, 10565, 1, 2, 0, 2, 235),
+        "native_endoscaling_step_0" => (470, 10565, 1, 2, 0, 2, 235),
         step if step.starts_with("native_endoscaling_step_") => (470, 10565, 1, 2, 0, 2, 234),
-        step if step.starts_with("endoscaling_step_") => (500, 10624, 0, 2, 0, 2, 249),
-        "nested_collapse" if point == "bootstrap" => (1072, 5319, 33, 41, 0, 41, 545),
+        // The last nested step walks the remaining three of the 103 inputs.
+        "endoscaling_step_25" => (498, 8215, 0, 2, 0, 2, 248),
+        step if step.starts_with("endoscaling_step_") => (498, 10620, 0, 2, 0, 2, 248),
+        "nested_collapse" if point == "bootstrap" => (1068, 5302, 33, 41, 0, 41, 544),
         "nested_collapse" if point == "leaves" || point == "nodes" => {
-            (1072, 5319, 33, 42, 0, 42, 540)
+            (1068, 5302, 33, 42, 0, 42, 542)
         }
-        "nested_compute_v" => (1072, 6344, 33, 1, 0, 1, 538),
+        "nested_compute_v" => (1068, 6336, 33, 1, 0, 1, 536),
         other => panic!("no census pinned for {other}"),
     };
     let (pinned, rejected) = match (name, point) {
-        ("hashes_1", _) => (13, 95),
-        ("hashes_2", _) => (14, 84),
-        ("collapse", "bootstrap") => (18, 140),
-        ("collapse", "leaves" | "nodes") => (16, 140),
-        ("compute_v", _) => (13, 447),
-        ("bind_challenges_0", _) => (13, 701),
-        ("bind_challenges_1", _) => (13, 701),
-        ("bind_challenges_2", _) => (13, 701),
-        ("bind_challenges_3", "bootstrap") => (15, 700),
-        ("bind_challenges_3", "leaves" | "nodes") => (13, 700),
-        ("bind_beta", _) => (12, 596),
-        ("bind_endoscalar", "bootstrap") => (99, 388),
-        ("bind_endoscalar", "leaves") => (86, 398),
-        ("bind_endoscalar", "nodes") => (95, 389),
-        ("native_endoscaling_step_0", "leaves") => (85, 150),
-        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (98, 136),
-        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (85, 149),
-        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (94, 140),
-        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (98, 151),
-        (step, "leaves") if step.starts_with("endoscaling_step_") => (84, 165),
-        (step, "nodes") if step.starts_with("endoscaling_step_") => (94, 155),
-        ("nested_collapse", "bootstrap") => (115, 430),
-        ("nested_collapse", "leaves") => (100, 440),
-        ("nested_collapse", "nodes") => (110, 430),
-        ("nested_compute_v", "bootstrap") => (114, 424),
-        ("nested_compute_v", "leaves") => (100, 438),
-        ("nested_compute_v", "nodes") => (110, 428),
+        ("hashes_1", "bootstrap") => (8, 94),
+        ("hashes_1", "leaves" | "nodes") => (9, 93),
+        ("hashes_2", "bootstrap") => (9, 83),
+        ("hashes_2", "leaves" | "nodes") => (10, 82),
+        ("collapse", "bootstrap") => (14, 135),
+        ("collapse", "leaves" | "nodes") => (16, 131),
+        ("compute_v", _) => (9, 445),
+        ("bind_challenges_0", _) => (9, 699),
+        ("bind_challenges_1", _) => (9, 699),
+        ("bind_challenges_2", _) => (9, 699),
+        ("bind_challenges_3", "bootstrap") => (11, 698),
+        ("bind_challenges_3", "leaves" | "nodes") => (9, 698),
+        ("bind_beta", _) => (7, 596),
+        ("bind_endoscalar", "bootstrap") => (103, 385),
+        ("bind_endoscalar", "leaves") => (102, 386),
+        ("bind_endoscalar", "nodes") => (105, 383),
+        ("native_endoscaling_step_0", "bootstrap") => (102, 133),
+        ("native_endoscaling_step_0", "leaves") => (101, 134),
+        ("native_endoscaling_step_0", "nodes") => (104, 131),
+        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (102, 132),
+        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (101, 133),
+        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (104, 130),
+        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (101, 147),
+        (step, "leaves") if step.starts_with("endoscaling_step_") => (100, 148),
+        (step, "nodes") if step.starts_with("endoscaling_step_") => (103, 145),
+        ("nested_collapse", "bootstrap") => (118, 426),
+        ("nested_collapse", "leaves") => (116, 426),
+        ("nested_collapse", "nodes") => (119, 423),
+        ("nested_compute_v", "bootstrap") => (117, 419),
+        ("nested_compute_v", "leaves") => (116, 420),
+        ("nested_compute_v", "nodes") => (119, 417),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {
@@ -548,7 +555,8 @@ fn patcher_captures_internal_circuits() -> Result<()> {
 
     // Leaves and nodes agree on everything the witness' values do not
     // decide; the base case differs only in the c the two collapse circuits
-    // leave free.
+    // leave free, and in the own output header and circuit id the native
+    // collapse pins in its place.
     let structural = |census: &Census| {
         (
             census.name.clone(),
@@ -564,7 +572,18 @@ fn patcher_captures_internal_circuits() -> Result<()> {
         |checker: &CaptureChecker| checker.census.iter().map(structural).collect::<Vec<_>>();
     assert_eq!(all_structural(&leaves), all_structural(&nodes));
     for (s, l) in bootstrap.census.iter().zip(&leaves.census) {
-        if s.name == "collapse" || s.name == "nested_collapse" {
+        if s.name == "collapse" {
+            // c is not an output at the base case; the step's own output
+            // header and circuit id, which the base case pins, are.
+            let pinned = crate::pcd::HEADER_SIZE + 1;
+            assert_eq!(
+                s.outputs + 1,
+                l.outputs + pinned,
+                "{}: c is not an output at the base case, the pinned own header and id are",
+                s.name
+            );
+            assert_eq!(s.strongly_forced + 1, l.strongly_forced + pinned);
+        } else if s.name == "nested_collapse" {
             assert_eq!(
                 s.outputs + 1,
                 l.outputs,

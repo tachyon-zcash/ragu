@@ -37,8 +37,9 @@
 //! * the unified slots it covers — `provide`s, or `receive`s and checks —
 //!   read off the `Coverage` it reports; and
 //! * the stage values it checks against an in-circuit computation: the
-//!   collapsed claims `collapse` folds to, the $k(y)$ evaluations
-//!   `collapse` recomputes, the sponge state `hashes_1` saves. These
+//!   collapsed claims `collapse` folds to, the step's own output header
+//!   and circuit id `collapse` pins in the base case, the $k(y)$ evaluations
+//!   `hashes_1` recomputes, the sponge state `hashes_1` saves. These
 //!   are reserved stage wires, committed outside the circuit, and the
 //!   circuit that checks them is the one that binds them.
 //!
@@ -429,7 +430,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, _application_data, _application_aux) =
+        let (left, right, _application_data, _application_aux, application) =
             self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
 
         let mut dr = Emulator::execute();
@@ -452,6 +453,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -463,6 +465,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let native_source = NativeFuseProofSource {
             left: &left,
             right: &right,
+            application: &application,
         };
         let nested_source = NestedFuseProofSource {
             left: &left,
@@ -552,6 +555,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -572,6 +576,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
             &left,
             &right,
+            &application,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -583,6 +588,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &bound_challenges,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &nested_s_prime,
@@ -620,6 +626,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &pre_beta,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &native_f,
@@ -817,8 +824,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             hashes_2_witness,
         )?;
 
-        // collapse checks both fold layers and the children's application
-        // k(y) values. Only the final c comparison is waived at bootstrap.
+        // collapse checks both fold layers, computing the step's own
+        // application k(y) itself. Only the final c comparison is waived at
+        // bootstrap, where it instead pins the step's own output header and
+        // circuit id to the bootstrap step's.
         let collapse = native::circuits::collapse::Circuit::<
             C,
             R,
@@ -834,12 +843,23 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 inner_error_witness: &native_inner_error_witness,
             })
         };
-        // At the base case the covered slot, c, is left free by design, so
-        // only the k(y) checks remain as outputs.
+        // At the base case the covered slot, c, is left free by design; the
+        // base-case pin forces the own output header and circuit id instead.
         let collapse_covered = if base_case {
             Vec::new()
         } else {
             covered_outputs(&collapse, collapse_witness()?, coverage(&[]))?
+        };
+        let collapse_pinned = if base_case {
+            stage_wire_indices::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
+                |stage| {
+                    let mut wires = wires_of(&stage.own.output_header)?;
+                    wires.extend(wires_of(&stage.own.circuit_id)?);
+                    Ok(wires)
+                },
+            )?
+        } else {
+            Vec::new()
         };
         let collapse_spec = CircuitSpec {
             name: "collapse".into(),
@@ -848,16 +868,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .map(OutputRef::Instance)
                 .chain(
                     stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
-                        |stage| {
-                            Ok(stage
-                                .collapsed
-                                .iter()
-                                .chain([&stage.left.application, &stage.right.application])
-                                .map(|e| *e.wire())
-                                .collect())
-                        },
+                        |stage| Ok(stage.collapsed.iter().map(|e| *e.wire()).collect()),
                     )?
                     .into_iter()
+                    .chain(collapse_pinned)
                     .map(OutputRef::Stage),
                 )
                 .collect(),
@@ -1086,6 +1100,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
+            native_application: application.commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {

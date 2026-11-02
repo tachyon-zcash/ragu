@@ -494,9 +494,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     let Proof {
         bridge_alpha,
         circuit_id,
-        left_header,
-        right_header,
-        native_application_rx,
         native_preamble_rx,
         native_inner_error_rx,
         native_outer_error_rx,
@@ -564,7 +561,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         alpha,
         u,
         pre_beta,
-        native_application_commitment: _,
         native_preamble_commitment: _,
         native_inner_error_commitment: _,
         native_outer_error_commitment: _,
@@ -601,11 +597,8 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     } = proof;
 
     lines.push("circuit_id", usize::from(*circuit_id));
-    lines.fields("left_header", left_header);
-    lines.fields("right_header", right_header);
     lines.field("bridge_alpha", bridge_alpha);
 
-    lines.poly("native_application_rx", native_application_rx);
     lines.poly("native_preamble_rx", native_preamble_rx);
     lines.poly("native_inner_error_rx", native_inner_error_rx);
     lines.poly("native_outer_error_rx", native_outer_error_rx);
@@ -786,8 +779,6 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
 
     let Instance {
         circuit_id,
-        left_header,
-        right_header,
         native: native_commitments,
         native_registry_xy,
         native_p,
@@ -810,8 +801,6 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         nested_b_at_u,
     } = instance;
     out.u32(usize::from(*circuit_id));
-    out.fields(left_header);
-    out.fields(right_header);
     out.points(native_commitments);
     out.point(native_registry_xy);
     out.point(native_p);
@@ -824,10 +813,9 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(v);
     out.field(nested_c);
     out.field(nested_v);
-    for Child { x, y, id } in [left, right] {
+    for Child { x, y } in [left, right] {
         out.field(x);
         out.field(y);
-        out.field(id);
     }
     out.field(a_at_u);
     out.field(b_at_u);
@@ -895,8 +883,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         return None;
     }
     let circuit_id = CircuitIndex::new(cursor.u32()?);
-    let left_header = cursor.fields()?;
-    let right_header = cursor.fields()?;
     let native_commitments = cursor.points()?;
     let native_registry_xy = cursor.point()?;
     let native_p = cursor.point()?;
@@ -913,7 +899,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         Some(Child {
             x: cursor.field()?,
             y: cursor.field()?,
-            id: cursor.field()?,
         })
     };
     let left = child()?;
@@ -932,8 +917,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_b_at_u = cursor.field()?;
     let instance = Instance {
         circuit_id,
-        left_header,
-        right_header,
         native: native_commitments,
         native_registry_xy,
         native_p,

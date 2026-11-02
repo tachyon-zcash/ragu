@@ -167,7 +167,7 @@ mod tests {
 
     use super::*;
     use crate::wire::{
-        Decode, Dimensions, MAX_HEADER_SIZE, MAX_RANK,
+        Decode, Dimensions, MAX_RANK,
         format::{PayloadKind, write_envelope},
     };
 
@@ -194,14 +194,7 @@ mod tests {
     /// An envelope of `payload` declaring `rank` and `header_size`.
     fn envelope(payload: PayloadKind, rank: u32, header_size: u64) -> Vec<u8> {
         let mut bytes = Vec::new();
-        write_envelope(
-            payload,
-            Dimensions {
-                rank,
-                header_size: 0,
-            },
-            &mut bytes,
-        );
+        write_envelope(payload, Dimensions { rank }, &mut bytes);
         bytes[20..28].copy_from_slice(&header_size.to_le_bytes());
         bytes
     }
@@ -217,9 +210,9 @@ mod tests {
 
     #[test]
     fn sequence_buffer_stops_at_the_length_the_envelope_implies() {
-        let dims = Dimensions::of::<ProductionRank, 4>();
+        let dims = Dimensions::of::<ProductionRank>();
         let limit = ENVELOPE_SIZE + <TestCompressed as Decode>::encoded_len(dims);
-        let envelope = envelope(PayloadKind::Compressed, dims.rank, dims.header_size as u64);
+        let envelope = envelope(PayloadKind::Compressed, dims.rank, 0);
         let input = |extra: usize| {
             envelope
                 .iter()
@@ -258,17 +251,17 @@ mod tests {
     fn envelope_bounds_the_shape_before_any_payload_is_buffered() {
         for (envelope, reason) in [
             (
-                envelope(PayloadKind::Compressed, 13, 4),
+                envelope(PayloadKind::Compressed, 13, 0),
                 "proof payload kind mismatch",
             ),
-            (envelope(PayloadKind::Proof, 12, 4), "proof rank mismatch"),
+            (envelope(PayloadKind::Proof, 12, 0), "proof rank mismatch"),
             (
-                envelope(PayloadKind::Proof, 13, MAX_HEADER_SIZE as u64 + 1),
-                "proof header size exceeds the limit",
+                envelope(PayloadKind::Proof, 13, 4),
+                "proof header size must be zero",
             ),
             (
                 envelope(PayloadKind::Proof, 13, u64::MAX),
-                "proof header size exceeds the limit",
+                "proof header size must be zero",
             ),
         ] {
             let error = read_framed::<TestProof, _>(SeqDeserializer::<_, Error>::new(
@@ -278,7 +271,7 @@ mod tests {
             assert!(error.to_string().contains(reason), "{error}");
         }
         let error = read_framed::<TestCompressed, _>(SeqDeserializer::<_, Error>::new(
-            envelope(PayloadKind::Compressed, MAX_RANK + 1, 4)
+            envelope(PayloadKind::Compressed, MAX_RANK + 1, 0)
                 .into_iter()
                 .chain(core::iter::repeat(0u8)),
         ))

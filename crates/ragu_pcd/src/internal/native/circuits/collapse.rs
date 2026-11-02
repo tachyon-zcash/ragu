@@ -1,7 +1,8 @@
 //! Verifies both layers of the native quotient fold.
 //!
-//! The circuit enforces the children's application k(y) values against their
-//! headers. For each group of the children's claims, it enforces that folding
+//! The circuit computes the step's own application k(y) from its headers in
+//! the preamble: the children's output headers as its inputs and its own
+//! output header. For each group of the claims, it enforces that folding
 //! the group's k(y) targets with the [`inner_error`] stage's quotient under mu
 //! gives the collapsed value the [`outer_error`] stage witnessed. Outside the
 //! base case, it enforces that folding the collapsed values with the outer
@@ -37,12 +38,19 @@
 //! [`is_base_case`] returns false.
 //!
 //! For every application step the suffix read here is a constant that
-//! [`padded::for_header`] bakes into the step's application circuit, so no
-//! application step can present the [`Dummy`] suffix and every application
-//! fuse has its child claims enforced — including one whose children carry the
-//! unit `()` header. See [`is_dummy_input`] for how that binding is
-//! established, and for the internal [`Rerandomize`] step, whose suffix is a
-//! witness wire constrained away from `Dummy`.
+//! [`padded::for_header`] bakes into the step's application circuit, and the
+//! internal [`Rerandomize`] step holds its witnessed suffix away from
+//! `Dummy` (see [`is_dummy_input`]). But that is a property of the step's own
+//! application claim, which this step folds into the very $c$ the base case
+//! leaves free. So the base case also pins, here, the step's own circuit id to
+//! [`Bootstrap`]'s and its own output header to the unit header (see
+//! [`enforce_base_case_is_bootstrap`]). This circuit's claim is enforced by
+//! the parent or the decider, outside this step's $c$, so a proof taking the
+//! base case is a bootstrap proof with the unit output header whatever its
+//! $c$, and attests nothing, as before. Conversely, a proof of the bootstrap
+//! step not taking the base case has its own application claim enforced,
+//! and that claim requires `Dummy` inputs, so the circuit id alone decides
+//! the base case.
 //!
 //! [`Dummy`]: crate::header::Dummy
 //! [`Bootstrap`]: crate::step::internal::bootstrap::Bootstrap
@@ -50,6 +58,7 @@
 //! [`finalize`]: crate::ApplicationBuilder::finalize
 //! [`padded::for_header`]: crate::step::internal::padded::for_header
 //! [`is_dummy_input`]: super::super::stages::preamble::ProofInputs::is_dummy_input
+//! [`enforce_base_case_is_bootstrap`]: super::super::stages::preamble::Output::enforce_base_case_is_bootstrap
 //!
 //! [`is_base_case`]: super::super::stages::preamble::Output::is_base_case
 //! [`inner_error`]: super::super::stages::inner_error
@@ -190,15 +199,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let allocator = &mut Standard::new();
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
-        // Compute application k(y) values and enforce equality with staged
-        // values witnessed in outer_error. The y challenge is derived in
-        // hashes_1 and read (not received) here, since hashes_1 owns coverage.
+        // Compute the step's own application k(y). The y challenge is
+        // derived in hashes_1 and read (not received) here, since hashes_1
+        // owns coverage.
         let y = unified_output.y.read(dr, allocator)?;
-        let left_application_ky = preamble.left.application_ky(dr, &y)?;
-        let right_application_ky = preamble.right.application_ky(dr, &y)?;
+        let application_ky = preamble.application_ky(dr, &y)?;
 
-        left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
-        right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
+        // The base case leaves the folded c free below, so pin it to the
+        // bootstrap step with the unit output header here.
+        let is_base_case = preamble.is_base_case(dr, allocator)?;
+        preamble.enforce_base_case_is_bootstrap::<C::Profile>(dr, allocator, &is_base_case)?;
 
         // Get layer 1 folding challenges from the unified instance.
         let mu = unified_output.mu.read(dr, allocator)?;
@@ -208,7 +218,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // claims's iteration order for correct folding correspondence.
         // Sources include:
         // - Child c values from preamble (the children's final revdot claims)
-        // - Application and unified k(y) evaluations from outer_error
+        // - The step's own application k(y), computed above
+        // - Unified k(y) evaluations from outer_error
         // The statement circuit's k(y) values come straight from the
         // preamble, as the application ones are above, and the
         // binding circuit's from the children's nested extension stage
@@ -238,6 +249,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             dr,
             preamble.left.unified.c.clone(),
             preamble.right.unified.c.clone(),
+            application_ky,
             &outer_error.left,
             &outer_error.right,
             left_statement,
@@ -280,10 +292,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             // inputs. There the prover may witness any c, which is what lets it
             // fuse two synthesized proofs that do not verify; the resulting
             // proof attests nothing in return.
-            preamble
-                .is_base_case(dr, allocator)?
-                .not(dr)
-                .conditional_enforce_equal(dr, allocator, &witnessed_c, &computed_c)?;
+            is_base_case.not(dr).conditional_enforce_equal(
+                dr,
+                allocator,
+                &witnessed_c,
+                &computed_c,
+            )?;
         }
 
         let (output, aux) = unified_output.finish(dr, allocator)?;

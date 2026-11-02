@@ -178,11 +178,14 @@ parts of the NARK instance and accumulator managed by the prover.
 
 ```admonish info title="Split-up of the folding work"
 
-- NARK instances for both the application circuit and fuse circuits in step $i$
-  is **only folded in the step $i+1$**.
-- The NARK instance for the application circuit is first committed via
-  [nested commitment](../../prelim/nested_commitment.md) outside the circuit
-  before being accumulated inside the fuse circuit in the next recursion step.
+- The NARK instance for the application circuit in step $i$ is **folded in
+  step $i$ itself**: its trace depends on none of the step's challenges, so it
+  is committed via [nested commitment](../../prelim/nested_commitment.md)
+  before the folding challenges are drawn, and the fuse circuit accumulates it
+  in the same step.
+- The NARK instances for the fuse circuits in step $i$ are **only folded in
+  step $i+1$**: their traces contain step $i$'s own challenges, so they cannot
+  be committed before them.
 - The accumulator for one curve contains both group and field elements. E.g.,
   $\acc^{(1)}=(S,\bar{A},\bar{B},c,\bar{P},u,v)$ where
   $S,\bar{A},\bar{B},P\in\G^{(1)}$ and $c,u,v\in\F^{(1)}\equiv\F_p$.

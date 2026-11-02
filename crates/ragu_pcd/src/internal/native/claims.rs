@@ -35,7 +35,8 @@ use crate::{
 /// `bind_endoscalar`.
 ///
 /// Note: [`hashes_1`] separately uses `unified_bridge_ky` because its public
-/// inputs include child proof headers (see [`hashes_1::Output`]).
+/// inputs include the step's own output header and circuit id (see
+/// [`hashes_1::Output`]).
 ///
 /// [`hashes_1`]: crate::internal::native::circuits::hashes_1
 /// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
@@ -151,7 +152,8 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 ///
 /// The ordering is: for each claim type, add claims for all proofs before
 /// moving to the next claim type. This produces an interleaved order:
-/// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
+/// `[L_raw, R_raw, app, L_h1, R_h1, ...]` for the fuse, whose one
+/// application claim is the step's own.
 ///
 /// This ordering must match the $k(y)$ ordering in
 /// [`collapse`](crate::internal::native::circuits::collapse)
@@ -169,8 +171,8 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof)
-    for (app_id, rx) in source.app_circuits().zip(source.rx(Rx(Application))) {
+    // Application circuit claims: the fuse's own, none for a decider
+    for (app_id, rx) in source.applications() {
         processor.circuit_claim(app_id, rx);
     }
 
@@ -412,7 +414,9 @@ pub trait KySource {
     /// Iterator over raw_c values (the c from AB proof / preamble unified).
     fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// Iterator over application circuit $k(y)$ values.
+    /// Iterator over application circuit $k(y)$ values, one per claim the
+    /// source's [`applications`](crate::internal::claims::Source::applications)
+    /// yields.
     fn application_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Iterator over unified bridge $k(y)$ values.
@@ -493,8 +497,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub left_raw_c: Element<'dr, D>,
     pub right_raw_c: Element<'dr, D>,
-    pub left_app: Element<'dr, D>,
-    pub right_app: Element<'dr, D>,
+    pub application: Element<'dr, D>,
     pub left_bridge: Element<'dr, D>,
     pub right_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
@@ -508,14 +511,15 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
-    /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values
-    /// and the statement and binding circuits' k(y) values, `None` for a
-    /// profile without one.
+    /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values,
+    /// the step's own application k(y), and the statement and binding
+    /// circuits' k(y) values, `None` for a profile without one.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
         right_raw_c: Element<'dr, D>,
+        application: Element<'dr, D>,
         left_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         left_statement: Option<Element<'dr, D>>,
@@ -526,8 +530,7 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         Self {
             left_raw_c,
             right_raw_c,
-            left_app: left_ky.application.clone(),
-            right_app: right_ky.application.clone(),
+            application,
             left_bridge: left_ky.unified_bridge.clone(),
             right_bridge: right_ky.unified_bridge.clone(),
             left_unified: left_ky.unified.clone(),
@@ -550,7 +553,7 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
     }
 
     fn application_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
-        once(self.left_app.clone()).chain(once(self.right_app.clone()))
+        once(self.application.clone())
     }
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {

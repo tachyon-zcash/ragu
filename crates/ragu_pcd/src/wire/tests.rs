@@ -7,10 +7,7 @@ use ragu_primitives::vec::ConstLen;
 use super::*;
 
 // The values here have layouts their types fix alone.
-const DIMS: Dimensions = Dimensions {
-    rank: 0,
-    header_size: 0,
-};
+const DIMS: Dimensions = Dimensions { rank: 0 };
 
 type Pair = FixedSequence<DefaultEncoding, ConstLen<2>>;
 

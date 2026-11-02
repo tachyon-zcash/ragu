@@ -1,6 +1,13 @@
 //! S-prime stage for nested fuse operations: the native `registry_wx`
-//! commitments, and the commitment of the native points stage holding their
-//! nested counterparts.
+//! commitments, the commitment of the step's own application trace, and the
+//! commitment of the native points stage holding the `registry_wx`
+//! commitments' nested counterparts.
+//!
+//! The step folds its own application claim at the $y$ squeezed right after
+//! this stage's commitment is absorbed, so the trace is fixed before the
+//! claim's challenges. It need not be fixed before $w$: the claim's
+//! registry restriction is the circuit's own, $m(\omega^{id}, X, y)$, which
+//! does not involve $w$.
 
 use core::marker::PhantomData;
 
@@ -17,12 +24,14 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::profile::Profile;
 
 /// Number of curve points in this stage.
-const NUM: usize = 3;
+const NUM: usize = 4;
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine> {
     pub registry_wx0: C,
     pub registry_wx1: C,
+    /// Commitment of the step's own application trace.
+    pub native_application: C,
     /// Commitment of the native points stage holding the nested
     /// `registry_wx` commitments, fixed here before $y$ is squeezed.
     pub native_points_registry_wx: C,
@@ -38,6 +47,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub registry_wx0: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub registry_wx1: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub native_application: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub native_points_registry_wx: Point<'dr, D, C>,
 }
@@ -67,6 +78,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Ok(Output {
             registry_wx0: Point::alloc(dr, witness.as_ref().map(|w| w.registry_wx0))?,
             registry_wx1: Point::alloc(dr, witness.as_ref().map(|w| w.registry_wx1))?,
+            native_application: Point::alloc(dr, witness.as_ref().map(|w| w.native_application))?,
             native_points_registry_wx: Point::alloc(
                 dr,
                 witness.as_ref().map(|w| w.native_points_registry_wx),

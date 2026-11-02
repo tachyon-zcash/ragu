@@ -39,7 +39,7 @@ use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
     fuzzing::corrupt::{
         Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
-        NestedAccumulator, NestedCommitment, NestedRx, RxComponent, Side,
+        NestedAccumulator, NestedCommitment, NestedRx, RxComponent,
     },
     header::Header,
     wire,
@@ -167,18 +167,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
         // Out of the registry's domain, and in it but not the honest id.
         Corruption::CircuitId(u32::MAX),
         Corruption::CircuitId(1),
-        Corruption::SwapHeaders,
     ];
-
-    for side in [Side::Left, Side::Right] {
-        for index in 0..HEADER_SIZE {
-            out.push(Corruption::HeaderElement { side, index, delta });
-        }
-        // Shorter, longer, and past any plausible header.
-        for len in [0, HEADER_SIZE - 1, HEADER_SIZE + 1, 64] {
-            out.push(Corruption::HeaderLen { side, len });
-        }
-    }
 
     for which in Challenge::ALL {
         // A value no honest proof carries in that slot: the dummy fixture's
@@ -253,7 +242,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CorruptionGroup {
-    HeadersAndChallenges,
+    CircuitIdAndChallenges,
     CommitmentsAndAccumulators,
     NativePolynomials,
     NestedPolynomials,
@@ -263,11 +252,7 @@ impl CorruptionGroup {
     /// Every vocabulary entry belongs to exactly one independently run group.
     fn of(corruption: &Corruption<C>) -> Self {
         match corruption {
-            Corruption::CircuitId(_)
-            | Corruption::HeaderElement { .. }
-            | Corruption::HeaderLen { .. }
-            | Corruption::SwapHeaders
-            | Corruption::Challenge(..) => Self::HeadersAndChallenges,
+            Corruption::CircuitId(_) | Corruption::Challenge(..) => Self::CircuitIdAndChallenges,
             Corruption::NegateBridgeCommitment(_)
             | Corruption::NegateChallengesPartial
             | Corruption::NegateNativeCommitment(_)
@@ -370,7 +355,7 @@ fn no_op_edits() -> Vec<Corruption<C>> {
     let mut out = Vec::new();
     for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
         out.push(Corruption::NativeCoeff {
-            component: RxComponent::Rx(NativeRx::Application),
+            component: RxComponent::Rx(NativeRx::Hashes1),
             coeff,
             delta: Fp::from(delta),
         });
@@ -497,7 +482,7 @@ macro_rules! corruption_tests {
             #[test]
             #[ignore = "corruption suite: run by the Linux corruption job"]
             fn headers_and_challenges_reject() {
-                check_corruptions($shape, CorruptionGroup::HeadersAndChallenges);
+                check_corruptions($shape, CorruptionGroup::CircuitIdAndChallenges);
             }
 
             #[test]
@@ -609,9 +594,9 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
         proof: fixture.proof.clone(),
         data: fixture.data,
     };
-    let first = both.proof.corrupt(Corruption::HeaderElement {
-        side: Side::Left,
-        index: 0,
+    let first = both.proof.corrupt(Corruption::NativeCoeff {
+        component: RxComponent::Rx(NativeRx::Hashes1),
+        coeff: 0,
         delta: Fp::from(3u64),
     });
     let second = both
@@ -635,14 +620,14 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
         proof: fixture.proof.clone(),
         data: fixture.data,
     };
-    cancelled.proof.corrupt(Corruption::HeaderElement {
-        side: Side::Left,
-        index: 0,
+    cancelled.proof.corrupt(Corruption::NativeCoeff {
+        component: RxComponent::Rx(NativeRx::Hashes1),
+        coeff: 0,
         delta: Fp::from(3u64),
     });
-    cancelled.proof.corrupt(Corruption::HeaderElement {
-        side: Side::Left,
-        index: 0,
+    cancelled.proof.corrupt(Corruption::NativeCoeff {
+        component: RxComponent::Rx(NativeRx::Hashes1),
+        coeff: 0,
         delta: -Fp::from(3u64),
     });
     assert!(
@@ -661,11 +646,6 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
 fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
     match *corruption {
         Corruption::CircuitId(id) => Corruption::CircuitId(id),
-        Corruption::HeaderElement { side, index, delta } => {
-            Corruption::HeaderElement { side, index, delta }
-        }
-        Corruption::HeaderLen { side, len } => Corruption::HeaderLen { side, len },
-        Corruption::SwapHeaders => Corruption::SwapHeaders,
         Corruption::Challenge(which, value) => Corruption::Challenge(which, value),
         Corruption::NegateBridgeCommitment(which) => Corruption::NegateBridgeCommitment(which),
         Corruption::NegateChallengesPartial => Corruption::NegateChallengesPartial,

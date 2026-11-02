@@ -163,7 +163,11 @@ fn rejects_what_the_decider_rejects() {
         proof.carry::<Value>(data)
     };
     let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 3] = [
-        ("left header element", |_, p| p.left_header[0] += Fp::ONE),
+        // Another in-domain circuit id: the decider's `hashes_1` target
+        // and mesh claim read it.
+        ("other circuit id", |_, p| {
+            p.circuit_id = CircuitIndex::new(1)
+        }),
         ("polynomial with a stale commitment", |_, p| {
             p.native_a_poly
                 .add_assign(&sparse::Polynomial::from_coeffs(vec![Fp::ONE]))
@@ -190,24 +194,6 @@ fn rejects_what_the_decider_rejects() {
         assert!(
             !accepts(&app, &compress(&app, &pcd, 3)),
             "{case}: the compressed verifier rejects"
-        );
-    }
-
-    let malformed_headers: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 2] = [
-        ("left header too long", |_, p| p.left_header.push(Fp::ZERO)),
-        ("right header too short", |_, p| {
-            p.right_header.pop();
-        }),
-    ];
-    for (case, edit) in malformed_headers {
-        let pcd = edited(edit);
-        assert!(!decides(&app, &pcd, 2), "{case}: the decider rejects");
-        assert!(
-            matches!(
-                app.compress(&pcd, &mut StdRng::seed_from_u64(3)),
-                Err(Error::InvalidWitness(_))
-            ),
-            "{case}: compression rejects the malformed shape"
         );
     }
 }
@@ -425,8 +411,6 @@ fn rejects_tampered_messages() {
         ));
         p.instance.nested[bridge] = -p.instance.nested[bridge];
     });
-    tamper("header element", &|p| p.instance.right_header[0] += Fp::ONE);
-    tamper("header length", &|p| p.instance.left_header.push(Fp::ZERO));
     tamper("circuit id", &|p| {
         p.instance.circuit_id = CircuitIndex::new(u32::MAX as usize)
     });

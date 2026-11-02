@@ -13,8 +13,8 @@ A circuit's public inputs are encoded as a polynomial $k(Y)$, introduced in the
 $y$ and checks it against the revdot claim.
 
 Recursion instantiates $k(Y)$ three times: once for the values the internal
-circuits share, once for those same values bound to the child headers, and once
-for the application's own step circuit.
+circuits share, once for those same values bound to the step's own output
+header and circuit id, and once for the application's own step circuit.
 
 ### `unified_ky`
 
@@ -35,17 +35,24 @@ enforce those constraints instead.
 
 ### `unified_bridge_ky`
 
-The same wires, extended with both child headers:
+The same wires, extended with the step's own output header and circuit id:
 
-$$k_\text{bridge}(Y) = \text{Horner}(\texttt{unified\_output} \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, 0 \,\|\, 1, \; Y)$$
+$$k_\text{bridge}(Y) = \text{Horner}(\texttt{unified\_output} \,\|\, \texttt{output\_header} \,\|\, \texttt{circuit\_id} \,\|\, 0 \,\|\, 1, \; Y)$$
 
-Binding the headers is what stops a proof from claiming one pair of headers
-while proving a different pair. `hashes_1` uses this rather than
-$k_\text{unified}(y)$, because it is the circuit that binds child headers.
+A step folds its own application claim against the output header and
+circuit id its preamble witnesses, and `hashes_1` exports those same wires.
+The step that consumes the proof holds its own copies, its input header and
+the child's circuit id, to this instance when it folds the child's
+`hashes_1` claim. Every header therefore has one copy checked by the step
+that produced it and one by the step that consumes it, and this instance
+bridges the two: it is what stops a proof from presenting one output header
+to its parent while having proved another.
 
 ### `application_ky`
 
-The step circuit's own public inputs, with no unified output and no zero suffix:
+The step circuit's own public inputs, with no unified output and no zero suffix.
+The step computes it in `collapse`, from its preamble: its input headers are its
+children's output headers, read from the wires their bridges bind.
 
 $$k_\text{app}(Y) = \text{Horner}(\texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
 
@@ -81,7 +88,7 @@ recursive verifier actually checks, carried through the $k(Y)$ mechanism above.
 The shared `Output` structure holds 29 wires: eight nested-curve commitments at
 two wires each, and thirteen field elements covering the Fiat-Shamir challenges
 and the final values $c$ and $v$. `hashes_1` emits a wider structure that adds
-the two child headers.
+the step's own output header and circuit id.
 
 Each circuit constrains the wires it is responsible for and reads the rest from
 witness data, so every wire is constrained exactly once and no circuit repeats
@@ -91,11 +98,14 @@ The verifier then checks:
 
 1. The raw $c$ value from the $AB$ component, directly — this is the folded
    revdot scalar rather than a $k(y)$ evaluation.
-2. $k_\text{app}(y)$ against the application circuit's claim.
-3. $k_\text{bridge}(y)$ against the bridge claim.
-4. $k_\text{unified}(y)$ against the claims of the four internal circuits that
+2. $k_\text{bridge}(y)$ against the bridge claim, with the proof's own output
+   header and circuit id.
+3. $k_\text{unified}(y)$ against the claims of the internal circuits that
    share it.
-5. Stage and final-staged mask claims against zero.
+4. Stage and final-staged mask claims against zero.
+
+There is no application claim among them: the proof folded its own, so it
+is part of the accumulator the raw $c$ and the `collapse` claim check.
 
 ## Substitution {#substitution}
 
