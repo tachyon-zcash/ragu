@@ -143,7 +143,7 @@ $\beta$. Lift injectivity is what makes
 that equality determine the bits. Stage sharing, the parent challenge
 commitment binding, and the root check must preserve these same wires.
 
-`bind_beta` performs two plain endoscalings, one per child, and costs 1891
+`bind_beta` performs two plain endoscalings, one per child, and costs 1737
 gates at 143 bits. It now ends at the preamble under its own final mask
 instead of chaining through the `outer_error` stage, whose wires it never
 read. Its claim contains `BindBeta`, `PointsBinding`, and `Preamble`; the
@@ -155,7 +155,7 @@ nested walk steps are unchanged.
 
 The constraint census uses production rank `R<13>`, a 103-element header,
 and 6000 placeholder application circuits. In that fixture the largest
-`bind_challenges` variant uses 2033 of 2048 gates, leaving fifteen gates of
+`bind_challenges` variant uses 1878 of 2048 gates, leaving 170 gates of
 headroom. The census tests pin that count; extending the binder requires
 rechecking its capacity.
 
@@ -201,7 +201,7 @@ domain size $K=64$, revdot group size and group count $M=7$, $N=14$ on the
 native side and $M=8$, $N=10$ on the nested side, $T=138$ nested PCS
 queries (the 18 static openings, each child's 39 rx polynomials at
 $x_n z_n$, and the registry restriction at each of the 42 nested internal
-circuits' $\omega^j$), and point folds of 93 native and 105 nested terms.
+circuits' $\omega^j$), and point folds of 93 native and 104 nested terms.
 One challenge set drives both fields' revdot folds, so each fold challenge
 is charged for both sides. The entries bound the number of roots charged to
 a challenge, conditional on the relevant discrepancy being a nonzero
@@ -223,10 +223,10 @@ has $m-1$ coefficients and must be committed before the folding challenge.
 | $x_n$ | Two folded-polynomial checks and registry restriction | $3(D-1)=24573$ |
 | $\alpha_n$ | Batching the $T$ opening claims | $T-1=137$ |
 | $u_n$ | Quotient identity, clearing at most $T$ denominators | $D+T-1=8329$ |
-| $\beta$ | Both point folds, with 93 and 105 terms | $92+104=196$ |
+| $\beta$ | Both point folds, with 93 and 104 terms | $92+103=195$ |
 
 Counting the comparisons separately, rather than relying on the gist's
-six-check shorthand, gives $66477/2^{143} \approx 2^{-126.98}$ for this
+six-check shorthand, gives $66476/2^{143} \approx 2^{-126.98}$ for this
 local ledger. In particular, the lower-degree challenges must not be
 omitted, even though they do not change the rounded estimate of about
 127 bits. The $u_n$ entry conservatively clears the quotient denominators;
