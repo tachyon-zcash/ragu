@@ -128,11 +128,9 @@ impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {
         once(&self.0[component])
     }
 
+    /// A proof folds its own application claim, so its decider has none.
     fn applications(&self) -> impl Iterator<Item = (CircuitIndex, Self::Rx)> {
-        once((
-            self.0.circuit_id(),
-            &self.0[native::RxComponent::Rx(native::RxIndex::Application)],
-        ))
+        empty()
     }
 }
 
@@ -418,7 +416,7 @@ pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
         .zip(builder.b)
         .chain(masked_claims(|component| &proof[component], masked))
         .collect();
-    let shapes = claims::native_shapes::<C::Profile, _>(proof.circuit_id(), z, masked)?;
+    let shapes = claims::native_shapes::<C::Profile, _>(z, masked)?;
     reduce::<_, R, B, _>(
         &claims,
         &shapes,

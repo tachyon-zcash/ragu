@@ -80,15 +80,18 @@ fn an_envelope_this_type_cannot_have_is_rejected() {
     // A proof's rank is its type's.
     let error = rejected(|bytes| bytes[16] = 12);
     assert!(error.contains("proof rank mismatch"), "{error}");
-    // A header size past the limit is refused before the payload is read.
+    // No payload carries a header, so any nonzero header size is refused
+    // before the payload is read.
     let error = rejected(|bytes| bytes[20..28].copy_from_slice(&(1u64 << 40).to_le_bytes()));
-    assert!(error.contains("header size exceeds the limit"), "{error}");
-    // Another admissible header size implies another length. A sequence is
-    // refused once it runs past that length, a byte string by its length.
+    assert!(error.contains("header size must be zero"), "{error}");
     let error = rejected(|bytes| bytes[20] = 3);
+    assert!(error.contains("header size must be zero"), "{error}");
+    // A sequence is refused once it runs past the envelope's length, a byte
+    // string by its length.
+    let error = rejected(|bytes| bytes.push(0));
     assert!(error.contains("exceeds its fixed length"), "{error}");
     let mut edited = bytes.clone();
-    edited[20] = 3;
+    edited.push(0);
     let borrowed = BorrowedBytesDeserializer::<serde::de::value::Error>::new(&edited);
     let Err(error) = Proof::<C, R>::deserialize(borrowed) else {
         panic!("a byte string of another length must not decode")

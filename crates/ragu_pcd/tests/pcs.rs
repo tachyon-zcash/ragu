@@ -902,7 +902,7 @@ mod challenge_stage {
 
     use super::{
         folding,
-        support::{self, C, Cache, HEADER_SIZE, R, Value},
+        support::{self, C, Cache, R, Value},
     };
     use crate::internal::nested::stages::challenges;
 
@@ -936,7 +936,7 @@ mod challenge_stage {
                 "{case}: the edit must leave the child's nested claims true"
             );
             assert!(
-                !crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
+                !crate::verify::nested_challenges_match::<C, R>(
                     &forged,
                     &forged.challenges().lifts::<C>()?,
                 )?,

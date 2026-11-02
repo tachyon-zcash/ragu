@@ -153,40 +153,6 @@ fn verify_rejects_invalid_circuit_id() {
     assert!(!result, "verify should reject invalid circuit_id");
 }
 
-#[test]
-fn verify_rejects_wrong_left_header_size() {
-    let app = create_test_app();
-    let mut rng = StdRng::seed_from_u64(1234);
-
-    let mut proof = verifying_proof(&app, &mut rng);
-
-    // Corrupt left_header to have wrong size
-    proof.left_header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE + 1];
-
-    let pcd = proof.carry::<()>(());
-    let result = app
-        .verify_uncompressed(&pcd, &mut rng)
-        .expect("verify should not error");
-    assert!(!result, "verify should reject wrong left_header size");
-}
-
-#[test]
-fn verify_rejects_wrong_right_header_size() {
-    let app = create_test_app();
-    let mut rng = StdRng::seed_from_u64(1234);
-
-    let mut proof = verifying_proof(&app, &mut rng);
-
-    // Corrupt right_header to have wrong size
-    proof.right_header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE - 1];
-
-    let pcd = proof.carry::<()>(());
-    let result = app
-        .verify_uncompressed(&pcd, &mut rng)
-        .expect("verify should not error");
-    assert!(!result, "verify should reject wrong right_header size");
-}
-
 /// Builds an application with a unit seed step to seed and a unit step
 /// fusing two `Pcd<()>` children.
 fn unit_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
@@ -288,54 +254,6 @@ fn base_case_confined_to_bootstrap_rejects_invalid_unit_children() {
             .expect("parent verify should not error"),
         "a parent fused from invalid children must not verify"
     );
-}
-
-#[test]
-fn forged_dummy_headers_cannot_trigger_the_base_case() {
-    // Base-case detection reads the suffix slot of the headers the current
-    // step declared for its children (see `is_dummy_input`). Those headers
-    // live in three places that an honest prover keeps equal: the step's
-    // application circuit bakes them in as constants, the proof stores
-    // them, and the preamble stage witnesses them. A prover who forges any
-    // one of the three to the reserved `Dummy` suffix — trying to make the
-    // circuit skip the child revdot claim — breaks that agreement, and the
-    // consumer's claims pin it:
-    //
-    // * `hashes_1` publishes the witnessed headers, which the verifier's
-    //   `unified_bridge_ky` compares against the proof's stored headers; and
-    // * the verifier's `application_ky` pins the stored headers to the
-    //   constants the step's application circuit emitted.
-    //
-    // Forging the stored headers, as here, diverges from both, so the proof
-    // must be rejected whether or not its children are valid.
-    let app = unit_app();
-    let forged = {
-        let mut header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE];
-        header[HEADER_SIZE - 1] =
-            <Pasta as Cycle>::CircuitField::from(crate::header::Suffix::internal(2).get());
-        header
-    };
-
-    let mut rng = StdRng::seed_from_u64(11);
-    let (valid_unit, ()) = app.seed(&mut rng, UnitSeed, ()).expect("seed");
-    let invalid_unit = corrupt(valid_unit.clone());
-
-    for (child, child_desc) in [(valid_unit, "valid"), (invalid_unit, "corrupted")] {
-        let (parent, ()) = app
-            .fuse(&mut rng, UnitStep, (), child.clone(), child)
-            .expect("fuse assembles a proof regardless of satisfiability");
-
-        let (mut proof, ()) = parent.into_parts();
-        proof.left_header.clone_from(&forged);
-        proof.right_header.clone_from(&forged);
-        let parent = proof.carry::<()>(());
-
-        assert!(
-            !app.verify_uncompressed(&parent, StdRng::seed_from_u64(12))
-                .expect("parent verify should not error"),
-            "forged dummy suffixes over {child_desc} children must not verify"
-        );
-    }
 }
 
 #[test]

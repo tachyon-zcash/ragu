@@ -217,7 +217,6 @@ fn public<F: Field, R: Rank, Id>(
 /// circuit claims' $k(y)$ values; the registry is read through the backend
 /// `B`.
 pub(crate) fn verify_native<C: ProfiledCycle, R: Rank, B: Backend>(
-    circuit_id: CircuitIndex,
     commitment: impl Fn(native::RxComponent) -> C::HostCurve,
     registry: &Registry<'_, C::CircuitField, R>,
     y: C::CircuitField,
@@ -227,7 +226,7 @@ pub(crate) fn verify_native<C: ProfiledCycle, R: Rank, B: Backend>(
     reduction: &Reduction<C::HostCurve>,
     transcript: &mut impl IpaTranscript<C::HostCurve>,
 ) -> Result<Option<Openings<C::HostCurve>>> {
-    let shapes = claims::native_shapes::<C::Profile, _>(circuit_id, z, masked)?;
+    let shapes = claims::native_shapes::<C::Profile, _>(z, masked)?;
     let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,

@@ -24,8 +24,8 @@ use crate::{
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
-        Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, HeaderSize, Point,
-        Reader, Rounds, Scalar, SizedSequence, field_len,
+        Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, Point, Reader, Rounds,
+        Scalar, SizedSequence, field_len,
     },
 };
 
@@ -69,7 +69,6 @@ macro_rules! codec {
 codec!([F: Field] Child<F> {
     x => Scalar,
     y => Scalar,
-    id => Scalar,
 });
 codec!([F: Field] NestedChild<F> {
     x => Scalar,
@@ -123,8 +122,6 @@ codec!([P: Affine] Messages<P> {
 });
 codec!([C: ProfiledCycle] Instance<C> {
     circuit_id => DefaultEncoding,
-    left_header => SizedSequence<Scalar, HeaderSize>,
-    right_header => SizedSequence<Scalar, HeaderSize>,
     native => FixedSequence<Point, Native<C::Profile>>,
     native_registry_xy => Point,
     native_p => Point,

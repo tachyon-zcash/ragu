@@ -13,7 +13,7 @@ fn seed_proof_round_trips() {
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, _) = leaf(&app, &mut rng, 7).into_parts();
     let bytes = proof.to_bytes().unwrap();
-    assert_eq!(bytes.len(), TestProof::encoded_len::<4>());
+    assert_eq!(bytes.len(), TestProof::encoded_len());
     let decoded = TestProof::from_bytes(&bytes).unwrap();
     assert_eq!(decoded.to_bytes().unwrap(), bytes);
 }
@@ -63,11 +63,11 @@ fn envelope_rejects_mismatches_before_payload_decoding() {
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
     let bytes = proof.to_bytes().unwrap();
-    assert_eq!(bytes.len(), TestProof::encoded_len::<4>());
+    assert_eq!(bytes.len(), TestProof::encoded_len());
     assert_eq!(&bytes[..8], b"RAGUPCD\0");
     assert_eq!(
         &bytes[8..28],
-        &[3, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
+        &[3, 0, 1, 0, 2, 0, 1, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     );
     let decoded = TestProof::from_bytes(&bytes).unwrap();
     assert_eq!(decoded.to_bytes().unwrap(), bytes);
@@ -86,6 +86,7 @@ fn envelope_rejects_mismatches_before_payload_decoding() {
         (12, "unsupported proof schema version"),
         (14, "unsupported proof protocol version"),
         (16, "proof rank mismatch"),
+        (20, "proof header size must be zero"),
     ] {
         let mut invalid = bytes.clone();
         invalid[offset] = invalid[offset].wrapping_add(1);

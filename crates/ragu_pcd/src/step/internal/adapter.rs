@@ -57,6 +57,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         (
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
             FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
+            FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
         ),
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
@@ -100,8 +101,13 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
                 .map(|e| *e.value().take())
                 .collect_fixed()?;
 
+            let output_header = elements[HEADER_SIZE * 2..HEADER_SIZE * 3]
+                .iter()
+                .map(|e| *e.value().take())
+                .collect_fixed()?;
+
             Ok((
-                (left_header, right_header),
+                (left_header, right_header, output_header),
                 output_data.take(),
                 step_aux.take(),
             ))
@@ -226,7 +232,7 @@ mod tests {
             .expect("witness should succeed")
             .into_aux();
 
-        let ((left_header, right_header), output_data, _step_aux) = aux.take();
+        let ((left_header, right_header, _output_header), output_data, _step_aux) = aux.take();
 
         // Left header should start with 10
         assert_eq!(left_header[0], Fp::from(10u64));

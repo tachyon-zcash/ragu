@@ -1,7 +1,10 @@
 //! Commit to $m(w, x_i, Y)$ polynomials for the child proofs.
 //!
 //! This sets the s-prime fields on the [`ProofBuilder`], which commits to the
-//! $m(w, x_i, Y)$ polynomials for the $i$th child proof's $x$ challenge.
+//! $m(w, x_i, Y)$ polynomials for the $i$th child proof's $x$ challenge. The
+//! `s_prime` bridge also carries the step's own application trace's
+//! commitment, so the trace is fixed before $y$, at which the step folds its
+//! claim.
 //!
 //! The nested registry's restrictions $m_n(w_n, x_{i,n}, Y)$ are computed
 //! here as well, at the nested counterparts of the same challenges. Their
@@ -18,6 +21,7 @@ use ragu_core::{Cycle, Result};
 use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
+use super::_01_application::NativeApplication;
 use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
 
 /// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
@@ -47,6 +51,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
@@ -57,7 +62,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested.registry_wx1_commitment,
             builder,
         )?;
-        self.compute_bridge_s_prime(rng, &native, builder)?;
+        self.compute_bridge_s_prime(rng, &native, application, builder)?;
         Ok((native, nested))
     }
 
@@ -65,6 +70,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
+        application: &NativeApplication<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
@@ -72,6 +78,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested::stages::s_prime::Witness {
                 registry_wx0: native.registry_wx0_commitment,
                 registry_wx1: native.registry_wx1_commitment,
+                native_application: application.commitment,
                 native_points_registry_wx: builder.native_points_registry_wx_commitment(),
             },
         )?;

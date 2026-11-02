@@ -1426,7 +1426,7 @@ mod commitments {
         field::Field,
     };
 
-    use super::support::{self, C, HEADER_SIZE, R};
+    use super::support::{self, C, R};
     use crate::{Pcd, Proof, header::Header, internal::nested, profile::ProfiledCycle};
 
     fn check_coefficients<H: Header<ragu_core::pasta::Fp>>(
@@ -1515,10 +1515,11 @@ mod commitments {
         //    beta's lift.
         let lifts = parent.challenges().lifts::<C>()?;
         let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
-        let challenges = nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
+        let challenges = nested::stages::challenges::Witness::new(
             challenge_lifts.try_into().unwrap(),
-            parent.left_header(),
-            parent.right_header(),
+            nested::stages::challenges::is_bootstrap::<crate::profile::Standard>(
+                parent.circuit_id(),
+            )?,
             beta_lift[0],
         );
         assert_eq!(challenges.base_case_sign, sign);

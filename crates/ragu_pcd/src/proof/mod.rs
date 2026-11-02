@@ -179,13 +179,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Shared alpha source for deriving cached bridge polynomial alphas.
     pub(crate) bridge_alpha: C::ScalarField,
 
-    // Application metadata
+    // Application metadata. The proof carries no header: its output header
+    // is encoded from the data it carries, and its input headers were
+    // checked by its own application claim, which it folded.
     pub(crate) circuit_id: CircuitIndex,
-    pub(crate) left_header: Vec<C::CircuitField>,
-    pub(crate) right_header: Vec<C::CircuitField>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
-    pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_error_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -299,7 +298,6 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) pre_beta: C::CircuitField,
 
     // Native commitment caches
-    native_application_commitment: Cached<C::HostCurve>,
     native_preamble_commitment: Cached<C::HostCurve>,
     native_inner_error_commitment: Cached<C::HostCurve>,
     native_outer_error_commitment: Cached<C::HostCurve>,
@@ -340,19 +338,17 @@ pub struct Proof<C: Cycle, R: Rank> {
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
-    /// Whether the headers, polynomial vectors and commitment-cache vectors
-    /// have exactly the receiving profile's shape. Check before traversing
+    /// Whether the polynomial vectors and commitment-cache vectors have
+    /// exactly the receiving profile's shape. Check before traversing
     /// components so that missing entries cannot panic and trailing ones
     /// cannot be ignored.
-    pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
+    pub(crate) fn well_formed(&self) -> bool {
         let native_steps = native::NumSteps::<C::Profile>::len();
         let nested_steps = nested::NumSteps::<C::Profile>::len();
         let native_extension = C::Profile::native_extension();
         let nested_extension = C::Profile::nested_extension();
 
-        self.left_header.len() == HEADER_SIZE
-            && self.right_header.len() == HEADER_SIZE
-            && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
+        self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
             && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
             && self.native_endoscaling_step_rxs.len() == native_steps
             && self.native_endoscaling_step_commitments.len() == native_steps
@@ -379,7 +375,6 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             OuterError => &self.native_outer_error_rx,
             Query => &self.native_query_rx,
             Eval => &self.native_eval_rx,
-            Application => &self.native_application_rx,
             Hashes1 => &self.native_hashes_1_rx,
             Hashes2 => &self.native_hashes_2_rx,
             Collapse => &self.native_collapse_rx,
@@ -572,14 +567,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.circuit_id
     }
 
-    pub(crate) fn left_header(&self) -> &[C::CircuitField] {
-        &self.left_header
-    }
-
-    pub(crate) fn right_header(&self) -> &[C::CircuitField] {
-        &self.right_header
-    }
-
     pub(crate) fn native_registry_xy_poly(&self) -> &sparse::Polynomial<C::CircuitField, R> {
         &self.native_registry_xy_poly
     }
@@ -633,7 +620,6 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             OuterError => self.native_outer_error_commitment.0,
             Query => self.native_query_commitment.0,
             Eval => self.native_eval_commitment.0,
-            Application => self.native_application_commitment.0,
             Hashes1 => self.native_hashes_1_commitment.0,
             Hashes2 => self.native_hashes_2_commitment.0,
             Collapse => self.native_collapse_commitment.0,
@@ -1092,11 +1078,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         builder.set_circuit_id(CircuitIndex::new(0));
 
-        builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
-        builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
-
         // Native rx polynomials (all trivial ones)
-        builder.set_native_application_rx(ones_host.clone());
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
@@ -1226,6 +1208,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 &nested::stages::s_prime::Witness {
                     registry_wx0: host_commitment,
                     registry_wx1: host_commitment,
+                    native_application: host_commitment,
                     native_points_registry_wx: builder.native_points_registry_wx_commitment(),
                 },
             )
@@ -1335,6 +1318,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             // Current-step bridge inputs.
             push(host_commitment, &ones_host); // registry_wx0
             push(host_commitment, &ones_host); // registry_wx1
+            push(host_commitment, &ones_host); // own application
             push(host_commitment, &ones_host); // registry_wy
             push(host_commitment, &ones_host); // a
             push(host_commitment, &ones_host); // b
@@ -1362,7 +1346,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         {
             let registry_xy_commitment = builder.native_registry_xy_commitment();
             let trivial_child_witness = nested::stages::preamble::ChildWitness {
-                application: host_commitment,
                 hashes_1: host_commitment,
                 hashes_2: host_commitment,
                 collapse: host_commitment,

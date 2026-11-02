@@ -257,7 +257,7 @@ where
     assert_eq!(verifier.verify_compressed(&compressed)?, accepted);
 
     let foreign = copy_proof_payload::<C<S>, C<T>, Rk>(source.into_parts().0).carry::<Value>(value);
-    assert!(foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(foreign.proof().well_formed());
     check_both_verifiers(verifier, &foreign, accepted, &mut rng)?;
     let refreshed = verifier.rerandomize(foreign.clone(), &mut rng)?;
     check_both_verifiers(verifier, &refreshed, accepted, &mut rng)?;

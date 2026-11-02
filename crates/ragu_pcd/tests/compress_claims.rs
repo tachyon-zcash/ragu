@@ -104,10 +104,22 @@ fn native_shapes_match_the_decider() {
     native::claims::build::<crate::profile::Standard, _, _>(&NativePolys(proof), &mut builder)
         .unwrap();
 
-    let shapes =
-        super::native_shapes::<crate::profile::Standard, _>(proof.circuit_id(), z, &[]).unwrap();
+    let shapes = super::native_shapes::<crate::profile::Standard, _>(z, &[]).unwrap();
+    // The proof folded its own application claim, so the raw claim is
+    // followed directly by the internal circuits' claims.
     assert_eq!(shapes[0].kind, Kind::Raw);
-    assert_eq!(shapes[1].kind, Kind::Circuit(proof.circuit_id()));
+    assert_eq!(
+        shapes[1].kind,
+        Kind::Circuit(
+            native::InternalCircuitIndex::Hashes1Circuit
+                .circuit_index::<crate::profile::Standard>()
+        )
+    );
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| shape.kind != Kind::Circuit(proof.circuit_id()))
+    );
     check(
         &shapes,
         |component| proof[component].clone(),
@@ -149,8 +161,6 @@ fn nested_shapes_match_the_decider() {
 
 #[test]
 fn wire_bindings_follow_the_claims() {
-    let app = create_test_app();
-    let proof = app.bootstrap_pcd().into_parts().0;
     let z = Fp::from(3);
     let poly = native::RxComponent::Rx(native::RxIndex::Eval);
     let masked = [Masked::new(
@@ -159,11 +169,8 @@ fn wire_bindings_follow_the_claims() {
         alloc::vec![Fp::ONE, Fp::ZERO],
         Fp::from(7),
     )];
-    let shapes =
-        super::native_shapes::<crate::profile::Standard, _>(proof.circuit_id(), z, &masked)
-            .unwrap();
-    let unmasked =
-        super::native_shapes::<crate::profile::Standard, _>(proof.circuit_id(), z, &[]).unwrap();
+    let shapes = super::native_shapes::<crate::profile::Standard, _>(z, &masked).unwrap();
+    let unmasked = super::native_shapes::<crate::profile::Standard, _>(z, &[]).unwrap();
     assert_eq!(shapes.len(), unmasked.len() + 1);
     let last = shapes.last().unwrap();
     assert_eq!(last.kind, Kind::Masked(0));

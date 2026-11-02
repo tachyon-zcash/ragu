@@ -54,6 +54,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right,
             builder.left_header(),
             builder.right_header(),
+            builder.output_header(),
+            builder.circuit_id(),
         )?;
 
         let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(

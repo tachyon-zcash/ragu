@@ -82,8 +82,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier
         // refuses it, rather than read past its ends.
-        if !left.proof().well_formed::<HEADER_SIZE>() || !right.proof().well_formed::<HEADER_SIZE>()
-        {
+        if !left.proof().well_formed() || !right.proof().well_formed() {
             return Err(Error::InvalidWitness(
                 "a child proof does not have this profile's shape".into(),
             ));
@@ -94,7 +93,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, application_data, application_aux) =
+        let (left, right, application_data, application_aux, application) =
             self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
 
         let mut dr = Emulator::execute();
@@ -117,6 +116,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -128,6 +128,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let native_source = NativeFuseProofSource {
             left: &left,
             right: &right,
+            application: &application,
         };
         let nested_source = NestedFuseProofSource {
             left: &left,
@@ -219,6 +220,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -239,6 +241,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
             &left,
             &right,
+            &application,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -250,6 +253,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &bound_challenges,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &nested_s_prime,
@@ -301,6 +305,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &pre_beta,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &native_f,
@@ -336,6 +341,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
+            native_application: application.commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {

@@ -65,11 +65,8 @@ codec! {
 
     // Application metadata
     circuit_id => wire::DefaultEncoding,
-    left_header => wire::SizedSequence<wire::Scalar, wire::HeaderSize>,
-    right_header => wire::SizedSequence<wire::Scalar, wire::HeaderSize>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
-    native_application_rx => wire::DefaultEncoding,
     native_preamble_rx => wire::DefaultEncoding,
     native_inner_error_rx => wire::DefaultEncoding,
     native_outer_error_rx => wire::DefaultEncoding,
@@ -179,7 +176,6 @@ codec! {
     pre_beta => wire::Scalar,
 
     // Native commitment caches
-    native_application_commitment => CachedPoint,
     native_preamble_commitment => CachedPoint,
     native_inner_error_commitment => CachedPoint,
     native_outer_error_commitment => CachedPoint,
