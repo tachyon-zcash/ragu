@@ -65,8 +65,6 @@ codec! {
 
     // Application metadata
     circuit_id => wire::DefaultEncoding,
-    left_header => wire::SizedSequence<wire::Scalar, wire::HeaderSize>,
-    right_header => wire::SizedSequence<wire::Scalar, wire::HeaderSize>,
     nested_mesh_claims => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::MeshClaimsLen<C::Profile, crate::profile::online::stages::Nested>>,
     nested_online_fold => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Nested, 2>>,
     native_mesh_claims => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::MeshClaimsLen<C::Profile, crate::profile::online::stages::Native>>,
@@ -79,8 +77,6 @@ codec! {
     nested_source_out => wire::FixedSequence<wire::DefaultEncoding, crate::profile::online::stages::MeshPresent<C::Profile,crate::profile::online::stages::Nested,1>>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
-    native_application_rx => wire::DefaultEncoding,
-    native_application_stage_rx => wire::DefaultEncoding,
     native_preamble_rx => wire::DefaultEncoding,
     native_inner_error_rx => wire::DefaultEncoding,
     native_outer_error_rx => wire::DefaultEncoding,
@@ -115,7 +111,6 @@ codec! {
     // then the step's online openings, one per slot of its left, right and
     // output headers
     online_polynomials => wire::Array<wire::DefaultEncoding>,
-    online_openings => wire::Array<wire::DefaultEncoding>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => wire::DefaultEncoding,
@@ -197,8 +192,6 @@ codec! {
     pre_beta => wire::Scalar,
 
     // Native commitment caches
-    native_application_commitment => CachedPoint,
-    native_application_stage_commitment => CachedPoint,
     native_preamble_commitment => CachedPoint,
     native_inner_error_commitment => CachedPoint,
     native_outer_error_commitment => CachedPoint,

@@ -13,7 +13,7 @@
 //! and receives a wire holding the polynomial's value there; the opening
 //! $f_i(x_i) = y_i$ is not checked in the circuit but by Ragu's polynomial
 //! commitment scheme, which folds it into the step's own batch and whose
-//! verified openings the parent holds the step's instance to. An input slot
+//! verified openings the step's own fold holds its instance to. An input slot
 //! the step does not query is opened at $\zeta$ to its value there; an
 //! output slot it does not query is opened at $\zeta$ and held to one, as
 //! padding (see below).

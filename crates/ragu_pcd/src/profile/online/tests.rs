@@ -579,13 +579,7 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
             core::iter::once(component)
         }
         fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [Self::Rx; 2])> {
-            core::iter::once((
-                CircuitIndex::new(0),
-                [
-                    native::RxComponent::Rx(native::RxIndex::Application),
-                    native::RxComponent::Rx(native::RxIndex::ApplicationStage),
-                ],
-            ))
+            core::iter::empty()
         }
     }
     #[derive(Default)]
@@ -705,29 +699,21 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
         sums,
         foreign: FixedVec::new(vec![px, py])?,
     };
-    let online = [native::online::Query {
-        x: Fp::from(5),
-        y: Fp::from(7),
-    }; native::online::NUM_ONLINE_FP_QUERIES];
     Emulator::emulate_wireless(
         (
             unified,
             helper,
-            online,
             [Fp::ZERO; 2],
             [EpAffine::generator()],
             sums,
             [EpAffine::generator(); 3],
         ),
         |dr, witness| {
-            let (unified, helper, online, header, points, sums, stages) = witness.cast();
+            let (unified, helper, header, points, sums, stages) = witness.cast();
             let y = Element::constant(dr, Fp::from(107));
             let mut inputs = native::stages::preamble::ProofInputs::<_, C, 2>::alloc_from_parts(
                 dr,
                 header.as_ref().map(|h| h.as_slice()),
-                header.as_ref().map(|h| h.as_slice()),
-                header.as_ref().map(|h| h.as_slice()),
-                online.as_ref(),
                 header.as_ref().map(|_| Fp::ONE),
                 unified.as_ref(),
                 points.as_ref().map(|p| p.as_slice()),
@@ -742,16 +728,15 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             for point in stages.iter() {
                 point.write(dr, &mut stage_coordinates)?;
             }
-            let compute_target = inputs.compute_v_bridge_ky(dr, &y, &stages)?;
-            let helper_target = inputs.online_helper_ky(dr, &y)?.unwrap();
             let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
+            let compute_target = inputs.compute_v_bridge_ky(dr, &y, &stages, &unified_ky)?;
+            let helper_target = inputs.online_helper_ky(dr, &y)?.unwrap();
             let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky)?;
             let output = native::circuits::compute_v::Output::<_, C> {
                 inherited_coordinates: FixedVec::new(vec![])?,
                 inherited_points: FixedVec::new(vec![])?,
                 online_auxiliaries: FixedVec::from_fn(|_| unreachable!("no later auxiliary phase")),
                 unified: inputs.unified.clone(),
-                online: inputs.online.clone(),
                 online_fold: inputs.online_fold.clone(),
                 online_stages: FixedVec::from_fn(|i| stage_coordinates[i].clone()),
             };
@@ -788,7 +773,10 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 inputs.online_fold[i] = original.add(dr, &Element::one());
                 assert_ne!(
                     compute_target.value().take(),
-                    inputs.compute_v_bridge_ky(dr, &y, &stages)?.value().take()
+                    inputs
+                        .compute_v_bridge_ky(dr, &y, &stages, &unified_ky)?
+                        .value()
+                        .take()
                 );
                 assert_ne!(
                     helper_target.value().take(),
@@ -813,7 +801,7 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
     )?;
     let targets = ky::NativeKy {
         c: Some(Fp::from(2)),
-        application: Fp::from(3),
+        application: Some(Fp::from(3)),
         unified: Fp::from(5),
         unified_bridge: Fp::from(7),
         compute_v_bridge: Fp::from(11),
