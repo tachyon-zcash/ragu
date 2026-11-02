@@ -13,10 +13,12 @@
 //!   Poseidon transcript over the instance and its messages. The circuit
 //!   replays it with the [`Transcript`](crate::internal::transcript::Transcript)
 //!   gadget over the allocated messages; host-curve points and scalar-field
-//!   values, which lie in the other field, enter through bridges as the
-//!   fuse's do, each the value at its position in a stage of the other
-//!   side, so that the bridges sum to that stage's commitment (see
-//!   [`stages`]).
+//!   values, which lie in the other field, enter as the native verifier
+//!   absorbs them, one nested-curve commitment per run of them before a
+//!   challenge, the commitment of the stage that holds the run on the
+//!   scalar-field side, which the circuit-field side absorbs as a witness
+//!   point its binding circuit exposes for the proof's consumer to hold to
+//!   that stage (see [`stages`]).
 //! - **Field identities.** The fold's weights and $W(r)$, the public parts
 //!   of the folded claims, the split identity, the batch's $f(u)$ and $v$
 //!   and the IPA's $b$ are arithmetic in one field: [`Element`] arithmetic
@@ -101,23 +103,27 @@
 //!
 //! Everything that passes between the sides, the challenges the
 //! scalar-field side lifts from their bits, the digits of the full-width
-//! scalars each side scales the other curve's points by, and the bridges
-//! through which the circuit-field transcript absorbs the scalar field's
-//! values and the host curve's points, is a witness the receiving side
-//! allocates, chunk by chunk: a witness one chunk allocates binds no other
-//! chunk's, so a chunk that scales by a challenge from bits holds its
-//! bits' lift to the lifts stage slot the challenge's lift chunk fills,
-//! and a scalar's digits are allocated once, across the parts of its one
-//! scaling. What holds a witness to the sending side is the fuse's design: the
-//! sending side holds the value as wires of an unblinded stage, the
-//! receiving side recomputes that stage's commitment from the witness it
-//! took, and its binding circuit exposes the recomputation for the
-//! proof's consumer to hold to the stage's actual commitment, through the
-//! circuit's claim (see [`stages`] for the stages,
+//! scalars each side scales the other curve's points by, and the
+//! commitments of the runs of the scalar field's values and the host
+//! curve's points the circuit-field transcript absorbs, is a witness the
+//! receiving side allocates, chunk by chunk: a witness one chunk allocates
+//! binds no other chunk's, so a chunk that scales by a challenge from bits
+//! holds its bits' lift to the lifts stage slot the challenge's lift chunk
+//! fills, and a scalar's digits are allocated once, across the parts of
+//! its one scaling. What holds a witness to the sending side is the fuse's
+//! design: the sending side holds the value as wires of an unblinded
+//! stage, the receiving side recomputes that stage's commitment from the
+//! witness it took, or takes the commitment itself as the witness, as the
+//! transcript does for a run, and its binding circuit exposes the point for
+//! the proof's consumer to hold to the stage's actual commitment, through
+//! the circuit's claim (see [`stages`] for the stages,
 //! [`chunk::BindingCircuit`] for the circuit and
-//! [`Binding`](crate::profile::Binding) for the consumer's check). A
-//! prover who prepares the two sides from different compressed proofs,
-//! each consistent with itself, fails that claim.
+//! [`Binding`](crate::profile::Binding) for the consumer's check). Each
+//! run's commitment is that of the stage holding the run's values, so
+//! every challenge is a function of the messages before it, as the native
+//! verifier's are: a prover who prepares the two sides from different
+//! compressed proofs, each consistent with itself, or who chooses a
+//! message after the challenge that depends on it, fails that claim.
 //!
 //! # What remains
 //!
@@ -140,7 +146,9 @@
 //!    decompressed proof's challenges against the wallet registry and
 //!    holds the stage's wires to them, through the polynomial-query hooks
 //!    [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes, as
-//!    $G'$ below does. Waits on #821. Until then nothing ties a proof to
+//!    $G'$ below does; that check also holds the proof's circuit id to
+//!    the registry's domain, which the native verifier checks and the
+//!    chunks do not. Waits on #821. Until then nothing ties a proof to
 //!    the canonical wallet application either: an aggregator that builds
 //!    its [`Decompression`](crate::profile::Decompression) over a different
 //!    wallet application, or writes values of no registry at all, has its

@@ -26,10 +26,8 @@ lazy_static! {
 /// $2^{13}$-point prefix, blinding generator and IPA generator are the
 /// Standard parameters' originals.
 ///
-/// An application at the aggregator rank needs them, and so does any
-/// application that compresses, whatever its profile: compression bridges a
-/// proof's values at their positions in the decompression's stages at the
-/// aggregator rank, past the end of the original tables.
+/// An application at the aggregator rank needs them; a Standard application
+/// does not, compressing included.
 ///
 /// Requires the `baked-aggregator` feature. Only calling this function loads
 /// these larger tables; [`super::baked()`] always loads the original tables.

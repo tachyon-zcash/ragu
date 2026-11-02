@@ -16,9 +16,11 @@ use super::{CycleTranscript, IPA_TAG, transcript::convert_challenge};
 
 const K: u32 = 8;
 
-/// A transcript that has seen nothing but the domain tag.
+/// A transcript that has seen nothing but the domain tag, committing each
+/// run of scalar-field values over the first nested generators, since the
+/// IPAs absorb host-curve points.
 fn fresh() -> CycleTranscript<'static, Pasta> {
-    CycleTranscript::new(crate::pasta::baked(), IPA_TAG).unwrap()
+    CycleTranscript::over_first_generators(crate::pasta::baked(), IPA_TAG).unwrap()
 }
 
 /// The suite for one curve of the cycle, given its scalar field, its

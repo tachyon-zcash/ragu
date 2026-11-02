@@ -40,7 +40,7 @@ fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
 }
 
 fn transcript() -> CycleTranscript<'static, Pasta> {
-    CycleTranscript::new(crate::pasta::baked(), TAG).unwrap()
+    CycleTranscript::over_first_generators(crate::pasta::baked(), TAG).unwrap()
 }
 
 /// The openings of an honest reduction hold against the prover's witness:

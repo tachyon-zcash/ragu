@@ -73,7 +73,7 @@ impl Setup {
     /// any challenge is sampled.
     pub fn absorbed(&self) -> Transcript {
         transcript::<Pasta, ReferenceBackend, TestR>(
-            crate::pasta::baked_aggregator(),
+            crate::pasta::baked(),
             &self.proof.instance,
             &self.header,
         )

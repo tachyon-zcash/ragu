@@ -79,8 +79,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         // A later refactor may have `fuse` rederive a child's challenges from
         // its bridge commitments and treat the stored ones as a cache it
         // refreshes; then nothing reads the cache and this check can go.
-        let mut fuse_transcript =
-            CycleTranscript::<C, <B as SelectableBackend>::Verifier>::new(self.params, RAGU_TAG)?;
+        let mut fuse_transcript = CycleTranscript::<C>::new(self.params, RAGU_TAG)?;
         let challenges = instance.challenges(&mut fuse_transcript)?.ok_or_else(|| {
             Error::InvalidWitness(
                 "proof transcript challenge is outside the endoscalar range".into(),

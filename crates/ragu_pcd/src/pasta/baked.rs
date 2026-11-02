@@ -3,7 +3,8 @@
 use alloc::vec::Vec;
 
 use lazy_static::lazy_static;
-use ragu_core::Cycle;
+use ragu_circuits::polynomials::{AggregatorRank, Rank};
+use ragu_core::{Cycle, FixedGenerators};
 use udon::{
     curve::{
         AffineAdapter, AffinePoint, Pallas, PallasAffine, PastaCurve, Point, Vesta, VestaAffine,
@@ -11,7 +12,7 @@ use udon::{
     cycle::{Generators, Pasta},
 };
 
-use super::{DEFAULT_EP_K, DEFAULT_EQ_K, PastaParams};
+use super::{DEFAULT_EP_K, DEFAULT_EQ_K, PastaParams, STAGE_REACH};
 use crate::ipa::IpaCycle;
 
 bento::embed_array! {
@@ -21,6 +22,30 @@ bento::embed_array! {
 bento::embed_array! {
     static VESTA: [VestaAffine; (1 << DEFAULT_EQ_K) + 2] =
         concat!(env!("OUT_DIR"), "/vesta-generators-v1-", udon::stored_form!(), ".bin");
+}
+bento::embed_array! {
+    static PALLAS_STAGES: [PallasAffine; 2 * STAGE_REACH] =
+        concat!(env!("OUT_DIR"), "/pallas-generators-stages-v1-", udon::stored_form!(), ".bin");
+}
+
+/// The aggregator rank's $n$: a stage trace at that rank lands the even
+/// wire of gate $g$ at degree $2n - 1 - g$ and the odd at $4n - 1 - g$.
+const STAGE_N: usize = 1 << (AggregatorRank::RANK - 2);
+
+/// The nested generator at `index` among the stage reach's: the artifact
+/// holds the even wires' of the first [`STAGE_REACH`] gates after the
+/// SYSTEM gate, then the odd wires', each range in ascending index.
+fn stage_generator(index: usize) -> Option<Point<Pallas>> {
+    let even = 2 * STAGE_N - 1 - STAGE_REACH..2 * STAGE_N - 1;
+    let odd = 4 * STAGE_N - 1 - STAGE_REACH..4 * STAGE_N - 1;
+    let position = if even.contains(&index) {
+        index - even.start
+    } else if odd.contains(&index) {
+        STAGE_REACH + index - odd.start
+    } else {
+        return None;
+    };
+    Some(PALLAS_STAGES[position].to_point())
 }
 
 /// The artifact's points as the vector generators and the blinding
@@ -65,16 +90,26 @@ impl IpaCycle for Pasta {
     fn nested_u(_: &PastaParams) -> &<Pasta as Cycle>::NestedCurve {
         AffineAdapter::from_ref(&PALLAS_U)
     }
+
+    /// The table's generator where it reaches, and past it the stage
+    /// reach's, which the aggregator table holds too: a Standard application
+    /// compresses over `baked()` and its aggregator decompresses over
+    /// `baked_aggregator()`, at the same generators.
+    fn nested_generator(
+        params: &PastaParams,
+        index: usize,
+    ) -> Option<<Pasta as Cycle>::NestedCurve> {
+        if let Some(generator) = Pasta::nested_generators(params).g().get(index) {
+            return Some(*generator);
+        }
+        stage_generator(index).map(|point| *AffineAdapter::from_ref(&point))
+    }
 }
 
 /// Returns Ragu's fixed generators bound to Udon's Pasta cycle.
 ///
 /// The embedded points require no decoding. Parameter slices are assembled
 /// once and retained for the lifetime of the program.
-///
-/// These tables stop at the Standard rank, short of the positions
-/// compression bridges a proof's values at: an application that compresses
-/// needs `baked_aggregator()`, under the `baked-aggregator` feature.
 pub fn baked() -> &'static PastaParams {
     &PASTA_PARAMETERS
 }

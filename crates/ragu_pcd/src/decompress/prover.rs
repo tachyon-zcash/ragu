@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 
 use ragu_circuits::{
     CircuitExt,
-    polynomials::{ProductionRank, Rank},
+    polynomials::{ProductionRank, Rank, sparse},
     registry::Registry,
     staging::StageExt,
 };
@@ -31,8 +31,8 @@ use super::{
     chunk::{self, last},
     program::Last,
     run::{Prepared, Sides},
-    side::{Native, Nested, Side},
-    stages::{DigitsStage, InstanceStage, LiftsStage, MessagesStage, TranscriptStage, WorkStage},
+    side::{Native, Nested},
+    stages::{DigitsStage, Front, LiftsStage, TranscriptStage, WorkStage},
 };
 use crate::{
     Application, CompressedPcd, Pcd, SelectableBackend,
@@ -192,28 +192,26 @@ where
         let binding =
             native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
         circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
-        type Instance<C, R, const H: usize> = InstanceStage<C, Native, ProductionRank, R, H>;
-        type Messages<C, R, const H: usize> = MessagesStage<C, Native, ProductionRank, R, H>;
         type Lifts<C, R, const H: usize> = LiftsStage<C, Native, ProductionRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Native, ProductionRank, R, H>;
         type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, ProductionRank, R, H>;
         type Digits<C, R, const H: usize> = DigitsStage<C, Native, ProductionRank, R, H>;
-        let stages = alloc::vec![
-            Instance::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.instance)?,
-            Messages::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.messages)?,
+        let mut stages = front_rxs::<C, Native, R, HEADER_SIZE>(prepared, rng)?;
+        stages.extend([
             Lifts::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.lifts)?,
             Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
             Transcript::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.transcript)?,
             Digits::<C, R, HEADER_SIZE>::rx(C::CircuitField::ZERO, &prepared.digits)?,
-        ];
+        ]);
         Ok(ExtensionRxs { circuits, stages })
     }
 
     /// The nested extension's polynomials for profile `P`, as
     /// [`native_rxs`](Self::native_rxs): every chunk circuit's, the
-    /// binding circuit's and the five stages', the instance, messages,
-    /// lifts and digits stages' unblinded, which the circuit-field side
-    /// recomputes.
+    /// binding circuit's and the stages', the run stages', whose
+    /// commitments the compression's transcript absorbed, and the lifts
+    /// and digits stages', which the circuit-field side recomputes,
+    /// unblinded.
     ///
     /// # Errors
     ///
@@ -243,21 +241,42 @@ where
         let binding =
             nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
         circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
-        type Instance<C, R, const H: usize> = InstanceStage<C, Nested, ProductionRank, R, H>;
-        type Messages<C, R, const H: usize> = MessagesStage<C, Nested, ProductionRank, R, H>;
         type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, ProductionRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Nested, ProductionRank, R, H>;
         type Digits<C, R, const H: usize> = DigitsStage<C, Nested, ProductionRank, R, H>;
         let zero = C::ScalarField::ZERO;
-        let stages = alloc::vec![
-            Instance::<C, R, HEADER_SIZE>::rx(zero, &prepared.instance)?,
-            Messages::<C, R, HEADER_SIZE>::rx(zero, &prepared.messages)?,
+        let mut stages = front_rxs::<C, Nested, R, HEADER_SIZE>(prepared, rng)?;
+        stages.extend([
             Lifts::<C, R, HEADER_SIZE>::rx(zero, &prepared.lifts)?,
             Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
             Digits::<C, R, HEADER_SIZE>::rx(zero, &prepared.digits)?,
-        ];
+        ]);
         Ok(ExtensionRxs { circuits, stages })
     }
+}
+
+/// The polynomials of side `S`'s front stages over `prepared`, in stage
+/// order, each blinded from `rng` unless the other side holds a value to
+/// its commitment.
+fn front_rxs<C, S, R, const HEADER_SIZE: usize>(
+    prepared: &Prepared<C, S>,
+    rng: &mut impl CryptoRng,
+) -> Result<Vec<sparse::Polynomial<S::F, R>>>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    S: Front<C, ProductionRank, R, HEADER_SIZE>,
+    R: Rank,
+{
+    (0..S::stages())
+        .map(|index| {
+            let alpha = if S::unblinded(index) {
+                S::F::ZERO
+            } else {
+                blinding(rng)
+            };
+            S::rx(index, alpha, prepared)
+        })
+        .collect()
 }
 
 /// The trace of chunk circuit `index` of side `S` over `prepared`, by the
@@ -270,7 +289,7 @@ fn chunk_trace<C, S, R, const HEADER_SIZE: usize>(
 ) -> Result<ragu_circuits::Trace<S::F>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Side<C>,
+    S: Front<C, ProductionRank, R, HEADER_SIZE>,
     R: Rank,
 {
     Ok(match last(schedule, index) {

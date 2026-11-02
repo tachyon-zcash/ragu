@@ -4,14 +4,15 @@
 //!
 //! Every chunk circuit of a side has the same shape: the stages loaded
 //! unenforced, as the fuse's endoscaling steps load theirs, then its
-//! chunks' own gates, in order. A [`Circuit`] loads the instance, messages,
-//! lifts and work stages; a [`TranscriptCircuit`], for transcript chunks
-//! and the bridge sums, loads the transcript stage after them as well, so
-//! that only those chunks pay for the bridges and the sponge states; a
-//! [`DigitsCircuit`], for the digits chunks, loads the digits stage after
-//! the work stage instead. Which chunks a circuit runs is fixed by its
-//! index into the schedule, so the family of chunk circuits is as fixed as
-//! the schedule, and the stages' masks bind the layout the chunks read.
+//! chunks' own gates, in order. A [`Circuit`] loads the side's front
+//! stages (see [`Front`]), the lifts stage and the work stage; a
+//! [`TranscriptCircuit`], for transcript chunks, loads the transcript
+//! stage after them as well, so that only those chunks pay for the sponge
+//! states; a [`DigitsCircuit`], for the digits chunks, loads the digits
+//! stage after the work stage instead. Which chunks a circuit runs is
+//! fixed by its index into the schedule, so the family of chunk circuits
+//! is as fixed as the schedule, and the stages' masks bind the layout the
+//! chunks read.
 //!
 //! A chunk circuit at rank `R` verifies a compressed proof at rank `K`:
 //! its schedule is cut for `R`'s gate budget, and what it loads and checks
@@ -22,8 +23,8 @@
 //! Beside the chunks, a [`StatementCircuit`] loads the instance stage alone
 //! and exposes the output header the chunks verified as its public output,
 //! the one place the decompressed statement reaches a claim; and a
-//! [`BindingCircuit`] loads the work stage and exposes the side's
-//! recomputations of the other side's stage commitments
+//! [`BindingCircuit`] loads the work stage and exposes the other side's
+//! stage commitments the side absorbed or recomputed
 //! ([`Regions::exposed`](super::program::Regions::exposed)) as its public
 //! output, which the proof's consumer holds to those commitments through
 //! the circuit's claim (see [`Binding`](crate::profile::Binding)).
@@ -51,7 +52,7 @@ use super::{
     program::{Last, Schedule},
     run::{self, Ctx, Loaded, Prepared, View},
     side::Side,
-    stages::{DigitsStage, InstanceStage, LiftsStage, MessagesStage, TranscriptStage, WorkStage},
+    stages::{DigitsStage, Front, InstanceStage, LiftsStage, TranscriptStage, WorkStage},
 };
 
 /// The last stage circuit `index` of `schedule` loads, which says whether
@@ -126,17 +127,6 @@ impl<'p, C: Cycle> Inner<'p, C> {
     }
 }
 
-/// The stages every circuit of a side loads, loaded unenforced: the
-/// instance, messages, lifts and work stages.
-macro_rules! load_common {
-    ($dr:ident, $witness:ident, $instance:ident, $messages:ident, $lifts:ident, $work:ident) => {
-        let $instance = $instance.unenforced($dr, $witness.as_ref().map(|w| &w.instance))?;
-        let $messages = $messages.unenforced($dr, $witness.as_ref().map(|w| &w.messages))?;
-        let $lifts = $lifts.unenforced($dr, $witness.as_ref().map(|w| &w.lifts))?;
-        let $work = $work.unenforced($dr, $witness.as_ref().map(|w| &w.work))?;
-    };
-}
-
 /// Defines a chunk circuit type whose last stage is `$Last`, loaded after
 /// the common four as `$extra`, with `$kind` its [`Last`].
 macro_rules! chunk_circuit {
@@ -162,7 +152,7 @@ macro_rules! chunk_circuit {
             }
         }
 
-        impl<'p, C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+        impl<'p, C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
             $Circuit<'p, C, S, K, R, HEADER_SIZE>
         {
             /// The circuit at `index` of `schedule`.
@@ -183,7 +173,7 @@ macro_rules! chunk_circuit {
             }
         }
 
-        impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+        impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
             MultiStageCircuit<S::F, R> for $Circuit<'_, C, S, K, R, HEADER_SIZE>
         {
             type Last = $Last<C, S, K, R, HEADER_SIZE>;
@@ -208,15 +198,16 @@ macro_rules! chunk_circuit {
             where
                 Self: 'dr,
             {
-                let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
-                let (messages, dr) = dr.add_stage::<MessagesStage<C, S, K, R, HEADER_SIZE>>()?;
+                let (front, dr) = <S as Front<C, K, R, HEADER_SIZE>>::add(dr)?;
                 let (lifts, dr) = dr.add_stage::<LiftsStage<C, S, K, R, HEADER_SIZE>>()?;
                 let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
                 let ($extra, dr) = chunk_circuit!(@extra dr, $Last, $extra, C, S, K, R, HEADER_SIZE);
                 let dr = dr.finish();
-                load_common!(dr, witness, instance, messages, lifts, work);
+                let front = <S as Front<C, K, R, HEADER_SIZE>>::load(front, dr, &witness)?;
+                let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
+                let work = work.unenforced(dr, witness.as_ref().map(|w| &w.work))?;
                 let $extra = chunk_circuit!(@load dr, witness, $extra, $extra);
-                let $loaded = (instance, messages, lifts, work, $extra);
+                let $loaded = (&front, &lifts, &work, &$extra);
                 let loaded = $view;
                 self.inner
                     .synthesize::<_, S, K, HEADER_SIZE>(dr, loaded, witness)?;
@@ -246,10 +237,10 @@ chunk_circuit!(
     /// that need no stage past the work stage.
     Circuit, Last::Work, WorkStage, none,
     |loaded| {
-        let (instance, messages, lifts, work, ()) = &loaded;
+        let (front, lifts, work, ()) = loaded;
         Loaded {
-            instance: View::new(instance),
-            messages: View::new(messages),
+            instance: front.instance(),
+            messages: front.messages(),
             lifts: View::new(lifts),
             work: View::new(work),
             transcript: View::empty(),
@@ -260,13 +251,13 @@ chunk_circuit!(
 
 chunk_circuit!(
     /// The chunk circuit at an index of side `S`'s schedule, for transcript
-    /// chunks and the bridge sums: loads the transcript stage as well.
+    /// chunks: loads the transcript stage as well.
     TranscriptCircuit, Last::Transcript, TranscriptStage, transcript,
     |loaded| {
-        let (instance, messages, lifts, work, transcript) = &loaded;
+        let (front, lifts, work, transcript) = loaded;
         Loaded {
-            instance: View::new(instance),
-            messages: View::new(messages),
+            instance: front.instance(),
+            messages: front.messages(),
             lifts: View::new(lifts),
             work: View::new(work),
             transcript: View::new(transcript),
@@ -280,10 +271,10 @@ chunk_circuit!(
     /// chunks: loads the digits stage as well.
     DigitsCircuit, Last::Digits, DigitsStage, digits,
     |loaded| {
-        let (instance, messages, lifts, work, digits) = &loaded;
+        let (front, lifts, work, digits) = loaded;
         Loaded {
-            instance: View::new(instance),
-            messages: View::new(messages),
+            instance: front.instance(),
+            messages: front.messages(),
             lifts: View::new(lifts),
             work: View::new(work),
             transcript: View::empty(),
@@ -367,19 +358,19 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     }
 }
 
-/// Length type for the points side `S`'s binding circuit exposes:
-/// [`Side::EXPOSED`].
-pub(crate) struct Exposed<C, S>(PhantomData<fn() -> (C, S)>);
+/// Length type for the points side `S`'s binding circuit exposes for a
+/// proof at rank `K`: [`Side::exposed`].
+pub(crate) struct Exposed<C, S, K>(PhantomData<fn() -> (C, S, K)>);
 
-impl<C: Cycle, S: Side<C>> Len for Exposed<C, S> {
+impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
     fn len() -> usize {
-        S::EXPOSED
+        S::exposed::<K>()
     }
 }
 
 /// The binding circuit of side `S`: the circuit whose public output is the
-/// side's recomputations of the other side's stage commitments, read off
-/// the work stage where the chunks left them
+/// other side's stage commitments the side absorbed or recomputed, read
+/// off the work stage where the chunks left them
 /// ([`Regions::exposed`](super::program::Regions::exposed)). The chunks
 /// bind those slots to the values the side took from the other side, so a
 /// claim on this circuit's output at the $k(y)$ of the other side's actual
@@ -402,14 +393,14 @@ impl<C: Cycle, S, K, R, const HEADER_SIZE: usize> Clone
     }
 }
 
-impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
     BindingCircuit<C, S, K, R, HEADER_SIZE>
 {
     /// The binding circuit over `schedule`'s stages.
     pub(crate) fn new(schedule: Arc<Schedule>) -> MultiStage<S::F, R, Self> {
         assert_eq!(
             schedule.regions.exposed.len(),
-            S::EXPOSED,
+            S::exposed::<K>(),
             "the schedule exposes the side's points"
         );
         MultiStage::new(BindingCircuit {
@@ -419,14 +410,14 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize>
     }
 }
 
-impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<S::F, R>
-    for BindingCircuit<C, S, K, R, HEADER_SIZE>
+impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SIZE: usize>
+    MultiStageCircuit<S::F, R> for BindingCircuit<C, S, K, R, HEADER_SIZE>
 {
     type Last = WorkStage<C, S, K, R, HEADER_SIZE>;
     /// The exposed points.
-    type Instance<'source> = FixedVec<S::P, Exposed<C, S>>;
+    type Instance<'source> = FixedVec<S::P, Exposed<C, S, K>>;
     type Witness<'source> = &'source Prepared<C, S>;
-    type Output = Kind![S::F; FixedVec<Point<'_, _, S::P>, Exposed<C, S>>];
+    type Output = Kind![S::F; FixedVec<Point<'_, _, S::P>, Exposed<C, S, K>>];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -445,13 +436,14 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     where
         Self: 'dr,
     {
-        let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
-        let (messages, dr) = dr.add_stage::<MessagesStage<C, S, K, R, HEADER_SIZE>>()?;
+        let (front, dr) = <S as Front<C, K, R, HEADER_SIZE>>::add(dr)?;
         let (lifts, dr) = dr.add_stage::<LiftsStage<C, S, K, R, HEADER_SIZE>>()?;
         let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
         let dr = dr.finish();
-        load_common!(dr, witness, instance, messages, lifts, work);
-        let _ = (instance, messages, lifts);
+        let front = <S as Front<C, K, R, HEADER_SIZE>>::load(front, dr, &witness)?;
+        let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
+        let work = work.unenforced(dr, witness.as_ref().map(|w| &w.work))?;
+        let _ = (front, lifts);
         let exposed = self
             .schedule
             .regions

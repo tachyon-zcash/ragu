@@ -125,8 +125,9 @@ trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params =
     /// The profile's fixture directory, under `tests/fixtures/fuse`.
     const DIR: &'static str;
     /// The fixtures' application: their four steps, on the aggregator-rank
-    /// parameters, which compressing needs; their prefix is the Standard
-    /// tables, so the wallet's proofs are the same as over those.
+    /// parameters, which the aggregator's decompression needs; their prefix
+    /// is the Standard tables, so the wallet's proofs are the same as over
+    /// those.
     fn app() -> App<Self>;
 }
 

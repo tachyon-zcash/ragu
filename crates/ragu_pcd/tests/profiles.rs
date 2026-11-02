@@ -85,3 +85,16 @@ fn both_profiles_prove_in_one_binary() -> Result<()> {
     assert!(aggregator.verify_compressed(&compressed)?);
     Ok(())
 }
+
+/// A wallet compresses over the Standard tables alone: `baked()` carries
+/// the generators past its table that the compression's runs commit at.
+#[test]
+fn a_wallet_compresses_over_the_standard_tables() -> Result<()> {
+    let pasta = ragu_pcd::pasta::baked();
+    let poseidon_params = Pasta::circuit_poseidon(pasta);
+    let wallet = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+        .register(WitnessLeaf { poseidon_params })?
+        .register(Hash2 { poseidon_params })?
+        .finalize(pasta)?;
+    prove_verify_compress(&wallet, 4)
+}

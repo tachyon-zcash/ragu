@@ -24,6 +24,7 @@ use super::{
 };
 use crate::{
     Pcd, Proof, RAGU_TAG,
+    decompress::stages::run_bases,
     header::{Header, Suffix},
     internal::{ky, native, nested},
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
@@ -351,7 +352,7 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
 
 fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
     super::transcript::<_, ReferenceBackend, ProductionRank>(
-        crate::pasta::baked_aggregator(),
+        crate::pasta::baked(),
         instance,
         header,
     )
@@ -361,16 +362,13 @@ fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
     .unwrap()
 }
 
+/// The first challenge of a transcript under `tag` with the statement
+/// absorbed, the runs committed as the compression's are.
 fn statement_challenge(tag: &[u8], instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    let mut transcript = CycleTranscript::<Pasta>::positioned(
-        crate::pasta::baked_aggregator(),
+    let mut transcript = CycleTranscript::<Pasta>::with_runs(
+        crate::pasta::baked(),
         tag,
-        crate::decompress::stages::bridge_positions::<
-            Pasta,
-            crate::profile::Standard,
-            ProductionRank,
-        >()
-        .unwrap(),
+        run_bases::<Pasta, ProductionRank>(crate::pasta::baked()).unwrap(),
     )
     .unwrap();
     instance.absorb(&mut transcript).unwrap();

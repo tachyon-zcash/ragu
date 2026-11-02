@@ -10,13 +10,16 @@
 //! statement circuit, which loads the instance stage alone and exposes the
 //! output header the chunks verified as its public output, under a fourth
 //! final mask (see [`chunk::StatementCircuit`]), and the binding circuit,
-//! which loads the work stage and exposes the side's recomputations of the
-//! scalar-field side's instance, messages, lifts and digits stages, under
-//! the work stage's final mask (see [`chunk::BindingCircuit`]). On the
-//! nested side it is the scalar-field side's chunks over its five stages,
-//! the digits chunks last, under two final masks, and its binding circuit,
-//! which exposes its recomputation of the circuit-field side's digits
-//! stage; that side's transcript stage is empty and stays out.
+//! which loads the work stage and exposes the commitments of the
+//! scalar-field side's run stages the transcript absorbed and the side's
+//! recomputations of that side's lifts and digits stages, under the work
+//! stage's final mask (see [`chunk::BindingCircuit`]). On the nested side
+//! it is the scalar-field side's chunks over its stages, one per run of the
+//! compression's transcript, then the trailing, lifts, work and digits
+//! stages (see [`Front`]), the digits chunks last, under two final masks,
+//! and its binding circuit, which exposes its recomputation of the
+//! circuit-field side's digits stage; that side's transcript stage is
+//! empty and stays out.
 //!
 //! The chunk circuits verify a standard-profile compressed proof at rank
 //! `K` as circuits at the profile's rank `R`, so the hooks take the base
@@ -36,35 +39,86 @@ use super::{
     chunk::{self, last},
     program::Last,
     side::{Native, Nested, Side},
-    stages::{DigitsStage, InstanceStage, LiftsStage, MessagesStage, TranscriptStage, WorkStage},
+    stages::{
+        DigitsStage, Front, InstanceStage, LiftsStage, Runs, TranscriptStage, WorkStage, num_runs,
+    },
 };
 use crate::{
     ipa::IpaCycle,
     profile::{Binding, BondingSlot, CircuitSlot, Extension, ProfiledCycle, Registered, Standard},
 };
 
-/// The instance stage's index among a side's extension stages.
-const INSTANCE: u32 = 0;
-/// The messages stage's.
-const MESSAGES: u32 = 1;
-/// The lifts stage's.
-const LIFTS: u32 = 2;
-/// The work stage's.
-const WORK: u32 = 3;
-/// The transcript stage's, on the native side.
-const TRANSCRIPT: u32 = 4;
-/// The digits stage's: after the transcript stage on the native side,
-/// after the work stage on the nested side.
-const fn digits_stage(with_transcript: bool) -> u32 {
-    if with_transcript { 5 } else { 4 }
+/// A side's stage indices among its extension's stages: its front's
+/// first, `front` of them, then the lifts and work stages, and after the
+/// work stage the transcript stage, on the side with one, and the digits
+/// stage. The final masks follow the stages: the work stage's, the
+/// transcript stage's on the side with one, the digits stage's, and on
+/// that side the instance stage's, the statement circuit's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Indices {
+    /// The front stages.
+    pub front: usize,
+    /// Whether the side has a transcript stage.
+    pub with_transcript: bool,
+}
+
+impl Indices {
+    /// The native side's: the instance and messages stages in front, a
+    /// transcript stage after the work stage.
+    pub(crate) const fn native() -> Self {
+        Indices {
+            front: 2,
+            with_transcript: true,
+        }
+    }
+
+    /// The nested side's for a proof of `runs` runs: a stage per run and
+    /// the trailing stage in front, no transcript stage.
+    pub(crate) const fn nested(runs: usize) -> Self {
+        Indices {
+            front: runs + 1,
+            with_transcript: false,
+        }
+    }
+
+    pub(crate) const fn lifts(self) -> u32 {
+        self.front as u32
+    }
+
+    pub(crate) const fn work(self) -> u32 {
+        self.front as u32 + 1
+    }
+
+    /// The transcript stage's index, on the side with one.
+    pub(crate) const fn transcript(self) -> u32 {
+        self.front as u32 + 2
+    }
+
+    pub(crate) const fn digits(self) -> u32 {
+        self.front as u32 + 2 + self.with_transcript as u32
+    }
+
+    /// The stages.
+    pub(crate) const fn stages(self) -> usize {
+        self.front + 3 + self.with_transcript as usize
+    }
+
+    /// The stages every chunk circuit loads: the front, lifts and work
+    /// stages.
+    fn common(self) -> Vec<u32> {
+        (0..=self.work()).collect()
+    }
 }
 
 /// The native extension's stages: the instance, messages, lifts, work,
 /// transcript and digits stages.
-pub(crate) const NATIVE_STAGES: usize = 6;
-/// The nested extension's stages: the instance, messages, lifts, work and
-/// digits stages.
-pub(crate) const NESTED_STAGES: usize = 5;
+pub(crate) const NATIVE_STAGES: usize = Indices::native().stages();
+
+/// The nested extension's stages for a proof of `runs` runs: a stage per
+/// run, the trailing, lifts, work and digits stages.
+pub(crate) const fn nested_stages(runs: usize) -> usize {
+    Indices::nested(runs).stages()
+}
 
 /// A side's chunk circuit counts: its chunk circuits and, among them, how
 /// many run transcript chunks, first, and how many digits chunks, last.
@@ -85,47 +139,55 @@ impl Counts {
     }
 }
 
-/// The native layout of the chunk circuits `counts` describes, as the
-/// schedule orders them, and the statement and binding circuits after
-/// them: every chunk circuit loads the instance, messages, lifts and work
-/// stages, a transcript one the transcript stage after them and a digits
-/// one the digits stage, the statement circuit the instance stage alone
-/// and the binding circuit the first four. A final mask binds each kind
-/// by its last stage: the work stage's, the transcript stage's, the digits
-/// stage's, then the instance stage's. The binding circuit recomputes the
-/// nested extension's instance, messages, lifts and digits stages.
+/// The native layout of the chunk circuits `counts` describes, for proofs
+/// of `runs` runs, as the schedule orders them, and the statement and
+/// binding circuits after them: every chunk circuit loads the instance,
+/// messages, lifts and work stages, a transcript one the transcript stage
+/// after them and a digits one the digits stage, the statement circuit
+/// the instance stage alone and the binding circuit the first four. A
+/// final mask binds each kind by its last stage: the work stage's, the
+/// transcript stage's, the digits stage's, then the instance stage's. The
+/// binding circuit exposes the nested extension's run stages, which the
+/// transcript absorbed, and its recomputations of that extension's lifts
+/// and digits stages, in that order.
 ///
 /// # Panics
 ///
 /// Panics if the transcript and digits counts exceed the chunks.
-pub(crate) fn native_layout(counts: Counts) -> Extension {
+pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
     assert!(
         counts.transcript + counts.digits <= counts.chunks,
         "the transcript and digits chunks are among the chunks"
     );
-    let digits = digits_stage(true);
+    let indices = Indices::native();
+    let nested = Indices::nested(runs);
     let statement = counts.chunks as u32;
     let binding = statement + 1;
     let mut circuits = Vec::with_capacity(counts.chunks + 2);
     circuits.extend(repeat_n(
-        vec![INSTANCE, MESSAGES, LIFTS, WORK, TRANSCRIPT],
+        indices
+            .common()
+            .into_iter()
+            .chain([indices.transcript()])
+            .collect::<Vec<_>>(),
         counts.transcript,
     ));
+    circuits.extend(repeat_n(indices.common(), counts.work()));
     circuits.extend(repeat_n(
-        vec![INSTANCE, MESSAGES, LIFTS, WORK],
-        counts.work(),
-    ));
-    circuits.extend(repeat_n(
-        vec![INSTANCE, MESSAGES, LIFTS, WORK, digits],
+        indices
+            .common()
+            .into_iter()
+            .chain([indices.digits()])
+            .collect::<Vec<_>>(),
         counts.digits,
     ));
-    circuits.push(vec![INSTANCE]);
-    circuits.push(vec![INSTANCE, MESSAGES, LIFTS, WORK]);
+    circuits.push(vec![0]);
+    circuits.push(indices.common());
     let transcript = counts.transcript as u32;
     let work = (counts.transcript + counts.work()) as u32;
     Extension {
         circuits,
-        stages: NATIVE_STAGES,
+        stages: indices.stages(),
         final_masks: vec![
             (transcript..work).chain([binding]).collect(),
             (0..transcript).collect(),
@@ -135,23 +197,26 @@ pub(crate) fn native_layout(counts: Counts) -> Extension {
         statement: Some(statement),
         binding: Some(Binding {
             circuit: binding,
-            stages: vec![INSTANCE, MESSAGES, LIFTS, digits_stage(false)],
+            stages: (0..runs as u32)
+                .chain([nested.lifts(), nested.digits()])
+                .collect(),
         }),
     }
 }
 
-/// The nested layout of the chunk circuits `counts` describes, which runs
-/// no transcript chunks, and the binding circuit after them: every chunk
-/// circuit loads the instance, messages, lifts and work stages, a digits
-/// one the digits stage after them, and the binding circuit the first
-/// four, under the work stage's final mask then the digits stage's. The
-/// binding circuit recomputes the native extension's digits stage.
+/// The nested layout of the chunk circuits `counts` describes, for proofs
+/// of `runs` runs, which runs no transcript chunks, and the binding
+/// circuit after them: every chunk circuit loads the run stages, the
+/// trailing stage and the lifts and work stages, a digits one the digits
+/// stage after them, and the binding circuit the same stages as the rest,
+/// under the work stage's final mask then the digits stage's. The binding
+/// circuit recomputes the native extension's digits stage.
 ///
 /// # Panics
 ///
 /// Panics if `counts` has transcript chunks or more digits chunks than
 /// chunks.
-pub(crate) fn nested_layout(counts: Counts) -> Extension {
+pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
     assert_eq!(
         counts.transcript, 0,
         "the scalar-field side runs no transcript chunks"
@@ -160,22 +225,23 @@ pub(crate) fn nested_layout(counts: Counts) -> Extension {
         counts.digits <= counts.chunks,
         "the digits chunks are among the chunks"
     );
-    let digits = digits_stage(false);
+    let indices = Indices::nested(runs);
     let binding = counts.chunks as u32;
     let work = counts.work() as u32;
     let mut circuits = Vec::with_capacity(counts.chunks + 1);
+    circuits.extend(repeat_n(indices.common(), counts.work()));
     circuits.extend(repeat_n(
-        vec![INSTANCE, MESSAGES, LIFTS, WORK],
-        counts.work(),
-    ));
-    circuits.extend(repeat_n(
-        vec![INSTANCE, MESSAGES, LIFTS, WORK, digits],
+        indices
+            .common()
+            .into_iter()
+            .chain([indices.digits()])
+            .collect::<Vec<_>>(),
         counts.digits,
     ));
-    circuits.push(vec![INSTANCE, MESSAGES, LIFTS, WORK]);
+    circuits.push(indices.common());
     Extension {
         circuits,
-        stages: NESTED_STAGES,
+        stages: indices.stages(),
         final_masks: vec![
             (0..work).chain([binding]).collect(),
             (work..binding).collect(),
@@ -183,7 +249,7 @@ pub(crate) fn nested_layout(counts: Counts) -> Extension {
         statement: None,
         binding: Some(Binding {
             circuit: binding,
-            stages: vec![digits_stage(true)],
+            stages: vec![Indices::native().digits()],
         }),
     }
 }
@@ -268,7 +334,10 @@ where
     K: Rank,
     R: Rank,
 {
-    Ok(native_layout(native_counts::<C, K, R, HEADER_SIZE>()?))
+    Ok(native_layout(
+        native_counts::<C, K, R, HEADER_SIZE>()?,
+        num_runs::<K>(),
+    ))
 }
 
 /// The nested extension: the scalar-field side's chunks over its five
@@ -280,7 +349,10 @@ where
     K: Rank,
     R: Rank,
 {
-    Ok(nested_layout(nested_counts::<C, K, R, HEADER_SIZE>()?))
+    Ok(nested_layout(
+        nested_counts::<C, K, R, HEADER_SIZE>()?,
+        num_runs::<K>(),
+    ))
 }
 
 /// The schedule of side `S`, checked against the counts the profile
@@ -315,7 +387,7 @@ fn register_circuit<'params, C, S, K, R, const HEADER_SIZE: usize>(
 ) -> Result<Registered<'params, S::F, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Side<C>,
+    S: Front<C, K, R, HEADER_SIZE>,
     K: Rank,
     R: Rank,
 {
@@ -336,56 +408,51 @@ where
     }
 }
 
-/// Registers bonding `bonding` of side `S`: the stages' masks in stage
-/// order, then the final mask of the chunks whose last stage is the work
-/// stage, on a side with a transcript stage of those whose last is the
-/// transcript stage, of those whose last is the digits stage, and on a
-/// side with a transcript stage of the statement circuit, whose last is
-/// the instance stage.
+/// Registers bonding `bonding` of side `S`, by `indices`: the stages'
+/// masks in stage order, then the final mask of the chunks whose last
+/// stage is the work stage, on a side with a transcript stage of those
+/// whose last is the transcript stage, of those whose last is the digits
+/// stage, and on a side with a transcript stage of the statement circuit,
+/// whose last is the instance stage.
 fn register_bonding<'params, C, S, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
     slot: BondingSlot<'params, S::F, R>,
-    with_transcript: bool,
+    indices: Indices,
 ) -> Result<Registered<'params, S::F, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Side<C>,
+    S: Front<C, K, R, HEADER_SIZE>,
     K: Rank,
     R: Rank,
 {
     type Instance<C, S, K, R, const H: usize> = InstanceStage<C, S, K, R, H>;
-    type Messages<C, S, K, R, const H: usize> = MessagesStage<C, S, K, R, H>;
     type Lifts<C, S, K, R, const H: usize> = LiftsStage<C, S, K, R, H>;
     type Work<C, S, K, R, const H: usize> = WorkStage<C, S, K, R, H>;
     type Transcript<C, S, K, R, const H: usize> = TranscriptStage<C, S, K, R, H>;
     type Digits<C, S, K, R, const H: usize> = DigitsStage<C, S, K, R, H>;
-    let stages = if with_transcript {
-        NATIVE_STAGES
-    } else {
-        NESTED_STAGES
-    } as u32;
-    let digits = digits_stage(with_transcript);
-    let bonding = bonding as u32;
-    match bonding {
-        INSTANCE => slot.register_mask::<Instance<C, S, K, R, HEADER_SIZE>>(),
-        MESSAGES => slot.register_mask::<Messages<C, S, K, R, HEADER_SIZE>>(),
-        LIFTS => slot.register_mask::<Lifts<C, S, K, R, HEADER_SIZE>>(),
-        WORK => slot.register_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
-        TRANSCRIPT if with_transcript => {
+    if bonding < indices.front {
+        return S::register_mask(bonding, slot);
+    }
+    let with_transcript = indices.with_transcript;
+    let stages = indices.stages() as u32;
+    let digits_final = stages + 1 + with_transcript as u32;
+    match bonding as u32 {
+        index if index == indices.lifts() => slot.register_mask::<Lifts<C, S, K, R, HEADER_SIZE>>(),
+        index if index == indices.work() => slot.register_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
+        index if with_transcript && index == indices.transcript() => {
             slot.register_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == digits => slot.register_mask::<Digits<C, S, K, R, HEADER_SIZE>>(),
+        index if index == indices.digits() => {
+            slot.register_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
+        }
         index if index == stages => slot.register_final_mask::<Work<C, S, K, R, HEADER_SIZE>>(),
-        index if index == stages + 1 && with_transcript => {
+        index if with_transcript && index == stages + 1 => {
             slot.register_final_mask::<Transcript<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == stages + 1 && !with_transcript => {
+        index if index == digits_final => {
             slot.register_final_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
         }
-        index if index == stages + 2 && with_transcript => {
-            slot.register_final_mask::<Digits<C, S, K, R, HEADER_SIZE>>()
-        }
-        index if index == stages + 3 && with_transcript => {
+        index if with_transcript && index == digits_final + 1 => {
             slot.register_final_mask::<Instance<C, S, K, R, HEADER_SIZE>>()
         }
         _ => Err(Error::Initialization("no such bonding".into())),
@@ -432,7 +499,7 @@ where
     K: Rank,
     R: Rank,
 {
-    register_bonding::<C, Native, K, R, HEADER_SIZE>(bonding, slot, true)
+    register_bonding::<C, Native, K, R, HEADER_SIZE>(bonding, slot, Indices::native())
 }
 
 /// Registers nested circuit `circuit` of a side declared at `pinned`
@@ -446,7 +513,7 @@ pub(crate) fn register_nested_circuit<'params, C, K, R, const HEADER_SIZE: usize
 ) -> Result<Registered<'params, C::ScalarField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
+    K: Runs,
     R: Rank,
 {
     if circuit == pinned.chunks {
@@ -465,10 +532,14 @@ pub(crate) fn register_nested_bonding<'params, C, K, R, const HEADER_SIZE: usize
 ) -> Result<Registered<'params, C::ScalarField, R>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    K: Rank,
+    K: Runs,
     R: Rank,
 {
-    register_bonding::<C, Nested, K, R, HEADER_SIZE>(bonding, slot, false)
+    register_bonding::<C, Nested, K, R, HEADER_SIZE>(
+        bonding,
+        slot,
+        Indices::nested(num_runs::<K>()),
+    )
 }
 
 #[cfg(test)]

@@ -6,6 +6,19 @@ and one IPA per curve. Below is the interactive form of
 challenges from a transcript domain-separated by `ragu-ipa-v1` (see
 [Transcript](../prelim/transcript.md#domain-separation)).
 
+The transcript runs over the circuit field. It absorbs circuit-field scalars
+and nested-curve points directly. Each run of scalar-field values, the host
+curve's point coordinates and the nested curve's scalars, it commits on the
+nested curve, unblinded, at the generators the run's stage takes in the
+proof's decompression at the aggregator rank, and absorbs the commitment as
+a point before the next absorption or challenge; a verifier in circuit
+absorbs that point as a witness and holds it to the stage. Every challenge
+is the endoscalar lift of a squeeze, as Fuse's challenges are: the
+squeeze's low 143 bits read as an endoscalar and lifted into the scalar field
+of the curve the challenge serves, so that a circuit over the other field can
+scale that curve's points by it. A squeeze outside the endoscalar range
+rejects the proof.
+
 **Shared inputs:** registry, output header, rank $D=2^k$, and generators
 $G_0,\ldots,G_{D-1},U$ with no known nontrivial discrete-log relations.
 For degree below $D$, write $[h]=\sum_i h_iG_i$ and

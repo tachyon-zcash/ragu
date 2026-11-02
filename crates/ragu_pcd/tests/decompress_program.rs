@@ -48,14 +48,18 @@ fn check(schedule: &Schedule) {
     {
         elements[slot] = true;
     }
-    for &slot in regions.inverse_scaled.iter().chain([&regions.g_prime]) {
+    for &slot in regions
+        .inverse_scaled
+        .iter()
+        .chain([&regions.g_prime])
+        .chain(&regions.runs)
+    {
         points[slot] = true;
     }
     let read_point = |src: &PointSrc, points: &[bool]| match src {
         PointSrc::Work(slot) => assert!(points[*slot], "point slot {slot} read before written"),
         PointSrc::Instance(p) => assert!(*p < layout.instance.points),
         PointSrc::Message(p) => assert!(*p < layout.messages.points),
-        PointSrc::Bridge(p) => assert!(*p < layout.transcript.points),
         PointSrc::Generator(_) | PointSrc::U => {}
     };
     let read_element =
@@ -222,7 +226,8 @@ fn check(schedule: &Schedule) {
 }
 
 /// Both sides' schedules for a production-rank proof in chunk circuits at
-/// rank `R` are consistent, and their counts are reported.
+/// rank `R` are consistent, and their counts are reported, at the
+/// aggregator rank, the chunk circuits' own.
 fn schedules_are_consistent<R: Rank>() {
     let native = native_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap();
     let nested = nested_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap();
@@ -265,11 +270,6 @@ fn schedules_are_consistent<R: Rank>() {
             kinds(schedule)
         );
     }
-}
-
-#[test]
-fn production_rank_schedules_are_consistent() {
-    schedules_are_consistent::<ProductionRank>();
 }
 
 #[test]
@@ -365,11 +365,6 @@ fn circuits_pack_the_chunks<R: Rank>() {
             schedule.chunks.len()
         );
     }
-}
-
-#[test]
-fn production_rank_circuits_pack_the_chunks() {
-    circuits_pack_the_chunks::<ProductionRank>();
 }
 
 #[test]

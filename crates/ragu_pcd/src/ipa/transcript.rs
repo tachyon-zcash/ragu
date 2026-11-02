@@ -4,24 +4,34 @@
 //! operations with the proof carried as a struct rather than a byte stream.
 //! [`CycleTranscript`] is the fuse's transcript opened for both curves: the
 //! PCD transcript over the circuit field, executed at concrete values
-//! through the [`Emulator`] driver. Nested-curve points are absorbed as the
-//! [`Point`] gadget writes them; host-curve points and scalar-field values
-//! are bridged the way the fuse's bridge stages bridge them, committed on the
-//! nested curve and absorbed as that commitment: over the first nested
-//! generators as the fuse's transcript does, or, for the compression's,
-//! each value at the generator its wire lands on in a stage of the proof's
-//! decompression ([`BridgePositions`]), so that the bridges of a stage's
-//! values sum to the stage's commitment. Challenges for the host curve are
-//! the raw squeeze. Nested challenges preserve its canonical integer in
-//! the scalar field, rejecting values outside the two fields' common
-//! capacity (254 bits for Pasta).
+//! through the [`Emulator`] driver. Nested-curve points and circuit-field
+//! scalars are absorbed as the [`Point`] and [`Element`] gadgets write
+//! them. Host-curve points and scalar-field values lie in the other field:
+//! the transcript collects them as they come and, when anything else is
+//! absorbed or a challenge is squeezed, first commits the run of them on
+//! the nested curve and absorbs the commitment as a point, as the fuse's
+//! bridge stages carry the other field's values. The commitment is over
+//! the generators the run's stage of the proof's decompression lands the
+//! values on, unblinded (the transcript is opened with them,
+//! [`with_runs`](CycleTranscript::with_runs)), so that it is that stage's
+//! commitment: a circuit over the circuit field absorbs it as a witness
+//! point, and the proof's consumer holds the point to the stage, which
+//! binds the run's values before the challenge that follows them (see
+//! [`stages`](crate::decompress::stages)). A run that precedes no
+//! challenge is never absorbed: no challenge depends on it. Challenges for
+//! the host curve are the raw squeeze. Nested challenges preserve its
+//! canonical integer in the scalar field, rejecting values outside the two
+//! fields' common capacity (254 bits for Pasta). The compression reads both
+//! through `Lifted`, which narrows each squeeze to a 143-bit endoscalar and
+//! lifts it into the field of the curve the challenge serves, as the fuse's
+//! challenges are read.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_backend::ReferenceBackend;
 use ragu_core::{
-    Cycle, Error, FixedGenerators, Result,
+    Cycle, Error, Result,
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe},
 };
@@ -58,71 +68,6 @@ pub(super) fn convert_challenge<F: Field, T: Field>(challenge: F) -> Result<T> {
     })
 }
 
-/// Where a transcript bridges each host-curve point and scalar-field
-/// value: the nested generators the point's coordinates and the value land
-/// on, in absorption order, read one value after another (see
-/// [`bridge_positions`](crate::decompress::stages::bridge_positions)).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BridgePositions {
-    points: Vec<[usize; 2]>,
-    scalars: Vec<usize>,
-    next_point: usize,
-    next_scalar: usize,
-}
-
-impl BridgePositions {
-    /// Positions at the start of the absorption order: `points` the
-    /// generators of each host-curve point's $x$ and $y$, `scalars` each
-    /// scalar-field value's.
-    pub(crate) fn new(points: Vec<[usize; 2]>, scalars: Vec<usize>) -> Self {
-        BridgePositions {
-            points,
-            scalars,
-            next_point: 0,
-            next_scalar: 0,
-        }
-    }
-
-    /// The generators of each host-curve point's coordinates, in order.
-    #[cfg(test)]
-    pub(crate) fn points(&self) -> &[[usize; 2]] {
-        &self.points
-    }
-
-    /// The generators of each scalar-field value, in order.
-    #[cfg(test)]
-    pub(crate) fn scalars(&self) -> &[usize] {
-        &self.scalars
-    }
-
-    /// The next host-curve point's generators.
-    ///
-    /// # Errors
-    ///
-    /// Fails past the last point: the transcript bridges more points than
-    /// the layout places, which a proof of the layout's shape never does.
-    pub(crate) fn point(&mut self) -> Result<[usize; 2]> {
-        let position = self.points.get(self.next_point).copied().ok_or_else(|| {
-            Error::Initialization("the transcript bridges a point past the layout".into())
-        })?;
-        self.next_point += 1;
-        Ok(position)
-    }
-
-    /// The next scalar-field value's generator.
-    ///
-    /// # Errors
-    ///
-    /// As [`point`](Self::point), for a value.
-    pub(crate) fn scalar(&mut self) -> Result<usize> {
-        let position = self.scalars.get(self.next_scalar).copied().ok_or_else(|| {
-            Error::Initialization("the transcript bridges a value past the layout".into())
-        })?;
-        self.next_scalar += 1;
-        Ok(position)
-    }
-}
-
 /// What the IPA needs from a transcript: halo2's `TranscriptWrite`
 /// operations, with the proof carried as a struct rather than written to a
 /// byte stream, so the verifier writes what the prover wrote.
@@ -137,46 +82,75 @@ pub trait IpaTranscript<C: Affine> {
     fn squeeze_challenge(&mut self) -> Result<C::Scalar>;
 }
 
+type Executor<F> = Emulator<Wireless<Always<()>, F>>;
+
+/// Where a transcript commits the scalar field's runs.
+enum RunBases<C: Cycle> {
+    /// Nowhere: the fuse's transcript takes no scalar-field value.
+    None,
+    /// Each run at its stage's generators, in absorption order: the
+    /// compression's.
+    Positioned(Vec<Vec<C::NestedCurve>>),
+    /// Each run over the first nested generators, as the fuse's bridge
+    /// stages commit: a test's transcript over part of the compression.
+    #[cfg(test)]
+    First(Vec<C::NestedCurve>),
+}
+
 /// The fuse's transcript, opened for the IPAs of both curves: one sponge over
 /// the circuit field, executed at concrete values through the [`Emulator`]
-/// driver, with the cycle's parameters at hand for bridging. Bridge commitments
-/// use the Ragu-owned backend `B`.
+/// driver, committing the scalar field's runs with the backend `B`.
 pub struct CycleTranscript<'dr, C: Cycle, B: SelectableBackend = ReferenceBackend> {
-    dr: Emulator<Wireless<Always<()>, C::CircuitField>>,
-    transcript:
-        Transcript<'dr, Emulator<Wireless<Always<()>, C::CircuitField>>, C::CircuitPoseidon>,
-    params: &'dr C::Params,
+    dr: Executor<C::CircuitField>,
+    transcript: Transcript<'dr, Executor<C::CircuitField>, C::CircuitPoseidon>,
+    /// The generators each run is committed at.
+    bases: RunBases<C>,
+    /// The scalar-field values absorbed since the last run's commitment,
+    /// which the next covers.
+    pending: Vec<C::ScalarField>,
+    /// The runs' commitments absorbed so far, in order.
+    runs: Vec<C::NestedCurve>,
     backend: PhantomData<B>,
-    /// Where the bridged values land, or `None` for the first nested
-    /// generators.
-    positions: Option<BridgePositions>,
 }
 
 impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
     /// Creates a transcript over the cycle's circuit-field Poseidon,
-    /// domain-separated by `tag`, bridging over the first nested
-    /// generators as the fuse's bridge stages do.
+    /// domain-separated by `tag`, which takes no scalar-field value: the
+    /// fuse's.
     pub fn new(params: &'dr C::Params, tag: &[u8]) -> Result<Self> {
-        let mut dr = Emulator::execute();
+        let mut dr = Executor::<C::CircuitField>::execute();
         let transcript = Transcript::new(&mut dr, C::circuit_poseidon(params), tag)?;
         Ok(CycleTranscript {
             dr,
             transcript,
-            params,
+            bases: RunBases::None,
+            pending: Vec::new(),
+            runs: Vec::new(),
             backend: PhantomData,
-            positions: None,
         })
     }
 
-    /// As [`new`](Self::new), bridging each value at its position in
-    /// `positions`, the compression's layout.
-    pub(crate) fn positioned(
+    /// As [`new`](Self::new), committing each run of scalar-field values
+    /// at the next of `bases`, in absorption order: the compression's.
+    pub(crate) fn with_runs(
         params: &'dr C::Params,
         tag: &[u8],
-        positions: BridgePositions,
+        bases: Vec<Vec<C::NestedCurve>>,
     ) -> Result<Self> {
         let mut transcript = Self::new(params, tag)?;
-        transcript.positions = Some(positions);
+        transcript.bases = RunBases::Positioned(bases);
+        Ok(transcript)
+    }
+
+    /// As [`new`](Self::new), committing each run of scalar-field values
+    /// over the first nested generators, for a test that runs part of the
+    /// compression on a transcript of its own.
+    #[cfg(test)]
+    pub(crate) fn over_first_generators(params: &'dr C::Params, tag: &[u8]) -> Result<Self> {
+        use ragu_core::FixedGenerators;
+        let mut transcript = Self::new(params, tag)?;
+        let generators = C::nested_generators(params).g();
+        transcript.bases = RunBases::First(generators[..generators.len().min(256)].to_vec());
         Ok(transcript)
     }
 
@@ -190,45 +164,84 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
         NestedSide(self)
     }
 
+    /// The runs' commitments absorbed so far, one per run of scalar-field
+    /// values, in order.
+    pub(crate) fn runs(&self) -> &[C::NestedCurve] {
+        &self.runs
+    }
+
     /// Absorbs a nested-curve point through the [`Point`] gadget, which
-    /// rejects the identity as halo2's `common_point` does.
+    /// rejects the identity as halo2's `common_point` does, after the
+    /// commitment of the run before it, if any.
     fn absorb(&mut self, point: C::NestedCurve) -> Result<()> {
+        self.flush()?;
+        self.absorb_point(point)
+    }
+
+    fn absorb_point(&mut self, point: C::NestedCurve) -> Result<()> {
         super::fingerprint::record_point(&point);
         Point::constant(&mut self.dr, point)?.write(&mut self.dr, &mut self.transcript)
     }
 
-    /// Bridges scalar-field values into the transcript the way the fuse's
-    /// bridge stages do: committed on the nested curve, then absorbed as that
-    /// commitment; a point's two coordinates or a single value, at the
-    /// first generators or at the positions the transcript was opened with.
-    ///
-    /// An identity bridge, including the encoding of a single zero scalar,
-    /// is rejected by `absorb`. This can reject otherwise-valid proofs.
-    fn bridge(&mut self, values: &[C::ScalarField]) -> Result<()> {
-        let g = C::nested_generators(self.params).g();
-        let commitment: C::NestedCurve = match &mut self.positions {
-            None => B::msm(values, &g[..values.len()]).to_affine(),
-            Some(positions) => {
-                let bases: Vec<C::NestedCurve> = match values {
-                    [_] => alloc::vec![g[positions.scalar()?]],
-                    [_, _] => {
-                        let [x, y] = positions.point()?;
-                        alloc::vec![g[x], g[y]]
-                    }
-                    _ => {
-                        return Err(Error::Initialization(
-                            "a bridge is a value or a point's coordinates".into(),
-                        ));
-                    }
-                };
-                B::msm(values, &bases).to_affine()
-            }
-        };
-        self.absorb(commitment)
+    /// Absorbs a circuit-field scalar, after the commitment of the run
+    /// before it, if any.
+    fn absorb_scalar(&mut self, scalar: C::CircuitField) -> Result<()> {
+        self.flush()?;
+        super::fingerprint::record_scalar(&scalar);
+        Element::constant(&mut self.dr, scalar).write(&mut self.dr, &mut self.transcript)
     }
 
-    /// Squeezes a circuit-field challenge.
+    /// Collects a scalar-field value for the run's commitment.
+    fn collect(&mut self, value: C::ScalarField) -> Result<()> {
+        if matches!(self.bases, RunBases::None) {
+            return Err(Error::Initialization(
+                "the transcript was opened without run stages and takes no scalar-field value"
+                    .into(),
+            ));
+        }
+        self.pending.push(value);
+        Ok(())
+    }
+
+    /// Absorbs the commitment of the scalar-field values collected since
+    /// the last, if any, ending the run.
+    ///
+    /// A run committing to the identity, which a run of all zeros does, is
+    /// rejected by [`absorb`](Self::absorb). This can reject
+    /// otherwise-valid proofs.
+    fn flush(&mut self) -> Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let run: &[C::NestedCurve] = match &self.bases {
+            RunBases::None => unreachable!("values are collected only with run stages"),
+            RunBases::Positioned(bases) => {
+                let Some(run) = bases.get(self.runs.len()) else {
+                    return Err(Error::Initialization(
+                        "the transcript absorbs more runs of scalar-field values than the proof's decompression has stages for".into(),
+                    ));
+                };
+                if run.len() != self.pending.len() {
+                    return Err(Error::InvalidWitness(
+                        "a run of scalar-field values is not the size of its stage".into(),
+                    ));
+                }
+                run
+            }
+            #[cfg(test)]
+            RunBases::First(generators) => &generators[..self.pending.len()],
+        };
+        let commitment = B::msm(self.pending.iter(), run.iter()).to_affine();
+        self.pending.clear();
+        self.absorb_point(commitment)?;
+        self.runs.push(commitment);
+        Ok(())
+    }
+
+    /// Squeezes a circuit-field challenge, after the commitment of the run
+    /// before it, if any.
     fn squeeze(&mut self) -> Result<C::CircuitField> {
+        self.flush()?;
         let challenge = *self.transcript.challenge(&mut self.dr)?.value().take();
         super::fingerprint::record_challenge(&challenge);
         Ok(challenge)
@@ -236,26 +249,25 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
 }
 
 /// A [`CycleTranscript`] as the host-curve IPA sees it: a point's
-/// coordinates are in the scalar field, so it is bridged; a scalar is in the
-/// circuit field, so it is absorbed directly; and a challenge is the raw
-/// squeeze, as the fuse's native challenges are.
-pub struct HostSide<'a, 'dr, C: Cycle, B: SelectableBackend = ReferenceBackend>(
-    &'a mut CycleTranscript<'dr, C, B>,
-);
+/// coordinates are in the scalar field, so they are collected for the run's
+/// commitment; a scalar is in the circuit field, so it is absorbed directly;
+/// and a challenge is the raw squeeze. The compression reads its challenges
+/// through `Lifted`, as endoscalar lifts.
+pub struct HostSide<'a, 'dr, C: Cycle, B: SelectableBackend>(&'a mut CycleTranscript<'dr, C, B>);
 
 impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::HostCurve> for HostSide<'_, '_, C, B> {
     fn write_point(&mut self, point: C::HostCurve) -> Result<()> {
         let Some((x, y)) = point.coordinates() else {
-            return Err(ragu_core::Error::InvalidWitness(
+            return Err(Error::InvalidWitness(
                 "point at infinity cannot be written to the transcript".into(),
             ));
         };
-        self.0.bridge(&[x, y])
+        self.0.collect(x)?;
+        self.0.collect(y)
     }
 
     fn write_scalar(&mut self, scalar: C::CircuitField) -> Result<()> {
-        super::fingerprint::record_scalar(&scalar);
-        Element::constant(&mut self.0.dr, scalar).write(&mut self.0.dr, &mut self.0.transcript)
+        self.0.absorb_scalar(scalar)
     }
 
     fn squeeze_challenge(&mut self) -> Result<C::CircuitField> {
@@ -265,14 +277,13 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::HostCurve> for HostSide<'_
 
 /// A [`CycleTranscript`] as the nested-curve IPA sees it: a point's
 /// coordinates are in the circuit field, so it is absorbed directly; a scalar
-/// is in the scalar field, so it is bridged; and a challenge preserves the
-/// squeeze's canonical integer within the two fields' common capacity.
-/// For Pasta this gives a $2^{254}$-element challenge space. The fuse's
-/// replayed challenges still use endoscalar lifts; a recursive verifier of
-/// these fresh compression challenges must reproduce this conversion.
-pub struct NestedSide<'a, 'dr, C: Cycle, B: SelectableBackend = ReferenceBackend>(
-    &'a mut CycleTranscript<'dr, C, B>,
-);
+/// is in the scalar field, so it is collected for the run's commitment; and
+/// a raw challenge keeps the squeeze's canonical integer within the two
+/// fields' common capacity, 254 bits for Pasta. The compression reads its
+/// challenges through `Lifted`, which narrows each squeeze to a 143-bit
+/// endoscalar first, as the fuse's challenges are read; a recursive
+/// verifier of the compression reproduces that lift.
+pub struct NestedSide<'a, 'dr, C: Cycle, B: SelectableBackend>(&'a mut CycleTranscript<'dr, C, B>);
 
 impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSide<'_, '_, C, B> {
     fn write_point(&mut self, point: C::NestedCurve) -> Result<()> {
@@ -280,7 +291,7 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSid
     }
 
     fn write_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
-        self.0.bridge(&[scalar])
+        self.0.collect(scalar)
     }
 
     fn squeeze_challenge(&mut self) -> Result<C::ScalarField> {

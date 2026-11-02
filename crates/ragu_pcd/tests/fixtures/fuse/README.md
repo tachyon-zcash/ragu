@@ -28,7 +28,7 @@ its verifier fingerprints and tampered proofs.
 Six fixtures from a fixed tree of fuses over the harness's own steps
 (`Seed`, `Merge`, `UnitLeft`, and `UnitRight`, which is registered but never
 fused), with header size 4, on the aggregator-rank Pasta parameters, which
-compressing needs and whose prefix is the Standard tables; the wallet at
+the aggregator's decompression needs and whose prefix is the Standard tables; the wallet at
 production rank and the aggregator at the aggregator rank:
 
 | Scenario      | Header  | Fuses                                   |
