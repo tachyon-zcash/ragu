@@ -7,7 +7,7 @@
 //! online polynomials. After $w$ is squeezed,
 //! [`compute_application_proof`] synthesizes the step circuit with
 //! $\zeta = w$ and the six slots' polynomials (see
-//! [`online`](crate::internal::online)), and sets the application rx and
+//! [`online`]), and sets the application rx and
 //! the online openings on the [`ProofBuilder`].
 //!
 //! [`begin_application_proof`]: Application::begin_application_proof

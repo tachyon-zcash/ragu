@@ -119,13 +119,11 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
         let allocator = &mut Standard::new();
         // The circuit is fixed by the set's size: this fixture seeds sets of
         // `SEED_SIZE` elements.
-        let roots: Vec<Element<'dr, D>> = (0..SEED_SIZE)
-            .map(|i| Element::alloc(dr, allocator, roots.as_ref().map(|r| r[i])))
-            .collect::<Result<_>>()?;
         let zeta = oracles.zeta().clone();
         let mut product = Element::one();
-        for root in &roots {
-            let factor = zeta.sub(dr, root);
+        for i in 0..SEED_SIZE {
+            let root = Element::alloc(dr, allocator, roots.as_ref().map(|r| r[i]))?;
+            let factor = zeta.sub(dr, &root);
             product = product.mul(dr, &factor)?;
         }
         let at_zeta = oracles.query_at_zeta(dr, Slot::output(0))?;
