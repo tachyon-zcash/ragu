@@ -89,6 +89,10 @@
 //! [`floor_plan`]: crate::floor_planner::floor_plan
 //! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/local/wiring.html
 
+mod memo;
+mod record;
 pub mod sx;
 pub mod sxy;
 pub mod sy;
+
+pub(crate) use memo::{MemoCache, Placement};

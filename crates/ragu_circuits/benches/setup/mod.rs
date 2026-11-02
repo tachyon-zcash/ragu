@@ -3,7 +3,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
 };
 use ragu_core::pasta::Fp;
-use ragu_testing::circuits::{MySimpleCircuit, SquareCircuit};
+use ragu_testing::circuits::{HeavyRoutineCircuit, MySimpleCircuit, SquareCircuit};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
@@ -97,4 +97,55 @@ pub fn builder_simple<'a>() -> RegistryBuilder<'a, Fp, TestRank> {
 
 pub fn registry_simple<'a>() -> Registry<'a, Fp, TestRank> {
     builder_simple().finalize().unwrap()
+}
+
+/// Registry with circuits that use heavy routines (for memoization benchmarks).
+///
+/// Uses 100 iterations per routine call to make the memoization savings visible.
+pub fn builder_heavy_routines<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
+    RegistryBuilder::<'a, Fp, ProductionRank>::new()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+        .register_circuit(HeavyRoutineCircuit {
+            num_calls: 5,
+            iterations_per_call: 100,
+        })
+        .unwrap()
+}
+
+pub fn registry_heavy_routines<'a>() -> Registry<'a, Fp, ProductionRank> {
+    builder_heavy_routines().finalize().unwrap()
 }
