@@ -183,11 +183,8 @@ where
 
     // App circuits (interleaved per proof), each over the step's own
     // polynomial and the proof's application stage.
-    let rxs = source
-        .rx(Rx(Application))
-        .zip(source.rx(Rx(ApplicationStage)));
-    for (app_id, (own, stage)) in source.app_circuits().zip(rxs) {
-        processor.circuit_claim(app_id, [own, stage].into_iter());
+    for (app_id, rxs) in source.applications() {
+        processor.circuit_claim(app_id, rxs.into_iter());
     }
 
     // Internal circuits and stages in canonical order.

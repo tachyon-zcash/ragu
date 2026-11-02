@@ -168,8 +168,14 @@ impl Source for NativeIds {
         once(component)
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        once(self.circuit_id)
+    fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [native::RxComponent; 2])> {
+        once((
+            self.circuit_id,
+            [
+                native::RxComponent::Rx(native::RxIndex::Application),
+                native::RxComponent::Rx(native::RxIndex::ApplicationStage),
+            ],
+        ))
     }
 }
 
@@ -185,7 +191,7 @@ impl Source for NestedIds {
         once(component)
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn applications(&self) -> impl Iterator<Item = ((), [nested::RxComponent; 2])> {
         empty()
     }
 }
