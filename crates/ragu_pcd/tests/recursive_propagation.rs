@@ -137,12 +137,17 @@ pub(crate) mod support {
     pub(crate) type UnitRight = HashStep<Value, (), 3>;
 
     fn build_app() -> Result<App> {
+        app_builder()?.finalize(crate::pasta::baked())
+    }
+
+    /// The application's builder with its steps registered, before
+    /// finalization.
+    pub(crate) fn app_builder() -> Result<ApplicationBuilder<'static, C, R, HEADER_SIZE>> {
         ApplicationBuilder::<C, R, HEADER_SIZE>::new()
             .register(Seed::new())?
             .register(Merge::new())?
             .register(UnitLeft::new())?
-            .register(UnitRight::new())?
-            .finalize(crate::pasta::baked())
+            .register(UnitRight::new())
     }
 
     /// Reuse the deterministic registries and bootstrap proof between test
