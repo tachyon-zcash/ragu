@@ -157,14 +157,11 @@ pub(crate) enum ChallengeRef {
     Bits(usize),
 }
 
-/// A full-width scalar a chunk scales a point by.
+/// A full-width scalar a chunk scales a point by: a value of the other
+/// field, by index into the side's foreign scalars, whose digits the chunk
+/// allocates as witnesses and the other side's digits stage binds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScalarRef {
-    /// An element of this side's field, whose digits the chunk allocates
-    /// and binds to it.
-    Element(ElementSrc),
-    /// A value of the other field, by index into the side's foreign
-    /// scalars, whose digits the chunk allocates as witnesses.
     Bits(usize),
 }
 
@@ -701,11 +698,8 @@ pub(crate) mod squeezed {
 
 /// Positions within [`Regions::fuse`].
 pub(crate) mod fuse {
-    pub const W: usize = 0;
     pub const Y: usize = 1;
-    pub const Z: usize = 2;
     pub const X: usize = 5;
-    pub const ALPHA: usize = 6;
     pub const U: usize = 7;
     pub const PRE_BETA: usize = 8;
 }
@@ -1046,18 +1040,14 @@ impl Builder {
     fn scale(&mut self, point: PointSrc, scalar: ScalarRef, offset: PointSrc, out: usize) {
         let n = self.scalar_bits;
         let parts = self.limits.scale_parts;
-        let bound = match scalar {
-            ScalarRef::Bits(id) => {
-                assert!(
-                    self.bound[id].is_none(),
-                    "a foreign scalar binds its digits once"
-                );
-                let slot = self.slots.point();
-                self.bound[id] = Some(slot);
-                Some((id, slot))
-            }
-            ScalarRef::Element(_) => None,
-        };
+        let ScalarRef::Bits(id) = scalar;
+        assert!(
+            self.bound[id].is_none(),
+            "a foreign scalar binds its digits once"
+        );
+        let slot = self.slots.point();
+        self.bound[id] = Some(slot);
+        let bound = Some((id, slot));
         let mut init = None;
         let mut bind_init = None;
         for part in 0..parts {
@@ -2147,6 +2137,7 @@ fn nested_schedule_with<
 
 /// The number of chunks of each side for a proof at rank `K` in chunk
 /// circuits at rank `R`.
+#[cfg(test)]
 pub(crate) fn chunk_counts<
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     K: Rank,

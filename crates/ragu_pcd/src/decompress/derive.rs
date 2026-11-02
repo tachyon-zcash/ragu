@@ -4,7 +4,7 @@
 //!
 //! Every challenge that multiplies a point here is one the compression
 //! squeezed as an endoscalar, so each weighted sum is a Horner chain of
-//! [`group_scale`](Endoscalar::group_scale) steps, as the fuse's
+//! [`group_scale`](ragu_primitives::Endoscalar::group_scale) steps, as the fuse's
 //! endoscaling steps form their sums. The claims' points come from the
 //! same [`build`](crate::internal::native::claims::build) the decider and
 //! the compressed verifier enumerate the claims through, run over the
@@ -16,20 +16,26 @@
 //! chain's circuit recomputes (see [`stages`](super::stages)).
 
 use alloc::vec::Vec;
-use core::{iter::once, ops::Range};
+#[cfg(test)]
+use core::iter::once;
+use core::ops::Range;
 
+#[cfg(test)]
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Coeff, Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Boolean, Element, Endoscalar, GadgetExt, NonzeroBank, Point};
+use ragu_primitives::{Boolean, Element, NonzeroBank, Point};
+#[cfg(test)]
+use ragu_primitives::{Endoscalar, GadgetExt};
 use udon::{
     curve::{EndomorphismAffine as Affine, Projective},
     field::Field,
 };
 
+#[cfg(test)]
 use crate::{
     compress::revdot::{
         claims::Kind,
@@ -45,6 +51,7 @@ use crate::{
 };
 
 /// A claim's points: its $a$, a raw claim's $b$, and its kind.
+#[cfg(test)]
 pub(crate) struct Claim<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub kind: Kind,
     pub a: Point<'dr, D, C>,
@@ -55,6 +62,7 @@ pub(crate) struct Claim<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 /// present point weighted highest, as the Horner chain
 /// $\text{acc} = e \cdot \text{acc} + P_i$ that scales alone past an
 /// absent point. `None` if no point is present.
+#[cfg(test)]
 fn horner<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     points: impl IntoIterator<Item = Option<Point<'dr, D, C>>>,
@@ -75,6 +83,7 @@ fn horner<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 }
 
 /// The sum of `points`, which must not be empty.
+#[cfg(test)]
 fn sum<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     mut points: impl Iterator<Item = Point<'dr, D, C>>,
@@ -91,6 +100,7 @@ fn sum<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 /// components, a bonding claim Horner-folds its groups' sums under $z$.
 /// The processor's methods cannot fail, so the first error waits in
 /// `error` and stops the rest.
+#[cfg(test)]
 struct Deriver<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     dr: &'a mut D,
     bank: &'a mut NonzeroBank<'dr, D>,
@@ -99,6 +109,7 @@ struct Deriver<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     error: Option<Error>,
 }
 
+#[cfg(test)]
 impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Deriver<'a, 'dr, D, C> {
     fn push(&mut self, kind: Kind, a: Result<Point<'dr, D, C>>, b: Option<Point<'dr, D, C>>) {
         if self.error.is_some() {
@@ -147,6 +158,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Deriver<'a, 'dr, D, C> {
     }
 }
 
+#[cfg(test)]
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>
     NativeProcessor<Standard, Point<'dr, D, C>, CircuitIndex> for Deriver<'_, 'dr, D, C>
 {
@@ -175,6 +187,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>
     }
 }
 
+#[cfg(test)]
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> NestedProcessor<Standard, Point<'dr, D, C>>
     for Deriver<'_, 'dr, D, C>
 {
@@ -200,17 +213,20 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> NestedProcessor<Standard, Poin
 }
 
 /// A [`Source`] over one curve's commitments, in the instance's order.
+#[cfg(test)]
 struct Commitments<'p, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     points: &'p [Point<'dr, D, C>],
     circuit_id: Option<CircuitIndex>,
 }
 
+#[cfg(test)]
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Commitments<'_, 'dr, D, C> {
     fn point(&self, position: usize) -> Point<'dr, D, C> {
         self.points[position].clone()
     }
 }
 
+#[cfg(test)]
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Source for Commitments<'_, 'dr, D, C> {
     type RxComponent = native::RxComponent;
     type Rx = Point<'dr, D, C>;
@@ -226,10 +242,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Source for Commitments<'_, 'dr
 }
 
 /// The nested counterpart of [`Commitments`].
+#[cfg(test)]
 struct NestedCommitments<'p, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     points: &'p [Point<'dr, D, C>],
 }
 
+#[cfg(test)]
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Source for NestedCommitments<'_, 'dr, D, C> {
     type RxComponent = nested::RxComponent;
     type Rx = Point<'dr, D, C>;
@@ -248,6 +266,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Source for NestedCommitments<'
 /// in the instance's order, for the application circuit `circuit_id`, then
 /// the wire bindings over the stage polynomials `masked` names, in the
 /// compressed verifier's order.
+#[cfg(test)]
 pub(crate) fn native_claims<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     commitments: &[Point<'dr, D, C>],
@@ -272,6 +291,7 @@ pub(crate) fn native_claims<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 }
 
 /// The nested claims' points, as [`native_claims`] lists them.
+#[cfg(test)]
 pub(crate) fn nested_claims<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     commitments: &[Point<'dr, D, C>],
@@ -299,6 +319,7 @@ pub(crate) fn nested_claims<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 /// [`Weights`] weights the claims: each group's chain under `inner`, then
 /// the groups' under `outer`, both run from the last so that the first
 /// claim's weight is one.
+#[cfg(test)]
 fn weighted<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     points: Vec<Option<Point<'dr, D, C>>>,
@@ -321,6 +342,7 @@ fn weighted<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 /// error terms: $\[A\]$ over every claim's $a$ under the $A$ weights, the
 /// dilated polynomial's over the circuit claims' $a$ under the $B$
 /// weights, and the raw polynomial's over the raw claims' $b$ likewise.
+#[cfg(test)]
 pub(crate) fn fold<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     claims: &[Claim<'dr, D, C>],
@@ -360,6 +382,7 @@ pub(crate) fn fold<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 
 /// The batched commitment $\[H\]$: $\[f\]$ and the `commitments` under
 /// $\beta$, $\[f\]$ weighted highest, as the batch weights them.
+#[cfg(test)]
 pub(crate) fn batched<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     f: &Point<'dr, D, C>,
@@ -430,10 +453,9 @@ impl<'dr, D: Driver<'dr>> Digits<'dr, D> {
     /// Binds the digits of the element `k` of this circuit's own field to it
     /// and keeps none of them: the other side allocates the same bits from
     /// the value and scales by them, so here only the binding matters.
+    #[cfg(test)]
     pub(crate) fn bind(dr: &mut D, k: &Element<'dr, D>) -> Result<()> {
-        let digits = Self::alloc_bound(dr, k)?;
-        debug_assert_eq!(digits.len(), Self::width::<D::F>());
-        Ok(())
+        Self::alloc_bound(dr, k).map(|_| ())
     }
 
     /// The digits of the element `k` of this circuit's own field, bound to
@@ -519,6 +541,7 @@ pub(crate) fn scale_shift<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 
 /// $k P$ for the full-width scalar `digits` represent: the whole
 /// signed-digit chain from `offset`, ended.
+#[cfg(test)]
 pub(crate) fn scale<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     point: &Point<'dr, D, C>,
@@ -534,6 +557,7 @@ pub(crate) fn scale<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 /// the parameters fix, and the point the signed-digit chains start from,
 /// independent of every point they scale.
 #[derive(Clone, Copy)]
+#[cfg(test)]
 pub(crate) struct Fixed<C> {
     pub g_0: C,
     pub u: C,
@@ -544,6 +568,7 @@ pub(crate) struct Fixed<C> {
 /// and $R_j$, the witness points $u_j^{-1} L_j$, and $G'$. The circuit
 /// binds each $u_j^{-1} L_j$ to its $L_j$; $G'$ it does not bind yet, see
 /// the module's *What remains*.
+#[cfg(test)]
 pub(crate) struct Opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub s_commitment: Point<'dr, D, C>,
     pub rounds: Vec<(Point<'dr, D, C>, Point<'dr, D, C>)>,
@@ -552,6 +577,7 @@ pub(crate) struct Opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 }
 
 /// The final check's full-width scalars as digits: $v$, $c$ and $c b z$.
+#[cfg(test)]
 pub(crate) struct Scalars<'dr, D: Driver<'dr>> {
     pub v: Digits<'dr, D>,
     pub c: Digits<'dr, D>,
@@ -563,6 +589,7 @@ pub(crate) struct Scalars<'dr, D: Driver<'dr>> {
 /// L_j + u_j R_j) = v G_0 + c G' + c b z U$, with each $u_j^{-1} L_j$ the
 /// witness point $u_j$ scales back to $L_j$, and $G_0$ and $U$ the
 /// generators `fixed` holds.
+#[cfg(test)]
 pub(crate) fn enforce_opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     h: &Point<'dr, D, C>,

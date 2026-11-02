@@ -102,6 +102,7 @@ pub(crate) struct Public<'dr, D: Driver<'dr>> {
     /// The wire bindings, in the order the masked kinds index them.
     pub bindings: Vec<Binding<'dr, D>>,
     /// The challenge weighting the bindings' wires.
+    #[cfg(test)]
     pub sigma: Element<'dr, D>,
 }
 
@@ -408,6 +409,7 @@ pub(crate) fn openings<'dr, D: Driver<'dr>>(
 /// Enforces the reduction on one curve and returns the opening claims it
 /// leaves for the batch: the weights, bindings and public phases and the
 /// openings, as one circuit.
+#[cfg(test)]
 pub(crate) fn verify<'dr, D: Driver<'dr>, K: Rank>(
     dr: &mut D,
     public_parts: &Public<'dr, D>,

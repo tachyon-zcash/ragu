@@ -121,6 +121,10 @@ pub(crate) const fn message_points<K: Rank>() -> usize {
 
 /// Positions of the circuit field's instance values within the
 /// circuit-field side's instance scalars.
+#[allow(
+    dead_code,
+    reason = "every position is named; the wire bindings read the children's as a range"
+)]
 pub(crate) mod native_scalars {
     pub const OMEGA_J: usize = 0;
     pub const C: usize = 1;
@@ -138,6 +142,10 @@ pub(crate) mod native_scalars {
 /// Positions of the scalar field's instance values within the
 /// scalar-field side's instance scalars, and of their bridges within the
 /// circuit-field side's transcript stage.
+#[allow(
+    dead_code,
+    reason = "every position is named; the wire bindings read the children's as a range"
+)]
 pub(crate) mod nested_scalars {
     pub const BRIDGE_ALPHA: usize = 0;
     pub const C: usize = 1;
@@ -728,17 +736,6 @@ type NestedInstanceBridge<C, P> = ValuesStage<
     (),
     BridgeInstancePoints<P>,
     ConstLen<NESTED_SCALARS>,
->;
-
-/// The scalar-field side's messages stage, after its instance stage: the
-/// host curve's point messages, then the nested curve's scalar messages.
-type NestedMessagesBridge<C, P, K> = ValuesStage<
-    <C as Cycle>::ScalarField,
-    <C as Cycle>::HostCurve,
-    BridgeRank,
-    NestedInstanceBridge<C, P>,
-    BridgeMessagePoints<K>,
-    ConstLen<MESSAGE_SCALARS>,
 >;
 
 /// Where the compression's transcript bridges each host-curve point and

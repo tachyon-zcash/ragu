@@ -41,6 +41,9 @@ pub(crate) struct Challenges<'dr, D: Driver<'dr>> {
 
 /// The scalars of the final check: with the batched commitment weighted
 /// by one, the sum of every point under its scalar must be the identity.
+/// The chunks read $c b z$ alone, the other side scaling the rest's points
+/// by digits; the tests read every scalar.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Scalars<'dr, D: Driver<'dr>> {
     /// The scalar of $G_0$: $-v$.
     pub g_0: Element<'dr, D>,

@@ -199,11 +199,6 @@
 //! enforcement of a chunk's work-stage writes, the chunk tests that target
 //! them fail.
 
-// The chunk circuits use the gadgets piecewise. The whole-side verifier in
-// `circuit` and the entry points only it calls, such as the transcript
-// replay and the claim derivation, are reached from the tests alone.
-#![allow(dead_code)]
-
 use alloc::vec::Vec;
 
 use ragu_core::{Result, drivers::Driver};
@@ -221,6 +216,7 @@ pub(crate) mod revdot;
 pub(crate) mod run;
 pub(crate) mod side;
 pub(crate) mod stages;
+#[cfg(test)]
 pub(crate) mod transcript;
 
 #[cfg(test)]

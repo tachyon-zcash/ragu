@@ -226,6 +226,7 @@ where
 
 /// The native circuit counts for proofs over `C` at rank `K` with
 /// `HEADER_SIZE` headers, as chunk circuits at rank `R`.
+#[cfg(test)]
 pub(crate) fn native_counts<C, K, R, const HEADER_SIZE: usize>() -> Result<Counts>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -241,6 +242,7 @@ where
 ///
 /// Fails if the nested schedule has a transcript circuit, which its side
 /// has no stage for.
+#[cfg(test)]
 pub(crate) fn nested_counts<C, K, R, const HEADER_SIZE: usize>() -> Result<Counts>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -259,6 +261,7 @@ where
 /// The native extension: the circuit-field side's chunks over its six
 /// stages, for proofs over `C` at rank `K` with `HEADER_SIZE` headers, as
 /// chunk circuits at rank `R`, with its statement and binding circuits.
+#[cfg(test)]
 pub(crate) fn native<C, K, R, const HEADER_SIZE: usize>() -> Result<Extension>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -270,6 +273,7 @@ where
 
 /// The nested extension: the scalar-field side's chunks over its five
 /// stages, with its binding circuit.
+#[cfg(test)]
 pub(crate) fn nested<C, K, R, const HEADER_SIZE: usize>() -> Result<Extension>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -390,8 +394,8 @@ where
 
 /// Registers native circuit `circuit` of a side declared at `pinned`
 /// chunk circuits: a chunk circuit, at the index past them the statement
-/// circuit, and at the next the binding circuit; see [`native`] for the
-/// layout.
+/// circuit, and at the next the binding circuit; see [`native_layout`]
+/// for the layout.
 pub(crate) fn register_native_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: Counts,
@@ -418,7 +422,7 @@ where
     register_circuit::<C, Native, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
 }
 
-/// Registers native bonding `bonding`; see [`native`] for the layout.
+/// Registers native bonding `bonding`; see [`native_layout`] for the layout.
 pub(crate) fn register_native_bonding<'params, C, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
     slot: BondingSlot<'params, C::CircuitField, R>,
@@ -433,7 +437,7 @@ where
 
 /// Registers nested circuit `circuit` of a side declared at `pinned`
 /// chunk circuits: a chunk circuit, or at the index past them the binding
-/// circuit; see [`nested`] for the layout.
+/// circuit; see [`nested_layout`] for the layout.
 pub(crate) fn register_nested_circuit<'params, C, K, R, const HEADER_SIZE: usize>(
     circuit: usize,
     pinned: Counts,
@@ -454,7 +458,7 @@ where
     register_circuit::<C, Nested, K, R, HEADER_SIZE>(circuit, pinned, slot, params)
 }
 
-/// Registers nested bonding `bonding`; see [`nested`] for the layout.
+/// Registers nested bonding `bonding`; see [`nested_layout`] for the layout.
 pub(crate) fn register_nested_bonding<'params, C, K, R, const HEADER_SIZE: usize>(
     bonding: usize,
     slot: BondingSlot<'params, C::ScalarField, R>,

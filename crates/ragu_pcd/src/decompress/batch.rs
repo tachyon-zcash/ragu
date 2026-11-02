@@ -42,6 +42,9 @@ pub(crate) struct Challenges<'dr, D: Driver<'dr>> {
 pub(crate) struct Batched<'dr, D: Driver<'dr>> {
     pub point: Element<'dr, D>,
     pub value: Element<'dr, D>,
+    /// The chunks form $\[H\]$ by a Horner chain under $\beta$'s
+    /// endoscalar instead; the tests read the weights.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub weights: Vec<Element<'dr, D>>,
 }
 

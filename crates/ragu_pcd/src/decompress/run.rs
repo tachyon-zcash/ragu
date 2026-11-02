@@ -327,6 +327,7 @@ where
             targets,
             restrictions,
             bindings: self.bindings(dr)?,
+            #[cfg(test)]
             sigma: self.lift(regions.lifts[squeezed::SIGMA]),
         })
     }
@@ -629,14 +630,8 @@ where
         } => {
             let width = Digits::<'dr, D>::width::<S::Other>();
             let point = ctx.point(dr, *point)?;
-            let digits = match *scalar {
-                ScalarRef::Bits(id) => Digits::alloc_range(dr, ctx.foreign(id), *lo..*hi)?,
-                ScalarRef::Element(src) => {
-                    assert_eq!((*lo, *hi), (0, width), "an element's digits are not cut");
-                    let element = ctx.element(dr, src)?;
-                    Digits::alloc_bound(dr, &element)?
-                }
-            };
+            let ScalarRef::Bits(id) = *scalar;
+            let digits = Digits::alloc_range(dr, ctx.foreign(id), *lo..*hi)?;
             let init = init.map(|slot| ctx.loaded.work.points[slot].clone());
             let offset = ctx.fixed(*offset);
             let scaled = NonzeroBank::scope(dr, |dr, bank| {
