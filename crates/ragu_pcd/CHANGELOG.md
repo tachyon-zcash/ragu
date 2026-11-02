@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added recursion profiles through `profile::{Profile, ProfiledCycle, Profiled,
   Standard, Aggregator, Shape}`. Profiles declare internal extension circuits,
-  stages, statement and cross-cycle bindings, and endoscaling work.
+  stages, statement and cross-cycle bindings, and endoscaling work. The
+  `Aggregator` profile, its `Decompression` context and
+  `Application::decompress` are not yet sound against a dishonest prover: the
+  decompression takes the wallet registry's evaluations and the IPA's final
+  generator from the prover until the polynomial-query hooks land.
+  `Aggregator` is pinned for 4-element headers alone; other header sizes do
+  not compile.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
   profile-specific prover context. The extension API is experimental while
   decompression is integrated. `finalize` checks a profile's declaration

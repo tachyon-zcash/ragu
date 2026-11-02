@@ -43,52 +43,39 @@
 //! and run in the circuit over the matching field: the host curve's in the
 //! native circuits, the nested curve's in the nested ones.
 //!
-//! # Roadmap
+//! # Layout
 //!
-//! 1. This module and its design. *Done.*
-//! 2. [`revdot`]: the fold and split as a gadget, tested against the
-//!    native verifier on a real compressed proof. *Done.*
-//! 3. [`batch`]: $f(u)$, $v$ and the $\beta$ weights as a gadget. *Done.*
-//! 4. [`ipa`]: $b$, the round inverses and the scalars of the final check
-//!    as a gadget. *Done.* Binding $G'$ through $s(X)$ is in *What
-//!    remains*, below.
-//! 5. [`transcript`]: the compression's transcript over the allocated
-//!    instance and messages, squeezing the native challenges. *Done*.
-//! 6. [`derive`](mod@derive): the derived commitments, $\[H\]$ and the IPA's final
-//!    check as endoscalar chains over the other curve's points, the
-//!    compression's challenges squeezed as endoscalars for them. *Done.*
-//! 7. [`circuit`]: the verifier assembled from the gadgets as the two
-//!    circuits of the cycle, with the witness both allocate prepared from
-//!    a compressed proof, and tested end to end under the simulators.
-//!    *Done* up to the proof system's integration, below.
-//! 8. [`program`], [`stages`], [`run`], [`side`] and [`chunk`]: each side
-//!    cut into chunk circuits under the gate budget, every chunk loading
-//!    the compressed proof's data from stages and leaving its results in
-//!    a work stage for later chunks, with the prover's native run of the
-//!    same program filling the stages. *Done*: every chunk of both sides
-//!    fits the gate budget with its stages loaded, at the smallest rank
-//!    the digits stage leaves room at and, with the chunks' limits scaled
-//!    to its budget, at the aggregator rank, and is satisfied on a real
-//!    compressed proof; a tampered stage fails some chunk. The chunk
-//!    circuits take two ranks, the compressed proof's and their own, so
-//!    that an aggregator at
-//!    [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) can
-//!    cut a wallet's production-rank proof into fewer chunks, which pack
-//!    into 51 native and 36 nested circuits at the tests' header size.
-//! 9. [`extension`] and [`prover`]: the chunk circuits as the aggregator
-//!    profile's extension, declared from pinned counts and registered
-//!    through the profile's hooks, and their polynomials for every proof
-//!    from the canonical compressed proof the application holds. *Done*:
-//!    an aggregator application proves, verifies and compresses at the
-//!    aggregator rank.
-//! 10. The decompression step
-//!     ([`decompress`](crate::step::internal::decompress)): the one step
-//!     whose output header is the decompressed proof's, with the native
-//!     extension's statement circuit ([`chunk::StatementCircuit`]) exposing
-//!     the header the chunks verified and its claim's $k(y)$ holding the
-//!     step's output header to it. *Done*: a wallet's compressed proof
-//!     decompresses into a proof of the aggregator its own steps fuse, and
-//!     a relabelled one fails.
+//! - [`revdot`], [`batch`] and [`ipa`]: the fold and split, the batch's
+//!   $f(u)$, $v$ and $\beta$ weights, and the IPA's round inverses, $b$
+//!   and final-check scalars, as gadgets. Binding $G'$ through $s(X)$ is in
+//!   *What remains*, below.
+//! - The compression's transcript over the allocated instance and messages,
+//!   squeezing the native challenges; the derived commitments, $\[H\]$ and
+//!   the IPA's final check as endoscalar chains over the other curve's
+//!   points; and the verifier assembled from the gadgets as the two
+//!   circuits of the cycle, each side one circuit, which the tests run end
+//!   to end.
+//! - [`program`], [`stages`], [`run`], [`side`] and [`chunk`]: each side
+//!   cut into chunk circuits under the gate budget, every chunk loading
+//!   the compressed proof's data from stages and leaving its results in a
+//!   work stage for later chunks, with the prover's native run of the same
+//!   program filling the stages. The chunk circuits take two ranks, the
+//!   compressed proof's and their own, so that an aggregator at
+//!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) cuts a
+//!   wallet's production-rank proof into fewer chunks, whose circuit counts
+//!   the aggregator profile pins
+//!   ([`native_circuits`](crate::profile::Aggregator::native_circuits) and
+//!   [`NESTED_CIRCUITS`](crate::profile::Aggregator::NESTED_CIRCUITS)).
+//! - [`extension`] and [`prover`]: the chunk circuits as the aggregator
+//!   profile's extension, declared from the pinned counts and registered
+//!   through the profile's hooks, and their polynomials for every proof
+//!   from the canonical compressed proof the application holds.
+//! - The decompression step
+//!   ([`decompress`](crate::step::internal::decompress)): the one step
+//!   whose output header is the decompressed proof's, with the native
+//!   extension's statement circuit ([`chunk::StatementCircuit`]) exposing
+//!   the header the chunks verified and its claim's $k(y)$ holding the
+//!   step's output header to it.
 //!
 //! # Integration
 //!
@@ -102,9 +89,10 @@
 //! profile declares it, at the aggregator rank: every chunk then runs in
 //! every proof of that profile, over the canonical compressed proof the
 //! application's [`Decompression`](crate::profile::Decompression) holds,
-//! so each child carries 101 more polynomials at the tests' header size
-//! for the fuse to hash, evaluate and fold, which the fuse's circuits
-//! carry at four times the production rank's budget. The decompression
+//! so each child carries the extension's polynomials, which
+//! [`Shape`](crate::profile::Shape) counts, for the fuse to hash, evaluate
+//! and fold, which the fuse's circuits carry at four times the production
+//! rank's budget. The decompression
 //! step runs the chunks over the wallet's proof it is given and outputs
 //! that proof's header, which the statement circuit's claim holds to the
 //! header the chunks verified.
@@ -165,7 +153,7 @@
 //!    G \rangle$ as a witness point, so as the circuits stand that check
 //!    binds nothing: a prover who chooses $G'$ satisfies it for any
 //!    left-hand side. Everything before the IPA's final check is bound.
-//!    $G'$ is the commitment to $s(X) = \prod_{i < k} (1 + u_{k-1-i}
+//!    $G'$ is the commitment to $s(X) = \prod\_{i < k} (1 + u\_{k-1-i}
 //!    X^{2^i})$ over the same generators, so the fix is to witness $s$ as
 //!    a polynomial of the decompression proof, take its commitment as
 //!    $G'$, and defer one evaluation claim, $s$ at a fresh point against
@@ -181,6 +169,19 @@
 //!
 //! The two are independent and land in either order; the aggregator's
 //! proofs are sound against a dishonest prover once both have.
+//!
+//! One cost, not a gap, remains beside them. Every proof of the profile
+//! carries the chunk circuits' polynomials, so an aggregator step that
+//! decompresses nothing still runs every chunk, over the wallet
+//! application's canonical compressed proof: in a tree over $n$ wallet
+//! proofs, $n - 1$ of its $2n - 1$ steps. Letting such a step carry an
+//! empty extension needs the fuse to accept trivial claims for the
+//! extension's circuits under a flag bound in the instance, so that a
+//! decompression step cannot claim it; until then the cost is fixed per
+//! step.
+//!
+//! TODO: let a step that decompresses nothing carry an empty extension,
+//! as above.
 //!
 //! TODO: pin the decompressed proof to the approved Standard setup through
 //! the polynomial-query hooks #821 proposes, the registry evaluations
