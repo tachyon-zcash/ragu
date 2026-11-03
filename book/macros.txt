@@ -20,3 +20,8 @@
 \acc:\mathsf{acc}
 \pf:\mathsf{pf}
 \aux:\mathsf{aux}
+\nf:\mathsf{nf}
+\cm:\mathsf{cm}
+\tg:\mathsf{tg}
+\anchor:\mathsf{anchor}
+\E:\mathbb{E}
