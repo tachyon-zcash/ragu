@@ -191,17 +191,48 @@ that every opening is of the committed polynomial. The `Oracles` argument
 of `witness` lets the circuit open each slot once:
 
 ```rust
-// A random point squeezed after every slot's polynomial was committed.
+// A random point squeezed after every slot's polynomial and the staged
+// values were committed.
 let zeta = oracles.zeta().clone();
 // The value of the left header's first polynomial at zeta, as a wire.
 let l0 = oracles.query_at_zeta(dr, Slot::left(0))?;
 // The output polynomial at the same point.
 let o0 = oracles.query_at_zeta(dr, Slot::output(0))?;
+// The root this step multiplies in, staged before zeta (see below).
+let t = oracles.staged()[0].clone();
 // Enforce O0(zeta) = L0(zeta) * (zeta - t), the relation the step proves.
 o0.enforce_equal(dr, &l0.mul(dr, &zeta.sub(dr, &t))?)?;
 // A slot may also be opened at any wire, such as a witnessed nullifier.
 let membership = oracles.query(dr, Slot::left(1), &nullifier)?;
 ```
+
+A check at `zeta` is sound only if every value it reads was fixed before
+`zeta` was drawn: an opening at `zeta` (or at a point itself fixed before
+it), an input header's field, a staged value, or a wire computed from
+those; or an in-circuit hash output, or a value from a small set such as a
+bit. Any other wire `witness` allocates, the output header's fields
+included, is chosen with `zeta` in hand. Had `t` above been witnessed in
+`witness`, the prover could set `t = zeta - O0(zeta) / L0(zeta)` and the
+check would hold whatever the polynomials. So a step stages such values: it
+declares `const NUM_STAGED: usize = 1;` and returns them from `staged`, which
+runs beside `polynomials`, before `zeta`:
+
+```rust
+fn staged<'source>(
+    &self,
+    root: &Self::Witness<'source>,
+    _: HeaderInput<'_, Fp, Self::Left>,
+    _: HeaderInput<'_, Fp, Self::Right>,
+) -> Result<Vec<Fp>> {
+    Ok(vec![*root])
+}
+```
+
+Ragu commits the staged values in the proof's application stage before
+`zeta` is drawn and hands them to `witness` as wires through
+`oracles.staged()`, each bound to the committed value. Every step circuit
+of the application reserves room for the largest `NUM_STAGED` any of its
+steps declares, `ceil(n / 2)` gates.
 
 The returned wire is a witness: nothing in the circuit checks that it is the
 polynomial's value at the point. Ragu's polynomial commitment scheme proves
