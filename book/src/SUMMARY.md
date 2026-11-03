@@ -48,6 +48,7 @@
   - [Recursion](protocol/recursion/index.md)
     - [Public Inputs](protocol/recursion/public_inputs.md)
     - [Compression](protocol/recursion/compression.md)
+    - [Decompression](protocol/recursion/decompression.md)
   - [Analysis](protocol/analysis.md) <!-- todo -->
   - [Local (Sean's Corner!)]()
     - [Arithmetization](protocol/local/arithmetization.md)
