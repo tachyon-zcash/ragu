@@ -171,7 +171,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// application takes at
     /// [`finalize_with`](crate::ApplicationBuilder::finalize_with). Nothing
     /// for a profile without an extension.
-    type Context<'params, Base, R, B>
+    type Context<'params, Base, R, B>: ProverContext
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
@@ -308,7 +308,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default fills an empty extension and fails for any other.
     fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
-        source: Option<&Decompressed<Base>>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -334,7 +334,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default fills an empty extension and fails for any other.
     fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
-        source: Option<&Decompressed<Base>>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -957,6 +957,31 @@ impl Extension {
         Ok(())
     }
 }
+
+/// A profile's prover context: what an application of the profile holds
+/// across proofs to build its extension over, and what a step can supply
+/// in its place.
+pub trait ProverContext {
+    /// What a step supplies the extension's prover in place of the
+    /// context's own proof: the compressed proof a decompression step
+    /// decompresses. Uninhabited for a context no step supplies anything
+    /// to.
+    type Source;
+}
+
+/// No context, and nothing a step supplies.
+impl ProverContext for () {
+    type Source = core::convert::Infallible;
+}
+
+/// What a step can supply the extension's prover of an application over
+/// `C` in place of its context's proof ([`ProverContext::Source`]).
+pub(crate) type Source<'params, C, R, B> = <<<C as ProfiledCycle>::Profile as Profile>::Context<
+    'params,
+    <C as ProfiledCycle>::Base,
+    R,
+    B,
+> as ProverContext>::Source;
 
 /// The standard profile: the fuse alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1895,6 +1920,10 @@ pub(crate) mod testing {
         header: Mutex<Option<Vec<F>>>,
     }
 
+    impl<F> ProverContext for StatementContext<F> {
+        type Source = core::convert::Infallible;
+    }
+
     impl<F> Default for StatementContext<F> {
         fn default() -> Self {
             StatementContext {
@@ -1964,7 +1993,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2045,7 +2074,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2061,7 +2090,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2235,6 +2264,10 @@ pub(crate) mod testing {
         pub(crate) nested: [bool; DIGITS],
     }
 
+    impl<Base: Cycle> ProverContext for CrossingContext<'_, Base> {
+        type Source = core::convert::Infallible;
+    }
+
     /// The signed digits of `bits`: $2b - 1$ each.
     fn signed<F: Field>(bits: &[bool; DIGITS]) -> [F; DIGITS] {
         bits.map(|bit| if bit { F::ONE } else { -F::ONE })
@@ -2327,7 +2360,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2350,7 +2383,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2463,7 +2496,7 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2490,7 +2523,7 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
-            _: Option<&Decompressed<Base>>,
+            _: Option<&core::convert::Infallible>,
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
