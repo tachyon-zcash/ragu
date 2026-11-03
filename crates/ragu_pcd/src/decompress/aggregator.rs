@@ -2,11 +2,11 @@
 //! wallet's compressed proof, declared as its extension. Public only under
 //! the `unstable-aggregator` feature, through [`profile`](crate::profile).
 
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::any::TypeId;
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, Rank, WalletRank},
+    polynomials::{AggregatorRank, Rank, WalletRank, sparse},
     registry::Registry,
 };
 use ragu_core::{Error, Result};
@@ -316,5 +316,30 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     {
         Self::accepts::<R>(H)?;
         context.nested_rxs::<Self>(source, registry, rng)
+    }
+    fn native_extension_commitments<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        circuits: &[sparse::Polynomial<Base::CircuitField, R>],
+    ) -> Option<Vec<Base::HostCurve>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        context.native_cached_commitments(source, circuits)
+    }
+
+    fn nested_extension_commitments<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        circuits: &[sparse::Polynomial<Base::ScalarField, R>],
+    ) -> Option<Vec<Base::NestedCurve>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        context.nested_cached_commitments(source, circuits)
     }
 }

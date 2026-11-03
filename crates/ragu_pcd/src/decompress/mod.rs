@@ -180,13 +180,15 @@
 //!
 //! One cost, not a gap, remains beside them. Every proof of the profile
 //! carries the chunk circuits' polynomials, so an aggregator step that
-//! decompresses nothing still runs every chunk, over the wallet
+//! decompresses nothing uses every chunk's witness over the wallet
 //! application's canonical compressed proof: in a tree over $n$ wallet
 //! proofs, $n - 1$ of its $2n - 1$ steps. Letting such a step carry an
 //! empty extension needs the fuse to accept trivial claims for the
 //! extension's circuits under a flag bound in the instance, so that a
-//! decompression step cannot claim it; until then the cost is fixed per
-//! step.
+//! decompression step cannot claim it. With `std`, the prover caches these
+//! canonical circuit polynomials and commitments in the application's context
+//! and refreshes their blinding for each ordinary step. The remaining proof
+//! operations still carry and process the extension's polynomials.
 //!
 //! TODO: let a step that decompresses nothing carry an empty extension,
 //! as above.
