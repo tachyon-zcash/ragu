@@ -55,8 +55,9 @@ Vesta, loaded from data embedded in the binary. Poseidon parameters are
 compile-time constants and do not require initialization.
 
 Standard uses the original tables of $2^{13}$ vector generators per curve.
-For the Aggregator profile, `baked-aggregator` adds separate $2^{15}$ tables
-through `ragu_pcd::pasta::baked_aggregator()`, sized for the aggregator rank.
+For the Aggregator profile, which the `unstable-aggregator` feature exposes,
+`baked-aggregator` adds separate $2^{15}$ tables through
+`ragu_pcd::pasta::baked_aggregator()`, sized for the aggregator rank.
 The regular `baked()` tables remain the same size even when that feature is
 enabled; the larger tables are initialized only when their loader is called.
 

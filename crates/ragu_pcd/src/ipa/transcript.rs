@@ -175,6 +175,7 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
 
     /// The runs' commitments absorbed so far, one per run of scalar-field
     /// values, in order.
+    #[cfg(feature = "unstable-aggregator")]
     pub(crate) fn runs(&self) -> &[C::NestedCurve] {
         &self.runs
     }

@@ -105,7 +105,7 @@ fn native_side(setup: &Setup) -> Side<<Pasta as Cycle>::HostCurve> {
 
     let (mut t, sampled, nested_sampled) = setup.transcript();
     let openings = setup.native_openings(&mut t, &sampled, nested_sampled.y);
-    let batched = batch::verify::<_, ReferenceBackend, _>(
+    let batched = batch::verifier::verify::<_, ReferenceBackend, _>(
         &openings.commitments,
         &openings.claims,
         &messages.batch,
@@ -195,7 +195,7 @@ fn nested_side(setup: &Setup) -> Side<<Pasta as Cycle>::NestedCurve> {
     let (mut t, native_sampled, sampled) = setup.transcript();
     setup.run_native(&mut t, &native_sampled, sampled.y);
     let openings = setup.nested_openings(&mut t, &sampled, native_sampled.y);
-    let batched = batch::verify::<_, ReferenceBackend, _>(
+    let batched = batch::verifier::verify::<_, ReferenceBackend, _>(
         &openings.commitments,
         &openings.claims,
         &messages.batch,

@@ -50,6 +50,7 @@ extern crate std;
 
 mod backend;
 mod compress;
+#[cfg(feature = "unstable-aggregator")]
 mod decompress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
@@ -439,9 +440,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Like [`finalize`](Self::finalize), with the profile's prover
     /// context: what its prover holds across proofs beyond the proof under
     /// construction (see [`Profile::Context`]).
-    /// An [`Aggregator`](profile::Aggregator) application takes a
-    /// [`Decompression`](profile::Decompression) of the wallet application
-    /// it aggregates.
+    /// An `Aggregator` application takes a `Decompression` of the wallet
+    /// application it aggregates.
     ///
     /// # Errors
     ///
@@ -506,6 +506,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             bootstrap: self.bootstrap,
             seeded_trivial: OnceCell::new(),
@@ -614,6 +615,7 @@ pub struct Application<
     params: &'params C::Params,
     num_application_steps: usize,
     /// The header type each registered step outputs, by suffix.
+    #[cfg(feature = "unstable-aggregator")]
     output_headers: BTreeMap<header::Suffix, TypeId>,
     /// The profile's prover context: what its prover holds across proofs
     /// (see [`Profile::Context`]).
@@ -638,7 +640,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 {
     /// The profile's prover context, as given to
     /// [`finalize_with`](ApplicationBuilder::finalize_with): for an
-    /// aggregator application, the [`Decompression`](profile::Decompression)
+    /// aggregator application, the `Decompression`
     /// holding the wallet application it aggregates.
     pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
         &self.context
@@ -646,6 +648,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     /// The header type each registered step outputs, by suffix: the headers
     /// the application's statements carry.
+    #[cfg(feature = "unstable-aggregator")]
     pub(crate) fn output_headers(&self) -> &BTreeMap<header::Suffix, TypeId> {
         &self.output_headers
     }

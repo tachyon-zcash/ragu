@@ -113,7 +113,7 @@ fn native_ipa_scalars_match_the_verifier() {
     let at_ipa = || {
         let (mut t, sampled, nested_sampled) = setup.transcript();
         let openings = setup.native_openings(&mut t, &sampled, nested_sampled.y);
-        let claim = batch::verify::<_, ReferenceBackend, _>(
+        let claim = batch::verifier::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             &setup.proof.native.batch,
@@ -162,7 +162,7 @@ fn nested_ipa_scalars_match_the_verifier() {
         let (mut t, native_sampled, sampled) = setup.transcript();
         setup.run_native(&mut t, &native_sampled, sampled.y);
         let openings = setup.nested_openings(&mut t, &sampled, native_sampled.y);
-        let claim = batch::verify::<_, ReferenceBackend, _>(
+        let claim = batch::verifier::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             &setup.proof.nested.batch,

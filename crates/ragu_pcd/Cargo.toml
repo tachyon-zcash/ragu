@@ -47,6 +47,11 @@ test-utils = []
 # crate's own tests. Not part of the stable public API. Its corruptions are
 # judged by the uncompressed verifier, so it needs `test-utils`.
 unstable-fuzzing = ["test-utils"]
+# Exposes the aggregator profile: `profile::Aggregator`, its `Decompression`
+# context and chunk circuit `Counts`, and `Application::decompress`. Not part of
+# the stable public API: the profile is not yet sound against a dishonest
+# prover (see `Aggregator`'s docs).
+unstable-aggregator = []
 
 [build-dependencies]
 # Retain the original hash-to-curve implementation for generator derivation.
@@ -77,9 +82,10 @@ serde_json = "1"
 rand = { workspace = true, features = ["thread_rng"] }
 criterion = { workspace = true }
 ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc", "test-utils"] }
-# Extension tests also need the optional larger Aggregator parameters, and the
-# integration tests and benchmarks check proofs with the uncompressed verifier.
-ragu_pcd = { path = ".", version = "0.0.0", default-features = false, features = ["baked-aggregator", "test-utils"] }
+# Extension tests also need the aggregator profile and its optional larger
+# parameters, and the integration tests and benchmarks check proofs with the
+# uncompressed verifier.
+ragu_pcd = { path = ".", version = "0.0.0", default-features = false, features = ["baked-aggregator", "test-utils", "unstable-aggregator"] }
 gungraun = { workspace = true }
 ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
 proptest = { workspace = true }

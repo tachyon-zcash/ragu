@@ -77,7 +77,10 @@ use super::{
 use crate::{
     RAGU_TAG,
     compress::{
-        instance::{OPENED, native_binding_degrees, nested_binding_degrees},
+        instance::{
+            NativeEval, NativePreamble, NativeQuery, NestedEval, NestedPreamble, NestedQuery,
+            OPENED, degrees,
+        },
         revdot::{
             claims::Kind,
             fold::{Derived, Layout as FoldLayout},
@@ -1713,6 +1716,104 @@ pub(crate) fn native_sizes<
     const HEADER_SIZE: usize,
 >() -> Result<Schedule> {
     native_schedule_with::<C, K, R, HEADER_SIZE>(Foreign::Scalars(3 + AB_TERMS))
+}
+
+/// The coefficient degrees of the native wire bindings' stage wires, in
+/// the order [`Instance::native_bindings`] lists the bindings and their
+/// wires: the preamble's children, the query stage's registry values, the
+/// eval stage's evaluations, and the points stages' coordinates.
+///
+/// [`Instance::native_bindings`]: crate::compress::instance::Instance::native_bindings
+pub(crate) fn native_binding_degrees<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>()
+-> Result<[Vec<usize>; 5]> {
+    Ok([
+        degrees::<_, R, NativePreamble<C, R, HEADER_SIZE>>(|out| {
+            let mut wires = Vec::new();
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.unified.x)?);
+                wires.extend(wires_of(&child.unified.y)?);
+                wires.extend(wires_of(&child.circuit_id)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, NativeQuery<C, R, HEADER_SIZE>>(|out| {
+            let mut wires = wires_of(&out.fixed_registry)?;
+            wires.extend(wires_of(&out.registry_wxy)?);
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
+                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
+                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, NativeEval<C, R, HEADER_SIZE>>(|out| {
+            let e = &out.evaluations;
+            let mut wires = Vec::new();
+            for element in [
+                &e.registry_wx0,
+                &e.registry_wx1,
+                &e.registry_wy,
+                &e.a_poly,
+                &e.b_poly,
+                &e.registry_xy,
+            ] {
+                wires.extend(wires_of(element)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, native::stages::points::AbStage<C::NestedCurve, C::Profile>>(|stage| {
+            let mut wires = wires_of(&stage.a)?;
+            wires.extend(wires_of(&stage.b)?);
+            Ok(wires)
+        })?,
+        degrees::<_, R, native::stages::points::FStage<C::NestedCurve, C::Profile>>(|stage| {
+            wires_of(&stage.registry_xy)
+        })?,
+    ])
+}
+
+/// The coefficient degrees of the nested wire bindings' stage wires, in
+/// the order [`Instance::nested_bindings`] lists them: the bridge
+/// preamble's children, the bridge query's registry values and the bridge
+/// eval's evaluations.
+///
+/// [`Instance::nested_bindings`]: crate::compress::instance::Instance::nested_bindings
+pub(crate) fn nested_binding_degrees<C: ProfiledCycle, R: Rank>() -> Result<[Vec<usize>; 3]> {
+    Ok([
+        degrees::<_, R, NestedPreamble<C, R>>(|out| {
+            let mut wires = Vec::new();
+            for child in [&out.left, &out.right] {
+                wires.extend(wires_of(&child.nested.x)?);
+                wires.extend(wires_of(&child.nested.y)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, NestedQuery<C, R>>(|out| {
+            let q = &out.nested;
+            let mut wires = wires_of(&q.fixed_registry)?;
+            wires.extend(wires_of(&q.registry_wxy)?);
+            for child in [&q.left, &q.right] {
+                wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
+                wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
+            }
+            Ok(wires)
+        })?,
+        degrees::<_, R, NestedEval<C, R>>(|out| {
+            let e = &out.nested;
+            let mut wires = Vec::new();
+            for element in [
+                &e.registry_wx0,
+                &e.registry_wx1,
+                &e.registry_wy,
+                &e.a_poly,
+                &e.b_poly,
+                &e.registry_xy,
+            ] {
+                wires.extend(wires_of(element)?);
+            }
+            Ok(wires)
+        })?,
+    ])
 }
 
 fn native_schedule_with<
