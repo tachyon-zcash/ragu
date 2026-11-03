@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     Pcd, Proof, RAGU_TAG,
-    decompress::stages::run_bases,
+    compress::runs::run_bases,
     header::{Header, Suffix},
     internal::{ky, native, nested},
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},

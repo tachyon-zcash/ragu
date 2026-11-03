@@ -19,9 +19,10 @@ use udon::curve::Affine as _;
 
 use super::{
     DigitsStage, Layout, LiftsStage, RunIndex, Runs, TrailingStage, digits_degrees, lifts_degrees,
-    nested_front, num_runs, run_bases, run_degrees, trailing_source,
+    nested_front, num_runs, trailing_source,
 };
 use crate::{
+    compress::runs::{run_bases, run_degrees, runs},
     decompress::{
         side::{Native, Nested},
         support::HEADER_SIZE,
@@ -54,14 +55,15 @@ macro_rules! typed {
 #[test]
 fn run_stages_land_where_the_layout_says() {
     let layout = Layout::nested::<Fq, Standard, K>();
-    let degrees = run_degrees::<K, R>(&layout);
+    let degrees = run_degrees::<Standard, K, R>();
     assert_eq!(degrees.len(), num_runs::<K>());
     for (index, expected) in degrees.iter().enumerate() {
         let typed = <K as Runs>::Last::wire_degrees::<Pasta, K, R>(index).unwrap();
         assert_eq!(&typed, expected, "run {index}");
         assert_eq!(
-            expected.len(),
-            nested_front::<K>(&layout)[index].shape().values()
+            nested_front::<K>(&layout)[index].shape(),
+            runs::<K>()[index].shape::<Standard>(),
+            "run {index}'s shape"
         );
     }
     let trailing = typed!(Fq, TrailingStage<Pasta, K, R>);
@@ -115,7 +117,7 @@ fn standard_parameters_reach_the_runs_generators() {
     let aggregator = run_bases::<Pasta, K>(crate::pasta::baked_aggregator()).unwrap();
     assert_eq!(standard, aggregator);
     let table = Pasta::nested_generators(crate::pasta::baked_aggregator()).g();
-    for (bases, degrees) in standard.iter().zip(run_degrees::<K, R>(&layout)) {
+    for (bases, degrees) in standard.iter().zip(run_degrees::<Standard, K, R>()) {
         for (base, degree) in bases.iter().zip(degrees) {
             assert!(
                 degree >= Pasta::nested_generators(crate::pasta::baked()).g().len(),
