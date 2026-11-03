@@ -150,7 +150,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &mut self,
         index: usize,
     ) -> Option<&mut C::HostCurve> {
-        self.online_commitments.0.get_mut(index)
+        self.online_commitments
+            .get_mut(index)
+            .map(|commitment| &mut commitment.0)
     }
 
     /// The step's `slot`-th online opening, mutably, or `None` past the

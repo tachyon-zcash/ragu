@@ -15,7 +15,7 @@ use ragu_core::{
     pasta::{Fp, Pasta},
 };
 use ragu_pcd::{
-    Application, ApplicationBuilder, Pcd,
+    Application, ApplicationBuilder, Pcd, Proof,
     header::{HEADER_POLYNOMIALS, Header},
     step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
@@ -51,13 +51,23 @@ fn roots(from: u64) -> Vec<Fp> {
 
 /// `pcd` verifies under both verifiers and carries `expected`'s
 /// accumulator polynomial in its first slot, or the constant one in both
-/// slots when it carries no accumulator.
+/// slots when it carries no accumulator. A proof that carries an
+/// accumulator also survives the wire: it decodes to the same polynomials
+/// and still verifies.
 fn check<H: Header<Fp>>(app: &App, pcd: &Pcd<C, R, H>, expected: Option<&[Fp]>, seed: u64) {
     let mut rng = StdRng::seed_from_u64(seed);
     assert!(app.verify_differential(pcd, &mut rng).unwrap());
     let one = vec![Fp::ONE];
     match expected {
-        Some(expected) => assert_eq!(pcd.polynomials(), [expected.to_vec(), one]),
+        Some(expected) => {
+            assert_eq!(pcd.polynomials(), [expected.to_vec(), one]);
+            let bytes = pcd.proof().to_bytes().unwrap();
+            let decoded = Proof::<C, R>::from_bytes(&bytes)
+                .unwrap()
+                .carry::<H>(pcd.data().clone());
+            assert_eq!(decoded.polynomials(), pcd.polynomials());
+            assert!(app.verify_differential(&decoded, &mut rng).unwrap());
+        }
         None => assert_eq!(pcd.polynomials(), [one.clone(), one]),
     }
 }

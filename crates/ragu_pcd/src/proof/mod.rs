@@ -84,7 +84,7 @@ use ragu_primitives::{
     vec::{FixedVec, Len},
 };
 use udon::{
-    curve::{EndomorphismAffine, Projective},
+    curve::{Affine, Projective},
     field::Field,
 };
 
@@ -353,7 +353,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_points_ab_commitment: Cached<C::HostCurve>,
     native_points_f_commitment: Cached<C::HostCurve>,
     native_points_walk_commitment: Cached<C::HostCurve>,
-    online_commitments: Cached<[C::HostCurve; HEADER_POLYNOMIALS]>,
+    online_commitments: [Cached<C::HostCurve>; HEADER_POLYNOMIALS],
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -480,7 +480,9 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for Proof<C, R> {
 /// Whether `commitments` are the commitments of `polys` under `generators`,
 /// as one batch: the Horner combination of the polynomials under `r` must
 /// commit to the same combination of the points, which a mismatch in any
-/// pair breaks unless `r` is a root of the difference.
+/// pair breaks unless `r` is a root of the difference. Shared by the
+/// uncompressed verifier and the compressor, which both rederive a proof's
+/// cached commitments.
 pub(crate) fn commitments_match<B, F, P, R, G>(
     polys: &[&sparse::Polynomial<F, R>],
     commitments: &[P],
@@ -490,7 +492,7 @@ pub(crate) fn commitments_match<B, F, P, R, G>(
 where
     B: Backend,
     F: Field,
-    P: EndomorphismAffine<Scalar = F>,
+    P: Affine<Scalar = F>,
     R: Rank,
     G: FixedGenerators<P>,
 {
@@ -608,8 +610,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
-                self.online_commitments.0[0],
-                self.online_commitments.0[1],
+                self.online_commitments[0].0,
+                self.online_commitments[1].0,
                 self.native_rx_commitment(RxIndex::ApplicationStage),
             ],
             coverage: Default::default(),
@@ -627,7 +629,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// The commitments of [`online_polys`](Self::online_polys), which this
     /// proof's nested instance exports.
     pub(crate) fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
-        self.online_commitments.0
+        self.online_commitments
+            .clone()
+            .map(|commitment| commitment.0)
     }
 
     /// The step's online openings, one per slot, which its `compute_v`

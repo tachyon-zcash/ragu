@@ -1319,7 +1319,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_commitment: cached!(native_points_ab_commitment),
             native_points_f_commitment: cached!(native_points_f_commitment),
             native_points_walk_commitment: cached!(native_points_walk_commitment),
-            online_commitments: cached!(online_commitments),
+            online_commitments: self
+                .online_commitments
+                .take()
+                .expect("online_commitments not set")
+                .map(Cached),
         })
     }
 }
