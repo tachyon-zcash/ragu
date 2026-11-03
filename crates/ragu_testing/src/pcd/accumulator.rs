@@ -8,6 +8,11 @@
 //! ([`MergeAccumulators`]), each proving the relation at $\zeta$; and
 //! opening an input polynomial at a witnessed point to prove membership
 //! ([`ProveMember`]) or non-membership ([`ProveNonMember`]).
+//!
+//! The roots a relation at $\zeta$ reads are staged, so they are fixed
+//! before $\zeta$ is drawn: a root the circuit witnessed afterwards would be
+//! the prover's choice given $\zeta$, and $O(\zeta) = L(\zeta)(\zeta - t)$
+//! holds for $t = \zeta - O(\zeta) / L(\zeta)$ whatever the polynomials.
 
 use ragu_core::{
     Cycle, Result,
@@ -74,13 +79,14 @@ pub fn multiply<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     out
 }
 
-/// Seeds an accumulator over a witnessed set: the output polynomial is
+/// Seeds an accumulator over a staged set: the output polynomial is
 /// $\prod_i (X - r_i)$ and the circuit checks its value at $\zeta$ against
-/// the product over the witnessed roots.
+/// the product over the staged roots.
 pub struct SeedAccumulator;
 
 impl<C: Cycle> Step<C> for SeedAccumulator {
     const INDEX: Index = Index::new(0);
+    const NUM_STAGED: usize = SEED_SIZE;
     type Witness<'source> = Vec<C::CircuitField>;
     type Aux<'source> = ();
     type Left = ();
@@ -96,11 +102,20 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
         Ok([vanishing(roots), vec![C::CircuitField::ONE]])
     }
 
+    fn staged<'source>(
+        &self,
+        roots: &Self::Witness<'source>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+    ) -> Result<Vec<C::CircuitField>> {
+        Ok(roots.clone())
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        roots: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
     ) -> Result<(
@@ -115,13 +130,11 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
     where
         Self: 'dr,
     {
-        let allocator = &mut Standard::new();
         // The circuit is fixed by the set's size: this fixture seeds sets of
-        // `SEED_SIZE` elements.
+        // `SEED_SIZE` elements, staged before zeta was drawn.
         let zeta = oracles.zeta().clone();
         let mut product = Element::one();
-        for i in 0..SEED_SIZE {
-            let root = Element::alloc(dr, allocator, roots.as_ref().map(|r| r[i]))?;
+        for root in oracles.staged().to_vec() {
             let factor = zeta.sub(dr, &root);
             product = product.mul(dr, &factor)?;
         }
@@ -144,13 +157,14 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
 /// The number of roots [`SeedAccumulator`] takes.
 pub const SEED_SIZE: usize = 3;
 
-/// Adds one witnessed element to an accumulator: the output polynomial is
+/// Adds one staged element to an accumulator: the output polynomial is
 /// the input's times $(X - t)$, and the circuit checks
 /// $O(\zeta) = L(\zeta)(\zeta - t)$.
 pub struct ExtendAccumulator;
 
 impl<C: Cycle> Step<C> for ExtendAccumulator {
     const INDEX: Index = Index::new(1);
+    const NUM_STAGED: usize = 1;
     type Witness<'source> = C::CircuitField;
     type Aux<'source> = ();
     type Left = Accumulator;
@@ -169,11 +183,20 @@ impl<C: Cycle> Step<C> for ExtendAccumulator {
         ])
     }
 
+    fn staged<'source>(
+        &self,
+        root: &Self::Witness<'source>,
+        _: HeaderInput<'_, C::CircuitField, Accumulator>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+    ) -> Result<Vec<C::CircuitField>> {
+        Ok(vec![*root])
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
         oracles: &mut Oracles<'_, 'dr, D>,
-        root: DriverValue<D, Self::Witness<'source>>,
+        _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, C::CircuitField>,
         right: DriverValue<D, ()>,
     ) -> Result<(
@@ -191,7 +214,7 @@ impl<C: Cycle> Step<C> for ExtendAccumulator {
         let allocator = &mut Standard::new();
         let left: Encoded<'dr, D, Accumulator, HEADER_SIZE> = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
-        let root = Element::alloc(dr, allocator, root)?;
+        let root = oracles.staged()[0].clone();
 
         let zeta = oracles.zeta().clone();
         let input = oracles.query_at_zeta(dr, Slot::left(0))?;
