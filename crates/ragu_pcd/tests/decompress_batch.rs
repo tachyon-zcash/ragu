@@ -115,7 +115,7 @@ fn native_batch_matches_the_verifier() {
     };
     let challenges = |batch: &Batch<_>| replay_batch(batch, &mut Lifted(at_batch().0.host()));
     let expected = |openings: &Openings<_>, batch: &Batch<_>| {
-        batch::verify::<_, ReferenceBackend, _>(
+        batch::verifier::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             batch,
@@ -162,7 +162,7 @@ fn nested_batch_matches_the_verifier() {
     };
     let challenges = |batch: &Batch<_>| replay_batch(batch, &mut Lifted(at_batch().0.nested()));
     let expected = |openings: &Openings<_>, batch: &Batch<_>| {
-        batch::verify::<_, ReferenceBackend, _>(
+        batch::verifier::verify::<_, ReferenceBackend, _>(
             &openings.commitments,
             &openings.claims,
             batch,

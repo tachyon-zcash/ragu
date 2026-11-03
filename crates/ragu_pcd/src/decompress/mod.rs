@@ -212,6 +212,7 @@ use alloc::vec::Vec;
 use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::Element;
 
+pub(crate) mod aggregator;
 pub(crate) mod batch;
 pub(crate) mod chunk;
 pub(crate) mod circuit;

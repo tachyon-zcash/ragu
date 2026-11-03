@@ -129,8 +129,8 @@ fn check_bindings<F, Id, R>(
 }
 
 /// The degrees the decompression lays the wire bindings out by are the
-/// ones the bindings pin: [`super::native_binding_degrees`] and
-/// [`super::nested_binding_degrees`] list each binding's wires as
+/// ones the bindings pin: [`native_binding_degrees`](crate::decompress::program::native_binding_degrees) and
+/// [`nested_binding_degrees`](crate::decompress::program::nested_binding_degrees) list each binding's wires as
 /// `native_bindings` and `nested_bindings` do, in their order.
 #[test]
 fn binding_degrees_are_the_bindings() {
@@ -148,7 +148,7 @@ fn binding_degrees_are_the_bindings() {
         )
         .unwrap();
     let degrees =
-        super::native_binding_degrees::<Pasta, TestR, HEADER_SIZE>().unwrap();
+        crate::decompress::program::native_binding_degrees::<Pasta, TestR, HEADER_SIZE>().unwrap();
     assert_eq!(native.len(), degrees.len());
     for (index, (binding, degrees)) in native.iter().zip(degrees).enumerate() {
         assert_eq!(pinned(&binding.wires), degrees, "native binding {index}");
@@ -157,7 +157,7 @@ fn binding_degrees_are_the_bindings() {
     let nested = instance
         .nested_bindings::<TestR, ReferenceBackend>(&challenges, &app.nested_registry, Fq::ONE)
         .unwrap();
-    let degrees = super::nested_binding_degrees::<Pasta, TestR>().unwrap();
+    let degrees = crate::decompress::program::nested_binding_degrees::<Pasta, TestR>().unwrap();
     assert_eq!(nested.len(), degrees.len());
     for (index, (binding, degrees)) in nested.iter().zip(degrees).enumerate() {
         assert_eq!(pinned(&binding.wires), degrees, "nested binding {index}");

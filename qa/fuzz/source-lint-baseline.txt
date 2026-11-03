@@ -29,10 +29,10 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is st
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
 RAGU005|crates/ragu_pcd/src/decompress/derive.rs|509|A chain either continues a part the schedule cut or starts from the fixed offset; which is a constant of the call site.
 RAGU005|crates/ragu_pcd/src/decompress/ipa.rs|71|The first factor seeds the product; later factors multiply once each.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|248|The first square is the base itself; each later one squares the previous.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|276|The exponent is a constant of the rank; its set bits fix which squares multiply.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|277|The exponent is a constant of the rank; its first set bit seeds the product.
-RAGU005|crates/ragu_pcd/src/decompress/mod.rs|295|The first two powers are one and the base; later ones multiply once each.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|249|The first square is the base itself; each later one squares the previous.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|277|The exponent is a constant of the rank; its set bits fix which squares multiply.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|278|The exponent is a constant of the rank; its first set bit seeds the product.
+RAGU005|crates/ragu_pcd/src/decompress/mod.rs|296|The first two powers are one and the base; later ones multiply once each.
 RAGU005|crates/ragu_pcd/src/decompress/revdot.rs|304|A claim's kind is fixed by the protocol's claim list, never by the witness.
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|172|A point source is a constant of the schedule, a pure function of the proof system's constants.
 RAGU005|crates/ragu_pcd/src/decompress/run.rs|183|An element source is a constant of the schedule, a pure function of the proof system's constants.

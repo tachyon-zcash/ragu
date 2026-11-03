@@ -20,10 +20,10 @@ use udon::{curve::Affine, field::Field};
 use super::revdot::OpeningClaim;
 
 mod prover;
-mod verifier;
+pub(crate) mod verifier;
 
 pub(crate) use prover::batch;
-pub(crate) use verifier::{verify, verify_openings};
+pub(crate) use verifier::verify_openings;
 
 /// The prover's messages of the batch on one curve.
 #[derive(Clone, Debug)]

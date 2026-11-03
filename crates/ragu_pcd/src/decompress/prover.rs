@@ -139,7 +139,7 @@ where
     /// # Errors
     ///
     /// Fails if the wallet application's verifier would reject `pcd`.
-    pub fn prepare<H: Header<C::CircuitField>>(
+    pub(crate) fn prepare<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
     ) -> Result<Decompressed<C>> {

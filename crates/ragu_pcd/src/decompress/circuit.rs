@@ -458,7 +458,7 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
     } = inputs;
     let raw_squeezed = Squeezed::read(raw_sampled, messages, raw)?;
 
-    let claim = crate::compress::batch::verify::<_, B, _>(
+    let claim = crate::compress::batch::verifier::verify::<_, B, _>(
         &openings.commitments,
         &openings.claims,
         &messages.batch,
