@@ -247,9 +247,9 @@ where
 }
 
 #[cfg(test)]
-#[path = "../../tests/compress.rs"]
+#[path = "../../tests/compression/compress.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "../../tests/compress_regressions.rs"]
+#[path = "../../tests/compression/regressions.rs"]
 mod regression_tests;

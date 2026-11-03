@@ -1707,5 +1707,5 @@ const _: () = {
 };
 
 #[cfg(test)]
-#[path = "../../tests/decompress_stages.rs"]
+#[path = "../../tests/decompression/stages.rs"]
 mod tests;

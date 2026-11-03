@@ -64,5 +64,5 @@ fn check_claims<F: Field>(claims: &[OpeningClaim<F>]) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/compress_batch.rs"]
+#[path = "../../../tests/compression/batch.rs"]
 mod tests;

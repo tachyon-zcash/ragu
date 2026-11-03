@@ -265,7 +265,7 @@ pub(crate) fn verify_nested<C: ProfiledCycle, R: Rank, B: Backend>(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/compress_revdot_verifier.rs"]
+#[path = "../../../tests/compression/revdot_verifier.rs"]
 mod tests;
 
 #[cfg(test)]

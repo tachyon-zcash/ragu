@@ -7,10 +7,11 @@
 //! children of its own step and compresses the result, which verifies as
 //! any compressed proof does. Every proof system call is timed, on the
 //! single-threaded reference backend unless `--features multicore`
-//! selects the parallel one.
+//! selects the parallel one. The test is ignored by default, since it
+//! proves at the aggregator rank:
 //!
 //! ```text
-//! cargo run --release -p ragu_pcd --example roundtrip
+//! cargo test --release -p ragu_pcd --test roundtrip -- --ignored --nocapture
 //! ```
 
 use std::time::Instant;
@@ -42,7 +43,9 @@ fn timed<T>(label: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
     Ok(value)
 }
 
-fn main() -> Result<()> {
+#[test]
+#[ignore = "proves at the aggregator rank; run with --release -- --ignored --nocapture"]
+fn roundtrip() -> Result<()> {
     // The aggregator rank's tables serve the wallet too: their prefix is
     // the Standard tables.
     let pasta = ragu_pcd::pasta::baked_aggregator();

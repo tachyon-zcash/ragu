@@ -457,5 +457,5 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_chunk.rs"]
+#[path = "../../tests/decompression/chunk.rs"]
 mod tests;

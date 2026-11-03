@@ -35,7 +35,7 @@
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its
-//! witnessed header would bind to nothing. `tests/decompress_statement.rs`
+//! witnessed header would bind to nothing. `tests/decompression/statement.rs`
 //! proves the step under a stand-in statement circuit and checks the
 //! binding both ways.
 //!

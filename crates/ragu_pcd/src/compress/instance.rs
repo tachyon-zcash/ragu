@@ -770,5 +770,5 @@ impl<C: ProfiledCycle> Instance<C> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/compress_instance.rs"]
+#[path = "../../tests/compression/instance.rs"]
 mod tests;
