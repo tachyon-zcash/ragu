@@ -6,7 +6,7 @@ use std::hint::black_box;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_acceleration::AcceleratedBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -29,7 +29,7 @@ fn register(
     ),
 ) {
     black_box(
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        ApplicationBuilder::<Pasta, WalletRank, 4>::new()
             .register(leaf)
             .unwrap()
             .register(hash)
@@ -41,7 +41,7 @@ fn register(
 #[bench::finalize()]
 fn finalize(
     (app, pasta): (
-        ApplicationBuilder<'static, Pasta, ProductionRank, 4>,
+        ApplicationBuilder<'static, Pasta, WalletRank, 4>,
         &'static <Pasta as Cycle>::Params,
     ),
 ) {
@@ -57,7 +57,7 @@ library_benchmark_group!(
 #[bench::seed()]
 fn seed(
     (app, poseidon_params, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4>,
+        Application<'static, Pasta, WalletRank, 4>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -74,9 +74,9 @@ fn seed(
 #[bench::fuse()]
 fn fuse(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Application<'static, Pasta, WalletRank, 4>,
+        Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
+        Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -102,9 +102,9 @@ library_benchmark_group!(
 #[bench::fuse_accelerated()]
 fn fuse_accelerated(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Application<'static, Pasta, WalletRank, 4, AcceleratedBackend>,
+        Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
+        Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -131,8 +131,8 @@ library_benchmark_group!(
 #[bench::verify_leaf()]
 fn verify_leaf(
     (app, leaf, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Application<'static, Pasta, WalletRank, 4>,
+        Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
         StdRng,
     ),
 ) {
@@ -143,8 +143,8 @@ fn verify_leaf(
 #[bench::verify_node()]
 fn verify_node(
     (app, node, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Application<'static, Pasta, WalletRank, 4>,
+        Pcd<Pasta, WalletRank, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
@@ -155,8 +155,8 @@ fn verify_node(
 #[bench::rerandomize()]
 fn rerandomize(
     (app, node, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Application<'static, Pasta, WalletRank, 4>,
+        Pcd<Pasta, WalletRank, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
@@ -175,8 +175,8 @@ library_benchmark_group!(
 #[bench::compress_node()]
 fn compress_node(
     (app, node, mut rng): (
-        Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Application<'static, Pasta, WalletRank, 4>,
+        Pcd<Pasta, WalletRank, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
@@ -187,7 +187,7 @@ fn compress_node(
 #[bench::verify_compressed_leaf()]
 fn verify_compressed_leaf(
     (app, compressed): (
-        Application<'static, Pasta, ProductionRank, 4>,
+        Application<'static, Pasta, WalletRank, 4>,
         CompressedPcd<Pasta, nontrivial::LeafNode>,
     ),
 ) {
@@ -198,7 +198,7 @@ fn verify_compressed_leaf(
 #[bench::verify_compressed_node()]
 fn verify_compressed_node(
     (app, compressed): (
-        Application<'static, Pasta, ProductionRank, 4>,
+        Application<'static, Pasta, WalletRank, 4>,
         CompressedPcd<Pasta, nontrivial::InternalNode>,
     ),
 ) {

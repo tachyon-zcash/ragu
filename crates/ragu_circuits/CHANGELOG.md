@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `Rank` support for `R<14>` and `R<15>`, and the `AggregatorRank`
-  alias for `R<15>`, for extension circuits that exceed the production rank's
-  capacity. `ProductionRank` remains `R<13>`.
+  alias for `R<15>`, for extension circuits that exceed the wallet rank's
+  capacity. `WalletRank` remains `R<13>`.
 - Added iteration over the stored coefficients of sparse polynomials.
 - Added `Stage::gate_ranges`, the gates of a stage and of every stage before
   it, for a registry to check a circuit's declared stages against.
@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renamed `ProductionRank` to `WalletRank`, the rank wallets prove at,
+  beside `AggregatorRank`.
 - Temporarily replaced evaluation-based registry tags with caller-supplied tags.
 
 - Renamed `registry::Key` to `registry::Tag` and `Registry::digest()` to

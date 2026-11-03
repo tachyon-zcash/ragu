@@ -81,7 +81,7 @@ impl<P: Profile> Len for NumPoints<P> {
 
 /// The endoscalings a nested step performs in the standard profile: what
 /// fits a step beside the stages it reserves, which hold every point the
-/// walk consumes, at the production rank. A profile sets its own
+/// walk consumes, at the wallet rank. A profile sets its own
 /// ([`Profile::NESTED_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 

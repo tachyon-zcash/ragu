@@ -78,7 +78,7 @@ use std::{fs, path::PathBuf};
 
 use blake2b_simd::{Params, State};
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank, Rank, sparse},
+    polynomials::{AggregatorRank, Rank, WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -144,7 +144,7 @@ fn steps<C: FixtureCycle>(
 }
 
 impl FixtureCycle for Pasta {
-    type Rank = ProductionRank;
+    type Rank = WalletRank;
     const DIR: &'static str = "standard";
 
     fn app() -> App<Self> {
@@ -1545,7 +1545,7 @@ mod standard {
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "wallet-rank proving is impractically slow without --release"
     )]
     #[test]
     fn prover() {
@@ -1554,7 +1554,7 @@ mod standard {
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "wallet-rank proving is impractically slow without --release"
     )]
     #[test]
     fn verifier() {

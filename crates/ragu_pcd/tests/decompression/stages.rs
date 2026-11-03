@@ -8,7 +8,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank},
+    polynomials::{AggregatorRank, WalletRank},
     staging::{stage_wire_indices, wire_degree, wires_of},
 };
 use ragu_core::{
@@ -31,7 +31,7 @@ use crate::{
     profile::Standard,
 };
 
-type K = ProductionRank;
+type K = WalletRank;
 type R = AggregatorRank;
 
 /// The generators a values stage's wires land on, read off `$stage` over

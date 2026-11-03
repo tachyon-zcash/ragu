@@ -1,4 +1,4 @@
-//! Compression and compressed verification at the production rank, with one
+//! Compression and compressed verification at the wallet rank, with one
 //! or all available workers.
 //! Compares reference and accelerated MSM and independent-work scheduling.
 //!
@@ -15,7 +15,7 @@ use std::{
 use criterion::Criterion;
 use ragu_acceleration::AcceleratedBackend;
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -32,7 +32,7 @@ fn bench_compression<B: SelectableBackend>(
 ) {
     let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .with_backend::<B>()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()

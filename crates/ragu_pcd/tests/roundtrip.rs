@@ -1,6 +1,6 @@
 //! A wallet proof's round trip through an aggregator.
 //!
-//! A wallet application at the production rank proves two leaves and
+//! A wallet application at the wallet rank proves two leaves and
 //! compresses each, as a wallet does for the wire. An aggregator
 //! application at the aggregator rank decompresses each compressed proof
 //! into a proof of its own over the same data, fuses the two as the
@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
+use ragu_circuits::polynomials::{AggregatorRank, Rank, WalletRank};
 use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Pasta},
@@ -52,12 +52,9 @@ fn roundtrip() -> Result<()> {
     let poseidon_params = Pasta::circuit_poseidon(pasta);
     let mut rng = StdRng::seed_from_u64(0);
 
-    println!(
-        "wallet: the standard profile at rank {}",
-        ProductionRank::RANK
-    );
+    println!("wallet: the standard profile at rank {}", WalletRank::RANK);
     let wallet = timed("finalize", || {
-        ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+        ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
             .register(WitnessLeaf { poseidon_params })?
             .register(Hash2 { poseidon_params })?
             .finalize(pasta)

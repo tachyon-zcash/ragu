@@ -1,5 +1,5 @@
 //! Two profiles in one binary: a standard-profile application over `Pasta`
-//! at the production rank and an aggregator-profile application over the
+//! at the wallet rank and an aggregator-profile application over the
 //! same curves at the aggregator rank, each proving, verifying and
 //! compressing its own proofs, the aggregator's with the decompression
 //! circuits over the wallet application's canonical compressed proof. A
@@ -7,7 +7,7 @@
 //! decompression step, as a child its own steps fuse. The cycles are
 //! distinct types, so neither application accepts the other's proofs.
 
-use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, Rank};
+use ragu_circuits::polynomials::{AggregatorRank, Rank, WalletRank};
 use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Pasta, PastaParams},
@@ -22,11 +22,11 @@ use rand::{SeedableRng, rngs::StdRng};
 
 const HEADER_SIZE: usize = 4;
 
-/// The wallet application: the standard profile at the production rank.
-fn wallet() -> Result<Application<'static, Pasta, ProductionRank, HEADER_SIZE>> {
+/// The wallet application: the standard profile at the wallet rank.
+fn wallet() -> Result<Application<'static, Pasta, WalletRank, HEADER_SIZE>> {
     let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+    ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
         .register(WitnessLeaf { poseidon_params })?
         .register(Hash2 { poseidon_params })?
         .finalize(pasta)
@@ -92,7 +92,7 @@ fn both_profiles_prove_in_one_binary() -> Result<()> {
 fn a_wallet_compresses_over_the_standard_tables() -> Result<()> {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let wallet = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
         .register(WitnessLeaf { poseidon_params })?
         .register(Hash2 { poseidon_params })?
         .finalize(pasta)?;

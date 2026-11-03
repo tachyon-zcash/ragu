@@ -29,7 +29,7 @@ Six fixtures from a fixed tree of fuses over the harness's own steps
 (`Seed`, `Merge`, `UnitLeft`, and `UnitRight`, which is registered but never
 fused), with header size 4, on the aggregator-rank Pasta parameters, which
 the aggregator's decompression needs and whose prefix is the Standard tables; the wallet at
-production rank and the aggregator at the aggregator rank:
+wallet rank and the aggregator at the aggregator rank:
 
 | Scenario      | Header  | Fuses                                   |
 | ------------- | ------- | --------------------------------------- |
@@ -71,7 +71,7 @@ Each scenario has four files.
   primary field of the uncompressed proof, in declaration order, over the
   field's canonical bytes (every coefficient of a polynomial, zeros included);
   then `rng.fuse.words`, `rng.compress.words` and `proof.bytes`. The
-  uncompressed proof is over ten megabytes at production rank, so this stands
+  uncompressed proof is over ten megabytes at wallet rank, so this stands
   in for committing it. A mismatch names the fields that drifted, and the
   file's diff in a pull request reads as the list of stages a change touched.
 - `<scenario>.fingerprint`: `key = value` lines recording the verifier's run
@@ -120,5 +120,5 @@ sibling inputs come from the harness's SplitMix64 generator, which is not
 cryptographically secure and exists only to make synthetic test data
 reproducible; it must never produce a real proof.
 
-The tests are ignored without `--release`: production-rank proving is
+The tests are ignored without `--release`: wallet-rank proving is
 impractically slow in debug builds.

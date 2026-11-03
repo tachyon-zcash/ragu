@@ -353,7 +353,7 @@ let test_app = ApplicationBuilder::<Pasta, TestRank, 1>::new()
     .finalize(pasta)?;
 
 // Production application, with tags drawn for exactly this set of steps
-let prod_app = ApplicationBuilder::<Pasta, ProductionRank, 8>::new()
+let prod_app = ApplicationBuilder::<Pasta, WalletRank, 8>::new()
     .register(complex_step)?
     .with_registry_tags(prod_tags, &expected_prod_manifest_digest)?
     .finalize(pasta)?;

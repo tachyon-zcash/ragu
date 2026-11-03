@@ -1681,7 +1681,7 @@ impl<N: RunIndex> RunIndex for Succ<N> {
 /// A rank whose proofs' runs the scalar-field side's stage chain covers:
 /// the chain's length is a type, [`Last`](Self::Last), the last run's
 /// index, so the ranks the chunk circuits decompress proofs of are the
-/// ones named here. The production rank's, the wallets'.
+/// ones named here. The wallet rank's, the wallets'.
 pub(crate) trait Runs: Rank {
     /// The last run's index.
     type Last: RunIndex;
@@ -1693,16 +1693,16 @@ macro_rules! run_index {
     (+ $($rest:tt)*) => { Succ<run_index!($($rest)*)> };
 }
 
-impl Runs for ragu_circuits::polynomials::ProductionRank {
+impl Runs for ragu_circuits::polynomials::WalletRank {
     // Twenty-three runs: ten besides the thirteen rounds'.
     type Last = run_index!(+ + + + + + + + + + + + + + + + + + + + + +);
 }
 
 const _: () = {
     assert!(
-        <<ragu_circuits::polynomials::ProductionRank as Runs>::Last as RunIndex>::INDEX + 1
-            == num_runs::<ragu_circuits::polynomials::ProductionRank>(),
-        "the production rank's chain covers its runs"
+        <<ragu_circuits::polynomials::WalletRank as Runs>::Last as RunIndex>::INDEX + 1
+            == num_runs::<ragu_circuits::polynomials::WalletRank>(),
+        "the wallet rank's chain covers its runs"
     );
 };
 

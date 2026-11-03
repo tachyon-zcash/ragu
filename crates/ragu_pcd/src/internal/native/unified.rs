@@ -612,7 +612,7 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Cycle<CircuitField = D::F>>
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::ProductionRank;
+    use ragu_circuits::polynomials::WalletRank;
     use ragu_core::{drivers::emulator::Emulator, maybe::Empty, pasta::Pasta};
 
     use super::*;
@@ -622,7 +622,7 @@ mod tests {
         // Use a wireless emulator with Empty witness input; the emulator never
         // reads witness input.
         let mut emulator = Emulator::counter();
-        let output = Output::<'_, _, Pasta>::alloc_from_proof::<ProductionRank, _>(
+        let output = Output::<'_, _, Pasta>::alloc_from_proof::<WalletRank, _>(
             &mut emulator,
             &mut (),
             Empty,

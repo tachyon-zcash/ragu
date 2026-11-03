@@ -2,7 +2,7 @@
 //! Mounted under `proof` so the test can replace a commitment cache without
 //! exposing a mutation API or changing the committed polynomial.
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle, FixedGenerators,
     pasta::{Fp, Fq, Pasta},
@@ -14,7 +14,7 @@ use crate::{ApplicationBuilder, ipa::IpaCycle};
 
 #[test]
 fn rejects_recompressed_blinded_trace_commitments() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .finalize(crate::pasta::baked_aggregator())
         .unwrap();
     let honest = app.bootstrap_pcd();

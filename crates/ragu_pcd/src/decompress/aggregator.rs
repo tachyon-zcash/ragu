@@ -6,7 +6,7 @@ use alloc::collections::BTreeMap;
 use core::any::TypeId;
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank, Rank},
+    polynomials::{AggregatorRank, Rank, WalletRank},
     registry::Registry,
 };
 use ragu_core::{Error, Result};
@@ -29,14 +29,14 @@ use crate::{
 
 /// The aggregator profile: the fuse plus the circuits that verify a
 /// [`Standard`] compressed proof in circuit, for wallet proofs over
-/// [`Pasta`](ragu_core::pasta::Pasta) at the production rank with `HEADER_SIZE`-element headers.
+/// [`Pasta`](ragu_core::pasta::Pasta) at the wallet rank with `HEADER_SIZE`-element headers.
 ///
 /// The circuits are the decompression module's chunk circuits, laid out as
 /// its extension, which an aggregator proves at [`AggregatorRank`]: each
 /// polynomial a profile adds is one more commitment the fuse's hashing
 /// circuits absorb, one more evaluation its compute-v circuit takes, two
 /// more claims its collapse circuits fold and a longer walk whose every
-/// step loads the longer points stage, and at the production rank two
+/// step loads the longer points stage, and at the wallet rank two
 /// polynomials per side already push a nested endoscaling step past the
 /// budget. At four times the budget the fuse carries the extension, and
 /// the hooks refuse any other rank.
@@ -124,7 +124,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// The endoscalings a step of either walk performs: what fits a step at
     /// the aggregator rank beside the stages it reserves, which cuts the
     /// walks and with them the proof's polynomials by more than the ratio
-    /// to the production rank's four, since the sides size each other.
+    /// to the wallet rank's four, since the sides size each other.
     pub const ENDOSCALINGS_PER_STEP: usize = 14;
 
     /// Checks that the hooks register at the aggregator rank for the
@@ -155,7 +155,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NATIVE_EXTENSION: usize =
         Self::native_circuits(HEADER_SIZE).circuits + 2 + extension::NATIVE_STAGES;
     const NESTED_EXTENSION: usize =
-        Self::NESTED_CIRCUITS.circuits + 1 + extension::nested_stages(num_runs::<ProductionRank>());
+        Self::NESTED_CIRCUITS.circuits + 1 + extension::nested_stages(num_runs::<WalletRank>());
 
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
@@ -221,14 +221,11 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     }
 
     fn native_extension() -> Extension {
-        extension::native_layout(
-            Self::native_circuits(HEADER_SIZE),
-            num_runs::<ProductionRank>(),
-        )
+        extension::native_layout(Self::native_circuits(HEADER_SIZE), num_runs::<WalletRank>())
     }
 
     fn nested_extension() -> Extension {
-        extension::nested_layout(Self::NESTED_CIRCUITS, num_runs::<ProductionRank>())
+        extension::nested_layout(Self::NESTED_CIRCUITS, num_runs::<WalletRank>())
     }
 
     fn register_native_circuit<'params, Base, R: Rank, const H: usize>(
@@ -240,7 +237,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(H)?;
-        extension::register_native_circuit::<Base, ProductionRank, R, H>(
+        extension::register_native_circuit::<Base, WalletRank, R, H>(
             circuit,
             Self::native_circuits(HEADER_SIZE),
             slot,
@@ -257,7 +254,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(H)?;
-        extension::register_native_bonding::<Base, ProductionRank, R, H>(bonding, slot)
+        extension::register_native_bonding::<Base, WalletRank, R, H>(bonding, slot)
     }
 
     fn register_nested_circuit<'params, Base, R: Rank>(
@@ -269,7 +266,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(HEADER_SIZE)?;
-        extension::register_nested_circuit::<Base, ProductionRank, R, HEADER_SIZE>(
+        extension::register_nested_circuit::<Base, WalletRank, R, HEADER_SIZE>(
             circuit,
             Self::NESTED_CIRCUITS,
             slot,
@@ -286,7 +283,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         Self::accepts::<R>(HEADER_SIZE)?;
-        extension::register_nested_bonding::<Base, ProductionRank, R, HEADER_SIZE>(bonding, slot)
+        extension::register_nested_bonding::<Base, WalletRank, R, HEADER_SIZE>(bonding, slot)
     }
 
     fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(

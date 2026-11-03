@@ -17,7 +17,7 @@ pub trait Rank:
     private::Sealed + Clone + Send + Sync + 'static + PartialEq + Eq + core::fmt::Debug + Default
 {
     /// The rank can range from $2$ to $28$ (to avoid overflows on 32-bit
-    /// architectures), but only [`ProductionRank`], [`AggregatorRank`],
+    /// architectures), but only [`WalletRank`], [`AggregatorRank`],
     /// [`TestRank`] and `R<14>` are currently implemented.
     const RANK: u32;
 
@@ -114,19 +114,20 @@ pub trait Rank:
 }
 
 /// `R<N>` implements [`Rank`] for supported values of $N$. The type aliases
-/// [`ProductionRank`] ($N = 13$) and [`TestRank`] ($N = 7$) are provided for
-/// convenience; `R<14>` serves the tests of what the production rank cannot
+/// [`WalletRank`] ($N = 13$) and [`TestRank`] ($N = 7$) are provided for
+/// convenience; `R<14>` serves the tests of what the wallet rank cannot
 /// hold. Additional implementations can be added to `impl_rank_for_R!` as needed.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct R<const RANK: u32>;
 
-/// The standard production rank for Ragu circuits.
+/// The wallet rank: the standard rank for Ragu circuits, at which wallets
+/// prove.
 ///
 /// Provides $2^{13} = 8192$ polynomial coefficients and supports up to
 /// $2^{11} = 2048$ gates.
-pub type ProductionRank = R<13>;
+pub type WalletRank = R<13>;
 
-/// The rank for aggregators' proofs: four times the production rank's
+/// The rank for aggregators' proofs: four times the wallet rank's
 /// capacity, $2^{15}$ polynomial coefficients and up to $2^{13} = 8192$
 /// gates, so that the fuse's circuits have the room to verify children that
 /// carry the decompression circuits' polynomials.

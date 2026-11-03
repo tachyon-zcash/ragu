@@ -1,4 +1,4 @@
-//! Byte round trips of production-rank proofs through the versioned envelope.
+//! Byte round trips of wallet-rank proofs through the versioned envelope.
 
 use ragu_pcd::wire::Error;
 use ragu_testing::pcd::nontrivial::LeafNode;

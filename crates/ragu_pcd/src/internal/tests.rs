@@ -10,7 +10,7 @@ use ragu_core::pasta::{Fp, Fq, Pasta};
 
 use super::*;
 use crate::*;
-pub type R = ragu_circuits::polynomials::ProductionRank;
+pub type R = ragu_circuits::polynomials::WalletRank;
 
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{

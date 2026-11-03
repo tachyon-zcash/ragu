@@ -5,7 +5,7 @@
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank, R, Rank},
+    polynomials::{AggregatorRank, R, Rank, WalletRank},
     registry::Tag,
 };
 use ragu_core::{
@@ -34,7 +34,7 @@ const SENDER_MANIFEST: &[u8] = &[0x24; 32];
 const RECEIVER_MANIFEST: &[u8] = &[0x25; 32];
 type C<P> = Profiled<Pasta, P>;
 type App<P, R> = Application<'static, C<P>, R, HEADER_SIZE>;
-type TestPcd<P> = Pcd<C<P>, ProductionRank, Value>;
+type TestPcd<P> = Pcd<C<P>, WalletRank, Value>;
 
 #[path = "compressed_profile_attacks.rs"]
 mod compressed_attacks;
@@ -385,13 +385,13 @@ fn check_same_shape<S: Profile, T: Profile>(
     local_value: Fp,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
     let sender_tags = RegistryTags::<C<S>>::from_beacon(&[0x42; 32], SENDER_MANIFEST);
     let (native_tag, nested_tag) = (sender_tags.native(), sender_tags.nested());
-    let sender = application::<S, ProductionRank>(sender_tags, SENDER_MANIFEST, sender_constraint)?;
+    let sender = application::<S, WalletRank>(sender_tags, SENDER_MANIFEST, sender_constraint)?;
     let mut rng = StdRng::seed_from_u64(0x908_1501);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -426,8 +426,7 @@ where
             tags.nested() == nested_tag,
             matches!(changed, DifferentTags::Native)
         );
-        let receiver =
-            application::<T, ProductionRank>(tags, RECEIVER_MANIFEST, receiver_constraint)?;
+        let receiver = application::<T, WalletRank>(tags, RECEIVER_MANIFEST, receiver_constraint)?;
         let (local, ()) = receiver.seed(
             &mut rng,
             Seed {
@@ -437,7 +436,7 @@ where
         )?;
         check_both_verifiers(&receiver, &local, true, &mut rng)?;
 
-        let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
+        let foreign = copy_proof_payload::<C<S>, C<T>, WalletRank>(source.proof().clone())
             .carry::<Value>(foreign_value);
         assert!(
             foreign.proof().well_formed::<HEADER_SIZE>(),
@@ -585,7 +584,7 @@ fn standard_and_aggregator_cannot_substitute_for_each_other() -> Result<()> {
         SENDER_MANIFEST,
         Some(Fp::from(7)),
     )?;
-    let wallet = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
         .register(seed())?
         .register(Sum)?
         .finalize(params)?;

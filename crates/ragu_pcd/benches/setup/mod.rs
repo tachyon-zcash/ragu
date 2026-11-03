@@ -1,5 +1,5 @@
 use ragu_acceleration::AcceleratedBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -21,12 +21,12 @@ pub fn setup_register() -> (
 }
 
 pub fn setup_finalize() -> (
-    ApplicationBuilder<'static, Pasta, ProductionRank, 4>,
+    ApplicationBuilder<'static, Pasta, WalletRank, 4>,
     &'static <Pasta as Cycle>::Params,
 ) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
@@ -35,13 +35,13 @@ pub fn setup_finalize() -> (
 }
 
 pub fn setup_seed() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, WalletRank, 4>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
     let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })
@@ -52,9 +52,9 @@ pub fn setup_seed() -> (
 }
 
 pub fn setup_fuse() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Application<'static, Pasta, WalletRank, 4>,
+    Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
+    Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -82,15 +82,15 @@ pub fn setup_fuse() -> (
 /// Mirrors [`setup_fuse`], but selects the accelerated backend so the tracked
 /// baselines isolate the cost of the overridden operations.
 pub fn setup_fuse_accelerated() -> (
-    Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Application<'static, Pasta, WalletRank, 4, AcceleratedBackend>,
+    Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
+    Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .with_backend::<AcceleratedBackend>()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
@@ -120,8 +120,8 @@ pub fn setup_fuse_accelerated() -> (
 }
 
 pub fn setup_verify_leaf() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Application<'static, Pasta, WalletRank, 4>,
+    Pcd<Pasta, WalletRank, nontrivial::LeafNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
@@ -138,8 +138,8 @@ pub fn setup_verify_leaf() -> (
 }
 
 pub fn setup_verify_node() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+    Application<'static, Pasta, WalletRank, 4>,
+    Pcd<Pasta, WalletRank, nontrivial::InternalNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
@@ -176,7 +176,7 @@ pub fn setup_verify_node() -> (
 /// Mirrors [`setup_verify_leaf`], with the leaf compressed, so the tracked
 /// baseline isolates compressed verification from compression.
 pub fn setup_verify_compressed_leaf() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, WalletRank, 4>,
     CompressedPcd<Pasta, nontrivial::LeafNode>,
 ) {
     let (app, leaf, mut rng) = setup_verify_leaf();
@@ -186,7 +186,7 @@ pub fn setup_verify_compressed_leaf() -> (
 
 /// Mirrors [`setup_verify_node`], with the node compressed.
 pub fn setup_verify_compressed_node() -> (
-    Application<'static, Pasta, ProductionRank, 4>,
+    Application<'static, Pasta, WalletRank, 4>,
     CompressedPcd<Pasta, nontrivial::InternalNode>,
 ) {
     let (app, node, mut rng) = setup_verify_node();

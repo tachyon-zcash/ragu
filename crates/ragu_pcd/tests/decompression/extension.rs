@@ -1,7 +1,7 @@
 //! The decompression circuits as the aggregator profile's extension: the
 //! pinned layout is the schedules', the hooks register every chunk, the
 //! statement and binding circuits and every stage at the aggregator rank
-//! and refuse the production rank, and an application over the profile
+//! and refuse the wallet rank, and an application over the profile
 //! builds at the aggregator rank, where every fuse circuit fits with the
 //! extension's polynomials, and its bootstrap proof verifies with the
 //! chunks run over the wallet application's canonical compressed proof. A
@@ -12,7 +12,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank, Rank},
+    polynomials::{AggregatorRank, Rank, WalletRank},
     registry::RegistryBuilder,
 };
 use ragu_core::{
@@ -53,34 +53,34 @@ type P = Aggregator<HEADER_SIZE>;
 fn pinned_layout_is_the_schedules() {
     assert_eq!(
         P::native_circuits(HEADER_SIZE),
-        native_counts::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap(),
+        native_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
         "the native pins for the test header size"
     );
     assert_eq!(
         P::NESTED_CIRCUITS,
-        nested_counts::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap(),
+        nested_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
         "the nested pins"
     );
     assert_eq!(
         Aggregator::<103>::native_circuits(103),
-        native_counts::<Pasta, ProductionRank, AggregatorRank, 103>().unwrap(),
+        native_counts::<Pasta, WalletRank, AggregatorRank, 103>().unwrap(),
         "the native pins for the internal tests' header size"
     );
     assert_eq!(
         P::native_extension(),
-        native::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap()
+        native::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap()
     );
     assert_eq!(
         P::nested_extension(),
-        nested::<Pasta, ProductionRank, AggregatorRank, HEADER_SIZE>().unwrap()
+        nested::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap()
     );
     assert_eq!(
         Aggregator::<103>::native_extension(),
-        native::<Pasta, ProductionRank, AggregatorRank, 103>().unwrap()
+        native::<Pasta, WalletRank, AggregatorRank, 103>().unwrap()
     );
     assert_eq!(
         Aggregator::<103>::nested_extension(),
-        nested::<Pasta, ProductionRank, AggregatorRank, 103>().unwrap()
+        nested::<Pasta, WalletRank, AggregatorRank, 103>().unwrap()
     );
 
     let native = P::native_extension();
@@ -106,7 +106,7 @@ fn pinned_layout_is_the_schedules() {
     assert_eq!(native.circuits[chunk_circuits], [0]);
     assert_eq!(native.circuits[chunk_circuits + 1], [0, 1, 2, 3]);
     assert_eq!(native.statement, Some(chunk_circuits as u32));
-    let runs = num_runs::<ProductionRank>() as u32;
+    let runs = num_runs::<WalletRank>() as u32;
     let binding = native.binding.as_ref().expect("the native side binds");
     assert_eq!(binding.circuit, chunk_circuits as u32 + 1);
     assert_eq!(
@@ -154,7 +154,7 @@ fn pinned_layout_is_the_schedules() {
 }
 
 /// Every chunk and bonding of both sides registers through the hooks at
-/// the aggregator rank, one past the last fails, and the production rank
+/// the aggregator rank, one past the last fails, and the wallet rank
 /// is refused.
 #[test]
 fn hooks_register_every_chunk_and_stage() {
@@ -754,7 +754,7 @@ fn timings() {
     // The wallet.
     let wallet = timed!(
         "wallet finalize (registries + bootstrap)",
-        ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+        ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
             .register(Leaf)
             .unwrap()
             .register(Join)
@@ -783,7 +783,7 @@ fn timings() {
     report(
         "wallet",
         Shape::of::<Standard>().polynomials(),
-        ProductionRank::RANK,
+        WalletRank::RANK,
         stored_coefficients(node.proof()),
         compressed_size(compressed.proof()),
     );

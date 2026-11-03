@@ -6,7 +6,7 @@
 use alloc::{borrow::Cow, vec, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::{ProductionRank, Rank, TestRank, sparse};
+use ragu_circuits::polynomials::{Rank, TestRank, WalletRank, sparse};
 use ragu_core::{
     Cycle, Error, FixedGenerators, Result,
     pasta::{Fp, Fq, Pasta},
@@ -28,7 +28,7 @@ use crate::{
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, MSM, Params},
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 const TAG: &[u8] = b"ragu-test-batch";
 

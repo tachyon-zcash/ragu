@@ -40,7 +40,7 @@ use crate::decompress::{
 };
 
 /// The rank the chunk circuits are checked at: the aggregator's
-/// configuration, the chunks at the aggregator rank over a production-rank
+/// configuration, the chunks at the aggregator rank over a wallet-rank
 /// proof.
 type SmallR = AggregatorRank;
 

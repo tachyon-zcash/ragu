@@ -56,7 +56,7 @@ impl<P: Profile> Len for NumPoints<P> {
 }
 
 /// The endoscalings a native step performs in the standard profile: what
-/// fits a step beside the stages it reserves at the production rank. A
+/// fits a step beside the stages it reserves at the wallet rank. A
 /// profile sets its own ([`Profile::NATIVE_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 

@@ -1,7 +1,7 @@
 //! Malformed proof data must be a rejection, not a panic or an internal error.
 //! Mounted beneath `proof` to mutate private commitment caches as well as rxs.
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
 use udon::curve::Affine as CurveAffine;
@@ -9,11 +9,11 @@ use udon::curve::Affine as CurveAffine;
 use super::Proof;
 use crate::{Application, ApplicationBuilder, wire};
 
-type TestApp = Application<'static, Pasta, ProductionRank, 4>;
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestApp = Application<'static, Pasta, WalletRank, 4>;
+type TestProof = Proof<Pasta, WalletRank>;
 
 fn fixture() -> (TestApp, TestProof) {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .finalize(crate::pasta::baked())
         .expect("application must build");
     let pcd = app.bootstrap_pcd();

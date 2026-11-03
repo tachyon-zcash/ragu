@@ -18,7 +18,7 @@
 //! its schedule is cut for `R`'s gate budget, and what it loads and checks
 //! is sized by `K`. An aggregator runs the chunks at
 //! [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) over
-//! wallets' proofs at the production rank.
+//! wallets' proofs at the wallet rank.
 //!
 //! Beside the chunks, a [`StatementCircuit`] loads the instance stage alone
 //! and exposes the output header the chunks verified as its public output,

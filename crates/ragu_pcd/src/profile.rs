@@ -160,7 +160,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// step beside the stages it reserves at the profile's rank. The walk
     /// over the nested batch takes a step per so many points, so more per
     /// step is fewer steps and fewer polynomials, and the other side's walk
-    /// shortens with them. The standard profile's is the production rank's.
+    /// shortens with them. The standard profile's is the wallet rank's.
     /// Both endoscaling counts must be nonzero and their product must exceed
     /// four, so the mutually dependent walk sizes can converge.
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = native::ENDOSCALINGS_PER_STEP;
@@ -204,7 +204,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The circuits and stages the profile adds on the native side.
     ///
     /// The challenge binders load a native extension's stages, and at the
-    /// production rank their largest variant sits fifteen gates under the
+    /// wallet rank their largest variant sits fifteen gates under the
     /// gate budget with the standard header: an extension stage costing more
     /// needs a smaller header or a cheaper binder. The internal census tests
     /// pin that count.
@@ -2255,7 +2255,7 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::{AggregatorRank, ProductionRank, R};
+    use ragu_circuits::polynomials::{AggregatorRank, R, WalletRank};
 
     use super::{
         testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Wider},
@@ -2792,7 +2792,7 @@ mod tests {
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
         let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
-        let nested_stages = extension::nested_stages(num_runs::<ProductionRank>());
+        let nested_stages = extension::nested_stages(num_runs::<WalletRank>());
         assert_eq!(nested_stages, 27, "a stage per run, then four");
         assert_eq!(
             shape,
@@ -2802,7 +2802,7 @@ mod tests {
             Shape::of::<Aggregator<103>>(),
             Shape::solve(34 + 2 + 6, 18 + 1 + nested_stages, per_step, per_step)
         );
-        // The knob: at the production rank's four per step the walks are
+        // The knob: at the wallet rank's four per step the walks are
         // far longer.
         assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 4, 4).polynomials());
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
@@ -2817,26 +2817,25 @@ mod tests {
     #[test]
     fn aggregator_hooks_refuse_other_parameters() {
         let params = crate::pasta::baked();
-        let at_production_rank = Aggregator::<4>::register_native_circuit::<Pasta, ProductionRank, 4>(
+        let at_wallet_rank = Aggregator::<4>::register_native_circuit::<Pasta, WalletRank, 4>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params,
         );
-        assert!(matches!(at_production_rank, Err(Error::Initialization(_))));
+        assert!(matches!(at_wallet_rank, Err(Error::Initialization(_))));
         let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 103>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params,
         );
         assert!(matches!(other_header, Err(Error::Initialization(_))));
-        let nested_at_production_rank = Aggregator::<4>::register_nested_circuit::<
-            Pasta,
-            ProductionRank,
-        >(
-            0, CircuitSlot::new(RegistryBuilder::new()), params
+        let nested_at_wallet_rank = Aggregator::<4>::register_nested_circuit::<Pasta, WalletRank>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params,
         );
         assert!(matches!(
-            nested_at_production_rank,
+            nested_at_wallet_rank,
             Err(Error::Initialization(_))
         ));
     }

@@ -48,7 +48,7 @@
 use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
-use ragu_circuits::{Circuit, polynomials::ProductionRank};
+use ragu_circuits::{Circuit, polynomials::WalletRank};
 use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Pasta},
@@ -450,7 +450,7 @@ fn patcher_captures_internal_circuits() -> Result<()> {
     let merge2 = || Merge2 {
         poseidon_params: Pasta::circuit_poseidon(pasta),
     };
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(leaf_step())?
         .register(hash2())?
         .register(merge2())?

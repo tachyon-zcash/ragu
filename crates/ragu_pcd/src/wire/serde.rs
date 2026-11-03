@@ -158,7 +158,7 @@ impl<'de, C: ProfiledCycle> Deserialize<'de> for CompressedProof<C> {
 mod tests {
     use alloc::string::ToString;
 
-    use ragu_circuits::polynomials::ProductionRank;
+    use ragu_circuits::polynomials::WalletRank;
     use ragu_core::pasta::Pasta;
     use serde::de::{
         DeserializeSeed,
@@ -171,7 +171,7 @@ mod tests {
         format::{PayloadKind, write_envelope},
     };
 
-    type TestProof = Proof<Pasta, ProductionRank>;
+    type TestProof = Proof<Pasta, WalletRank>;
     type TestCompressed = CompressedProof<Pasta>;
 
     struct EmptyWithHugeHint;
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn sequence_buffer_stops_at_the_length_the_envelope_implies() {
-        let dims = Dimensions::of::<ProductionRank, 4>();
+        let dims = Dimensions::of::<WalletRank, 4>();
         let limit = ENVELOPE_SIZE + <TestCompressed as Decode>::encoded_len(dims);
         let envelope = envelope(PayloadKind::Compressed, dims.rank, dims.header_size as u64);
         let input = |extra: usize| {

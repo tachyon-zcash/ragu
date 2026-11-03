@@ -153,7 +153,7 @@ The internal registry therefore has 49 native and 42 nested entries,
 including masks, one native entry more than before. The 23 native and 26
 nested walk steps are unchanged.
 
-The constraint census uses production rank `R<13>`, a 103-element header,
+The constraint census uses wallet rank `R<13>`, a 103-element header,
 and 6000 placeholder application circuits. In that fixture the largest
 `bind_challenges` variant uses 2033 of 2048 gates, leaving fifteen gates of
 headroom. The census tests pin that count; extending the binder requires

@@ -64,7 +64,7 @@
 //!   program filling the stages. The chunk circuits take two ranks, the
 //!   compressed proof's and their own, so that an aggregator at
 //!   [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) cuts a
-//!   wallet's production-rank proof into fewer chunks, whose circuit counts
+//!   wallet's wallet-rank proof into fewer chunks, whose circuit counts
 //!   the aggregator profile pins
 //!   ([`native_circuits`](crate::profile::Aggregator::native_circuits) and
 //!   [`NESTED_CIRCUITS`](crate::profile::Aggregator::NESTED_CIRCUITS)).

@@ -18,7 +18,7 @@ pub(crate) mod support {
     };
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{
-        polynomials::{ProductionRank, Rank, sparse},
+        polynomials::{Rank, WalletRank, sparse},
         staging::{StageReader, stage_wire_indices, wire_degree, wires_of},
     };
     use ragu_core::{
@@ -39,7 +39,7 @@ pub(crate) mod support {
     use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
     pub(crate) type C = Pasta;
-    pub(crate) type R = ProductionRank;
+    pub(crate) type R = WalletRank;
     pub(crate) const HEADER_SIZE: usize = 4;
     use crate::{
         Application, ApplicationBuilder, Pcd, Proof,
