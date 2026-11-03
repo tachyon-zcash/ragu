@@ -103,5 +103,5 @@ pub(crate) fn verify<'dr, D: Driver<'dr>>(
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_ipa.rs"]
+#[path = "../../tests/decompression/ipa.rs"]
 mod tests;

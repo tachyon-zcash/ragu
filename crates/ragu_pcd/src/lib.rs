@@ -79,7 +79,7 @@ mod setup_binding_tests;
 mod profile_layout_tests;
 
 #[cfg(test)]
-#[path = "../tests/decompress_statement.rs"]
+#[path = "../tests/decompression/statement.rs"]
 mod decompress_statement_tests;
 
 #[cfg(all(test, feature = "unstable-fuzzing"))]

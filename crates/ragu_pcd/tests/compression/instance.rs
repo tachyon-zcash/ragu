@@ -354,5 +354,5 @@ fn extra_openings_hold() {
     assert_eq!(claims[1].value, proof.nested_v().unwrap());
 }
 
-#[path = "backend_equivalence/compress_instance.rs"]
+#[path = "../backend_equivalence/compress_instance.rs"]
 mod backend_equivalence;

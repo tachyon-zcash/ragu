@@ -448,5 +448,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_transcript.rs"]
+#[path = "../../tests/decompression/transcript.rs"]
 mod tests;

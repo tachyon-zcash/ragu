@@ -229,7 +229,7 @@ pub(crate) mod stages;
 pub(crate) mod transcript;
 
 #[cfg(test)]
-#[path = "../../tests/decompress_support.rs"]
+#[path = "../../tests/decompression/support.rs"]
 pub(crate) mod support;
 
 /// An element's powers $x^{2^i}$, for raising it to constant exponents by

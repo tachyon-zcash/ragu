@@ -1562,5 +1562,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_circuit.rs"]
+#[path = "../../tests/decompression/circuit.rs"]
 mod tests;

@@ -428,5 +428,5 @@ pub(crate) fn verify<'dr, D: Driver<'dr>, K: Rank>(
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_revdot.rs"]
+#[path = "../../tests/decompression/revdot.rs"]
 mod tests;

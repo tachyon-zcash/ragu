@@ -2480,5 +2480,5 @@ pub(crate) fn chunk_counts<
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_program.rs"]
+#[path = "../../tests/decompression/program.rs"]
 mod tests;

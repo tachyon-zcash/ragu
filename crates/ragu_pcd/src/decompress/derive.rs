@@ -631,5 +631,5 @@ pub(crate) fn enforce_opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_derive.rs"]
+#[path = "../../tests/decompression/derive.rs"]
 mod tests;

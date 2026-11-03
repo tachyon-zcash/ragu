@@ -543,5 +543,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "../../tests/decompress_extension.rs"]
+#[path = "../../tests/decompression/extension.rs"]
 mod tests;
