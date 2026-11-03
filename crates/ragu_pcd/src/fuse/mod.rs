@@ -38,13 +38,13 @@ use udon::field::Field;
 use crate::{
     Application, Pcd, RAGU_TAG,
     internal::{nested, transcript::Transcript},
-    profile::{Decompressed, ProfiledCycle},
+    profile::{ProfiledCycle, Source},
     proof::ProofBuilder,
     step::Step,
 };
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
@@ -92,7 +92,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         witness: S::Witness<'source>,
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
-        source: Option<&Decompressed<C::Base>>,
+        source: Option<&Source<'params, C, R, B>>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier

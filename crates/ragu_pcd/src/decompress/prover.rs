@@ -39,7 +39,9 @@ use crate::{
     header::Header,
     internal::{native, nested},
     ipa::IpaCycle,
-    profile::{Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, Standard},
+    profile::{
+        Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext, Standard,
+    },
     step::internal::decompress::Decompress,
 };
 
@@ -63,6 +65,15 @@ where
     wallet: Application<'params, C, ProductionRank, HEADER_SIZE, B>,
     canonical: Sides<C>,
     _marker: PhantomData<fn() -> R>,
+}
+
+/// A decompression step supplies the compressed proof it decompresses.
+impl<C, R, const HEADER_SIZE: usize, B> ProverContext for Decompression<'_, C, R, HEADER_SIZE, B>
+where
+    C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    B: SelectableBackend,
+{
+    type Source = Decompressed<C>;
 }
 
 impl<'params, C, R, const HEADER_SIZE: usize, B> Decompression<'params, C, R, HEADER_SIZE, B>
