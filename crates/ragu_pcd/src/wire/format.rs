@@ -326,12 +326,12 @@ mod tests {
             Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
-        // 101 instance points; 27 instance scalars and the 12 online
-        // openings; per side 6+2R points, 21 scalars; plus the circuit
-        // index and common envelope.
+        // 101 instance points; 27 instance scalars and the online openings'
+        // two scalars each; per side 6+2R points, 21 scalars; plus the
+        // circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (101 + 27 + 12 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (101 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

@@ -101,8 +101,9 @@ codec! {
     native_points_f_rx => wire::DefaultEncoding,
     native_points_walk_rx => wire::DefaultEncoding,
 
-    // The step's own online polynomials (CircuitField, HostCurve commitment)
-    // and their openings, one per slot
+    // The step's own online polynomials (CircuitField, HostCurve commitment),
+    // then the step's online openings, one per slot of its left, right and
+    // output headers
     online_polys => wire::Array<wire::DefaultEncoding>,
     online_queries => wire::Array<wire::DefaultEncoding>,
 
@@ -212,7 +213,7 @@ codec! {
     native_points_ab_commitment => CachedPoint,
     native_points_f_commitment => CachedPoint,
     native_points_walk_commitment => CachedPoint,
-    online_commitments => CachedPoints,
+    online_commitments => wire::Array<CachedPoint>,
 
     // Bridge commitments (non-cached)
     bridge_preamble_commitment => wire::Point,
@@ -252,33 +253,6 @@ impl<G: Decode<wire::Point>> Decode<CachedPoint> for Cached<G> {
         dims: wire::Dimensions,
     ) -> core::result::Result<Self, wire::Error<'a>> {
         <G as Decode<wire::Point>>::decode(reader, dims).map(Cached)
-    }
-}
-
-/// The wire codec of a [`Cached`] array of commitments: the points
-/// themselves.
-struct CachedPoints;
-
-impl<G: Encode<wire::Point>, const N: usize> Encode<CachedPoints> for Cached<[G; N]> {
-    fn encode(
-        &self,
-        output: &mut Vec<u8>,
-        dims: wire::Dimensions,
-    ) -> core::result::Result<(), wire::Error<'static>> {
-        <[G; N] as Encode<wire::Array<wire::Point>>>::encode(&self.0, output, dims)
-    }
-}
-
-impl<G: Decode<wire::Point>, const N: usize> Decode<CachedPoints> for Cached<[G; N]> {
-    fn encoded_len(dims: wire::Dimensions) -> usize {
-        <[G; N] as Decode<wire::Array<wire::Point>>>::encoded_len(dims)
-    }
-
-    fn decode<'a>(
-        reader: &mut wire::Reader<'a>,
-        dims: wire::Dimensions,
-    ) -> core::result::Result<Self, wire::Error<'a>> {
-        <[G; N] as Decode<wire::Array<wire::Point>>>::decode(reader, dims).map(Cached)
     }
 }
 
