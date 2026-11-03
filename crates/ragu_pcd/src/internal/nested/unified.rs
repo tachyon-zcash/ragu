@@ -48,8 +48,9 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::internal::{native::unified::Slot, online::HEADER_POLYNOMIALS};
 
 /// The host-curve commitments the instance exports, in [`Write`] order:
-/// the fourteen stage commitments and the step's own online commitments.
-pub const NUM_EXPORTED: usize = 14 + HEADER_POLYNOMIALS;
+/// the fourteen stage commitments, the step's own online commitments and
+/// its application stage's.
+pub const NUM_EXPORTED: usize = 15 + HEADER_POLYNOMIALS;
 
 /// Length type for the exported commitments.
 pub type ExportedLen = ConstLen<NUM_EXPORTED>;

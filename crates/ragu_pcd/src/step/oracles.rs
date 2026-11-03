@@ -13,6 +13,15 @@
 //! and whose verified openings the parent holds the step's instance to. A
 //! slot the step does not query is opened at $\zeta$ to its value there.
 //!
+//! [`Oracles`] also holds the step's [staged](super::Step::staged) values,
+//! committed before $\zeta$ in the proof's application stage. A check at
+//! $\zeta$ is sound only if every value it reads was fixed before $\zeta$:
+//! an opening at $\zeta$ or at a point itself fixed before $\zeta$, an
+//! input's header field, a staged value, or a wire computed from those; or
+//! an in-circuit hash output, or a value from a small set. Any other wire the
+//! circuit witnesses, the output header's fields included, is the prover's
+//! choice given $\zeta$.
+//!
 //! The slots are the headers' polynomials in order `[L0, L1, R0, R1, O0,
 //! O1]`. Every slot holds whatever polynomial the step that produced the
 //! header committed, the constant one where that step used fewer; what a
@@ -39,11 +48,12 @@ pub(crate) trait Evaluate<F>: Sync {
     fn evaluate(&self, slot: usize, x: F) -> F;
 }
 
-/// What the fuse hands the adapter for a step's online slots: $\zeta$ and
-/// the slots' polynomials, as prover data.
+/// What the fuse hands the adapter for a step's online slots: $\zeta$, the
+/// slots' polynomials and the step's staged values, as prover data.
 pub(crate) struct OnlineWitness<F, R: Rank> {
     pub(crate) zeta: F,
     pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_QUERIES],
+    pub(crate) staged: alloc::vec::Vec<F>,
 }
 
 impl<F: Field, R: Rank> Evaluate<F> for OnlineWitness<F, R> {
@@ -52,24 +62,28 @@ impl<F: Field, R: Rank> Evaluate<F> for OnlineWitness<F, R> {
     }
 }
 
-/// The online polynomial oracles of a step: $\zeta$ and the six slots, each
-/// queryable once.
+/// The online polynomial oracles of a step: $\zeta$, the six slots, each
+/// queryable once, and the staged values.
 pub struct Oracles<'a, 'dr, D: Driver<'dr>> {
     zeta: Element<'dr, D>,
+    staged: alloc::vec::Vec<Element<'dr, D>>,
     evaluator: DriverValue<D, &'a dyn Evaluate<D::F>>,
     queries: [Option<QueryOutput<'dr, D>>; online::NUM_ONLINE_QUERIES],
     _marker: PhantomData<&'dr ()>,
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
-    /// Allocates $\zeta$ and prepares the slots from the fuse's witness.
+    /// Allocates $\zeta$ and prepares the slots from the fuse's witness,
+    /// with the staged values the adapter allocated and bound.
     pub(crate) fn alloc<R: Rank>(
         dr: &mut D,
         witness: DriverValue<D, &'a OnlineWitness<D::F, R>>,
+        staged: alloc::vec::Vec<Element<'dr, D>>,
     ) -> Result<Self> {
         let zeta = Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.zeta))?;
         Ok(Oracles {
             zeta,
+            staged,
             evaluator: witness.map(|w| w as &dyn Evaluate<D::F>),
             queries: core::array::from_fn(|_| None),
             _marker: PhantomData,
@@ -77,10 +91,21 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     }
 
     /// The step's challenge $\zeta$: squeezed after every slot's polynomial
-    /// was committed, so an opening at $\zeta$ is a random evaluation of a
-    /// polynomial fixed beforehand.
+    /// and the staged values were committed, so an opening at $\zeta$ is a
+    /// random evaluation of a polynomial fixed beforehand.
+    ///
+    /// A check at $\zeta$ must read only values fixed before it (see
+    /// [`oracles`](self)): stage, rather than witness, any other value it
+    /// reads.
     pub fn zeta(&self) -> &Element<'dr, D> {
         &self.zeta
+    }
+
+    /// The step's [staged](super::Step::staged) values, in order: wires
+    /// bound to the application stage, which the proof committed before
+    /// $\zeta$ was drawn.
+    pub fn staged(&self) -> &[Element<'dr, D>] {
+        &self.staged
     }
 
     /// Opens `slot` at `x`, returning a wire holding the polynomial's value

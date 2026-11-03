@@ -169,6 +169,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.f.native_points_f,
             &stages.preamble.online[0],
             &stages.preamble.online[1],
+            &stages.preamble.application_stage,
         ];
         let exported = unified.exported.receive(dr, allocator)?;
         for (instance, stage) in exported.iter().zip(held) {

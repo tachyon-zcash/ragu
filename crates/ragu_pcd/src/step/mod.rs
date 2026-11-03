@@ -162,12 +162,14 @@ pub struct HeaderInput<'a, F: Field, H: Header<F>> {
 ///
 /// A step proves in two phases. Before its challenge is drawn,
 /// [`polynomials`](Self::polynomials) commits the polynomials its output
-/// header carries, from the witness and the inputs' data and polynomials.
-/// After the challenge $\zeta$ is drawn, [`witness`](Self::witness)
-/// synthesizes the circuit, with [`Oracles`] standing for the three headers'
-/// polynomials: the step may open each once, at $\zeta$ or at any wire, and
-/// relate the values in its constraints. Ragu proves the openings; see
-/// [`oracles`].
+/// header carries, from the witness and the inputs' data and polynomials,
+/// and [`staged`](Self::staged) commits the step's staged values, the
+/// secret values its checks at $\zeta$ read that no header carries. After
+/// the challenge $\zeta$ is drawn, [`witness`](Self::witness) synthesizes
+/// the circuit, with [`Oracles`] standing for the three headers'
+/// polynomials and the staged values: the step may open each polynomial
+/// once, at $\zeta$ or at any wire, and relate the values in its
+/// constraints. Ragu proves the openings; see [`oracles`].
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
@@ -191,6 +193,35 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Auxiliary information produced during witness generation that may be
     /// used to pipeline witness input to later steps.
     type Aux<'source>: Send;
+
+    /// How many values [`staged`](Self::staged) returns. The application
+    /// stage has one size, the largest any registered step declares, and
+    /// every step circuit reserves `ceil(n / 2)` gates for it; a step that
+    /// declares fewer leaves the rest of the stage unused.
+    const NUM_STAGED: usize = 0;
+
+    /// The step's staged values, computed before the step's challenge is
+    /// drawn and committed in the proof's application stage:
+    /// [`NUM_STAGED`](Self::NUM_STAGED) field elements, which
+    /// [`witness`](Self::witness) receives as wires through
+    /// [`Oracles::staged`], each bound to the committed value.
+    ///
+    /// Stage every value a check at $\zeta$ reads that is neither a slot's
+    /// opening nor an input's header field, such as the roots a step merges
+    /// into an accumulator polynomial: a value the circuit witnesses after
+    /// $\zeta$ is drawn is the prover's choice given $\zeta$, and a check
+    /// $O(\zeta) = L(\zeta) \cdot (\zeta - t)$ with such a $t$ holds for
+    /// $t = \zeta - O(\zeta) / L(\zeta)$ whatever the polynomials are. The
+    /// default stages nothing.
+    fn staged<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, Self::Left>,
+        right: HeaderInput<'_, C::CircuitField, Self::Right>,
+    ) -> Result<Vec<C::CircuitField>> {
+        let _ = (witness, left, right);
+        Ok(Vec::new())
+    }
 
     /// The polynomials the output header carries, computed before the
     /// step's challenge is drawn: one coefficient vector, ascending in

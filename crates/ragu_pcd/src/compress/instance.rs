@@ -443,6 +443,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(Rx(PointsF)),
                 self.online_commitments[0],
                 self.online_commitments[1],
+                self.native_commitment(Rx(ApplicationStage)),
             ],
             coverage: Default::default(),
         })

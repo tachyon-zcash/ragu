@@ -499,6 +499,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         left_header,
         right_header,
         native_application_rx,
+        native_application_stage_rx,
         native_preamble_rx,
         native_inner_error_rx,
         native_outer_error_rx,
@@ -569,6 +570,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         u,
         pre_beta,
         native_application_commitment: _,
+        native_application_stage_commitment: _,
         native_preamble_commitment: _,
         native_inner_error_commitment: _,
         native_outer_error_commitment: _,
@@ -611,6 +613,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.field("bridge_alpha", bridge_alpha);
 
     lines.poly("native_application_rx", native_application_rx);
+    lines.poly("native_application_stage_rx", native_application_stage_rx);
     lines.poly("native_preamble_rx", native_preamble_rx);
     lines.poly("native_inner_error_rx", native_inner_error_rx);
     lines.poly("native_outer_error_rx", native_outer_error_rx);

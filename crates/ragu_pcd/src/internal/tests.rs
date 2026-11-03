@@ -49,9 +49,10 @@ where
 // Then copy-paste the output into the check_constraints! calls in the test below.
 //
 // The largest header the production rank fits: the challenge binders load
-// the preamble, query and eval stages, and with the online openings in all
-// three the last binder sits a few gates under the gate budget here.
-pub const HEADER_SIZE: usize = 99;
+// the preamble, query and eval stages, and with the online openings and the
+// application stage in all three the last binder sits one gate under the
+// gate budget here.
+pub const HEADER_SIZE: usize = 98;
 
 // Number of trivial application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
@@ -229,20 +230,22 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1803, lin = 3045);
-    check_constraints!(Hashes2Circuit,              mul = 1876, lin = 2984);
-    check_constraints!(CollapseCircuit,             mul = 1467, lin = 2099);
-    check_constraints!(ComputeVCircuit,             mul = 1904, lin = 2839);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2029, lin = 3054);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2034, lin = 3064);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2034, lin = 3064);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2045, lin = 3086);
-    check_constraints!(BindBetaCircuit,             mul = 1891, lin = 3114);
-    check_constraints!(BindEndoscalarCircuit,       mul = 920,  lin = 1725);
-    // Every native endoscaling step walks four points and lays out the same.
-    for step in 0..native::NUM_ENDOSCALING_STEPS as u32 {
-        check_constraints!(EndoscalingStep(step),   mul = 1990, lin = 3502);
+    check_constraints!(Hashes1Circuit,              mul = 1796, lin = 3035);
+    check_constraints!(Hashes2Circuit,              mul = 1873, lin = 2984);
+    check_constraints!(CollapseCircuit,             mul = 1458, lin = 2087);
+    check_constraints!(ComputeVCircuit,             mul = 1941, lin = 2909);
+    check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3054);
+    check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3064);
+    check_constraints!(BindChallengesCircuit(2),    mul = 2036, lin = 3064);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2047, lin = 3086);
+    check_constraints!(BindBetaCircuit,             mul = 1888, lin = 3114);
+    check_constraints!(BindEndoscalarCircuit,       mul = 929,  lin = 1739);
+    // Every native endoscaling step but the last walks four points and lays
+    // out the same; the last walks the rest.
+    for step in 0..native::NUM_ENDOSCALING_STEPS as u32 - 1 {
+        check_constraints!(EndoscalingStep(step),   mul = 1993, lin = 3502);
     }
+    check_constraints!(EndoscalingStep(native::NUM_ENDOSCALING_STEPS as u32 - 1), mul = 1119, lin = 1754);
 }
 
 #[rustfmt::skip]
@@ -256,16 +259,16 @@ fn test_internal_stage_parameters() {
     }
 
     check_stage!(PointsBinding, skip = 1, num = 26);
-    check_stage!(Preamble, skip = 27, num = 347);
-    check_stage!(OuterError, skip = 374, num = 20);
-    check_stage!(InnerError, skip = 394, num = 42);
-    check_stage!(Query, skip = 374, num = 83);
-    check_stage!(Eval, skip = 457, num = 59);
-    check_stage!(PointsChildren, skip = 27, num = 64);
-    check_stage!(PointsRegistryWx, skip = 91, num = 2);
-    check_stage!(PointsAb, skip = 93, num = 3);
-    check_stage!(PointsF, skip = 96, num = 2);
-    check_stage!(PointsWalk, skip = 98, num = 143);
+    check_stage!(Preamble, skip = 27, num = 344);
+    check_stage!(OuterError, skip = 371, num = 20);
+    check_stage!(InnerError, skip = 391, num = 42);
+    check_stage!(Query, skip = 371, num = 86);
+    check_stage!(Eval, skip = 457, num = 61);
+    check_stage!(PointsChildren, skip = 27, num = 66);
+    check_stage!(PointsRegistryWx, skip = 93, num = 2);
+    check_stage!(PointsAb, skip = 95, num = 3);
+    check_stage!(PointsF, skip = 98, num = 2);
+    check_stage!(PointsWalk, skip = 100, num = 144);
 }
 
 /// Every native internal circuit's claim in [`native::claims`] composes its
@@ -309,7 +312,7 @@ fn claimed_stages_lie_on_each_circuits_chain() {
     impl<P: crate::profile::Profile> Processor<P, RxComponent, ()> for Record {
         fn raw_claim(&mut self, _: RxComponent, _: RxComponent) {}
 
-        fn circuit_claim(&mut self, _: (), _: RxComponent) {}
+        fn circuit_claim(&mut self, _: (), _: impl Iterator<Item = RxComponent>) {}
 
         fn internal_circuit_claim(
             &mut self,
@@ -536,6 +539,8 @@ fn print_internal_circuit_constraint_counts() {
                 | InternalCircuitIndex::EvalFinalStaged
                 | InternalCircuitIndex::PointsWalkFinalStaged
                 | InternalCircuitIndex::PreambleFinalStaged
+                | InternalCircuitIndex::ApplicationStage
+                | InternalCircuitIndex::ApplicationFinalStaged
         )
     });
 
@@ -704,11 +709,11 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2010, 3501)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2015, 3501)));
     }
-    expected.push((nested::InternalCircuitIndex::Collapse, (1560, 2442)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1458, 1815)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (550,  227)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1594, 2494)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1488, 1852)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (562, 235)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -730,16 +735,16 @@ fn test_nested_stage_parameters() {
     }
 
     check_stage!(endoscalar::EndoscalarStage, skip = 1, num = 119);
-    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 120, num = 141);
-    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 261, num = 114);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 375, num = 3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 378, num = 37);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 415, num = 11);
-    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 426, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 429, num = 70);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 499, num = 2);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 501, num = 49);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 550, num = 10);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 120, num = 146);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 266, num = 119);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 385, num = 3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 388, num = 37);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 425, num = 11);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 436, num = 3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 439, num = 71);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 510, num = 2);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 512, num = 50);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 562, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -1110,7 +1115,12 @@ fn test_extension_claims_follow_the_declaration() {
     impl<P: Profile> Processor<P, (usize, RxComponent), CircuitIndex> for Recorder {
         fn raw_claim(&mut self, _: (usize, RxComponent), _: (usize, RxComponent)) {}
 
-        fn circuit_claim(&mut self, _: CircuitIndex, _: (usize, RxComponent)) {}
+        fn circuit_claim(
+            &mut self,
+            _: CircuitIndex,
+            _: impl Iterator<Item = (usize, RxComponent)>,
+        ) {
+        }
 
         fn internal_circuit_claim(
             &mut self,
@@ -1383,7 +1393,7 @@ fn test_extension_hooks_register_without_a_prover() {
         .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
 
-    // The 143-bit challenge binders leave the last binder three gates under
+    // The 143-bit challenge binders leave the last binder one gate under
     // the bound at the census header, and the fixture's extension stage
     // costs it thirteen more; a smaller header makes room to reach the
     // missing-prover check this test is about.
@@ -1421,8 +1431,8 @@ fn test_fold_groups_follow_the_profile() {
         profile::{Standard, testing::Wider},
     };
 
-    assert_eq!(native::num_claims::<Standard>(), 88);
-    assert_eq!(nested::num_claims::<Standard>(), 76);
+    assert_eq!(native::num_claims::<Standard>(), 92);
+    assert_eq!(nested::num_claims::<Standard>(), 78);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS

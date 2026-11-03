@@ -273,7 +273,8 @@ mod tests {
     };
 
     // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
-    // the online polynomials (see `internal::online`) in the batch. A
+    // the online polynomials (see `internal::online`) in the batch and the
+    // application stage beside the application trace. A
     // change to either moves the layout or the verifier semantics and needs
     // a new schema or protocol version, not a silent re-pin.
     #[test]
@@ -284,12 +285,12 @@ mod tests {
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 46,
-                nested_points: 113,
-                nested_steps: 28,
-                nested_rx: 41,
-                native_points: 97,
-                native_steps: 24,
+                native_rx: 48,
+                nested_points: 117,
+                nested_steps: 29,
+                nested_rx: 42,
+                native_points: 99,
+                native_steps: 25,
             }
         );
     }
@@ -325,12 +326,12 @@ mod tests {
             Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
-        // 98 instance points; 27 instance scalars and the 12 online
+        // 101 instance points; 27 instance scalars and the 12 online
         // openings; per side 6+2R points, 21 scalars; plus the circuit
         // index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (98 + 27 + 12 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (101 + 27 + 12 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

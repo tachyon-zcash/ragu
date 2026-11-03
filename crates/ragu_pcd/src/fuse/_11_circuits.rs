@@ -285,6 +285,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_points_f_commitment(),
                 builder.online_commitments()[0],
                 builder.online_commitments()[1],
+                builder.native_application_stage_commitment(),
             ],
             coverage: Default::default(),
         };
