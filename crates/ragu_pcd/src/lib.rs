@@ -17,6 +17,21 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
+//!   counterparts — versioned byte encodings for storing and transporting
+//!   proofs.
+//!
+//! For each payload kind, decoding checks envelope, schema and protocol
+//! versions, bounds the declared dimensions, then checks the exact length
+//! fixed by the profile, rank and header size before decoding proof data. The
+//! caller selects the expected application and cryptographic parameters
+//! through its deployment or consensus rules. With the `serde` feature,
+//! [`Proof`] and [`CompressedProof`] implement `Serialize` and `Deserialize`
+//! directly, as the byte string `to_bytes` writes, envelope included.
+//! A receiver compresses a decoded proof and accepts it on
+//! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
+//! the envelope layout, version rules and input size limits, including the
+//! limits callers must apply to Serde backends before they allocate buffers.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -54,6 +69,7 @@ pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
 mod verify;
+pub mod wire;
 
 #[cfg(test)]
 #[path = "../tests/setup_binding.rs"]
@@ -256,6 +272,9 @@ pub struct ApplicationBuilder<
     /// The largest shared gadget size among the registered steps.
     shared_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
+    /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
+    /// which finalization installs instead of building one.
+    bootstrap: Option<Proof<C, R>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -279,6 +298,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: 0,
             shared_size: 0,
             header_map: BTreeMap::new(),
+            bootstrap: None,
             _marker: PhantomData,
         }
     }
@@ -315,6 +335,39 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         Ok(self)
     }
 
+    /// Supplies the proof that bootstraps the recursion instead of building
+    /// it: one that [`Application::bootstrap_proof`] returned for an
+    /// application of the same configuration, stored by the caller, for
+    /// instance with [`Proof::to_bytes`]. Finalization installs it instead of
+    /// running the bootstrap fuse.
+    ///
+    /// The proof is checked for this profile's shape and for being a proof of
+    /// the bootstrap step, not for validity. No supplied proof can make
+    /// anything verify that otherwise would not, since every
+    /// [`seed`](Application::seed) enforces its children's claims, but one
+    /// that does not verify makes every proof built on it fail verification.
+    /// Key a stored proof by everything that fixes it (see
+    /// [`Application::bootstrap_proof`]) so that a changed application never
+    /// loads a stale one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an initialization error if the proof does not have this
+    /// profile's shape or is not a proof of the bootstrap step.
+    pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
+        let bootstrap = step::InternalStepIndex::Bootstrap.circuit_index::<C::Profile>()?;
+        if !proof.well_formed::<HEADER_SIZE>()
+            || !proof.has_shape()
+            || proof.circuit_id() != bootstrap
+        {
+            return Err(Error::Initialization(
+                "the supplied proof is not a bootstrap proof of this profile's shape".into(),
+            ));
+        }
+        self.bootstrap = Some(proof);
+        Ok(self)
+    }
+
     /// Selects a Ragu-owned computational backend.
     ///
     /// The selected backend is used for proving and native witness
@@ -332,6 +385,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             shared_size: self.shared_size,
             header_map: self.header_map,
+            bootstrap: self.bootstrap,
             _marker: PhantomData,
         }
     }
@@ -430,7 +484,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// This also bootstraps the recursion: it fuses two synthesized dummies
     /// through an internal step — the only fuse treated as the base case — to
     /// produce the bootstrap proof that [`seed`](Application::seed) consumes as
-    /// a child. This costs one fuse, once per application.
+    /// a child. This costs one fuse, once per application, unless the proof
+    /// was supplied with [`with_bootstrap`](Self::with_bootstrap).
     ///
     /// # Errors
     ///
@@ -527,27 +582,30 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             num_application_steps: self.num_application_steps,
             shared_size: self.shared_size,
-            bootstrap: None,
+            bootstrap: self.bootstrap,
             seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
         };
 
         // Bootstrap the recursion once, up front, so that `seed` never pays
-        // for it lazily. The proof carries no secrets — it attests nothing and
-        // is consumed as a public child by every seed — so a fixed seed is
-        // fine. Its bytes are stable for a given `rand` version but must not
-        // be relied on across versions (`StdRng` is not portable), so never
-        // pin them.
-        let mut rng = StdRng::seed_from_u64(0);
-        let (pcd, ()) = app.fuse(
-            &mut rng,
-            step::internal::bootstrap::Bootstrap::new(),
-            (),
-            app.dummy_pcd(),
-            app.dummy_pcd(),
-        )?;
-        app.bootstrap = Some(pcd.into_parts().0);
+        // for it lazily, unless the application was given the proof. The proof
+        // carries no secrets — it attests nothing and is consumed as a public
+        // child by every seed — so a fixed seed is fine. Its bytes are stable
+        // for a given `rand` version but must not be relied on across versions
+        // (`StdRng` is not portable), so never pin them: a stored proof stays
+        // valid, but one built later need not match it.
+        if app.bootstrap.is_none() {
+            let mut rng = StdRng::seed_from_u64(0);
+            let (pcd, ()) = app.fuse(
+                &mut rng,
+                step::internal::bootstrap::Bootstrap::new(),
+                (),
+                app.dummy_pcd(),
+                app.dummy_pcd(),
+            )?;
+            app.bootstrap = Some(pcd.into_parts().0);
+        }
 
         Ok(app)
     }
@@ -648,9 +706,11 @@ pub struct Application<
     /// The proof that bootstraps the recursion: a genuine, verifying
     /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
     ///
-    /// Always `Some` once [`ApplicationBuilder::finalize`] returns. It is `None`
-    /// only while `finalize` is building it, since doing so runs
-    /// [`fuse`](Self::fuse) on the otherwise complete `Application`.
+    /// Always `Some` once [`ApplicationBuilder::finalize`] returns, which
+    /// installs the proof given to [`ApplicationBuilder::with_bootstrap`] or
+    /// builds it. It is `None` only while `finalize` is building it, since
+    /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
+    /// `Application`.
     bootstrap: Option<Proof<C, R>>,
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
@@ -698,9 +758,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// its inputs.
     ///
     /// This is the entry point for creating leaf nodes in a PCD tree. The step
-    /// is fused against the bootstrap proof built by
-    /// [`ApplicationBuilder::finalize`] as both children, so this is an
-    /// ordinary fuse whose child claims are enforced, not a base case.
+    /// is fused against the bootstrap proof that
+    /// [`ApplicationBuilder::finalize`] built or installed as both children, so
+    /// this is an ordinary fuse whose child claims are enforced, not a base
+    /// case.
     pub fn seed<'source, RNG: CryptoRng, S: Step<C, Left = (), Right = ()>>(
         &self,
         rng: &mut RNG,
@@ -716,25 +777,40 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         )
     }
 
-    /// Returns the `Pcd<()>` that bootstraps the recursion.
+    /// Returns the proof that bootstraps the recursion.
     ///
-    /// [`ApplicationBuilder::finalize`] builds it once: two synthesized
-    /// [`dummy_pcd`](Self::dummy_pcd) dummies — which cannot verify on
-    /// their own — are fused through the internal
-    /// [`Bootstrap`](step::internal::bootstrap::Bootstrap) step, the only step
-    /// declaring [`Dummy`](header::Dummy) inputs and hence the only
-    /// fuse treated as the base case. The result verifies, so
-    /// [`seed`](Self::seed) consumes it as an ordinary child.
+    /// [`ApplicationBuilder::finalize`] builds it once, unless it was given one
+    /// with [`ApplicationBuilder::with_bootstrap`]: two synthesized dummy
+    /// proofs, which cannot verify on their own, are fused through the
+    /// internal bootstrap step, the only step whose inputs are dummies and
+    /// hence the only fuse treated as the base case. The result verifies, so
+    /// [`seed`](Self::seed) consumes it as an ordinary child. It attests
+    /// nothing, and its own witness is empty: the bootstrap step skips its
+    /// children's claims and outputs the data-less unit header.
     ///
-    /// The proof attests nothing: `Bootstrap` skips its children's claims and
-    /// outputs the data-less unit header. It is a public constant of the
-    /// application, and every call returns a clone of the same proof.
-    fn bootstrap_pcd(&self) -> Pcd<C, R, ()> {
+    /// The proof is fixed by the application's configuration: its registries
+    /// and public parameters, its profile, rank and header size, the circuits
+    /// of the Ragu version in use, and for a profile with an extension the
+    /// prover context at finalization. Store it, for instance with
+    /// [`Proof::to_bytes`], and supply it to later applications of the same
+    /// configuration with [`ApplicationBuilder::with_bootstrap`], so that
+    /// their finalization skips the bootstrap fuse.
+    ///
+    /// Like every uncompressed proof, this one is not zero-knowledge: for a
+    /// profile with an extension it holds the extension's polynomials,
+    /// computed over the prover context at finalization. Store or ship it
+    /// only if that context holds nothing confidential. The built-in profiles
+    /// have no extension, so their bootstrap proof reveals nothing.
+    pub fn bootstrap_proof(&self) -> &Proof<C, R> {
         self.bootstrap
             .as_ref()
             .expect("finalize always sets the bootstrap proof")
-            .clone()
-            .carry(())
+    }
+
+    /// The bootstrap proof as the `Pcd<()>` that [`seed`](Self::seed) and
+    /// rerandomization consume; see [`bootstrap_proof`](Self::bootstrap_proof).
+    fn bootstrap_pcd(&self) -> Pcd<C, R, ()> {
+        self.bootstrap_proof().clone().carry(())
     }
 
     /// Returns the cached valid `Pcd<()>` used as the neutral right child of
@@ -743,23 +819,21 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// The proof is lazily created by folding the bootstrap proof with itself
     /// through the unit instantiation of the rerandomization step. Subsequent
     /// calls reuse the same proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Pcd<C, R, ()> {
-        self.seeded_trivial
-            .get_or_init(|| {
-                self.fuse(
+    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Result<Pcd<C, R, ()>> {
+        let proof = match self.seeded_trivial.get() {
+            Some(proof) => proof,
+            None => {
+                let (pcd, ()) = self.fuse(
                     rng,
                     step::internal::rerandomize::Rerandomize::new(),
                     (),
                     self.bootstrap_pcd(),
                     self.bootstrap_pcd(),
-                )
-                .expect("seeded trivial fuse should not fail")
-                .0
-                .into_parts()
-                .0
-            })
-            .clone()
-            .carry(())
+                )?;
+                self.seeded_trivial.get_or_init(|| pcd.into_parts().0)
+            }
+        };
+        Ok(proof.clone().carry(()))
     }
 
     /// Rerandomize proof-carrying data.
@@ -783,7 +857,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         pcd: Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<C, R, H>> {
-        let seeded_trivial = self.seeded_trivial_pcd(rng);
+        let seeded_trivial = self.seeded_trivial_pcd(rng)?;
 
         // The Rerandomize step's witness() returns the left input's data as
         // output data, preserving it through rerandomization. Its right child

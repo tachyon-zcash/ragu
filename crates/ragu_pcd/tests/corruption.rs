@@ -3,15 +3,19 @@
 //! `qa/fuzz`'s `fuzz_verify_reject`, `fuzz_verify_reject_full` and
 //! `fuzz_pcd_lifecycle` all rest on one contract: when
 //! [`Proof::corrupt`](ragu_pcd::Proof::corrupt) reports a [`Binding`], the
-//! verifiers it names must not accept — `verify_uncompressed` for
-//! [`Binding::MustRejectUncompressed`], and `compress` followed by
-//! `verify_compressed` as well for [`Binding::MustReject`]. A wrong
+//! verification paths must not accept — `verify_uncompressed`, and `compress`
+//! followed by `verify_compressed` for [`Binding::MustReject`]. A wrong
 //! classification can either skip a required rejection check or report a false
 //! positive.
 //!
 //! So the contract is pinned here instead, over the whole vocabulary and over
 //! proofs of two shapes: a `WitnessLeaf` seed, and a `Merge2` fuse of two
 //! `Hash2` nodes, whose accumulators and headers are the nondegenerate ones.
+//!
+//! The decoded sweep then takes the production path on bytes: every case is
+//! encoded and decoded before it is judged, and whenever `compress` and
+//! `verify_compressed` accept the decoded proof, that exact proof is fused as
+//! both children of a parent, which must verify.
 //!
 //! This entire suite is ignored in the platform matrix and runs in the
 //! dedicated Linux PR job with `--test corruption -- --include-ignored`.
@@ -24,11 +28,11 @@
 
 mod nontrivial_support;
 
-use std::sync::OnceLock;
+use std::{collections::HashSet, mem::discriminant, sync::OnceLock};
 
 use nontrivial_support::{C, HEADER_SIZE, R, app};
 use ragu_core::{
-    Error,
+    Cycle, Error,
     pasta::{Fp, Fq},
 };
 use ragu_pcd::{
@@ -38,8 +42,9 @@ use ragu_pcd::{
         NestedAccumulator, NestedCommitment, NestedRx, RxComponent, Side,
     },
     header::Header,
+    wire,
 };
-use ragu_testing::pcd::nontrivial::{InternalNode, LeafNode};
+use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2};
 use rand::{SeedableRng, rngs::StdRng};
 
 /// Which header a fixture's proof carries, so it can be verified again after
@@ -72,7 +77,7 @@ impl Fixture {
     }
 
     /// The compressed verifier's verdict: compress, then verify. Compression
-    /// refusing the proof's shape is a rejection; any other error fails the
+    /// refusing malformed proof data is a rejection; any other error fails the
     /// test, as for the decider.
     fn verify_compressed(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
         fn judge<H: Header<Fp>>(
@@ -93,6 +98,27 @@ impl Fixture {
             Shape::Leaf => judge(app, &proof.carry::<LeafNode>(self.data), seed),
             Shape::Deep => judge(app, &proof.carry::<InternalNode>(self.data), seed),
         }
+    }
+
+    /// Fuses the proof as both children of a parent and returns the parent's
+    /// verdict from both verifiers, which must agree.
+    fn fuses_with_itself(&self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
+        let poseidon_params = C::circuit_poseidon(ragu_pcd::pasta::baked());
+        let mut rng = StdRng::seed_from_u64(seed);
+        let parent = match self.shape {
+            Shape::Leaf => {
+                let child = || self.proof.clone().carry::<LeafNode>(self.data);
+                app.fuse(&mut rng, Hash2 { poseidon_params }, (), child(), child())
+            }
+            Shape::Deep => {
+                let child = || self.proof.clone().carry::<InternalNode>(self.data);
+                app.fuse(&mut rng, Merge2 { poseidon_params }, (), child(), child())
+            }
+        }
+        .expect("fusing an accepted child must succeed")
+        .0;
+        app.verify_differential(&parent, rng)
+            .expect("the parent's verifiers must not error")
     }
 }
 
@@ -339,6 +365,25 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
     );
 }
 
+/// The edits that make no change: zero deltas and out-of-range coefficient
+/// indices.
+fn no_op_edits() -> Vec<Corruption<C>> {
+    let mut out = Vec::new();
+    for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
+        out.push(Corruption::NativeCoeff {
+            component: RxComponent::Rx(NativeRx::Application),
+            coeff,
+            delta: Fp::from(delta),
+        });
+        out.push(Corruption::NestedCoeff {
+            index: NestedRx::BridgeEval,
+            coeff,
+            delta: Fq::from(delta),
+        });
+    }
+    out
+}
+
 /// Zero deltas and out-of-range coefficient edits must leave a valid proof.
 fn check_no_op_edits(shape: Shape) {
     let app = app();
@@ -346,29 +391,103 @@ fn check_no_op_edits(shape: Shape) {
     assert!(fixture.clone().verify(&app, 1234));
     assert!(fixture.clone().verify_compressed(&app, 1234));
 
-    for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
-        for corruption in [
-            Corruption::NativeCoeff {
-                component: RxComponent::Rx(NativeRx::Application),
-                coeff,
-                delta: Fp::from(delta),
-            },
-            Corruption::NestedCoeff {
-                index: NestedRx::BridgeEval,
-                coeff,
-                delta: Fq::from(delta),
-            },
-        ] {
-            let mut unchanged = Fixture {
-                shape: fixture.shape,
-                proof: fixture.proof.clone(),
-                data: fixture.data,
-            };
-            assert_eq!(unchanged.proof.corrupt(corruption), Binding::Unbound);
-            assert!(unchanged.clone().verify(&app, 1234));
-            assert!(unchanged.verify_compressed(&app, 1234));
-        }
+    for corruption in no_op_edits() {
+        let mut unchanged = Fixture {
+            shape: fixture.shape,
+            proof: fixture.proof.clone(),
+            data: fixture.data,
+        };
+        assert_eq!(unchanged.proof.corrupt(corruption), Binding::Unbound);
+        assert!(unchanged.clone().verify(&app, 1234));
+        assert!(unchanged.verify_compressed(&app, 1234));
     }
+}
+
+/// The production path on bytes, from decoding to reuse as a child.
+///
+/// Every case is encoded and decoded before it is judged, so the wire form
+/// carries the edit. A case the wire form cannot carry, a header of another
+/// length, has no encoding and must be rejected in memory. A decoded case
+/// bound by the vocabulary must be rejected by `compress` and
+/// `verify_compressed`; one they accept, the honest proof and the no-op
+/// edits, is fused as both children of a parent, and the parent must verify
+/// under both verifiers. Acceptance of a decoded child is what licenses its
+/// reuse, so that implication is pinned here directly.
+///
+/// The rejection of every vocabulary entry is pinned in memory by the groups
+/// above, and the round trip is exact, so one entry per kind of corruption
+/// stands for the rest here.
+fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
+    let app = app();
+    let fixture = fixture(&app, shape);
+    let honest = || Fixture {
+        shape: fixture.shape,
+        proof: fixture.proof.clone(),
+        data: fixture.data,
+    };
+
+    let mut sweep = vec![("honest".to_string(), honest(), Binding::Unbound)];
+    let mut kinds = HashSet::new();
+    for corruption in vocabulary().into_iter().chain(no_op_edits()) {
+        let described = format!("{corruption:?}");
+        let kind = discriminant(&corruption);
+        let mut corrupted = honest();
+        let binding = corrupted.proof.corrupt(corruption);
+        if binding.binds_compressed() && !kinds.insert(kind) {
+            continue;
+        }
+        sweep.push((described, corrupted, binding));
+    }
+
+    let mut accepted = 0usize;
+    for (described, corrupted, binding) in sweep {
+        let bytes = match corrupted.proof.to_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                assert_eq!(error, wire::Error::Unencodable, "{shape:?}: {described}");
+                assert!(
+                    !corrupted.verify(&app, 1234),
+                    "{shape:?}: a proof with no encoding verified: {described}",
+                );
+                continue;
+            }
+        };
+        let decoded = Proof::<C, R>::from_bytes(&bytes)
+            .unwrap_or_else(|error| panic!("{shape:?}: {described}: {error}"));
+        assert_eq!(
+            decoded.to_bytes().expect("a decoded proof re-encodes"),
+            bytes,
+            "{shape:?}: the round trip is not exact: {described}",
+        );
+        let decoded = Fixture {
+            shape,
+            proof: decoded,
+            data: corrupted.data,
+        };
+        let verdict = decoded.clone().verify_compressed(&app, 1234);
+        if binding.binds_compressed() {
+            assert!(
+                !verdict,
+                "{shape:?}: the production path accepted a decoded corrupted proof: {described}",
+            );
+            continue;
+        }
+        assert!(
+            verdict,
+            "{shape:?}: the production path rejected a decoded honest proof: {described}",
+        );
+        assert!(
+            decoded.fuses_with_itself(&app, 1234),
+            "{shape:?}: an accepted decoded child made a parent that does not verify: {described}",
+        );
+        accepted += 1;
+    }
+    // Entries the vocabulary leaves unbound on this shape, such as edits to
+    // an accumulator a leaf does not have, are accepted and fused as well.
+    assert!(
+        accepted > no_op_edits().len(),
+        "{shape:?}: only {accepted} cases reached the fuse check",
+    );
 }
 
 macro_rules! corruption_tests {
@@ -405,6 +524,12 @@ macro_rules! corruption_tests {
             fn no_op_edits_verify() {
                 check_no_op_edits($shape);
             }
+
+            #[test]
+            #[ignore = "corruption suite: run by the Linux corruption job"]
+            fn decoded_proofs_fuse_when_accepted() {
+                check_decoded_proofs_fuse_when_accepted($shape);
+            }
         }
     };
 }
@@ -412,39 +537,30 @@ macro_rules! corruption_tests {
 corruption_tests!(leaf, Shape::Leaf);
 corruption_tests!(deep, Shape::Deep);
 
-/// Stored challenges bind the decider alone. The compressed statement does not
-/// carry them, so the compressed verifier judges a proof with a stale stored
-/// challenge by what the compressor made of it: the compressor reads the stored
-/// `w`, `x`, `y` and `u`, so those four compress into proofs it rejects, and
-/// the other seven into proofs of the honest instance, which it accepts.
+/// A stale stored challenge must fail both verification paths. Compression
+/// checks every stored challenge even though the compressed statement omits
+/// them, because recursive reuse consumes the original proof's caches.
 #[test]
 #[ignore = "corruption suite: run by the Linux corruption job"]
-fn stored_challenge_edits_bind_the_decider_alone() {
+fn stored_challenge_edits_bind_both_verification_paths() {
     let app = app();
     for shape in [Shape::Leaf, Shape::Deep] {
         let fixture = fixture(&app, shape);
+        assert!(fixture.clone().verify(&app, 1234));
+        assert!(fixture.clone().verify_compressed(&app, 1234));
         for which in Challenge::ALL {
             let mut corrupted = fixture.clone();
             let binding = corrupted
                 .proof
                 .corrupt(Corruption::Challenge(which, Fp::from(0xc0ffee_u64)));
-            assert_eq!(
-                binding,
-                Binding::MustRejectUncompressed,
-                "{shape:?}: {which:?}"
-            );
+            assert_eq!(binding, Binding::MustReject, "{shape:?}: {which:?}");
             assert!(
                 !corrupted.clone().verify(&app, 1234),
                 "the decider accepted a {shape:?} proof with a stale stored {which:?}",
             );
-            let consumed = matches!(
-                which,
-                Challenge::W | Challenge::X | Challenge::Y | Challenge::U
-            );
-            assert_eq!(
-                corrupted.verify_compressed(&app, 1234),
-                !consumed,
-                "{shape:?}: the compressed verifier's verdict on a stale stored {which:?}",
+            assert!(
+                !corrupted.verify_compressed(&app, 1234),
+                "the compressed verification path accepted a {shape:?} proof with a stale stored {which:?}",
             );
         }
     }
@@ -502,10 +618,9 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
     let second = both
         .proof
         .corrupt(Corruption::Challenge(Challenge::Mu, Fp::from(0xbadu64)));
-    // The header edit binds both verifiers; the stored challenge binds the
-    // decider alone. The composed edit binds both, since the header edit does.
+    // Both effective edits bind both verification paths, as does their composition.
     assert_eq!(first, Binding::MustReject);
-    assert_eq!(second, Binding::MustRejectUncompressed);
+    assert_eq!(second, Binding::MustReject);
     assert_eq!(first.max(second), Binding::MustReject);
     assert!(
         !both.clone().verify(&app, 99),

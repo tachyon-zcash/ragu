@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod builder;
+mod codec;
 // Stage regressions recommit edited application polynomials to bypass the
 // honest proving API.
 #[cfg(test)]
@@ -42,6 +43,12 @@ pub(crate) mod recursive_propagation_tests;
 #[cfg(test)]
 #[path = "../../tests/backend_equivalence.rs"]
 mod backend_equivalence;
+// Golden fixtures of the fuse pipeline and the compressed verifier, under
+// `tests/fixtures/fuse/`. Mounted here so the digests destructure `Proof`
+// exhaustively: a new field fails to compile until the fixture pins it.
+#[cfg(test)]
+#[path = "../../tests/fuse_fixtures.rs"]
+mod fuse_fixture_tests;
 #[cfg(test)]
 #[path = "../../tests/profile_substitution.rs"]
 mod profile_substitution_tests;

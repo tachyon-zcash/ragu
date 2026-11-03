@@ -1,0 +1,100 @@
+name: Fixtures
+
+# Checks the golden fixtures under `crates/ragu_pcd/tests/fixtures/`. The
+# `fuse fixtures` job replays the committed randomness tapes through the
+# prover and requires the committed proofs and digests back, and checks that
+# the verifier still accepts the committed compressed proofs. A red job means
+# the fuse pipeline or the verifier changed what it produces or accepts; see
+# `crates/ragu_pcd/tests/fixtures/fuse/README.md` for how to regenerate the
+# fixtures when that is intended.
+#
+# Backend CI calls this workflow and includes its result in the required
+# `backend-required` gate. The Rust CI matrix also runs these tests on every
+# platform.
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      fixtures: ${{ steps.filter.outputs.fixtures }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          filters: |
+            fixtures:
+              - '.cargo/**'
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/fixtures.yml'
+              - '.github/workflows/backend.yml'
+              - '.github/actions/**'
+
+  fuse:
+    name: fuse fixtures
+    needs: changes
+    if: needs.changes.outputs.fixtures == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: fixtures
+      - name: Check the fuse and verifier fixtures
+        env:
+          RAGU_FIXTURES: check
+        # Release profiles can enable debug assertions, marking these tests ignored.
+        run: >-
+          cargo test --release -p ragu_pcd --locked --all-features
+          --lib proof::fuse_fixture_tests -- --include-ignored
+
+  result:
+    name: fixture result
+    if: always()
+    needs: [changes, fuse]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate fixture jobs
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          FIXTURES_RESULT: ${{ needs.fuse.result }}
+          FIXTURES_CHANGED: ${{ needs.changes.outputs.fixtures }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Fixture change detection: $CHANGES_RESULT"
+            exit 1
+          fi
+          if [[ "$FIXTURES_RESULT" == "success" ]]; then
+            exit 0
+          fi
+          if [[ "$FIXTURES_RESULT" == "skipped" &&
+                "$FIXTURES_CHANGED" == "false" &&
+                "$EVENT_NAME" != "push" ]]; then
+            exit 0
+          fi
+          echo "Fuse fixtures: $FIXTURES_RESULT"
+          exit 1

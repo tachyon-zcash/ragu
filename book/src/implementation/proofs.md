@@ -130,13 +130,26 @@ both children. Steps used with `seed` must have `Left = ()` and
 The base case of the recursion lives in a single internal step, the only one
 whose fuse does not verify its children. `ApplicationBuilder::finalize` runs it
 once over two synthesized _dummy proofs_ — which do not verify on their own —
-to produce the bootstrap proof, which carries the unit header.
+to produce the bootstrap proof, which carries the unit header, unless the
+application was given one with `ApplicationBuilder::with_bootstrap`.
 
 The bootstrap proof attests nothing, and any prover can produce one; it exists
 only so that the recursion has a valid proof to start from. The internal step's
 private `Dummy` input header is the base-case sentinel. Ordinary steps,
 including those with unit inputs, cannot declare `Dummy` and therefore always
 enforce their child claims.
+
+The proof is fixed by the application's configuration, so an application can
+store the one `Application::bootstrap_proof` returns and supply it to later
+applications of the same configuration with `with_bootstrap`, whose
+finalization then skips the fuse. The supplied proof is checked for shape and
+for coming from the bootstrap step, not for validity: a proof from another
+configuration is installed, and every proof built on it then fails
+verification, so a stored proof must be keyed by what fixes it. Like every
+uncompressed proof it is not zero-knowledge: for a profile with an extension
+it holds the extension's polynomials over the prover context, so store it
+only if that context holds nothing confidential. The built-in profiles have no
+extension.
 
 ### `fuse`
 

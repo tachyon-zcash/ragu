@@ -22,6 +22,7 @@ use udon::curve::Affine;
 
 use crate::SelectableBackend;
 
+pub(crate) mod fingerprint;
 mod msm;
 mod prover;
 mod transcript;

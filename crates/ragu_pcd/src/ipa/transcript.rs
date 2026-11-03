@@ -106,6 +106,7 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
     /// Absorbs a nested-curve point through the [`Point`] gadget, which
     /// rejects the identity as halo2's `common_point` does.
     fn absorb(&mut self, point: C::NestedCurve) -> Result<()> {
+        super::fingerprint::record_point(&point);
         Point::constant(&mut self.dr, point)?.write(&mut self.dr, &mut self.transcript)
     }
 
@@ -123,7 +124,9 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
 
     /// Squeezes a circuit-field challenge.
     fn squeeze(&mut self) -> Result<C::CircuitField> {
-        Ok(*self.transcript.challenge(&mut self.dr)?.value().take())
+        let challenge = *self.transcript.challenge(&mut self.dr)?.value().take();
+        super::fingerprint::record_challenge(&challenge);
+        Ok(challenge)
     }
 }
 
@@ -146,6 +149,7 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::HostCurve> for HostSide<'_
     }
 
     fn write_scalar(&mut self, scalar: C::CircuitField) -> Result<()> {
+        super::fingerprint::record_scalar(&scalar);
         Element::constant(&mut self.0.dr, scalar).write(&mut self.0.dr, &mut self.0.transcript)
     }
 

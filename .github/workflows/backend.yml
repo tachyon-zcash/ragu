@@ -16,6 +16,13 @@ permissions:
   contents: read
 
 jobs:
+  fixtures:
+    name: fuse fixtures
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/fixtures.yml
+
   # Extend this shared matrix when another accelerated backend lands instead
   # of adding a feature-specific matrix (and three more PR status checks).
   # The general Rust jobs exercise all features together; this checks each
@@ -87,23 +94,28 @@ jobs:
           cargo build -p ragu_no_std --lib --no-default-features --locked
           --target thumbv7em-none-eabihf
 
-  # Stable status for the ruleset. Future backend jobs should be added to this
-  # list instead of becoming separate required checks.
+  # Stable status for the ruleset, including the golden fixture replay.
+  # Future backend jobs should be added to this list instead of becoming
+  # separate required checks.
   backend-required:
     name: backend-required
     if: always()
     needs:
+      - fixtures
       - backend-equivalence
       - backend-nostd
     runs-on: ubuntu-latest
     steps:
       - name: Validate required backend jobs
         env:
+          FIXTURES_RESULT: ${{ needs.fixtures.result }}
           EQUIVALENCE_RESULT: ${{ needs.backend-equivalence.result }}
           NOSTD_RESULT: ${{ needs.backend-nostd.result }}
         run: |
-          if [[ "$EQUIVALENCE_RESULT" != "success" ||
+          if [[ "$FIXTURES_RESULT" != "success" ||
+                "$EQUIVALENCE_RESULT" != "success" ||
                 "$NOSTD_RESULT" != "success" ]]; then
+            echo "Fuse fixtures: $FIXTURES_RESULT"
             echo "Backend equivalence: $EQUIVALENCE_RESULT"
             echo "Backend no_std: $NOSTD_RESULT"
             exit 1
