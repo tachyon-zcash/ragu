@@ -80,6 +80,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_points_binding: builder.native_points_binding_commitment(),
             native_points_children: builder.native_points_children_commitment(),
             online: builder.online_commitments(),
+            application_stage: builder.native_application_stage_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };

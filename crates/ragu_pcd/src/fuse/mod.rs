@@ -98,7 +98,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // polynomials the preamble bridge commits.
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
-        self.begin_application_proof(
+        let staged = self.begin_application_proof(
+            rng,
             &step,
             &witness,
             (&left, &left_data),
@@ -125,6 +126,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (&left, left_data),
             (&right, right_data),
             *w.value().take(),
+            staged,
             &mut builder,
         )?;
         let native_registry = self.native_registry.at(*w.value().take());

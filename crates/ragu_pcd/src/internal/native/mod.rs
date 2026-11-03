@@ -77,7 +77,7 @@ impl<P: Profile> Len for Endoscalings<P> {
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here. The profile's shape rederives
 /// the whole cycle (see [`Shape`]).
-pub const NUM_ENDOSCALING_STEPS: usize = 24;
+pub const NUM_ENDOSCALING_STEPS: usize = 25;
 
 const _: () = assert!(
     endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
@@ -132,14 +132,15 @@ fn try_fixed_vec<T, L: Len, E>(
 }
 
 /// The native rx polynomials that are not endoscaling steps: the
-/// application's, the four hashing, collapse and compute-v circuits', the
-/// binders', bind-beta's, bind-endoscalar's and the eleven stages'.
-pub const NUM_FIXED_RX: usize = 18 + NUM_BINDERS;
+/// application's and its stage's, the four hashing, collapse and compute-v
+/// circuits', the binders', bind-beta's, bind-endoscalar's and the eleven
+/// stages'.
+pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
 
 /// The native internal circuits that are not endoscaling steps: the rx
-/// polynomials' circuits and stages, the application's aside, and the five
-/// final stage masks.
-pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 1 + 5;
+/// polynomials' circuits and stages, the application's two aside, the five
+/// final stage masks, and the application stage's mask and final mask.
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 2 + 5 + 2;
 
 /// The minimum groups for the native quotient fold: fourteen groups of
 /// seven provide room for 98 claims. Larger profiles grow the group count.
@@ -263,6 +264,13 @@ pub enum InternalCircuitIndex {
     PointsWalkFinalStaged,
     /// The preamble's final mask, under which `bind_beta` ends.
     PreambleFinalStaged,
+    // Application masks
+    /// The mask of the application stage, which every step circuit reserves
+    /// after its SYSTEM gate.
+    ApplicationStage,
+    /// The final mask of the step circuits, whose only stage is the
+    /// application stage.
+    ApplicationFinalStaged,
     /// A bonding of the profile's native extension, a stage's mask or a
     /// final mask, in [`Extension::bondings`](crate::profile::Extension::bondings)
     /// order.
@@ -334,6 +342,8 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::EvalFinalStaged);
         push(&mut slots, &mut c, Self::PointsWalkFinalStaged);
         push(&mut slots, &mut c, Self::PreambleFinalStaged);
+        push(&mut slots, &mut c, Self::ApplicationStage);
+        push(&mut slots, &mut c, Self::ApplicationFinalStaged);
         assert!(c == Self::NUM);
         slots
     }
@@ -416,6 +426,8 @@ impl InternalCircuitIndex {
             | EvalFinalStaged
             | PointsWalkFinalStaged
             | PreambleFinalStaged
+            | ApplicationStage
+            | ApplicationFinalStaged
             | ExtensionBonding(_) => true,
         }
     }
@@ -456,6 +468,8 @@ pub struct InternalCircuitValues<T, P: Profile> {
     pub eval_final_staged: T,
     pub points_walk_final_staged: T,
     pub preamble_final_staged: T,
+    pub application_stage: T,
+    pub application_final_staged: T,
     /// One per bonding of the profile's native extension.
     pub extension_bondings: FixedVec<T, NumExtensionBondings<P>>,
 }
@@ -506,6 +520,8 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             EvalFinalStaged => &self.eval_final_staged,
             PointsWalkFinalStaged => &self.points_walk_final_staged,
             PreambleFinalStaged => &self.preamble_final_staged,
+            ApplicationStage => &self.application_stage,
+            ApplicationFinalStaged => &self.application_final_staged,
             ExtensionBonding(j) => &self.extension_bondings[j as usize],
         }
     }
@@ -559,6 +575,8 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             eval_final_staged: f(EvalFinalStaged)?,
             points_walk_final_staged: f(PointsWalkFinalStaged)?,
             preamble_final_staged: f(PreambleFinalStaged)?,
+            application_stage: f(ApplicationStage)?,
+            application_final_staged: f(ApplicationFinalStaged)?,
             extension_bondings: try_fixed_vec(|j| f(ExtensionBonding(j as u32)))?,
         })
     }
@@ -569,6 +587,11 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
 pub enum RxIndex {
     // Circuits
     Application,
+    /// The application stage, which the application claim adds to the
+    /// step's own polynomial. The stage mask holds it to its block and the
+    /// application final mask holds the step's own polynomial to zero
+    /// there, so its commitment binds exactly the staged values.
+    ApplicationStage,
     Hashes1,
     Hashes2,
     Collapse,
@@ -626,6 +649,7 @@ impl RxIndex {
         let mut slots = [None; Self::NUM];
         let mut c = 0;
         push(&mut slots, &mut c, Self::Application);
+        push(&mut slots, &mut c, Self::ApplicationStage);
         push(&mut slots, &mut c, Self::Hashes1);
         push(&mut slots, &mut c, Self::Hashes2);
         push(&mut slots, &mut c, Self::Collapse);
@@ -708,6 +732,7 @@ impl RxIndex {
 #[derive(Clone)]
 pub struct RxValues<T, P: Profile> {
     pub application: T,
+    pub application_stage: T,
     pub hashes_1: T,
     pub hashes_2: T,
     pub collapse: T,
@@ -755,6 +780,7 @@ impl<T, P: Profile> RxValues<T, P> {
         use RxIndex::*;
         match id {
             Application => &self.application,
+            ApplicationStage => &self.application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
             Collapse => &self.collapse,
@@ -797,6 +823,7 @@ impl<T, P: Profile> RxValues<T, P> {
         use RxIndex::*;
         Ok(RxValues {
             application: f(Application)?,
+            application_stage: f(ApplicationStage)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
             collapse: f(Collapse)?,
@@ -919,13 +946,19 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
 ///
 /// Does not register internal steps (rerandomize, bootstrap); those are
 /// registered by the caller after this function returns.
+///
+/// `stage_size` is the application stage's size in values, the largest any
+/// registered step stages, which fixes the layout of the application masks.
 pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
     mut registry: RegistryBuilder<'params, C::CircuitField, R>,
     params: &'params C::Params,
     log2_circuits: u32,
+    stage_size: usize,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
+    // The application stage follows the SYSTEM gate in every step circuit.
+    let stage_gates = ragu_circuits::staging::stage_gates(stage_size);
 
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
@@ -945,6 +978,11 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }
+            ApplicationStage => {
+                registry.register_bonding(ragu_circuits::staging::stage_mask(1, stage_gates)?)
+            }
+            ApplicationFinalStaged => registry
+                .register_bonding(ragu_circuits::staging::final_stage_mask(1 + stage_gates)?),
             InnerErrorStage => registry.register_bonding(stages::inner_error::Stage::<
                 C,
                 R,

@@ -1,15 +1,16 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{Circuit, WithAux, polynomials::Rank};
+use ragu_circuits::{Circuit, WithAux, polynomials::Rank, staging};
 use ragu_core::{
-    Cycle, Result,
+    Coeff, Cycle, Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
     Element, GadgetExt,
+    allocator::{Allocator, Standard},
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
@@ -33,18 +34,80 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
 /// `[zeta, x_0, y_0, ..., x_5, y_5, left, right, output]`: the step's
 /// challenge, its online openings in slot order and its three padded headers
 /// (see [`online`]).
+///
+/// The application stage occupies the first gates after the SYSTEM gate of
+/// every step circuit, reserved by [`reserve_stage`]: the step's own trace is
+/// zero there and the committed stage polynomial supplies those wires, as
+/// for a staged circuit. Its size is the largest
+/// [`NUM_STAGED`](Step::NUM_STAGED) registered in the application, known
+/// once every step is, so the block is reserved here rather than through a
+/// type-level stage.
 pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
     step: S,
+    /// The application stage's size, in values.
+    stage_size: usize,
     _marker: PhantomData<(C, R)>,
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
+    /// The circuit of `step` over a stage of exactly its own
+    /// [`NUM_STAGED`](Step::NUM_STAGED) values.
+    #[cfg(test)]
     pub fn new(step: S) -> Self {
         Adapter {
             step,
+            stage_size: S::NUM_STAGED,
             _marker: PhantomData,
         }
     }
+
+    /// The circuit of `step` over an application stage of `stage_size`
+    /// values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an initialization error if the step stages more values than
+    /// the stage holds; registration sizes the stage from every step, so
+    /// this guards the prover's own calls.
+    pub fn with_stage(step: S, stage_size: usize) -> Result<Self> {
+        if S::NUM_STAGED > stage_size {
+            return Err(Error::Initialization(
+                "the step stages more values than the application stage holds".into(),
+            ));
+        }
+        Ok(Adapter {
+            step,
+            stage_size,
+            _marker: PhantomData,
+        })
+    }
+}
+
+/// Reserves the application stage's gates at the start of the circuit, as a
+/// stage builder would, and returns its first `size` wires.
+///
+/// The reserved wires are zero in the circuit's own trace; the committed
+/// stage polynomial supplies their values, and the application final mask
+/// holds the own trace to zero there. Every step circuit reserves the block,
+/// including the internal steps, so one pair of masks covers every proof.
+///
+/// Invariant: the adapter binds only the returned wires, the block's `a` and
+/// `d` wires. The final mask holds all four wire slots of each reserved gate
+/// to zero in the step's own trace. The stage mask does not force the block's
+/// `b` and `c` wires or an odd-sized stage's padding wire to zero in the
+/// stage polynomial, so those wires must remain unexposed.
+fn reserve_stage<'dr, D: Driver<'dr>>(dr: &mut D, size: usize) -> Result<Vec<D::Wire>> {
+    // Allocate whole gates, two wires each, so the step's own gates start
+    // after the block; the padding wire of an odd-sized stage is unused.
+    let allocator = &mut Standard::new();
+    let mut wires = Vec::with_capacity(size);
+    for i in 0..2 * staging::stage_gates(size) {
+        let wire = allocator.alloc(dr, || Ok(Coeff::Zero))?;
+        if i < size {
+            wires.push(wire);
+        }
+    }
+    Ok(wires)
 }
 
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::CircuitField>
@@ -88,9 +151,31 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     where
         Self: 'dr,
     {
+        let stage_wires = reserve_stage(dr, self.stage_size)?;
         let (left, right, witness, online) = witness.cast();
 
-        let mut oracles = Oracles::alloc(dr, online.as_ref())?;
+        // The step's staged values, each bound to its stage wire by one
+        // equality: the committed stage supplies the stage wires, so a value
+        // the circuit allocates here can only be the committed one. The
+        // adapter owns this flat binding; no gadget traversal decides which
+        // wires are bound.
+        let mut staged = Vec::with_capacity(S::NUM_STAGED);
+        for (i, stage_wire) in stage_wires.iter().take(S::NUM_STAGED).enumerate() {
+            let value = Element::alloc(
+                dr,
+                &mut (),
+                online.as_ref().map(|w| {
+                    w.staged
+                        .get(i)
+                        .copied()
+                        .expect("the fuse checks the staged values' count")
+                }),
+            )?;
+            dr.enforce_equal(value.wire(), stage_wire)?;
+            staged.push(value);
+        }
+
+        let mut oracles = Oracles::alloc(dr, online.as_ref(), staged)?;
         let ((left, right, output), output_data, step_aux) =
             self.step
                 .witness::<_, HEADER_SIZE>(dr, &mut oracles, witness, left, right)?;
@@ -221,6 +306,7 @@ mod tests {
                 // Slot i holds X + i.
                 sparse::Polynomial::from_coeffs(alloc::vec![Fp::from(slot as u64), Fp::ONE])
             }),
+            staged: alloc::vec::Vec::new(),
         }
     }
 
@@ -296,7 +382,7 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
         let witness = online(3);
-        let mut oracles = Oracles::alloc(dr, Always::maybe_just(|| &witness)).unwrap();
+        let mut oracles = Oracles::alloc(dr, Always::maybe_just(|| &witness), Vec::new()).unwrap();
         let x = Element::alloc(dr, &mut (), Always::maybe_just(|| Fp::from(5u64))).unwrap();
         assert_eq!(
             *oracles

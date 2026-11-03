@@ -3,8 +3,9 @@
 //! Before the preamble bridge is committed, [`begin_application_proof`]
 //! fixes what the bridge carries about the application: the children's
 //! output headers, encoded from their data, the step's circuit id and, by
-//! the step's [`polynomials`](Step::polynomials) phase, the step's own
-//! online polynomials. After $w$ is squeezed,
+//! the step's [`polynomials`](Step::polynomials) and
+//! [`staged`](Step::staged) phase, the step's own online polynomials and
+//! its application stage. After $w$ is squeezed,
 //! [`compute_application_proof`] synthesizes the step circuit with
 //! $\zeta = w$ and the six slots' polynomials (see
 //! [`online`]), and sets the application rx and
@@ -15,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::{CircuitExt, polynomials::Rank};
+use ragu_circuits::{CircuitExt, polynomials::Rank, staging};
 use ragu_core::{Error, Result};
 use rand::CryptoRng;
 use udon::field::Field;
@@ -31,24 +32,26 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// The first phase: sets the children's output headers, the circuit id
-    /// and the step's own online polynomials on the builder, all of which
-    /// the preamble bridge commits before $w$ is squeezed.
+    /// The first phase: sets the children's output headers, the circuit id,
+    /// the step's own online polynomials and its application stage on the
+    /// builder, all of which the preamble bridge commits before $w$ is
+    /// squeezed. Returns the staged values, which the second phase binds.
     ///
     /// # Errors
     ///
     /// Propagates the step's errors, and returns [`Error::InvalidWitness`]
     /// if the step returns a polynomial with more coefficients than the
     /// rank holds, or the zero polynomial, whose commitment the walk cannot
-    /// take.
-    pub(super) fn begin_application_proof<'source, S: Step<C>>(
+    /// take, or other than [`NUM_STAGED`](Step::NUM_STAGED) staged values.
+    pub(super) fn begin_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
+        rng: &mut RNG,
         step: &S,
         witness: &S::Witness<'source>,
         left: (&Proof<C, R>, &<S::Left as Header<C::CircuitField>>::Data),
         right: (&Proof<C, R>, &<S::Right as Header<C::CircuitField>>::Data),
         builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()> {
+    ) -> Result<Vec<C::CircuitField>> {
         builder.set_circuit_id(S::INDEX.circuit_index::<C::Profile>(self.num_application_steps)?);
         builder.set_left_header(ky::output_header::<C, S::Left, HEADER_SIZE>(
             left.1.clone(),
@@ -93,12 +96,38 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 unreachable!("the step returned HEADER_POLYNOMIALS polynomials")
             }),
         );
-        Ok(())
+
+        let staged = step.staged(
+            witness,
+            HeaderInput {
+                data: left.1,
+                polynomials: &left_polys,
+            },
+            HeaderInput {
+                data: right.1,
+                polynomials: &right_polys,
+            },
+        )?;
+        if staged.len() != S::NUM_STAGED {
+            return Err(Error::InvalidWitness(
+                "a step must stage exactly NUM_STAGED values".into(),
+            ));
+        }
+        // The application stage, after the SYSTEM gate, blinded: its values
+        // are the step's secrets. Its commitment joins the preamble bridge.
+        builder.set_native_application_stage_rx(staging::stage_rx::<_, R>(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            1,
+            self.stage_size,
+            &staged,
+        )?);
+        Ok(staged)
     }
 
-    /// The second phase: synthesizes the step circuit with $\zeta$ and the
-    /// slots' polynomials, and sets the application rx and the online
-    /// openings on the builder. Returns the output header's data and the
+    /// The second phase: synthesizes the step circuit with $\zeta$, the
+    /// slots' polynomials and the `staged` values the first phase
+    /// committed, and sets the application rx and the online openings on
+    /// the builder. Returns the output header's data and the
     /// step's auxiliary output.
     pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
@@ -108,6 +137,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: (&Proof<C, R>, <S::Left as Header<C::CircuitField>>::Data),
         right: (&Proof<C, R>, <S::Right as Header<C::CircuitField>>::Data),
         zeta: C::CircuitField,
+        staged: Vec<C::CircuitField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         <S::Output as Header<C::CircuitField>>::Data,
@@ -118,8 +148,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let online = OnlineWitness {
             zeta,
             polys: online::polys(left.0, right.0, builder.online_polys()).map(Clone::clone),
+            staged,
         };
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::with_stage(step, self.stage_size)?
             .trace((left.1, right.1, witness, online))?
             .into_parts();
         let rx = self.native_registry.assemble(

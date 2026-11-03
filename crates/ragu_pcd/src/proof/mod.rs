@@ -18,6 +18,9 @@ mod codec;
 // properties with saved recursion failures, and the scheduled heavy-tests
 // run picks up the full suites with `cargo test -- --ignored`.
 #[cfg(test)]
+#[path = "../../tests/app_stage.rs"]
+mod app_stage_tests;
+#[cfg(test)]
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
 #[cfg(test)]
@@ -198,6 +201,9 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
+    /// The application stage, which the application claim adds to the
+    /// step's own polynomial, sized for the largest registered step.
+    pub(crate) native_application_stage_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_inner_error_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_outer_error_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -321,6 +327,7 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Native commitment caches
     native_application_commitment: Cached<C::HostCurve>,
+    native_application_stage_commitment: Cached<C::HostCurve>,
     native_preamble_commitment: Cached<C::HostCurve>,
     native_inner_error_commitment: Cached<C::HostCurve>,
     native_outer_error_commitment: Cached<C::HostCurve>,
@@ -402,6 +409,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             Query => &self.native_query_rx,
             Eval => &self.native_eval_rx,
             Application => &self.native_application_rx,
+            ApplicationStage => &self.native_application_stage_rx,
             Hashes1 => &self.native_hashes_1_rx,
             Hashes2 => &self.native_hashes_2_rx,
             Collapse => &self.native_collapse_rx,
@@ -602,6 +610,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsF),
                 self.online_commitments.0[0],
                 self.online_commitments.0[1],
+                self.native_rx_commitment(RxIndex::ApplicationStage),
             ],
             coverage: Default::default(),
         })
@@ -708,6 +717,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             Query => self.native_query_commitment.0,
             Eval => self.native_eval_commitment.0,
             Application => self.native_application_commitment.0,
+            ApplicationStage => self.native_application_stage_commitment.0,
             Hashes1 => self.native_hashes_1_commitment.0,
             Hashes2 => self.native_hashes_2_commitment.0,
             Collapse => self.native_collapse_commitment.0,
@@ -1171,6 +1181,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
+        builder.set_native_application_stage_rx(ones_host.clone());
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
@@ -1478,6 +1489,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
                 stashed_online: builder.online_commitments(),
+                stashed_application_stage: builder.native_application_stage_commitment(),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
                 nested: nested::stages::preamble::NestedValues {
@@ -1495,6 +1507,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     native_points_binding: builder.native_points_binding_commitment(),
                     native_points_children: builder.native_points_children_commitment(),
                     online: builder.online_commitments(),
+                    application_stage: builder.native_application_stage_commitment(),
                     left: trivial_child_witness.clone(),
                     right: trivial_child_witness,
                 },

@@ -70,6 +70,7 @@ codec! {
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     native_application_rx => wire::DefaultEncoding,
+    native_application_stage_rx => wire::DefaultEncoding,
     native_preamble_rx => wire::DefaultEncoding,
     native_inner_error_rx => wire::DefaultEncoding,
     native_outer_error_rx => wire::DefaultEncoding,
@@ -185,6 +186,7 @@ codec! {
 
     // Native commitment caches
     native_application_commitment => CachedPoint,
+    native_application_stage_commitment => CachedPoint,
     native_preamble_commitment => CachedPoint,
     native_inner_error_commitment => CachedPoint,
     native_outer_error_commitment => CachedPoint,
