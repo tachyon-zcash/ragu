@@ -128,6 +128,42 @@ fn check_bindings<F, Id, R>(
     }
 }
 
+/// The degrees the decompression lays the wire bindings out by are the
+/// ones the bindings pin: [`super::native_binding_degrees`] and
+/// [`super::nested_binding_degrees`] list each binding's wires as
+/// `native_bindings` and `nested_bindings` do, in their order.
+#[test]
+fn binding_degrees_are_the_bindings() {
+    let (app, _, instance) = setup();
+    let challenges = replay(&instance);
+    fn pinned<F: Copy>(wires: &[(usize, F)]) -> alloc::vec::Vec<usize> {
+        wires.iter().map(|&(degree, _)| degree).collect()
+    }
+
+    let native = instance
+        .native_bindings::<TestR, ReferenceBackend, HEADER_SIZE>(
+            &challenges,
+            &app.native_registry,
+            Fp::ONE,
+        )
+        .unwrap();
+    let degrees =
+        super::native_binding_degrees::<Pasta, TestR, HEADER_SIZE>().unwrap();
+    assert_eq!(native.len(), degrees.len());
+    for (index, (binding, degrees)) in native.iter().zip(degrees).enumerate() {
+        assert_eq!(pinned(&binding.wires), degrees, "native binding {index}");
+    }
+
+    let nested = instance
+        .nested_bindings::<TestR, ReferenceBackend>(&challenges, &app.nested_registry, Fq::ONE)
+        .unwrap();
+    let degrees = super::nested_binding_degrees::<Pasta, TestR>().unwrap();
+    assert_eq!(nested.len(), degrees.len());
+    for (index, (binding, degrees)) in nested.iter().zip(degrees).enumerate() {
+        assert_eq!(pinned(&binding.wires), degrees, "nested binding {index}");
+    }
+}
+
 #[test]
 fn wire_bindings_hold() {
     let (app, pcd, instance) = setup();
