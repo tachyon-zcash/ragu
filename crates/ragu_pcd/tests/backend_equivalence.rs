@@ -8,7 +8,7 @@ use proptest::{
 use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    polynomials::{ProductionRank, Rank, sparse},
+    polynomials::{Rank, WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -180,8 +180,8 @@ const RNG_FINGERPRINT_WORDS: usize = 4;
 const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
-type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
-type TestPcd = Pcd<Pasta, ProductionRank, ()>;
+type TestApplication<'params, B> = Application<'params, Pasta, WalletRank, TEST_HEADER_SIZE, B>;
+type TestPcd = Pcd<Pasta, WalletRank, ()>;
 type TestCompressedPcd = CompressedPcd<Pasta, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
 type Outcome = (VerifierDecision, RngFingerprint);
@@ -235,14 +235,14 @@ struct Apps {
 impl Apps {
     fn build(dummy_circuits: usize) -> Self {
         let pasta = ragu_pcd::pasta::baked_aggregator();
-        let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let reference = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let accelerated = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
             .with_backend::<AcceleratedBackend>()
             .register(UnitStep)
             .unwrap()
@@ -250,7 +250,7 @@ impl Apps {
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let prover = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
             .with_backend::<AcceleratedProver>()
             .register(UnitStep)
             .unwrap()
@@ -463,7 +463,7 @@ fn verifier_outcome<B: SelectableBackend>(
 }
 
 fn corruptions(
-    proof: &Proof<Pasta, ProductionRank>,
+    proof: &Proof<Pasta, WalletRank>,
     inputs: CorruptionInputs,
 ) -> impl IntoIterator<Item = (&'static str, ProofMutation<Fp>)> {
     [
@@ -955,7 +955,7 @@ impl crate::backend::TestSealed for SerialFuseBackend {
 
 #[test]
 fn serial_fuse_keeps_individual_msms_and_original_iteration() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
         .with_backend::<SerialFuseBackend>()
         .register(UnitStep)
         .unwrap()
@@ -970,7 +970,7 @@ fn serial_fuse_keeps_individual_msms_and_original_iteration() {
 
 #[test]
 fn selected_backend_dispatch_reaches_protocol_phases() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
         .with_backend::<TrackingBackend>()
         .register(UnitStep)
         .unwrap()

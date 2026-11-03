@@ -7,7 +7,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    polynomials::ProductionRank,
+    polynomials::WalletRank,
     registry::{CircuitIndex, Registry},
 };
 use ragu_core::{
@@ -56,7 +56,7 @@ struct Side<'a, F: Field, Id, C: Affine> {
 /// Each named circuit's restriction at $(r, y)$.
 fn restrictions<F: Field, Id>(
     shapes: &[Shape<Id, F>],
-    registry: &Registry<'_, F, ProductionRank>,
+    registry: &Registry<'_, F, WalletRank>,
     r: F,
     y: F,
 ) -> Vec<(CircuitIndex, F)> {

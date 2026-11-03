@@ -6,7 +6,7 @@
 use alloc::vec;
 
 use ragu_circuits::{
-    polynomials::{ProductionRank, sparse},
+    polynomials::{WalletRank, sparse},
     registry::CircuitIndex,
     staging::{StageReader, stage_wire_indices, wires_of},
 };
@@ -34,7 +34,7 @@ use crate::{
     step::{Encoded, Index, Step},
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 type App = Application<'static, Pasta, TestR, HEADER_SIZE>;
 type NativeEval = native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE>;

@@ -246,7 +246,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
 }
 
 fn check_splices<P: Profile>(
-    app: &App<P, ProductionRank>,
+    app: &App<P, WalletRank>,
     local: &CompressedProof<C<P>>,
     local_data: Fp,
     donor: &CompressedProof<C<P>>,
@@ -277,15 +277,15 @@ fn check_profile_packets<S: Profile, T: Profile>(
     edit_fields: bool,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let sender = application::<S, ProductionRank>(
+    let sender = application::<S, WalletRank>(
         RegistryTags::from_beacon(&[0x42; 32], SENDER_MANIFEST),
         SENDER_MANIFEST,
         source_constraint,
     )?;
-    let receiver = application::<T, ProductionRank>(
+    let receiver = application::<T, WalletRank>(
         RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
         RECEIVER_MANIFEST,
         Some(Fp::from(7)),
@@ -356,9 +356,9 @@ fn compressed_standard_rejects_weaker_profile_packet_splices() -> Result<()> {
 
 fn check_fresh_weaker_proving<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let app = application::<P, ProductionRank>(
+    let app = application::<P, WalletRank>(
         RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
         RECEIVER_MANIFEST,
         Some(Fp::from(7)),

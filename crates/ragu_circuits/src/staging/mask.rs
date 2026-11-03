@@ -390,7 +390,7 @@ mod tests {
         }
     }
 
-    type R = crate::polynomials::ProductionRank;
+    type R = crate::polynomials::WalletRank;
 
     #[test]
     fn test_staging_valid() -> Result<()> {

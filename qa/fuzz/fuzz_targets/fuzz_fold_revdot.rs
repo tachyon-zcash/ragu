@@ -7,7 +7,7 @@
 //! Both at a fuzzer-chosen field and rank — see [Field and rank
 //! dispatch](../README.md). The bilinear expansion in the first identity is
 //! quadratic in the fold count and linear in the rank's vector length, so
-//! production rank is exactly where a term-ordering or accumulation mistake
+//! wallet rank is exactly where a term-ordering or accumulation mistake
 //! would show up and test rank is where it would hide.
 
 #![no_main]

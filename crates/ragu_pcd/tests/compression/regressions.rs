@@ -5,7 +5,7 @@ use alloc::{format, string::ToString, vec, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{ProductionRank, sparse},
+    polynomials::{WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -35,7 +35,7 @@ use crate::{
 
 fn check_targets<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<Pasta, ProductionRank, H>,
+    pcd: &Pcd<Pasta, WalletRank, H>,
     label: &str,
     rng: &mut StdRng,
 ) {
@@ -63,7 +63,7 @@ fn check_targets<H: Header<Fp>>(
             Fq::random(|bytes| rng.fill_bytes(bytes)),
         ),
     ] {
-        let expected = ky::native_ky::<Pasta, ProductionRank, H, HEADER_SIZE>(pcd, y).unwrap();
+        let expected = ky::native_ky::<Pasta, WalletRank, H, HEADER_SIZE>(pcd, y).unwrap();
         let expected_nested = ky::NestedKy {
             c: pcd.proof().nested_c(),
             unified: ky::nested_ky(pcd.proof(), nested_y).unwrap(),
@@ -175,7 +175,7 @@ fn rejects_edit(
     app: &App,
     pcd: &TestPcd,
     label: &str,
-    edit: impl FnOnce(&mut Proof<Pasta, ProductionRank>),
+    edit: impl FnOnce(&mut Proof<Pasta, WalletRank>),
 ) {
     let mut proof = pcd.proof().clone();
     edit(&mut proof);
@@ -351,15 +351,11 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
 }
 
 fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    super::transcript::<_, ReferenceBackend, ProductionRank>(
-        crate::pasta::baked(),
-        instance,
-        header,
-    )
-    .unwrap()
-    .host()
-    .squeeze_challenge()
-    .unwrap()
+    super::transcript::<_, ReferenceBackend, WalletRank>(crate::pasta::baked(), instance, header)
+        .unwrap()
+        .host()
+        .squeeze_challenge()
+        .unwrap()
 }
 
 /// The first challenge of a transcript under `tag` with the statement
@@ -368,7 +364,7 @@ fn statement_challenge(tag: &[u8], instance: &Instance<Pasta>, header: &[Fp]) ->
     let mut transcript = CycleTranscript::<Pasta>::with_runs(
         crate::pasta::baked(),
         tag,
-        run_bases::<Pasta, ProductionRank>(crate::pasta::baked()).unwrap(),
+        run_bases::<Pasta, WalletRank>(crate::pasta::baked()).unwrap(),
     )
     .unwrap();
     instance.absorb(&mut transcript).unwrap();

@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 
 use ragu_circuits::{
     CircuitExt,
-    polynomials::{ProductionRank, Rank, sparse},
+    polynomials::{Rank, WalletRank, sparse},
     registry::Registry,
     staging::StageExt,
 };
@@ -62,7 +62,7 @@ where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
     B: SelectableBackend,
 {
-    wallet: Application<'params, C, ProductionRank, HEADER_SIZE, B>,
+    wallet: Application<'params, C, WalletRank, HEADER_SIZE, B>,
     canonical: Sides<C>,
     _marker: PhantomData<fn() -> R>,
 }
@@ -101,7 +101,7 @@ where
     /// verification fails, which a finalized application's bootstrap does
     /// not.
     pub fn new(
-        wallet: Application<'params, C, ProductionRank, HEADER_SIZE, B>,
+        wallet: Application<'params, C, WalletRank, HEADER_SIZE, B>,
         rng: &mut impl CryptoRng,
     ) -> Result<Self> {
         let reach = R::num_coeffs();
@@ -119,8 +119,7 @@ where
             .expect("a finalized application holds its bootstrap proof")
             .carry::<()>(());
         let compressed = wallet.compress(&bootstrap, rng)?;
-        let canonical =
-            Sides::prepare::<ProductionRank, R, HEADER_SIZE, B, ()>(&wallet, &compressed)?;
+        let canonical = Sides::prepare::<WalletRank, R, HEADER_SIZE, B, ()>(&wallet, &compressed)?;
         Ok(Decompression {
             wallet,
             canonical,
@@ -129,7 +128,7 @@ where
     }
 
     /// The wallet application whose proofs the aggregator decompresses.
-    pub fn wallet(&self) -> &Application<'params, C, ProductionRank, HEADER_SIZE, B> {
+    pub fn wallet(&self) -> &Application<'params, C, WalletRank, HEADER_SIZE, B> {
         &self.wallet
     }
 
@@ -144,7 +143,7 @@ where
         pcd: &CompressedPcd<C, H>,
     ) -> Result<Decompressed<C>> {
         Ok(Decompressed(Sides::prepare::<
-            ProductionRank,
+            WalletRank,
             R,
             HEADER_SIZE,
             B,
@@ -185,28 +184,26 @@ where
             let circuit = native::InternalCircuitIndex::ExtensionCircuit(index as u32);
             circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
         }
-        let trace = chunk::StatementCircuit::<C, Native, ProductionRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
+        let trace =
+            chunk::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(schedule.clone())
+                .trace(prepared)?
+                .into_parts()
+                .0;
         let statement =
             native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
         circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
-        let trace = chunk::BindingCircuit::<C, Native, ProductionRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
+        let trace =
+            chunk::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(schedule.clone())
+                .trace(prepared)?
+                .into_parts()
+                .0;
         let binding =
             native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
         circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
-        type Lifts<C, R, const H: usize> = LiftsStage<C, Native, ProductionRank, R, H>;
-        type Work<C, R, const H: usize> = WorkStage<C, Native, ProductionRank, R, H>;
-        type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, ProductionRank, R, H>;
-        type Digits<C, R, const H: usize> = DigitsStage<C, Native, ProductionRank, R, H>;
+        type Lifts<C, R, const H: usize> = LiftsStage<C, Native, WalletRank, R, H>;
+        type Work<C, R, const H: usize> = WorkStage<C, Native, WalletRank, R, H>;
+        type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, WalletRank, R, H>;
+        type Digits<C, R, const H: usize> = DigitsStage<C, Native, WalletRank, R, H>;
         let mut stages = front_rxs::<C, Native, R, HEADER_SIZE>(prepared, rng)?;
         stages.extend([
             Lifts::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.lifts)?,
@@ -243,18 +240,17 @@ where
             let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
             circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
         }
-        let trace = chunk::BindingCircuit::<C, Nested, ProductionRank, R, HEADER_SIZE>::new(
-            schedule.clone(),
-        )
-        .trace(prepared)?
-        .into_parts()
-        .0;
+        let trace =
+            chunk::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(schedule.clone())
+                .trace(prepared)?
+                .into_parts()
+                .0;
         let binding =
             nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
         circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
-        type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, ProductionRank, R, H>;
-        type Work<C, R, const H: usize> = WorkStage<C, Nested, ProductionRank, R, H>;
-        type Digits<C, R, const H: usize> = DigitsStage<C, Nested, ProductionRank, R, H>;
+        type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, WalletRank, R, H>;
+        type Work<C, R, const H: usize> = WorkStage<C, Nested, WalletRank, R, H>;
+        type Digits<C, R, const H: usize> = DigitsStage<C, Nested, WalletRank, R, H>;
         let zero = C::ScalarField::ZERO;
         let mut stages = front_rxs::<C, Nested, R, HEADER_SIZE>(prepared, rng)?;
         stages.extend([
@@ -275,7 +271,7 @@ fn front_rxs<C, S, R, const HEADER_SIZE: usize>(
 ) -> Result<Vec<sparse::Polynomial<S::F, R>>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Front<C, ProductionRank, R, HEADER_SIZE>,
+    S: Front<C, WalletRank, R, HEADER_SIZE>,
     R: Rank,
 {
     (0..S::stages())
@@ -300,12 +296,12 @@ fn chunk_trace<C, S, R, const HEADER_SIZE: usize>(
 ) -> Result<ragu_circuits::Trace<S::F>>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
-    S: Front<C, ProductionRank, R, HEADER_SIZE>,
+    S: Front<C, WalletRank, R, HEADER_SIZE>,
     R: Rank,
 {
     Ok(match last(schedule, index) {
         Last::Transcript => {
-            chunk::TranscriptCircuit::<C, S, ProductionRank, R, HEADER_SIZE>::new(
+            chunk::TranscriptCircuit::<C, S, WalletRank, R, HEADER_SIZE>::new(
                 index,
                 schedule.clone(),
                 params,
@@ -315,7 +311,7 @@ where
             .0
         }
         Last::Digits => {
-            chunk::DigitsCircuit::<C, S, ProductionRank, R, HEADER_SIZE>::new(
+            chunk::DigitsCircuit::<C, S, WalletRank, R, HEADER_SIZE>::new(
                 index,
                 schedule.clone(),
                 params,
@@ -325,14 +321,10 @@ where
             .0
         }
         Last::Work => {
-            chunk::Circuit::<C, S, ProductionRank, R, HEADER_SIZE>::new(
-                index,
-                schedule.clone(),
-                params,
-            )
-            .trace(prepared)?
-            .into_parts()
-            .0
+            chunk::Circuit::<C, S, WalletRank, R, HEADER_SIZE>::new(index, schedule.clone(), params)
+                .trace(prepared)?
+                .into_parts()
+                .0
         }
     })
 }

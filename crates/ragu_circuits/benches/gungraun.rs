@@ -7,7 +7,7 @@ use std::hint::black_box;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_circuits::{
     Circuit, CircuitExt,
-    polynomials::{ProductionRank, TestRank, sparse},
+    polynomials::{TestRank, WalletRank, sparse},
     registry::{Registry, RegistryBuilder},
     testing::synthesis_counts,
 };
@@ -26,7 +26,7 @@ use setup::{
 fn commit_sparse(
     (generators, (poly,)): (
         &'static <Pasta as Cycle>::HostGenerators,
-        (sparse::Polynomial<Fp, ProductionRank>,),
+        (sparse::Polynomial<Fp, WalletRank>,),
     ),
 ) {
     black_box(poly.commit_to_affine(generators));
@@ -41,8 +41,8 @@ library_benchmark_group!(
 #[bench::revdot((rand_sparse_poly, rand_sparse_poly))]
 fn revdot(
     (poly1, poly2): (
-        sparse::Polynomial<Fp, ProductionRank>,
-        sparse::Polynomial<Fp, ProductionRank>,
+        sparse::Polynomial<Fp, WalletRank>,
+        sparse::Polynomial<Fp, WalletRank>,
     ),
 ) {
     black_box(poly1.revdot(&poly2));
@@ -50,19 +50,19 @@ fn revdot(
 
 #[library_benchmark(setup = setup_rng)]
 #[bench::fold((rand_sparse_poly_vec::<8>, f))]
-fn fold((polys, scale): (Vec<sparse::Polynomial<Fp, ProductionRank>>, Fp)) {
+fn fold((polys, scale): (Vec<sparse::Polynomial<Fp, WalletRank>>, Fp)) {
     black_box(sparse::Polynomial::fold(polys.iter(), scale));
 }
 
 #[library_benchmark(setup = setup_rng)]
 #[bench::eval((rand_sparse_poly, f))]
-fn eval((poly, x): (sparse::Polynomial<Fp, ProductionRank>, Fp)) {
+fn eval((poly, x): (sparse::Polynomial<Fp, WalletRank>, Fp)) {
     black_box(poly.eval(x));
 }
 
 #[library_benchmark(setup = setup_rng)]
 #[bench::dilate((rand_sparse_poly, f))]
-fn dilate((mut poly, z): (sparse::Polynomial<Fp, ProductionRank>, Fp)) {
+fn dilate((mut poly, z): (sparse::Polynomial<Fp, WalletRank>, Fp)) {
     poly.dilate(z);
     black_box(poly);
 }
@@ -118,7 +118,7 @@ fn register() {
 
 #[library_benchmark]
 #[bench::finalize(builder_squares())]
-fn finalize(builder: RegistryBuilder<Fp, ProductionRank>) {
+fn finalize(builder: RegistryBuilder<Fp, WalletRank>) {
     black_box(builder.finalize()).unwrap();
 }
 

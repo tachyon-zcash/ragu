@@ -7,7 +7,7 @@ use alloc::{borrow::Cow, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{ProductionRank, Rank, sparse},
+    polynomials::{Rank, WalletRank, sparse},
     registry::Registry,
 };
 use ragu_core::pasta::{Fp, Fq, Pasta};
@@ -23,7 +23,7 @@ use crate::{
     internal::{claims::Builder, native, nested},
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {

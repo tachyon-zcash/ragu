@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -13,11 +13,11 @@ use crate::{
     wire::{Dimensions, Encode, Error},
 };
 
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestProof = Proof<Pasta, WalletRank>;
 
 #[test]
 fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .finalize(crate::pasta::baked())
         .unwrap();
     let mut rng = StdRng::seed_from_u64(0x5eed);
@@ -37,7 +37,7 @@ fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
     // Each vector has a protocol-fixed length, so a vector of another length
     // changes the total and is rejected before any byte is interpreted.
     // Encoding refuses other counts; use the raw byte layout.
-    let dims = Dimensions::of::<ProductionRank, 4>();
+    let dims = Dimensions::of::<WalletRank, 4>();
     macro_rules! reject_lengths {
         ($($field:ident),* $(,)?) => {$(
             let element = {
@@ -76,7 +76,7 @@ fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
 fn a_proof_of_another_shape_has_no_serialization() {
     use alloc::string::ToString;
 
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .finalize(crate::pasta::baked())
         .unwrap();
     let mut proof = app.bootstrap_pcd().into_parts().0;
@@ -88,7 +88,7 @@ fn a_proof_of_another_shape_has_no_serialization() {
 }
 
 #[test]
-#[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
+#[cfg_attr(debug_assertions, ignore = "wallet-rank recursive proof")]
 fn decoded_child_remains_usable_by_fuse() {
     use ragu_core::pasta::Fp;
 
@@ -115,7 +115,7 @@ fn decoded_child_remains_usable_by_fuse() {
 /// installed as given instead of being built, and proofs built on it verify.
 /// A proof of another shape or of another step is refused.
 #[test]
-#[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
+#[cfg_attr(debug_assertions, ignore = "wallet-rank recursive proof")]
 fn a_supplied_bootstrap_proof_replaces_the_bootstrap_fuse() {
     use ragu_core::pasta::Fp;
 
@@ -176,7 +176,7 @@ fn a_supplied_bootstrap_proof_replaces_the_bootstrap_fuse() {
 /// no error either; keying a stored proof by its configuration is the
 /// application's job.
 #[test]
-#[cfg_attr(debug_assertions, ignore = "production-rank recursive proof")]
+#[cfg_attr(debug_assertions, ignore = "wallet-rank recursive proof")]
 fn a_mismatched_bootstrap_proof_is_installed_and_fails_verification_later() {
     use ragu_core::pasta::Fp;
 
@@ -184,7 +184,7 @@ fn a_mismatched_bootstrap_proof_is_installed_and_fails_verification_later() {
 
     // The bootstrap proof of an application with no steps registered: the
     // same shape and bootstrap circuit index, over another registry.
-    let other = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let other = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .finalize(crate::pasta::baked())
         .unwrap();
     let stored = other.bootstrap_proof().to_bytes().unwrap();

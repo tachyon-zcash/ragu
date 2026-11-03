@@ -1,4 +1,4 @@
-//! The wire format: byte round trips of production-rank proofs through the
+//! The wire format: byte round trips of wallet-rank proofs through the
 //! application's envelope, the compressed transport path and the serde
 //! adapters.
 //!

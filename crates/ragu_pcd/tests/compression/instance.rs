@@ -5,7 +5,7 @@
 //! extra openings hold against the polynomials.
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::{ProductionRank, Rank, sparse};
+use ragu_circuits::polynomials::{Rank, WalletRank, sparse};
 use ragu_core::{
     Cycle,
     pasta::{Fp, Fq, Pasta},
@@ -24,7 +24,7 @@ use crate::{
     ipa::CycleTranscript,
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {

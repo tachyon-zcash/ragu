@@ -155,7 +155,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "production-rank proof generation; run in release in CI"]
+    #[ignore = "wallet-rank proof generation; run in release in CI"]
     fn decode_to_verify_smoke() {
         initialize();
         // The control inputs: raw bytes that are no proof, the unchanged seed

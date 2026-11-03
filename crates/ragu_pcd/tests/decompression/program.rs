@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{
-    polynomials::{AggregatorRank, ProductionRank, Rank},
+    polynomials::{AggregatorRank, Rank, WalletRank},
     staging::StageExt,
 };
 use ragu_core::{
@@ -239,12 +239,12 @@ fn check(schedule: &Schedule) {
     }
 }
 
-/// Both sides' schedules for a production-rank proof in chunk circuits at
+/// Both sides' schedules for a wallet-rank proof in chunk circuits at
 /// rank `R` are consistent, and their counts are reported, at the
 /// aggregator rank, the chunk circuits' own.
 fn schedules_are_consistent<R: Rank>() {
-    let native = native_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap();
-    let nested = nested_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap();
+    let native = native_schedule::<Pasta, WalletRank, R, HEADER_SIZE>().unwrap();
+    let nested = nested_schedule::<Pasta, WalletRank, R, HEADER_SIZE>().unwrap();
     check(&native);
     check(&nested);
     let kinds = |schedule: &Schedule| {
@@ -291,12 +291,12 @@ fn aggregator_rank_schedules_are_consistent() {
     schedules_are_consistent::<AggregatorRank>();
 }
 
-/// The production rank's limits are the fitted ones; the aggregator rank's
+/// The wallet rank's limits are the fitted ones; the aggregator rank's
 /// hold twice the work per chunk, a full-width scaling in one chunk, and
 /// pack circuits to all of the budget but a sixty-fourth.
 #[test]
 fn limits_scale_with_the_rank() {
-    assert_eq!(Limits::at::<ProductionRank>(), Limits::FITTED);
+    assert_eq!(Limits::at::<WalletRank>(), Limits::FITTED);
     let fitted = Limits::FITTED;
     assert_eq!(
         Limits::at::<AggregatorRank>(),
@@ -320,9 +320,9 @@ fn limits_scale_with_the_rank() {
 fn native_counts_follow_the_header_size() {
     use super::chunk_counts;
     let (native_small, nested_small) =
-        chunk_counts::<Pasta, ProductionRank, AggregatorRank, 4>().unwrap();
+        chunk_counts::<Pasta, WalletRank, AggregatorRank, 4>().unwrap();
     let (native_large, nested_large) =
-        chunk_counts::<Pasta, ProductionRank, AggregatorRank, 103>().unwrap();
+        chunk_counts::<Pasta, WalletRank, AggregatorRank, 103>().unwrap();
     std::println!(
         "aggregator rank: {native_small}/{nested_small} chunks at header size 4, \
          {native_large}/{nested_large} at 103"
@@ -339,11 +339,11 @@ fn circuits_pack_the_chunks<R: Rank>() {
     for (name, schedule) in [
         (
             "native",
-            native_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap(),
+            native_schedule::<Pasta, WalletRank, R, HEADER_SIZE>().unwrap(),
         ),
         (
             "nested",
-            nested_schedule::<Pasta, ProductionRank, R, HEADER_SIZE>().unwrap(),
+            nested_schedule::<Pasta, WalletRank, R, HEADER_SIZE>().unwrap(),
         ),
     ] {
         let mut placed = alloc::vec![false; schedule.chunks.len()];
@@ -401,7 +401,7 @@ fn aggregator_rank_circuits_pack_the_chunks() {
 /// rebuilds, so only the equalities hold.
 #[test]
 fn schedules_are_built_once() {
-    type K = ProductionRank;
+    type K = WalletRank;
     type R = AggregatorRank;
     let native = schedule::<Pasta, Native, K, R, HEADER_SIZE>().unwrap();
     let again = schedule::<Pasta, Native, K, R, HEADER_SIZE>().unwrap();
@@ -439,7 +439,7 @@ fn schedules_are_built_once() {
 /// the layout from the type alone.
 #[test]
 fn ab_layout_is_the_stage_polynomials() {
-    type K = ProductionRank;
+    type K = WalletRank;
     type EqAffine = <Pasta as Cycle>::HostCurve;
     let g = Pasta::host_generators(crate::pasta::baked()).g();
     let witness = ab::Witness {

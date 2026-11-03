@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle, Result,
     drivers::Driver,
@@ -27,7 +27,7 @@ use crate::{
     ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript},
 };
 
-pub(crate) type TestR = ProductionRank;
+pub(crate) type TestR = WalletRank;
 pub(crate) const HEADER_SIZE: usize = 4;
 pub(crate) type App = Application<'static, Pasta, TestR, HEADER_SIZE>;
 pub(crate) type Transcript = CycleTranscript<'static, Pasta>;

@@ -208,7 +208,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use ragu_circuits::{
-        polynomials::ProductionRank,
+        polynomials::WalletRank,
         staging::{StageExt, StageReader, stage_wire_indices, wires_of},
     };
     use ragu_core::pasta::EqAffine;
@@ -228,7 +228,7 @@ mod tests {
     /// lifts it was built from, at the indices its gadget names.
     #[test]
     fn stage_values_read_back() -> Result<()> {
-        type R = ProductionRank;
+        type R = WalletRank;
         type F = ragu_core::pasta::Fq;
         let lifts: [F; NUM] = core::array::from_fn(|i| F::from(3 + i as u64));
         let beta = F::from(99);

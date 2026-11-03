@@ -295,9 +295,9 @@ where
 
 fn check_application_circuits<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let verifier = verifier::<P, ProductionRank>()?;
+    let verifier = verifier::<P, WalletRank>()?;
     // An equivalent registered relation is the control for erasing the Rust
     // profile type. Removing its constraint or changing its constant must fail.
     for (constraint, value, accepted) in [
@@ -305,7 +305,7 @@ where
         (None, Fp::from(9), false),
         (Some(Fp::from(9)), Fp::from(9), false),
     ] {
-        check_prover::<Permissive, P, ProductionRank>(
+        check_prover::<Permissive, P, WalletRank>(
             &verifier,
             constraint,
             value,

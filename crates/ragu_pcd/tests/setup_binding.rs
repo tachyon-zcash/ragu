@@ -4,7 +4,7 @@
 //! API does not allow assembling such mixed tag pairs.
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Result,
     pasta::{Pasta, PastaParams},
@@ -22,8 +22,8 @@ use crate::{
 
 const HEADER_SIZE: usize = 4;
 const MANIFEST: &[u8] = &[0x24; 32];
-type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, ProductionRank, ()>;
+type App<C> = Application<'static, C, WalletRank, HEADER_SIZE>;
+type TestPcd<C> = Pcd<C, WalletRank, ()>;
 
 #[derive(Clone, Copy, Debug)]
 enum ChangedTag {
@@ -34,7 +34,7 @@ enum ChangedTag {
 fn application<C>(changed: Option<ChangedTag>) -> Result<App<C>>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
     let mut tags = RegistryTags::<C>::from_beacon(&[0x42; 32], MANIFEST);
     let other = RegistryTags::<C>::from_beacon(&[0x43; 32], MANIFEST);
@@ -43,7 +43,7 @@ where
         Some(ChangedTag::Nested) => tags.nested = other.nested,
         None => {}
     }
-    ApplicationBuilder::<C, ProductionRank, HEADER_SIZE>::new()
+    ApplicationBuilder::<C, WalletRank, HEADER_SIZE>::new()
         .register(UnitStep)?
         .with_registry_tags(tags, MANIFEST)?
         .finalize(crate::pasta::baked_aggregator())
@@ -77,7 +77,7 @@ where
 fn check_setup_binding<C>(changed: ChangedTag) -> Result<()>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
     let sender = application::<C>(None)?;
     let receiver = application::<C>(Some(changed))?;

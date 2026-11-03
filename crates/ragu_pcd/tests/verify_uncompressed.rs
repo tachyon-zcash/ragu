@@ -1,5 +1,5 @@
 use ragu_circuits::{
-    polynomials::{ProductionRank, sparse},
+    polynomials::{WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -16,7 +16,7 @@ use crate::{
     step::{Encoded, Index, Step},
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {

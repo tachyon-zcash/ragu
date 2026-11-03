@@ -687,7 +687,7 @@ pub(crate) struct Limits {
     pub fill: usize,
 }
 
-/// The gate budget [`Limits::FITTED`] is fitted to: the production rank's
+/// The gate budget [`Limits::FITTED`] is fitted to: the wallet rank's
 /// $2^{11}$.
 const FITTED_GATES: usize = 1 << 11;
 
