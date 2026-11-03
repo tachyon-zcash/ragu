@@ -579,6 +579,18 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::CircuitField, R>>
     );
 
+    pub(crate) fn set_native_extension_circuit_commitments(
+        &mut self,
+        commitments: Vec<C::HostCurve>,
+    ) {
+        assert!(
+            self.native_extension_circuit_commitments
+                .set(commitments)
+                .is_ok(),
+            "double-set extension commitments"
+        );
+    }
+
     /// Lazily computes and caches the commitments of the native extension
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn native_extension_circuit_commitments(&self) -> &[C::HostCurve] {
@@ -817,6 +829,18 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         nested_extension_stage_rxs,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
+
+    pub(crate) fn set_nested_extension_circuit_commitments(
+        &mut self,
+        commitments: Vec<C::NestedCurve>,
+    ) {
+        assert!(
+            self.nested_extension_circuit_commitments
+                .set(commitments)
+                .is_ok(),
+            "double-set extension commitments"
+        );
+    }
 
     /// Lazily computes and caches the commitments of the nested extension
     /// circuits' rx polynomials. Returns the cached slice.

@@ -268,38 +268,29 @@ where
     RC: raw::RawCircuit<F> + 'a,
     R: Rank,
 {
-    struct Processed<RC> {
-        circuit: RC,
+    struct Processed<F: Field, R: Rank> {
+        wiring: wiring::compiled::Compiled<F, R>,
         metrics: metrics::CircuitMetrics,
     }
 
-    impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<RC> {
-        fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F {
-            wiring::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
-                .expect("should succeed if metrics succeeded")
+    impl<F: Field, R: Rank> WiringObject<F, R> for Processed<F, R> {
+        fn sxy(&self, x: F, y: F, _: &[floor_planner::ConstraintSegment]) -> F {
+            self.wiring.sxy(x, y)
         }
-        fn sx(
-            &self,
-            x: F,
-            floor_plan: &[floor_planner::ConstraintSegment],
-        ) -> sparse::Polynomial<F, R> {
-            wiring::sx::eval(&self.circuit, x, floor_plan)
-                .expect("should succeed if metrics succeeded")
+        fn sx(&self, x: F, _: &[floor_planner::ConstraintSegment]) -> sparse::Polynomial<F, R> {
+            self.wiring.sx(x)
         }
-        fn sy(
-            &self,
-            y: F,
-            floor_plan: &[floor_planner::ConstraintSegment],
-        ) -> sparse::Polynomial<F, R> {
-            wiring::sy::eval(&self.circuit, y, floor_plan)
-                .expect("should succeed if metrics succeeded")
+        fn sy(&self, y: F, _: &[floor_planner::ConstraintSegment]) -> sparse::Polynomial<F, R> {
+            self.wiring.sy(y)
         }
         fn segment_records(&self) -> &[SegmentRecord] {
             &self.metrics.segments
         }
     }
 
-    Ok(Box::new(Processed { circuit, metrics }))
+    let floor_plan = floor_planner::floor_plan(&metrics.segments);
+    let wiring = wiring::compiled::compile::<F, RC, R>(&circuit, &floor_plan)?;
+    Ok(Box::new(Processed { wiring, metrics }))
 }
 
 /// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness of a
