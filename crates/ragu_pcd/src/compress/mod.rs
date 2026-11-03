@@ -70,10 +70,10 @@ use self::{
     batch::Batch,
     instance::Instance,
     revdot::{Reduction, fold::Derived, native_components, nested_components},
+    runs::run_bases,
 };
 use crate::{
     SelectableBackend,
-    decompress::stages::run_bases,
     header::Header,
     ipa::{CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript},
     profile::ProfiledCycle,
@@ -83,6 +83,7 @@ pub(crate) mod batch;
 pub(crate) mod instance;
 mod prover;
 pub(crate) mod revdot;
+pub(crate) mod runs;
 mod verifier;
 
 /// The prover's messages of the compression on one curve.
