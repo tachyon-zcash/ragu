@@ -148,6 +148,12 @@ impl<R: Rank> StageMask<R> {
     /// The result has `4 × num_gates` non-zero entries
     /// (vs `4(n - 1)` for the full mask projection).
     fn notch_project<F: Field>(&self, p: F) -> sparse::Polynomial<F, R> {
+        self.carve_project(p, true)
+    }
+
+    /// The negated notch entries of the stage gates' `a` and `d` wires, and
+    /// of their `b` and `c` wires if `bc`.
+    fn carve_project<F: Field>(&self, p: F, bc: bool) -> sparse::Polynomial<F, R> {
         if self.num_gates == 0 || p == F::ZERO {
             return sparse::Polynomial::default();
         }
@@ -157,8 +163,10 @@ impl<R: Rank> StageMask<R> {
         let mut view = sparse::View::<F, R, _>::wiring();
         view.d.resize(g + m, F::ZERO);
         view.a.resize(g + m, F::ZERO);
-        view.b.resize(g + m, F::ZERO);
-        view.c.resize(g + m, F::ZERO);
+        if bc {
+            view.b.resize(g + m, F::ZERO);
+            view.c.resize(g + m, F::ZERO);
+        }
 
         let p_inv = p.invert().expect("p is not zero");
         let mut d = -p.pow_u64(g as u64);
@@ -169,8 +177,10 @@ impl<R: Rank> StageMask<R> {
         for j in g..g + m {
             view.d[j] = d;
             view.a[j] = a;
-            view.b[j] = b;
-            view.c[j] = c;
+            if bc {
+                view.b[j] = b;
+                view.c[j] = c;
+            }
             d *= p;
             a *= p;
             b *= p_inv;
@@ -178,6 +188,21 @@ impl<R: Rank> StageMask<R> {
         }
 
         view.build()
+    }
+
+    /// The notch at `xy`: of the stage gates' `a` and `d` wires, and of their
+    /// `b` and `c` wires if `bc`.
+    fn carve_xy<F: Field>(&self, xy: F, bc: bool) -> F {
+        if xy == F::ZERO {
+            return F::ZERO;
+        }
+        let n = R::n();
+        let (g, m) = (self.skip_gates, self.num_gates);
+        let mut ends = xy.pow_u64(g as u64);
+        if bc {
+            ends += xy.pow_u64((2 * n - g - m) as u64);
+        }
+        (F::ONE + xy.pow_u64(2 * n as u64)) * ends * geometric_sum(xy, m)
     }
 }
 
@@ -194,18 +219,7 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
     ///
     /// with $g = \text{skip\_gates}$ and $m = \text{num\_gates}$.
     fn sxy(&self, x: F, y: F, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> F {
-        if x == F::ZERO || y == F::ZERO {
-            return F::ZERO;
-        }
-
-        let xy = x * y;
-        let xy_2n = xy.pow_u64(2 * R::n() as u64);
-
-        let gsum = geometric_sum(xy, self.num_gates);
-        let skip = xy.pow_u64(self.skip_gates as u64);
-        let tail = xy.pow_u64((2 * R::n() - self.skip_gates - self.num_gates) as u64);
-
-        -((F::ONE + xy_2n) * (skip + tail) * gsum)
+        -self.carve_xy(x * y, true)
     }
 
     fn sx(
@@ -222,6 +236,127 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         _floor_plan: &[crate::floor_planner::ConstraintSegment],
     ) -> sparse::Polynomial<F, R> {
         self.notch_project(y)
+    }
+
+    fn segment_records(&self) -> &[crate::SegmentRecord] {
+        &[]
+    }
+
+    fn is_mask(&self) -> bool {
+        true
+    }
+}
+
+/// The canonical mask of a stage: a [`StageMask`] that holds more wires to
+/// zero, so that the stage's polynomial may be nonzero only at the `a` and
+/// `d` wires of its gates, where the stage allocator puts its values. It
+/// also holds to zero:
+///
+/// - the SYSTEM gate's `a` wire, where a stage carries its blinding factor,
+///   and its `b` and `d` wires (its `c` wire is already held by the registry
+///   tag term);
+/// - the stage gates' `b` and `c` wires, which the gate equation `a * b = c`
+///   of a loading circuit leaves free;
+/// - for a stage of an odd number of values, the last gate's `d` wire, which
+///   no value fills.
+///
+/// A stage under this mask is a function of its values, so its commitment
+/// is too: the commitment can serve as a deterministic, binding digest of
+/// the values. The mask has the `ONE` wire's $Y^0$ term, unlike every other
+/// bonding polynomial, so that it holds the stage's `d` wire of the SYSTEM
+/// gate to zero; it is still checked in a bonding claim, against $k = 0$.
+///
+/// # Precondition
+///
+/// Use it only for a stage whose values are never all zero, such as the
+/// coordinates of a curve point. The stage then carries no blinding factor,
+/// which in other stages keeps the commitment away from the point at
+/// infinity: an all-zero canonical stage commits to the identity, which a
+/// circuit cannot witness as an affine point. For values not all zero, the
+/// commitment is the identity only if the prover knows a discrete-log
+/// relation between the generators.
+#[derive(Clone)]
+pub struct CanonicalStageMask<R: Rank> {
+    stage: StageMask<R>,
+    values: usize,
+}
+
+impl<R: Rank> CanonicalStageMask<R> {
+    /// Creates the canonical mask of a stage of `values` values, over
+    /// `values.div_ceil(2)` gates from gate `skip_gates`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capacity error if the stage exceeds the rank's gate bound.
+    pub fn new(skip_gates: usize, values: usize) -> Result<Self> {
+        Ok(Self {
+            stage: StageMask::new(skip_gates, values.div_ceil(2))?,
+            values,
+        })
+    }
+
+    /// Whether the last gate's `d` wire is padding: the stage holds an odd
+    /// number of values.
+    fn padded(&self) -> bool {
+        self.values % 2 == 1
+    }
+
+    /// The degree of the last gate's `d` wire.
+    fn padding_degree(&self) -> u64 {
+        (self.stage.skip_gates + self.stage.num_gates - 1) as u64
+    }
+
+    /// The per-instance term restricted at `p`: the SYSTEM gate's `a`, `b`
+    /// and `d` wires and an odd stage's padding `d` wire, less the notch of
+    /// the stage gates' `a` and `d` wires. The stage gates' `b` and `c` wires
+    /// stay in the global term.
+    fn project<F: Field>(&self, p: F) -> sparse::Polynomial<F, R> {
+        let n = R::n() as u64;
+        let mut pinned = sparse::View::<F, R, _>::wiring();
+        pinned.d.push(F::ONE);
+        pinned.b.push(p.pow_u64(2 * n - 1));
+        pinned.a.push(p.pow_u64(2 * n));
+        if self.padded() {
+            let last = self.padding_degree();
+            pinned.d.resize(last as usize + 1, F::ZERO);
+            pinned.d[last as usize] = p.pow_u64(last);
+        }
+        let mut poly = pinned.build();
+        poly += &self.stage.carve_project(p, false);
+        poly
+    }
+}
+
+impl<F: Field, R: Rank> WiringObject<F, R> for CanonicalStageMask<R> {
+    /// Evaluates the per-instance term: minus the stage gates' `a` and `d`
+    /// wires, plus the SYSTEM gate's `a`, `b` and `d` wires and an odd
+    /// stage's padding `d` wire.
+    fn sxy(&self, x: F, y: F, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> F {
+        let xy = x * y;
+        let n = R::n() as u64;
+        let padding = if self.padded() {
+            xy.pow_u64(self.padding_degree())
+        } else {
+            F::ZERO
+        };
+        F::ONE + xy.pow_u64(2 * n - 1) + xy.pow_u64(2 * n) + padding
+            - self.stage.carve_xy(xy, false)
+    }
+
+    fn sx(
+        &self,
+        x: F,
+        _floor_plan: &[crate::floor_planner::ConstraintSegment],
+    ) -> sparse::Polynomial<F, R> {
+        self.project(x)
+    }
+
+    fn sy(
+        &self,
+        y: F,
+        _floor_plan: &[crate::floor_planner::ConstraintSegment],
+    ) -> sparse::Polynomial<F, R> {
+        self.project(y)
     }
 
     fn segment_records(&self) -> &[crate::SegmentRecord] {
@@ -255,7 +390,7 @@ mod tests {
 
     use super::{
         super::{Stage, StageExt},
-        StageMask,
+        CanonicalStageMask, StageMask,
     };
     use crate::{
         WiringObject, WithAux, floor_planner, into_raw_wiring_object, into_wiring_object, metrics,
@@ -1046,6 +1181,136 @@ mod tests {
         assert_eq!(
             poly_commitment, manual_commitment,
             "Commitment via staging mechanism should match manual computation"
+        );
+    }
+
+    /// The canonical mask agrees with itself across `sxy`, `sx` and `sy`,
+    /// including at zero, where its `Y^0` term survives.
+    #[test]
+    fn canonical_mask_evaluations_agree() {
+        for (skip, num) in [(1, 1), (1, 3), (120, 2), (R::n() - 1, 2), (5, 0), (7, 5)] {
+            let mask = CanonicalStageMask::<R>::new(skip, num).unwrap();
+            let random = || Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+            for (x, y) in [
+                (random(), random()),
+                (Fp::ZERO, random()),
+                (random(), Fp::ZERO),
+            ] {
+                let sxy = mask.sxy(x, y, &[]);
+                assert_eq!(mask.sx(x, &[]).eval(y), sxy, "sx at ({skip}, {num})");
+                assert_eq!(mask.sy(y, &[]).eval(x), sxy, "sy at ({skip}, {num})");
+            }
+        }
+    }
+
+    /// The bonding check `revdot(rx, s(X, y)) = 0` with the full mask, the
+    /// global term included, as the registry assembles it (the tag term is
+    /// left out: every stage below has a zero `c` wire in its SYSTEM gate).
+    fn bonds(mask: &dyn WiringObject<Fp, R>, rx: &sparse::Polynomial<Fp, R>) -> bool {
+        let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let mut s = super::global_project::<Fp, R>(y);
+        s += &mask.sy(y, &[]);
+        rx.revdot(&s) == Fp::ZERO
+    }
+
+    /// The sum of `polys`.
+    fn sum(polys: &[sparse::Polynomial<Fp, R>]) -> sparse::Polynomial<Fp, R> {
+        let mut out = sparse::Polynomial::default();
+        for poly in polys {
+            out += poly;
+        }
+        out
+    }
+
+    /// One wire of one gate of a trace, set to `value`.
+    fn wire(gate: usize, which: char, value: Fp) -> sparse::Polynomial<Fp, R> {
+        let mut view = sparse::View::<Fp, R, _>::trace();
+        let slot = match which {
+            'a' => &mut view.a,
+            'b' => &mut view.b,
+            'c' => &mut view.c,
+            _ => &mut view.d,
+        };
+        slot.resize(gate + 1, Fp::ZERO);
+        slot[gate] = value;
+        view.build()
+    }
+
+    /// A stage of two values at gate `g` (one point's coordinates): the
+    /// standard mask accepts it with any blinding factor and any `b`, `c`
+    /// in its gate, so its commitment is not a function of the values; the
+    /// canonical mask accepts only the unblinded stage holding the values
+    /// alone.
+    #[test]
+    fn the_canonical_mask_pins_every_free_slot() {
+        let g = 120;
+        let values = [Fp::from(7u64), Fp::from(11u64)];
+        let standard = StageMask::<R>::new(g, 1).unwrap();
+        let canonical = CanonicalStageMask::<R>::new(g, 2).unwrap();
+
+        // An unblinded stage holds its values on its gate's a and d wires,
+        // where the stage allocator puts them, and nothing else.
+        let honest = sum(&[wire(g, 'a', values[0]), wire(g, 'd', values[1])]);
+        assert!(bonds(&standard, &honest));
+        assert!(bonds(&canonical, &honest));
+
+        // A stage's blinding factor sits on its SYSTEM gate's a wire.
+        let delta = Fp::from(5u64);
+        let blinded = sum(&[honest.clone(), wire(0, 'a', delta)]);
+        let tampered = [
+            ("blinding factor a[0]", blinded),
+            ("SYSTEM b[0]", sum(&[honest.clone(), wire(0, 'b', delta)])),
+            ("SYSTEM d[0]", sum(&[honest.clone(), wire(0, 'd', delta)])),
+            (
+                "stage gate b[g]",
+                sum(&[honest.clone(), wire(g, 'b', delta)]),
+            ),
+            (
+                "stage gate b[g], c[g] = a[g] * b[g]",
+                sum(&[
+                    honest.clone(),
+                    wire(g, 'b', delta),
+                    wire(g, 'c', values[0] * delta),
+                ]),
+            ),
+        ];
+        for (what, rx) in tampered {
+            assert!(bonds(&standard, &rx), "the standard mask accepts {what}");
+            assert!(!bonds(&canonical, &rx), "the canonical mask rejects {what}");
+        }
+
+        // Both reject a value outside the stage's gate.
+        let spilled = sum(&[honest.clone(), wire(g + 1, 'a', delta)]);
+        assert!(!bonds(&standard, &spilled));
+        assert!(!bonds(&canonical, &spilled));
+    }
+
+    /// A stage of an odd number of values leaves its last gate's `d` wire
+    /// unused: the standard mask accepts any value there, the canonical mask
+    /// only zero.
+    #[test]
+    fn the_canonical_mask_pins_an_odd_stages_padding() {
+        let g = 40;
+        let values = [Fp::from(7u64), Fp::from(11u64), Fp::from(13u64)];
+        let standard = StageMask::<R>::new(g, 2).unwrap();
+        let canonical = CanonicalStageMask::<R>::new(g, 3).unwrap();
+
+        let honest = sum(&[
+            wire(g, 'a', values[0]),
+            wire(g, 'd', values[1]),
+            wire(g + 1, 'a', values[2]),
+        ]);
+        assert!(bonds(&standard, &honest));
+        assert!(bonds(&canonical, &honest));
+
+        let padded = sum(&[honest.clone(), wire(g + 1, 'd', Fp::from(5u64))]);
+        assert!(
+            bonds(&standard, &padded),
+            "the standard mask accepts padding"
+        );
+        assert!(
+            !bonds(&canonical, &padded),
+            "the canonical mask rejects padding"
         );
     }
 }

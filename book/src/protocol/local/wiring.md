@@ -159,6 +159,27 @@ s_{\text{mask}}(X, Y) &= \color{#7e22ce}{\kappa}\color{black} \cdot (XY)^{4n - 1
 \end{array}
 $$
 
+### Canonical Stage Masks
+
+A stage mask leaves free every wire of the stage's gates, and the `SYSTEM`
+gate, which carries the stage's blinding factor $\alpha$ in $\v{a}_0$. The
+stage allocator puts the stage's values on the $\v{a}$ and $\v{d}$ wires,
+so the $\v{b}$ wires (and the $\v{c} = \v{a} \cdot \v{b}$ wires) and an
+odd stage's last $\v{d}$ wire stay free. Thus a stage polynomial, and its
+commitment, is not a function of the stage's values.
+
+A _canonical_ stage mask also holds these wires to zero: $\v{a}_0$,
+$\v{b}_0$ and $\v{d}_0$ of the `SYSTEM` gate ($\v{c}_0$ is already held by
+$\kappa$), the $\v{b}$ and $\v{c}$ wires of the stage's gates, and an odd
+stage's padding $\v{d}$ wire. To hold $\v{d}_0$, it keeps the $Y^0$ term
+that other bonding polynomials omit; the verifier still checks it against
+$k = 0$. An unblinded stage under a canonical mask is then a function of its
+values, and its commitment is a deterministic, binding digest of them.
+
+A canonical stage has no $\alpha$, so use one only for values that are
+never all zero (for example, the coordinates of a curve point). An all-zero
+stage commits to the point at infinity.
+
 ## Layout for Wiring Polynomials
 
 | trace $\uparrow$ | monomials | wiring $\downarrow$ | $Y^0$ | $\cdots$ | $Y^{4n-1}$ |

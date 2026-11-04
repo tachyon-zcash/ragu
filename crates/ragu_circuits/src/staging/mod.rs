@@ -466,6 +466,28 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
         )?)))
     }
 
+    /// Creates the canonical bonding polynomial of this stage: like
+    /// [`mask`](Self::mask), and it also holds to zero the stage's blinding
+    /// factor, the rest of its SYSTEM gate and its gates' `b` and `c`
+    /// wires, so that the stage polynomial is a function of its values and
+    /// its commitment a deterministic, binding digest of them. The stage
+    /// must be committed with a zero `alpha` (see `CanonicalStageMask` in
+    /// the `mask` module). For a stage of an odd number of values, it also
+    /// holds the last gate's unused `d` wire to zero.
+    ///
+    /// Use it only for a stage whose values are never all zero: without a
+    /// blinding factor, an all-zero stage commits to the point at infinity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capacity error if the mask cannot be represented at rank `R`.
+    fn canonical_mask<'a>() -> Result<BondingObject<'a, F, R>> {
+        Ok(BondingObject::new(Box::new(mask::CanonicalStageMask::new(
+            Self::skip_gates(),
+            Self::values(),
+        )?)))
+    }
+
     /// Creates a bonding polynomial that can be used to enforce well-formedness
     /// checks on any final trace (stage) that has this stage as its
     /// [`MultiStageCircuit::Last`] stage.
