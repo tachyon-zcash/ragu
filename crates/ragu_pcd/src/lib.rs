@@ -93,7 +93,7 @@ pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder, Tag},
@@ -227,12 +227,15 @@ impl<C: ProfiledCycle> RegistryTags<C> {
 }
 
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// Independent work uses [`AcceleratedBackend`] by default. Select another
+/// backend explicitly with [`Self::with_backend`].
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -609,7 +612,7 @@ pub struct Application<
     C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,

@@ -3011,7 +3011,7 @@ mod tests {
     fn a_binding_holds_the_sides_to_each_other_under<P>() -> Result<()>
     where
         P: Profile<
-            Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+            Context<'static, Pasta, R<14>, ragu_acceleration::AcceleratedBackend> = CrossingContext<
                 'static,
                 Pasta,
             >,
@@ -3083,7 +3083,7 @@ mod tests {
     fn extension_polynomials_are_bound_under<P>() -> Result<()>
     where
         P: Profile<
-            Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+            Context<'static, Pasta, R<14>, ragu_acceleration::AcceleratedBackend> = CrossingContext<
                 'static,
                 Pasta,
             >,
