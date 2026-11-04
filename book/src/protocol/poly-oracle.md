@@ -257,9 +257,9 @@ Before:
 
 After:
 
-   Preamble                    PointsChildren       BridgeHash (witness O1)
+   Preamble                    PointsChildren       BridgeHash (copy of O1, not absorbed)
        ├──────────────┐               │                 │
-       │              │               │             Preamble (witness L0,L1,R0,R1,O0)
+       │              │               │             Preamble (witness L0,L1,R0,R1,O0,O1)
        │              │               │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ```
@@ -277,7 +277,10 @@ The digest depends on the stage's position.
 The endoscalar stage has a fixed size (the 143-bit endoscalar encoding), thus the position does not move when the walk or `Preamble` grows.
 Binding follows from the binding of the commitment: two points with the same digest are two openings of one commitment.
 
-Unlike [v1](#v1), this changes the transcript: the `BridgeHash` commitment joins the `unified` instance next to `bridge_preamble_commitment`, and `hashes_1` absorbs it before squeezing $w$, so $\zeta$ binds `O1` too.
+`O1` stays in the nested `Preamble`, and `BridgeHash` holds a copy; the nested `collapse` circuit enforces the two to be equal.
+The digest is a function of `O1`, and `w` already absorbs `O1` through the `Preamble`, thus the digest is fixed before $\zeta$ and the transcript does not change.
+(Absorbing the digest would cost `hashes_1` one more Poseidon permutation, beyond its gate budget.)
+The digest joins the `unified` instance next to `bridge_preamble_commitment`, and the parent binds it to the `BridgeHash` stage it folds, as it binds the other bridge commitments.
 The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.
 
 ### V3: witness private poly via 2-stage app circuit {#v3}
@@ -301,9 +304,9 @@ Before:
 
      ERROR                           NESTED
 
-   Preamble                         BridgeHash (witness O1)
+   Preamble                         BridgeHash (copy of O1, not absorbed)
        │                                │
-       │                            Preamble (witness L0,L1,R0,R1,O0)
+       │                            Preamble (witness L0,L1,R0,R1,O0,O1)
        │                                │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
@@ -311,9 +314,9 @@ After:
 
      ERROR           APP             NESTED
 
-   Preamble      PrivatePoly        BridgeHash (witness O1)
+   Preamble      PrivatePoly        BridgeHash (copy of O1, not absorbed)
        │              │                 │
-       │              │             Preamble (witness L0,L1,R0,R1,O0, pri_poly_rx_comm)
+       │              │             Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
        │              │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ```
@@ -360,9 +363,9 @@ Before:
 
      ERROR           APP             NESTED
 
-   Preamble      PrivatePoly        BridgeHash (witness O1)
+   Preamble      PrivatePoly        BridgeHash (copy of O1, not absorbed)
        │              │                 │
-       │              │             Preamble (witness L0,L1,R0,R1,O0, pri_poly_rx_comm)
+       │              │             Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
        │              │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
@@ -370,9 +373,9 @@ After:
 
      ERROR           APP           QUERY        NESTED
 
-   Preamble      PrivatePoly                BridgeHash (witness O1)
+   Preamble      PrivatePoly                BridgeHash (copy of O1, not absorbed)
        │              │                           │
-       │              │                    Preamble (witness L0,L1,R0,R1,O0, pri_poly_rx_comm)
+       │              │                    Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
        │              │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
        │              │                           │
