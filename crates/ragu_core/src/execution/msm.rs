@@ -11,12 +11,68 @@ use udon::{
     exec::{ExecutionOptions, Executor},
     field::{FieldAdapter, PastaField},
     msm::{
-        Bases, Input, ScalarStorage, Scratch,
+        Bases, Input, Requirements, ScalarStorage, Scratch,
         execution::{BatchPlan, JobStorage, WorkerStorage},
     },
 };
 
 use super::executor::{self, PoolExecutor};
+
+/// Reusable storage for prepared Pasta MSMs.
+///
+/// Buffers grow on demand and retain their capacity until this value is
+/// dropped. Ragu applications keep one workspace for public verifier
+/// arithmetic; no global or thread-local storage is used.
+#[derive(Default)]
+pub struct MsmWorkspace {
+    pub(super) pallas: MsmBuffers<Pallas>,
+    pub(super) vesta: MsmBuffers<Vesta>,
+}
+
+pub(super) struct MsmBuffers<C: PastaCurve> {
+    records: Vec<ScalarStorage<C>>,
+    digits: Vec<u8>,
+    affine: Vec<AffinePoint<C>>,
+    projective: Vec<ProjectivePoint<C>>,
+    field: Vec<PastaField<C::Base>>,
+    indices: Vec<usize>,
+}
+
+impl<C: PastaCurve> Default for MsmBuffers<C> {
+    fn default() -> Self {
+        Self {
+            records: Vec::new(),
+            digits: Vec::new(),
+            affine: Vec::new(),
+            projective: Vec::new(),
+            field: Vec::new(),
+            indices: Vec::new(),
+        }
+    }
+}
+
+impl<C: PastaCurve> MsmBuffers<C> {
+    fn scratch(&mut self, required: Requirements) -> Scratch<'_, C> {
+        // Udon overwrites scratch before reading it. Initialize only newly
+        // added elements and retain the allocations between executions.
+        self.records.resize(required.scalars(), ScalarStorage::ZERO);
+        self.digits.resize(required.digits(), 0);
+        self.affine
+            .resize(required.affine(), AffinePoint::GENERATOR);
+        self.projective
+            .resize(required.projective(), ProjectivePoint::IDENTITY);
+        self.field.resize(required.field(), PastaField::ZERO);
+        self.indices.resize(required.indices(), 0);
+        Scratch::new(
+            &mut self.records,
+            &mut self.digits,
+            &mut self.affine,
+            &mut self.projective,
+            &mut self.field,
+            &mut self.indices,
+        )
+    }
+}
 
 /// Computes $\sum_i \mathrm{scalars}_i \cdot \mathrm{bases}_i$.
 ///
@@ -165,7 +221,12 @@ fn execute<C: PastaCurve, X: Executor>(
     options: ExecutionOptions,
     executor: &X,
 ) -> ProjectivePoint<C> {
-    execute_input(Input::new(Bases::Points(bases), scalars), options, executor)
+    execute_input(
+        Input::new(Bases::Points(bases), scalars),
+        options,
+        executor,
+        &mut MsmBuffers::default(),
+    )
 }
 
 pub(super) fn execute_prepared<C: PastaCurve, X: Executor>(
@@ -173,11 +234,13 @@ pub(super) fn execute_prepared<C: PastaCurve, X: Executor>(
     bases: &[PreparedAffinePoint<C>],
     options: ExecutionOptions,
     executor: &X,
+    buffers: &mut MsmBuffers<C>,
 ) -> ProjectivePoint<C> {
     execute_input(
         Input::new(Bases::Prepared(bases), scalars),
         options,
         executor,
+        buffers,
     )
 }
 
@@ -185,24 +248,11 @@ fn execute_input<C: PastaCurve, X: Executor>(
     input: Input<'_, C>,
     options: ExecutionOptions,
     executor: &X,
+    buffers: &mut MsmBuffers<C>,
 ) -> ProjectivePoint<C> {
     let required = input.requirements(options).expect("MSM scratch size fits");
-    let mut records = vec![ScalarStorage::ZERO; required.scalars()];
-    let mut digits = vec![0; required.digits()];
-    let mut affine = vec![AffinePoint::GENERATOR; required.affine()];
-    let mut projective = vec![ProjectivePoint::IDENTITY; required.projective()];
-    let mut field = vec![PastaField::ZERO; required.field()];
-    let mut indices = vec![0; required.indices()];
-    let scratch = Scratch::new(
-        &mut records,
-        &mut digits,
-        &mut affine,
-        &mut projective,
-        &mut field,
-        &mut indices,
-    );
     input
-        .execute(options, executor, scratch)
+        .execute(options, executor, buffers.scratch(required))
         .expect("scratch was sized for these inputs and execution options")
 }
 

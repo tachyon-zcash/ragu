@@ -15,7 +15,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::{FixedGenerators, PreparedMsm};
+use ragu_core::{FixedGenerators, MsmWorkspace, PreparedMsm};
 use udon::{curve::Affine, fft::Domain, field::Field};
 
 /// A statically dispatched implementation of Ragu's computational operations.
@@ -300,7 +300,11 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     ///
     /// The default retains [`Self::msm`] overrides. Each result must equal
     /// `Self::msm(&coeffs, bases.bases())`, including length validation.
-    fn msm_prepared<C: Affine>(coeffs: Vec<C::Scalar>, bases: &PreparedMsm<C>) -> C::Projective {
+    fn msm_prepared<C: Affine>(
+        coeffs: Vec<C::Scalar>,
+        bases: &PreparedMsm<C>,
+        _workspace: &mut MsmWorkspace,
+    ) -> C::Projective {
         Self::msm(&coeffs, bases.bases())
     }
 

@@ -16,6 +16,7 @@
 //! [`IpaTranscript`], implemented for both curves by [`CycleTranscript`].
 
 use alloc::{sync::Arc, vec::Vec};
+use core::ops::Deref;
 
 use ragu_core::{Cycle, FixedGenerators, PreparedMsm};
 use udon::curve::Affine;
@@ -83,9 +84,34 @@ pub trait IpaCycle: Cycle {
 pub struct Params<C: Affine> {
     pub(crate) k: u32,
     pub(crate) n: u64,
-    pub(crate) g: Vec<C>,
-    pub(crate) prepared: Option<Arc<PreparedMsm<C>>>,
+    pub(crate) g: Generators<C>,
     pub(crate) u: C,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum Generators<C: Affine> {
+    Owned(Vec<C>),
+    Prepared(Arc<PreparedMsm<C>>),
+}
+
+impl<C: Affine> Generators<C> {
+    fn prepared(&self) -> Option<&PreparedMsm<C>> {
+        match self {
+            Self::Owned(_) => None,
+            Self::Prepared(bases) => Some(bases),
+        }
+    }
+}
+
+impl<C: Affine> Deref for Generators<C> {
+    type Target = [C];
+
+    fn deref(&self) -> &[C] {
+        match self {
+            Self::Owned(bases) => bases,
+            Self::Prepared(bases) => bases.bases(),
+        }
+    }
 }
 
 impl<C: Affine> Params<C> {
@@ -118,10 +144,21 @@ impl<C: Affine> Params<C> {
         Params {
             k,
             n: n as u64,
-            g: generators.g()[..n].to_vec(),
-            prepared: None,
+            g: Generators::Owned(generators.g()[..n].to_vec()),
             u,
         }
+    }
+
+    pub(crate) fn for_verifier<G: FixedGenerators<C>>(
+        generators: &G,
+        u: C,
+        k: u32,
+        prepared: Option<&Arc<PreparedMsm<C>>>,
+    ) -> Self {
+        prepared.map_or_else(
+            || Self::with_k(generators, u, k),
+            |prepared| Self::with_prepared(Arc::clone(prepared), u, k),
+        )
     }
 
     pub(crate) fn with_prepared(generators: Arc<PreparedMsm<C>>, u: C, k: u32) -> Self {
@@ -134,8 +171,7 @@ impl<C: Affine> Params<C> {
         Self {
             k,
             n: n as u64,
-            g: generators.bases().to_vec(),
-            prepared: Some(generators),
+            g: Generators::Prepared(generators),
             u,
         }
     }

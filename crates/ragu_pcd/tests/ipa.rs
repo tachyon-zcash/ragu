@@ -243,7 +243,7 @@ macro_rules! ipa_tests {
                     let mut coefficients: Vec<_> =
                         poly.iter().zip(&mask).map(|(p, s)| *p + xi * s).collect();
                     coefficients[0] -= claimed;
-                    let mut g = params.g.clone();
+                    let mut g = params.g.to_vec();
                     let mut powers: Vec<_> =
                         core::iter::successors(Some(F::ONE), |power| Some(*power * x))
                             .take(coefficients.len())
