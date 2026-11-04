@@ -70,7 +70,7 @@ fn check_public_parts<F: Field, B: Backend>() {
             public::<_, TestRank, _>(
                 kind,
                 at,
-                z,
+                TestRank::txz(r, z),
                 &|circuit| {
                     registry_calls.fetch_add(1, Ordering::Relaxed);
                     restriction(circuit)
@@ -88,6 +88,30 @@ fn check_public_parts<F: Field, B: Backend>() {
                 .count()
         );
     }
+}
+
+/// The direct scalar formula agrees with the old coefficient construction,
+/// including zero inputs and unit geometric ratios, on both Pasta fields.
+#[test]
+fn shared_gate_value_matches_polynomial_at_production_ranks() {
+    fn check<F: Field, R: Rank>() {
+        for (x, z) in [
+            (F::ZERO, F::ZERO),
+            (F::ZERO, F::ONE),
+            (F::ONE, F::ZERO),
+            (F::ONE, F::ONE),
+            (-F::ONE, -F::ONE),
+            (F::from(7), F::from(7)),
+            (F::from(7), F::from(7).invert().unwrap()),
+            (F::from(7), F::from(11)),
+        ] {
+            assert_eq!(R::txz(x, z), R::tz(z).eval(x));
+        }
+    }
+    check::<Fp, ragu_circuits::polynomials::WalletRank>();
+    check::<Fq, ragu_circuits::polynomials::WalletRank>();
+    check::<Fp, ragu_circuits::polynomials::AggregatorRank>();
+    check::<Fq, ragu_circuits::polynomials::AggregatorRank>();
 }
 
 #[test]
