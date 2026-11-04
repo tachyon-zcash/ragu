@@ -471,8 +471,8 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// factor, the rest of its SYSTEM gate and its gates' `b` and `c`
     /// wires, so that the stage polynomial is a function of its values and
     /// its commitment a deterministic, binding digest of them. The stage
-    /// must be committed with a zero `alpha` (see
-    /// [`CanonicalStageMask`](mask::CanonicalStageMask)).
+    /// must be committed with a zero `alpha` (see `CanonicalStageMask` in
+    /// the `mask` module).
     ///
     /// # Errors
     ///
