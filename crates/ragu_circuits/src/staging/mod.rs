@@ -472,7 +472,11 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// wires, so that the stage polynomial is a function of its values and
     /// its commitment a deterministic, binding digest of them. The stage
     /// must be committed with a zero `alpha` (see `CanonicalStageMask` in
-    /// the `mask` module).
+    /// the `mask` module). For a stage of an odd number of values, it also
+    /// holds the last gate's unused `d` wire to zero.
+    ///
+    /// Use it only for a stage whose values are never all zero: without a
+    /// blinding factor, an all-zero stage commits to the point at infinity.
     ///
     /// # Errors
     ///
@@ -480,7 +484,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     fn canonical_mask<'a>() -> Result<BondingObject<'a, F, R>> {
         Ok(BondingObject::new(Box::new(mask::CanonicalStageMask::new(
             Self::skip_gates(),
-            Self::num_gates(),
+            Self::values(),
         )?)))
     }
 

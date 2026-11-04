@@ -10,9 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `StageExt::canonical_mask` and `staging::mask::CanonicalStageMask`: a
-  stage mask that also holds the SYSTEM gate and the stage gates' `b` and `c`
-  wires to zero, so that an unblinded stage is a function of its values and
-  its commitment a deterministic, binding digest of them.
+  stage mask that also holds the SYSTEM gate, the stage gates' `b` and `c`
+  wires and an odd stage's padding wire to zero, so that an unblinded stage
+  is a function of its values and its commitment a deterministic, binding
+  digest of them. Use it only for values that are never all zero.
 - Added `Rank` support for `R<14>` for extension circuits that exceed the
   production rank's capacity. `ProductionRank` remains `R<13>`.
 - Added iteration over the stored coefficients of sparse polynomials.
