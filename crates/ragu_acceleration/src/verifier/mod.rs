@@ -12,7 +12,7 @@
 
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    registry::{Registry, RegistryAt},
+    registry::{CircuitIndex, Registry, RegistryAt},
 };
 use udon::{curve::Affine, field::Field};
 
@@ -22,6 +22,15 @@ pub(crate) fn registry_wxy_over_domain<F: Field, R: Rank>(
     y: F,
 ) -> alloc::vec::Vec<F> {
     registry.wxy_over_domain_parallel(x, y)
+}
+
+pub(crate) fn registry_circuits_xy<F: Field, R: Rank>(
+    registry: &Registry<'_, F, R>,
+    circuits: &[CircuitIndex],
+    x: F,
+    y: F,
+) -> alloc::vec::Vec<F> {
+    registry.circuits_xy_parallel(circuits, x, y)
 }
 
 pub(crate) fn registry_at_x<F: Field, R: Rank>(

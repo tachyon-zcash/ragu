@@ -12,7 +12,7 @@ use ragu_circuits::{
 use ragu_core::pasta::{Fp, Fq};
 use udon::field::Field;
 
-use super::{public, public_parts};
+use super::{public, public_parts, registry_public_parts};
 use crate::compress::revdot::claims::{Kind, Masked, Shape};
 
 fn check_public_parts<F: Field, B: Backend>() {
@@ -112,6 +112,92 @@ fn shared_gate_value_matches_polynomial_at_production_ranks() {
     check::<Fq, ragu_circuits::polynomials::WalletRank>();
     check::<Fp, ragu_circuits::polynomials::AggregatorRank>();
     check::<Fq, ragu_circuits::polynomials::AggregatorRank>();
+}
+
+/// Repeated circuit claims share an evaluation, while their claim positions
+/// and the registry's tag and interpolation semantics are unchanged.
+#[test]
+fn selected_registry_queries_match_individual_evaluations() {
+    #[derive(Clone, Copy, Debug, Default)]
+    struct SelectedBackend;
+    impl Backend for SelectedBackend {
+        fn registry_circuits_xy<F: Field, R: Rank>(
+            registry: &ragu_circuits::registry::Registry<'_, F, R>,
+            circuits: &[CircuitIndex],
+            x: F,
+            y: F,
+        ) -> Vec<F> {
+            assert_eq!(
+                circuits
+                    .iter()
+                    .map(|id| usize::from(*id))
+                    .collect::<Vec<_>>(),
+                [0, 4, 7, 8]
+            );
+            ReferenceBackend::registry_circuits_xy(registry, circuits, x, y)
+        }
+    }
+    fn check<F: Field>() {
+        let mut builder = ragu_circuits::registry::RegistryBuilder::<F, TestRank>::new()
+            .with_tag(ragu_circuits::registry::Tag::new(F::from(17)));
+        for times in 1..=5 {
+            builder = builder
+                .register_circuit(ragu_testing::circuits::SquareCircuit { times })
+                .unwrap();
+        }
+        let registry = builder.finalize().unwrap();
+        let kinds = [
+            Kind::Circuit(CircuitIndex::new(8)),
+            Kind::Raw,
+            Kind::Circuit(CircuitIndex::new(0)),
+            Kind::Bonding(CircuitIndex::new(4)),
+            Kind::Circuit(CircuitIndex::new(0)),
+            Kind::Circuit(CircuitIndex::new(7)),
+        ];
+        let shapes = kinds.map(|kind| Shape::<(), F> {
+            kind,
+            a: vec![],
+            b: vec![],
+        });
+        for r in [F::ZERO, F::ONE, F::from(7)] {
+            let (y, z) = (F::from(11), F::from(13));
+            let expected: Vec<_> = kinds
+                .iter()
+                .map(|kind| match kind {
+                    Kind::Circuit(circuit) => (
+                        F::ZERO,
+                        registry.wxy(circuit.omega_j(), r, y) + TestRank::tz(z).eval(r),
+                    ),
+                    Kind::Bonding(circuit) => (F::ZERO, registry.wxy(circuit.omega_j(), r, y)),
+                    _ => (F::ZERO, F::ZERO),
+                })
+                .collect();
+            assert_eq!(
+                registry_public_parts::<_, TestRank, SelectedBackend, _>(
+                    &shapes,
+                    &registry,
+                    r,
+                    y,
+                    z,
+                    &[]
+                ),
+                expected
+            );
+            assert_eq!(
+                registry_public_parts::<_, TestRank, AcceleratedBackend, _>(
+                    &shapes,
+                    &registry,
+                    r,
+                    y,
+                    z,
+                    &[]
+                ),
+                expected
+            );
+        }
+    }
+    check::<Fp>();
+    check::<Fq>();
 }
 
 #[test]
