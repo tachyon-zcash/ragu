@@ -75,8 +75,8 @@ pub(crate) struct Compiled<F: Field, R: Rank> {
 impl<F: Field, R: Rank> Recording<F, R> {
     fn finish(self) -> Compiled<F, R> {
         let base = R::num_coeffs();
-        // Mark nodes reachable from constraints, then count references only
-        // within that live graph. Dead expressions need no evaluation.
+        // Mark nodes reachable from constraints. Dead expressions need no
+        // evaluation and must not keep otherwise single-use expressions alive.
         let mut live = vec![false; self.nodes.len()];
         for (_, row) in &self.constraints {
             for &(wire, _) in &row.terms {
@@ -94,15 +94,65 @@ impl<F: Field, R: Rank> Recording<F, R> {
                 }
             }
         }
-        let mut uses = vec![0usize; live.len()];
-        for node in self
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| live[*i])
-            .map(|(_, n)| n)
-            .chain(self.constraints.iter().map(|(_, row)| row))
-        {
+        let mut program = Compiled {
+            terms: Vec::new(),
+            constants: Vec::new(),
+            nodes: Vec::new(),
+            constraints: Vec::new(),
+            gates: self.gates,
+            _rank: core::marker::PhantomData,
+        };
+        let mut pool = alloc::collections::BTreeMap::<Vec<u8>, usize>::new();
+        let (nodes, constraints) = {
+            let mut nodes = Vec::new();
+            let mut remap = vec![usize::MAX; self.nodes.len()];
+            let mut unique = alloc::collections::BTreeMap::new();
+            // Intern ordered expressions after remapping their predecessors.
+            // Coefficient codes compare field values, so different Coeff
+            // variants for the same value also share a node. No term sorting
+            // or algebraic rewriting is needed for structural equality.
+            let mut intern =
+                |mut row: Expression<F>, nodes: &mut Vec<Expression<F>>, remap: &[usize]| {
+                    let mut key = Vec::with_capacity(row.terms.len());
+                    for (wire, coefficient) in &mut row.terms {
+                        if *wire >= base {
+                            *wire = remap[*wire - base];
+                            assert_ne!(*wire, usize::MAX, "a live predecessor is already interned");
+                        }
+                        if let Some(code) = program.coefficient(*coefficient, &mut pool) {
+                            key.push((*wire, code));
+                        }
+                    }
+                    // A plain wire alias needs no node, even when shared by
+                    // several constraints or other expressions.
+                    if let [(wire, 0)] = key.as_slice() {
+                        return *wire;
+                    }
+                    *unique.entry(key).or_insert_with(|| {
+                        let wire = base + nodes.len();
+                        nodes.push(row);
+                        wire
+                    })
+                };
+            for (i, row) in self.nodes.into_iter().enumerate() {
+                if live[i] {
+                    remap[i] = intern(row, &mut nodes, &remap);
+                }
+            }
+            let constraints: Vec<_> = self
+                .constraints
+                .into_iter()
+                .map(|(y, row)| {
+                    let wire = intern(row, &mut nodes, &remap);
+                    (y, Expression::new().add(&wire))
+                })
+                .collect();
+            (nodes, constraints)
+        };
+        // Count uses after deduplication, before inlining: independently
+        // recorded copies can now keep their common expression shared.
+        let mut uses = vec![0usize; nodes.len()];
+        for node in nodes.iter().chain(constraints.iter().map(|(_, row)| row)) {
             for &(wire, _) in &node.terms {
                 if wire >= base {
                     uses[wire - base] += 1;
@@ -139,29 +189,20 @@ impl<F: Field, R: Rank> Recording<F, R> {
                 gain: Coeff::One,
             }
         }
-        let mut normalized = Vec::with_capacity(self.nodes.len());
-        for (i, node) in self.nodes.into_iter().enumerate() {
-            if live[i] {
-                let row = inline(node, &mut normalized, &uses, base);
-                normalized.push(Some(row));
-            } else {
-                normalized.push(None);
-            }
+        let mut normalized = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let row = inline(node, &mut normalized, &uses, base);
+            normalized.push(Some(row));
         }
-        let mut rows = Vec::with_capacity(self.constraints.len());
-        for (y, row) in self.constraints {
+        let mut rows = Vec::with_capacity(constraints.len());
+        for (y, row) in constraints {
             rows.push((y, inline(row, &mut normalized, &uses, base)));
         }
         rows.sort_unstable_by_key(|(y, _)| *y);
-        let mut program = Compiled {
-            terms: Vec::new(),
-            constants: Vec::new(),
-            nodes: Vec::new(),
-            constraints: Vec::new(),
-            gates: self.gates,
-            _rank: core::marker::PhantomData,
-        };
-        let mut pool = alloc::collections::BTreeMap::<Vec<u8>, usize>::new();
+        // Inlining may eliminate coefficients or combine them into new ones.
+        // Retain only the coefficients used by the final program.
+        program.constants.clear();
+        pool.clear();
         let mut remap = vec![usize::MAX; normalized.len()];
         // Allocated wire IDs become indices in four compact gate buffers;
         // virtual IDs follow those buffers, with dead/inlined nodes removed.
@@ -200,6 +241,39 @@ impl<F: Field, R: Rank> Recording<F, R> {
 }
 
 impl<F: Field, R: Rank> Compiled<F, R> {
+    fn coefficient(
+        &mut self,
+        coefficient: Coeff<F>,
+        pool: &mut alloc::collections::BTreeMap<Vec<u8>, usize>,
+    ) -> Option<usize> {
+        Some(match coefficient {
+            Coeff::One => 0,
+            Coeff::NegativeOne => 1,
+            Coeff::Two => 2,
+            _ => {
+                let coefficient = coefficient.value();
+                if coefficient == F::ZERO {
+                    return None;
+                }
+                if coefficient == F::ONE {
+                    0
+                } else if coefficient == -F::ONE {
+                    1
+                } else if coefficient == F::ONE.double() {
+                    2
+                } else {
+                    *pool
+                        .entry(coefficient.to_bytes().as_ref().to_vec())
+                        .or_insert_with(|| {
+                            let code = self.constants.len() + 3;
+                            self.constants.push(coefficient);
+                            code
+                        })
+                }
+            }
+        })
+    }
+
     fn store(
         &mut self,
         row: Expression<F>,
@@ -208,33 +282,9 @@ impl<F: Field, R: Rank> Compiled<F, R> {
     ) -> core::ops::Range<usize> {
         let start = self.terms.len();
         for (wire, coefficient) in row.terms {
-            let code = match coefficient {
-                Coeff::One => 0,
-                Coeff::NegativeOne => 1,
-                Coeff::Two => 2,
-                _ => {
-                    let coefficient = coefficient.value();
-                    if coefficient == F::ZERO {
-                        continue;
-                    }
-                    if coefficient == F::ONE {
-                        0
-                    } else if coefficient == -F::ONE {
-                        1
-                    } else if coefficient == F::ONE.double() {
-                        2
-                    } else {
-                        *pool
-                            .entry(coefficient.to_bytes().as_ref().to_vec())
-                            .or_insert_with(|| {
-                                let code = self.constants.len() + 3;
-                                self.constants.push(coefficient);
-                                code
-                            })
-                    }
-                }
-            };
-            self.terms.push((map(wire), code));
+            if let Some(code) = self.coefficient(coefficient, pool) {
+                self.terms.push((map(wire), code));
+            }
         }
         start..self.terms.len()
     }
@@ -542,6 +592,81 @@ pub(crate) mod tests {
                 &crate::tests::SquareCircuit { times },
             );
         }
+    }
+
+    #[test]
+    fn duplicate_expressions_share_work_without_changing_wiring() {
+        use crate::{WithAux, polynomials::TestRank};
+
+        struct Duplicates;
+        impl<F: Field> RawCircuit<F> for Duplicates {
+            type Witness<'a> = ();
+            type Output = ();
+            type Aux<'a> = ();
+
+            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+                &self,
+                dr: &mut D,
+                _: ragu_core::drivers::DriverValue<D, ()>,
+            ) -> Result<WithAux<(), ragu_core::drivers::DriverValue<D, ()>>> {
+                let (a, b, c, extra) = dr.gate(|| unreachable!())?;
+                let d = dr.assign_extra(extra, || unreachable!())?;
+                let mut parents = Vec::new();
+                for copy in 0..3 {
+                    let child = dr.add(|lc| {
+                        if copy == 0 {
+                            lc.add(&a)
+                                .add_term(&b, Coeff::Arbitrary(F::from(7)))
+                                .sub(&d)
+                        } else {
+                            // The gain only affects subsequent terms. The
+                            // resulting field coefficients match the first
+                            // expression, despite distinct enum variants.
+                            lc.add_term(&a, Coeff::Arbitrary(F::ONE))
+                                .gain(Coeff::Arbitrary(F::from(7)))
+                                .add(&b)
+                                .gain(Coeff::Arbitrary(F::from(7).invert().unwrap()))
+                                .add_term(&d, Coeff::Arbitrary(-F::ONE))
+                        }
+                    });
+                    let parent = dr.add(|lc| lc.add(&child).add_term(&c, Coeff::Two));
+                    dr.enforce_zero(|lc| lc.add(&parent))?;
+                    parents.push(parent);
+                }
+                // Equal predecessors are shared transitively; reverse
+                // evaluation must accumulate both positive and negative uses.
+                dr.enforce_zero(|lc| lc.add(&parents[0]).sub(&parents[1]))?;
+                // Different coefficients and wires must not be conflated.
+                dr.enforce_zero(|lc| lc.add(&b).add_term(&a, Coeff::Arbitrary(F::from(9))))?;
+                // Unused copies must not keep an otherwise single-use child.
+                let _ = dr.add(|lc| {
+                    lc.add(&a)
+                        .add_term(&b, Coeff::Arbitrary(F::from(7)))
+                        .sub(&d)
+                });
+                Ok(WithAux::new((), D::unit()))
+            }
+        }
+
+        fn check<F: Field>() {
+            let metrics = crate::metrics::eval_raw::<F, _>(&Duplicates).unwrap();
+            let plan = crate::floor_planner::floor_plan(&metrics.segments);
+            let compiled = compile::<F, _, TestRank>(&Duplicates, &plan).unwrap();
+            assert_eq!(compiled.nodes.len(), 1, "the three copies share one parent");
+            for x in [F::ZERO, F::ONE, -F::ONE, F::from(13)] {
+                let expected =
+                    super::super::sx::eval::<F, _, TestRank>(&Duplicates, x, &plan).unwrap();
+                assert!(expected.iter_coeffs().eq(compiled.sx(x).iter_coeffs()));
+                for y in [F::ZERO, F::ONE, -F::ONE, F::from(29)] {
+                    let expected =
+                        super::super::sy::eval::<F, _, TestRank>(&Duplicates, y, &plan).unwrap();
+                    assert!(expected.iter_coeffs().eq(compiled.sy(y).iter_coeffs()));
+                    assert_eq!(compiled.sxy(x, y), expected.eval(x));
+                }
+            }
+        }
+        check::<ragu_core::pasta::Fp>();
+        check::<ragu_core::pasta::Fq>();
     }
 
     #[test]
