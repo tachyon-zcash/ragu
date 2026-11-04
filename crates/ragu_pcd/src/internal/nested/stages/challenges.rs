@@ -44,7 +44,11 @@
 //! the header-derived sign. A step whose prover traced its nested circuits
 //! against a different sign or lift fails those claims in its parent's fold.
 //! The root has no parent: the decider rederives the root's stage polynomial
-//! from its headers and challenges, and compares coefficients.
+//! from its headers and challenges, and compares coefficients. Optional
+//! decompression profiles append two child activation signs after beta. The
+//! last native binder derives them from the child circuit IDs. The root
+//! recomputes them from the child circuit IDs opened from its preamble.
+//! Standard profiles append no wires.
 //!
 //! [`challenge`]: crate::internal::nested::challenge
 //! [`StageExt::generator_index_for_a`]: ragu_circuits::staging::StageExt::generator_index_for_a
@@ -93,6 +97,16 @@ pub const U: usize = ALPHA + 1;
 pub const SIGN_INDEX: usize = NUM;
 /// The position of the lift of `pre_beta`, $\beta$.
 pub const BETA_INDEX: usize = NUM + 1;
+/// The two child activation signs, present only for optional decompression.
+pub const EXTENSION_INDEX: usize = NUM + 2;
+
+/// Two activation signs for optional profiles, otherwise no extra wires.
+pub struct ExtensionLen<P>(PhantomData<P>);
+impl<P: Profile> ragu_primitives::vec::Len for ExtensionLen<P> {
+    fn len() -> usize {
+        if P::OPTIONAL_DECOMPRESSION { 2 } else { 0 }
+    }
+}
 
 /// Length type for the challenge lifts before the sign and $\beta$.
 pub type Len = ConstLen<NUM>;
@@ -107,9 +121,25 @@ pub struct Witness<F> {
     pub base_case_sign: F,
     /// The lift of `pre_beta`.
     pub beta: F,
+    /// +1 for a decompression child, -1 otherwise. The last native binder
+    /// derives these signs from the children's application circuit IDs.
+    pub extension_signs: [F; 2],
 }
 
 impl<F: Field> Witness<F> {
+    /// Derives activation signs from native child circuit IDs. Root
+    /// verifiers use IDs opened from the preamble; the prover uses its
+    /// children's IDs. Recursive binding repeats this predicate in circuit.
+    pub fn set_extension_signs<P: Profile, N: Field>(&mut self, ids: [N; 2]) -> Result<()> {
+        if P::OPTIONAL_DECOMPRESSION {
+            let decompress: N = crate::step::InternalStepIndex::Decompress
+                .circuit_index::<P>()?
+                .omega_j();
+            self.extension_signs = ids.map(|id| if id == decompress { F::ONE } else { -F::ONE });
+        }
+        Ok(())
+    }
+
     /// Creates the witness from the lifts and the children's native output
     /// headers. The sign mirrors the native preamble's base-case predicate;
     /// the last native binding circuit derives that predicate independently
@@ -132,6 +162,7 @@ impl<F: Field> Witness<F> {
                 -F::ONE
             },
             beta,
+            extension_signs: [F::ONE; 2],
         }
     }
 }
@@ -143,13 +174,15 @@ impl<F: Field> Witness<F> {
 /// This is stage communication data, not part of any circuit's public
 /// instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>> {
+pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
     #[ragu(gadget)]
     pub pairs: FixedVec<Pair<'dr, D>, Len>,
     #[ragu(gadget)]
     pub base_case: Pair<'dr, D>,
     #[ragu(gadget)]
     pub beta: Pair<'dr, D>,
+    #[ragu(gadget)]
+    pub extension: FixedVec<Pair<'dr, D>, ExtensionLen<P>>,
 }
 
 /// One lift and its trailing zero.
@@ -169,12 +202,12 @@ pub struct Stage<C: Affine, R, P> {
 impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
     type Parent = super::eval::Stage<C, R, P>;
     type Witness<'source> = &'source Witness<C::Base>;
-    type OutputKind = Kind![C::Base; Output<'_, _>];
+    type OutputKind = Kind![C::Base; Output<'_, _, P>];
 
     fn values() -> usize {
         // One lift and one zero per challenge, then the base-case sign and
         // beta with theirs: every value at an a-wire.
-        (NUM + 2) * 2
+        (NUM + 2 + if P::OPTIONAL_DECOMPRESSION { 2 } else { 0 }) * 2
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -195,10 +228,13 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         let pairs = FixedVec::try_from_fn(|i| pair(dr, witness.as_ref().map(|w| w.lifts[i])))?;
         let base_case = pair(dr, witness.as_ref().map(|w| w.base_case_sign))?;
         let beta = pair(dr, witness.as_ref().map(|w| w.beta))?;
+        let extension =
+            FixedVec::try_from_fn(|i| pair(dr, witness.as_ref().map(|w| w.extension_signs[i])))?;
         Ok(Output {
             pairs,
             base_case,
             beta,
+            extension,
         })
     }
 }

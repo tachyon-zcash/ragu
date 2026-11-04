@@ -168,6 +168,7 @@ fn claim_targets_match_positional_ky_values() {
         application: Fp::from(7),
         statement: None,
         binding: None,
+        extension: 1u64.into(),
     };
     let masked = [Masked::new(
         native::RxComponent::AbA,
@@ -192,6 +193,7 @@ fn claim_targets_match_positional_ky_values() {
         c: Fq::from(2),
         unified: Fq::from(3),
         binding: None,
+        extension: 1u64.into(),
     };
     let masked = [Masked::new(
         nested::RxComponent::AbA,

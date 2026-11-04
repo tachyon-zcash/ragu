@@ -140,8 +140,18 @@ A prover who prepares the two sides from different compressed proofs, or who
 chooses a message after the challenge that depends on it, fails a binding
 claim. The chunk, statement and binding circuits are internal circuits of the
 aggregator profile, so every proof of the profile carries their polynomials:
-a step that decompresses nothing runs them over the application's canonical
-compressed proof.
+the decompression step supplies their full witnesses, while an ordinary step
+uses empty traces with fresh SYSTEM-gate blinding and zero extension targets.
+The blinding keeps the commitments nonidentity without running the chunks.
+
+Activation is determined by the proof's application circuit ID. The consuming
+fuse derives that predicate from each child's native preamble and binds two
+activation signs into its nested challenge stage. The nested collapse uses
+those signs for the same zero-or-active targets. At the root, both verifiers
+recompute the signs from the child circuit IDs read or opened from the
+preamble. A decompression step therefore cannot select the empty extension,
+including when its proof is consumed by another fuse. The aggregator profile
+has a new setup-tag name for this relation; the wallet relation is unchanged.
 
 ## What remains
 

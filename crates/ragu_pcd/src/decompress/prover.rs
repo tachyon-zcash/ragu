@@ -1,18 +1,15 @@
 //! The decompression as a profile's prover: the extension's polynomials
 //! for a proof, from a compressed proof's prepared sides.
 //!
-//! Every proof of a profile carries every extension circuit's polynomial,
-//! witnessing the chunks over a compressed proof. A decompression step uses
-//! its incoming wallet proof; any other step uses a canonical one, the wallet
-//! application's compressed bootstrap proof, which [`Decompression`] prepares
-//! once and holds for the aggregator application's lifetime. The traces then
-//! assemble against the aggregator's registry as the fuse's own circuits'
-//! do, and the stages' polynomials come from the prepared sides' values.
-//! With `std`, ordinary aggregator steps reuse the canonical circuit bodies
-//! and commitments held by this context, refreshing the SYSTEM-gate blinding
-//! in each polynomial and updating its commitment by the same generator
-//! multiple. Actual decompressions always trace and commit the input's own
-//! circuits. Without `std`, both paths use the original computation.
+//! A decompression step traces the verifier over its incoming wallet proof
+//! and assembles those traces against the aggregator's registry. Ordinary
+//! aggregator steps instead use empty extension traces with fresh SYSTEM
+//! blinding. The optional-extension relation derives activation from the
+//! application's bound circuit ID on both sides.
+//!
+//! Profiles that retain the always-active relation can still use the
+//! canonical bootstrap decompression and its cached circuit bodies. Actual
+//! decompressions always trace and commit their input's circuits.
 //!
 //! The context owns the wallet application: the aggregator application
 //! holds the standard application whose proofs it decompresses, and hands
@@ -204,7 +201,9 @@ where
     }
 
     /// The native extension's polynomials for profile `P` over `source`,
-    /// or over the canonical decompression without: every chunk circuit's
+    /// or a blinded empty witness for an inactive optional extension. An
+    /// always-active profile uses the canonical proof without a source:
+    /// every chunk circuit's
     /// trace, the statement circuit's and the binding circuit's assembled
     /// against `registry` at their index in `P`'s layout, and the six
     /// stages' polynomials, each blinded from `rng` but the digits
@@ -220,6 +219,9 @@ where
         registry: &Registry<'_, C::CircuitField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
+        if P::OPTIONAL_DECOMPRESSION && source.is_none() {
+            return Ok(empty_extension(&P::native_extension(), rng));
+        }
         let prepared = &self.sides(source).native;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
@@ -298,6 +300,9 @@ where
         registry: &Registry<'_, C::ScalarField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
+        if P::OPTIONAL_DECOMPRESSION && source.is_none() {
+            return Ok(empty_extension(&P::nested_extension(), rng));
+        }
         let prepared: &Prepared<C, Nested> = &self.sides(source).nested;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
@@ -483,6 +488,28 @@ fn trace_alpha<F: Field, R: Rank>(rx: &sparse::Polynomial<F, R>) -> F {
     rx.iter_stored_coeffs()
         .find_map(|(degree, &coefficient)| (degree == 2 * R::n() - 1).then_some(coefficient))
         .unwrap_or(F::ZERO)
+}
+
+/// An inactive extension still has nonidentity commitments. The SYSTEM
+/// a-wire is unconstrained by circuit wiring and stage masks; b, c and d
+/// remain zero, so every extension revdot target is zero.
+fn empty_extension<F: Field, R: Rank>(
+    extension: &crate::profile::Extension,
+    rng: &mut impl CryptoRng,
+) -> ExtensionRxs<F, R> {
+    let mut empty = || {
+        let mut alpha = F::ZERO;
+        while alpha == F::ZERO {
+            alpha = blinding(rng);
+        }
+        let mut view = sparse::View::trace();
+        view.a.push(alpha);
+        view.build()
+    };
+    ExtensionRxs {
+        circuits: (0..extension.circuits.len()).map(|_| empty()).collect(),
+        stages: (0..extension.stages).map(|_| empty()).collect(),
+    }
 }
 
 /// A stage polynomial's blinding.

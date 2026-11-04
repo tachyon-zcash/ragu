@@ -156,6 +156,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
 
+    /// Whether the extension is active only for the internal decompression
+    /// step. Other steps have zero extension targets and may use blinded
+    /// empty traces. Both curves derive activation from the bound circuit ID;
+    /// the nested side receives it through the native-bound challenge stage.
+    const OPTIONAL_DECOMPRESSION: bool = false;
+
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
     /// over the nested batch takes a step per so many points, so more per
@@ -430,6 +436,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         let native = Self::native_extension();
         let nested = Self::nested_extension();
+        if Self::OPTIONAL_DECOMPRESSION && native.statement.is_none() {
+            return Err(Error::Initialization(
+                "an optional decompression extension requires a statement circuit".into(),
+            ));
+        }
         for (side, declared, extension, other) in [
             ("native", Self::NATIVE_EXTENSION, &native, &nested),
             ("nested", Self::NESTED_EXTENSION, &nested, &native),
@@ -1092,7 +1103,7 @@ impl Profile for Standard {
 
 /// The aggregator profile's [`NAME`](Profile::NAME), the same for every
 /// header size.
-pub(crate) const AGGREGATOR_NAME: &str = "aggregator";
+pub(crate) const AGGREGATOR_NAME: &str = "aggregator-optional-decompression-v1";
 
 /// A cycle with a profile: what every item that lays out a proof is generic
 /// over.
@@ -2726,7 +2737,7 @@ mod tests {
         }
         named!(Nameless, "");
         named!(StandardImpostor, "standard");
-        named!(AggregatorImpostor, "aggregator");
+        named!(AggregatorImpostor, AGGREGATOR_NAME);
         named!(Named, "named");
 
         // A profile that copies a built-in profile's token still carries
@@ -2752,7 +2763,7 @@ mod tests {
             };
         }
         forged!(StandardForger, "standard", Standard);
-        forged!(AggregatorForger, "aggregator", Aggregator<4>);
+        forged!(AggregatorForger, AGGREGATOR_NAME, Aggregator<4>);
         assert!(StandardForger::check().is_err());
         assert!(AggregatorForger::check().is_err());
 

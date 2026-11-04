@@ -143,13 +143,30 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         ky.finish_ky(dr)
     }
 
+    /// The child's extension activation, derived from its bound circuit ID.
+    pub fn extension_enabled<P: Profile>(&self, dr: &mut D) -> Result<Element<'dr, D>> {
+        if !P::OPTIONAL_DECOMPRESSION {
+            return Ok(Element::one());
+        }
+        let decompress = Element::constant(
+            dr,
+            InternalStepIndex::Decompress
+                .circuit_index::<P>()?
+                .omega_j(),
+        );
+        Ok(self
+            .circuit_id
+            .is_equal(dr, &mut (), &decompress)?
+            .element())
+    }
+
     /// The statement circuit's $k(y)$ for this child, when profile `P`'s
     /// native extension has one: the $k(y)$ of the header the extension
     /// verified, followed by the zero the circuit's slot appends to its
     /// output. The header is the child's own output header for a proof of
     /// the decompression step and the unit header for a proof of any other
-    /// step, so a profile's prover verifies a proof with the unit header,
-    /// such as an application's bootstrap, outside that step. `None` for a
+    /// step for an always-active extension. Optional extensions instead have
+    /// a zero statement target outside the decompression step. `None` for a
     /// profile without a statement circuit, which computes nothing and
     /// which [`ky_values`] never asks for.
     ///
@@ -175,6 +192,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             self.output_header.write(dr, &mut ky)?;
             ky::finish_extension_ky(ky, dr)?
         };
+        if P::OPTIONAL_DECOMPRESSION {
+            return own.mul(dr, &is_decompress.element()).map(Some);
+        }
         let canonical = {
             let mut ky = Horner::new(y);
             for value in ky::output_header::<C, (), HEADER_SIZE>(())? {

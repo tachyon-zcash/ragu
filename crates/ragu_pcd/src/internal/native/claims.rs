@@ -430,6 +430,11 @@ pub trait KySource {
     /// required for `repeat_n` in [`ky_prefix`].
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One activation value per proof for extension circuits.
+    fn extension_ones(&self) -> impl Iterator<Item = Self::Ky> + Clone {
+        self.ones()
+    }
+
     /// One value per proof for the statement circuit of the profile's
     /// native extension: the $k(y)$ of the output header it exposes, as
     /// [`statement_ky`](super::stages::preamble::ProofInputs::statement_ky)
@@ -466,7 +471,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
         .chain({
             let extension = P::native_extension();
-            let ones: Vec<S::Ky> = source.ones().collect();
+            let ones: Vec<S::Ky> = source.extension_ones().collect();
             let statement: Vec<S::Ky> = source.statement_ky().collect();
             let binding: Vec<S::Ky> = source.binding_ky().collect();
             assert!(
@@ -503,11 +508,26 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_statement: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
     pub right_binding: Option<Element<'dr, D>>,
+    pub extension: [Element<'dr, D>; 2],
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
+    /// Set the already-bound activation values and scale binding targets.
+    pub fn with_extension(mut self, dr: &mut D, active: [Element<'dr, D>; 2]) -> Result<Self> {
+        self.left_binding = self
+            .left_binding
+            .map(|v| v.mul(dr, &active[0]))
+            .transpose()?;
+        self.right_binding = self
+            .right_binding
+            .map(|v| v.mul(dr, &active[1]))
+            .transpose()?;
+        self.extension = active;
+        Ok(self)
+    }
+
     /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values
     /// and the statement and binding circuits' k(y) values, `None` for a
     /// profile without one.
@@ -536,6 +556,7 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_statement,
             left_binding,
             right_binding,
+            extension: [Element::one(), Element::one()],
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -559,6 +580,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn extension_ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.extension.clone().into_iter()
     }
 
     fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

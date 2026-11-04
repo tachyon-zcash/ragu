@@ -1083,6 +1083,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // A dummy proof has synthetic traces and a fixed +1 sign. Use the
         // same witness for its binding partials and challenge stage.
         let nested_challenges = nested::stages::challenges::Witness {
+            extension_signs: [-C::ScalarField::ONE; 2],
             lifts: FixedVec::new(challenge_lifts.to_vec()).expect("NUM challenge lifts"),
             base_case_sign: C::ScalarField::ONE,
             beta: beta_lift[0],

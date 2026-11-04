@@ -49,16 +49,15 @@ use crate::{
 /// 4-element headers are pinned outside the crate's tests, so
 /// `Aggregator<4>` is the one aggregator that compiles.
 ///
-/// Every proof of the profile carries the chunk circuits' polynomials, so
-/// every fuse runs the chunks over a compressed proof, a step that
-/// decompresses nothing included (see the decompression module's *What
-/// remains*). The application
-/// holds a [`Decompression`] of the wallet application it aggregates, taken
-/// at [`finalize_with`](crate::ApplicationBuilder::finalize_with), whose
-/// canonical compressed proof every fuse decompresses, except the
-/// decompression step: it decompresses the wallet proof it is given
-/// ([`decompress`](crate::Application::decompress)) and outputs that
-/// proof's header. The extension's statement circuit exposes the header
+/// Every proof retains the extension's polynomial slots. A decompression
+/// step fills them with the wallet verifier's witness; other steps use
+/// empty traces with fresh SYSTEM blinding. The extension's activation is
+/// derived from the proof's bound application circuit ID on the native side
+/// and carried to the nested side through the bound challenge stage. The
+/// application holds a [`Decompression`] of its wallet application, taken
+/// at [`finalize_with`](crate::ApplicationBuilder::finalize_with). A
+/// decompression step verifies the supplied wallet proof and outputs its
+/// header ([`decompress`](crate::Application::decompress)). The extension's statement circuit exposes the header
 /// the chunks verified, and its claim's $k(y)$ holds a proof of the
 /// decompression step to it; each side's binding circuit exposes the other
 /// side's stage commitments it absorbed or recomputed, and its claim's
@@ -148,6 +147,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
 
 impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NAME: &'static str = AGGREGATOR_NAME;
+    const OPTIONAL_DECOMPRESSION: bool = true;
     const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(TypeId::of::<Self>));
     // The chunk circuits, the statement and binding circuits and the
     // stages on the native side; the chunk circuits, the binding circuit

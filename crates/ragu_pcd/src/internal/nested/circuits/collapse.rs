@@ -207,6 +207,20 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             left_binding,
             right_binding,
         );
+        let ky = if P::OPTIONAL_DECOMPRESSION {
+            use udon::field::Field;
+            let mut active = [Element::one(), Element::one()];
+            for (result, pair) in active.iter_mut().zip(stages.challenges.extension.iter()) {
+                pair.lift.square(dr)?.enforce_equal(dr, &Element::one())?;
+                *result = pair.lift.add(dr, &Element::one()).scale(
+                    dr,
+                    ragu_core::Coeff::Arbitrary(D::F::from(2).invert().unwrap()),
+                );
+            }
+            ky.with_extension(dr, active)?
+        } else {
+            ky
+        };
         let mut ky = ky_values::<P, _>(&ky);
 
         // Layer 1: each group's fold must be the collapsed value witnessed.
