@@ -214,6 +214,37 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     fn sy(&self, y: F, floor_plan: &[floor_planner::ConstraintSegment])
     -> sparse::Polynomial<F, R>;
 
+    /// Evaluates with the powers of X shared by a registry query.
+    fn sxy_with_powers(
+        &self,
+        x: F,
+        y: F,
+        _powers: &[F],
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> F {
+        self.sxy(x, y, floor_plan)
+    }
+
+    /// Restricts X with its powers shared by a registry query.
+    fn sx_with_powers(
+        &self,
+        x: F,
+        _powers: &[F],
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> sparse::Polynomial<F, R> {
+        self.sx(x, floor_plan)
+    }
+
+    /// Restricts Y with its powers shared by a registry query.
+    fn sy_with_powers(
+        &self,
+        y: F,
+        _powers: &[F],
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> sparse::Polynomial<F, R> {
+        self.sy(y, floor_plan)
+    }
+
     /// Returns per-segment constraint records in DFS emission order.
     ///
     /// These records serve as input to [`floor_planner::floor_plan`] for
@@ -282,6 +313,31 @@ where
         }
         fn sy(&self, y: F, _: &[floor_planner::ConstraintSegment]) -> sparse::Polynomial<F, R> {
             self.wiring.sy(y)
+        }
+        fn sxy_with_powers(
+            &self,
+            x: F,
+            y: F,
+            powers: &[F],
+            _: &[floor_planner::ConstraintSegment],
+        ) -> F {
+            self.wiring.sxy_with_powers(x, y, Some(powers))
+        }
+        fn sx_with_powers(
+            &self,
+            x: F,
+            powers: &[F],
+            _: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<F, R> {
+            self.wiring.sx_with_powers(x, Some(powers))
+        }
+        fn sy_with_powers(
+            &self,
+            y: F,
+            powers: &[F],
+            _: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<F, R> {
+            self.wiring.sy_with_powers(y, Some(powers))
         }
         fn segment_records(&self) -> &[SegmentRecord] {
             &self.metrics.segments

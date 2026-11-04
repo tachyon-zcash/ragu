@@ -67,6 +67,17 @@ use crate::{
     polynomials::{Rank, sparse},
 };
 
+fn powers<F: Field, R: Rank>(point: F) -> Vec<F> {
+    let mut power = F::ONE;
+    (0..R::num_coeffs())
+        .map(|_| {
+            let current = power;
+            power *= point;
+            current
+        })
+        .collect()
+}
+
 /// Represents a simple numeric index of a circuit in the registry.
 ///
 /// Any value naming a domain point selects a wiring polynomial: the $s_i(X, Y)$
@@ -533,6 +544,26 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         evals
     }
 
+    /// Evaluates the W-domain using independent circuit jobs and shared
+    /// powers of X. Results use the same domain order as
+    /// [`Self::wxy_over_domain`]. Without a worker pool, jobs run serially.
+    pub fn wxy_over_domain_parallel(&self, x: F, y: F) -> Vec<F> {
+        let tag = self.tag_sxy(x, y);
+        let global = crate::staging::mask::global_mask::<F, R>(x, y);
+        let powers = powers::<F, R>(x);
+        let mut evals = alloc::vec![tag; self.domain.size()];
+        ragu_core::for_each_mut(&mut evals, |j, value| {
+            let i = self.bitreversed_index(j);
+            if let Some(circuit) = self.circuits.get(i) {
+                *value += circuit.sxy_with_powers(x, y, &powers, &self.floor_plans[i]);
+                if circuit.is_mask() {
+                    *value += global;
+                }
+            }
+        });
+        evals
+    }
+
     /// Interpolate the Lagrange-basis evaluations from
     /// [`wxy_over_domain`](Self::wxy_over_domain) into the monomial-basis
     /// polynomial $m(W, x, y)$ via an inverse FFT.
@@ -676,6 +707,42 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         result
     }
 
+    fn w_cached_parallel<T: Send>(
+        &self,
+        cache: &LagrangeCache<F>,
+        init: impl Fn() -> T + Sync,
+        add_poly: impl Fn(&dyn WiringObject<F, R>, &[ConstraintSegment], F, &mut T) + Sync,
+        combine: impl Fn(&mut T, T),
+    ) -> T {
+        let LagrangeCache::Arbitrary(coeffs) = cache else {
+            return self.w_cached(cache, init, add_poly);
+        };
+        // Bound temporary storage while giving the pool more jobs than
+        // workers. Each job reduces four circuits before the final sum.
+        const CIRCUITS_PER_JOB: usize = 4;
+        let mut jobs: Vec<_> = core::iter::repeat_with(&init)
+            .take(self.circuits.len().div_ceil(CIRCUITS_PER_JOB))
+            .collect();
+        ragu_core::for_each_mut(&mut jobs, |job, result| {
+            let start = job * CIRCUITS_PER_JOB;
+            let end = (start + CIRCUITS_PER_JOB).min(self.circuits.len());
+            for i in start..end {
+                let coefficient = coeffs[self.bitreversed_index(i)];
+                add_poly(
+                    &*self.circuits[i],
+                    &self.floor_plans[i],
+                    coefficient,
+                    result,
+                );
+            }
+        });
+        let mut result = init();
+        for job in jobs {
+            combine(&mut result, job);
+        }
+        result
+    }
+
     /// Sums Lagrange coefficients for masking polynomials at the given $W$ point.
     ///
     /// Only circuits where [`WiringObject::is_mask`] returns `true` contribute.
@@ -755,6 +822,70 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
 }
 
 impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
+    /// Restricts X using independent circuit jobs and shared powers of X.
+    /// Returns exactly [`Self::x`], including tag and masking terms.
+    pub fn x_parallel(&self, x: F) -> sparse::Polynomial<F, R> {
+        self.restriction_parallel(x, true)
+    }
+
+    /// Restricts Y using independent circuit jobs and shared powers of Y.
+    /// Returns exactly [`Self::y`], including tag and masking terms.
+    pub fn y_parallel(&self, y: F) -> sparse::Polynomial<F, R> {
+        self.restriction_parallel(y, false)
+    }
+
+    fn restriction_parallel(&self, point: F, fix_x: bool) -> sparse::Polynomial<F, R> {
+        // A domain point needs at most one circuit, so avoid a shared table
+        // and job storage for this common verifier path.
+        if !matches!(self.cache, LagrangeCache::Arbitrary(_)) {
+            return if fix_x { self.x(point) } else { self.y(point) };
+        }
+        let powers = powers::<F, R>(point);
+        let mut poly = self.registry.w_cached_parallel(
+            &self.cache,
+            sparse::Polynomial::default,
+            |circuit, floor_plan, coefficient, result| {
+                let mut part = if fix_x {
+                    circuit.sx_with_powers(point, &powers, floor_plan)
+                } else {
+                    circuit.sy_with_powers(point, &powers, floor_plan)
+                };
+                part.scale(coefficient);
+                result.add_assign(&part);
+            },
+            |result, part| result.add_assign(&part),
+        );
+        let mut global = crate::staging::mask::global_project::<F, R>(point);
+        global.scale(self.mask_coeff_sum);
+        poly.add_assign(&global);
+        if point != F::ZERO {
+            let mut tag = sparse::View::<_, R, _>::wiring();
+            tag.c
+                .push(self.registry.tag.value() * powers[R::num_coeffs() - 1]);
+            poly.add_assign(&tag.build());
+        }
+        poly
+    }
+
+    /// Evaluates at X and Y with independent circuit jobs and shared X
+    /// powers. Domain points retain [`Self::xy`]'s single-circuit fast path.
+    pub fn xy_parallel(&self, x: F, y: F) -> F {
+        if !matches!(self.cache, LagrangeCache::Arbitrary(_)) {
+            return self.xy(x, y);
+        }
+        let powers = powers::<F, R>(x);
+        let mut result = self.registry.w_cached_parallel(
+            &self.cache,
+            || F::ZERO,
+            |circuit, floor_plan, coefficient, result| {
+                *result += coefficient * circuit.sxy_with_powers(x, y, &powers, floor_plan);
+            },
+            |result, part| *result += part,
+        );
+        result += self.mask_coeff_sum * crate::staging::mask::global_mask::<F, R>(x, y);
+        result + self.registry.tag_sxy(x, y)
+    }
+
     /// Evaluate the registry polynomial restricted at $W$ and $Y$, unrestricted at $X$.
     pub fn y(&self, y: F) -> sparse::Polynomial<F, R> {
         let mut poly = self.registry.w_cached(
@@ -858,6 +989,44 @@ mod tests {
     use super::{CircuitIndex, RegistryBuilder};
     use crate::{polynomials::TestRank, tests::SquareCircuit};
     type TestRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank>;
+
+    #[test]
+    fn parallel_restrictions_match_serial_with_masks_tags_and_padding() -> Result<()> {
+        for count in [0, 1, 5, 17] {
+            let mut builder = TestRegistryBuilder::new().with_tag(super::Tag::new(Fp::from(7)));
+            for i in 0..count {
+                builder = builder.register_circuit(SquareCircuit { times: i })?;
+            }
+            if count != 0 {
+                builder = builder.register_bonding(crate::BondingObject::new(
+                    alloc::boxed::Box::new(crate::staging::mask::StageMask::<TestRank>::new(2, 3)?),
+                ));
+            }
+            let registry = builder.finalize()?;
+            let ws = [
+                Fp::ZERO,
+                Fp::from(17),
+                CircuitIndex::new(0).omega_j(),
+                CircuitIndex::new(count).omega_j(),
+                CircuitIndex::new(registry.domain.size() - 1).omega_j(),
+            ];
+            for x in [Fp::ZERO, Fp::ONE, Fp::from(13)] {
+                for y in [Fp::ZERO, Fp::ONE, Fp::from(29)] {
+                    assert_eq!(
+                        registry.wxy_over_domain_parallel(x, y),
+                        registry.wxy_over_domain(x, y)
+                    );
+                    for w in ws {
+                        let at = registry.at(w);
+                        assert!(at.x_parallel(x).iter_coeffs().eq(at.x(x).iter_coeffs()));
+                        assert!(at.y_parallel(y).iter_coeffs().eq(at.y(y).iter_coeffs()));
+                        assert_eq!(at.xy_parallel(x, y), at.xy(x, y));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_omega_j_multiplicative_order() {

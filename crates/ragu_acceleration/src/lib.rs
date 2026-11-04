@@ -29,7 +29,11 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ragu_backend::Backend;
-use udon::curve::Affine;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{Registry, RegistryAt},
+};
+use udon::{curve::Affine, field::Field};
 
 pub mod verifier;
 
@@ -66,6 +70,22 @@ macro_rules! impl_accelerated_backends {
 }
 
 impl_accelerated_backends! {
+    fn registry_wxy_over_domain<F: Field, R: Rank>(registry: &Registry<'_, F, R>, x: F, y: F) -> alloc::vec::Vec<F> {
+        verifier::registry_wxy_over_domain(registry, x, y)
+    }
+
+    fn registry_at_x<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, x: F) -> sparse::Polynomial<F, R> {
+        verifier::registry_at_x(registry, x)
+    }
+
+    fn registry_at_y<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, y: F) -> sparse::Polynomial<F, R> {
+        verifier::registry_at_y(registry, y)
+    }
+
+    fn registry_wxy<F: Field, R: Rank>(registry: &Registry<'_, F, R>, w: F, x: F, y: F) -> F {
+        verifier::registry_wxy(registry, w, x, y)
+    }
+
     #[cfg(feature = "multicore")]
     fn map<I: IntoIterator, T: Send>(
         inputs: I,
