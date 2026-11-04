@@ -5,6 +5,7 @@
 //! weights backwards. Neither operation executes circuit or routine code.
 
 use alloc::{vec, vec::Vec};
+
 use ragu_core::{
     Coeff, Error, Result,
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
@@ -510,9 +511,10 @@ pub(crate) fn compile<F: Field, RC: RawCircuit<F>, R: Rank>(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use ragu_core::pasta::Fp;
+
     use super::*;
     use crate::{Circuit, metrics, raw::CircuitAdapterRef};
-    use ragu_core::pasta::Fp;
 
     pub(crate) fn assert_matches_interpreted<C: Circuit<Fp>, R: Rank>(circuit: &C) {
         let metrics = metrics::eval(circuit).unwrap();

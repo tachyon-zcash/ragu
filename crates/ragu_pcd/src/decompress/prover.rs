@@ -532,11 +532,12 @@ where
 
 #[cfg(all(test, feature = "std"))]
 mod canonical_cache_tests {
-    use super::*;
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_core::{Cycle, pasta::Pasta};
     use rand::{RngExt, SeedableRng, rngs::StdRng};
     use udon::curve::Affine;
+
+    use super::*;
 
     fn check<C: Affine>(generators: &impl FixedGenerators<C>) {
         type R = ragu_circuits::polynomials::TestRank;

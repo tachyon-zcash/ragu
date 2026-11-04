@@ -313,10 +313,11 @@ fn alpha_batched_quotients<F: Field, R: Rank, B: crate::SelectableBackend>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use ragu_backend::ReferenceBackend;
     use ragu_circuits::polynomials::TestRank;
     use ragu_core::pasta::{Fp, Fq};
+
+    use super::*;
 
     fn check<F: Field>() {
         let polys = [
