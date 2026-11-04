@@ -74,9 +74,14 @@ fn run(
         &shapes(kinds),
         targets,
         |_| point,
-        |_, _| {
-            evaluated.fetch_add(1, Ordering::Relaxed);
-            (Fp::ZERO, Fp::ZERO)
+        |_| {
+            kinds
+                .iter()
+                .map(|_| {
+                    evaluated.fetch_add(1, Ordering::Relaxed);
+                    (Fp::ZERO, Fp::ZERO)
+                })
+                .collect()
         },
         &reduction,
         Fp::from(3),
