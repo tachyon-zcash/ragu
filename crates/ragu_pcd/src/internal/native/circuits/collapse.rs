@@ -2,12 +2,12 @@
 //!
 //! The circuit enforces the children's application k(y) values against their
 //! headers, and their `compute_v` bridge k(y) values against the online
-//! openings each child exported. For each group of the children's claims, it enforces that folding
-//! the group's k(y) targets with the [`inner_error`] stage's quotient under mu
-//! gives the collapsed value the [`outer_error`] stage witnessed. Outside the
-//! base case, it enforces that folding the collapsed values with the outer
-//! quotient under mu' gives the unified instance's c. The unified k(y) values
-//! are enforced by [`super::hashes_1`].
+//! openings each child exported. For each group of the children's claims, it
+//! enforces that folding the group's k(y) targets with the [`inner_error`]
+//! stage's quotient under mu gives the collapsed value the [`outer_error`]
+//! stage witnessed. Outside the base case, it enforces that folding the
+//! collapsed values with the outer quotient under mu' gives the unified
+//! instance's c. The unified k(y) values are enforced by [`super::hashes_1`].
 //!
 //! A profile's statement targets come from its headers; its binding targets
 //! come from the extension commitments in the points binding stage. That

@@ -32,8 +32,16 @@ use udon::field::Field;
 
 /// The accumulator header: the number of accumulated elements as its data,
 /// and the accumulator polynomial $\prod_i (X - r_i)$ in its first slot;
-/// its second slot holds the constant one.
+/// its second slot holds the constant one, which every step that outputs
+/// it pins (see [`pin_padding`]).
 pub struct Accumulator;
+
+/// Opens the output header's second slot at $\zeta$ and holds it to one,
+/// the padding an [`Accumulator`] carries there.
+fn pin_padding<'dr, D: Driver<'dr>>(dr: &mut D, oracles: &mut Oracles<'_, 'dr, D>) -> Result<()> {
+    let padding = oracles.query_at_zeta(dr, Slot::output(1))?;
+    padding.enforce_equal(dr, &Element::one())
+}
 
 impl<F: Field> Header<F> for Accumulator {
     const SUFFIX: Suffix = Suffix::new(10);
@@ -141,6 +149,7 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
         let at_zeta = oracles.query_at_zeta(dr, Slot::output(0))?;
         at_zeta.enforce_equal(dr, &product)?;
 
+        pin_padding(dr, oracles)?;
         let count = Element::constant(dr, C::CircuitField::from(SEED_SIZE as u64));
         Ok((
             (
@@ -223,6 +232,7 @@ impl<C: Cycle> Step<C> for ExtendAccumulator {
         let expected = input.mul(dr, &factor)?;
         output.enforce_equal(dr, &expected)?;
 
+        pin_padding(dr, oracles)?;
         let count = left.as_gadget().add(dr, &Element::one());
         let data = count.value().map(|v| *v);
         Ok(((left, right, Encoded::from_gadget(count)), data, D::unit()))
@@ -282,6 +292,7 @@ impl<C: Cycle> Step<C> for MergeAccumulators {
         let expected = l.mul(dr, &r)?;
         output.enforce_equal(dr, &expected)?;
 
+        pin_padding(dr, oracles)?;
         let count = left.as_gadget().add(dr, right.as_gadget());
         let data = count.value().map(|v| *v);
         Ok(((left, right, Encoded::from_gadget(count)), data, D::unit()))

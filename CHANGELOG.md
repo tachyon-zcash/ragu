@@ -21,13 +21,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   means is the application's convention for the header, constrained by the
   producing steps' circuits. `Pcd::polynomials` reads a header's
   polynomials back.
+- Staged values: `Step::NUM_STAGED` and `Step::staged` commit the values a
+  step's checks at the challenge read but no header carries, in an
+  application stage committed before the challenge; `Oracles::staged` hands
+  them to `Step::witness`. A check at the challenge must read only values
+  fixed before it. See the `ragu_pcd` changelog.
+- Bridge hash: `Oracles::bridge_hash` gives a step the digest of its own last
+  online commitment, and `Application::bridge_hash` computes it outside the
+  circuit, for hash chains over polynomial commitments.
 
 ### Changed
 
 - `Step::witness` takes the step's `Oracles` after the driver, and the
   application circuit's instance is prefixed by the challenge and the six
-  online openings. Every proof carries two more polynomials and their
-  commitments; the native and nested walks grow by one and two steps.
+  online openings, followed by the bridge hash. Every proof carries two more
+  online polynomials, the application stage, two limb-binding circuits and
+  the bridge hash, and their commitments; the native and nested walks grow
+  by two and four steps (23 to 25, 26 to 30), and every step circuit
+  reserves `ceil(n / 2)` gates for the largest `Step::NUM_STAGED`
+  registered.
+- The largest `HEADER_SIZE` the production rank `R<13>` fits drops from 103
+  to 97 elements: the challenge binders load the preamble, query and eval
+  stages, which carry the online openings, the application stage, the limb
+  binders' evaluations, the limbs and the children's bridge hashes. At 97 the
+  largest binder uses 2047 of 2048 gates; a larger header fails
+  `ApplicationBuilder::finalize` with `GateBoundExceeded`.
 - Registry tags are supplied by the application from a randomness beacon;
   `ApplicationBuilder::finalize` requires them unless the test-only
   `insecure-test-registry-tag` feature is enabled.

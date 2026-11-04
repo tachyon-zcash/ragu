@@ -30,14 +30,27 @@ pub trait Step<C: Cycle> {
     type Right: Header<C::CircuitField>;
     type Output: Header<C::CircuitField>;
 
+    // Optional: how many values the step stages. Defaults to none.
+    const NUM_STAGED: usize = 0;
+
     // Optional: the polynomials the output header carries, committed before
-    // the step's challenge is drawn. Defaults to none.
+    // the step's challenge is drawn. Defaults to the constant one in every
+    // slot.
     fn polynomials<'source>(
         &self,
         witness: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Self::Left>,
         right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<Vec<Vec<C::CircuitField>>>;
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]>;
+
+    // Optional: the `NUM_STAGED` staged values, committed before the step's
+    // challenge is drawn. Defaults to none.
+    fn staged<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, Self::Left>,
+        right: HeaderInput<'_, C::CircuitField, Self::Right>,
+    ) -> Result<Vec<C::CircuitField>>;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
@@ -94,7 +107,7 @@ type Right = LeafNode;  // Right proof type
 type Output = InternalNode;  // What this step creates
 ```
 
-### 3. The witness Function
+### 3. The `witness` Function
 
 This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
@@ -105,7 +118,7 @@ This is where the circuit logic is implemented. The function:
 4. Performs computation (constraints)
 5. Returns encoded proofs and auxiliary output
 
-### 4. The polynomials Function
+### 4. The `polynomials` and `staged` Functions
 
 Every header carries `HEADER_POLYNOMIALS` (two) polynomials beside its field
 data; the count is a parameter of the protocol, not of the header type. A
@@ -116,6 +129,11 @@ inputs' data and polynomials. Ragu commits them, and they travel with the
 proof. The default puts the constant one in every slot, which is right for
 headers without polynomials; a step that uses one slot returns the constant
 one for the other.
+
+`staged` runs beside `polynomials` and returns the `NUM_STAGED` values the
+step's checks at $\zeta$ read but no header carries, such as the roots it
+multiplies into an accumulator polynomial (see
+[Polynomial Oracles](#polynomial-oracles)).
 
 ## Two Types of Steps
 

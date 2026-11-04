@@ -40,7 +40,7 @@ use ragu_primitives::{Element, vec::FixedVec};
 use udon::field::Field;
 
 use crate::internal::online::{self, Queries, QueriesOutput, QueryOutput};
-pub use crate::internal::online::{HEADER_POLYNOMIALS, Slot};
+pub use crate::internal::online::{HEADER_POLYNOMIALS, Position, Slot};
 
 /// Evaluates a step's online polynomials: `evaluate(slot, x)` is the value
 /// of the polynomial in slot `slot` at `x`.
@@ -136,8 +136,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// # Errors
     ///
     /// Each slot may be queried once; a second query of the same slot is
-    /// refused. Witness generation fails if the slot's polynomial cannot be
-    /// evaluated, which no honest prover's can.
+    /// refused. Allocating the opened value propagates the driver's error.
     pub fn query(
         &mut self,
         dr: &mut D,

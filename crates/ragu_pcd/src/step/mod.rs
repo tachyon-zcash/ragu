@@ -7,7 +7,7 @@ pub mod oracles;
 use alloc::{vec, vec::Vec};
 
 pub use encoder::Encoded;
-pub use oracles::{Oracles, Slot};
+pub use oracles::{Oracles, Position, Slot};
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Cycle, Result,
