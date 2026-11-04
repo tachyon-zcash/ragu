@@ -152,13 +152,20 @@ impl<'a, C: Affine> MSM<'a, C> {
 
     /// Perform multiexp through backend `B` and check that it results in zero.
     pub fn eval<B: SelectableBackend>(self) -> bool {
+        self.eval_with_workspace::<B>(&mut ragu_core::MsmWorkspace::default())
+    }
+
+    pub(crate) fn eval_with_workspace<B: SelectableBackend>(
+        self,
+        workspace: &mut ragu_core::MsmWorkspace,
+    ) -> bool {
         // After use_g(), the generator vector often contains only the G_0
         // constant term. Do not pad that short check with zero-weight bases.
         let generator_terms = self
             .g_scalars
             .iter()
             .flatten()
-            .zip(&self.params.g)
+            .zip(self.params.g.iter())
             .filter(|(scalar, _)| **scalar != C::Scalar::ZERO);
         let len = generator_terms.clone().count()
             + self.u_scalar.map(|_| 1).unwrap_or(0)
@@ -187,12 +194,12 @@ impl<'a, C: Affine> MSM<'a, C> {
         assert_eq!(scalars.len(), len);
 
         let identity = if let (Some(prepared), Some(coeffs)) =
-            (self.params.prepared.as_deref(), self.g_scalars)
+            (self.params.g.prepared(), self.g_scalars)
             && len - dynamic_len >= 128
         {
             // The fixed generator equation and proof-specific terms are
             // evaluated separately, then added without changing the equation.
-            let fixed = B::msm_prepared(coeffs, prepared);
+            let fixed = B::msm_prepared(coeffs, prepared, workspace);
             let dynamic = multiexp::<C, B>(&scalars[..dynamic_len], &bases[..dynamic_len]);
             (fixed + dynamic).is_identity()
         } else {

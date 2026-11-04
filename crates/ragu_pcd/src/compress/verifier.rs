@@ -8,7 +8,7 @@ use crate::{
     Application, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::ky,
-    ipa::{CycleTranscript, IpaCycle},
+    ipa::{CycleTranscript, IpaCycle, Params},
     profile::ProfiledCycle,
 };
 
@@ -124,13 +124,18 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             );
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
-            proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
+            let params = Params::for_verifier(
+                C::host_generators(self.params),
+                *C::host_u(self.params),
+                R::RANK,
+                self.native_ipa_generators.as_ref(),
+            );
+            proof_check!(batch::verify_openings::<_, Verifier<B>>(
                 &openings,
                 &proof.native.batch,
                 &proof.native.opening,
-                C::host_generators(self.params),
-                *C::host_u(self.params),
-                self.native_ipa_generators.as_ref(),
+                &params,
+                &mut self.verifier_workspace.borrow_mut(),
                 &mut Lifted(transcript.host()),
             ))
         };
@@ -163,13 +168,18 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             )?;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
-            proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
+            let params = Params::for_verifier(
+                C::nested_generators(self.params),
+                *C::nested_u(self.params),
+                R::RANK,
+                self.nested_ipa_generators.as_ref(),
+            );
+            proof_check!(batch::verify_openings::<_, Verifier<B>>(
                 &openings,
                 &proof.nested.batch,
                 &proof.nested.opening,
-                C::nested_generators(self.params),
-                *C::nested_u(self.params),
-                self.nested_ipa_generators.as_ref(),
+                &params,
+                &mut self.verifier_workspace.borrow_mut(),
                 &mut Lifted(transcript.nested()),
             ))
         };

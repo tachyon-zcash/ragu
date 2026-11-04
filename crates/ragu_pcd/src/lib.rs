@@ -93,7 +93,11 @@ mod decompress_statement_tests;
 mod profile_corruption_tests;
 
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
-use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use core::{
+    any::TypeId,
+    cell::{OnceCell, RefCell},
+    marker::PhantomData,
+};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
@@ -104,7 +108,7 @@ use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder, Tag},
 };
-use ragu_core::{Cycle, Error, FixedGenerators, PreparedMsm, Result};
+use ragu_core::{Cycle, Error, FixedGenerators, MsmWorkspace, PreparedMsm, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -531,6 +535,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 )
                 .map(Arc::new),
             context,
+            verifier_workspace: RefCell::new(MsmWorkspace::default()),
             _marker: PhantomData,
         };
 
@@ -655,6 +660,8 @@ pub struct Application<
     /// Fixed IPA bases prepared once during application startup.
     native_ipa_generators: Option<Arc<PreparedMsm<C::HostCurve>>>,
     nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
+    /// Scratch for public IPA checks, retained for this application's lifetime.
+    verifier_workspace: RefCell<MsmWorkspace>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
