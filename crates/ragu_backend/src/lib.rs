@@ -15,7 +15,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::FixedGenerators;
+use ragu_core::{FixedGenerators, PreparedMsm};
 use udon::{curve::Affine, fft::Domain, field::Field};
 
 /// A statically dispatched implementation of Ragu's computational operations.
@@ -28,9 +28,8 @@ use udon::{curve::Affine, fft::Domain, field::Field};
 /// Implementing this low-level trait does not make a downstream type selectable
 /// by `ragu_pcd`; application execution is restricted to Ragu-owned backends.
 ///
-/// Backends are currently selected by type and cannot carry per-application
-/// state. If implementations need device handles or caches, Ragu can store the
-/// selected backend as a value while retaining static dispatch.
+/// Backends are selected by type and carry no per-application state.
+/// Reusable inputs, such as prepared generator bases, are owned by callers.
 pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     /// Evaluates a sparse polynomial at `point`.
     ///
@@ -287,6 +286,22 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         Bases::IntoIter: Clone + Sync,
     {
         ragu_core::msm(coeffs.into_iter().copied(), bases.into_iter().copied())
+    }
+
+    /// Optionally prepares fixed bases for repeated MSMs.
+    ///
+    /// Returning `None` retains the ordinary [`Self::msm`] path. Prepared
+    /// bases must describe exactly the original points in the original order.
+    fn prepare_msm<C: Affine>(_bases: &[C]) -> Option<PreparedMsm<C>> {
+        None
+    }
+
+    /// Multiplies fresh scalars by previously prepared bases.
+    ///
+    /// The default retains [`Self::msm`] overrides. Each result must equal
+    /// `Self::msm(&coeffs, bases.bases())`, including length validation.
+    fn msm_prepared<C: Affine>(coeffs: Vec<C::Scalar>, bases: &PreparedMsm<C>) -> C::Projective {
+        Self::msm(&coeffs, bases.bases())
     }
 
     /// Computes independent MSMs, returning results in input order.

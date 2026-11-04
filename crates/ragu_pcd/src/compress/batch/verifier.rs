@@ -1,10 +1,10 @@
 //! The verifier's side of the batch.
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 
 use ragu_backend::Backend;
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Error, FixedGenerators, Result};
+use ragu_core::{Error, FixedGenerators, PreparedMsm, Result};
 use udon::{curve::Affine, field::Field};
 
 use super::{Batch, Batched, check_claims};
@@ -22,10 +22,14 @@ pub(crate) fn verify_openings<P: Affine, R: Rank, B: SelectableBackend>(
     opening: &IpaProof<P>,
     generators: &impl FixedGenerators<P>,
     u: P,
+    prepared: Option<&Arc<PreparedMsm<P>>>,
     transcript: &mut impl IpaTranscript<P>,
 ) -> Result<bool> {
     let claim = verify::<_, B, _>(&openings.commitments, &openings.claims, batch, transcript)?;
-    let params = Params::with_k(generators, u, R::RANK);
+    let params = prepared.map_or_else(
+        || Params::with_k(generators, u, R::RANK),
+        |prepared| Params::with_prepared(Arc::clone(prepared), u, R::RANK),
+    );
     let mut msm = MSM::new(&params);
     msm.append_term(P::Scalar::ONE, claim.commitment);
     Ok(

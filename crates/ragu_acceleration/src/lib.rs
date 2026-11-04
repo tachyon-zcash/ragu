@@ -12,7 +12,8 @@
 //! scratch, and execution budget; the reference backend runs them separately.
 //! Independent polynomial work also uses Udon's scoped scheduler rather than
 //! the reference backend's serial loop.
-//! Single MSMs and FFTs retain the defaults, which also use Udon.
+//! Fixed Pasta generators can retain cached endomorphism coordinates across
+//! verifier MSMs. Other single MSMs and FFTs retain the defaults, which use Udon.
 //! Overrides of the kernels that `ragu_pcd`'s verifier consults belong in
 //! [`verifier`], which carries a stricter review and testing bar than
 //! prover-only overrides. An override arrives with its differential test
@@ -33,6 +34,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
+use ragu_core::PreparedMsm;
 use udon::{curve::Affine, field::Field};
 
 pub mod verifier;
@@ -107,6 +109,14 @@ impl_accelerated_backends! {
         });
         jobs.into_iter()
             .map(|(_, output)| output.expect("each output is initialized"))
+    }
+
+    fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {
+        verifier::prepare_msm(bases)
+    }
+
+    fn msm_prepared<C: Affine>(coeffs: alloc::vec::Vec<C::Scalar>, bases: &PreparedMsm<C>) -> C::Projective {
+        verifier::msm_prepared(coeffs, bases)
     }
 
     fn msm_batch<
