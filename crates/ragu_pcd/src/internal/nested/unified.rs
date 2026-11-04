@@ -52,6 +52,15 @@ use crate::internal::{native::unified::Slot, online::HEADER_POLYNOMIALS};
 /// its application stage's.
 pub const NUM_EXPORTED: usize = 15 + HEADER_POLYNOMIALS;
 
+// The exported lists (the proof's, the builder's, the compressed instance's,
+// nested collapse's held commitments and a child's stashed copies) spell
+// out the online commitments slot by slot, as `[0]` and `[1]`. A change to
+// the slot count must rewrite them, in the walk's order.
+const _: () = assert!(
+    HEADER_POLYNOMIALS == 2,
+    "the exported commitment lists spell out two online slots"
+);
+
 /// Length type for the exported commitments.
 pub type ExportedLen = ConstLen<NUM_EXPORTED>;
 

@@ -169,8 +169,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         let ((left_header, right_header), output_data, step_aux, queries) = aux;
-        debug_assert_eq!(&left_header.into_inner()[..], builder.left_header());
-        debug_assert_eq!(&right_header.into_inner()[..], builder.right_header());
+        // The step's circuit must encode the headers the preamble committed,
+        // which were fixed from the inputs' data before the circuit ran.
+        if left_header.into_inner()[..] != *builder.left_header()
+            || right_header.into_inner()[..] != *builder.right_header()
+        {
+            return Err(Error::InvalidWitness(
+                "the step encodes other input headers than its inputs' data".into(),
+            ));
+        }
 
         builder.set_native_application_rx(rx);
         builder.set_online_queries(queries);

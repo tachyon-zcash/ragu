@@ -4,8 +4,8 @@
 //! polynomial, and a step that misstates its polynomial or its claim cannot
 //! produce a proof.
 //!
-//! This suite is ignored in the platform matrix and runs in the dedicated
-//! Linux PR job with `--test online_oracles -- --include-ignored`.
+//! This suite is ignored in the platform matrix and runs in the Linux PR job
+//! `corruption (exhaustive)` with `--test online_oracles -- --include-ignored`.
 
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
@@ -357,5 +357,240 @@ fn a_false_membership_claim_cannot_prove() -> Result<()> {
         .fuse(&mut rng, ProveNonMember, Fp::from(2), a, app_unit(&app)?)
         .map(|(pcd, ())| pcd);
     refused(&app, non_member, "a member claimed as a non-member");
+    Ok(())
+}
+
+/// A header whose two slots carry distinct non-trivial polynomials,
+/// $X + a_0$ and $2X + a_1$, for its data $(a_0, a_1)$.
+struct Pair;
+
+impl Header<Fp> for Pair {
+    const SUFFIX: ragu_pcd::header::Suffix = ragu_pcd::header::Suffix::new(20);
+    type Data = [Fp; 2];
+    type Output = ragu_core::gadgets::Kind![Fp; ragu_primitives::vec::FixedVec<Element<'_, _>, ragu_primitives::vec::ConstLen<2>>];
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: ragu_primitives::allocator::Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, [Fp; 2]>,
+    ) -> Result<ragu_core::gadgets::Bound<'dr, D, Self::Output>> {
+        ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w[i]))
+        })
+    }
+}
+
+/// The polynomials of a [`Pair`] header with data `a`.
+fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; HEADER_POLYNOMIALS] {
+    [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
+}
+
+/// Seeds a [`Pair`] from staged data, checking both output slots at zeta.
+struct PairSeed;
+
+impl Step<C> for PairSeed {
+    const INDEX: Index = Index::new(0);
+    const NUM_STAGED: usize = 2;
+    type Witness<'source> = [Fp; 2];
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = Pair;
+
+    fn polynomials<'source>(
+        &self,
+        a: &[Fp; 2],
+        _: HeaderInput<'_, Fp, ()>,
+        _: HeaderInput<'_, Fp, ()>,
+    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+        Ok(pair_polys(*a))
+    }
+
+    fn staged<'source>(
+        &self,
+        a: &[Fp; 2],
+        _: HeaderInput<'_, Fp, ()>,
+        _: HeaderInput<'_, Fp, ()>,
+    ) -> Result<Vec<Fp>> {
+        Ok(a.to_vec())
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _: DriverValue<D, [Fp; 2]>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, (), HS>,
+            Encoded<'dr, D, Pair, HS>,
+        ),
+        DriverValue<D, [Fp; 2]>,
+        DriverValue<D, ()>,
+    )> {
+        let a = oracles.staged().to_vec();
+        let zeta = oracles.zeta().clone();
+        let two = Element::constant(dr, Fp::from(2));
+        let o0 = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let expected = zeta.add(dr, &a[0]);
+        o0.enforce_equal(dr, &expected)?;
+        let o1 = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let expected = zeta.mul(dr, &two)?.add(dr, &a[1]);
+        o1.enforce_equal(dr, &expected)?;
+        let data = D::just(|| [*a[0].value().take(), *a[1].value().take()]);
+        let output = ragu_primitives::vec::FixedVec::try_from(a)?;
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(output),
+            ),
+            data,
+            D::unit(),
+        ))
+    }
+}
+
+/// Fuses two [`Pair`]s into their sum, opening each of the six slots at
+/// its own point and checking every value against the headers' data, so
+/// that any two slots exchanged are told apart.
+struct PairFuse;
+
+/// The point slot `i` is opened at.
+fn point(i: usize) -> Fp {
+    Fp::from(101 + i as u64)
+}
+
+impl Step<C> for PairFuse {
+    const INDEX: Index = Index::new(1);
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = Pair;
+    type Right = Pair;
+    type Output = Pair;
+
+    fn polynomials<'source>(
+        &self,
+        _: &(),
+        left: HeaderInput<'_, Fp, Pair>,
+        right: HeaderInput<'_, Fp, Pair>,
+    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+        Ok(pair_polys([
+            left.data[0] + right.data[0],
+            left.data[1] + right.data[1],
+        ]))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, [Fp; 2]>,
+        right: DriverValue<D, [Fp; 2]>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Pair, HS>,
+            Encoded<'dr, D, Pair, HS>,
+            Encoded<'dr, D, Pair, HS>,
+        ),
+        DriverValue<D, [Fp; 2]>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut Standard::new();
+        let left: Encoded<'dr, D, Pair, HS> = Encoded::new(dr, allocator, left)?;
+        let right: Encoded<'dr, D, Pair, HS> = Encoded::new(dr, allocator, right)?;
+        let sum: Vec<_> = (0..2)
+            .map(|k| left.as_gadget()[k].add(dr, &right.as_gadget()[k]))
+            .collect();
+        let slots = [
+            (Slot::left(0), left.as_gadget()[0].clone()),
+            (Slot::left(1), left.as_gadget()[1].clone()),
+            (Slot::right(0), right.as_gadget()[0].clone()),
+            (Slot::right(1), right.as_gadget()[1].clone()),
+            (Slot::output(0), sum[0].clone()),
+            (Slot::output(1), sum[1].clone()),
+        ];
+        for (i, (slot, a)) in slots.into_iter().enumerate() {
+            let x = Element::constant(dr, point(i));
+            let slope = Element::constant(dr, Fp::from(1 + slot.index() as u64));
+            let y = oracles.query(dr, slot, &x)?;
+            let expected = x.mul(dr, &slope)?.add(dr, &a);
+            y.enforce_equal(dr, &expected)?;
+        }
+        let data = D::just(|| [*sum[0].value().take(), *sum[1].value().take()]);
+        let output = ragu_primitives::vec::FixedVec::try_from(sum)?;
+        Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
+    }
+}
+
+fn pair_app() -> App {
+    ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+        .register(PairSeed)
+        .and_then(|b| b.register(PairFuse))
+        .expect("the application must build")
+        .finalize(ragu_pcd::pasta::baked())
+        .expect("the application must build")
+}
+
+/// Six distinct polynomials opened at six distinct points: the fuse proves,
+/// and so does a parent that opens its output's slots as its own inputs'.
+/// Exchanging any two slots, or any slot's point or value, would break a
+/// check, so the slot order is pinned end to end.
+#[test]
+#[ignore = "proves at production rank; run in the PR job"]
+fn six_distinct_slots_prove_and_verify() -> Result<()> {
+    let app = pair_app();
+    let mut rng = StdRng::seed_from_u64(0x51075);
+    let a = app.seed(&mut rng, PairSeed, [Fp::from(3), Fp::from(5)])?.0;
+    let b = app.seed(&mut rng, PairSeed, [Fp::from(7), Fp::from(11)])?.0;
+    let (ab, ()) = app.fuse(&mut rng, PairFuse, (), a, b)?;
+    assert_eq!(*ab.data(), [Fp::from(10), Fp::from(16)]);
+    assert_eq!(ab.polynomials(), pair_polys([Fp::from(10), Fp::from(16)]));
+    assert!(app.verify_differential(&ab, &mut rng)?);
+    let (abab, ()) = app.fuse(&mut rng, PairFuse, (), ab.clone(), ab.clone())?;
+    assert_eq!(*abab.data(), [Fp::from(20), Fp::from(32)]);
+    assert!(app.verify_differential(&abab, &mut rng)?);
+
+    #[cfg(feature = "unstable-fuzzing")]
+    {
+        use ragu_pcd::fuzzing::corrupt::Corruption;
+        let rejected = |corruption: Corruption<C>, what: &str, rng: &mut StdRng| {
+            let (mut proof, data) = ab.clone().into_parts();
+            proof.corrupt(corruption);
+            let pcd = proof.carry::<Pair>(data);
+            assert!(
+                !app.verify_differential(&pcd, rng).unwrap(),
+                "{what} must be rejected"
+            );
+        };
+        for slot in 0..6 {
+            for value in [false, true] {
+                rejected(
+                    Corruption::OnlineQuery {
+                        slot,
+                        value,
+                        delta: Fp::ONE,
+                    },
+                    &format!("slot {slot}'s {}", if value { "value" } else { "point" }),
+                    &mut rng,
+                );
+            }
+        }
+        for index in 0..HEADER_POLYNOMIALS {
+            rejected(
+                Corruption::OnlineCoeff {
+                    index,
+                    coeff: 0,
+                    delta: Fp::ONE,
+                },
+                &format!("own polynomial {index}"),
+                &mut rng,
+            );
+        }
+    }
     Ok(())
 }
