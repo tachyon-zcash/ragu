@@ -12,7 +12,7 @@ use udon::{
 
 use super::{
     executor::{self, PoolExecutor},
-    msm::execute_prepared,
+    msm::{MsmBuffers, MsmWorkspace, execute_prepared},
 };
 
 #[derive(Clone, Debug)]
@@ -54,14 +54,31 @@ impl<C: Affine> PreparedMsm<C> {
     ///
     /// Panics before execution unless there is exactly one scalar per base.
     pub fn evaluate(&self, scalars: Vec<C::Scalar>) -> C::Projective {
+        self.evaluate_with_workspace(scalars, &mut MsmWorkspace::default())
+    }
+
+    /// Multiplies fresh scalars, retaining the workspace for later checks.
+    ///
+    /// The workspace may be reused across input lengths and Pasta curves.
+    ///
+    /// # Panics
+    ///
+    /// Panics before execution unless there is exactly one scalar per base.
+    pub fn evaluate_with_workspace(
+        &self,
+        scalars: Vec<C::Scalar>,
+        workspace: &mut MsmWorkspace,
+    ) -> C::Projective {
         assert_eq!(
             scalars.len(),
             self.bases.len(),
             "msm operands must have equal length"
         );
         match &self.pasta {
-            PastaBases::Pallas(bases) => evaluate::<C, Pallas>(&scalars, bases),
-            PastaBases::Vesta(bases) => evaluate::<C, Vesta>(&scalars, bases),
+            PastaBases::Pallas(bases) => {
+                evaluate::<C, Pallas>(&scalars, bases, &mut workspace.pallas)
+            }
+            PastaBases::Vesta(bases) => evaluate::<C, Vesta>(&scalars, bases, &mut workspace.vesta),
         }
     }
 }
@@ -77,6 +94,7 @@ fn prepare<P: PastaCurve>(bases: &dyn Any) -> Option<Vec<PreparedAffinePoint<P>>
 fn evaluate<C: Affine, P: PastaCurve>(
     scalars: &dyn Any,
     bases: &[PreparedAffinePoint<P>],
+    buffers: &mut MsmBuffers<P>,
 ) -> C::Projective {
     let scalars = scalars
         .downcast_ref::<Vec<FieldAdapter<P::Scalar>>>()
@@ -86,6 +104,7 @@ fn evaluate<C: Affine, P: PastaCurve>(
         bases,
         executor::options(),
         &PoolExecutor,
+        buffers,
     ));
     *(&result as &dyn Any)
         .downcast_ref::<C::Projective>()
@@ -101,13 +120,13 @@ mod tests {
 
     use super::*;
 
-    fn check<P: PastaCurve>() {
+    fn check<P: PastaCurve>(mut workspace: Option<&mut MsmWorkspace>) {
         let mut rng = StdRng::seed_from_u64(701);
         let generator = AffineAdapter::<P>::generator();
         let points: Vec<_> = (1..=17)
             .map(|i| AffineAdapter::from(generator.to_projective() * FieldAdapter::from(i)))
             .collect();
-        for n in [0, 1, 31, 128, 129, 257, 2049, 8192, 8193] {
+        for n in [8193, 1, 0, 128, 8192, 31, 2049, 129, 257, 0] {
             let bases: Vec<_> = (0..n).map(|i| points[i % points.len()]).collect();
             let prepared = PreparedMsm::new(&bases).unwrap();
             assert_eq!(prepared.bases(), bases);
@@ -121,7 +140,11 @@ mod tests {
                     })
                     .collect();
                 let expected = AffineAdapter::<P>::msm(&scalars, &bases);
-                assert_eq!(prepared.evaluate(scalars), expected);
+                let result = match workspace.as_deref_mut() {
+                    Some(workspace) => prepared.evaluate_with_workspace(scalars, workspace),
+                    None => prepared.evaluate(scalars),
+                };
+                assert_eq!(result, expected);
             }
         }
         assert!(PreparedMsm::new(&[AffineAdapter::<P>::identity()]).is_none());
@@ -130,8 +153,16 @@ mod tests {
 
     #[test]
     fn prepared_bases_match_ordinary_msms_on_both_curves() {
-        check::<Pallas>();
-        check::<Vesta>();
+        check::<Pallas>(None);
+        check::<Vesta>(None);
+    }
+
+    #[test]
+    fn prepared_workspace_can_be_reused_across_sizes_scalars_and_curves() {
+        let mut workspace = MsmWorkspace::default();
+        check::<Pallas>(Some(&mut workspace));
+        check::<Vesta>(Some(&mut workspace));
+        check::<Pallas>(Some(&mut workspace));
     }
 
     #[test]
