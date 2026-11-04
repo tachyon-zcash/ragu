@@ -437,10 +437,7 @@ impl<C: udon::curve::Affine, R: Rank> CanonicalCircuits<C, R> {
         Self {
             polynomials: polynomials.to_vec(),
             alphas: polynomials.iter().map(trace_alpha).collect(),
-            commitments: polynomials
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, generators))
-                .collect(),
+            commitments: B::sparse_commit_many_to_affine(polynomials, generators),
         }
     }
 

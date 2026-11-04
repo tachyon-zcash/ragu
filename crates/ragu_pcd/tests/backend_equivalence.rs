@@ -1642,6 +1642,30 @@ mod independent_polynomials {
             []
         );
 
+        // Cross batch boundaries with mixed dense, sparse and zero inputs;
+        // compare against independent commitments in the original order.
+        for length in [0, 1, 7, 8, 9, 15, 16, 17] {
+            let many: Vec<_> = (0..length)
+                .map(|i| polys[i % polys.len()].clone())
+                .collect();
+            let expected: Vec<_> = many
+                .iter()
+                .map(|poly| ReferenceBackend::sparse_commit_to_affine(poly, generators))
+                .collect();
+            assert_eq!(
+                ReferenceBackend::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+            assert_eq!(
+                AcceleratedBackend::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+            assert_eq!(
+                AcceleratedProver::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+        }
+
         let inputs = [
             (&polys[2], C::Scalar::from(7)),
             (&polys[0], C::Scalar::ZERO),
