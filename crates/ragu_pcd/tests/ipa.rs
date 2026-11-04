@@ -415,14 +415,34 @@ macro_rules! ipa_tests {
                 let (commitment, x, v, proof) = opening(&params, 11);
                 let guard = verify(&params, commitment, x, v, &proof);
 
+                assert!(guard.clone().use_challenges().eval::<ReferenceBackend>());
                 let g = guard.compute_g::<ReferenceBackend>();
                 let (msm, accumulator) = guard.clone().use_g(g);
-                assert!(msm.eval::<ReferenceBackend>());
+                let (accepted, events) =
+                    crate::ipa::fingerprint::capture(|| msm.eval::<ReferenceBackend>());
+                assert!(accepted);
+                let lengths: Vec<_> = events
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        crate::ipa::fingerprint::Event::Msm { scalars, .. } => Some(scalars.len()),
+                        _ => None,
+                    })
+                    .collect();
+                // P, S, both round points, G-prime, U and G_0 only.
+                assert_eq!(lengths.len(), 1);
+                assert!(lengths[0] <= 2 * K as usize + 5);
                 assert_eq!(accumulator.g, g);
                 assert_eq!(accumulator.u.len(), K as usize);
 
                 let (msm, _) = guard.use_g(params.g[0]);
                 assert!(!msm.eval::<ReferenceBackend>());
+
+                let mut tampered = proof;
+                tampered.c += F::ONE;
+                let guard = verify(&params, commitment, x, v, &tampered);
+                let g = guard.compute_g::<ReferenceBackend>();
+                assert!(!guard.clone().use_challenges().eval::<ReferenceBackend>());
+                assert!(!guard.use_g(g).0.eval::<ReferenceBackend>());
             }
 
             #[test]
