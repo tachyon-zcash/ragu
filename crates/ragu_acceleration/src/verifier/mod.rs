@@ -15,6 +15,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
+use ragu_core::PreparedMsm;
 use udon::{curve::Affine, field::Field};
 
 pub(crate) fn registry_wxy_over_domain<F: Field, R: Rank>(
@@ -55,6 +56,17 @@ pub(crate) fn registry_wxy<F: Field>(
     y: F,
 ) -> F {
     registry.wxy_parallel(w, x, y)
+}
+
+pub(crate) fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {
+    PreparedMsm::new(bases)
+}
+
+pub(crate) fn msm_prepared<C: Affine>(
+    coeffs: alloc::vec::Vec<C::Scalar>,
+    bases: &PreparedMsm<C>,
+) -> C::Projective {
+    bases.evaluate(coeffs)
 }
 
 /// Computes independent MSMs, panicking before any of them if an input's
