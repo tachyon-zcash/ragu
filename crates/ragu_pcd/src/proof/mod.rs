@@ -146,6 +146,14 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     pub fn polynomials(&self) -> [Vec<C::CircuitField>; HEADER_POLYNOMIALS] {
         online::coefficients(self.proof.online_polys())
     }
+
+    /// The commitments of [`polynomials`](Self::polynomials), one per slot:
+    /// what a parent opens as its left or right slots, and what
+    /// [`Application::commit`](crate::Application::commit) computes from
+    /// the coefficients.
+    pub fn commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.proof.online_commitments()
+    }
 }
 
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {

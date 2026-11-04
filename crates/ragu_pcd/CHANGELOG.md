@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gates for the largest `NUM_STAGED` registered, and the step circuits are
   constructed at `finalize`.
 
+- Added `Pcd::commitments` and `Application::commit`: a header's slot
+  commitments, and the commitment of given coefficients, so that an
+  application can recompute `Application::bridge_hash` outside the circuit.
+
 ### Changed
 
 - `ApplicationBuilder`, `Application`, and their proving, verification and
