@@ -232,6 +232,37 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
         floor_plan: &[floor_planner::ConstraintSegment],
     ) -> wiring::monomials::Monomials<F>;
 
+    /// Evaluates with the powers of X shared by a registry query.
+    fn sxy_with_powers(
+        &self,
+        x: F,
+        y: F,
+        _powers: &[F],
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> F {
+        self.sxy(x, y, floor_plan)
+    }
+
+    /// Restricts X with its powers shared by a registry query.
+    fn sx_with_powers(
+        &self,
+        x: F,
+        _powers: &[F],
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> sparse::Polynomial<F, R> {
+        self.sx(x, floor_plan)
+    }
+
+    /// Restricts Y with its powers shared by a registry query.
+    fn sy_with_powers(
+        &self,
+        y: F,
+        _powers: &[F],
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> sparse::Polynomial<F, R> {
+        self.sy(y, floor_plan)
+    }
+
     /// Returns per-segment constraint records in DFS emission order.
     ///
     /// These records serve as input to [`floor_planner::floor_plan`] for
@@ -286,12 +317,13 @@ where
     RC: raw::RawCircuit<F> + 'a,
     R: Rank,
 {
-    struct Processed<F: Field, R: Rank> {
+    struct Processed<F: Field, RC: raw::RawCircuit<F>, R: Rank> {
+        circuit: RC,
         wiring: wiring::compiled::Compiled<F, R>,
         metrics: metrics::CircuitMetrics,
     }
 
-    impl<F: Field, R: Rank> WiringObject<F, R> for Processed<F, R> {
+    impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<F, RC, R> {
         fn sxy(&self, x: F, y: F, _: &[floor_planner::ConstraintSegment]) -> F {
             self.wiring.sxy(x, y)
         }
@@ -308,6 +340,31 @@ where
             wiring::monomials::eval::<_, _, R>(&self.circuit, floor_plan)
                 .expect("should succeed if metrics succeeded")
         }
+        fn sxy_with_powers(
+            &self,
+            x: F,
+            y: F,
+            powers: &[F],
+            _: &[floor_planner::ConstraintSegment],
+        ) -> F {
+            self.wiring.sxy_with_powers(x, y, Some(powers))
+        }
+        fn sx_with_powers(
+            &self,
+            x: F,
+            powers: &[F],
+            _: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<F, R> {
+            self.wiring.sx_with_powers(x, Some(powers))
+        }
+        fn sy_with_powers(
+            &self,
+            y: F,
+            powers: &[F],
+            _: &[floor_planner::ConstraintSegment],
+        ) -> sparse::Polynomial<F, R> {
+            self.wiring.sy_with_powers(y, Some(powers))
+        }
         fn segment_records(&self) -> &[SegmentRecord] {
             &self.metrics.segments
         }
@@ -315,7 +372,11 @@ where
 
     let floor_plan = floor_planner::floor_plan(&metrics.segments);
     let wiring = wiring::compiled::compile::<F, RC, R>(&circuit, &floor_plan)?;
-    Ok(Box::new(Processed { wiring, metrics }))
+    Ok(Box::new(Processed {
+        circuit,
+        wiring,
+        metrics,
+    }))
 }
 
 /// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness of a

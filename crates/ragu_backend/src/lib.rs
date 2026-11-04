@@ -22,11 +22,22 @@ use udon::{curve::Affine, fft::Domain, field::Field};
 pub trait RegistryEvaluation<F: Field> {
     /// Evaluates the registry polynomial at $(w, x, y)$.
     fn wxy(&self, w: F, x: F, y: F) -> F;
+
+    /// [`wxy`](Self::wxy) with independent circuit jobs, for backends that
+    /// spread the evaluation across threads. It must equal `wxy`, which the
+    /// default calls.
+    fn wxy_parallel(&self, w: F, x: F, y: F) -> F {
+        self.wxy(w, x, y)
+    }
 }
 
 impl<F: Field, R: Rank> RegistryEvaluation<F> for Registry<'_, F, R> {
     fn wxy(&self, w: F, x: F, y: F) -> F {
         Registry::wxy(self, w, x, y)
+    }
+
+    fn wxy_parallel(&self, w: F, x: F, y: F) -> F {
+        self.at(w).xy_parallel(x, y)
     }
 }
 
