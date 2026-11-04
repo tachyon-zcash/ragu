@@ -1,7 +1,5 @@
-//! Immutable Pasta bases with reusable generator tables.
+//! Immutable Pasta bases with cached endomorphism coordinates.
 
-#[cfg(feature = "large-msm-tables")]
-use alloc::vec;
 use alloc::vec::Vec;
 use core::any::Any;
 
@@ -10,14 +8,6 @@ use udon::{
         Affine, AffineAdapter, Pallas, PastaCurve, PreparedAffinePoint, ProjectiveAdapter, Vesta,
     },
     field::FieldAdapter,
-    msm::Bases,
-};
-#[cfg(feature = "large-msm-tables")]
-use udon::{
-    curve::{AffinePoint, ProjectivePoint},
-    exec::TaskBudget,
-    field::PastaField,
-    msm::{AlphaCodebook, AlphaCoefficient, AlphaDescription, AlphaTable},
 };
 
 use super::{
@@ -27,102 +17,15 @@ use super::{
 
 #[derive(Clone, Debug)]
 enum PastaBases {
-    Pallas(PreparedBases<Pallas>),
-    Vesta(PreparedBases<Vesta>),
-}
-
-#[derive(Clone, Debug)]
-enum PreparedBases<P: PastaCurve> {
-    Coordinates(Vec<PreparedAffinePoint<P>>),
-    #[cfg(feature = "large-msm-tables")]
-    Alpha(AlphaBank<P>),
-}
-
-/// Private, immutable output of Udon's table and codebook preparation. Binding
-/// these buffers only checks dimensions, so they must never be populated from
-/// untrusted serialized data or mixed between different descriptions/bases.
-#[derive(Clone, Debug)]
-#[cfg(feature = "large-msm-tables")]
-struct AlphaBank<P: PastaCurve> {
-    description: AlphaDescription,
-    codes: Vec<u32>,
-    coefficients: Vec<AlphaCoefficient>,
-    entries: Vec<PreparedAffinePoint<P>>,
-}
-
-#[cfg(feature = "large-msm-tables")]
-impl<P: PastaCurve> AlphaBank<P> {
-    fn new(bases: &[PreparedAffinePoint<P>]) -> Option<Self> {
-        // Sixty-four layers with cached endomorphisms trade retained memory
-        // and one-time preparation for less online bucket work. Bound each
-        // point bank to 192 MiB (rank 15 with 96-byte entries): larger
-        // inputs still use cached endomorphism coordinates. Check amortization
-        // for a serial budget so the same bank is useful in either core mode.
-        let description = AlphaDescription::new(7).expect("supported alpha width");
-        let required = description
-            .requirements::<P, PreparedAffinePoint<P>>(bases.len())
-            .ok()?;
-        if !description.amortized(bases.len(), TaskBudget::SERIAL)
-            || required.table_entries > (192 * 1024 * 1024) / size_of::<PreparedAffinePoint<P>>()
-        {
-            return None;
-        }
-        let mut codes = vec![0; description.codes()];
-        let mut coefficients = vec![AlphaCoefficient::ZERO; description.layers()];
-        let mut codebook_scratch = vec![0; description.codebook_scratch()];
-        let codebook = AlphaCodebook::prepare(
-            description,
-            &mut codes,
-            &mut coefficients,
-            &mut codebook_scratch,
-        );
-        let mut entries =
-            vec![PreparedAffinePoint::from_affine(&AffinePoint::GENERATOR); required.table_entries];
-        let mut projective = vec![ProjectivePoint::IDENTITY; required.projective_scratch];
-        let mut field = vec![PastaField::ZERO; required.field_scratch];
-        AlphaTable::prepare(
-            codebook,
-            bases,
-            &mut entries,
-            &mut projective,
-            &mut field,
-            executor::options().task_budget(),
-            &PoolExecutor,
-        );
-        Some(Self {
-            description,
-            codes,
-            coefficients,
-            entries,
-        })
-    }
-
-    fn table(&self) -> AlphaTable<'_, P, PreparedAffinePoint<P>> {
-        let codebook = AlphaCodebook::bind(self.description, &self.codes, &self.coefficients);
-        AlphaTable::bind(codebook, &self.entries)
-    }
-}
-
-impl<P: PastaCurve> PreparedBases<P> {
-    fn bases(&self) -> Bases<'_, P> {
-        match self {
-            Self::Coordinates(bases) => Bases::Prepared(bases),
-            #[cfg(feature = "large-msm-tables")]
-            Self::Alpha(bank) => Bases::AlphaPrepared(bank.table()),
-        }
-    }
+    Pallas(Vec<PreparedAffinePoint<Pallas>>),
+    Vesta(Vec<PreparedAffinePoint<Vesta>>),
 }
 
 /// Immutable bases prepared for repeated Pasta MSMs.
 ///
-/// Preparation caches each base's endomorphism coordinates. With the opt-in
-/// `large-msm-tables` feature, it instead caches a 64-layer alpha table when
-/// it fits within 192 MiB and meets Udon's serial amortization heuristic. These
-/// are variable-time MSM tables for public verifier arithmetic, prepared once
-/// and reused with fresh scalars. Large tables add startup work and retain
-/// about 403 MB for two rank-15 banks, excluding the original bases and scratch.
-/// The original bases remain available to reference backends. Neither scalar
-/// rows nor MSM results are retained here.
+/// Preparation caches each base's endomorphism coordinates. Scalars are
+/// supplied afresh for every multiplication; this does not cache an MSM result.
+/// The original bases remain available to reference backends.
 #[derive(Clone, Debug)]
 pub struct PreparedMsm<C: Affine> {
     bases: Vec<C>,
@@ -180,22 +83,17 @@ impl<C: Affine> PreparedMsm<C> {
     }
 }
 
-fn prepare<P: PastaCurve>(bases: &dyn Any) -> Option<PreparedBases<P>> {
+fn prepare<P: PastaCurve>(bases: &dyn Any) -> Option<Vec<PreparedAffinePoint<P>>> {
     let bases = bases.downcast_ref::<Vec<AffineAdapter<P>>>()?;
-    let bases: Vec<_> = AffineAdapter::as_slice(bases)
+    AffineAdapter::as_slice(bases)
         .iter()
         .map(|base| base.as_affine().map(PreparedAffinePoint::from_affine))
-        .collect::<Option<_>>()?;
-    #[cfg(feature = "large-msm-tables")]
-    if let Some(bank) = AlphaBank::new(&bases) {
-        return Some(PreparedBases::Alpha(bank));
-    }
-    Some(PreparedBases::Coordinates(bases))
+        .collect()
 }
 
 fn evaluate<C: Affine, P: PastaCurve>(
     scalars: &dyn Any,
-    bases: &PreparedBases<P>,
+    bases: &[PreparedAffinePoint<P>],
     buffers: &mut MsmBuffers<P>,
 ) -> C::Projective {
     let scalars = scalars
@@ -203,7 +101,7 @@ fn evaluate<C: Affine, P: PastaCurve>(
         .expect("the prepared curve's scalar type");
     let result = ProjectiveAdapter::new(execute_prepared(
         FieldAdapter::as_slice(scalars),
-        bases.bases(),
+        bases,
         executor::options(),
         &PoolExecutor,
         buffers,
@@ -232,19 +130,6 @@ mod tests {
             let bases: Vec<_> = (0..n).map(|i| points[i % points.len()]).collect();
             let prepared = PreparedMsm::new(&bases).unwrap();
             assert_eq!(prepared.bases(), bases);
-            #[cfg(feature = "large-msm-tables")]
-            if matches!(n, 8192 | 32768 | 32769) {
-                let uses_alpha = matches!(
-                    &prepared.pasta,
-                    PastaBases::Pallas(PreparedBases::Alpha(_))
-                        | PastaBases::Vesta(PreparedBases::Alpha(_))
-                );
-                assert_eq!(
-                    uses_alpha,
-                    n <= 32768,
-                    "production ranks and the storage cap"
-                );
-            }
             for row in 0..3 {
                 let scalars: Vec<FieldAdapter<P::Scalar>> = (0..n)
                     .map(|i| match row {

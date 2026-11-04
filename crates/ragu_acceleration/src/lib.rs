@@ -14,9 +14,6 @@
 //! the reference backend's serial loop.
 //! Fixed Pasta generators can retain cached endomorphism coordinates across
 //! verifier MSMs. Other single MSMs and FFTs retain the defaults, which use Udon.
-//! The opt-in `large-msm-tables` feature retains 64-layer generator tables,
-//! trading startup work and memory for less repeated verifier MSM work; see
-//! [`PreparedMsm`] for the storage bound.
 //! Overrides of the kernels that `ragu_pcd`'s verifier consults belong in
 //! [`verifier`], which carries a stricter review and testing bar than
 //! prover-only overrides. An override arrives with its differential test
