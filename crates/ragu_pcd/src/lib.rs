@@ -827,6 +827,29 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         internal::limbs::digest::<C, R>(C::nested_generators(self.params), point)
     }
 
+    /// The commitment of a header polynomial with coefficients `coeffs`, in
+    /// ascending degree: what a step that returns them from
+    /// [`Step::polynomials`] carries in that slot, unblinded. An application
+    /// that recomputes a commitment outside the circuit, for instance to
+    /// recompute a [`bridge_hash`](Self::bridge_hash), calls this.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the polynomial has more coefficients than the rank holds.
+    pub fn commit(&self, coeffs: &[C::CircuitField]) -> Result<C::HostCurve> {
+        if coeffs.len() > R::num_coeffs() {
+            return Err(Error::InvalidWitness(
+                "a polynomial has more coefficients than the rank holds".into(),
+            ));
+        }
+        let poly =
+            ragu_circuits::polynomials::sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec());
+        Ok(B::sparse_commit_to_affine(
+            &poly,
+            C::host_generators(self.params),
+        ))
+    }
+
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
