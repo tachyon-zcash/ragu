@@ -31,6 +31,9 @@ mock = [
 ]
 # Kept for compatibility: the mock has no parallel stage of its own.
 multicore = []
+# `serde::{Serialize, Deserialize}` for the mock `Proof` and `Pcd`, as their
+# wire bytes. Only meaningful with `mock`.
+serde = ["dep:serde"]
 std = []
 
 [lib]
@@ -43,10 +46,14 @@ bench = false
 [dependencies]
 blake2b_simd = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+serde = { version = "1", default-features = false, features = ["alloc"], optional = true }
 udon = { workspace = true, optional = true }
 ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
 ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
 ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
 
 [workspace]
 members = [
