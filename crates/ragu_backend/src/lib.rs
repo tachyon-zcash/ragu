@@ -306,7 +306,10 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     }
 }
 
-/// The backend used by default throughout Ragu.
+/// The reference backend, with serial scheduling of independent operations.
+///
+/// Applications may select this explicitly to compare accelerated kernels
+/// against their reference implementations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReferenceBackend;
 

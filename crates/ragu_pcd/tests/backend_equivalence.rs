@@ -236,6 +236,7 @@ impl Apps {
     fn build(dummy_circuits: usize) -> Self {
         let pasta = ragu_pcd::pasta::baked_aggregator();
         let reference = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<ReferenceBackend>()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)

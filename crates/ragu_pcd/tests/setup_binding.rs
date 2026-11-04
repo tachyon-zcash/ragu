@@ -3,7 +3,7 @@
 //! Private access lets these tests isolate either final tag; the public setup
 //! API does not allow assembling such mixed tag pairs.
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Result,
@@ -34,7 +34,7 @@ enum ChangedTag {
 fn application<C>(changed: Option<ChangedTag>) -> Result<App<C>>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let mut tags = RegistryTags::<C>::from_beacon(&[0x42; 32], MANIFEST);
     let other = RegistryTags::<C>::from_beacon(&[0x43; 32], MANIFEST);
@@ -77,7 +77,7 @@ where
 fn check_setup_binding<C>(changed: ChangedTag) -> Result<()>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let sender = application::<C>(None)?;
     let receiver = application::<C>(Some(changed))?;
