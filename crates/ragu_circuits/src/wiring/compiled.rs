@@ -270,7 +270,7 @@ impl<F: Field, R: Rank> Compiled<F, R> {
         }
     }
 
-    fn at_x(&self, x: F) -> Vec<F> {
+    fn at_x(&self, x: F, powers: Option<&[F]>) -> Vec<F> {
         let mut values = vec![F::ZERO; 4 * self.gates + self.nodes.len()];
         for (block, start) in [
             0,
@@ -281,10 +281,15 @@ impl<F: Field, R: Rank> Compiled<F, R> {
         .into_iter()
         .enumerate()
         {
-            let mut power = x.pow_u64(start as u64);
-            for value in &mut values[block * self.gates..(block + 1) * self.gates] {
-                *value = power;
-                power *= x;
+            let block_values = &mut values[block * self.gates..(block + 1) * self.gates];
+            if let Some(powers) = powers {
+                block_values.copy_from_slice(&powers[start..start + self.gates]);
+            } else {
+                let mut power = x.pow_u64(start as u64);
+                for value in block_values {
+                    *value = power;
+                    power *= x;
+                }
             }
         }
         for (i, row) in self.nodes.iter().enumerate() {
@@ -294,7 +299,11 @@ impl<F: Field, R: Rank> Compiled<F, R> {
     }
 
     pub(crate) fn sx(&self, x: F) -> sparse::Polynomial<F, R> {
-        let values = self.at_x(x);
+        self.sx_with_powers(x, None)
+    }
+
+    pub(crate) fn sx_with_powers(&self, x: F, powers: Option<&[F]>) -> sparse::Polynomial<F, R> {
+        let values = self.at_x(x, powers);
         let len = self.constraints.last().map_or(0, |(y, _)| y + 1);
         let mut result = vec![F::ZERO; len];
         for (y, row) in &self.constraints {
@@ -304,7 +313,11 @@ impl<F: Field, R: Rank> Compiled<F, R> {
     }
 
     pub(crate) fn sxy(&self, x: F, y: F) -> F {
-        let values = self.at_x(x);
+        self.sxy_with_powers(x, y, None)
+    }
+
+    pub(crate) fn sxy_with_powers(&self, x: F, y: F, powers: Option<&[F]>) -> F {
+        let values = self.at_x(x, powers);
         let mut degree = self.constraints.last().map_or(0, |(y, _)| *y);
         let mut result = F::ZERO;
         for (power, row) in self.constraints.iter().rev() {
@@ -324,15 +337,23 @@ impl<F: Field, R: Rank> Compiled<F, R> {
     }
 
     pub(crate) fn sy(&self, y: F) -> sparse::Polynomial<F, R> {
+        self.sy_with_powers(y, None)
+    }
+
+    pub(crate) fn sy_with_powers(&self, y: F, powers: Option<&[F]>) -> sparse::Polynomial<F, R> {
         let mut values = vec![F::ZERO; 4 * self.gates + self.nodes.len()];
         let mut degree = 0;
         let mut power = F::ONE;
         for (position, row) in &self.constraints {
-            let gap = position - degree;
-            if gap == 1 {
-                power *= y;
-            } else if gap > 1 {
-                power *= y.pow_u64(gap as u64);
+            if let Some(powers) = powers {
+                power = powers[*position];
+            } else {
+                let gap = position - degree;
+                if gap == 1 {
+                    power *= y;
+                } else if gap > 1 {
+                    power *= y.pow_u64(gap as u64);
+                }
             }
             self.distribute(row.clone(), power, &mut values);
             degree = *position;
