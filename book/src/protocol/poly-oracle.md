@@ -268,7 +268,13 @@ This gives us a hash `bridge_o1_hash` native on the `Fp` side that we can use fo
 Importantly, we need to synchronize our outside-the-circuit code to use this non-standard hash function:
 computes the trace `bridge_hash_rx` as a stage polynomial $\in\F_q[X]$, then computes its commitment as a $\E_p$/`NestedCurve` point, and uses its two coordinates as the hash digest.
 For the digest to be a function of the point, the `BridgeHash` stage is committed unblinded (every other stage takes a random blinding), and every wire of the stage is fixed by the point.
-`BridgeHash` is the first nested stage: the digest depends on the stage's position, which then does not move when `Preamble` grows.
+
+A standard stage mask does not enforce this: it leaves free the blinding slot $a_0$ (and $b_0, d_0$) of the `SYSTEM` gate, and the $b, c$ wires of the stage's gates (any $c = a \cdot b$ satisfies the gate).
+Thus `BridgeHash` registers a stricter, _canonical_ stage mask that also holds these wires to zero ($c_0$ is already held by the registry tag $\kappa$).
+Then the stage polynomial holds only $x$ and $y$ of the point, and the digest is the fixed linear combination $x \cdot G_i + y \cdot G_j$ of two generators.
+`BridgeHash` comes directly after the endoscalar stage and before the points stage.
+The digest depends on the stage's position.
+The endoscalar stage has a fixed size (the 143-bit endoscalar encoding), thus the position does not move when the walk or `Preamble` grows.
 Binding follows from the binding of the commitment: two points with the same digest are two openings of one commitment.
 
 Unlike [v1](#v1), this changes the transcript: the `BridgeHash` commitment joins the `unified` instance next to `bridge_preamble_commitment`, and `hashes_1` absorbs it before squeezing $w$, so $\zeta$ binds `O1` too.
