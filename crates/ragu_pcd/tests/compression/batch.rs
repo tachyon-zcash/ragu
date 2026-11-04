@@ -3,7 +3,7 @@
 //! commitment and value of the prover's $p$, the IPA proves it, and a
 //! tampered message breaks the proof.
 
-use alloc::{borrow::Cow, vec, vec::Vec};
+use alloc::{borrow::Cow, string::ToString, vec, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::{Rank, TestRank, WalletRank, sparse};
@@ -470,4 +470,70 @@ fn nested_batch_opens_through_the_ipa() {
         *Pasta::nested_u(crate::pasta::baked()),
         &mut verifier.nested()
     ));
+}
+
+/// Repeated query points share inverses without changing Horner weights;
+/// every zero denominator must still reject rather than enter the batch.
+#[test]
+fn batched_denominators_match_individual_inversions() {
+    fn check<C: Affine>() {
+        let commitments = [C::generator(), -C::generator()];
+        let batch = Batch {
+            f: C::generator(),
+            evaluations: vec![C::Scalar::from(13), C::Scalar::from(17)],
+        };
+        let claims = [
+            OpeningClaim {
+                poly: 0,
+                point: C::Scalar::from(2),
+                value: C::Scalar::from(5),
+            },
+            OpeningClaim {
+                poly: 1,
+                point: C::Scalar::from(2),
+                value: C::Scalar::from(7),
+            },
+            OpeningClaim {
+                poly: 0,
+                point: C::Scalar::from(3),
+                value: C::Scalar::from(11),
+            },
+            OpeningClaim {
+                poly: 0,
+                point: C::Scalar::from(2),
+                value: C::Scalar::from(5),
+            },
+        ];
+        let (alpha, u, beta) = (C::Scalar::from(3), C::Scalar::from(7), C::Scalar::from(11));
+        let transcript = || BatchTranscript {
+            challenges: [alpha, u, beta].into_iter(),
+            writes: 0,
+        };
+        for selected in [&claims[..0], &claims[..1], &claims[..]] {
+            let quotient = selected.iter().fold(C::Scalar::ZERO, |sum, claim| {
+                sum * alpha
+                    + (batch.evaluations[claim.poly] - claim.value)
+                        * (u - claim.point).invert().unwrap()
+            });
+            let expected = batch
+                .evaluations
+                .iter()
+                .fold(quotient, |sum, value| sum * beta + value);
+            let actual =
+                verify::<_, ReferenceBackend, _>(&commitments, selected, &batch, &mut transcript())
+                    .unwrap();
+            assert_eq!(actual.value, expected);
+            assert_eq!(actual.point, u);
+        }
+        for index in 0..claims.len() {
+            let mut invalid = claims;
+            invalid[index].point = u;
+            assert!(matches!(
+                verify::<_, ReferenceBackend, _>(&commitments, &invalid, &batch, &mut transcript()),
+                Err(Error::InvalidWitness(message)) if message.to_string() == "u lands on a query point"
+            ));
+        }
+    }
+    check::<EpAffine>();
+    check::<EqAffine>();
 }

@@ -65,12 +65,32 @@ pub(crate) fn verify<C: Affine, B: Backend, T: IpaTranscript<C>>(
     let beta = transcript.squeeze_challenge()?;
 
     // f(u) from the quotient relation, the first claim weighted highest.
+    // Repeated query points share one inverse. Keep the original claim
+    // order and alpha weights; only the denominator computation is batched.
+    let mut points = Vec::new();
+    let positions: Vec<_> = claims
+        .iter()
+        .map(|claim| {
+            if let Some(index) = points.iter().position(|point| *point == claim.point) {
+                index
+            } else {
+                points.push(claim.point);
+                points.len() - 1
+            }
+        })
+        .collect();
+    let mut inverses: Vec<_> = points.iter().map(|point| u - point).collect();
+    // Batch inversion leaves zero entries unchanged, but this relation
+    // requires every denominator to be invertible.
+    if inverses.contains(&C::Scalar::ZERO) {
+        return Err(Error::InvalidWitness("u lands on a query point".into()));
+    }
+    let mut scratch = alloc::vec![C::Scalar::ZERO; inverses.len()];
+    C::Scalar::batch_invert(&mut inverses, &mut scratch);
     let mut f_at_u = C::Scalar::ZERO;
-    for claim in claims {
-        let denominator = (u - claim.point)
-            .invert()
-            .ok_or_else(|| Error::InvalidWitness("u lands on a query point".into()))?;
-        f_at_u = f_at_u * alpha + (batch.evaluations[claim.poly] - claim.value) * denominator;
+    for (claim, position) in claims.iter().zip(positions) {
+        f_at_u =
+            f_at_u * alpha + (batch.evaluations[claim.poly] - claim.value) * inverses[position];
     }
 
     // v and the commitment to p: f and every polynomial under beta, f
