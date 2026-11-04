@@ -39,14 +39,14 @@ pub(crate) struct Evaluated<F> {
 /// The verifier's side on one curve: `shapes` are the claims' shapes and
 /// `targets` the $k(y)$ of the raw and circuit claims among them, exactly one
 /// per such claim in claim order (the other claims' $k(y)$ is zero);
-/// `commitment` gives each component's commitment and `public` each kind of
-/// claim's public parts of $a$ and $b$ at a point. Returns the opening claims
+/// `commitment` gives each component's commitment and `public` returns the
+/// claims' public parts of $a$ and $b$ at a point, in shape order. Returns the opening claims
 /// the batch must prove, or `None` if the reduction does not hold.
 fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
     shapes: &[Shape<Id, C::Scalar>],
     targets: impl Iterator<Item = C::Scalar>,
     commitment: impl Fn(Id) -> C,
-    public: impl Fn(Kind, C::Scalar) -> (C::Scalar, C::Scalar) + Sync,
+    public: impl FnOnce(C::Scalar) -> Vec<(C::Scalar, C::Scalar)>,
     reduction: &Reduction<C>,
     z: C::Scalar,
     transcript: &mut impl IpaTranscript<C>,
@@ -85,10 +85,13 @@ fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
     // Each claim's public parts depend only on r and data fixed before it,
     // so the backend may evaluate them concurrently. Each result keeps its
     // claim's slot, where it meets that claim's weights and target.
-    for (i, (a, b)) in public_parts::<_, B, _>(shapes, r, public)
-        .into_iter()
-        .enumerate()
-    {
+    let public = public(r);
+    assert_eq!(
+        public.len(),
+        shapes.len(),
+        "one public evaluation per claim"
+    );
+    for (i, (a, b)) in public.into_iter().enumerate() {
         a_public += weights.a(i) * a;
         b_public += weights.b(i) * b;
         target += weights.a(i) * weights.b(i) * targets[i];
@@ -200,13 +203,13 @@ fn public_parts<F: Field, B: Backend, Id: Sync>(
 fn public<F: Field, R: Rank, Id>(
     kind: Kind,
     r: F,
-    z: F,
+    gate: F,
     restriction: &impl Fn(CircuitIndex) -> F,
     masked: &[Masked<Id, F>],
 ) -> (F, F) {
     match kind {
         Kind::Raw => (F::ZERO, F::ZERO),
-        Kind::Circuit(circuit) => (F::ZERO, restriction(circuit) + R::tz(z).eval(r)),
+        Kind::Circuit(circuit) => (F::ZERO, restriction(circuit) + gate),
         Kind::Bonding(circuit) => (F::ZERO, restriction(circuit)),
         Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<R>(r)),
     }
@@ -233,7 +236,14 @@ pub(crate) fn verify_native<C: ProfiledCycle, R: Rank, B: Backend>(
         &shapes,
         native::claims::ky_prefix::<C::Profile, _>(targets),
         commitment,
-        |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
+        |r| {
+            // Every circuit claim shares this value. Evaluate it directly
+            // once instead of constructing its polynomial for each claim.
+            let gate = R::txz(r, z);
+            public_parts::<_, B, _>(&shapes, r, |kind, r| {
+                public::<_, R, _>(kind, r, gate, &|circuit| restriction(circuit, r), masked)
+            })
+        },
         reduction,
         z,
         transcript,
@@ -257,7 +267,12 @@ pub(crate) fn verify_nested<C: ProfiledCycle, R: Rank, B: Backend>(
         &shapes,
         nested::claims::ky_prefix::<C::Profile, _>(targets),
         commitment,
-        |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
+        |r| {
+            let gate = R::txz(r, z);
+            public_parts::<_, B, _>(&shapes, r, |kind, r| {
+                public::<_, R, _>(kind, r, gate, &|circuit| restriction(circuit, r), masked)
+            })
+        },
         reduction,
         z,
         transcript,
