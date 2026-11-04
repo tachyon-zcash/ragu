@@ -99,6 +99,7 @@ fn check(schedule: &Schedule) {
         assert!(!points[slot], "point slot {slot} written twice");
         points[slot] = true;
     };
+    let mut on_curve: Vec<PointSrc> = Vec::new();
     for chunk in &schedule.chunks {
         match chunk {
             Chunk::Transcript {
@@ -220,7 +221,38 @@ fn check(schedule: &Schedule) {
                 read_point(left, &points);
                 read_point(right, &points);
             }
+            Chunk::Curve { points: held } => {
+                for point in held {
+                    read_point(point, &points);
+                }
+                on_curve.extend(held.iter().copied());
+            }
         }
+    }
+    // Every point the prover supplies is held to the curve: the instance's
+    // and the messages' points, and the work points the prover fills.
+    for p in 0..layout.instance.points {
+        assert!(
+            on_curve.contains(&PointSrc::Instance(p)),
+            "instance point {p} is held to the curve"
+        );
+    }
+    for p in 0..layout.messages.points {
+        assert!(
+            on_curve.contains(&PointSrc::Message(p)),
+            "message point {p} is held to the curve"
+        );
+    }
+    for &slot in regions
+        .runs
+        .iter()
+        .chain(&regions.inverse_scaled)
+        .chain([&regions.g_prime])
+    {
+        assert!(
+            on_curve.contains(&PointSrc::Work(slot)),
+            "prover-supplied point {slot} is held to the curve"
+        );
     }
     assert!(
         states.iter().all(|&saved| saved),
@@ -265,6 +297,7 @@ fn schedules_are_consistent<R: Rank>() {
                 Chunk::Scale { .. } => "scale",
                 Chunk::Sign { .. } => "sign",
                 Chunk::Equal { .. } => "equal",
+                Chunk::Curve { .. } => "curve",
             };
             match counts.iter_mut().find(|(n, _)| *n == name) {
                 Some((_, count)) => *count += 1,
@@ -307,6 +340,7 @@ fn limits_scale_with_the_rank() {
             checks: 2 * fitted.checks,
             sums: 2 * fitted.sums,
             digits: 2 * fitted.digits,
+            curve: 2 * fitted.curve,
             scale_parts: 1,
             fill: AggregatorRank::n() - AggregatorRank::n() / 64,
         }

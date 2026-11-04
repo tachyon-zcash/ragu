@@ -35,6 +35,14 @@
 //!   them by endoscalar Horner chains, as the fuse's endoscaling steps do,
 //!   which asks the compression to lift its point-multiplying challenges
 //!   to endoscalars.
+//! - **Curve membership.** The chunks load their stages unenforced, so the
+//!   curve equation a point's allocation emits reaches no circuit on its
+//!   own; one chunk per side holds every point the prover supplies, the
+//!   instance's and the messages' commitments, the runs' and the IPA's
+//!   witness points, to the curve, as `bind_endoscalar` does for the fuse's
+//!   points stages. A chunk's own points are sums and scalings of those and
+//!   of the generators. Without it an off-curve point with $x = 0$ leaves
+//!   an endoscaling's output unconstrained.
 //! - **$G'$.** The IPA's final generator $G' = \langle s, G \rangle$ is the
 //!   commitment to $s(X)$ over the same generators, so $s$ can be a
 //!   polynomial of the decompression proof whose commitment is $G'$, with

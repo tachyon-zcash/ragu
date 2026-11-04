@@ -21,6 +21,7 @@ use ragu_core::{
 };
 use ragu_primitives::{
     Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
+    consistent::Consistent,
     extract_endoscalar,
     poseidon::{Sponge, SpongeState},
     vec::{FixedVec, Len},
@@ -698,6 +699,14 @@ where
             let left = ctx.point(dr, *left)?;
             let right = ctx.point(dr, *right)?;
             left.enforce_equal(dr, &right)?;
+        }
+        Chunk::Curve { points } => {
+            // The stages are loaded unenforced, so the curve equation a
+            // point's allocation emits reaches no chunk circuit: re-emit it
+            // here for every point the prover supplies, once per side.
+            for &src in points {
+                ctx.point(dr, src)?.enforce_consistent(dr)?;
+            }
         }
     }
     Ok(writes)

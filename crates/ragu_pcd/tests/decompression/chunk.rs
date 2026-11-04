@@ -13,14 +13,19 @@ use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     BondingObject, CircuitExt,
     polynomials::{AggregatorRank, Rank, sparse},
-    staging::{MultiStage, MultiStageCircuit, StageExt},
+    staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 use ragu_core::{
     Cycle,
+    drivers::emulator::Emulator,
+    maybe::{Always, MaybeKind},
     pasta::{Fp, Fq, Pasta},
 };
 use ragu_primitives::vec::{ConstLen, FixedVec};
-use ragu_testing::registry::TestRegistryBuilder;
+use ragu_testing::{
+    patcher::{capture_with_stage_values, constraints_hold, repair},
+    registry::TestRegistryBuilder,
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use udon::{
     curve::{Affine as _, Projective as _},
@@ -31,12 +36,12 @@ use super::{BindingCircuit, Circuit, DigitsCircuit, StatementCircuit, Transcript
 use crate::{
     decompress::{
         circuit::Witness,
-        program::{Chunk, Last, Schedule, challenges_per_curve, squeezed},
+        program::{Chunk, CircuitPlan, Last, PointSrc, Schedule, challenges_per_curve, squeezed},
         run::{Prepared, Sides},
         side::{Native, Nested, Side},
         stages::{
-            DigitsStage, Front, InstanceStage, LiftsStage, Run, TranscriptStage, WorkStage,
-            native_scalars, num_runs, runs,
+            DigitsStage, Front, InstanceStage, LiftsStage, MessagesStage, Run, TranscriptStage,
+            WorkStage, message_points, native_scalars, num_runs, runs,
         },
         support::{HEADER_SIZE, Setup, TestR},
     },
@@ -99,6 +104,7 @@ fn kind(chunk: &Chunk) -> &'static str {
         Chunk::Scale { .. } => "scale",
         Chunk::Sign { .. } => "sign",
         Chunk::Equal { .. } => "equal",
+        Chunk::Curve { .. } => "curve",
     }
 }
 
@@ -339,6 +345,190 @@ fn transcript_chunks_squeeze_the_native_verifiers_challenges() {
         witness.nested.raw.in_order(),
         "the nested curve's compression challenges"
     );
+}
+
+/// The gates side `S`'s curve chunks take beyond their stages at rank `R`,
+/// each synthesized as a circuit of its own.
+fn curve_gates<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(prepared: &Prepared<Pasta, S>) {
+    use crate::decompress::program::CircuitPlan;
+    let params = crate::pasta::baked_aggregator();
+    let gates =
+        |plan: CircuitPlan| {
+            let mut schedule = Schedule::clone(&prepared.schedule);
+            schedule.circuits = alloc::vec![plan];
+            ragu_circuits::testing::synthesis_counts(
+                &Circuit::<Pasta, S, TestR, R, HEADER_SIZE>::new(0, Arc::new(schedule), params),
+            )
+            .unwrap()
+            .num_gates
+        };
+    let loading = gates(CircuitPlan {
+        chunks: Vec::new(),
+        last: Last::Work,
+    });
+    let mut held = 0;
+    for (i, chunk) in prepared.schedule.chunks.iter().enumerate() {
+        let Chunk::Curve { points } = chunk else {
+            continue;
+        };
+        held += points.len();
+        let measured = gates(CircuitPlan {
+            chunks: alloc::vec![i],
+            last: Last::Work,
+        }) - loading;
+        assert!(
+            measured >= 3 * points.len(),
+            "{} curve chunk {i} holds {} points in {measured} gates",
+            S::NAME,
+            points.len()
+        );
+    }
+    assert!(held > 0, "{} holds its points to the curve", S::NAME);
+}
+
+/// The curve chunks hold the prover's points to the curve in the circuit
+/// itself: the stages are loaded unenforced, so the equation a point's
+/// allocation emits reaches no chunk circuit on its own. Each curve chunk
+/// synthesizes at least the three gates a point's equation takes, on both
+/// sides.
+#[test]
+fn curve_chunks_emit_the_curve_equation() {
+    let setup = Setup::new();
+    let sides = sides::<SmallR>(&setup);
+    curve_gates::<Native, SmallR>(&sides.native);
+    curve_gates::<Nested, SmallR>(&sides.nested);
+}
+
+/// The honest values of stage `S`'s reserved wires, two per reserved gate in
+/// injection order, as `capture_with_stage_values` takes them: the stage run
+/// on the extractor emulator, as `StageExt::rx` runs it.
+fn stage_values<S: Stage<Fp, SmallR> + Default>(witness: S::Witness<'_>) -> Vec<Fp> {
+    let mut dr = Emulator::extractor();
+    let output = S::default()
+        .witness(&mut dr, Always::maybe_just(|| witness))
+        .expect("the stage has its witness");
+    let mut values = dr.wires(&output).expect("the stage's wires");
+    values.resize(2 * <S as StageExt<Fp, SmallR>>::num_gates(), Fp::ZERO);
+    values
+}
+
+/// Where the circuit-field side's stage wires sit among a work circuit's
+/// reserved wires: the stages in chain order, each two wires a gate, a
+/// point's $x$ then $y$ before the elements.
+struct StageWires {
+    messages: usize,
+}
+
+impl StageWires {
+    fn of(prepared: &Prepared<Pasta, Native>) -> Self {
+        type Instance = InstanceStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>;
+        let _ = prepared;
+        StageWires {
+            messages: 2 * <Instance as StageExt<Fp, SmallR>>::num_gates(),
+        }
+    }
+
+    /// The two reserved wires of message point `position`.
+    fn message_point(&self, position: usize) -> [usize; 2] {
+        [
+            self.messages + 2 * position,
+            self.messages + 2 * position + 1,
+        ]
+    }
+}
+
+/// The honest reserved wire values of a circuit-field work circuit, in
+/// chain order.
+fn work_circuit_stage_values(prepared: &Prepared<Pasta, Native>) -> Vec<Fp> {
+    let mut values = stage_values::<InstanceStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>>(
+        &prepared.instance,
+    );
+    values.extend(stage_values::<
+        MessagesStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>,
+    >(&prepared.messages));
+    values.extend(stage_values::<
+        LiftsStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>,
+    >(&prepared.lifts));
+    values.extend(stage_values::<
+        WorkStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>,
+    >(&prepared.work));
+    values
+}
+
+/// Captures the circuit-field work circuit running exactly `chunks`, with
+/// its honest stage values: the production chunk circuit over the production
+/// executor, grouped as the test says, since which chunks share a circuit is
+/// free.
+fn capture_work_circuit(
+    prepared: &Prepared<Pasta, Native>,
+    chunks: Vec<usize>,
+) -> ragu_testing::patcher::Capture<Fp> {
+    let mut schedule = Schedule::clone(&prepared.schedule);
+    schedule.circuits = alloc::vec![CircuitPlan {
+        chunks,
+        last: Last::Work,
+    }];
+    let circuit = Circuit::<Pasta, Native, TestR, SmallR, HEADER_SIZE>::new(
+        0,
+        Arc::new(schedule),
+        crate::pasta::baked_aggregator(),
+    );
+    capture_with_stage_values(&circuit, prepared, &work_circuit_stage_values(prepared))
+        .expect("the honest circuit satisfies its constraints")
+}
+
+/// The curve chunk rejects a message point off the curve, alone and in a
+/// circuit beside the chain that scales the point: the stages load their
+/// points unenforced, so this is the equation that holds the nested
+/// reduction's $[f]$ to the curve. The point $(0, 1)$ lies on no Pasta
+/// curve, since $5$ is a non-residue in both fields.
+#[test]
+fn curve_chunk_rejects_an_off_curve_f() {
+    let setup = Setup::new();
+    let sides = sides::<SmallR>(&setup);
+    let prepared = &sides.native;
+    let schedule = &prepared.schedule;
+    let wires = StageWires::of(prepared);
+
+    let position = schedule
+        .layout
+        .messages
+        .points_of_curve
+        .at(message_points::F);
+    let f = PointSrc::Message(position);
+    let chain_index = schedule
+        .chunks
+        .iter()
+        .position(|chunk| matches!(chunk, Chunk::Chain(chain) if chain.init == Some(f)))
+        .expect("the batched chain starts from [f]");
+    let curve_index = schedule
+        .chunks
+        .iter()
+        .position(|chunk| matches!(chunk, Chunk::Curve { points } if points.contains(&f)))
+        .expect("a curve chunk holds [f] to the curve");
+    let [fx, fy] = wires.message_point(position);
+
+    for chunks in [
+        alloc::vec![curve_index],
+        alloc::vec![chain_index, curve_index],
+    ] {
+        let capture = capture_work_circuit(prepared, chunks);
+        let (events, stage_wires) = (&capture.recorder.events, &capture.stage_wires);
+        assert!(
+            constraints_hold(events, &capture.recorder.values),
+            "the honest witness satisfies the circuit"
+        );
+        // Every stage wire is the prover's to commit: hold them all, with
+        // [f] rewritten off the curve, and solve the circuit's own wires.
+        let mut changed = capture.recorder.values.clone();
+        changed[stage_wires[fx]] = Fp::ZERO;
+        changed[stage_wires[fy]] = Fp::ONE;
+        repair(events, &mut changed, stage_wires);
+        assert!(
+            !constraints_hold(events, &changed),
+            "the curve chunk rejects [f] = (0, 1)"
+        );
+    }
 }
 
 /// Some circuit of side `S` rejects `prepared`.

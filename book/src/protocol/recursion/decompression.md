@@ -106,7 +106,8 @@ two agree. The field arithmetic recomputes the targets, the fold, the split,
 the batch and the IPA's scalars, with inverses as advised witnesses; the
 point arithmetic derives the fold's commitments, batches them into $[H]$ and
 folds $[H]$ through the IPA's rounds to a final multi-scalar multiplication
-that must equal the identity. The native side also recomputes Fuse's
+that must equal the identity. Every point a side took from P is held to its
+curve before a chain uses it. The native side also recomputes Fuse's
 challenge and AB-bridge stages and holds them to the instance's commitments.
 Two inputs are still taken from P unchecked, the registry's evaluations and
 the IPA's $G'$ (see *What remains*).

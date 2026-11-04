@@ -28,8 +28,9 @@
 //! sliced at the sponge's permutation boundaries; the challenges' lifts;
 //! the targets, the reduction, the batch and the IPA's scalars; the
 //! claims' points; the fold, batch and IPA chains as Horner steps; the
-//! full-width scalings; the recomputed stages; and the digits of the
-//! scalars the other side scales by. The two sides share
+//! full-width scalings; the recomputed stages; the digits of the scalars
+//! the other side scales by; and the curve membership of every point the
+//! prover supplies, which the stages load unenforced. The two sides share
 //! everything from the targets on ([`body`]); they differ in how they
 //! obtain their challenges and in the stages each recomputes of the
 //! other's: the circuit-field side absorbs each run of the scalar field's
@@ -275,6 +276,14 @@ pub(crate) enum Chunk {
         left: PointSrc,
         right: PointSrc,
     },
+    /// Holds each of `points` to the side's curve: the points the prover
+    /// supplies, the instance's and the messages' commitments and the work
+    /// points it fills, which the stages load unenforced. A chunk's own
+    /// points are sums and scalings of these and of the generators, so they
+    /// need no check of their own.
+    Curve {
+        points: Vec<PointSrc>,
+    },
 }
 
 /// One part of the other side's digits stage commitment, over the digits
@@ -502,6 +511,9 @@ mod cost {
     pub const PERMUTATION: usize = 290;
     /// The signed digits of a full-width scalar, bound to it.
     pub const DIGITS: usize = 256;
+    /// A point held to the curve: its coordinates squared, one cubed, and
+    /// the equation.
+    pub const CURVE: usize = 4;
     /// What any chunk pays beyond its operations.
     pub const BASE: usize = 10;
 }
@@ -569,6 +581,7 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
             .map(|&(_, by, _)| read(by) + ENDOSCALING)
             .sum(),
         Chunk::Scale { digits, .. } => SCALE_DIGIT * (digits.1 - digits.0),
+        Chunk::Curve { points } => CURVE * points.len(),
         Chunk::Sign { .. } | Chunk::Equal { .. } => 0,
     }
 }
@@ -680,6 +693,8 @@ pub(crate) struct Limits {
     pub sums: usize,
     /// Digit decompositions per digits chunk.
     pub digits: usize,
+    /// Points held to the curve per curve chunk.
+    pub curve: usize,
     /// The parts a full-width scaling is cut into.
     pub scale_parts: usize,
     /// The gates a circuit's stages and chunks are packed up to, as
@@ -706,6 +721,7 @@ impl Limits {
         checks: 2,
         sums: 24,
         digits: 3,
+        curve: 128,
         scale_parts: 2,
         fill: fill_of(FITTED_GATES),
     };
@@ -724,6 +740,7 @@ impl Limits {
             checks: fitted.checks * scale,
             sums: fitted.sums * scale,
             digits: fitted.digits * scale,
+            curve: fitted.curve * scale,
             scale_parts: fitted.scale_parts.div_ceil(scale),
             fill: fill_of(R::n()),
         }
@@ -1646,6 +1663,38 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
         |j| challenge(squeezed::ROUNDS + j),
         [ScalarRef::Bits(0), ScalarRef::Bits(1), ScalarRef::Bits(2)],
     );
+
+    // Every point the prover supplies, held to the curve: the stages load
+    // their points unenforced, so the equation their allocation emits
+    // reaches no chunk circuit on its own. The instance's and the messages'
+    // commitments, the transcript's run commitments, the IPA's witness
+    // points and G'; a chunk's own points are sums and scalings of these.
+    let mut points: Vec<PointSrc> = layout
+        .instance
+        .commitments
+        .positions()
+        .map(PointSrc::Instance)
+        .collect();
+    points.extend(
+        layout
+            .messages
+            .points_of_curve
+            .positions()
+            .map(PointSrc::Message),
+    );
+    points.extend(
+        b.regions
+            .runs
+            .iter()
+            .chain(&b.regions.inverse_scaled)
+            .chain([&b.regions.g_prime])
+            .map(|&slot| PointSrc::Work(slot)),
+    );
+    for batch in points.chunks(b.limits.curve) {
+        b.chunks.push(Chunk::Curve {
+            points: batch.to_vec(),
+        });
+    }
     (bindings, digits)
 }
 
