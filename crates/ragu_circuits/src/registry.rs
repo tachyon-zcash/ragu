@@ -564,6 +564,37 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         evals
     }
 
+    /// Evaluates the circuits selected by `indices` at the same X and Y,
+    /// preserving the requested order and sharing powers of X between them.
+    ///
+    /// Each result is exactly `wxy(index.omega_j(), x, y)`, including masking,
+    /// the registry tag, padded domain positions, and interpolation when an
+    /// index names a point outside this registry's domain.
+    pub fn circuits_xy_parallel(&self, indices: &[CircuitIndex], x: F, y: F) -> Vec<F> {
+        if indices.is_empty() {
+            return Vec::new();
+        }
+        if let [index] = indices {
+            return alloc::vec![self.wxy(index.omega_j(), x, y)];
+        }
+        let tag = self.tag_sxy(x, y);
+        let global = crate::staging::mask::global_mask::<F, R>(x, y);
+        let powers = powers::<F, R>(x);
+        let mut evals = alloc::vec![tag; indices.len()];
+        ragu_core::for_each_mut(&mut evals, |position, value| {
+            let i = usize::from(indices[position]);
+            if let Some(circuit) = self.circuits.get(i) {
+                *value += circuit.sxy_with_powers(x, y, &powers, &self.floor_plans[i]);
+                if circuit.is_mask() {
+                    *value += global;
+                }
+            } else if i >= self.domain.size() {
+                *value = self.wxy(indices[position].omega_j(), x, y);
+            }
+        });
+        evals
+    }
+
     /// Interpolate the Lagrange-basis evaluations from
     /// [`wxy_over_domain`](Self::wxy_over_domain) into the monomial-basis
     /// polynomial $m(W, x, y)$ via an inverse FFT.
@@ -1016,6 +1047,22 @@ mod tests {
                         registry.wxy_over_domain_parallel(x, y),
                         registry.wxy_over_domain(x, y)
                     );
+                    let indices = [
+                        CircuitIndex::new(0),
+                        CircuitIndex::new(count),
+                        CircuitIndex::new(0),
+                        CircuitIndex::new(registry.domain.size() - 1),
+                        CircuitIndex::new(registry.domain.size()),
+                    ];
+                    for selected in [&indices[..0], &indices[..1], &indices[..]] {
+                        assert_eq!(
+                            registry.circuits_xy_parallel(selected, x, y),
+                            selected
+                                .iter()
+                                .map(|i| registry.wxy(i.omega_j(), x, y))
+                                .collect::<alloc::vec::Vec<_>>()
+                        );
+                    }
                     for w in ws {
                         let at = registry.at(w);
                         assert!(at.x_parallel(x).iter_coeffs().eq(at.x(x).iter_coeffs()));

@@ -190,6 +190,27 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         registry.interpolate_xy_with(evals, Self::ifft)
     }
 
+    /// Evaluates selected circuit restrictions at one shared X/Y pair.
+    ///
+    /// Results retain `circuits` order, including duplicates. The default
+    /// uses [`Self::registry_wxy`] so its overrides remain effective.
+    ///
+    /// # Correctness
+    ///
+    /// Each output must equal `registry_wxy(registry, circuit.omega_j(), x, y)`,
+    /// including tags, masking, padded positions and out-of-domain indices.
+    fn registry_circuits_xy<F: Field, R: Rank>(
+        registry: &Registry<'_, F, R>,
+        circuits: &[CircuitIndex],
+        x: F,
+        y: F,
+    ) -> Vec<F> {
+        circuits
+            .iter()
+            .map(|circuit| Self::registry_wxy(registry, circuit.omega_j(), x, y))
+            .collect()
+    }
+
     /// Computes the circuit restriction $s_i(X, y)$ selected by `circuit`.
     fn registry_circuit_y<F: Field, R: Rank>(
         registry: &Registry<'_, F, R>,

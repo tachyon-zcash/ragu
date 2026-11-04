@@ -31,7 +31,7 @@ use alloc::vec::Vec;
 use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    registry::{Registry, RegistryAt},
+    registry::{CircuitIndex, Registry, RegistryAt},
 };
 use udon::{curve::Affine, field::Field};
 
@@ -72,6 +72,10 @@ macro_rules! impl_accelerated_backends {
 impl_accelerated_backends! {
     fn registry_wxy_over_domain<F: Field, R: Rank>(registry: &Registry<'_, F, R>, x: F, y: F) -> alloc::vec::Vec<F> {
         verifier::registry_wxy_over_domain(registry, x, y)
+    }
+
+    fn registry_circuits_xy<F: Field, R: Rank>(registry: &Registry<'_, F, R>, circuits: &[CircuitIndex], x: F, y: F) -> alloc::vec::Vec<F> {
+        verifier::registry_circuits_xy(registry, circuits, x, y)
     }
 
     fn registry_at_x<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, x: F) -> sparse::Polynomial<F, R> {

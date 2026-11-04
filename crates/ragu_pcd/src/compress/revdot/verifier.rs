@@ -196,6 +196,48 @@ fn public_parts<F: Field, B: Backend, Id: Sync>(
         .collect()
 }
 
+/// Evaluate each required circuit once, sharing query-point powers on the
+/// accelerated backend. Application circuits absent from the claims do no work.
+fn registry_public_parts<F: Field, R: Rank, B: Backend, Id: Sync>(
+    shapes: &[Shape<Id, F>],
+    registry: &Registry<'_, F, R>,
+    r: F,
+    y: F,
+    z: F,
+    masked: &[Masked<Id, F>],
+) -> Vec<(F, F)> {
+    let mut circuits: Vec<_> = shapes
+        .iter()
+        .filter_map(|shape| match shape.kind {
+            Kind::Circuit(circuit) | Kind::Bonding(circuit) => Some(circuit),
+            _ => None,
+        })
+        .collect();
+    circuits.sort_unstable_by_key(|circuit| usize::from(*circuit));
+    circuits.dedup();
+    let restrictions = B::registry_circuits_xy(registry, &circuits, r, y);
+    assert_eq!(
+        restrictions.len(),
+        circuits.len(),
+        "one restriction per circuit"
+    );
+    let gate = R::txz(r, z);
+    public_parts::<_, B, _>(shapes, r, |kind, r| {
+        public::<_, R, _>(
+            kind,
+            r,
+            gate,
+            &|circuit| {
+                let position = circuits
+                    .binary_search_by_key(&usize::from(circuit), |id| usize::from(*id))
+                    .expect("the claim's circuit was evaluated");
+                restrictions[position]
+            },
+            masked,
+        )
+    })
+}
+
 /// A claim's public parts of $a$ and $b$ at `r`, by kind: a wire binding
 /// subtracts its expected values from $a$ and has its mask for $b$, a
 /// circuit claim's $b$ holds the restriction and $t(z, X)$, a bonding
@@ -231,19 +273,11 @@ pub(crate) fn verify_native<C: ProfiledCycle, R: Rank, B: Backend>(
     transcript: &mut impl IpaTranscript<C::HostCurve>,
 ) -> Result<Option<Openings<C::HostCurve>>> {
     let shapes = claims::native_shapes::<C::Profile, _>(circuit_id, z, masked)?;
-    let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,
         native::claims::ky_prefix::<C::Profile, _>(targets),
         commitment,
-        |r| {
-            // Every circuit claim shares this value. Evaluate it directly
-            // once instead of constructing its polynomial for each claim.
-            let gate = R::txz(r, z);
-            public_parts::<_, B, _>(&shapes, r, |kind, r| {
-                public::<_, R, _>(kind, r, gate, &|circuit| restriction(circuit, r), masked)
-            })
-        },
+        |r| registry_public_parts::<_, R, B, _>(&shapes, registry, r, y, z, masked),
         reduction,
         z,
         transcript,
@@ -262,17 +296,11 @@ pub(crate) fn verify_nested<C: ProfiledCycle, R: Rank, B: Backend>(
     transcript: &mut impl IpaTranscript<C::NestedCurve>,
 ) -> Result<Option<Openings<C::NestedCurve>>> {
     let shapes = claims::nested_shapes::<C::Profile, _>(z, masked)?;
-    let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
     verify::<_, R, B, _>(
         &shapes,
         nested::claims::ky_prefix::<C::Profile, _>(targets),
         commitment,
-        |r| {
-            let gate = R::txz(r, z);
-            public_parts::<_, B, _>(&shapes, r, |kind, r| {
-                public::<_, R, _>(kind, r, gate, &|circuit| restriction(circuit, r), masked)
-            })
-        },
+        |r| registry_public_parts::<_, R, B, _>(&shapes, registry, r, y, z, masked),
         reduction,
         z,
         transcript,
