@@ -217,7 +217,7 @@ criteria = "safe-to-deploy"
 [[exemptions.zakura-udon]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
-notes = "Version update for optional prepared alpha MSM tables. Carries forward the existing exemption; this is not an audit."
+notes = "Udon 0.2 dependency update. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.zerocopy]]
 version = "0.8.48"

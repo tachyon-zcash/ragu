@@ -27,8 +27,6 @@ all-features = true
 [features]
 alloc = []
 default = ["alloc"]
-# Larger fixed-generator MSM tables; trades startup and memory for online work.
-large-msm-tables = ["alloc"]
 multicore = ["maybe-rayon/threads", "std"]
 std = []
 
