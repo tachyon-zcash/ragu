@@ -261,6 +261,7 @@ fn nested_reduction_verifies() {
         c: proof.nested_c(),
         unified: ky::nested_ky(proof, y).unwrap(),
         binding: None,
+        extension: 1u64.into(),
     };
     let commitment = |component| match component {
         nested::RxComponent::AbA => proof.nested_a_commitment(),

@@ -157,6 +157,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     left_binding,
                     right_binding,
                 );
+                let ky_source = if C::Profile::OPTIONAL_DECOMPRESSION {
+                    let active = [
+                        preamble.left.extension_enabled::<C::Profile>(dr)?,
+                        preamble.right.extension_enabled::<C::Profile>(dr)?,
+                    ];
+                    ky_source.with_extension(dr, active)?
+                } else {
+                    ky_source
+                };
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
                 let fold_products = fold_revdot::ClaimFolder::new(&mu);
@@ -353,6 +362,25 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     left_binding,
                     right_binding,
                 );
+                let ky_source = if C::Profile::OPTIONAL_DECOMPRESSION {
+                    let active = [
+                        Element::constant(
+                            dr,
+                            ky::extension_enabled::<C::ScalarField, C::Profile>(
+                                nested_source.left.circuit_id(),
+                            )?,
+                        ),
+                        Element::constant(
+                            dr,
+                            ky::extension_enabled::<C::ScalarField, C::Profile>(
+                                nested_source.right.circuit_id(),
+                            )?,
+                        ),
+                    ];
+                    ky_source.with_extension(dr, active)?
+                } else {
+                    ky_source
+                };
                 let mut ky = nested::claims::ky_values::<C::Profile, _>(&ky_source);
 
                 let fold_products = fold_revdot::ClaimFolder::new(&nested_mu);

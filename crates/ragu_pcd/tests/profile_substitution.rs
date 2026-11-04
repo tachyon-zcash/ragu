@@ -3,7 +3,7 @@
 //! and compression messages. Exhaustive destructuring keeps those copies
 //! complete when either proof representation changes.
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::{
     polynomials::{AggregatorRank, R, Rank, WalletRank},
     registry::Tag,
@@ -342,7 +342,7 @@ fn application<P: Profile, Rk: Rank>(
     expected: Option<Fp>,
 ) -> Result<App<P, Rk>>
 where
-    P::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, Rk, AcceleratedBackend>: Default,
 {
     ApplicationBuilder::<C<P>, Rk, HEADER_SIZE>::new()
         .register(Seed { expected })?
@@ -385,8 +385,8 @@ fn check_same_shape<S: Profile, T: Profile>(
     local_value: Fp,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
     let sender_tags = RegistryTags::<C<S>>::from_beacon(&[0x42; 32], SENDER_MANIFEST);
@@ -514,8 +514,8 @@ fn standard_cannot_substitute_for_a_weaker_profile() -> Result<()> {
 
 fn check_different_shapes<S: Profile, T: Profile>() -> Result<()>
 where
-    S::Context<'static, Pasta, R<14>, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, R<14>, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, R<14>, AcceleratedBackend>: Default,
+    T::Context<'static, Pasta, R<14>, AcceleratedBackend>: Default,
 {
     assert_ne!(Shape::of::<S>(), Shape::of::<T>());
     let sender = application::<S, R<14>>(

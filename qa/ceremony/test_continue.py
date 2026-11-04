@@ -18,6 +18,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 VERIFIED = "Success! Bitcoin block 967690 attests existence as of 2026-09-20 UTC"
 BEACON = "11" * 32
 ARTIFACTS = ("attestation.txt", "beacon.txt", "tags.txt")
+AGGREGATOR = "aggregator-optional-decompression-v1"
 
 
 class ContinueTests(unittest.TestCase):
@@ -126,10 +127,20 @@ class ContinueTests(unittest.TestCase):
         (self.directory / "manifest_digest.txt").write_text(self.manifest_digest + "\n")
 
     def test_aggregator_uses_its_recorded_profile(self):
+        document = json.loads((FIXTURES / f"{AGGREGATOR}.manifest").read_text())
+        self.replace_manifest(document)
+        result = self.run_script(RAGU_TEST_PROFILE=AGGREGATOR)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_retired_aggregator_stops_before_external_calls(self):
         document = json.loads((FIXTURES / "aggregator.manifest").read_text())
         self.replace_manifest(document)
-        result = self.run_script(RAGU_TEST_PROFILE="aggregator")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsupported QA profile: aggregator", result.stderr)
+        self.assert_records_unchanged()
+        calls = [json.loads(line) for line in (self.directory / "calls.jsonl").read_text().splitlines()]
+        self.assertFalse(any(call[0] in ("ots", "curl", "cargo") for call in calls))
 
     def test_legacy_standard_record_is_not_rewritten(self):
         document = json.loads((FIXTURES / "standard.manifest").read_text())
@@ -143,7 +154,7 @@ class ContinueTests(unittest.TestCase):
 
     def test_profile_label_mismatch_stops_before_external_calls(self):
         document = json.loads((FIXTURES / "standard.manifest").read_text())
-        document["setup"]["profile"]["name"] = "aggregator"
+        document["setup"]["profile"]["name"] = AGGREGATOR
         self.replace_manifest(document)
         result = self.run_script()
         self.assertNotEqual(result.returncode, 0)

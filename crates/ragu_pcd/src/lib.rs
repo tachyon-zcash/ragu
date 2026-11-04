@@ -32,6 +32,12 @@
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
 //! the envelope layout, version rules and input size limits, including the
 //! limits callers must apply to Serde backends before they allocate buffers.
+//!
+//! The default `asm` feature enables Udon's AArch64 field arithmetic. Other
+//! targets and Miri use the portable Rust kernels. To select portable arithmetic
+//! on AArch64, disable default features and retain `alloc`; `multicore` is an
+//! independent, opt-in feature. Cargo unifies dependency features, so portable
+//! builds must ensure no other dependency enables Udon's `aarch64-asm` feature.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -93,7 +99,7 @@ pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder, Tag},
@@ -227,12 +233,15 @@ impl<C: ProfiledCycle> RegistryTags<C> {
 }
 
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// Independent work uses [`AcceleratedBackend`] by default. Select another
+/// backend explicitly with [`Self::with_backend`].
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -609,7 +618,7 @@ pub struct Application<
     C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,

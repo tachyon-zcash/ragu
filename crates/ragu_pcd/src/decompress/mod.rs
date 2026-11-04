@@ -71,7 +71,7 @@
 //! - [`extension`] and [`prover`]: the chunk circuits as the aggregator
 //!   profile's extension, declared from the pinned counts and registered
 //!   through the profile's hooks, and their polynomials for every proof
-//!   from the canonical compressed proof the application holds.
+//!   from the incoming wallet proof, or blinded empty traces for other steps.
 //! - The decompression step
 //!   ([`decompress`](crate::step::internal::decompress)): the one step
 //!   whose output header is the decompressed proof's, with the native
@@ -87,14 +87,10 @@
 //! stages out as a profile's extension (see [`profile`](crate::profile))
 //! and registers them through the profile's hooks beside the fuse's
 //! circuits, on both registries; [`prover`] fills their polynomials for
-//! every proof from a compressed proof's prepared sides. The aggregator
-//! profile declares it, at the aggregator rank: every chunk then runs in
-//! every proof of that profile, over the canonical compressed proof the
-//! application's [`Decompression`](crate::profile::Decompression) holds,
-//! so each child carries the extension's polynomials, which
-//! [`Shape`](crate::profile::Shape) counts, for the fuse to hash, evaluate
-//! and fold, which the fuse's circuits carry at four times the production
-//! rank's budget. The decompression
+//! decompression proof from the prepared wallet proof. Ordinary aggregator
+//! steps use blinded empty traces in the same slots. The aggregator profile
+//! declares the extension at the aggregator rank, carrying its polynomials
+//! in every child for the fuse to hash, evaluate and fold. The decompression
 //! step runs the chunks over the wallet's proof it is given and outputs
 //! that proof's header, which the statement circuit's claim holds to the
 //! header the chunks verified.
@@ -178,18 +174,12 @@
 //! The two are independent and land in either order; the aggregator's
 //! proofs are sound against a dishonest prover once both have.
 //!
-//! One cost, not a gap, remains beside them. Every proof of the profile
-//! carries the chunk circuits' polynomials, so an aggregator step that
-//! decompresses nothing still runs every chunk, over the wallet
-//! application's canonical compressed proof: in a tree over $n$ wallet
-//! proofs, $n - 1$ of its $2n - 1$ steps. Letting such a step carry an
-//! empty extension needs the fuse to accept trivial claims for the
-//! extension's circuits under a flag bound in the instance, so that a
-//! decompression step cannot claim it; until then the cost is fixed per
-//! step.
-//!
-//! TODO: let a step that decompresses nothing carry an empty extension,
-//! as above.
+//! Ordinary aggregator steps use empty extension traces with fresh SYSTEM
+//! blinding. The native collapse and last challenge binder derive activation
+//! from the child circuit IDs; the nested collapse reads the bound signs.
+//! This leaves the decompression step's extension mandatory. All polynomial
+//! slots and registry entries remain present, so the ordinary fuse still
+//! carries their small commitments and includes their claims in its fold.
 //!
 //! TODO: pin the decompressed proof to the approved Standard setup through
 //! the polynomial-query hooks #821 proposes, the registry evaluations

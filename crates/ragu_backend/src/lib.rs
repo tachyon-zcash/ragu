@@ -102,6 +102,35 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         }))
     }
 
+    /// Commits to a slice of sparse polynomials in input order.
+    ///
+    /// Groups of eight use [`Self::sparse_commit_batch`], sharing the batch
+    /// planner's execution budget and scratch. The small tail uses individual
+    /// commitments. All projective results are normalized together, so only
+    /// one batch inversion is needed for the whole slice.
+    ///
+    /// # Correctness
+    ///
+    /// Each output must match [`Self::sparse_commit_to_affine`] for the
+    /// corresponding polynomial, including identity commitments.
+    fn sparse_commit_many_to_affine<C: Affine, R: Rank, G: FixedGenerators<C>>(
+        polys: &[sparse::Polynomial<C::Scalar, R>],
+        generators: &G,
+    ) -> Vec<C> {
+        let mut projective = Vec::with_capacity(polys.len());
+        let (batches, tail) = polys.as_chunks::<8>();
+        for batch in batches {
+            projective.extend(Self::sparse_commit_batch(batch.each_ref(), generators));
+        }
+        projective.extend(
+            tail.iter()
+                .map(|poly| Self::sparse_commit(poly, generators)),
+        );
+        let mut affine = alloc::vec![C::identity(); projective.len()];
+        C::batch_to_affine(&projective, &mut affine);
+        affine
+    }
+
     /// Commits to a sparse polynomial and normalizes the result to affine.
     ///
     /// # Correctness
@@ -306,7 +335,10 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     }
 }
 
-/// The backend used by default throughout Ragu.
+/// The reference backend, with serial scheduling of independent operations.
+///
+/// Applications may select this explicitly to compare accelerated kernels
+/// against their reference implementations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReferenceBackend;
 

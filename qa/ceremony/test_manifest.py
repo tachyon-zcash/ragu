@@ -15,6 +15,7 @@ import manifest
 
 HERE = Path(__file__).parent
 FIXTURES = HERE / "fixtures"
+AGGREGATOR = "aggregator-optional-decompression-v1"
 
 
 class ManifestTests(unittest.TestCase):
@@ -22,13 +23,43 @@ class ManifestTests(unittest.TestCase):
         return manifest.load(FIXTURES / f"{profile}.manifest")
 
     def test_fixture_canonical_bytes_and_digests(self):
-        for profile in ("standard", "aggregator"):
+        for profile in ("standard", AGGREGATOR):
             with self.subTest(profile=profile):
                 encoded = manifest.canonical_bytes(self.fixture(profile))
                 self.assertEqual(encoded, (FIXTURES / f"{profile}.manifest").read_bytes())
                 self.assertEqual(hashlib.sha256(encoded).hexdigest(),
                                  (FIXTURES / f"{profile}.manifest.sha256").read_text().strip())
                 self.assertEqual(manifest.continuation_profile(self.fixture(profile)), profile)
+
+    def test_tag_vectors_match_independent_derivation(self):
+        # Preserve the retired profile's vectors as well as the current ones.
+        fields = (
+            ("native", 0x40000000000000000000000000000000224698fc094cf91b992d30ed00000001),
+            ("nested", 0x40000000000000000000000000000000224698fc0994a8dd8c46eb2100000001),
+        )
+        for profile in ("standard", "aggregator", AGGREGATOR):
+            encoded = (FIXTURES / f"{profile}.manifest").read_bytes()
+            digest = hashlib.sha256(encoded).digest()
+            self.assertEqual(digest.hex(),
+                             (FIXTURES / f"{profile}.manifest.sha256").read_text().strip())
+            document = self.fixture(profile)
+            for side, modulus in fields:
+                with self.subTest(profile=profile, side=side):
+                    label = document["beacon"][f"{side}_registry_label"].encode("ascii")
+                    state = hashlib.blake2b(person=b"ragu_tag_beacon_")
+                    for value in (label, digest, bytes([0x42]) * 32):
+                        state.update(len(value).to_bytes(8, "little"))
+                        state.update(value)
+                    tag = int.from_bytes(state.digest(), "little") % modulus
+                    self.assertEqual(f"{tag:064x}",
+                                     (FIXTURES / f"{profile}.{side}.tag").read_text().strip())
+
+    def test_retired_aggregator_record_is_rejected(self):
+        old = self.fixture("aggregator")
+        with self.assertRaisesRegex(ValueError, "unsupported QA profile: aggregator"):
+            manifest.canonical_bytes(old)
+        with self.assertRaisesRegex(ValueError, "unsupported QA profile: aggregator"):
+            manifest.continuation_profile(old)
 
     def test_object_order_is_canonical_but_array_order_is_preserved(self):
         original = self.fixture()
@@ -39,7 +70,7 @@ class ManifestTests(unittest.TestCase):
         self.assertNotEqual(manifest.canonical_bytes(original), manifest.canonical_bytes(reordered))
 
     def test_setup_choices_change_the_manifest_digest(self):
-        original = self.fixture("aggregator")
+        original = self.fixture(AGGREGATOR)
         encoded = manifest.canonical_bytes(original)
         variants = []
         for path, value in [
@@ -76,7 +107,7 @@ class ManifestTests(unittest.TestCase):
                     manifest.canonical_bytes(value)
 
     def test_profile_and_label_mismatches_are_rejected(self):
-        for profile in ("standard", "aggregator"):
+        for profile in ("standard", AGGREGATOR):
             value = self.fixture(profile)
             value["beacon"]["native_registry_label"] = "wrong label"
             with self.assertRaisesRegex(ValueError, "does not match profile"):
@@ -91,11 +122,11 @@ class ManifestTests(unittest.TestCase):
         value["artifacts"]["source"]["sha256"] = "short"
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             manifest.canonical_bytes(value)
-        value = self.fixture("aggregator")
+        value = self.fixture(AGGREGATOR)
         value["setup"]["verified_setups"] = [{"profile": "standard", "manifest_sha256": "02" * 32}]
         with self.assertRaisesRegex(ValueError, "record_sha256"):
             manifest.canonical_bytes(value)
-        value = self.fixture("aggregator")
+        value = self.fixture(AGGREGATOR)
         value["setup"]["verified_setups"] = [{"profile": "standard", "manifest_sha256": "short"}]
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             manifest.canonical_bytes(value)

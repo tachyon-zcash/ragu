@@ -475,7 +475,9 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
         claim.value,
     )?;
     let g_prime = guard.compute_g::<B>();
-    if !guard.use_challenges().eval::<B>() {
+    // G-prime was computed from the verifier's challenges and fixed
+    // generators above. Reuse it instead of doing that full MSM again.
+    if !guard.use_g(g_prime).0.eval::<B>() {
         return Err(Error::InvalidWitness("the IPA fails".into()));
     }
 

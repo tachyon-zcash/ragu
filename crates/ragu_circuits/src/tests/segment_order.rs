@@ -181,6 +181,12 @@ proptest! {
     #[test]
     fn polynomial_consistency(tree in arb_tree()) {
         let circuit = TreeCircuit(tree);
+        if let Ok(metrics) = crate::metrics::eval(&circuit)
+            && metrics.num_gates <= <TestRank as crate::polynomials::Rank>::n()
+            && metrics.num_constraints < <TestRank as crate::polynomials::Rank>::num_coeffs()
+        {
+            crate::wiring::compiled::tests::assert_matches_interpreted::<_, TestRank>(&circuit);
+        }
         // Skip trees that exceed TestRank's multiplication bound.
         let circuit_obj = match crate::into_wiring_object::<_, _, TestRank>(circuit) {
             Ok(obj) => obj,

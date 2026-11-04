@@ -1,14 +1,15 @@
 //! The decompression as a profile's prover: the extension's polynomials
 //! for a proof, from a compressed proof's prepared sides.
 //!
-//! Every proof of a profile carries every extension circuit's polynomial,
-//! so every fuse runs the chunks over some compressed proof. A step that
-//! decompresses a wallet's proof runs them over that one; any other runs
-//! them over a canonical one, the wallet application's bootstrap proof
-//! compressed, which [`Decompression`] prepares once and holds for the
-//! aggregator application's lifetime. The chunk circuits' traces then
-//! assemble against the aggregator's registry as the fuse's own circuits'
-//! do, and the stages' polynomials come from the prepared sides' values.
+//! A decompression step traces the verifier over its incoming wallet proof
+//! and assembles those traces against the aggregator's registry. Ordinary
+//! aggregator steps instead use empty extension traces with fresh SYSTEM
+//! blinding. The optional-extension relation derives activation from the
+//! application's bound circuit ID on both sides.
+//!
+//! Profiles that retain the always-active relation can still use the
+//! canonical bootstrap decompression and its cached circuit bodies. Actual
+//! decompressions always trace and commit their input's circuits.
 //!
 //! The context owns the wallet application: the aggregator application
 //! holds the standard application whose proofs it decompresses, and hands
@@ -60,10 +61,17 @@ pub struct Decompressed<C: IpaCycle + ProfiledCycle<Profile = Standard>>(pub(cra
 pub struct Decompression<'params, C, R, const HEADER_SIZE: usize, B>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    R: Rank,
     B: SelectableBackend,
 {
     wallet: Application<'params, C, WalletRank, HEADER_SIZE, B>,
     canonical: Sides<C>,
+    // Owned by this context, which is moved into one finalized application:
+    // the registry layout and generator tables cannot change underneath it.
+    #[cfg(feature = "std")]
+    native_cache: std::sync::OnceLock<CanonicalCircuits<C::HostCurve, R>>,
+    #[cfg(feature = "std")]
+    nested_cache: std::sync::OnceLock<CanonicalCircuits<C::NestedCurve, R>>,
     _marker: PhantomData<fn() -> R>,
 }
 
@@ -71,6 +79,7 @@ where
 impl<C, R, const HEADER_SIZE: usize, B> ProverContext for Decompression<'_, C, R, HEADER_SIZE, B>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
+    R: Rank,
     B: SelectableBackend,
 {
     type Source = Decompressed<C>;
@@ -123,6 +132,10 @@ where
         Ok(Decompression {
             wallet,
             canonical,
+            #[cfg(feature = "std")]
+            native_cache: std::sync::OnceLock::new(),
+            #[cfg(feature = "std")]
+            nested_cache: std::sync::OnceLock::new(),
             _marker: PhantomData,
         })
     }
@@ -151,6 +164,36 @@ where
         >(&self.wallet, pcd)?))
     }
 
+    pub(crate) fn native_cached_commitments(
+        &self,
+        source: Option<&Decompressed<C>>,
+        circuits: &[sparse::Polynomial<C::CircuitField, R>],
+    ) -> Option<Vec<C::HostCurve>> {
+        #[cfg(feature = "std")]
+        if source.is_none() {
+            return self.native_cache.get().map(|cache| {
+                cache.commitments::<B>(circuits, C::host_generators(self.wallet.params))
+            });
+        }
+        let _ = (source, circuits);
+        None
+    }
+
+    pub(crate) fn nested_cached_commitments(
+        &self,
+        source: Option<&Decompressed<C>>,
+        circuits: &[sparse::Polynomial<C::ScalarField, R>],
+    ) -> Option<Vec<C::NestedCurve>> {
+        #[cfg(feature = "std")]
+        if source.is_none() {
+            return self.nested_cache.get().map(|cache| {
+                cache.commitments::<B>(circuits, C::nested_generators(self.wallet.params))
+            });
+        }
+        let _ = (source, circuits);
+        None
+    }
+
     /// The sides a fuse runs the chunks over: `source`'s, the proof the
     /// step decompresses, or the canonical proof's without.
     fn sides<'a>(&'a self, source: Option<&'a Decompressed<C>>) -> &'a Sides<C> {
@@ -158,7 +201,9 @@ where
     }
 
     /// The native extension's polynomials for profile `P` over `source`,
-    /// or over the canonical decompression without: every chunk circuit's
+    /// or a blinded empty witness for an inactive optional extension. An
+    /// always-active profile uses the canonical proof without a source:
+    /// every chunk circuit's
     /// trace, the statement circuit's and the binding circuit's assembled
     /// against `registry` at their index in `P`'s layout, and the six
     /// stages' polynomials, each blinded from `rng` but the digits
@@ -174,32 +219,57 @@ where
         registry: &Registry<'_, C::CircuitField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
+        if P::OPTIONAL_DECOMPRESSION && source.is_none() {
+            return Ok(empty_extension(&P::native_extension(), rng));
+        }
         let prepared = &self.sides(source).native;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
-        for index in 0..schedule.circuits.len() {
-            let trace =
-                chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
-            let circuit = native::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
-        }
-        let trace =
-            chunk::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(schedule.clone())
-                .trace(prepared)?
-                .into_parts()
-                .0;
-        let statement =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
-        circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
-        let trace =
-            chunk::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(schedule.clone())
-                .trace(prepared)?
-                .into_parts()
-                .0;
-        let binding =
-            native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
-        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+        #[cfg(feature = "std")]
+        let cached = source
+            .is_none()
+            .then(|| self.native_cache.get())
+            .flatten()
+            .map(|cached| cached.rerandomize(rng));
+        #[cfg(not(feature = "std"))]
+        let cached: Option<Vec<sparse::Polynomial<C::CircuitField, R>>> = None;
+        let circuits = if let Some(circuits) = cached {
+            circuits
+        } else {
+            let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
+            for index in 0..schedule.circuits.len() {
+                let trace =
+                    chunk_trace::<C, Native, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+                let circuit = native::InternalCircuitIndex::ExtensionCircuit(index as u32);
+                circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
+            }
+            let trace = chunk::StatementCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
+                schedule.clone(),
+            )
+            .trace(prepared)?
+            .into_parts()
+            .0;
+            let statement =
+                native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
+            circuits.push(registry.assemble(&trace, statement.circuit_index::<P>(), rng)?);
+            let trace = chunk::BindingCircuit::<C, Native, WalletRank, R, HEADER_SIZE>::new(
+                schedule.clone(),
+            )
+            .trace(prepared)?
+            .into_parts()
+            .0;
+            let binding =
+                native::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32 + 1);
+            circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+            #[cfg(feature = "std")]
+            if source.is_none() {
+                let _ = self.native_cache.set(CanonicalCircuits::new::<B>(
+                    &circuits,
+                    C::host_generators(params),
+                ));
+            }
+            circuits
+        };
         type Lifts<C, R, const H: usize> = LiftsStage<C, Native, WalletRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Native, WalletRank, R, H>;
         type Transcript<C, R, const H: usize> = TranscriptStage<C, Native, WalletRank, R, H>;
@@ -230,24 +300,48 @@ where
         registry: &Registry<'_, C::ScalarField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
+        if P::OPTIONAL_DECOMPRESSION && source.is_none() {
+            return Ok(empty_extension(&P::nested_extension(), rng));
+        }
         let prepared: &Prepared<C, Nested> = &self.sides(source).nested;
         let schedule = Arc::new(prepared.schedule.clone());
         let params = self.wallet.params;
-        let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
-        for index in 0..schedule.circuits.len() {
-            let trace =
-                chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
-            let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
-            circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
-        }
-        let trace =
-            chunk::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(schedule.clone())
-                .trace(prepared)?
-                .into_parts()
-                .0;
-        let binding =
-            nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
-        circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+        #[cfg(feature = "std")]
+        let cached = source
+            .is_none()
+            .then(|| self.nested_cache.get())
+            .flatten()
+            .map(|cached| cached.rerandomize(rng));
+        #[cfg(not(feature = "std"))]
+        let cached: Option<Vec<sparse::Polynomial<C::ScalarField, R>>> = None;
+        let circuits = if let Some(circuits) = cached {
+            circuits
+        } else {
+            let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
+            for index in 0..schedule.circuits.len() {
+                let trace =
+                    chunk_trace::<C, Nested, R, HEADER_SIZE>(&schedule, index, prepared, params)?;
+                let circuit = nested::InternalCircuitIndex::ExtensionCircuit(index as u32);
+                circuits.push(registry.assemble(&trace, circuit.circuit_index::<P>(), rng)?);
+            }
+            let trace = chunk::BindingCircuit::<C, Nested, WalletRank, R, HEADER_SIZE>::new(
+                schedule.clone(),
+            )
+            .trace(prepared)?
+            .into_parts()
+            .0;
+            let binding =
+                nested::InternalCircuitIndex::ExtensionCircuit(schedule.circuits.len() as u32);
+            circuits.push(registry.assemble(&trace, binding.circuit_index::<P>(), rng)?);
+            #[cfg(feature = "std")]
+            if source.is_none() {
+                let _ = self.nested_cache.set(CanonicalCircuits::new::<B>(
+                    &circuits,
+                    C::nested_generators(params),
+                ));
+            }
+            circuits
+        };
         type Lifts<C, R, const H: usize> = LiftsStage<C, Nested, WalletRank, R, H>;
         type Work<C, R, const H: usize> = WorkStage<C, Nested, WalletRank, R, H>;
         type Digits<C, R, const H: usize> = DigitsStage<C, Nested, WalletRank, R, H>;
@@ -329,6 +423,95 @@ where
     })
 }
 
+/// A fixed canonical circuit body with its original SYSTEM-gate blinding.
+/// Only this blinding changes between ordinary aggregator fuses. Actual
+/// decompressions always trace their input-dependent circuits afresh.
+#[cfg(feature = "std")]
+struct CanonicalCircuits<C: udon::curve::Affine, R: Rank> {
+    polynomials: Vec<sparse::Polynomial<C::Scalar, R>>,
+    alphas: Vec<C::Scalar>,
+    commitments: Vec<C>,
+}
+
+#[cfg(feature = "std")]
+impl<C: udon::curve::Affine, R: Rank> CanonicalCircuits<C, R> {
+    fn new<B: ragu_backend::Backend>(
+        polynomials: &[sparse::Polynomial<C::Scalar, R>],
+        generators: &impl FixedGenerators<C>,
+    ) -> Self {
+        Self {
+            polynomials: polynomials.to_vec(),
+            alphas: polynomials.iter().map(trace_alpha).collect(),
+            commitments: B::sparse_commit_many_to_affine(polynomials, generators),
+        }
+    }
+
+    fn rerandomize(&self, rng: &mut impl CryptoRng) -> Vec<sparse::Polynomial<C::Scalar, R>> {
+        self.polynomials
+            .iter()
+            .zip(&self.alphas)
+            .map(|(rx, &alpha)| {
+                let mut rx = rx.clone();
+                let mut delta = sparse::View::trace();
+                delta.a.push(blinding::<C::Scalar>(rng) - alpha);
+                rx.add_assign(&delta.build());
+                rx
+            })
+            .collect()
+    }
+
+    fn commitments<B: ragu_backend::Backend>(
+        &self,
+        polynomials: &[sparse::Polynomial<C::Scalar, R>],
+        generators: &impl FixedGenerators<C>,
+    ) -> Vec<C> {
+        assert_eq!(polynomials.len(), self.polynomials.len());
+        let generator = generators.g()[2 * R::n() - 1];
+        let projective: Vec<_> = polynomials
+            .iter()
+            .zip(&self.alphas)
+            .zip(&self.commitments)
+            .map(|((rx, &alpha), &commitment)| {
+                let scalars = [C::Scalar::ONE, trace_alpha(rx) - alpha];
+                let bases = [commitment, generator];
+                B::msm(scalars.iter(), bases.iter())
+            })
+            .collect();
+        let mut result = alloc::vec![C::identity(); projective.len()];
+        C::batch_to_affine(&projective, &mut result);
+        result
+    }
+}
+
+#[cfg(feature = "std")]
+fn trace_alpha<F: Field, R: Rank>(rx: &sparse::Polynomial<F, R>) -> F {
+    rx.iter_stored_coeffs()
+        .find_map(|(degree, &coefficient)| (degree == 2 * R::n() - 1).then_some(coefficient))
+        .unwrap_or(F::ZERO)
+}
+
+/// An inactive extension still has nonidentity commitments. The SYSTEM
+/// a-wire is unconstrained by circuit wiring and stage masks; b, c and d
+/// remain zero, so every extension revdot target is zero.
+fn empty_extension<F: Field, R: Rank>(
+    extension: &crate::profile::Extension,
+    rng: &mut impl CryptoRng,
+) -> ExtensionRxs<F, R> {
+    let mut empty = || {
+        let mut alpha = F::ZERO;
+        while alpha == F::ZERO {
+            alpha = blinding(rng);
+        }
+        let mut view = sparse::View::trace();
+        view.a.push(alpha);
+        view.build()
+    };
+    ExtensionRxs {
+        circuits: (0..extension.circuits.len()).map(|_| empty()).collect(),
+        stages: (0..extension.stages).map(|_| empty()).collect(),
+    }
+}
+
 /// A stage polynomial's blinding.
 fn blinding<F: Field>(rng: &mut impl CryptoRng) -> F {
     F::random(|bytes| rng.fill_bytes(bytes))
@@ -371,5 +554,68 @@ where
             Some(&decompressed),
         )?;
         Ok(pcd)
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod canonical_cache_tests {
+    use ragu_backend::{Backend, ReferenceBackend};
+    use ragu_core::{Cycle, pasta::Pasta};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
+    use udon::curve::Affine;
+
+    use super::*;
+
+    fn check<C: Affine>(generators: &impl FixedGenerators<C>) {
+        type R = ragu_circuits::polynomials::TestRank;
+        let polynomials: Vec<sparse::Polynomial<C::Scalar, R>> = (0..3)
+            .map(|i| {
+                let mut view = sparse::View::trace();
+                view.a.extend([C::Scalar::from(i), C::Scalar::from(5)]);
+                view.b.extend([C::Scalar::ZERO, C::Scalar::from(7)]);
+                view.c.extend([C::Scalar::ZERO, C::Scalar::from(35)]);
+                view.d.push(C::Scalar::ONE);
+                view.build()
+            })
+            .collect();
+        let cache = CanonicalCircuits::new::<ReferenceBackend>(&polynomials, generators);
+        let mut cached_rng = StdRng::seed_from_u64(51);
+        let mut direct_rng = StdRng::seed_from_u64(51);
+        for _ in 0..4 {
+            let actual = cache.rerandomize(&mut cached_rng);
+            let commitments = cache.commitments::<ReferenceBackend>(&actual, generators);
+            for ((original, actual), commitment) in polynomials.iter().zip(&actual).zip(commitments)
+            {
+                let alpha = blinding::<C::Scalar>(&mut direct_rng);
+                let expected: Vec<_> = original
+                    .iter_coeffs()
+                    .enumerate()
+                    .map(|(degree, coefficient)| {
+                        if degree == 2 * R::n() - 1 {
+                            alpha
+                        } else {
+                            coefficient
+                        }
+                    })
+                    .collect();
+                assert!(actual.iter_coeffs().eq(expected));
+                assert_eq!(
+                    commitment,
+                    ReferenceBackend::sparse_commit_to_affine(actual, generators)
+                );
+            }
+        }
+        assert_eq!(
+            cached_rng.random::<u64>(),
+            direct_rng.random::<u64>(),
+            "cache preserves random draws"
+        );
+    }
+
+    #[test]
+    fn rerandomized_polynomials_and_commitments_match_direct_computation_on_both_curves() {
+        let params = crate::pasta::baked_aggregator();
+        check(Pasta::host_generators(params));
+        check(Pasta::nested_generators(params));
     }
 }

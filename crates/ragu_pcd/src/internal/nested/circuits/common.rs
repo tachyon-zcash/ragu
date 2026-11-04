@@ -58,7 +58,7 @@ pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub query: stages::query::Output<'dr, D, C, P>,
     pub f: stages::f::Output<'dr, D, C>,
     pub eval: stages::eval::Output<'dr, D, C, P>,
-    pub challenges: stages::challenges::Output<'dr, D>,
+    pub challenges: stages::challenges::Output<'dr, D, P>,
 }
 
 /// Reserves the whole stage chain and loads every stage, unenforced.

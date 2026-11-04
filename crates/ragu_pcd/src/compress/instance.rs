@@ -460,10 +460,12 @@ impl<C: ProfiledCycle> Instance<C> {
         let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
             self.native_commitment(native::RxComponent::Rx(index))
         });
+        let extension = ky::extension_enabled::<C::ScalarField, C::Profile>(self.circuit_id)?;
         let nested = NestedKy {
             c: self.nested_c,
+            extension,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
-            binding: ky::binding_ky_of(&native_bound, nested_y)?,
+            binding: ky::binding_ky_of(&native_bound, nested_y)?.map(|v| v * extension),
         };
         Ok((native, nested))
     }
@@ -481,14 +483,16 @@ impl<C: ProfiledCycle> Instance<C> {
             return Ok(false);
         };
         let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
+        let mut witness = nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
+            challenge_lifts.try_into().expect("NUM challenge lifts"),
+            &self.left_header,
+            &self.right_header,
+            beta_lift[0],
+        );
+        witness.set_extension_signs::<C::Profile, _>([self.left.id, self.right.id])?;
         let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::ZERO,
-            &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
-                challenge_lifts.try_into().expect("NUM challenge lifts"),
-                &self.left_header,
-                &self.right_header,
-                beta_lift[0],
-            ),
+            &witness,
         )?;
         let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),

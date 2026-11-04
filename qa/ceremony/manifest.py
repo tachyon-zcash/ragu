@@ -10,7 +10,7 @@ import sys
 
 FORMAT = "ragu-setup-manifest-v1"
 HEIGHT_RULE = "earliest verified OpenTimestamps Bitcoin attestation height + 100"
-PROFILES = ("standard", "aggregator")
+PROFILES = ("standard", "aggregator-optional-decompression-v1")
 
 
 def unique_keys(pairs):

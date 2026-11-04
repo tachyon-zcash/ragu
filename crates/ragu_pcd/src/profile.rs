@@ -156,6 +156,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
 
+    /// Whether the extension is active only for the internal decompression
+    /// step. Other steps have zero extension targets and may use blinded
+    /// empty traces. Both curves derive activation from the bound circuit ID;
+    /// the nested side receives it through the native-bound challenge stage.
+    const OPTIONAL_DECOMPRESSION: bool = false;
+
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
     /// over the nested batch takes a step per so many points, so more per
@@ -353,6 +359,42 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
+    /// Supplies cached commitments for the native extension's circuit
+    /// polynomials, or leaves their computation to the proof builder.
+    /// Every returned point must commit to the corresponding polynomial
+    /// under the context's parameters, including its fresh blinding.
+    fn native_extension_commitments<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        circuits: &[sparse::Polynomial<Base::CircuitField, R>],
+    ) -> Option<Vec<Base::HostCurve>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, source, circuits);
+        None
+    }
+
+    /// Supplies cached commitments for the nested extension's circuit
+    /// polynomials, or leaves their computation to the proof builder.
+    /// Every returned point must commit to the corresponding polynomial
+    /// under the context's parameters, including its fresh blinding.
+    fn nested_extension_commitments<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        circuits: &[sparse::Polynomial<Base::ScalarField, R>],
+    ) -> Option<Vec<Base::NestedCurve>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, source, circuits);
+        None
+    }
+
     /// Checks that the constants agree with the extensions and that the
     /// extensions are well formed, and that the endoscaling counts allow
     /// the walk sizes to converge.
@@ -394,6 +436,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         let native = Self::native_extension();
         let nested = Self::nested_extension();
+        if Self::OPTIONAL_DECOMPRESSION && native.statement.is_none() {
+            return Err(Error::Initialization(
+                "an optional decompression extension requires a statement circuit".into(),
+            ));
+        }
         for (side, declared, extension, other) in [
             ("native", Self::NATIVE_EXTENSION, &native, &nested),
             ("nested", Self::NESTED_EXTENSION, &nested, &native),
@@ -665,6 +712,58 @@ impl<F: Field, C: Circuit<F>> Circuit<F> for Suffixed<C> {
 pub(crate) const NO_NATIVE_EXTENSION_PROVER: &str = "the profile's native extension has no prover";
 /// The nested counterpart of [`NO_NATIVE_EXTENSION_PROVER`].
 pub(crate) const NO_NESTED_EXTENSION_PROVER: &str = "the profile's nested extension has no prover";
+
+/// Invariant layout dimensions used by arithmetic index lookups. Keep the
+/// descriptor's Vec allocations out of these lookups, as well as the index
+/// lists themselves. The no-std path retains the original allocation behavior.
+#[derive(Clone, Copy)]
+pub(crate) struct ExtensionLengths {
+    pub circuits: usize,
+    pub stages: usize,
+    pub bondings: usize,
+}
+
+pub(crate) fn extension_lengths<P: Profile>(nested: bool) -> ExtensionLengths {
+    let build = || {
+        let extension = if nested {
+            P::nested_extension()
+        } else {
+            P::native_extension()
+        };
+        ExtensionLengths {
+            circuits: extension.circuits.len(),
+            stages: extension.stages,
+            bondings: extension.bondings(),
+        }
+    };
+    #[cfg(feature = "std")]
+    {
+        use std::sync::{Mutex, OnceLock, PoisonError};
+        static LENGTHS: OnceLock<
+            Mutex<std::collections::HashMap<(TypeId, bool), ExtensionLengths>>,
+        > = OnceLock::new();
+        let lengths = LENGTHS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+        let key = (TypeId::of::<P>(), nested);
+        if let Some(value) = lengths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            .copied()
+        {
+            return value;
+        }
+        // Build outside the lock: descriptor construction can ask for other
+        // profile dimensions through a stage's length type.
+        let value = build();
+        *lengths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(key)
+            .or_insert(value)
+    }
+    #[cfg(not(feature = "std"))]
+    build()
+}
 
 /// An extension's polynomials for one proof: its circuits' rx polynomials
 /// in circuit order, then its stages' in stage order.
@@ -1004,7 +1103,7 @@ impl Profile for Standard {
 
 /// The aggregator profile's [`NAME`](Profile::NAME), the same for every
 /// header size.
-pub(crate) const AGGREGATOR_NAME: &str = "aggregator";
+pub(crate) const AGGREGATOR_NAME: &str = "aggregator-optional-decompression-v1";
 
 /// A cycle with a profile: what every item that lays out a proof is generic
 /// over.
@@ -2638,7 +2737,7 @@ mod tests {
         }
         named!(Nameless, "");
         named!(StandardImpostor, "standard");
-        named!(AggregatorImpostor, "aggregator");
+        named!(AggregatorImpostor, AGGREGATOR_NAME);
         named!(Named, "named");
 
         // A profile that copies a built-in profile's token still carries
@@ -2664,7 +2763,7 @@ mod tests {
             };
         }
         forged!(StandardForger, "standard", Standard);
-        forged!(AggregatorForger, "aggregator", Aggregator<4>);
+        forged!(AggregatorForger, AGGREGATOR_NAME, Aggregator<4>);
         assert!(StandardForger::check().is_err());
         assert!(AggregatorForger::check().is_err());
 
@@ -2923,7 +3022,7 @@ mod tests {
     fn a_binding_holds_the_sides_to_each_other_under<P>() -> Result<()>
     where
         P: Profile<
-            Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+            Context<'static, Pasta, R<14>, ragu_acceleration::AcceleratedBackend> = CrossingContext<
                 'static,
                 Pasta,
             >,
@@ -2995,7 +3094,7 @@ mod tests {
     fn extension_polynomials_are_bound_under<P>() -> Result<()>
     where
         P: Profile<
-            Context<'static, Pasta, R<14>, ragu_backend::ReferenceBackend> = CrossingContext<
+            Context<'static, Pasta, R<14>, ragu_acceleration::AcceleratedBackend> = CrossingContext<
                 'static,
                 Pasta,
             >,

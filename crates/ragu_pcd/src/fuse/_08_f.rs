@@ -4,8 +4,9 @@
 //! for the claimed evaluations in the `query` stage. This also constructs the
 //! bridge for committing to the polynomial.
 //!
-//! Each `udon::polynomial::divide_linear_rev` call below produces the coefficients of $(p\_i(X) - v\_i)
-//! / (X - x\_i)$ for a single query. The static query prefix is defined by
+//! Queries at the same point are combined with their original alpha weights
+//! before division by $X - x_i$. Linearity gives the same quotient sum while
+//! requiring only one division per distinct point. The static query prefix is defined by
 //! [`STATIC_F_QUERIES`] and consumed by both this prover path and the
 //! `compute_v` circuit.
 //!
@@ -17,7 +18,7 @@
 //! commitment the `f` bridge carries, so they are fixed before $u$ is
 //! squeezed.
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use ragu_circuits::{
     polynomials::{Rank, sparse},
@@ -144,8 +145,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        use udon::polynomial::divide_linear_rev;
-
         let w = *w.value().take();
         let y = *y.value().take();
         let z = *z.value().take();
@@ -157,88 +156,51 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             idx.circuit_index::<C::Profile>().omega_j()
         };
 
-        let mut iters: Vec<_> = STATIC_F_QUERIES
+        let mut queries: Vec<_> = STATIC_F_QUERIES
             .into_iter()
             .map(|query| match query {
-                StaticFQuery::LeftP => {
-                    divide_linear_rev(left.native_p_poly().iter_coeffs(), left.u())
-                }
-                StaticFQuery::RightP => {
-                    divide_linear_rev(right.native_p_poly().iter_coeffs(), right.u())
-                }
-                StaticFQuery::LeftRegistryXyAtW => {
-                    divide_linear_rev(left.native_registry_xy_poly().iter_coeffs(), w)
-                }
-                StaticFQuery::RightRegistryXyAtW => {
-                    divide_linear_rev(right.native_registry_xy_poly().iter_coeffs(), w)
-                }
-                StaticFQuery::RegistryWx0AtLeftY => {
-                    divide_linear_rev(s_prime.registry_wx0_poly.iter_coeffs(), left.y())
-                }
-                StaticFQuery::RegistryWx1AtRightY => {
-                    divide_linear_rev(s_prime.registry_wx1_poly.iter_coeffs(), right.y())
-                }
-                StaticFQuery::RegistryWx0AtY => {
-                    divide_linear_rev(s_prime.registry_wx0_poly.iter_coeffs(), y)
-                }
-                StaticFQuery::RegistryWx1AtY => {
-                    divide_linear_rev(s_prime.registry_wx1_poly.iter_coeffs(), y)
-                }
-                StaticFQuery::RegistryWyAtLeftX => {
-                    divide_linear_rev(registry_wy.poly.iter_coeffs(), left.x())
-                }
-                StaticFQuery::RegistryWyAtRightX => {
-                    divide_linear_rev(registry_wy.poly.iter_coeffs(), right.x())
-                }
-                StaticFQuery::RegistryWyAtX => divide_linear_rev(registry_wy.poly.iter_coeffs(), x),
-                StaticFQuery::RegistryXyAtW => {
-                    divide_linear_rev(builder.native_registry_xy_poly().iter_coeffs(), w)
-                }
-                StaticFQuery::RegistryXyAtLeftCircuitId => divide_linear_rev(
-                    builder.native_registry_xy_poly().iter_coeffs(),
+                StaticFQuery::LeftP => (left.native_p_poly(), left.u()),
+                StaticFQuery::RightP => (right.native_p_poly(), right.u()),
+                StaticFQuery::LeftRegistryXyAtW => (left.native_registry_xy_poly(), w),
+                StaticFQuery::RightRegistryXyAtW => (right.native_registry_xy_poly(), w),
+                StaticFQuery::RegistryWx0AtLeftY => (&s_prime.registry_wx0_poly, left.y()),
+                StaticFQuery::RegistryWx1AtRightY => (&s_prime.registry_wx1_poly, right.y()),
+                StaticFQuery::RegistryWx0AtY => (&s_prime.registry_wx0_poly, y),
+                StaticFQuery::RegistryWx1AtY => (&s_prime.registry_wx1_poly, y),
+                StaticFQuery::RegistryWyAtLeftX => (&registry_wy.poly, left.x()),
+                StaticFQuery::RegistryWyAtRightX => (&registry_wy.poly, right.x()),
+                StaticFQuery::RegistryWyAtX => (&registry_wy.poly, x),
+                StaticFQuery::RegistryXyAtW => (builder.native_registry_xy_poly(), w),
+                StaticFQuery::RegistryXyAtLeftCircuitId => (
+                    builder.native_registry_xy_poly(),
                     left.circuit_id().omega_j(),
                 ),
-                StaticFQuery::RegistryXyAtRightCircuitId => divide_linear_rev(
-                    builder.native_registry_xy_poly().iter_coeffs(),
+                StaticFQuery::RegistryXyAtRightCircuitId => (
+                    builder.native_registry_xy_poly(),
                     right.circuit_id().omega_j(),
                 ),
-                StaticFQuery::LeftAbAAtXz => {
-                    divide_linear_rev(left[RxComponent::AbA].iter_coeffs(), xz)
-                }
-                StaticFQuery::LeftAbBAtX => {
-                    divide_linear_rev(left[RxComponent::AbB].iter_coeffs(), x)
-                }
-                StaticFQuery::RightAbAAtXz => {
-                    divide_linear_rev(right[RxComponent::AbA].iter_coeffs(), xz)
-                }
-                StaticFQuery::RightAbBAtX => {
-                    divide_linear_rev(right[RxComponent::AbB].iter_coeffs(), x)
-                }
-                StaticFQuery::CurrentAAtXz => {
-                    divide_linear_rev(builder.native_a_poly().iter_coeffs(), xz)
-                }
-                StaticFQuery::CurrentBAtX => {
-                    divide_linear_rev(builder.native_b_poly().iter_coeffs(), x)
-                }
+                StaticFQuery::LeftAbAAtXz => (&left[RxComponent::AbA], xz),
+                StaticFQuery::LeftAbBAtX => (&left[RxComponent::AbB], x),
+                StaticFQuery::RightAbAAtXz => (&right[RxComponent::AbA], xz),
+                StaticFQuery::RightAbBAtX => (&right[RxComponent::AbB], x),
+                StaticFQuery::CurrentAAtXz => (builder.native_a_poly(), xz),
+                StaticFQuery::CurrentBAtX => (builder.native_b_poly(), x),
             })
             .collect();
         // Per-rx evaluations at xz only. The same r_i(xz) values feed
         // into both A(xz) (undilated) and B(x) (Z-dilated).
         for proof in [left, right] {
             for id in RxIndex::all::<C::Profile>() {
-                iters.push(divide_linear_rev(proof[id].iter_coeffs(), xz));
+                queries.push((&proof[id], xz));
             }
         }
 
         // m(\omega^j, x, y) evaluations for each internal index j
         for id in native::InternalCircuitIndex::all::<C::Profile>() {
-            iters.push(divide_linear_rev(
-                builder.native_registry_xy_poly().iter_coeffs(),
-                omega_j(id),
-            ));
+            queries.push((builder.native_registry_xy_poly(), omega_j(id)));
         }
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let poly = alpha_batched_quotients::<_, R, B>(queries, alpha);
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
@@ -252,14 +214,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         challenges: pcs::Challenges<C::ScalarField>,
         alpha: C::ScalarField,
     ) -> NestedF<C, R> {
-        use udon::polynomial::divide_linear_rev;
-
-        let iters: Vec<_> = batch
-            .queries(challenges)
-            .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
-            .collect();
-
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let poly = alpha_batched_quotients::<_, R, B>(batch.queries(challenges).collect(), alpha);
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
         NestedF { poly, commitment }
@@ -309,21 +264,127 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 }
 
-/// Horner-batches quotient coefficient streams with $\alpha$: the first
-/// stream receives the highest power.
-fn alpha_batched_quotients<F: Field, R: Rank>(
-    mut iters: Vec<impl Iterator<Item = F>>,
+/// Groups queries before division, preserving the original Horner weights:
+/// the first query receives the highest alpha power, and the last receives one.
+fn alpha_batched_quotients<F: Field, R: Rank, B: crate::SelectableBackend>(
+    queries: Vec<(&sparse::Polynomial<F, R>, F)>,
     alpha: F,
 ) -> sparse::Polynomial<F, R> {
-    let mut coeffs = Vec::with_capacity(R::num_coeffs());
-    let (first, rest) = iters.split_first_mut().unwrap();
-    for val in first.by_ref() {
-        let c = rest
-            .iter_mut()
-            .fold(val, |acc, iter| acc.mul_add(&alpha, &iter.next().unwrap()));
-        coeffs.push(c);
+    let mut indices = BTreeMap::new();
+    let mut groups: Vec<(F, Vec<_>)> = Vec::new();
+    let mut weight = F::ONE;
+    for (poly, point) in queries.into_iter().rev() {
+        let index = *indices
+            .entry(point.to_bytes().as_ref().to_vec())
+            .or_insert_with(|| {
+                let index = groups.len();
+                groups.push((point, Vec::new()));
+                index
+            });
+        groups[index].1.push((poly, weight));
+        weight *= alpha;
     }
-    coeffs.reverse();
 
-    sparse::Polynomial::from_coeffs(coeffs)
+    let mut result = sparse::Polynomial::default();
+    for quotient in B::map(groups, |(point, polys)| {
+        let mut coefficients = Vec::new();
+        for (poly, weight) in polys {
+            if weight == F::ZERO {
+                continue;
+            }
+            // Registry restrictions can be much shorter than the rank bound.
+            // Visit stored coefficients and divide only the populated prefix.
+            for (index, coefficient) in poly.iter_stored_coeffs() {
+                if coefficients.len() <= index {
+                    coefficients.resize(index + 1, F::ZERO);
+                }
+                coefficients[index] = coefficient.mul_add(&weight, &coefficients[index]);
+            }
+        }
+        let mut quotient: Vec<_> =
+            udon::polynomial::divide_linear_rev(coefficients, point).collect();
+        quotient.reverse();
+        sparse::Polynomial::<F, R>::from_coeffs(quotient)
+    }) {
+        result.add_assign(&quotient);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_backend::ReferenceBackend;
+    use ragu_circuits::polynomials::TestRank;
+    use ragu_core::pasta::{Fp, Fq};
+
+    use super::*;
+
+    fn check<F: Field>() {
+        let polys = [
+            sparse::Polynomial::<F, TestRank>::default(),
+            sparse::Polynomial::from_coeffs(alloc::vec![F::from(3)]),
+            sparse::Polynomial::from_coeffs(alloc::vec![F::from(5), F::ZERO, F::from(7)]),
+            sparse::Polynomial::from_coeffs(
+                (0..TestRank::num_coeffs())
+                    .map(|i| {
+                        if i % 11 == 0 {
+                            F::from(i as u64 + 1)
+                        } else {
+                            F::ZERO
+                        }
+                    })
+                    .collect(),
+            ),
+        ];
+        for alpha in [F::ZERO, F::ONE, F::from(17)] {
+            for points in [
+                [F::ZERO; 7],
+                [F::ONE; 7],
+                [
+                    F::from(2),
+                    F::ZERO,
+                    F::from(3),
+                    F::from(2),
+                    F::ONE,
+                    F::ZERO,
+                    F::from(3),
+                ],
+            ] {
+                let queries: Vec<_> = points
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, point)| (&polys[i % polys.len()], point))
+                    .collect();
+                let mut expected = alloc::vec![F::ZERO; TestRank::num_coeffs() - 1];
+                // Independent reference: divide every query first, then apply
+                // the original Horner combination to each coefficient.
+                for (poly, point) in &queries {
+                    let mut q: Vec<_> =
+                        udon::polynomial::divide_linear_rev(poly.iter_coeffs(), *point).collect();
+                    q.reverse();
+                    for (coefficient, q) in expected.iter_mut().zip(q) {
+                        *coefficient = coefficient.mul_add(&alpha, &q);
+                    }
+                }
+                let expected = sparse::Polynomial::<F, TestRank>::from_coeffs(expected);
+                let reference =
+                    alpha_batched_quotients::<_, _, ReferenceBackend>(queries.clone(), alpha);
+                let accelerated =
+                    alpha_batched_quotients::<_, _, crate::AcceleratedBackend>(queries, alpha);
+                assert!(expected.iter_coeffs().eq(reference.iter_coeffs()));
+                assert!(expected.iter_coeffs().eq(accelerated.iter_coeffs()));
+            }
+        }
+        assert!(
+            alpha_batched_quotients::<F, TestRank, ReferenceBackend>(Vec::new(), F::ONE)
+                .iter_coeffs()
+                .all(|v| v == F::ZERO)
+        );
+    }
+
+    #[test]
+    fn grouped_quotients_preserve_weights_on_both_fields() {
+        check::<Fp>();
+        check::<Fq>();
+    }
 }

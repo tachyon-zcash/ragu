@@ -152,7 +152,15 @@ impl<'a, C: Affine> MSM<'a, C> {
 
     /// Perform multiexp through backend `B` and check that it results in zero.
     pub fn eval<B: SelectableBackend>(self) -> bool {
-        let len = self.g_scalars.as_ref().map(|v| v.len()).unwrap_or(0)
+        // After use_g(), the generator vector often contains only the G_0
+        // constant term. Do not pad that short check with zero-weight bases.
+        let generator_terms = self
+            .g_scalars
+            .iter()
+            .flatten()
+            .zip(&self.params.g)
+            .filter(|(scalar, _)| **scalar != C::Scalar::ZERO);
+        let len = generator_terms.clone().count()
             + self.u_scalar.map(|_| 1).unwrap_or(0)
             + self.other.len();
         let mut scalars: Vec<C::Scalar> = Vec::with_capacity(len);
@@ -170,9 +178,9 @@ impl<'a, C: Affine> MSM<'a, C> {
             bases.push(self.params.u);
         }
 
-        if let Some(g_scalars) = &self.g_scalars {
-            scalars.extend(g_scalars);
-            bases.extend(self.params.g.iter());
+        for (scalar, base) in generator_terms {
+            scalars.push(*scalar);
+            bases.push(*base);
         }
 
         assert_eq!(scalars.len(), len);

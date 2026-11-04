@@ -579,17 +579,29 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::CircuitField, R>>
     );
 
+    pub(crate) fn set_native_extension_circuit_commitments(
+        &mut self,
+        commitments: Vec<C::HostCurve>,
+    ) {
+        assert!(
+            self.native_extension_circuit_commitments
+                .set(commitments)
+                .is_ok(),
+            "double-set extension commitments"
+        );
+    }
+
     /// Lazily computes and caches the commitments of the native extension
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn native_extension_circuit_commitments(&self) -> &[C::HostCurve] {
         self.native_extension_circuit_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
-            self.native_extension_circuit_rxs
-                .as_ref()
-                .expect("native_extension_circuit_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.native_extension_circuit_rxs
+                    .as_ref()
+                    .expect("native_extension_circuit_rxs not set"),
+                host_gen,
+            )
         })
     }
 
@@ -598,12 +610,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     pub(crate) fn native_extension_stage_commitments(&self) -> &[C::HostCurve] {
         self.native_extension_stage_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
-            self.native_extension_stage_rxs
-                .as_ref()
-                .expect("native_extension_stage_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.native_extension_stage_rxs
+                    .as_ref()
+                    .expect("native_extension_stage_rxs not set"),
+                host_gen,
+            )
         })
     }
 
@@ -612,12 +624,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     pub(crate) fn native_endoscaling_step_commitments(&self) -> &[C::HostCurve] {
         self.native_endoscaling_step_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
-            self.native_endoscaling_step_rxs
-                .as_ref()
-                .expect("native_endoscaling_step_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.native_endoscaling_step_rxs
+                    .as_ref()
+                    .expect("native_endoscaling_step_rxs not set"),
+                host_gen,
+            )
         })
     }
 
@@ -626,12 +638,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     pub(crate) fn native_bind_challenges_commitments(&self) -> &[C::HostCurve] {
         self.native_bind_challenges_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
-            self.native_bind_challenges_rxs
-                .as_ref()
-                .expect("native_bind_challenges_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.native_bind_challenges_rxs
+                    .as_ref()
+                    .expect("native_bind_challenges_rxs not set"),
+                host_gen,
+            )
         })
     }
 
@@ -818,17 +830,29 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::ScalarField, R>>
     );
 
+    pub(crate) fn set_nested_extension_circuit_commitments(
+        &mut self,
+        commitments: Vec<C::NestedCurve>,
+    ) {
+        assert!(
+            self.nested_extension_circuit_commitments
+                .set(commitments)
+                .is_ok(),
+            "double-set extension commitments"
+        );
+    }
+
     /// Lazily computes and caches the commitments of the nested extension
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn nested_extension_circuit_commitments(&self) -> &[C::NestedCurve] {
         self.nested_extension_circuit_commitments.get_or_init(|| {
             let nested_gen = C::nested_generators(self.params);
-            self.nested_extension_circuit_rxs
-                .as_ref()
-                .expect("nested_extension_circuit_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.nested_extension_circuit_rxs
+                    .as_ref()
+                    .expect("nested_extension_circuit_rxs not set"),
+                nested_gen,
+            )
         })
     }
 
@@ -837,12 +861,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     pub(crate) fn nested_extension_stage_commitments(&self) -> &[C::NestedCurve] {
         self.nested_extension_stage_commitments.get_or_init(|| {
             let nested_gen = C::nested_generators(self.params);
-            self.nested_extension_stage_rxs
-                .as_ref()
-                .expect("nested_extension_stage_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.nested_extension_stage_rxs
+                    .as_ref()
+                    .expect("nested_extension_stage_rxs not set"),
+                nested_gen,
+            )
         })
     }
 
@@ -865,12 +889,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     pub(crate) fn nested_endoscaling_step_commitments(&self) -> &[C::NestedCurve] {
         self.nested_endoscaling_step_commitments.get_or_init(|| {
             let nested_gen = C::nested_generators(self.params);
-            self.nested_endoscaling_step_rxs
-                .as_ref()
-                .expect("nested_endoscaling_step_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            B::sparse_commit_many_to_affine(
+                self.nested_endoscaling_step_rxs
+                    .as_ref()
+                    .expect("nested_endoscaling_step_rxs not set"),
+                nested_gen,
+            )
         })
     }
 

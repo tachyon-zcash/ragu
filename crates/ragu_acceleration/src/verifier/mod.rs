@@ -10,7 +10,42 @@
 //! reached from the `Backend` impl in the crate root by delegation, so code
 //! that can influence an acceptance decision can be reviewed and tested here.
 
-use udon::curve::Affine;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{Registry, RegistryAt},
+};
+use udon::{curve::Affine, field::Field};
+
+pub(crate) fn registry_wxy_over_domain<F: Field, R: Rank>(
+    registry: &Registry<'_, F, R>,
+    x: F,
+    y: F,
+) -> alloc::vec::Vec<F> {
+    registry.wxy_over_domain_parallel(x, y)
+}
+
+pub(crate) fn registry_at_x<F: Field, R: Rank>(
+    registry: &RegistryAt<'_, F, R>,
+    x: F,
+) -> sparse::Polynomial<F, R> {
+    registry.x_parallel(x)
+}
+
+pub(crate) fn registry_at_y<F: Field, R: Rank>(
+    registry: &RegistryAt<'_, F, R>,
+    y: F,
+) -> sparse::Polynomial<F, R> {
+    registry.y_parallel(y)
+}
+
+pub(crate) fn registry_wxy<F: Field, R: Rank>(
+    registry: &Registry<'_, F, R>,
+    w: F,
+    x: F,
+    y: F,
+) -> F {
+    registry.at(w).xy_parallel(x, y)
+}
 
 /// Computes independent MSMs, panicking before any of them if an input's
 /// operands differ in length.
