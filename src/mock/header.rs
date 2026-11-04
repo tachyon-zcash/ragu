@@ -73,6 +73,18 @@ impl Suffix {
             HeaderSuffix::Application(value) => (value + NUM_INTERNAL_SUFFIXES) as u64,
         }
     }
+
+    /// Parses a [`Suffix`] from its `get()` value.
+    pub(crate) fn from_value(value: u64) -> Option<Self> {
+        let value = usize::try_from(value).ok()?;
+        if value < NUM_INTERNAL_SUFFIXES {
+            Some(Self::internal(value))
+        } else {
+            // Cannot overflow: `value - NUM_INTERNAL_SUFFIXES` is at most
+            // `usize::MAX - NUM_INTERNAL_SUFFIXES`, which `new` admits.
+            Some(Self::new(value - NUM_INTERNAL_SUFFIXES))
+        }
+    }
 }
 
 #[test]

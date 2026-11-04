@@ -8,6 +8,9 @@ pub use application::{Application, ApplicationBuilder};
 pub use header::{HEADER_POLYNOMIALS, Header, Suffix};
 pub use proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
 pub use step::{Encoded, HeaderInput, Index, Oracles, Position, Slot, Step};
+pub use wire::WireHeader;
+
+pub mod wire;
 
 mod application;
 pub mod header;
