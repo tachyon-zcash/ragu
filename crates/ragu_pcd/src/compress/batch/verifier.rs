@@ -1,10 +1,9 @@
 //! The verifier's side of the batch.
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::vec::Vec;
 
 use ragu_backend::Backend;
-use ragu_circuits::polynomials::Rank;
-use ragu_core::{Error, FixedGenerators, PreparedMsm, Result};
+use ragu_core::{Error, MsmWorkspace, Result};
 use udon::{curve::Affine, field::Field};
 
 use super::{Batch, Batched, check_claims};
@@ -16,26 +15,21 @@ use crate::{
 
 /// Derives the batched commitment, point, and value from `openings` and
 /// `batch`, then checks `opening` against that claim through the IPA.
-pub(crate) fn verify_openings<P: Affine, R: Rank, B: SelectableBackend>(
+pub(crate) fn verify_openings<P: Affine, B: SelectableBackend>(
     openings: &Openings<P>,
     batch: &Batch<P>,
     opening: &IpaProof<P>,
-    generators: &impl FixedGenerators<P>,
-    u: P,
-    prepared: Option<&Arc<PreparedMsm<P>>>,
+    params: &Params<P>,
+    workspace: &mut MsmWorkspace,
     transcript: &mut impl IpaTranscript<P>,
 ) -> Result<bool> {
     let claim = verify::<_, B, _>(&openings.commitments, &openings.claims, batch, transcript)?;
-    let params = prepared.map_or_else(
-        || Params::with_k(generators, u, R::RANK),
-        |prepared| Params::with_prepared(Arc::clone(prepared), u, R::RANK),
-    );
-    let mut msm = MSM::new(&params);
+    let mut msm = MSM::new(params);
     msm.append_term(P::Scalar::ONE, claim.commitment);
     Ok(
-        ipa::verify_proof(&params, msm, transcript, opening, claim.point, claim.value)?
+        ipa::verify_proof(params, msm, transcript, opening, claim.point, claim.value)?
             .use_challenges()
-            .eval::<B>(),
+            .eval_with_workspace::<B>(workspace),
     )
 }
 
