@@ -5,7 +5,7 @@
 
 use std::sync::OnceLock;
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::polynomials::{AggregatorRank, R, Rank, WalletRank};
 use ragu_core::{
     Cycle, Error, Result,
@@ -363,7 +363,7 @@ fn application<P: Profile, Rk: Rank>(
     expected: Option<Fp>,
 ) -> Result<App<P, Rk>>
 where
-    P::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, Rk, AcceleratedBackend>: Default,
 {
     let mut builder = ApplicationBuilder::<C<P>, Rk, HEADER_SIZE>::new()
         .register(Seed { expected })?
@@ -415,7 +415,7 @@ fn sender_fixture<P: Profile>(
     foreign_value: Fp,
 ) -> Result<SenderFixture<P>>
 where
-    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let sender = application::<P, WalletRank>((None, None), sender_constraint)?;
     let mut rng = StdRng::seed_from_u64(0x908_1501);
@@ -454,7 +454,7 @@ fn check_same_shape<S: Profile, T: Profile, const CHECK_GRANDPARENTS: bool>(
     share_registries: bool,
 ) -> Result<()>
 where
-    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
     let (native_tag, nested_tag) = sender.tags;
@@ -640,8 +640,8 @@ fn check_standard_payloads_in_weaker_profile<const CHECK_GRANDPARENTS: bool>() -
 
 fn check_different_shapes<S: Profile, T: Profile>() -> Result<()>
 where
-    S::Context<'static, Pasta, R<14>, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, R<14>, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, R<14>, AcceleratedBackend>: Default,
+    T::Context<'static, Pasta, R<14>, AcceleratedBackend>: Default,
 {
     assert_ne!(Shape::of::<S>(), Shape::of::<T>());
     let sender = application::<S, R<14>>((None, None), Some(Fp::from(7)))?;

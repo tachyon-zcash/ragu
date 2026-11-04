@@ -4,7 +4,7 @@
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
-use ragu_backend::Backend;
+use ragu_backend::{Backend, AcceleratedBackend};
 use ragu_circuits::{
     Circuit, CircuitExt, WithAux,
     registry::{CircuitIndex, Registry},
@@ -181,7 +181,7 @@ fn extension_rxs<F: Field, Rk: Rank, RNG: CryptoRng, const REQUIRE_ONE: bool>(
 
 fn verifier<P: Profile, Rk: Rank>() -> Result<App<P, Rk>>
 where
-    P::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, Rk, AcceleratedBackend>: Default,
 {
     application::<P, Rk>((None, None), Some(Fp::from(7)))
 }
@@ -208,7 +208,7 @@ fn check_prover<S: Profile, T: Profile, Rk: Rank>(
     accepted: bool,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, Rk, AcceleratedBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
     // The test seam gives a custom prover the exact tags the verifier derived,
@@ -228,23 +228,23 @@ where
     assert_eq!(prover.nested_registry.tag(), verifier.nested_registry.tag());
     assert_eq!(
         (
-            ReferenceBackend::registry_wxy(
+            AcceleratedBackend::registry_wxy(
                 &prover.native_registry,
                 Fp::from(2),
                 Fp::from(3),
                 Fp::from(5)
-            ) == ReferenceBackend::registry_wxy(
+            ) == AcceleratedBackend::registry_wxy(
                 &verifier.native_registry,
                 Fp::from(2),
                 Fp::from(3),
                 Fp::from(5)
             ),
-            ReferenceBackend::registry_wxy(
+            AcceleratedBackend::registry_wxy(
                 &prover.nested_registry,
                 Fq::from(2),
                 Fq::from(3),
                 Fq::from(5)
-            ) == ReferenceBackend::registry_wxy(
+            ) == AcceleratedBackend::registry_wxy(
                 &verifier.nested_registry,
                 Fq::from(2),
                 Fq::from(3),
@@ -298,7 +298,7 @@ where
 
 fn check_application_circuits<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let verifier = verifier::<P, WalletRank>()?;
     let local = local_control(&verifier)?;

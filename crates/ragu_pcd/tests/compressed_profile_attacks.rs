@@ -293,8 +293,8 @@ fn check_profile_packets<S: Profile, T: Profile>(
     edit_fields: bool,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let sender = application::<S, WalletRank>((None, None), source_constraint)?;
     let receiver = application::<T, WalletRank>((None, None), Some(Fp::from(7)))?;
@@ -382,7 +382,7 @@ fn compressed_standard_rejects_weaker_profile_packet_splices() -> Result<()> {
 
 fn check_fresh_weaker_proving<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let app = application::<P, WalletRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c002);
@@ -448,7 +448,9 @@ fn compressed_twin_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<(
 
 fn check_extension_edits<P>() -> Result<()>
 where
-    P: Profile<Context<'static, Pasta, R<14>, ReferenceBackend> = CrossingContext<'static, Pasta>>,
+    P: Profile<
+        Context<'static, Pasta, R<14>, AcceleratedBackend> = CrossingContext<'static, Pasta>,
+    >,
 {
     let params = crate::pasta::baked_aggregator();
     let bits = [true, false, false, true];
