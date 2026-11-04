@@ -52,6 +52,11 @@ criteria = "safe-to-deploy"
 version = "1.4.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.cc]]
+version = "1.11.0"
+criteria = "safe-to-deploy"
+notes = "Build dependency added by Udon 0.2. Carries forward the existing exemption; this is not an audit."
+
 [[exemptions.constant_time_eq]]
 version = "0.4.2"
 criteria = "safe-to-deploy"
@@ -83,6 +88,11 @@ criteria = "safe-to-deploy"
 [[exemptions.find-msvc-tools]]
 version = "0.1.11"
 criteria = "safe-to-deploy"
+
+[[exemptions.find-msvc-tools]]
+version = "0.1.15"
+criteria = "safe-to-deploy"
+notes = "Build dependency added by Udon 0.2. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.funty]]
 version = "2.0.0"
@@ -205,8 +215,9 @@ version = "1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zakura-udon]]
-version = "0.1.0"
+version = "0.2.0"
 criteria = "safe-to-deploy"
+notes = "Version update for optional prepared alpha MSM tables. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.zerocopy]]
 version = "0.8.48"

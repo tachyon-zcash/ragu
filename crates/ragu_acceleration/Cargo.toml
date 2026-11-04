@@ -19,6 +19,7 @@ rustdoc-args = ["--html-in-header", "katex-header.html"]
 
 [features]
 default = []
+large-msm-tables = ["ragu_core/large-msm-tables"]
 multicore = ["ragu_backend/multicore", "ragu_core/multicore", "std"]
 std = ["ragu_backend/std", "ragu_core/std"]
 
