@@ -95,6 +95,11 @@ proptest = { workspace = true }
 rayon = { workspace = true }
 
 [[bench]]
+name = "workflow"
+harness = false
+required-features = ["std", "test-utils", "baked-aggregator", "unstable-aggregator"]
+
+[[bench]]
 name = "gungraun"
 harness = false
 
