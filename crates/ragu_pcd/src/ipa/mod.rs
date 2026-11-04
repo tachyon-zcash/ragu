@@ -15,9 +15,9 @@
 //! coefficients folded by the argument. Fiat-Shamir goes through
 //! [`IpaTranscript`], implemented for both curves by [`CycleTranscript`].
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 
-use ragu_core::{Cycle, FixedGenerators};
+use ragu_core::{Cycle, FixedGenerators, PreparedMsm};
 use udon::curve::Affine;
 
 use crate::SelectableBackend;
@@ -82,6 +82,7 @@ pub struct Params<C: Affine> {
     pub(crate) k: u32,
     pub(crate) n: u64,
     pub(crate) g: Vec<C>,
+    pub(crate) prepared: Option<Arc<PreparedMsm<C>>>,
     pub(crate) u: C,
 }
 
@@ -116,6 +117,23 @@ impl<C: Affine> Params<C> {
             k,
             n: n as u64,
             g: generators.g()[..n].to_vec(),
+            prepared: None,
+            u,
+        }
+    }
+
+    pub(crate) fn with_prepared(generators: Arc<PreparedMsm<C>>, u: C, k: u32) -> Self {
+        let n = 1usize << k;
+        assert_eq!(
+            generators.bases().len(),
+            n,
+            "prepared generators match the IPA rank"
+        );
+        Self {
+            k,
+            n: n as u64,
+            g: generators.bases().to_vec(),
+            prepared: Some(generators),
             u,
         }
     }

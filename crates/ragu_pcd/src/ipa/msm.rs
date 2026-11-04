@@ -178,6 +178,7 @@ impl<'a, C: Affine> MSM<'a, C> {
             bases.push(self.params.u);
         }
 
+        let dynamic_len = scalars.len();
         for (scalar, base) in generator_terms {
             scalars.push(*scalar);
             bases.push(*base);
@@ -185,7 +186,18 @@ impl<'a, C: Affine> MSM<'a, C> {
 
         assert_eq!(scalars.len(), len);
 
-        let identity = multiexp::<C, B>(&scalars, &bases).is_identity();
+        let identity = if let (Some(prepared), Some(coeffs)) =
+            (self.params.prepared.as_deref(), self.g_scalars)
+            && len - dynamic_len >= 128
+        {
+            // The fixed generator equation and proof-specific terms are
+            // evaluated separately, then added without changing the equation.
+            let fixed = B::msm_prepared(coeffs, prepared);
+            let dynamic = multiexp::<C, B>(&scalars[..dynamic_len], &bases[..dynamic_len]);
+            (fixed + dynamic).is_identity()
+        } else {
+            multiexp::<C, B>(&scalars, &bases).is_identity()
+        };
         super::fingerprint::record_msm(&scalars, &bases, self.other.len(), identity);
         identity
     }

@@ -130,6 +130,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.native.opening,
                 C::host_generators(self.params),
                 *C::host_u(self.params),
+                self.native_ipa_generators.as_ref(),
                 &mut Lifted(transcript.host()),
             ))
         };
@@ -168,6 +169,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.nested.opening,
                 C::nested_generators(self.params),
                 *C::nested_u(self.params),
+                self.nested_ipa_generators.as_ref(),
                 &mut Lifted(transcript.nested()),
             ))
         };
