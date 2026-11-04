@@ -3,7 +3,7 @@
 
 use alloc::format;
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::polynomials::{R, Rank, WalletRank};
 use ragu_core::{Error, pasta::Pasta};
 use rand::{SeedableRng, rngs::StdRng};
@@ -157,7 +157,9 @@ fn malformed_standard_proof_shapes_are_rejected() {
 
 fn check_extension<P>()
 where
-    P: Profile<Context<'static, Pasta, R<14>, ReferenceBackend> = CrossingContext<'static, Pasta>>,
+    P: Profile<
+        Context<'static, Pasta, R<14>, AcceleratedBackend> = CrossingContext<'static, Pasta>,
+    >,
 {
     let params = crate::pasta::baked_aggregator();
     let bits = [true, false, false, true];
