@@ -288,8 +288,8 @@ mod tests {
                 native_rx: 48,
                 nested_points: 117,
                 nested_steps: 29,
-                nested_rx: 42,
-                native_points: 99,
+                nested_rx: 43,
+                native_points: 101,
                 native_steps: 25,
             }
         );
@@ -326,12 +326,12 @@ mod tests {
             Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
-        // 101 instance points; 27 instance scalars and the online openings'
+        // 102 instance points; 27 instance scalars and the online openings'
         // two scalars each; per side 6+2R points, 21 scalars; plus the
         // circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (101 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (102 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

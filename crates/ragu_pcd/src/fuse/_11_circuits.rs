@@ -14,6 +14,7 @@ use rand::CryptoRng;
 use super::_10_p::{NativeInputs, NativeWalk};
 use crate::{
     Application,
+    header::HEADER_POLYNOMIALS,
     internal::{native, native::total_circuit_counts, nested},
     profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
@@ -49,6 +50,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     ) -> Result<()> {
         let unified = native::unified::Instance {
             bridge_preamble_commitment: builder.bridge_preamble_commitment(),
+            bridge_hash_commitment: builder.bridge_hash_commitment(),
             w: builder.w(),
             bridge_s_prime_commitment: builder.bridge_s_prime_commitment(),
             y: builder.y(),
@@ -292,6 +294,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let witness = |instance| nested::circuits::common::Witness {
             instance,
             endoscalar: nested_endoscalar,
+            bridge_hash: builder.online_commitments()[HEADER_POLYNOMIALS - 1],
             points: nested_points,
             preamble: nested_preamble_witness,
             s_prime: nested_s_prime_witness,

@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 use ragu_circuits::{CircuitExt, polynomials::Rank, staging};
 use ragu_core::{Error, Result};
 use rand::CryptoRng;
-use udon::field::Field;
+use udon::{curve::Affine as _, field::Field};
 
 use crate::{
     Application, Header, Proof,
@@ -149,6 +149,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             zeta,
             polys: online::polys(left.0, right.0, builder.online_polys()).map(Clone::clone),
             staged,
+            bridge_hash: {
+                let (x, y) = builder
+                    .bridge_hash_commitment()
+                    .coordinates()
+                    .ok_or_else(|| {
+                        Error::InvalidWitness("the bridge hash is the point at infinity".into())
+                    })?;
+                [x, y]
+            },
         };
         let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::with_stage(step, self.stage_size)?
             .trace((left.1, right.1, witness, online))?

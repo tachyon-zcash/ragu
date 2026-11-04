@@ -666,6 +666,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             |builder: &ProofBuilder<'_, C, R, B>| -> Result<native::unified::Instance<C>> {
                 Ok(native::unified::Instance {
                     bridge_preamble_commitment: builder.bridge_preamble_commitment(),
+                    bridge_hash_commitment: builder.bridge_hash_commitment(),
                     w: builder.w(),
                     bridge_s_prime_commitment: builder.bridge_s_prime_commitment(),
                     y: builder.y(),
@@ -764,6 +765,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 hashes_1_witness()?,
                 coverage(&[
                     "bridge_preamble_commitment",
+                    // Exposed, not computed: the parent binds it to the
+                    // bridge-hash stage it folds.
+                    "bridge_hash_commitment",
                     "bridge_s_prime_commitment",
                     "bridge_inner_error_commitment",
                 ]),
@@ -1075,8 +1079,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // witnessed: that interstitial is its output; the endoscalar bits and
         // every other point are inputs. The points are the prover's own
         // witness, from `compute_p`.
+        let own_o1 = builder.online_commitments()[crate::header::HEADER_POLYNOMIALS - 1];
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
+            stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
             stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness)?,
         ]
         .concat();
@@ -1191,6 +1197,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     coverage: Default::default(),
                 },
                 endoscalar: beta_endo,
+                bridge_hash: own_o1,
                 points: &points_witness,
                 preamble: &nested_preamble,
                 s_prime: &nested_s_prime_witness,

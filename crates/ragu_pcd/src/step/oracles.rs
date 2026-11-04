@@ -54,6 +54,8 @@ pub(crate) struct OnlineWitness<F, R: Rank> {
     pub(crate) zeta: F,
     pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_QUERIES],
     pub(crate) staged: alloc::vec::Vec<F>,
+    /// The coordinates of $H^{bridge}(O_1)$, fixed with $\zeta$.
+    pub(crate) bridge_hash: [F; 2],
 }
 
 impl<F: Field, R: Rank> Evaluate<F> for OnlineWitness<F, R> {
@@ -66,6 +68,7 @@ impl<F: Field, R: Rank> Evaluate<F> for OnlineWitness<F, R> {
 /// queryable once, and the staged values.
 pub struct Oracles<'a, 'dr, D: Driver<'dr>> {
     zeta: Element<'dr, D>,
+    bridge_hash: [Element<'dr, D>; 2],
     staged: alloc::vec::Vec<Element<'dr, D>>,
     evaluator: DriverValue<D, &'a dyn Evaluate<D::F>>,
     queries: [Option<QueryOutput<'dr, D>>; online::NUM_ONLINE_QUERIES],
@@ -81,8 +84,13 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         staged: alloc::vec::Vec<Element<'dr, D>>,
     ) -> Result<Self> {
         let zeta = Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.zeta))?;
+        let bridge_hash = [
+            Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.bridge_hash[0]))?,
+            Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.bridge_hash[1]))?,
+        ];
         Ok(Oracles {
             zeta,
+            bridge_hash,
             staged,
             evaluator: witness.map(|w| w as &dyn Evaluate<D::F>),
             queries: core::array::from_fn(|_| None),
@@ -99,6 +107,15 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// reads.
     pub fn zeta(&self) -> &Element<'dr, D> {
         &self.zeta
+    }
+
+    /// $H^{bridge}(O_1)$, the digest of the step's own last online
+    /// commitment, as its two coordinates: fixed with $\zeta$, and held by
+    /// the parent to the commitment the step's transcript absorbed. A step
+    /// that hashes its output polynomial's commitment into a header field,
+    /// for instance into an anchor, reads it here.
+    pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
+        &self.bridge_hash
     }
 
     /// The step's [staged](super::Step::staged) values, in order: wires
@@ -153,8 +170,13 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     }
 
     /// Opens every slot the step did not query at $\zeta$, and returns
-    /// $\zeta$ with the six openings, in slot order, for the instance.
-    pub(crate) fn finish(mut self, dr: &mut D) -> Result<(Element<'dr, D>, QueriesOutput<'dr, D>)> {
+    /// $\zeta$ with the six openings, in slot order, and the bridge hash's
+    /// coordinates, for the instance.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn finish(
+        mut self,
+        dr: &mut D,
+    ) -> Result<(Element<'dr, D>, QueriesOutput<'dr, D>, [Element<'dr, D>; 2])> {
         for slot in Slot::all() {
             if self.queries[slot.offset()].is_none() {
                 self.query_at_zeta(dr, slot)?;
@@ -166,7 +188,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
                 .map(|query| query.expect("every slot was queried"))
                 .collect::<alloc::vec::Vec<_>>(),
         )?;
-        Ok((self.zeta, queries))
+        Ok((self.zeta, queries, self.bridge_hash))
     }
 }
 

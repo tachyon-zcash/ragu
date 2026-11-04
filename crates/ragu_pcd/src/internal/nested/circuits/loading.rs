@@ -97,6 +97,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
         let dr = dr.skip_stage::<EndoscalarStage>()?;
+        let dr = dr.skip_stage::<stages::bridge_hash::Stage<C>>()?;
         let (points_guard, dr) = dr.add_stage::<PointsStage<C, P>>()?;
         let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R, P>>()?;
         let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, P>>()?;

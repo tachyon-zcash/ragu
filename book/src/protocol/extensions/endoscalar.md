@@ -149,16 +149,17 @@ instead of chaining through the `outer_error` stage, whose wires it never
 read. Its claim contains `BindBeta`, `PointsBinding`, and `Preamble`; the
 new `PreambleFinalStaged` mask bonds `BindBeta`, which is removed from the
 `OuterErrorFinalStaged` bonding claim. Registration includes the new mask.
-The internal registry therefore has 53 native and 45 nested entries,
+The internal registry therefore has 53 native and 46 nested entries,
 including masks, with 25 native and 29 nested walk steps once the online
-polynomials of the headers and the application stage join the batch.
+polynomials of the headers, the application stage and the bridge-hash stage
+join the batch.
 
-The constraint census uses production rank `R<13>`, a 98-element header,
+The constraint census uses production rank `R<13>`, a 96-element header,
 and 6000 placeholder application circuits. In that fixture the largest
-`bind_challenges` variant uses 2047 of 2048 gates, leaving one gate of
-headroom; the binders load the preamble, query and eval stages, each of
-which now carries the online openings and the application stage's
-evaluations. The census tests pin that count;
+`bind_challenges` variant uses all 2048 gates; the binders load the
+preamble, query and eval stages, each of which now carries the online
+openings, the application stage's evaluations and the children's bridge
+hashes. The census tests pin that count;
 extending the binder requires rechecking its capacity.
 
 The exceptional-case invariant is explicit in the integer model: every
@@ -200,10 +201,10 @@ The following conservative local degree ledger is derived from the
 implementation's constants, which the `print_ledger_parameters` test in
 `crates/ragu_pcd/src/internal/tests.rs` prints: $D=8192$, nested registry
 domain size $K=64$, revdot group size and group count $M=7$, $N=14$ on the
-native side and $M=8$, $N=10$ on the nested side, $T=147$ nested PCS
-queries (the 18 static openings, each child's 42 rx polynomials at
-$x_n z_n$, and the registry restriction at each of the 45 nested internal
-circuits' $\omega^j$), and point folds of 99 native and 117 nested terms.
+native side and $M=8$, $N=10$ on the nested side, $T=150$ nested PCS
+queries (the 18 static openings, each child's 43 rx polynomials at
+$x_n z_n$, and the registry restriction at each of the 46 nested internal
+circuits' $\omega^j$), and point folds of 101 native and 117 nested terms.
 One challenge set drives both fields' revdot folds, so each fold challenge
 is charged for both sides. The entries bound the number of roots charged to
 a challenge, conditional on the relevant discrepancy being a nonzero
@@ -223,12 +224,12 @@ has $m-1$ coefficients and must be committed before the folding challenge.
 | $\mu_n$ | Inner revdot quotient folds on both sides | $2N(M-1)$ each: $168+140=308$ |
 | $\mu'_n$ | Outer revdot quotient folds on both sides | $2(N-1)$ each: $26+18=44$ |
 | $x_n$ | Two folded-polynomial checks and registry restriction | $3(D-1)=24573$ |
-| $\alpha_n$ | Batching the $T$ opening claims | $T-1=146$ |
-| $u_n$ | Quotient identity, clearing at most $T$ denominators | $D+T-1=8338$ |
-| $\beta$ | Both point folds, with 99 and 117 terms | $98+116=214$ |
+| $\alpha_n$ | Batching the $T$ opening claims | $T-1=149$ |
+| $u_n$ | Quotient identity, clearing at most $T$ denominators | $D+T-1=8341$ |
+| $\beta$ | Both point folds, with 101 and 117 terms | $100+116=216$ |
 
 Counting the comparisons separately, rather than relying on the gist's
-six-check shorthand, gives $66513/2^{143} \approx 2^{-126.98}$ for this
+six-check shorthand, gives $66521/2^{143} \approx 2^{-126.98}$ for this
 local ledger. In particular, the lower-degree challenges must not be
 omitted, even though they do not change the rounded estimate of about
 127 bits. The $u_n$ entry conservatively clears the quotient denominators;

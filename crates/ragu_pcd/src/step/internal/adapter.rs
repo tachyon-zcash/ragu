@@ -21,19 +21,19 @@ use super::super::{
 use crate::{Header, internal::online};
 
 /// The length of an application circuit's instance: $\zeta$, the online
-/// openings and the three padded headers.
+/// openings, the bridge hash's two coordinates and the three padded headers.
 pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        1 + 2 * online::NUM_ONLINE_QUERIES + 3 * HEADER_SIZE
+        1 + 2 * online::NUM_ONLINE_QUERIES + 2 + 3 * HEADER_SIZE
     }
 }
 
 /// Adapts a [`Step`] to a [`Circuit`] whose instance is
-/// `[zeta, x_0, y_0, ..., x_5, y_5, left, right, output]`: the step's
-/// challenge, its online openings in slot order and its three padded headers
-/// (see [`online`]).
+/// `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, left, right, output]`: the step's
+/// challenge, its online openings in slot order, the bridge hash of its own
+/// last online commitment and its three padded headers (see [`online`]).
 ///
 /// The application stage occupies the first gates after the SYSTEM gate of
 /// every step circuit, reserved by [`reserve_stage`]: the step's own trace is
@@ -179,12 +179,13 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         let ((left, right, output), output_data, step_aux) =
             self.step
                 .witness::<_, HEADER_SIZE>(dr, &mut oracles, witness, left, right)?;
-        let (zeta, queries) = oracles.finish(dr)?;
+        let (zeta, queries, bridge_hash) = oracles.finish(dr)?;
         let query_values = oracles::values(&queries);
 
         let mut elements = Vec::with_capacity(InstanceLen::<HEADER_SIZE>::len());
         elements.push(zeta);
         queries.write(dr, &mut elements)?;
+        elements.extend(bridge_hash);
         let headers = elements.len();
         left.write(dr, &mut elements)?;
         right.write(dr, &mut elements)?;
@@ -307,6 +308,7 @@ mod tests {
                 sparse::Polynomial::from_coeffs(alloc::vec![Fp::from(slot as u64), Fp::ONE])
             }),
             staged: alloc::vec::Vec::new(),
+            bridge_hash: [Fp::ZERO; 2],
         }
     }
 
@@ -314,11 +316,11 @@ mod tests {
     fn instance_len_counts_zeta_openings_and_headers() {
         assert_eq!(
             InstanceLen::<1>::len(),
-            1 + 2 * online::NUM_ONLINE_QUERIES + 3
+            1 + 2 * online::NUM_ONLINE_QUERIES + 2 + 3
         );
         assert_eq!(
             InstanceLen::<4>::len(),
-            1 + 2 * online::NUM_ONLINE_QUERIES + 12
+            1 + 2 * online::NUM_ONLINE_QUERIES + 2 + 12
         );
     }
 
@@ -335,11 +337,11 @@ mod tests {
             .expect("witness should succeed")
             .into_output();
 
-        // zeta, the openings, then the three padded headers
+        // zeta, the openings, the bridge hash, then the three padded headers
         assert_eq!(output.len(), InstanceLen::<HEADER_SIZE>::len());
         let values: alloc::vec::Vec<Fp> = output.iter().map(|e| *e.value().take()).collect();
         assert_eq!(values[0], Fp::from(7u64));
-        let headers = 1 + 2 * online::NUM_ONLINE_QUERIES;
+        let headers = 1 + 2 * online::NUM_ONLINE_QUERIES + 2;
         assert_eq!(values[headers], Fp::from(10u64));
         assert_eq!(values[headers + HEADER_SIZE], Fp::from(20u64));
         assert_eq!(values[headers + 2 * HEADER_SIZE], Fp::from(30u64));
@@ -394,7 +396,7 @@ mod tests {
         );
         assert!(oracles.query(dr, Slot::output(1), &x).is_err());
         assert!(oracles.query_at_zeta(dr, Slot::output(0)).is_ok());
-        let (zeta, queries) = oracles.finish(dr).unwrap();
+        let (zeta, queries, _) = oracles.finish(dr).unwrap();
         assert_eq!(*zeta.value().take(), Fp::from(3u64));
         assert_eq!(*queries[0].x.value().take(), Fp::from(3u64));
         assert_eq!(*queries[5].x.value().take(), Fp::from(5u64));

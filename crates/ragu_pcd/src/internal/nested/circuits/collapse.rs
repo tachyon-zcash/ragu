@@ -75,6 +75,7 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use super::common;
 use crate::{
+    header::HEADER_POLYNOMIALS,
     internal::{
         fold_revdot, ky,
         nested::{
@@ -171,6 +172,14 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.preamble.online[1],
             &stages.preamble.application_stage,
         ];
+        // The bridge-hash stage holds the step's own last online commitment,
+        // the one the preamble holds and w absorbed: its commitment, the
+        // digest, is then a function of a point fixed before w.
+        stages
+            .bridge_hash
+            .o1
+            .enforce_equal(dr, &stages.preamble.online[HEADER_POLYNOMIALS - 1])?;
+
         let exported = unified.exported.receive(dr, allocator)?;
         for (instance, stage) in exported.iter().zip(held) {
             instance.enforce_equal(dr, stage)?;

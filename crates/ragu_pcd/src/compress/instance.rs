@@ -386,6 +386,7 @@ impl<C: ProfiledCycle> Instance<C> {
         use nested::RxIndex::*;
         native_unified::Instance {
             bridge_preamble_commitment: self.bridge(BridgePreamble),
+            bridge_hash_commitment: self.bridge(BridgeHash),
             w: challenges.w,
             bridge_s_prime_commitment: self.bridge(BridgeSPrime),
             y: challenges.y,

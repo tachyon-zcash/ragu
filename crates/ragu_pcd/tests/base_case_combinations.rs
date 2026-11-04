@@ -496,6 +496,7 @@ fn nested_collapse_trace(proof: &Proof<C, R>) -> sparse::Polynomial<Fq, R> {
     let mut nested_trace = proof.nested_collapse_rx.clone();
     for stage in [
         nested::RxIndex::EndoscalarStage,
+        nested::RxIndex::BridgeHash,
         nested::RxIndex::PointsStage,
         nested::RxIndex::BridgePreamble,
         nested::RxIndex::BridgeSPrime,

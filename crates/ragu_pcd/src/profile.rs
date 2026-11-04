@@ -162,7 +162,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The circuits and stages the profile adds on the native side.
     ///
     /// The challenge binders load a native extension's stages, and at the
-    /// production rank their largest variant sits one gate under the
+    /// production rank their largest variant fills the
     /// gate budget with the census header: an extension stage costing more
     /// needs a smaller header or a cheaper binder. The internal census tests
     /// pin that count.
@@ -2371,12 +2371,12 @@ mod tests {
                 native_rx: 48,
                 nested_points: 117,
                 nested_steps: 29,
-                nested_rx: 42,
-                native_points: 99,
+                nested_rx: 43,
+                native_points: 101,
                 native_steps: 25,
             }
         );
-        assert_eq!(shape.polynomials(), 98);
+        assert_eq!(shape.polynomials(), 99);
     }
 
     #[test]

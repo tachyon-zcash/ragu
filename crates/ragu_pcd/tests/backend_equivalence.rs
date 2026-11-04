@@ -1347,6 +1347,7 @@ mod proof_equivalence {
                 online_polys: _,
                 online_queries: _,
                 bridge_preamble_rx: _,
+                bridge_hash_rx: _,
                 bridge_s_prime_rx: _,
                 bridge_inner_error_rx: _,
                 bridge_f_rx: _,
@@ -1417,6 +1418,7 @@ mod proof_equivalence {
                 native_points_walk_commitment: _,
                 online_commitments: _,
                 bridge_preamble_commitment: _,
+                bridge_hash_commitment: _,
                 bridge_s_prime_commitment: _,
                 bridge_inner_error_commitment: _,
                 bridge_f_commitment: _,
@@ -1579,6 +1581,7 @@ mod proof_equivalence {
             }
             if [
                 self.bridge_preamble_commitment(),
+                self.bridge_hash_commitment(),
                 self.bridge_s_prime_commitment(),
                 self.bridge_inner_error_commitment(),
                 self.bridge_outer_error_commitment(),
@@ -1588,6 +1591,7 @@ mod proof_equivalence {
                 self.bridge_eval_commitment(),
             ] != [
                 other.bridge_preamble_commitment(),
+                other.bridge_hash_commitment(),
                 other.bridge_s_prime_commitment(),
                 other.bridge_inner_error_commitment(),
                 other.bridge_outer_error_commitment(),

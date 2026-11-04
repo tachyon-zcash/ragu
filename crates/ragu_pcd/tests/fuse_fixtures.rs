@@ -528,6 +528,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         online_polys,
         online_queries,
         bridge_preamble_rx,
+        bridge_hash_rx,
         bridge_s_prime_rx,
         bridge_inner_error_rx,
         bridge_outer_error_rx,
@@ -598,6 +599,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_points_walk_commitment: _,
         online_commitments: _,
         bridge_preamble_commitment: _,
+        bridge_hash_commitment: _,
         bridge_s_prime_commitment: _,
         bridge_inner_error_commitment: _,
         bridge_outer_error_commitment: _,
@@ -649,6 +651,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     );
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
+    lines.poly("bridge_hash_rx", bridge_hash_rx);
     lines.poly("bridge_s_prime_rx", bridge_s_prime_rx);
     lines.poly("bridge_inner_error_rx", bridge_inner_error_rx);
     lines.poly("bridge_outer_error_rx", bridge_outer_error_rx);

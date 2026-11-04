@@ -143,7 +143,8 @@ impl<P: Profile> Len for NumInternal<P> {
 
 /// The nested points stage, over the native batch's commitments, for host
 /// curve `C` in profile `P`.
-pub type PointsStage<C, P> = endoscalar::PointsStage<C, NumPoints<P>, Endoscalings<P>>;
+pub type PointsStage<C, P> =
+    endoscalar::PointsStage<C, NumPoints<P>, Endoscalings<P>, stages::bridge_hash::Stage<C>>;
 
 /// The nested points stage's witness.
 pub type PointsWitness<C, P> = endoscalar::PointsWitness<C, NumPoints<P>, Endoscalings<P>>;
@@ -153,7 +154,7 @@ pub type Points<'dr, D, C, P> = endoscalar::Points<'dr, D, C, NumPoints<P>, Endo
 
 /// A nested endoscaling step.
 pub type EndoscalingStep<C, R, P> =
-    endoscalar::EndoscalingStep<C, R, NumPoints<P>, Endoscalings<P>>;
+    endoscalar::EndoscalingStep<C, R, NumPoints<P>, Endoscalings<P>, stages::bridge_hash::Stage<C>>;
 
 /// A nested endoscaling step's witness.
 pub type EndoscalingStepWitness<'source, C, P> =
@@ -164,9 +165,9 @@ pub type EndoscalingStepWitness<'source, C, P> =
 pub const NUM_INSTANCE_CIRCUITS: usize = 2;
 
 /// The nested rx polynomials that are not endoscaling steps: the instance
-/// circuits', the endoscalar and points stages', the eight bridge stages'
+/// circuits', the endoscalar and points stages', the nine bridge stages'
 /// and the challenge stage's.
-pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 11;
+pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 12;
 
 /// The nested internal circuits that are not endoscaling steps: the rx
 /// polynomials' circuits and stages, the two final stage masks and the
@@ -325,6 +326,9 @@ pub enum InternalCircuitIndex {
     PointsFinalStaged,
     /// Bridge `preamble` stage mask.
     BridgePreamble,
+    /// Bridge-hash stage mask, [canonical](ragu_circuits::staging::StageExt::canonical_mask):
+    /// the stage's commitment is a function of the point it holds.
+    BridgeHash,
     /// Bridge `s_prime` stage mask.
     BridgeSPrime,
     /// Bridge `inner_error` stage mask.
@@ -389,6 +393,7 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::PointsFinalStaged);
         push(&mut slots, &mut c, Self::BridgePreamble);
+        push(&mut slots, &mut c, Self::BridgeHash);
         push(&mut slots, &mut c, Self::BridgeSPrime);
         push(&mut slots, &mut c, Self::BridgeInnerError);
         push(&mut slots, &mut c, Self::BridgeOuterError);
@@ -453,9 +458,9 @@ impl InternalCircuitIndex {
         use InternalCircuitIndex::*;
         match self {
             EndoscalingStep(_) | Collapse | ComputeV | ExtensionCircuit(_) => false,
-            EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeSPrime
-            | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery | BridgeF
-            | BridgeEval | ChallengeStage | ChallengeFinalStaged | Loading
+            EndoscalarStage | PointsStage | PointsFinalStaged | BridgePreamble | BridgeHash
+            | BridgeSPrime | BridgeInnerError | BridgeOuterError | BridgeAB | BridgeQuery
+            | BridgeF | BridgeEval | ChallengeStage | ChallengeFinalStaged | Loading
             | ExtensionBonding(_) => true,
         }
     }
@@ -482,6 +487,8 @@ pub enum RxIndex {
     PointsStage,
     /// Bridge `preamble` rx polynomial.
     BridgePreamble,
+    /// Bridge-hash stage rx polynomial: the step's own `O1`, unblinded.
+    BridgeHash,
     /// Bridge `s_prime` rx polynomial.
     BridgeSPrime,
     /// Bridge `inner_error` rx polynomial.
@@ -511,9 +518,13 @@ impl RxIndex {
     /// [`InternalCircuitIndex::INSTANCE`] order.
     pub const INSTANCE: [Self; NUM_INSTANCE_CIRCUITS] = [Self::Collapse, Self::ComputeV];
 
-    /// The bridge stages, in transcript absorption order.
-    pub const BRIDGES: [Self; 8] = [
+    /// The bridge stages, in the unified instance's order: the stages whose
+    /// commitments the unified instance carries, which the parent binds to
+    /// the stages it folds. All but the bridge-hash stage are absorbed into
+    /// the transcript, in this order.
+    pub const BRIDGES: [Self; 9] = [
         Self::BridgePreamble,
+        Self::BridgeHash,
         Self::BridgeSPrime,
         Self::BridgeInnerError,
         Self::BridgeOuterError,
@@ -548,6 +559,7 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::EndoscalarStage);
         push(&mut slots, &mut c, Self::PointsStage);
         push(&mut slots, &mut c, Self::BridgePreamble);
+        push(&mut slots, &mut c, Self::BridgeHash);
         push(&mut slots, &mut c, Self::BridgeSPrime);
         push(&mut slots, &mut c, Self::BridgeInnerError);
         push(&mut slots, &mut c, Self::BridgeOuterError);
@@ -616,6 +628,7 @@ pub mod unified;
 
 pub mod stages {
     pub mod ab;
+    pub mod bridge_hash;
     pub mod challenges;
     pub mod eval;
     pub mod f;
@@ -667,6 +680,8 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                     stages::preamble::Stage::<C::HostCurve, R, C::Profile>::mask()?,
                 )
             }
+            BridgeHash => registry
+                .register_bonding(stages::bridge_hash::Stage::<C::HostCurve>::canonical_mask()?),
             BridgeSPrime => registry.register_bonding(stages::s_prime::Stage::<
                 C::HostCurve,
                 R,

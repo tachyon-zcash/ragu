@@ -283,6 +283,8 @@ pub enum NestedRx {
     PointsStage,
     /// Bridge `preamble` rx polynomial.
     BridgePreamble,
+    /// Bridge-hash stage rx polynomial.
+    BridgeHash,
     /// Bridge `s_prime` rx polynomial.
     BridgeSPrime,
     /// Bridge `inner_error` rx polynomial.
@@ -495,6 +497,8 @@ impl NestedCommitment {
 pub enum BridgeCommitment {
     /// The bridge `preamble` commitment.
     Preamble,
+    /// The bridge-hash commitment, $H^{bridge}(O_1)$.
+    Hash,
     /// The bridge `s'` commitment.
     SPrime,
     /// The bridge `inner_error` commitment.
@@ -513,8 +517,9 @@ pub enum BridgeCommitment {
 
 impl BridgeCommitment {
     /// All variants, in the order the unified instance writes them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Preamble,
+        Self::Hash,
         Self::SPrime,
         Self::InnerError,
         Self::OuterError,
@@ -1020,6 +1025,7 @@ impl NestedRx {
         matches!(
             self,
             Self::BridgePreamble
+                | Self::BridgeHash
                 | Self::BridgeSPrime
                 | Self::BridgeInnerError
                 | Self::BridgeOuterError
@@ -1071,6 +1077,7 @@ impl NestedRx {
             I::EndoscalarStage => Self::EndoscalarStage,
             I::PointsStage => Self::PointsStage,
             I::BridgePreamble => Self::BridgePreamble,
+            I::BridgeHash => Self::BridgeHash,
             I::BridgeSPrime => Self::BridgeSPrime,
             I::BridgeInnerError => Self::BridgeInnerError,
             I::BridgeOuterError => Self::BridgeOuterError,

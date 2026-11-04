@@ -261,6 +261,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_preamble_commitment: Option<C::NestedCurve>,
+    bridge_hash_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_hash_commitment: Option<C::NestedCurve>,
     bridge_s_prime_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_s_prime_commitment: Option<C::NestedCurve>,
     bridge_inner_error_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -412,6 +414,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             online_queries: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
+            bridge_hash_rx: None,
+            bridge_hash_commitment: None,
             bridge_s_prime_rx: None,
             bridge_s_prime_commitment: None,
             bridge_inner_error_rx: None,
@@ -790,6 +794,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         bridge_preamble_commitment,
         bridge_preamble_rx,
         bridge_preamble_commitment
+    );
+    bridge_pair!(
+        set_bridge_hash_rx,
+        bridge_hash_commitment,
+        bridge_hash_rx,
+        bridge_hash_commitment
     );
     bridge_pair!(
         set_bridge_s_prime_rx,
@@ -1197,6 +1207,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
+            bridge_hash_rx: take!(bridge_hash_rx),
+            bridge_hash_commitment: take!(bridge_hash_commitment),
             bridge_s_prime_rx: take!(bridge_s_prime_rx),
             bridge_s_prime_commitment: take!(bridge_s_prime_commitment),
             bridge_inner_error_rx: take!(bridge_inner_error_rx),

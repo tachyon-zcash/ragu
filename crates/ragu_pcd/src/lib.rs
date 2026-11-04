@@ -807,6 +807,27 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         .map(|(pcd, ())| pcd)
     }
 
+    /// $H^{bridge}(P)$: the digest a proof's bridge-hash stage gives the
+    /// commitment `point` when it is the step's own last online commitment,
+    /// and the value the step reads as
+    /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash). An application
+    /// that hashes a polynomial commitment, for instance into an anchor it
+    /// also recomputes outside the circuit, calls this.
+    ///
+    /// It is the commitment of the stage holding `point`'s coordinates
+    /// alone, so it depends on the rank and the nested generators; binding
+    /// rests on the commitment's.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `point` is the identity, which the stage cannot hold.
+    pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
+        internal::nested::stages::bridge_hash::digest::<_, _, R, _>(
+            point,
+            C::nested_generators(self.params),
+        )
+    }
+
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry

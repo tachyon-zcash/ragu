@@ -119,6 +119,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             EndoscalarStage => &mut self.nested_endoscalar_rx,
             PointsStage => Arc::make_mut(&mut self.nested_points_rx),
             BridgePreamble => Arc::make_mut(&mut self.bridge_preamble_rx),
+            BridgeHash => Arc::make_mut(&mut self.bridge_hash_rx),
             BridgeSPrime => Arc::make_mut(&mut self.bridge_s_prime_rx),
             BridgeInnerError => Arc::make_mut(&mut self.bridge_inner_error_rx),
             BridgeOuterError => Arc::make_mut(&mut self.bridge_outer_error_rx),
@@ -230,6 +231,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 EndoscalarStage => &mut self.nested_endoscalar_commitment.0,
                 PointsStage => &mut self.nested_points_commitment.0,
                 BridgePreamble => &mut self.bridge_preamble_commitment,
+                BridgeHash => &mut self.bridge_hash_commitment,
                 BridgeSPrime => &mut self.bridge_s_prime_commitment,
                 BridgeInnerError => &mut self.bridge_inner_error_commitment,
                 BridgeOuterError => &mut self.bridge_outer_error_commitment,
@@ -250,6 +252,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         use BridgeCommitment::*;
         match which {
             Preamble => &mut self.bridge_preamble_commitment,
+            Hash => &mut self.bridge_hash_commitment,
             SPrime => &mut self.bridge_s_prime_commitment,
             InnerError => &mut self.bridge_inner_error_commitment,
             F => &mut self.bridge_f_commitment,

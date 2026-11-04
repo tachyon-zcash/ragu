@@ -109,6 +109,7 @@ codec! {
 
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => wire::DefaultEncoding,
+    bridge_hash_rx => wire::DefaultEncoding,
     bridge_s_prime_rx => wire::DefaultEncoding,
     bridge_inner_error_rx => wire::DefaultEncoding,
     bridge_outer_error_rx => wire::DefaultEncoding,
@@ -217,6 +218,7 @@ codec! {
 
     // Bridge commitments (non-cached)
     bridge_preamble_commitment => wire::Point,
+    bridge_hash_commitment => wire::Point,
     bridge_s_prime_commitment => wire::Point,
     bridge_inner_error_commitment => wire::Point,
     bridge_outer_error_commitment => wire::Point,

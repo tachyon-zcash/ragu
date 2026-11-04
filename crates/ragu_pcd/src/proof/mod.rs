@@ -24,6 +24,9 @@ mod app_stage_tests;
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
 #[cfg(test)]
+#[path = "../../tests/bridge_hash.rs"]
+mod bridge_hash_tests;
+#[cfg(test)]
 #[path = "../../tests/compress_blinding.rs"]
 mod compress_blinding_tests;
 #[cfg(test)]
@@ -247,6 +250,9 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
+    /// The bridge-hash stage: the step's own `O1`, unblinded under a
+    /// canonical mask (see `nested::stages::bridge_hash`).
+    pub(crate) bridge_hash_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_outer_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -357,6 +363,7 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
+    pub(crate) bridge_hash_commitment: C::NestedCurve,
     pub(crate) bridge_s_prime_commitment: C::NestedCurve,
     pub(crate) bridge_inner_error_commitment: C::NestedCurve,
     pub(crate) bridge_outer_error_commitment: C::NestedCurve,
@@ -454,6 +461,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
             EndoscalarStage => &self.nested_endoscalar_rx,
             PointsStage => self.nested_points_rx.as_ref(),
             BridgePreamble => self.bridge_preamble_rx.as_ref(),
+            BridgeHash => self.bridge_hash_rx.as_ref(),
             BridgeSPrime => self.bridge_s_prime_rx.as_ref(),
             BridgeInnerError => self.bridge_inner_error_rx.as_ref(),
             BridgeOuterError => self.bridge_outer_error_rx.as_ref(),
@@ -762,6 +770,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         self.bridge_preamble_commitment
     }
 
+    /// $H^{bridge}(O_1)$: the commitment of the bridge-hash stage holding
+    /// the step's own `O1`.
+    pub(crate) fn bridge_hash_commitment(&self) -> C::NestedCurve {
+        self.bridge_hash_commitment
+    }
+
     pub(crate) fn bridge_s_prime_commitment(&self) -> C::NestedCurve {
         self.bridge_s_prime_commitment
     }
@@ -829,6 +843,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             EndoscalarStage => self.nested_endoscalar_commitment(),
             PointsStage => self.nested_points_commitment(),
             BridgePreamble => self.bridge_preamble_commitment,
+            BridgeHash => self.bridge_hash_commitment,
             BridgeSPrime => self.bridge_s_prime_commitment,
             BridgeInnerError => self.bridge_inner_error_commitment,
             BridgeOuterError => self.bridge_outer_error_commitment,
@@ -1519,6 +1534,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .expect("trivial preamble rx");
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
+
+            let o1 = builder.online_commitments()[HEADER_POLYNOMIALS - 1];
+            let rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)
+                .expect("trivial bridge-hash rx");
+            let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
+            builder.set_bridge_hash_rx(rx, commitment);
         }
 
         // Challenges (all ones for trivial)

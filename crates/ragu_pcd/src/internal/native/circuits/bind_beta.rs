@@ -172,9 +172,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             (&preamble.right, &binding.right),
         ] {
             // Same order as nested::RxIndex::BRIDGES. These are the points
-            // the child's hash circuits absorbed, before its challenges.
+            // the child's hash circuits absorbed, before its challenges, and
+            // its bridge hash, which they expose.
             let absorbed: [_; nested::RxIndex::BRIDGES.len()] = [
                 &child.unified.bridge_preamble_commitment,
+                &child.unified.bridge_hash_commitment,
                 &child.unified.bridge_s_prime_commitment,
                 &child.unified.bridge_inner_error_commitment,
                 &child.unified.bridge_outer_error_commitment,
