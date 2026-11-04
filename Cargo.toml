@@ -89,6 +89,6 @@ rayon = "1.11.0"
 # Bento stores the generated Udon points.
 bento = { package = "zakura-bento", version = "0.1.0", default-features = false }
 # Udon supplies the Pasta fields, curves, generic arithmetic traits, cycle, and
-# Poseidon parameters.
-udon = { package = "zakura-udon", version = "0.1.0", default-features = false, features = ["traits", "poseidon"] }
+# Poseidon parameters. Keep its version in sync with the isolated qa/fuzz workspace.
+udon = { package = "zakura-udon", version = "0.2.0", default-features = false, features = ["traits", "poseidon"] }
 criterion = { version = "0.5", default-features = false }

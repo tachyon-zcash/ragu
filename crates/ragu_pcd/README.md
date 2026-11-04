@@ -22,6 +22,15 @@ dependency may enable Udon's `aarch64-asm` feature for that build to remain
 portable. Use `cargo tree -p ragu_pcd -e features -i zakura-udon` with the same
 feature flags to inspect the resolved selection.
 
+The optional `large-msm-tables` feature prepares larger fixed-generator tables
+for `AcceleratedBackend` verification. Udon's 64-layer alpha tables retain about
+100.8 MB for the two rank-13 banks, or 402.8 MB at rank 15, in addition to the
+original bases and working memory. Preparation adds to application startup;
+tables are reused for subsequent verification calls. This trades memory and
+startup time for less online MSM work, primarily for repeated single-core
+verification. Each point bank is capped at 192 MiB; larger inputs keep the
+ordinary prepared coordinates. Proofs and verifier equations are unchanged.
+
 The [`pasta`](src/pasta/) module owns Ragu's fixed generator derivation and
 loading. With the `baked` feature, `build.rs` derives the generators on the host
 using `pasta_curves` only for hash-to-curve, converts them to checked Udon points,

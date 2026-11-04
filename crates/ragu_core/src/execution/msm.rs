@@ -5,8 +5,8 @@ use core::any::Any;
 
 use udon::{
     curve::{
-        Affine, AffineAdapter, AffinePoint, Pallas, PastaCurve, Point, PreparedAffinePoint,
-        ProjectiveAdapter, ProjectivePoint, Vesta,
+        Affine, AffineAdapter, AffinePoint, Pallas, PastaCurve, Point, ProjectiveAdapter,
+        ProjectivePoint, Vesta,
     },
     exec::{ExecutionOptions, Executor},
     field::{FieldAdapter, PastaField},
@@ -231,17 +231,12 @@ fn execute<C: PastaCurve, X: Executor>(
 
 pub(super) fn execute_prepared<C: PastaCurve, X: Executor>(
     scalars: &[PastaField<C::Scalar>],
-    bases: &[PreparedAffinePoint<C>],
+    bases: Bases<'_, C>,
     options: ExecutionOptions,
     executor: &X,
     buffers: &mut MsmBuffers<C>,
 ) -> ProjectivePoint<C> {
-    execute_input(
-        Input::new(Bases::Prepared(bases), scalars),
-        options,
-        executor,
-        buffers,
-    )
+    execute_input(Input::new(bases, scalars), options, executor, buffers)
 }
 
 fn execute_input<C: PastaCurve, X: Executor>(
