@@ -60,6 +60,36 @@ jobs:
         run: >-
           cargo test --release -p ragu_pcd --no-default-features
           --lib backend_equivalence:: -- --test-threads=1
+      - name: Check AArch64 ASM feature selection
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+
+          version = subprocess.check_output(["rustc", "-vV"], text=True)
+          assert "host: aarch64-apple-darwin" in version, version
+          command = ["cargo", "tree", "-p", "ragu_pcd", "--locked", "-e", "features", "-i", "zakura-udon"]
+          for flags, expected in [([], True), (["--no-default-features"], False)]:
+              tree = subprocess.check_output(command + flags, text=True)
+              enabled = 'zakura-udon feature "aarch64-asm"' in tree
+              assert enabled == expected, tree
+              print(f"Udon aarch64-asm: {enabled}; flags: {flags}")
+          PY
+      - name: Check portable fuse and verifier fixtures
+        if: matrix.os == 'macos-latest'
+        env:
+          RAGU_FIXTURES: check
+        run: >-
+          cargo test --release -p ragu_pcd --locked --no-default-features
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
+      - name: Check default ASM fuse and verifier fixtures
+        if: matrix.os == 'macos-latest'
+        env:
+          RAGU_FIXTURES: check
+        run: >-
+          cargo test --release -p ragu_pcd --locked
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -85,9 +115,13 @@ jobs:
         run: >-
           cargo build -p ragu_backend -p ragu_acceleration --lib
           --no-default-features --target thumbv7em-none-eabihf
-      - name: Build PCD reference configuration for bare-metal no_std
+      - name: Build portable PCD configuration for bare-metal no_std
         run: >-
           cargo build -p ragu_pcd --lib --no-default-features --features alloc
+          --target thumbv7em-none-eabihf
+      - name: Build default PCD features for bare-metal no_std
+        run: >-
+          cargo build -p ragu_pcd --lib --locked
           --target thumbv7em-none-eabihf
       - name: Build a no_std consumer of baked Pasta parameters
         run: >-

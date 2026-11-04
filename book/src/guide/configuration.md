@@ -7,7 +7,7 @@ that determine the system's capacity and behavior.
 
 The `ApplicationBuilder` requires a cycle, a rank, and a header size. An
 optional fourth parameter selects the backend and defaults to
-`ragu_backend::ReferenceBackend`:
+`ragu_acceleration::AcceleratedBackend`:
 
 ```rust
 ApplicationBuilder::<Pasta, R<13>, 4>::new()
