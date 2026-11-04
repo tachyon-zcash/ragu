@@ -9,11 +9,11 @@
 //! header; one relabelled on the way fails, and so does one whose two
 //! sides were prepared from different compressed proofs.
 
-use alloc::vec::Vec;
+use alloc::{string::ToString, vec::Vec};
 
 use ragu_circuits::{
     polynomials::{AggregatorRank, Rank, WalletRank},
-    registry::RegistryBuilder,
+    registry::{CircuitIndex, RegistryBuilder},
 };
 use ragu_core::{
     Cycle, Error, Result,
@@ -24,10 +24,11 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, allocator::Allocator};
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 use super::{native, native_counts, nested, nested_counts};
 use crate::{
-    Application, ApplicationBuilder,
+    Application, ApplicationBuilder, CompressedProof,
     decompress::{
         prover::Decompressed,
         run::Sides,
@@ -408,6 +409,58 @@ fn decompresses_a_wallet_proof() {
         matches!(app.verify_uncompressed(&relabelled, &mut rng), Ok(false)),
         "a relabelled decompression fails"
     );
+}
+
+/// A compressed proof the wallet application's verifier rejects up front is
+/// refused before any proving: `decompress` fails with the admission's own
+/// rejection on a circuit id outside the registry's domain, a child header
+/// of another size, an IPA opening a round pair short of the rank and a
+/// recomputed nested stage that does not commit as the instance claims.
+#[test]
+fn refuses_a_proof_the_wallet_rejects() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(17);
+    let wallet = wallet();
+    let (leaf, _) = wallet.seed(&mut rng, Leaf, Fp::from(42)).unwrap();
+    let (proof, data) = wallet.compress(&leaf, &mut rng).unwrap().into_parts();
+    let decompression = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .finalize_with(pasta, decompression)
+        .unwrap();
+    let wallet = app.context().wallet();
+
+    let edits: [(&str, fn(&mut CompressedProof<Pasta>)); 4] = [
+        ("an out-of-domain circuit id", |proof| {
+            proof.instance.circuit_id = CircuitIndex::new(u32::MAX as usize);
+        }),
+        ("a header of another size", |proof| {
+            proof.instance.left_header.push(Fp::ZERO);
+        }),
+        ("a round pair short of the rank", |proof| {
+            proof.native.opening.rounds.pop();
+        }),
+        ("a stage that does not commit as claimed", |proof| {
+            proof.instance.bridge_alpha += Fq::ONE;
+        }),
+    ];
+    for (case, edit) in edits {
+        let mut edited = proof.clone();
+        edit(&mut edited);
+        let Err(rejection) = wallet.admit_compressed(&edited) else {
+            panic!("{case}: the wallet admits it");
+        };
+        let edited = edited.carry::<Value>(data);
+        assert!(
+            matches!(wallet.verify_compressed(&edited), Ok(false)),
+            "{case}: the wallet's verifier rejects it"
+        );
+        let Err(error) = app.decompress(&mut rng, &edited) else {
+            panic!("{case}: decompresses");
+        };
+        assert_eq!(error.to_string(), rejection.to_string(), "{case}");
+    }
 }
 
 /// Two chunk circuits that load the same stages do not stand in for each

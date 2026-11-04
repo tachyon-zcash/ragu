@@ -58,8 +58,10 @@ use super::{
     ipa, revdot, transcript,
     transcript::{Absorb, Challenge, RawChallenge},
 };
+#[cfg(test)]
+use crate::RAGU_TAG;
 use crate::{
-    Application, CompressedPcd, CompressedProof, RAGU_TAG, SelectableBackend,
+    Application, CompressedPcd, CompressedProof, SelectableBackend,
     compress::{
         Lifted, Messages, Sampled,
         revdot::{
@@ -76,7 +78,7 @@ use crate::{
         native::claims::KySource as NativeKySource,
         nested::{self, claims::KySource as NestedKySource},
     },
-    ipa::{CycleTranscript, IpaCycle, IpaTranscript, MSM, Params},
+    ipa::{IpaCycle, IpaTranscript, MSM, Params},
     profile::{ProfiledCycle, Standard},
 };
 #[cfg(test)]
@@ -269,10 +271,13 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
         let instance = &proof.instance;
         let header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
 
-        let mut fuse_transcript = CycleTranscript::<C>::fuse(app.params, RAGU_TAG)?;
-        let fuse = instance
-            .challenges(&mut fuse_transcript)?
-            .ok_or_else(|| Error::InvalidWitness("pre_beta is out of range".into()))?;
+        // The verifier's admission: the circuit id's domain, the headers'
+        // size, the messages' shape, the fuse's challenges and the two nested
+        // stages the decider recomputes. Nothing below repeats these checks
+        // natively, and the chunk circuits' constraints on the recomputed
+        // stages are not enforced when their traces are prepared, so a proof
+        // the verifier rejects is refused here, before any proving.
+        let fuse = app.admit_compressed(&proof)?;
 
         // The compression's transcript twice over: lifted, as the verifier
         // reads it, and raw, for the endoscalars.

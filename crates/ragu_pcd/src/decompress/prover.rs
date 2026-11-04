@@ -348,8 +348,8 @@ where
     ///
     /// # Errors
     ///
-    /// Fails if the wallet application's verifier would reject `pcd`, or
-    /// if proving fails.
+    /// Fails if the wallet application's verifier would reject `pcd`,
+    /// before any proving, or if proving fails.
     ///
     /// # Soundness
     ///
