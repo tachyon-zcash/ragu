@@ -5,8 +5,8 @@ use core::any::Any;
 
 use udon::{
     curve::{
-        Affine, AffineAdapter, AffinePoint, Pallas, PastaCurve, Point, ProjectiveAdapter,
-        ProjectivePoint, Vesta,
+        Affine, AffineAdapter, AffinePoint, Pallas, PastaCurve, Point, PreparedAffinePoint,
+        ProjectiveAdapter, ProjectivePoint, Vesta,
     },
     exec::{ExecutionOptions, Executor},
     field::{FieldAdapter, PastaField},
@@ -165,7 +165,27 @@ fn execute<C: PastaCurve, X: Executor>(
     options: ExecutionOptions,
     executor: &X,
 ) -> ProjectivePoint<C> {
-    let input = Input::new(Bases::Points(bases), scalars);
+    execute_input(Input::new(Bases::Points(bases), scalars), options, executor)
+}
+
+pub(super) fn execute_prepared<C: PastaCurve, X: Executor>(
+    scalars: &[PastaField<C::Scalar>],
+    bases: &[PreparedAffinePoint<C>],
+    options: ExecutionOptions,
+    executor: &X,
+) -> ProjectivePoint<C> {
+    execute_input(
+        Input::new(Bases::Prepared(bases), scalars),
+        options,
+        executor,
+    )
+}
+
+fn execute_input<C: PastaCurve, X: Executor>(
+    input: Input<'_, C>,
+    options: ExecutionOptions,
+    executor: &X,
+) -> ProjectivePoint<C> {
     let required = input.requirements(options).expect("MSM scratch size fits");
     let mut records = vec![ScalarStorage::ZERO; required.scalars()];
     let mut digits = vec![0; required.digits()];

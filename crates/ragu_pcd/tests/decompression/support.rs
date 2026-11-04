@@ -190,6 +190,7 @@ impl Setup {
                 &self.proof.native.opening,
                 Pasta::host_generators(crate::pasta::baked()),
                 *Pasta::host_u(crate::pasta::baked()),
+                None,
                 &mut Lifted(t.host()),
             )
             .unwrap(),
