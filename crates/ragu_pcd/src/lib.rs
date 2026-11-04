@@ -822,7 +822,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Fails if `point` is the identity, which the stage cannot hold.
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
-        internal::nested::stages::bridge_hash::digest::<_, _, R, _>(
+        internal::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
             point,
             C::nested_generators(self.params),
         )

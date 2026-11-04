@@ -81,17 +81,18 @@ pub fn rx<C: Affine, R: Rank>(
 /// instance to recompute an anchor that hashes a polynomial commitment.
 ///
 /// It depends on the rank, which fixes where the stage's wires sit, and
-/// on the nested generators.
+/// on the nested generators; backend `B` computes the commitment.
 ///
 /// # Errors
 ///
 /// Fails only if the stage does not fit the rank.
-pub fn digest<C, N, R, G>(o1: C, generators: &G) -> Result<N>
+pub fn digest<B, C, N, R, G>(o1: C, generators: &G) -> Result<N>
 where
+    B: ragu_backend::Backend,
     C: Affine,
     N: udon::curve::Affine<Scalar = C::Base>,
     R: Rank,
     G: ragu_core::FixedGenerators<N>,
 {
-    Ok(rx::<C, R>(o1)?.commit_to_affine(generators))
+    Ok(B::sparse_commit_to_affine(&rx::<C, R>(o1)?, generators))
 }

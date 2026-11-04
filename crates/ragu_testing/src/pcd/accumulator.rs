@@ -33,7 +33,7 @@ use udon::field::Field;
 /// The accumulator header: the number of accumulated elements as its data,
 /// and the accumulator polynomial $\prod_i (X - r_i)$ in its first slot;
 /// its second slot holds the constant one, which every step that outputs
-/// it pins (see [`pin_padding`]).
+/// it pins (see `pin_padding`).
 pub struct Accumulator;
 
 /// Opens the output header's second slot at $\zeta$ and holds it to one,
