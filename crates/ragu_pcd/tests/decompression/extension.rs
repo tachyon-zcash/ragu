@@ -639,9 +639,10 @@ fn inactive_extension_cannot_bypass_decompression() {
     // Flip either child sign while keeping it in the allowed +/-1 range.
     // Root verification must derive its meaning, not merely check that range.
     {
-        use crate::internal::{native, nested};
         use ragu_backend::{Backend, ReferenceBackend};
         use ragu_circuits::polynomials::sparse;
+
+        use crate::internal::{native, nested};
         type C = Profiled<Pasta, P>;
         let instance =
             crate::compress::instance::Instance::of::<_, HEADER_SIZE>(ordinary.proof()).unwrap();
