@@ -207,20 +207,15 @@ Here's a production-ready configuration:
 ```rust
 use ragu_circuits::polynomials::R;
 use ragu_core::pasta::Pasta;
-use ragu_pcd::{ApplicationBuilder, RegistryTags};
+use ragu_pcd::ApplicationBuilder;
 
 // Initialize Pasta curves
 let pasta = ragu_pcd::pasta::baked();
-
-// expected_manifest_digest is pinned in trusted receiver configuration.
-// The setup procedure checks the manifest and beacon against that configuration.
-let tags = RegistryTags::<Pasta>::from_beacon(&beacon, &manifest_digest);
 
 // Build application with production parameters
 let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
     .register(step1)?
     .register(step2)?
-    .with_registry_tags(tags, &expected_manifest_digest)?
     .finalize(pasta)?;
 ```
 
@@ -232,81 +227,23 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
 ## Registry Tags
 
-**Temporary stopgap:** caller-supplied registry tags replace the evaluation-based
-derivation for the registry-collision issue
-[#78](https://github.com/tachyon-zcash/ragu/issues/78). This setup parameter is
-intended to be removed once the workaround is no longer needed. Consumers
-choose the procedure that supplies the $\kappa$ values, subject to the sampling
-requirement below. The Bitcoin/OpenTimestamps example in `qa/ceremony`
-exercises this temporary mechanism; it does not define a production ceremony
-protocol for Ragu.
+Each of the application's two registries carries a registry tag $\kappa$: one
+field element, injected into every circuit's wiring polynomial at a reserved
+position. The tag exists so that whoever controls the circuit definitions
+cannot adapt them to Fiat-Shamir challenges that have already been derived; the
+[wiring chapter](../protocol/local/wiring.md) shows where it sits, and the
+`Tag` documentation in `ragu_circuits::registry` gives the argument.
 
-`with_registry_tags` supplies the application's registry tags: one field element
-per registry, injected into every circuit's wiring polynomial. They exist so
-that whoever controls the circuit definitions cannot adapt them to
-Fiat-Shamir challenges that have already been derived.
-
-`RegistryTags::from_beacon` derives both final $\kappa$ values and retains
-their manifest digest. Its type fixes the profile, and its fields are private
-so an application cannot relabel tags derived for another profile or manifest.
-`with_registry_tags` requires the receiver's independently pinned expected
-manifest digest and rejects a mismatch. The builder stores the tag values and
-`finalize` installs them without hashing them again.
-
-`finalize` requires these tags and returns an initialization error if they
-are missing.
-
-For tests, benchmarks, and fuzzing, `ragu_circuits` provides the explicitly
-named `insecure-test-registry-tag` feature. It uses a fixed test key when
-no tag is supplied. `ragu_testing` enables this feature for the repository's
-test fixtures, so existing test callers can keep using `finalize` directly.
-**Production consumers must supply their own tags and must not enable this
-feature or depend on `ragu_testing`.** Cargo features are additive, including
-features enabled by dependencies and `--all-features`.
-
-The registry tag ($\kappa$) must be sampled independently and without bias
-after the complete pre-keyed system description has been fixed and publicly
-committed, then permanently bound to that description.
-
-Sampling is over the whole field, so zero is intentionally accepted. Under
-independent uniform sampling, the probability that either Pasta registry tag
-is zero is at most $1/|\mathbb{F}_p| + 1/|\mathbb{F}_q|$. Soundness arguments
-that require nonzero tags must include this setup error.
-
-The description covers the complete setup of both native and nested registries:
-the code and dependencies, ordered circuit manifests (including internal
-circuits), fields and domains, ranks and capacities, transcript rules and
-domain-separation tags, features and configuration, and all public parameters.
-Values fixed unambiguously by the committed code need not be repeated; every
-remaining setup choice must be committed explicitly. Changing the description
-requires a new set of tags.
-
-`RegistryTags::from_beacon` derives both tags from
-caller-supplied beacon bytes and `manifest_digest`. It hashes each registry's
-label, the manifest digest, and the beacon output together with length prefixes.
-The standard profile's labels are `ragu_pcd native registry` and
-`ragu_pcd nested registry`; another profile's labels follow those with the
-profile's name in parentheses, so one beacon output and manifest digest give
-each profile its own tags.
-A canonical, versioned manifest records the complete description.
-Hash the manifest and the actual contents of
-referenced artifacts with SHA-256 or an equivalent collision-resistant hash;
-a Git commit ID alone does not provide that content binding.
-
-The consumer is responsible for the sampling requirement and for checking
-that the committed description matches the deployed code, steps and parameters.
-The API checks the supplied manifest against the receiver's expected digest;
-it does not authenticate artifacts or perform ceremony verification. The
-`Tag::from_beacon` documentation states the derivation's input contract in full.
-
-### Ceremony
-
-`qa/ceremony/README.md` contains the QA example, its manifest format, and the
-Bitcoin/[OpenTimestamps](https://opentimestamps.org) steps used to exercise it.
-Its provider and block-selection choices belong to that example. A future
-Bitcoin block provides unpredictability after commitment, not unbiasability;
-this assumes miners do not selectively withhold blocks or reorganize the
-chain to bias the tags.
+`finalize` derives both tags from the registered circuits. Each wiring
+polynomial $s_i(X, Y)$ is written down as the list of its nonzero monomials
+$c \cdot X^e Y^q$ in canonical order, and the lists are hashed, in registration
+order, with the rank and the number of circuits, into a BLAKE2b digest that is
+reduced to a field element. Two registries have the same tag exactly when they
+hold the same polynomials, unless BLAKE2b collides. Any application built from
+the same steps, in the same order, with the same profile and rank, derives the
+same tags, and any change to a circuit changes them. Tests that need two
+applications with identical circuits but different tags, or different circuits
+with identical ones, override the derived tags through a `test-utils` seam.
 
 ## Parameter Selection Guide
 
@@ -352,10 +289,9 @@ let test_app = ApplicationBuilder::<Pasta, TestRank, 1>::new()
     .register(small_step)?
     .finalize(pasta)?;
 
-// Production application, with tags drawn for exactly this set of steps
+// Production application
 let prod_app = ApplicationBuilder::<Pasta, ProductionRank, 8>::new()
     .register(complex_step)?
-    .with_registry_tags(prod_tags, &expected_prod_manifest_digest)?
     .finalize(pasta)?;
 ```
 

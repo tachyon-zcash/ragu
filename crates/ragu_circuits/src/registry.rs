@@ -55,6 +55,7 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
+use blake2b_simd::Params;
 use ragu_core::{Error, Result};
 use udon::{
     fft::{Domain, bit_reverse},
@@ -126,7 +127,9 @@ pub struct RegistryBuilder<'params, F: Field, R: Rank> {
     bonding: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     internal_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-    tag: Option<Tag<F>>,
+    /// A tag to install instead of the derived one; a test seam only.
+    #[cfg(any(test, feature = "test-utils"))]
+    tag: Option<F>,
 }
 
 impl<F: Field, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -143,16 +146,21 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             bonding: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
+            #[cfg(any(test, feature = "test-utils"))]
             tag: None,
         }
     }
 
-    /// Supplies the registry tag to use at finalization.
+    /// Installs `tag` at finalization instead of the tag derived from the
+    /// registered circuits.
     ///
-    /// This is a temporary setup parameter for the registry-collision
-    /// workaround. The caller must satisfy the [sampling requirement](Tag#sampling-requirement);
-    /// this method stores the supplied value without validating its origin.
-    pub fn with_tag(mut self, tag: Tag<F>) -> Self {
+    /// This exists for adversarial tests, which use it to model a tag
+    /// collision between different registries or a tag mismatch between
+    /// identical ones. It has no production use: a registry's tag is a
+    /// function of its circuits (see [`Tag`]), and overriding it forfeits
+    /// the binding the tag provides.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_tag(mut self, tag: F) -> Self {
         self.tag = Some(tag);
         self
     }
@@ -223,12 +231,8 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
         self
     }
 
-    /// Builds the [`Registry`].
-    ///
-    /// Requires a tag supplied through [`Self::with_tag`] that satisfies the
-    /// [sampling requirement](Tag#sampling-requirement).
-    /// The `insecure-test-registry-tag` feature permits a fixed test tag when
-    /// none is supplied. Production consumers must not enable that feature.
+    /// Builds the [`Registry`], deriving its [`Tag`] from the registered
+    /// circuits.
     ///
     /// Circuits are concatenated in the following order for proper indexing:
     /// 1. Internal circuits: System circuits for the PCD construction
@@ -242,13 +246,8 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     /// # Errors
     ///
     /// Returns [`Error::CircuitBoundExceeded`] if the total number of
-    /// registered circuits exceeds the rank capacity, or
-    /// [`Error::Initialization`] if no tag was supplied and the test-only
-    /// fallback is disabled.
-    pub fn finalize(self) -> Result<Registry<'params, F, R>>
-    where
-        F: Field,
-    {
+    /// registered circuits exceeds the rank capacity.
+    pub fn finalize(self) -> Result<Registry<'params, F, R>> {
         let total_circuits = self.num_circuits();
         if total_circuits > R::num_coeffs() {
             return Err(Error::CircuitBoundExceeded {
@@ -273,29 +272,21 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
             .collect();
 
-        // Create provisional registry (tag not yet computed)
-        let mut registry = Registry {
+        let tag = Tag::derive(&circuits, &floor_plans);
+        #[cfg(any(test, feature = "test-utils"))]
+        let tag = self.tag.map_or(tag, Tag);
+
+        Ok(Registry {
             domain,
             circuits,
             floor_plans,
-            tag: Tag::default(),
-        };
-        registry.tag = Tag::new(registry.compute_registry_tag(self.tag)?);
-
-        Ok(registry)
+            tag,
+        })
     }
 }
 
 /// Public registry binding tag injected into the registry polynomial
 /// $m(W, X, Y)$ to prevent Fiat-Shamir soundness attacks.
-///
-/// **Temporary stopgap for [#78]:** finalization accepts this tag as a setup
-/// parameter while the registry-collision workaround is needed. The consumer
-/// chooses how to obtain it, subject to the sampling requirement below. Wrap
-/// the final field element with [`Tag::new`] and supply it through
-/// [`RegistryBuilder::with_tag`]; [`Tag::from_beacon`] is an optional helper.
-/// Production consumers must not use the fixed tag provided by the
-/// `insecure-test-registry-tag` feature.
 ///
 /// In Fiat-Shamir transformed protocols, common inputs such as the proving
 /// statement (i.e., circuit descriptions) must be included in the transcript
@@ -316,29 +307,37 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// recursive verifier. Ragu avoids preprocessing by design, and does not use
 /// verification keys, which suggests an alternative solution.
 ///
-/// # Sampling requirement
+/// # Hashing the registry polynomial
 ///
-/// The registry tag ($\kappa$) must be sampled independently and without bias
-/// after the complete pre-keyed system description has been fixed and publicly
-/// committed, then permanently bound to that description.
+/// The tag is a hash of $m(W, X, Y)$ itself, before the tag is injected.
+/// [`RegistryBuilder::finalize`] writes every registered wiring polynomial
+/// $s_i(X, Y)$ down as its nonzero monomials $c \cdot X^e Y^q$ in canonical
+/// order (the `wiring::monomials` evaluator), and absorbs them, in
+/// registration order, into BLAKE2b personalized with `ragu_registry___`
+/// after the rank's $n$ and the number of polynomials. The 64-byte digest is
+/// reduced to a field element.
 ///
-/// The description includes the code and dependencies, ordered application
-/// and internal circuit manifests, fields and domains, ranks and capacities,
-/// transcript rules and domain-separation tags, features and configuration,
-/// and all public parameters. For an application, it covers both registries.
-/// Changing the description requires new tags. The consumer is responsible
-/// for this contract; the API does not verify the setup procedure.
+/// Each wiring polynomial is a function of its circuit's constraints alone,
+/// not of how the circuit code emitted them, and the byte encoding is
+/// injective: every item is fixed-width or length-prefixed. Two registries
+/// with the same tag therefore have the same polynomial unless BLAKE2b
+/// collides. A tag of zero has probability $1/|\mathbb{F}|$ over the
+/// hash; soundness arguments that assume a nonzero tag must include it.
 ///
 /// # Break self-reference without preprocessing
 ///
 /// With the resulting registry [`Tag`], we can break the self-reference without
 /// preprocessing or reliance on public inputs.
 ///
-/// Concretely, the registry tag $k$ is injected as the monomial
-/// $k \cdot (XY)^{4n-1}$ at the registry level, binding each circuit's wiring
-/// polynomial to the registry polynomial and thus the entire registry polynomial
-/// to the Fiat-Shamir transcript without self-reference. The tag randomizes the
-/// wiring polynomial directly.
+/// Concretely, the registry tag $\kappa$ is injected as the monomial
+/// $\kappa \cdot (XY)^{4n-1}$ at the registry level, binding each circuit's
+/// wiring polynomial to the registry polynomial and thus the entire registry
+/// polynomial to the Fiat-Shamir transcript without self-reference. Whoever
+/// controls the circuit definitions cannot adapt them to challenges that have
+/// already been derived: any change to $m$ changes $\kappa$, which moves the
+/// coefficient of $(XY)^{4n-1}$ in every wiring polynomial, so the changed
+/// $m$ evaluates unpredictably at the points the transcript has fixed. See
+/// [#78] for the analysis.
 ///
 /// The tag is installed during [`RegistryBuilder::finalize`] and used during
 /// polynomial evaluations of circuits in the registry.
@@ -346,24 +345,20 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// [#78]: https://github.com/tachyon-zcash/ragu/issues/78
 pub struct Tag<F: Field>(F);
 
-impl<F: Field> Default for Tag<F> {
-    fn default() -> Self {
-        Self(F::ONE)
-    }
-}
-
 impl<F: Field> Tag<F> {
-    /// Creates a new registry tag from a field element.
-    ///
-    /// This wraps an already-derived value without hashing it. The caller
-    /// must satisfy the [sampling requirement](Tag#sampling-requirement).
-    ///
-    /// Zero is intentionally accepted: setup sampling is over the whole field.
-    /// Under independent uniform sampling, zero occurs with probability
-    /// `1 / |F|` per registry. Soundness arguments that assume a nonzero tag
-    /// must include this setup error, summed across registries.
-    pub fn new(val: F) -> Self {
-        Self(val)
+    /// Derives the tag of the registry holding `circuits`, laid out by
+    /// `floor_plans`: the hash of their wiring polynomials.
+    fn derive<R: Rank>(
+        circuits: &[Box<dyn WiringObject<F, R> + '_>],
+        floor_plans: &[Vec<ConstraintSegment>],
+    ) -> Self {
+        let mut state = Params::new().personal(b"ragu_registry___").to_state();
+        state.update(&(R::n() as u64).to_le_bytes());
+        state.update(&(circuits.len() as u64).to_le_bytes());
+        for (circuit, floor_plan) in circuits.iter().zip(floor_plans) {
+            circuit.monomials(floor_plan).hash_into(&mut state);
+        }
+        Self(F::from_uniform_bytes(state.finalize().as_array()))
     }
 
     /// Returns the registry tag value.
@@ -842,22 +837,82 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
     }
 }
 
-impl<F: Field, R: Rank> Registry<'_, F, R> {
-    /// Use the caller's beacon tag through the temporary replacement.
-    fn compute_registry_tag(&self, tag: Option<Tag<F>>) -> Result<F> {
-        crate::beacon::registry_tag(tag)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+
     use ragu_core::{Result, pasta::Fp};
     use rand::Rng;
     use udon::{fft::bit_reverse, field::Field};
 
     use super::{CircuitIndex, RegistryBuilder};
-    use crate::{polynomials::TestRank, tests::SquareCircuit};
+    use crate::{
+        polynomials::{ProductionRank, Rank, TestRank},
+        staging::mask::StageMask,
+        tests::SquareCircuit,
+    };
     type TestRegistryBuilder<'a> = RegistryBuilder<'a, Fp, TestRank>;
+
+    /// The tag is a function of the registered polynomials and their order,
+    /// and nothing else.
+    #[test]
+    fn tag_is_derived_from_the_circuits() -> Result<()> {
+        let tag = |times: &[usize], masks: &[(usize, usize)]| -> Result<Fp> {
+            let mut builder = TestRegistryBuilder::new();
+            for &times in times {
+                builder = builder.register_circuit(SquareCircuit { times })?;
+            }
+            for &(skip, num) in masks {
+                let mask = StageMask::<TestRank>::new(skip, num)?;
+                builder = builder.register_bonding(crate::BondingObject::new(Box::new(mask)));
+            }
+            Ok(builder.finalize()?.tag())
+        };
+
+        assert_eq!(tag(&[2, 5], &[])?, tag(&[2, 5], &[])?);
+        assert_ne!(tag(&[2, 5], &[])?, tag(&[5, 2], &[])?, "order");
+        assert_ne!(tag(&[2, 5], &[])?, tag(&[2, 5, 5], &[])?, "count");
+        assert_ne!(tag(&[2, 5], &[])?, tag(&[2, 6], &[])?, "circuit");
+        assert_ne!(tag(&[2], &[(1, 3)])?, tag(&[2], &[(1, 4)])?, "mask");
+        assert_ne!(tag(&[], &[(1, 3)])?, tag(&[], &[(2, 3)])?, "mask offset");
+        assert_eq!(
+            tag(&[], &[(1, 0)])?,
+            tag(&[], &[(2, 0)])?,
+            "an empty stage masks every gate wherever it starts"
+        );
+        Ok(())
+    }
+
+    /// Registries of different ranks hash into different tags, as the hash
+    /// binds the rank; the layout of a circuit's monomials does too.
+    #[test]
+    fn tag_binds_the_rank() -> Result<()> {
+        let small = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 1 })?
+            .finalize()?;
+        let large = RegistryBuilder::<Fp, ProductionRank>::new()
+            .register_circuit(SquareCircuit { times: 1 })?
+            .finalize()?;
+        assert_ne!(TestRank::n(), ProductionRank::n());
+        assert_ne!(small.tag(), large.tag());
+        Ok(())
+    }
+
+    #[test]
+    fn with_tag_overrides_the_derived_tag() -> Result<()> {
+        let derived = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .finalize()?
+            .tag();
+        let forced = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .with_tag(Fp::from(7))
+            .finalize()?
+            .tag();
+        assert_ne!(derived, Fp::from(7));
+        assert_eq!(forced, Fp::from(7));
+        Ok(())
+    }
 
     #[test]
     fn test_omega_j_multiplicative_order() {

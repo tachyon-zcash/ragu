@@ -15,9 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Registry tags are supplied by the application from a randomness beacon;
-  `ApplicationBuilder::finalize` requires them unless the test-only
-  `insecure-test-registry-tag` feature is enabled.
+- Registry tags are derived by `ApplicationBuilder::finalize` from the
+  registered circuits, by hashing every wiring polynomial written out as its
+  monomials.
 - The PCD transcript tag is `ragu-pcd-v1`; proofs made under the placeholder
   tag do not verify. Compression has its own tag, `ragu-ipa-v1`.
 - `ApplicationBuilder` and `Application` take a fourth type parameter

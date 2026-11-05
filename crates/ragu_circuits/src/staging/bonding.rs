@@ -34,6 +34,7 @@ use crate::{
     floor_planner::ConstraintSegment,
     into_wiring_object,
     polynomials::{Rank, sparse},
+    wiring::monomials::Monomials,
 };
 
 impl<F, R, S> MultiStage<F, R, S>
@@ -262,6 +263,12 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         correction.d.push(F::ONE);
         poly.sub_assign(&correction.build());
         poly
+    }
+
+    fn monomials(&self, floor_plan: &[ConstraintSegment]) -> Monomials<F> {
+        let mut monomials = self.0.monomials(floor_plan);
+        monomials.strip_one();
+        monomials
     }
 
     fn segment_records(&self) -> &[SegmentRecord] {
@@ -601,9 +608,15 @@ mod tests {
         assert_eq!(obj.sxy(Fp::ZERO, y, &floor_plan), Fp::ZERO);
         // s(x, 0) = 0: forces k(Y) = 0.
         assert_eq!(obj.sxy(x, Fp::ZERO, &floor_plan), Fp::ZERO);
+        // Written out, the polynomial has neither an X^0 nor a Y^0 monomial.
+        assert!(
+            obj.monomials(&floor_plan)
+                .iter()
+                .all(|m| m.x > 0 && m.y > 0)
+        );
     }
 
-    /// sxy(x,y) = sx(x).eval(y) = sy(y).eval(x).
+    /// sxy(x,y) = sx(x).eval(y) = sy(y).eval(x) = the monomials at (x, y).
     #[test]
     fn evaluation_consistency() {
         let obj = bonding_obj();
@@ -615,6 +628,7 @@ mod tests {
         let sxy = obj.sxy(x, y, &floor_plan);
         assert_eq!(sxy, obj.sx(x, &floor_plan).eval(y));
         assert_eq!(sxy, obj.sy(y, &floor_plan).eval(x));
+        assert_eq!(sxy, obj.monomials(&floor_plan).eval(x, y));
     }
 
     /// Build a trace with the SYSTEM gate zeroed and gates 1..n from (a, d)

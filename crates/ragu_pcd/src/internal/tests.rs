@@ -872,20 +872,24 @@ fn test_non_step_slots_reject_application_instances() {
     );
 }
 
+/// Both tags are derived from the registered circuits: the same application
+/// derives the same tags, and one more application step changes the native
+/// registry's tag.
 #[test]
-fn supplied_tags_reach_both_registries() -> Result<()> {
-    let tags = RegistryTags::<Pasta>::from_beacon(&[0x42; 32], &[0x24; 20]);
-    let native = tags.native.value();
-    let nested = tags.nested.value();
-    let app = ApplicationBuilder::<Pasta, R, 4>::new()
-        .with_registry_tags(tags, &[0x24; 20])?
-        .finalize(crate::pasta::baked())?;
-    assert_eq!(app.native_registry.tag(), native);
-    assert_eq!(app.nested_registry.tag(), nested);
+fn tags_are_derived_from_the_registries() -> Result<()> {
+    let application = |steps| {
+        ApplicationBuilder::<Pasta, R, 4>::new()
+            .register_dummy_circuits(steps)?
+            .finalize(crate::pasta::baked())
+    };
+    let (first, again, larger) = (application(1)?, application(1)?, application(2)?);
+    assert_eq!(first.native_registry.tag(), again.native_registry.tag());
+    assert_eq!(first.nested_registry.tag(), again.nested_registry.tag());
+    assert_ne!(first.native_registry.tag(), larger.native_registry.tag());
     Ok(())
 }
 
-/// Verifies the native registry uses the fixed tag enabled by the testing feature.
+/// Pins the native registry's derived tag, and with it the native circuits.
 #[test]
 fn test_native_registry_tag() {
     let pasta = crate::pasta::baked();
@@ -897,7 +901,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x247e382a1523800d0fc7bccd9b0e1e57eecd7a9758c4b7537f4ed76f5f54fe43"
+        "0x333b830c0eb5146c74305f6fa060a5bd84a614c5d737c7b3207a81f6e8acf079"
     ));
 
     assert_eq!(
@@ -907,7 +911,7 @@ fn test_native_registry_tag() {
     );
 }
 
-/// Verifies the nested registry uses the fixed tag enabled by the testing feature.
+/// Pins the nested registry's derived tag, and with it the nested circuits.
 #[test]
 fn test_nested_registry_tag() {
     let pasta = crate::pasta::baked();
@@ -919,7 +923,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x009ad8ef87fe4e7dc6e51df8807db0f783f39978e29787ab3e00a28c15d2bdbd"
+        "0x1bce0315ca0bb5a6b63d952828e5473f7516218d6c4e0e19e951acf3214daae7"
     ));
 
     assert_eq!(

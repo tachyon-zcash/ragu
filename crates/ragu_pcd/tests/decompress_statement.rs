@@ -24,7 +24,7 @@ use ragu_primitives::{Element, allocator::Standard as Allocator};
 use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
-    Application, ApplicationBuilder, Pcd, RegistryTags,
+    Application, ApplicationBuilder, Pcd,
     header::Header,
     internal::ky,
     profile::{
@@ -36,7 +36,6 @@ use crate::{
 };
 
 const HEADER_SIZE: usize = 4;
-const MANIFEST: &[u8] = &[0x26; 32];
 type C = Profiled<Pasta, Decompressing>;
 type Rk = R<14>;
 type App = Application<'static, C, Rk, HEADER_SIZE>;
@@ -89,7 +88,6 @@ impl Step<C> for Consume {
 fn application() -> Result<App> {
     ApplicationBuilder::<C, Rk, HEADER_SIZE>::new()
         .register(Consume)?
-        .with_registry_tags(RegistryTags::from_beacon(&[0x42; 32], MANIFEST), MANIFEST)?
         .finalize_with(
             crate::pasta::baked_aggregator(),
             StatementContext::default(),

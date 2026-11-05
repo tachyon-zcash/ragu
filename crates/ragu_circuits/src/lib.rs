@@ -20,7 +20,6 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
-mod beacon;
 pub mod floor_planner;
 pub mod horner;
 mod ky;
@@ -214,6 +213,18 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     fn sy(&self, y: F, floor_plan: &[floor_planner::ConstraintSegment])
     -> sparse::Polynomial<F, R>;
 
+    /// Writes down $s(X, Y)$ itself: every nonzero monomial, in canonical
+    /// order. The [`Registry`] hashes these to derive its tag.
+    ///
+    /// Unlike `sxy`/`sx`/`sy`, a masking polynomial returns its complete
+    /// polynomial here, shared $S\_{\text{global}}$ term included.
+    ///
+    /// [`Registry`]: registry::Registry
+    fn monomials(
+        &self,
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> wiring::monomials::Monomials<F>;
+
     /// Returns per-segment constraint records in DFS emission order.
     ///
     /// These records serve as input to [`floor_planner::floor_plan`] for
@@ -292,6 +303,13 @@ where
             floor_plan: &[floor_planner::ConstraintSegment],
         ) -> sparse::Polynomial<F, R> {
             wiring::sy::eval(&self.circuit, y, floor_plan)
+                .expect("should succeed if metrics succeeded")
+        }
+        fn monomials(
+            &self,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> wiring::monomials::Monomials<F> {
+            wiring::monomials::eval::<_, _, R>(&self.circuit, floor_plan)
                 .expect("should succeed if metrics succeeded")
         }
         fn segment_records(&self) -> &[SegmentRecord] {

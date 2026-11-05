@@ -4,6 +4,7 @@ use udon::{field::Field, polynomial::geometric_sum};
 use crate::{
     WiringObject,
     polynomials::{Rank, sparse},
+    wiring::monomials::{Monomial, Monomials},
 };
 
 /// Evaluates the global stage mask polynomial $S\_{\text{global}}(X, Y)$ at
@@ -222,6 +223,32 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         _floor_plan: &[crate::floor_planner::ConstraintSegment],
     ) -> sparse::Polynomial<F, R> {
         self.notch_project(y)
+    }
+
+    /// The complete mask, $S\_{\text{global}} - \text{notch}$: the monomial
+    /// $(XY)^k$ with coefficient one for every wire degree $k$ that the mask
+    /// pins to zero, which is every wire of every gate but the SYSTEM gate
+    /// and the stage's own `num_gates` gates from `skip_gates`.
+    fn monomials(&self, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> Monomials<F> {
+        let n = R::n();
+        // The gate whose wire sits at degree `k` in the wiring layout.
+        let gate = |k: usize| match k / n {
+            0 => k,
+            1 => 2 * n - 1 - k,
+            2 => k - 2 * n,
+            _ => 4 * n - 1 - k,
+        };
+        let active = self.skip_gates..self.skip_gates + self.num_gates;
+        Monomials::new(
+            (0..4 * n)
+                .filter(|&k| gate(k) != 0 && !active.contains(&gate(k)))
+                .map(|k| Monomial {
+                    y: k,
+                    x: k,
+                    coeff: F::ONE,
+                })
+                .collect(),
+        )
     }
 
     fn segment_records(&self) -> &[crate::SegmentRecord] {
@@ -627,6 +654,12 @@ mod tests {
                 let mut reconstructed = super::global_project::<Fp, R>(x);
                 reconstructed += &stage_mask.notch_project(x);
                 prop_assert_eq!(reconstructed.eval(y), sxy);
+
+                // The closed-form monomials are the generic path's, and are
+                // the full mask.
+                let monomials = stage_mask.monomials(&[]);
+                prop_assert_eq!(&monomials, &stripped.monomials(&plan));
+                prop_assert_eq!(monomials.eval(x, y), sxy);
 
                 Ok(())
             };
