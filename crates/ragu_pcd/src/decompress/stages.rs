@@ -15,9 +15,10 @@
 //! the work stage, what passes between chunks, the transcript stage, what
 //! only the transcript chunks need, the sponge's saved states, and the
 //! digits stage, the signed digits of the full-width scalars the other
-//! side scales by. A chunk loads the stages up to the last it needs, so
-//! the transcript and digits stages' cost falls on the chunks that fill
-//! them. A [`Layout`] names where in the instance and messages each part
+//! side scales by. A chunk loads the stages up to the last it needs, the
+//! digits chunks skipping the transcript stage, so the transcript and
+//! digits stages' cost falls on the chunks that fill them. A [`Layout`]
+//! names where in the instance and messages each part
 //! of the proof sits, the same positions whichever stages hold them, and
 //! how many lifts and digits the side holds; the
 //! [`Schedule`](super::program::Schedule) assigns the work stage's slots
@@ -55,9 +56,10 @@
 //!   recomputes it as the signed sum of the digits' generators while it
 //!   scales by them ([`digits_degrees`]).
 //!
-//! The digits stage comes after the work stage, so its generators depend
-//! on the work stage's size, which the side's schedule sets, and the
-//! other side's schedule names those generators: the stages' lengths
+//! The digits stage comes after the work stage, and on the circuit-field
+//! side after the transcript stage too, so its generators depend on the
+//! sizes the side's schedule sets, and the other side's schedule names
+//! those generators: the stages' lengths
 //! therefore take each side's schedule built for its sizes alone
 //! ([`Side::sizes`]), which no other side's schedule enters, and the
 //! full schedules build on them (see the [`program`](super::program)

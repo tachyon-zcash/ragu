@@ -3,7 +3,8 @@
 //! the challenges as endoscalars, the chains give the commitments the
 //! native verifier derives and the batched commitment it forms, a
 //! full-width scalar's digits scale a point by it, and the IPA's final
-//! check holds exactly when the native verifier accepts.
+//! check, over the $G'$ the native verifier derives, holds exactly when
+//! the native verifier accepts.
 
 use alloc::vec::Vec;
 
