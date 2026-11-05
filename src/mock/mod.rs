@@ -5,17 +5,17 @@
 //! implementation.
 
 pub use application::{Application, ApplicationBuilder};
-pub use ctx::StepCtx;
-pub use header::{Header, Suffix};
+pub use header::{HEADER_POLYNOMIALS, Header, Suffix};
 pub use proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
-pub use step::{Index, Step};
+pub use step::{Encoded, HeaderInput, Index, Oracles, Position, Slot, Step};
+pub use wire::WireHeader;
+
+pub mod wire;
 
 mod application;
-mod ctx;
-mod header;
-mod hooks;
+pub mod header;
 mod proof;
-mod step;
+pub mod step;
 
 #[cfg(test)]
 mod tests;
