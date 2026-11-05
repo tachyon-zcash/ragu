@@ -1,8 +1,12 @@
 //! Mock PCD header — mirrors `ragu_pcd::Header`.
 
-use alloc::vec::Vec;
-
-use ragu_core::pasta::{Ep, Eq, Fp, Fq};
+use ragu_core::{
+    Result,
+    drivers::{Driver, DriverValue},
+    gadgets::Bound,
+};
+use ragu_primitives::{allocator::Allocator, io::Write};
+use udon::field::Field;
 
 /// Number of internal header suffixes reserved by mock_ragu.
 ///
@@ -90,16 +94,19 @@ fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
     let _ = Suffix::new(usize::MAX);
 }
 
+pub const HEADER_POLYNOMIALS: usize = 3;
+
 /// Mirrors `ragu_pcd::Header`.
-pub trait Header: Send + Sync + 'static {
+pub trait Header<F: Field>: Send + Sync + 'static {
     const SUFFIX: Suffix;
     type Data: Send + Clone;
+    type Output: Write<F>;
 
-    /// Decomposes header data into the in-circuit values it would carry, as
-    /// `(Fp elements, Fq elements, Pallas points, Vesta points)`. Pass points
-    /// as points, not coordinates: like real ragu's in-circuit `encode`, the
-    /// identity is rejected when these are hashed.
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>);
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>>;
 }
 
 /// Header that encodes no data.
@@ -107,13 +114,18 @@ pub trait Header: Send + Sync + 'static {
 /// Mirrors `ragu_pcd`: the bootstrap proof and application steps may carry
 /// this ordinary header, while the private dummy suffix alone marks the base
 /// case.
-impl Header for () {
+impl<F: Field> Header<F> for () {
     type Data = ();
+    type Output = ();
 
     const SUFFIX: Suffix = Suffix::internal(1);
 
-    fn encode(_data: &()) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        _: &mut D,
+        _: &mut A,
+        _: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
     }
 }
 
