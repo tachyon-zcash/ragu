@@ -37,6 +37,10 @@ impl PayloadKind {
 const PROOF_SCHEMA_VERSION: u16 = 1;
 const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
+// Held at 1 until the first release: nothing is deployed, so a change to
+// the semantics before then, such as the lifted challenges and the run
+// commitments compression now uses, does not bump it, and proofs from
+// before the change fail verification rather than decoding.
 const PROTOCOL_VERSION: u16 = 1;
 pub(crate) const ENVELOPE_SIZE: usize = 28;
 

@@ -76,8 +76,8 @@ use crate::{
 /// unchecked, and the IPA's final generator $G'$ as a free witness point,
 /// so a dishonest prover can have the aggregator accept a compressed proof
 /// the wallet application's verifier rejects. Both close through the
-/// polynomial-query hooks
-/// [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes; until
+/// polynomial queries the online polynomial oracle
+/// ([#944](https://github.com/tachyon-zcash/ragu/pull/944)) proposes; until
 /// then an aggregator proof attests a decompression an honest prover ran,
 /// and the profile is public only under the `unstable-aggregator` feature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

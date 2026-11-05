@@ -150,13 +150,19 @@ Two of `verify_compressed`'s checks are not yet enforced in circuit, so the
 decompression is sound for an honest prover and not yet against a dishonest
 one:
 
-- **Registry evaluations** are prover-supplied wires. The decider must
-  recompute them against the wallet registry at the decompressed proof's
-  challenges and hold the wires to them, as it does Fuse's query stage,
-  through the polynomial-query hooks.
+- **Registry evaluations** are prover-supplied wires. The fix is the online
+  polynomial oracle's: the chunks claim each evaluation as a query on the
+  wallet registry's polynomial, the decompressing step's own fuse batches
+  the queries into its opening accumulator as it does an application's,
+  and the decider checks the openings against the wallet registry it holds.
 - **$G'$** is a witness point, so the IPA's final check binds nothing by
-  itself. $G' = \langle s, G \rangle$ is the commitment to
+  itself, and with it nothing holds the fold's, the batch's and the wire
+  bindings' claimed openings to the committed polynomials. $G' = \langle s,
+  G \rangle$ is the commitment to
   $s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the same generators, so
-  the fix is to carry $s$ as a polynomial of the decompression proof and
-  defer one evaluation of it to the fuse that consumes the proof, through
-  the same hooks on both curves.
+  the fix is to carry $s$ as a polynomial of the decompression proof, bound
+  before the decompressing step's fuse squeezes its fresh challenge, and to
+  claim one evaluation of it at that challenge as a query the same fuse
+  batches; the parent folds the chunk circuits' traces as it does every
+  circuit's, and the decider checks the opening. The same mechanism is
+  needed on both curves.

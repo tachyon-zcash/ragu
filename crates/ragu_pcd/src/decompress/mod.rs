@@ -47,8 +47,9 @@
 //! - **$G'$.** The IPA's final generator $G' = \langle s, G \rangle$ is the
 //!   commitment to $s(X)$ over the same generators, so $s$ can be a
 //!   polynomial of the decompression proof whose commitment is $G'$, with
-//!   one evaluation of it deferred to the fuse that consumes the proof.
-//!   Today the circuit takes $G'$ as a witness point (see *What remains*).
+//!   one evaluation of it claimed as a polynomial query the decompressing
+//!   step's own fuse batches into its opening accumulator. Today the
+//!   circuit takes $G'$ as a witness point (see *What remains*).
 //!
 //! The scalar checks are written once as [`Driver`]-generic gadget code
 //! and run in the circuit over the matching field: the host curve's in the
@@ -150,14 +151,16 @@
 //!    work stage ([`Regions::restrictions`](program::Regions::restrictions),
 //!    [`Regions::restriction_at_w`](program::Regions::restriction_at_w) and
 //!    [`Regions::registry_values`](program::Regions::registry_values)) and
-//!    take the values a prover writes there. The design is the
-//!    fuse's query stage's: the decider recomputes the evaluations at the
-//!    decompressed proof's challenges against the wallet registry and
-//!    holds the stage's wires to them, through the polynomial-query hooks
-//!    [#821](https://github.com/tachyon-zcash/ragu/pull/821) proposes, as
-//!    $G'$ below does; that check also holds the proof's circuit id to
-//!    the registry's domain, which the native verifier checks and the
-//!    chunks do not. Waits on #821. Until then nothing ties a proof to
+//!    take the values a prover writes there. The fix is the online
+//!    polynomial oracle's ([#944](https://github.com/tachyon-zcash/ragu/pull/944), V4):
+//!    the chunks claim each evaluation as a query on the wallet
+//!    registry's polynomial, the decompressing step's own fuse batches
+//!    the queries into its opening accumulator through its query and
+//!    eval stages, as it does an application's, and the decider checks
+//!    the openings against the wallet registry it holds, as $G'$ below
+//!    does; that check also holds the proof's circuit id to the
+//!    registry's domain, which the native verifier checks and the chunks
+//!    do not. Waits on #944. Until then nothing ties a proof to
 //!    the canonical wallet application either: an aggregator that builds
 //!    its [`Decompression`](crate::profile::Decompression) over a different
 //!    wallet application, or writes values of no registry at all, has its
@@ -169,20 +172,28 @@
 //! 2. **$G'$ is unbound.** The IPA's final check takes $G' = \langle s,
 //!    G \rangle$ as a witness point, so as the circuits stand that check
 //!    binds nothing: a prover who chooses $G'$ satisfies it for any
-//!    left-hand side. Everything else before the IPA's final check is bound.
+//!    left-hand side. Everything else before the IPA's final check is bound
+//!    to the proof's wires, not to its commitments: the fold, the batch and
+//!    the wire bindings are checked over the openings the prover claims,
+//!    and only that check would hold those openings to the committed
+//!    polynomials.
 //!    $G'$ is the commitment to $s(X) = \prod\_{i < k} (1 + u\_{k-1-i}
 //!    X^{2^i})$ over the same generators, so the fix is to witness $s$ as
 //!    a polynomial of the decompression proof, take its commitment as
-//!    $G'$, and defer one evaluation claim, $s$ at a fresh point against
-//!    [`ipa::s_at`], to the fuse that consumes the proof. The hooks #821
-//!    proposes, `witness_polynomial`, `derive_challenge` and
-//!    `enforce_poly_query`, first drafted in
-//!    [#783](https://github.com/tachyon-zcash/ragu/pull/783) and since
-//!    closed, are exactly that for a circuit-field polynomial, which
-//!    covers the host curve's $G'$. The nested curve's $G'$ is the
-//!    commitment to a scalar-field polynomial on the nested curve, which
-//!    those hooks do not reach, so it needs the same mechanism on the
-//!    nested side. Waits on #821 and a nested counterpart.
+//!    $G'$, and claim one evaluation of it, $s$ at a fresh challenge
+//!    against [`ipa::s_at`], as a polynomial query: the commitment is
+//!    bound before the decompressing step's fuse squeezes that challenge,
+//!    the query enters that same fuse's opening accumulator through its
+//!    query and eval stages, the parent folds the chunk circuits' traces
+//!    as it does every circuit's, and the decider checks the opening.
+//!    That is the online polynomial oracle's V4 ([#944](https://github.com/tachyon-zcash/ragu/pull/944),
+//!    after the hooks [#783](https://github.com/tachyon-zcash/ragu/pull/783)
+//!    and [#821](https://github.com/tachyon-zcash/ragu/pull/821) drafted,
+//!    both since closed) for a circuit-field polynomial, which covers the
+//!    host curve's $G'$. The nested curve's $G'$ is the commitment to a
+//!    scalar-field polynomial on the nested curve, which it does not
+//!    reach, so it needs the same mechanism on the nested side. Waits on
+//!    #944 and a nested counterpart.
 //!
 //! The two are independent and land in either order; the aggregator's
 //! proofs are sound against a dishonest prover once both have.
@@ -201,7 +212,7 @@
 //! as above.
 //!
 //! TODO: pin the decompressed proof to the approved Standard setup through
-//! the polynomial-query hooks #821 proposes, the registry evaluations
+//! the polynomial queries #944 proposes, the registry evaluations
 //! above, so that a Standard proof of another wallet application, or of
 //! no registry at all, is refused in the inner role. The outer role's
 //! substitutions are tested, the inner role's is Standard by type alone,
