@@ -5,14 +5,13 @@
 //! implementation.
 
 pub use application::{Application, ApplicationBuilder};
-pub use header::{HEADER_POLYNOMIALS, Header, Suffix};
-pub use proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
-pub use step::{Encoded, HeaderInput, Index, Oracles, Position, Slot, Step};
+pub use proof::{CompressedPcd, CompressedProof, Pcd, Proof};
 
 mod application;
 pub mod header;
 mod proof;
 pub mod step;
+pub mod wire;
 
 #[cfg(test)]
 mod tests;

@@ -16,7 +16,7 @@ use udon::{
 
 use super::{
     header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, Suffix},
-    proof::{self, PROOF_SIZE_COMPRESSED, Pcd, Proof},
+    proof::{self, CompressedPcd, CompressedProof, Pcd, Proof},
     step::{Encoded, Index, Oracles, Step},
 };
 
@@ -63,6 +63,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
         let header = Encoded::<_, (), HEADER_SIZE>::from_gadget(());
         if proof.step_index != Index::internal(1)
+            || proof.header_size != HEADER_SIZE
             || proof.header_hash
                 != proof::compute_header_hash(&mut Simulator::<C::CircuitField>::new(), &header)?
             || proof
@@ -215,20 +216,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
         // Bind the carried data before the hooks can stage or commit anything
         // derived from it. Returned gadgets are checked independently below.
-        if !self.verify(&left, &mut *rng)? || !self.verify(&right, &mut *rng)? {
-            return Err(Error::InvalidWitness(
-                "child proof or carried header is not accepted by this application".into(),
-            ));
-        }
-        if left
-            .proof
-            .polynomials
-            .iter()
-            .chain(&right.proof.polynomials)
-            .any(Vec::is_empty)
+        if !self.verify_uncompressed(&left, &mut *rng)?
+            || !self.verify_uncompressed(&right, &mut *rng)?
         {
             return Err(Error::InvalidWitness(
-                "decoded mock proofs are verify-only".into(),
+                "child proof or carried header is not accepted by this application".into(),
             ));
         }
         let staged = step.staged(&witness, left.input(), right.input())?;
@@ -314,9 +306,13 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
         let left_proof = left.proof;
         let right_proof = right.proof;
-        let left_bytes = left_proof.serialize();
-        let right_bytes = right_proof.serialize();
-        let mut witness_data = Vec::with_capacity(2 * PROOF_SIZE_COMPRESSED);
+        let left_bytes = left_proof
+            .to_bytes()
+            .map_err(|_| Error::InvalidWitness("unencodable child proof".into()))?;
+        let right_bytes = right_proof
+            .to_bytes()
+            .map_err(|_| Error::InvalidWitness("unencodable child proof".into()))?;
+        let mut witness_data = Vec::with_capacity(left_bytes.len() + right_bytes.len());
         witness_data.extend_from_slice(left_bytes.as_ref());
         witness_data.extend_from_slice(right_bytes.as_ref());
 
@@ -337,18 +333,53 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn verify_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
-        rng: RNG,
-    ) -> Result<bool> {
-        self.verify(pcd, rng)
-    }
-
-    pub fn verify<RNG: CryptoRng, H: Header<C::CircuitField>>(
-        &self,
-        pcd: &Pcd<C, R, H>,
         _rng: RNG,
     ) -> Result<bool> {
-        if pcd.proof.step_index != Index::internal(1) || TypeId::of::<H>() != TypeId::of::<()>() {
-            let Some(application_index) = pcd.proof.step_index.application() else {
+        if pcd.proof.header_size != HEADER_SIZE {
+            return Ok(false);
+        }
+        for (coefficients, point) in pcd.proof.polynomials.iter().zip(pcd.proof.commitments) {
+            if coefficients.is_empty()
+                || coefficients.len() > R::num_coeffs()
+                || point.is_identity()
+                || self.commit(coefficients)? != point
+            {
+                return Ok(false);
+            }
+        }
+        self.verify_statement::<H>(&pcd.proof.compressed(), &pcd.data)
+    }
+
+    pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
+        rng: &mut RNG,
+    ) -> Result<CompressedPcd<C, H>> {
+        if !self.verify_uncompressed(pcd, rng)? {
+            return Err(Error::InvalidWitness(
+                "cannot compress an invalid proof".into(),
+            ));
+        }
+        Ok(pcd.proof.compressed().carry(pcd.data.clone()))
+    }
+
+    pub fn verify_compressed<H: Header<C::CircuitField>>(
+        &self,
+        pcd: &CompressedPcd<C, H>,
+    ) -> Result<bool> {
+        self.verify_statement::<H>(&pcd.proof, &pcd.data)
+    }
+
+    fn verify_statement<H: Header<C::CircuitField>>(
+        &self,
+        proof: &CompressedProof<C>,
+        data: &H::Data,
+    ) -> Result<bool> {
+        if proof.rank != R::RANK || proof.header_size != HEADER_SIZE {
+            return Ok(false);
+        }
+        if proof.step_index != Index::internal(1) || TypeId::of::<H>() != TypeId::of::<()>() {
+            let Some(application_index) = proof.step_index.application() else {
                 return Ok(false);
             };
             // The header must match the output registered for the proof's step.
@@ -356,33 +387,21 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 return Ok(false);
             }
         }
-        // Legacy fixed-size proofs omit coefficients and remain verify-only.
-        if !pcd.proof.polynomials.iter().all(Vec::is_empty) {
-            for (coefficients, point) in pcd.proof.polynomials.iter().zip(pcd.proof.commitments) {
-                if coefficients.is_empty()
-                    || coefficients.len() > R::num_coeffs()
-                    || point.is_identity()
-                    || self.commit(coefficients)? != point
-                {
-                    return Ok(false);
-                }
-            }
-        }
         let mut dr = Simulator::<C::CircuitField>::new();
-        let data = Simulator::<C::CircuitField>::just(|| pcd.data.clone());
+        let data = Simulator::<C::CircuitField>::just(|| data.clone());
         let header = Encoded::<_, H, HEADER_SIZE>::new(&mut dr, &mut (), data)?;
         let expected_header_hash = proof::compute_header_hash(&mut dr, &header)?;
-        if expected_header_hash != pcd.proof.header_hash {
+        if expected_header_hash != proof.header_hash {
             return Ok(false);
         }
 
         let expected_binding = proof::compute_binding(
-            pcd.proof.step_index,
-            &pcd.proof.header_hash,
-            &pcd.proof.witness_hash,
-            &pcd.proof.commitments,
+            proof.step_index,
+            &proof.header_hash,
+            &proof.witness_hash,
+            &proof.commitments,
         );
-        Ok(expected_binding == pcd.proof.binding)
+        Ok(expected_binding == proof.binding)
     }
 
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(

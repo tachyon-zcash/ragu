@@ -11,7 +11,9 @@ use rand::{SeedableRng as _, rngs::StdRng};
 
 use super::{
     super::{
-        ApplicationBuilder, Encoded, Header, Index, Oracles, PROOF_SIZE_COMPRESSED, Step, Suffix,
+        ApplicationBuilder, CompressedProof,
+        header::{Header, Suffix},
+        step::{Encoded, Index, Oracles, Step},
     },
     application::{Merge, ValueHeader as PolynomialHeader, Witnessed, test_params},
 };
@@ -82,9 +84,12 @@ fn round_trip() {
     let app = value_app();
     let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7u64).expect("seed");
 
-    let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof().clone().into();
-    let recovered = Proof::try_from(&bytes).expect("round trip should succeed");
-    assert_eq!(pcd.proof().serialize(), recovered.serialize());
+    let bytes = pcd.proof().to_bytes().expect("encode proof");
+    let recovered = Proof::from_bytes(&bytes).expect("round trip should succeed");
+    assert_eq!(
+        pcd.proof().to_bytes().expect("encode proof"),
+        recovered.to_bytes().expect("encode proof")
+    );
 }
 
 pub(super) fn check_codecs(
@@ -93,23 +98,43 @@ pub(super) fn check_codecs(
     right: &Pcd<PolynomialHeader>,
     rng: &mut StdRng,
 ) -> Result<()> {
-    let bytes = merged.proof().serialize();
-    let decoded = Proof::try_from(bytes.as_ref())?.carry::<PolynomialHeader>(*merged.data());
-    assert!(app.verify(&decoded, &mut *rng)?);
-    let bytes = merged.proof().to_bytes()?;
+    let bytes = merged.proof().to_bytes().expect("encode proof");
     assert_eq!(bytes.len(), Proof::encoded_len::<4>());
-    let decoded = Proof::from_bytes(&bytes)?.carry::<PolynomialHeader>(*merged.data());
+    let decoded = Proof::from_bytes(&bytes)
+        .expect("decode proof")
+        .carry::<PolynomialHeader>(*merged.data());
     assert_eq!(decoded.polynomials(), merged.polynomials());
     assert!(app.verify_uncompressed(&decoded, &mut *rng)?);
     let (resumed, ()) = app.fuse(rng, Merge(false), None, decoded, right.clone())?;
-    assert!(app.verify(&resumed, &mut *rng)?);
+    assert!(app.verify_uncompressed(&resumed, &mut *rng)?);
     let mut corrupt = bytes;
-    corrupt[PROOF_SIZE_COMPRESSED] ^= 2; // Alter a coefficient, not its commitment.
-    let corrupt = Proof::from_bytes(&corrupt)?.carry::<PolynomialHeader>(*merged.data());
-    assert!(!app.verify(&corrupt, &mut *rng)?);
+    corrupt[CompressedProof::<Pasta>::encoded_len::<TestRank, 4>()] ^= 2; // Alter a coefficient, not its commitment.
+    let corrupt = Proof::from_bytes(&corrupt)
+        .expect("decode representation")
+        .carry::<PolynomialHeader>(*merged.data());
+    assert!(!app.verify_uncompressed(&corrupt, &mut *rng)?);
+    assert!(app.compress(&corrupt, rng).is_err());
     assert!(
         app.fuse(rng, Merge(false), None, corrupt, right.clone())
             .is_err()
     );
+    let compressed = app.compress(merged, rng)?;
+    let bytes = compressed
+        .proof()
+        .to_bytes()
+        .expect("encode compressed proof");
+    assert_eq!(
+        bytes.len(),
+        CompressedProof::<Pasta>::encoded_len::<TestRank, 4>()
+    );
+    let decoded = CompressedProof::<Pasta>::from_bytes(&bytes)
+        .expect("decode compressed proof")
+        .carry::<PolynomialHeader>(*compressed.data());
+    assert!(app.verify_compressed(&decoded)?);
+    let forged = decoded
+        .proof()
+        .clone()
+        .carry::<PolynomialHeader>(*decoded.data() + Fp::from(1));
+    assert!(!app.verify_compressed(&forged)?);
     Ok(())
 }

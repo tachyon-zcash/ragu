@@ -15,7 +15,10 @@ use udon::{
     field::Field as _,
 };
 
-use super::super::*;
+use super::super::{
+    header::{Header, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+};
 
 type ApplicationBuilder = crate::ApplicationBuilder<'static, Pasta, TestRank, 4>;
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
@@ -130,12 +133,12 @@ fn serialized_proof_rejects_mismatched_header_data() {
         .seed(&mut rng, SeedStep, 42u64)
         .expect("seed should succeed");
 
-    let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
-    let recovered_proof = Proof::try_from(&bytes).expect("recovered proof should deserialize");
+    let bytes = pcd.proof.to_bytes().expect("encode proof");
+    let recovered_proof = Proof::from_bytes(&bytes).expect("recovered proof should deserialize");
 
     let bad_pcd = recovered_proof.carry::<TestHeader>(TestHeaderData { value: 999 });
     let valid = app
-        .verify(&bad_pcd, &mut rng)
+        .verify_uncompressed(&bad_pcd, &mut rng)
         .expect("verify should succeed");
     assert!(
         !valid,
@@ -156,10 +159,10 @@ fn tampered_serialized_proof_fails_to_deserialize() {
         .seed(&mut rng, SeedStep, 42u64)
         .expect("seed should succeed");
 
-    let mut bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof.into();
+    let mut bytes = pcd.proof.to_bytes().expect("encode proof");
     bytes[0] ^= 0xFFu8;
     assert!(
-        Proof::try_from(&bytes).is_err(),
+        Proof::from_bytes(&bytes).is_err(),
         "tampered proof bytes must be rejected before reaching verify"
     );
 }
@@ -182,12 +185,12 @@ fn rerandomize_preserves_validity() {
         .rerandomize(pcd, &mut rng)
         .expect("rerandomize should succeed");
     let valid = app
-        .verify(&rerand_pcd, &mut rng)
+        .verify_uncompressed(&rerand_pcd, &mut rng)
         .expect("verify should succeed");
     assert!(valid, "rerandomized proof should still verify");
     assert_ne!(
-        rerand_pcd.proof.serialize(),
-        original_proof.serialize(),
+        rerand_pcd.proof.to_bytes().expect("encode proof"),
+        original_proof.to_bytes().expect("encode proof"),
         "rerandomization must change the proof"
     );
 }
@@ -441,7 +444,7 @@ fn header_with_point_round_trips() {
     let (pcd, ()) = app
         .seed(&mut rng, PointSeedStep, Ep::generator())
         .expect("seed with a non-identity point");
-    assert!(app.verify(&pcd, &mut rng).expect("verify"));
+    assert!(app.verify_uncompressed(&pcd, &mut rng).expect("verify"));
 }
 
 #[test]
@@ -501,7 +504,7 @@ fn identity_point_in_carried_data_errors_verify() {
     // Errs rather than returning `Ok(false)`: re-encoding such a header
     // fails synthesis in real ragu, it does not merely mismatch.
     assert!(matches!(
-        app.verify(&bad_pcd, &mut rng),
+        app.verify_uncompressed(&bad_pcd, &mut rng),
         Err(Error::InvalidWitness(_))
     ));
 }
@@ -530,7 +533,7 @@ fn verify_rejects_unregistered_output_header() {
     )
     .expect("proof");
     assert!(
-        !app.verify(&proof.carry::<TestHeader>(data), &mut rng)
+        !app.verify_uncompressed(&proof.carry::<TestHeader>(data), &mut rng)
             .expect("verify")
     );
 }
@@ -548,7 +551,10 @@ fn verify_rejects_header_registered_for_another_step() {
     let (point, ()) = app
         .seed(&mut rng, PointSeedStep, Ep::generator())
         .expect("seed");
-    assert!(app.verify(&point, &mut rng).expect("verify point output"));
+    assert!(
+        app.verify_uncompressed(&point, &mut rng)
+            .expect("verify point output")
+    );
     let (scalar, ()) = app
         .fuse(
             &mut rng,
@@ -558,7 +564,10 @@ fn verify_rejects_header_registered_for_another_step() {
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .expect("fuse");
-    assert!(app.verify(&scalar, &mut rng).expect("verify scalar output"));
+    assert!(
+        app.verify_uncompressed(&scalar, &mut rng)
+            .expect("verify scalar output")
+    );
 
     let data = TestHeaderData { value: 1 };
     let mut dr = ragu_primitives::Simulator::new();
@@ -578,7 +587,7 @@ fn verify_rejects_header_registered_for_another_step() {
     )
     .expect("proof");
     assert!(
-        !app.verify(&proof.carry::<TestHeader>(data), &mut rng)
+        !app.verify_uncompressed(&proof.carry::<TestHeader>(data), &mut rng)
             .expect("verify")
     );
 }
@@ -600,7 +609,7 @@ fn verify_rejects_input_only_header_as_output() {
     )
     .expect("proof");
     assert!(
-        !app.verify(&proof.carry::<()>(()), &mut rng)
+        !app.verify_uncompressed(&proof.carry::<()>(()), &mut rng)
             .expect("verify")
     );
 }
@@ -796,7 +805,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
         .proof()
         .clone()
         .carry::<ValueHeader>(*left.data() + Fp::ONE);
-    assert!(!app.verify(&forged, &mut rng)?);
+    assert!(!app.verify_uncompressed(&forged, &mut rng)?);
     assert!(
         app.fuse(
             &mut rng,
@@ -808,7 +817,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
         .is_err()
     );
     let (merged, ()) = app.fuse(&mut rng, Merge(false), None, left, right.clone())?;
-    assert!(app.verify(&merged, &mut rng)?);
+    assert!(app.verify_uncompressed(&merged, &mut rng)?);
     super::proof::check_codecs(&app, &merged, &right, &mut rng)?;
     // Correct header and polynomial data, but an index this app does not accept.
     let other = ApplicationBuilder::new()
@@ -817,7 +826,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
         .register(Seed::<2>(None))?
         .finalize(test_params())?;
     let (foreign, ()) = other.seed(&mut rng, Seed::<2>(None), Fp::from(5u64))?;
-    assert!(!app.verify(&foreign, &mut rng)?);
+    assert!(!app.verify_uncompressed(&foreign, &mut rng)?);
     assert!(
         app.fuse(&mut rng, Merge(false), None, foreign, right)
             .is_err()
