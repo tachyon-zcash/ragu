@@ -332,6 +332,7 @@ fn real_format_payload_kinds_fail_closed() {
 #[cfg(feature = "serde")]
 mod serde_tests {
     use alloc::string::ToString as _;
+
     use serde::de::{DeserializeSeed, value::SeqDeserializer};
 
     use super::*;
