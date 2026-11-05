@@ -1,282 +1,226 @@
-use alloc::{vec, vec::Vec};
-
+use ragu_circuits::polynomials::{ProductionRank as TestRank, Rank};
 use ragu_core::{
-    Result,
-    pasta::{Ep, EpAffine, Eq, EqAffine, Fp, Fq},
+    Cycle,
+    pasta::{Fp, Pasta},
 };
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Affine;
 
-use crate::{
-    Application, ApplicationBuilder, Header, Index, Pcd, Proof, Step, StepCtx, Suffix, WireHeader,
-    wire::Error,
-};
+use super::application::{Seed, ValueHeader, test_params};
+use crate::{Application, ApplicationBuilder, Pcd, Proof, WireHeader, wire::Error};
 
-/// Header carrying one of every element kind, as a rich application header.
-struct MixedHeader;
+type MockProof = Proof<Pasta, TestRank>;
+type MockPcd<H> = Pcd<Pasta, TestRank, H>;
+type MockApplication = Application<'static, Pasta, TestRank, 4>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct MixedData {
-    fp: Fp,
-    fq: Fq,
-    ep: Ep,
-    eq: Eq,
-}
-
-impl Header for MixedHeader {
-    type Data = MixedData;
-
-    const SUFFIX: Suffix = Suffix::new(0);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        (vec![data.fp], vec![data.fq], vec![data.ep], vec![data.eq])
-    }
-}
-
-impl WireHeader for MixedHeader {
-    fn decode(fps: &[Fp], fqs: &[Fq], eps: &[Ep], eqs: &[Eq]) -> Option<Self::Data> {
-        if let ([fp], [fq], [ep], [eq]) = (fps, fqs, eps, eqs) {
-            Some(MixedData {
-                fp: *fp,
-                fq: *fq,
-                ep: *ep,
-                eq: *eq,
-            })
-        } else {
-            None
+impl WireHeader<Fp> for ValueHeader {
+    fn decode(elements: &[Fp]) -> Option<Self::Data> {
+        match elements {
+            [value] => Some(*value),
+            _ => None,
         }
     }
 }
 
-/// A header with the same shape but a different suffix.
-struct OtherHeader;
-
-impl Header for OtherHeader {
-    type Data = MixedData;
-
-    const SUFFIX: Suffix = Suffix::new(1);
-
-    fn encode(data: &Self::Data) -> (Vec<Fp>, Vec<Fq>, Vec<Ep>, Vec<Eq>) {
-        MixedHeader::encode(data)
-    }
-}
-
-impl WireHeader for OtherHeader {
-    fn decode(fps: &[Fp], fqs: &[Fq], eps: &[Ep], eqs: &[Eq]) -> Option<Self::Data> {
-        MixedHeader::decode(fps, fqs, eps, eqs)
-    }
-}
-
-/// Seed step producing a [`MixedHeader`].
-struct MixedSeedStep;
-
-impl Step for MixedSeedStep {
-    type Aux<'source> = ();
-    type Left = ();
-    type Output = MixedHeader;
-    type Right = ();
-    type Witness<'source> = MixedData;
-
-    const INDEX: Index = Index::new(0);
-
-    fn witness<'source>(
-        &self,
-        _ctx: &mut StepCtx<'_>,
-        witness: Self::Witness<'source>,
-        _left: <Self::Left as Header>::Data,
-        _right: <Self::Right as Header>::Data,
-    ) -> Result<(<Self::Output as Header>::Data, Self::Aux<'source>)> {
-        Ok((witness, ()))
-    }
-}
-
-fn mixed_app() -> Application {
-    ApplicationBuilder::new()
-        .register(MixedSeedStep)
+fn application() -> MockApplication {
+    ApplicationBuilder::<'static, Pasta, TestRank, 4>::new()
+        .register(Seed::<0>(None))
         .expect("register")
-        .finalize()
+        .finalize(test_params())
         .expect("finalize")
 }
 
-fn mixed_data() -> MixedData {
-    MixedData {
-        fp: Fp::from(42),
-        fq: Fq::from(7),
-        ep: EpAffine::generator().to_projective(),
-        eq: EqAffine::generator().to_projective(),
-    }
-}
-
-fn mixed_pcd() -> Pcd<MixedHeader> {
-    mixed_app()
-        .seed(&mut StdRng::from_seed([7; 32]), MixedSeedStep, mixed_data())
+fn seeded_pcd() -> MockPcd<ValueHeader> {
+    let mut rng = StdRng::seed_from_u64(7);
+    application()
+        .seed(&mut rng, Seed::<0>(None), Fp::from(42))
         .expect("seed")
         .0
 }
 
+fn bootstrap_proof() -> MockProof {
+    application().bootstrap_proof().clone()
+}
+
 #[test]
-fn proof_round_trip() {
-    for proof in [Proof::bootstrap(), mixed_pcd().proof().clone()] {
-        let bytes = proof.to_bytes();
-        assert_eq!(bytes.len(), Proof::encoded_len());
-        let decoded = Proof::from_bytes(&bytes).expect("decode");
-        assert_eq!(decoded.to_bytes(), bytes);
+fn proof_round_trip_preserves_reusable_data() {
+    for proof in [bootstrap_proof(), seeded_pcd().proof().clone()] {
+        let bytes = proof.to_bytes().expect("encode");
+        assert_eq!(bytes.len(), MockProof::encoded_len::<4>());
+        let decoded = MockProof::from_bytes(&bytes).expect("decode");
+        assert_eq!(decoded.to_bytes().expect("re-encode"), bytes);
     }
 }
 
 #[test]
 fn pcd_round_trip() {
-    let pcd = mixed_pcd();
+    let pcd = seeded_pcd();
     let bytes = pcd.to_bytes().expect("encode");
-    let decoded = Pcd::<MixedHeader>::from_bytes(&bytes).expect("decode");
-    assert_eq!(decoded.data(), &mixed_data());
-    assert_eq!(decoded.proof().to_bytes(), pcd.proof().to_bytes());
+    let decoded = MockPcd::<ValueHeader>::from_bytes(&bytes).expect("decode");
+    assert_eq!(decoded.data(), pcd.data());
+    assert_eq!(
+        decoded.proof().to_bytes().expect("encode"),
+        pcd.proof().to_bytes().expect("encode")
+    );
+    assert!(
+        application()
+            .verify(&decoded, StdRng::seed_from_u64(8))
+            .expect("verify")
+    );
 
-    let unit = Proof::bootstrap().carry::<()>(());
+    let unit = bootstrap_proof().carry::<()>(());
     let bytes = unit.to_bytes().expect("encode");
-    let decoded = Pcd::<()>::from_bytes(&bytes).expect("decode");
+    let decoded = MockPcd::<()>::from_bytes(&bytes).expect("decode");
     assert_eq!(decoded.data(), &());
 }
 
-/// The trivial proof's full encoding, recomputed independently of the crate.
-/// A change here is a format change: bump the schema or envelope version.
 #[test]
-fn golden_trivial_proof() {
-    let expected: &[u8] = &[
-        0x52, 0x41, 0x47, 0x55, 0x50, 0x43, 0x44, 0x00, // magic
-        0x03, 0x00, // envelope version
-        0x03, 0x00, // payload kind: mock proof
-        0x01, 0x00, // schema version
-        0x01, 0x00, // protocol version
-        0x00, 0x00, 0x00, 0x00, // rank
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // header elements
-    ];
-    let bytes = Proof::bootstrap().to_bytes();
-    assert_eq!(&bytes[..28], expected);
+fn envelope_and_payload_layout() {
+    let proof = bootstrap_proof();
+    let bytes = proof.to_bytes().expect("encode");
+    assert_eq!(&bytes[..8], b"RAGUPCD\0");
     assert_eq!(
-        bytes[28..].to_vec(),
-        vec![
-            // step index 1 (internal)
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]
-        .into_iter()
-        .chain(
-            [
-                // header hash
-                0xcd, 0x6d, 0x63, 0xa9, 0x3b, 0x98, 0x61, 0x2d, 0x26, 0x50, 0xef, 0xde, 0x8f, 0xf4,
-                0x99, 0x1d, 0xe7, 0xd2, 0xe4, 0xe3, 0x4d, 0xc4, 0xa2, 0xa3, 0x66, 0xe2, 0x55, 0xa0,
-                0x58, 0xd4, 0xc7, 0x1c,
-            ]
-            .into_iter()
-            // witness hash
-            .chain([
-                0xbc, 0x51, 0x90, 0x92, 0xac, 0xba, 0x34, 0x4c, 0xf3, 0x9e, 0x3b, 0x15, 0xe7, 0x4a,
-                0x88, 0xa9, 0xe4, 0x5f, 0xc4, 0xa3, 0x09, 0xbb, 0xc5, 0x90, 0x07, 0x99, 0xcf, 0xbe,
-                0x69, 0x2d, 0x6e, 0x14,
-            ])
-            // binding
-            .chain([
-                0x25, 0x46, 0xec, 0xae, 0xe1, 0xe6, 0x1f, 0x8d, 0x86, 0x83, 0x67, 0x45, 0x9c, 0x3d,
-                0x0e, 0x66, 0xc3, 0x82, 0xd2, 0x92, 0xdd, 0xa9, 0x58, 0x06, 0x70, 0xda, 0xb4, 0x62,
-                0x5e, 0x0b, 0x36, 0x67,
-            ])
-            // rerandomization tag
-            .chain([0u8; 32]),
-        )
-        .collect::<Vec<u8>>()
+        u16::from_le_bytes(bytes[8..10].try_into().expect("version")),
+        3
+    );
+    assert_eq!(
+        u16::from_le_bytes(bytes[10..12].try_into().expect("kind")),
+        3
+    );
+    assert_eq!(
+        u16::from_le_bytes(bytes[12..14].try_into().expect("schema")),
+        2
+    );
+    assert_eq!(
+        u16::from_le_bytes(bytes[14..16].try_into().expect("protocol")),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(bytes[16..20].try_into().expect("rank")),
+        TestRank::RANK
+    );
+    assert_eq!(&bytes[20..28], &[0; 8]);
+    let fixed = proof.serialize();
+    assert_eq!(&bytes[28..28 + 8], &fixed[..8]);
+    assert_eq!(bytes.len(), MockProof::encoded_len::<4>());
+    let digest = blake2b_simd::Params::new().hash_length(32).hash(&bytes);
+    assert_eq!(
+        digest.to_hex().as_str(),
+        "d584171ba11855eefe0a1328ad0a48603b589b41d1e2af1c8849d5526d24c5b7"
     );
 }
 
 #[test]
 fn rejects_every_envelope_component_mutation() {
-    let bytes = Proof::bootstrap().to_bytes();
-    for (offset, reason) in [
-        (0, "invalid proof magic"),
-        (8, "unsupported proof envelope version"),
-        (10, "proof payload kind mismatch"),
-        (12, "unsupported proof schema version"),
-        (14, "unsupported proof protocol version"),
-        (16, "mock proofs carry no rank"),
-        (20, "mock header element count exceeds the limit"),
-    ] {
+    let bytes = bootstrap_proof().to_bytes().expect("encode");
+    for offset in [0, 8, 10, 12, 14, 16, 20] {
         let mut mutated = bytes.clone();
         mutated[offset] ^= 1;
         assert!(
-            matches!(Proof::from_bytes(&mutated), Err(Error::Invalid { offset: at, reason: why, .. }) if at == offset && why == reason),
-            "offset {offset} must fail with {reason}"
+            matches!(MockProof::from_bytes(&mutated), Err(Error::Invalid { offset: at, .. }) if at == offset),
+            "offset {offset} must fail"
         );
     }
 }
 
 #[test]
-fn rejects_truncation_and_trailing_bytes() {
-    let bytes = mixed_pcd().to_bytes().expect("encode");
+fn real_format_payload_kinds_fail_closed() {
+    for tag in [1u16, 2, 5] {
+        let mut bytes = bootstrap_proof().to_bytes().expect("encode");
+        bytes[10..12].copy_from_slice(&tag.to_le_bytes());
+        assert!(matches!(
+            MockProof::from_bytes(&bytes),
+            Err(Error::Invalid {
+                reason: "proof payload kind mismatch",
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
+fn rejects_invalid_proof_payload() {
+    let mut bytes = bootstrap_proof().to_bytes().expect("encode");
+    // Proof prefix: index, header hash, three commitments, witness hash, binding.
+    let binding = 28 + 8 + 32 + 3 * 32 + 32;
+    bytes[binding] ^= 1;
     assert!(matches!(
-        Proof::from_bytes(&Proof::bootstrap().to_bytes()[..Proof::encoded_len() - 1]),
-        Err(Error::Truncated { .. }) | Err(Error::Length { .. })
+        MockProof::from_bytes(&bytes),
+        Err(Error::Invalid {
+            reason: "invalid mock proof payload",
+            ..
+        })
     ));
+
+    let mut bytes = bootstrap_proof().to_bytes().expect("encode");
+    let point_start = 28 + 8 + 32;
+    let identity = <Pasta as Cycle>::HostCurve::identity().to_bytes();
+    bytes[point_start..point_start + identity.as_ref().len()].copy_from_slice(identity.as_ref());
+    assert!(MockProof::from_bytes(&bytes).is_err());
+
+    let mut bytes = bootstrap_proof().to_bytes().expect("encode");
+    let coefficients = 28 + 8 + 32 + 3 * 32 + 3 * 32;
+    bytes[coefficients..coefficients + 32].fill(0xff);
+    assert!(MockProof::from_bytes(&bytes).is_err());
+}
+
+#[test]
+fn rejects_truncation_and_trailing_bytes() {
+    let bytes = bootstrap_proof().to_bytes().expect("encode");
     assert!(matches!(
-        Pcd::<MixedHeader>::from_bytes(&bytes[..bytes.len() - 1]),
+        MockProof::from_bytes(&bytes[..bytes.len() - 1]),
         Err(Error::Length { .. })
     ));
     let mut longer = bytes.clone();
     longer.push(0);
     assert!(matches!(
-        Pcd::<MixedHeader>::from_bytes(&longer),
+        MockProof::from_bytes(&longer),
+        Err(Error::Length { .. })
+    ));
+
+    let bytes = seeded_pcd().to_bytes().expect("encode");
+    assert!(matches!(
+        MockPcd::<ValueHeader>::from_bytes(&bytes[..bytes.len() - 1]),
+        Err(Error::Length { .. })
+    ));
+    let mut longer = bytes;
+    longer.push(0);
+    assert!(matches!(
+        MockPcd::<ValueHeader>::from_bytes(&longer),
         Err(Error::Length { .. })
     ));
 }
 
 #[test]
-fn rejects_binding_mismatch() {
-    let mut bytes = Proof::bootstrap().to_bytes();
-    // The binding hash follows the step index and two hashes.
-    bytes[28 + 8 + 64] ^= 1;
+fn rejects_suffix_and_count_mismatches() {
+    let bytes = seeded_pcd().to_bytes().expect("encode");
     assert!(matches!(
-        Proof::from_bytes(&bytes),
-        Err(Error::Invalid {
-            reason: "mock proof binding mismatch",
-            ..
-        })
-    ));
-}
-
-#[test]
-fn rejects_suffix_mismatch() {
-    let bytes = mixed_pcd().to_bytes().expect("encode");
-    assert!(matches!(
-        Pcd::<OtherHeader>::from_bytes(&bytes),
+        MockPcd::<()>::from_bytes(&bytes),
         Err(Error::Invalid {
             reason: "mock PCD header suffix mismatch",
             ..
         })
     ));
-}
 
-#[test]
-fn rejects_counts_disagreeing_with_the_envelope() {
-    let mut bytes = mixed_pcd().to_bytes().expect("encode");
-    // First count follows the proof payload and suffix.
-    bytes[28 + 136 + 8] ^= 1;
+    let mut bytes = bytes;
+    let count = MockProof::encoded_len::<4>() + 8;
+    bytes[count] ^= 1;
     assert!(matches!(
-        Pcd::<MixedHeader>::from_bytes(&bytes),
+        MockPcd::<ValueHeader>::from_bytes(&bytes),
         Err(Error::Invalid {
-            reason: "header element counts do not match the envelope",
+            reason: "header element count does not match the envelope",
             ..
         })
     ));
 }
 
 #[test]
-fn rejects_noncanonical_field_element() {
-    let mut bytes = mixed_pcd().to_bytes().expect("encode");
-    // First Fp follows the head: envelope, proof, suffix, counts.
-    let first = 28 + 136 + 8 + 32;
-    for byte in &mut bytes[first..first + 32] {
-        *byte = 0xff;
-    }
+fn rejects_noncanonical_header_element() {
+    let mut bytes = seeded_pcd().to_bytes().expect("encode");
+    let first = MockProof::encoded_len::<4>() + 16;
+    bytes[first..first + 32].fill(0xff);
     assert!(matches!(
-        Pcd::<MixedHeader>::from_bytes(&bytes),
+        MockPcd::<ValueHeader>::from_bytes(&bytes),
         Err(Error::Invalid {
             reason: "non-canonical field element",
             ..
@@ -285,48 +229,16 @@ fn rejects_noncanonical_field_element() {
 }
 
 #[test]
-fn rejects_identity_point() {
-    let mut bytes = mixed_pcd().to_bytes().expect("encode");
-    // First point: after one Fp and one Fq.
-    let first_point = 28 + 136 + 8 + 32 + 64;
-    let identity = EpAffine::identity().to_bytes();
-    bytes[first_point..first_point + 32].copy_from_slice(identity.as_ref());
-    assert!(matches!(
-        Pcd::<MixedHeader>::from_bytes(&bytes),
-        Err(Error::Invalid { .. })
-    ));
-}
-
-#[test]
-fn rejects_data_that_does_not_reencode_to_the_proof() {
-    // A well-formed payload whose data was replaced by another value with the
-    // same shape: the header hash no longer matches.
-    let mut bytes = mixed_pcd().to_bytes().expect("encode");
-    let first = 28 + 136 + 8 + 32;
-    // Fp::from(42) -> Fp::from(43)
-    bytes[first] = 43;
-    assert!(matches!(
-        Pcd::<MixedHeader>::from_bytes(&bytes),
-        Err(Error::Invalid {
-            reason: "mock PCD header data does not match its proof",
-            ..
-        })
-    ));
-}
-
-#[test]
-fn real_format_payload_kinds_fail_closed() {
-    for tag in [1u16, 2, 5] {
-        let mut bytes = Proof::bootstrap().to_bytes();
-        bytes[10..12].copy_from_slice(&tag.to_le_bytes());
-        assert!(matches!(
-            Proof::from_bytes(&bytes),
-            Err(Error::Invalid {
-                reason: "proof payload kind mismatch",
-                ..
-            })
-        ));
-    }
+fn decoded_pcd_still_requires_application_verification() {
+    let app = application();
+    let mut bytes = seeded_pcd().to_bytes().expect("encode");
+    let first = MockProof::encoded_len::<4>() + 16;
+    bytes[first] ^= 1;
+    let decoded = MockPcd::<ValueHeader>::from_bytes(&bytes).expect("valid representation");
+    assert!(
+        !app.verify(&decoded, StdRng::seed_from_u64(8))
+            .expect("verify")
+    );
 }
 
 #[cfg(feature = "serde")]
@@ -339,25 +251,27 @@ mod serde_tests {
 
     #[test]
     fn serde_round_trip() {
-        let proof = Proof::bootstrap();
+        let proof = bootstrap_proof();
         let json = serde_json::to_string(&proof).expect("serialize");
-        let decoded: Proof = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(decoded.to_bytes(), proof.to_bytes());
+        let decoded: MockProof = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            decoded.to_bytes().expect("encode"),
+            proof.to_bytes().expect("encode")
+        );
 
-        let pcd = mixed_pcd();
+        let pcd = seeded_pcd();
         let json = serde_json::to_string(&pcd).expect("serialize");
-        let decoded: Pcd<MixedHeader> = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(decoded.data(), &mixed_data());
+        let decoded: MockPcd<ValueHeader> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded.data(), pcd.data());
     }
 
     #[test]
     fn serde_rejects_corruption() {
-        let mut bytes = Proof::bootstrap().to_bytes();
+        let mut bytes = bootstrap_proof().to_bytes().expect("encode");
         bytes[0] ^= 1;
         let json = serde_json::to_string(&bytes).expect("serialize bytes");
-        let error = serde_json::from_str::<Proof>(&json)
-            .err()
-            .expect("corrupted bytes must fail to decode");
+        let error =
+            serde_json::from_str::<MockProof>(&json).expect_err("corrupted bytes must fail");
         assert!(error.to_string().contains("invalid proof magic"), "{error}");
     }
 
@@ -381,9 +295,9 @@ mod serde_tests {
     #[test]
     fn sequence_size_hint_does_not_control_allocation() {
         use serde::de::Visitor;
-        struct P;
-        impl<'de> Visitor<'de> for P {
-            type Value = Proof;
+        struct ProofVisitor;
+        impl<'de> Visitor<'de> for ProofVisitor {
+            type Value = MockProof;
             fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 f.write_str("a mock proof")
             }
@@ -392,27 +306,25 @@ mod serde_tests {
                 seq: A,
             ) -> core::result::Result<Self::Value, A::Error> {
                 use serde::Deserialize as _;
-                Proof::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))
+                MockProof::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))
             }
         }
-        let error = P
+        let error = ProofVisitor
             .visit_seq(EmptyWithHugeHint)
-            .err()
-            .expect("empty input must fail to decode");
+            .expect_err("empty input must fail");
         assert!(error.to_string().contains("truncated"), "{error}");
     }
 
     #[test]
     fn sequence_buffer_stops_at_the_envelope_length() {
         use serde::{Deserialize as _, de::value::Error as DeError};
-        // One byte beyond a mock proof's fixed length is refused.
-        let input = Proof::bootstrap()
+        let input = bootstrap_proof()
             .to_bytes()
+            .expect("encode")
             .into_iter()
             .chain(core::iter::repeat(0u8));
-        let error = Proof::deserialize(SeqDeserializer::<_, DeError>::new(input))
-            .err()
-            .expect("overlong input must fail to decode");
+        let error = MockProof::deserialize(SeqDeserializer::<_, DeError>::new(input))
+            .expect_err("overlong input must fail");
         assert!(
             error.to_string().contains("exceeds its fixed length"),
             "{error}"
