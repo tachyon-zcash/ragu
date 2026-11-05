@@ -13,7 +13,7 @@ pub(crate) mod builder;
 mod codec;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
-// Their properties prove tens of production-rank proofs each, so they are
+// Their properties prove tens of wallet-rank proofs each, so they are
 // `#[ignore]`d in the platform matrix. Rust CI explicitly replays the
 // properties with saved recursion failures, and the scheduled heavy-tests
 // run picks up the full suites with `cargo test -- --ignored`.
@@ -21,7 +21,7 @@ mod codec;
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
 #[cfg(test)]
-#[path = "../../tests/compress_blinding.rs"]
+#[path = "../../tests/compression/blinding.rs"]
 mod compress_blinding_tests;
 #[cfg(test)]
 #[path = "../../tests/recursive_bindings.rs"]

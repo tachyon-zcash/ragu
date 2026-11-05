@@ -176,7 +176,7 @@ fn invert<F: Field>(value: F) -> Result<F> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/compress_revdot.rs"]
+#[path = "../../../tests/compression/revdot.rs"]
 mod tests;
 
 #[cfg(test)]

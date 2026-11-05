@@ -4,7 +4,7 @@
 //! message is rejected.
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::{ProductionRank, sparse};
+use ragu_circuits::polynomials::{WalletRank, sparse};
 use ragu_core::{
     Cycle, FixedGenerators,
     pasta::{Fp, Fq, Pasta},
@@ -29,7 +29,7 @@ use crate::{
     ipa::CycleTranscript,
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 const TAG: &[u8] = b"ragu-test-revdot";
 

@@ -16,7 +16,10 @@ use super::{CycleTranscript, IPA_TAG, transcript::convert_challenge};
 
 const K: u32 = 8;
 
-/// A transcript that has seen nothing but the domain tag.
+/// A transcript that has seen nothing but the domain tag, through the
+/// public constructor, which commits each run of scalar-field values over
+/// the first nested generators: what a standalone IPA over this module
+/// opens, and what the host-curve IPA needs for its points.
 fn fresh() -> CycleTranscript<'static, Pasta> {
     CycleTranscript::new(crate::pasta::baked(), IPA_TAG).unwrap()
 }

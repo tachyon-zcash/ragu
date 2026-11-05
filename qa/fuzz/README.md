@@ -372,14 +372,14 @@ Three workflows in `.github/workflows/`:
 
 Most of this harness was written against `Fp` and `TestRank`, for a good
 reason: that is the cheap pair. `TestRank` is `R<7>` — `n = 32` gates, 128
-coefficients — where `ProductionRank` is `R<13>`, `n = 2048` and 8192
+coefficients — where `WalletRank` is `R<13>`, `n = 2048` and 8192
 coefficients, sixty-four times the vector length. Running every input at
-production rank would cost most of the executions per second, and execution
+wallet rank would cost most of the executions per second, and execution
 count is what finds bugs.
 
 The price was that the rank that actually ships, and the second field of the
 cycle, were only exercised where a target named them outright: at audit time
-**no** target used `ProductionRank` and only six mentioned `Fq`.
+**no** target used `WalletRank` and only six mentioned `Fq`.
 
 [`src/params.rs`](src/params.rs) makes both a fuzzer choice.
 `with_rank!(choice, |R| { .. })` and `with_field!(choice, |F| { .. })`
@@ -390,7 +390,7 @@ adding a `RankChoice` / `FieldChoice` to its `Input`.
 
 The rank draw is skewed: one byte in a sixteen-wide mid-range band selects
 production. The band placement is deliberate and was learned the hard way —
-the obvious `int_in_range(0..=15)? == 0` selected production rank on **46%**
+the obvious `int_in_range(0..=15)? == 0` selected wallet rank on **46%**
 of inputs rather than 6%, because libFuzzer's mutators emit `0x00` far more
 often than chance. `0x00` and `0xff` are both common mutator output, so the
 band avoids both. Even so the ratio is only nominal: a live fuzzer's byte
@@ -459,7 +459,7 @@ append (at most 128 bytes), or a canonical scalar replacement. Offsets wrap
 within the generated wire bytes (including the envelope). Nothing is stored
 in git for these targets: the control inputs are a byte or two, written
 inline by the smoke test and the CI step. Proof setup is cached once per process;
-compressing a decoded proof is still a production-rank operation and can take
+compressing a decoded proof is still a wallet-rank operation and can take
 seconds per input.
 
 Raw mode reaches envelope and dimension checks with short inputs. The main and

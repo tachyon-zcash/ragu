@@ -3,11 +3,11 @@
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
 
-use super::{CompressedPcd, Sampled, batch, revdot, transcript};
+use super::{CompressedPcd, CompressedProof, Lifted, Sampled, batch, revdot, transcript};
 use crate::{
     Application, RAGU_TAG, SelectableBackend,
     header::Header,
-    internal::ky,
+    internal::{ky, nested},
     ipa::{CycleTranscript, IpaCycle},
     profile::ProfiledCycle,
 };
@@ -19,6 +19,65 @@ type Verifier<B> = <B as SelectableBackend>::Verifier;
 impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    /// Admits `proof` to the compression's transcript, as verification
+    /// begins: its circuit id is in the registry's domain, for the reason
+    /// `verify_uncompressed` gives; its headers have the declared size; its
+    /// messages have the shape the verifier reads; the fuse's challenges,
+    /// from the bridge commitments in the fuse's schedule, lie in the
+    /// endoscalar range; and the two nested stages the decider
+    /// recomputes from public data commit as the instance claims. Returns
+    /// the fuse's challenges.
+    ///
+    /// [`verify_compressed`](Self::verify_compressed) runs these checks
+    /// before the compression's transcript, and so does the decompression's
+    /// witness preparation, which repeats the verifier's later computations
+    /// but not these: a proof the verifier rejects here is refused before
+    /// any proving.
+    ///
+    /// # Errors
+    ///
+    /// Fails with [`Error::InvalidWitness`] if a check rejects the proof, or
+    /// with another error on an internal computation error.
+    pub(crate) fn admit_compressed(
+        &self,
+        proof: &CompressedProof<C>,
+    ) -> Result<nested::Challenges<C::CircuitField>> {
+        let instance = &proof.instance;
+        if !self.native_registry.circuit_in_domain(instance.circuit_id) {
+            return Err(Error::InvalidWitness(
+                "the circuit id is outside the registry's domain".into(),
+            ));
+        }
+        if instance.left_header.len() != HEADER_SIZE || instance.right_header.len() != HEADER_SIZE {
+            return Err(Error::InvalidWitness(
+                "a child header does not have the declared size".into(),
+            ));
+        }
+        if !proof.well_formed::<R>() {
+            return Err(Error::InvalidWitness(
+                "the messages do not have the shape the verifier reads".into(),
+            ));
+        }
+        let mut fuse_transcript = CycleTranscript::<C>::fuse(self.params, RAGU_TAG)?;
+        let challenges = instance
+            .challenges(&mut fuse_transcript)?
+            .ok_or_else(|| Error::InvalidWitness("pre_beta is out of range".into()))?;
+        if challenges.lifts::<C>().is_err() {
+            return Err(Error::InvalidWitness(
+                "a fuse challenge is outside the endoscalar range".into(),
+            ));
+        }
+        if !instance.stages_match::<R, Verifier<B>, HEADER_SIZE>(
+            &challenges,
+            C::nested_generators(self.params),
+        )? {
+            return Err(Error::InvalidWitness(
+                "a recomputed nested stage does not commit as the instance claims".into(),
+            ));
+        }
+        Ok(challenges)
+    }
+
     /// Verifies some [`CompressedPcd`] for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if every check passes, `Ok(false)` if any fails
@@ -33,7 +92,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// The registry and polynomial evaluations and the recomputed stage
     /// commitments go through the sealed [`SelectableBackend::Verifier`] of
     /// the selected backend, as in `verify_uncompressed`. This also applies to
-    /// transcript bridges, batch commitment combinations, and IPA MSMs.
+    /// batch commitment combinations and IPA MSMs.
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
@@ -54,40 +113,16 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 
         let proof = pcd.proof();
         let instance = &proof.instance;
-
-        // The proof's circuit_id must be in the registry's domain, for the
-        // reason `verify_uncompressed` gives, and the headers must have the
-        // declared size; and the messages must have the shape read below.
-        if !self.native_registry.circuit_in_domain(instance.circuit_id)
-            || instance.left_header.len() != HEADER_SIZE
-            || instance.right_header.len() != HEADER_SIZE
-            || !proof.well_formed::<R>()
-        {
-            return Ok(false);
-        }
-
-        // The fuse's challenges, from the bridge commitments in the fuse's
-        // schedule, with pre_beta in the endoscalar range; and the nested
-        // stages the decider recomputes from public data.
-        let mut fuse_transcript = CycleTranscript::<C, Verifier<B>>::new(self.params, RAGU_TAG)?;
-        let Some(challenges) = proof_check!(instance.challenges(&mut fuse_transcript)) else {
-            return Ok(false);
-        };
-        if !proof_check!(instance.stages_match::<R, Verifier<B>, HEADER_SIZE>(
-            &challenges,
-            C::nested_generators(self.params),
-        )) {
-            return Ok(false);
-        }
+        let challenges = proof_check!(self.admit_compressed(proof));
 
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
-        let mut transcript = proof_check!(transcript::<C, Verifier<B>>(
+        let mut transcript = proof_check!(transcript::<C, Verifier<B>, R>(
             self.params,
             instance,
-            &output_header,
+            &output_header
         ));
-        let native_sampled = proof_check!(Sampled::squeeze(&mut transcript.host()));
-        let nested_sampled = proof_check!(Sampled::squeeze(&mut transcript.nested()));
+        let native_sampled = proof_check!(Sampled::squeeze(&mut Lifted(transcript.host())));
+        let nested_sampled = proof_check!(Sampled::squeeze(&mut Lifted(transcript.nested())));
         let (native_targets, nested_targets) = instance.targets::<HEADER_SIZE>(
             &challenges,
             &output_header,
@@ -112,7 +147,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &native_targets,
                 &masked,
                 &proof.native.reduction,
-                &mut transcript.host(),
+                &mut Lifted(transcript.host()),
             )) else {
                 return Ok(false);
             };
@@ -130,7 +165,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.native.opening,
                 C::host_generators(self.params),
                 *C::host_u(self.params),
-                &mut transcript.host(),
+                &mut Lifted(transcript.host()),
             ))
         };
         if !native {
@@ -150,7 +185,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &nested_targets,
                 &masked,
                 &proof.nested.reduction,
-                &mut transcript.nested(),
+                &mut Lifted(transcript.nested()),
             )) else {
                 return Ok(false);
             };
@@ -168,7 +203,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.nested.opening,
                 C::nested_generators(self.params),
                 *C::nested_u(self.params),
-                &mut transcript.nested(),
+                &mut Lifted(transcript.nested()),
             ))
         };
         Ok(nested)

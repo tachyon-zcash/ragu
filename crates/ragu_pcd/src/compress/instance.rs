@@ -101,18 +101,18 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_b_at_u: C::ScalarField,
 }
 
-type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H>;
-type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H>;
-type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H>;
-type NestedPreamble<C, R> =
+pub(crate) type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H>;
+pub(crate) type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H>;
+pub(crate) type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H>;
+pub(crate) type NestedPreamble<C, R> =
     nested_stages::preamble::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
-type NestedQuery<C, R> =
+pub(crate) type NestedQuery<C, R> =
     nested_stages::query::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
-type NestedEval<C, R> =
+pub(crate) type NestedEval<C, R> =
     nested_stages::eval::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
 
 /// The coefficient degrees of the wires `select` picks from stage `S`.
-fn degrees<F: Field, R: Rank, S: ragu_circuits::staging::Stage<F, R> + Default>(
+pub(crate) fn degrees<F: Field, R: Rank, S: ragu_circuits::staging::Stage<F, R> + Default>(
     select: impl for<'dst> FnOnce(
         ragu_core::gadgets::Bound<'dst, ragu_circuits::staging::Indexed<F>, S::OutputKind>,
     ) -> Result<Vec<usize>>,
@@ -770,5 +770,5 @@ impl<C: ProfiledCycle> Instance<C> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/compress_instance.rs"]
+#[path = "../../tests/compression/instance.rs"]
 mod tests;

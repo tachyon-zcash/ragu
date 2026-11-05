@@ -118,6 +118,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
 
     fn native_extension_rxs<'params, Base, Rk, const HS: usize, B, RNG>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&core::convert::Infallible>,
         registry: &Registry<'params, Base::CircuitField, Rk>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, Rk>>
@@ -140,6 +141,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
 
     fn nested_extension_rxs<'params, Base, Rk, const HS: usize, B, RNG>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&core::convert::Infallible>,
         registry: &Registry<'params, Base::ScalarField, Rk>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, Rk>>
@@ -293,9 +295,9 @@ where
 
 fn check_application_circuits<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let verifier = verifier::<P, ProductionRank>()?;
+    let verifier = verifier::<P, WalletRank>()?;
     // An equivalent registered relation is the control for erasing the Rust
     // profile type. Removing its constraint or changing its constant must fail.
     for (constraint, value, accepted) in [
@@ -303,7 +305,7 @@ where
         (None, Fp::from(9), false),
         (Some(Fp::from(9)), Fp::from(9), false),
     ] {
-        check_prover::<Permissive, P, ProductionRank>(
+        check_prover::<Permissive, P, WalletRank>(
             &verifier,
             constraint,
             value,
@@ -320,8 +322,8 @@ fn standard_verifier_uses_its_registered_application_circuits() -> Result<()> {
 }
 
 #[test]
-fn aggregator_verifier_uses_its_registered_application_circuits() -> Result<()> {
-    check_application_circuits::<Aggregator>()
+fn twin_verifier_uses_its_registered_application_circuits() -> Result<()> {
+    check_application_circuits::<Twin>()
 }
 
 fn check_extension_circuit<const NATIVE: bool>() -> Result<()> {

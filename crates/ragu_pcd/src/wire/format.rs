@@ -37,6 +37,10 @@ impl PayloadKind {
 const PROOF_SCHEMA_VERSION: u16 = 1;
 const COMPRESSED_SCHEMA_VERSION: u16 = 1;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
+// Held at 1 until the first release: nothing is deployed, so a change to
+// the semantics before then, such as the lifted challenges and the run
+// commitments compression now uses, does not bump it, and proofs from
+// before the change fail verification rather than decoding.
 const PROTOCOL_VERSION: u16 = 1;
 pub(crate) const ENVELOPE_SIZE: usize = 28;
 
@@ -261,7 +265,7 @@ fn open<'a>(
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::{ProductionRank, TestRank};
+    use ragu_circuits::polynomials::{TestRank, WalletRank};
     use ragu_core::pasta::{Fp, Pasta};
     use udon::field::Field;
 
@@ -300,24 +304,21 @@ mod tests {
             polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 10 * 32 + 4
         }
         assert_eq!(
-            <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
-                ProductionRank,
-                4,
-            >()),
-            payload::<ProductionRank, 4>()
+            <Proof<Pasta, WalletRank> as Decode>::encoded_len(Dimensions::of::<WalletRank, 4>()),
+            payload::<WalletRank, 4>()
         );
         assert_eq!(
             <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank, 1>()),
             payload::<TestRank, 1>()
         );
         assert_eq!(
-            Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
-            28 + payload::<ProductionRank, 4>()
+            Proof::<Pasta, WalletRank>::encoded_len::<4>(),
+            28 + payload::<WalletRank, 4>()
         );
         // 93 instance points; 27 instance scalars; per side 6+2R points,
         // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
-            CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
+            CompressedProof::<Pasta>::encoded_len::<WalletRank, 4>(),
             28 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }

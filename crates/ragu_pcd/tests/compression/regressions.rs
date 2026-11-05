@@ -5,7 +5,7 @@ use alloc::{format, string::ToString, vec, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{ProductionRank, sparse},
+    polynomials::{WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -24,6 +24,7 @@ use super::{
 };
 use crate::{
     Pcd, Proof, RAGU_TAG,
+    compress::runs::run_bases,
     header::{Header, Suffix},
     internal::{ky, native, nested},
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
@@ -34,7 +35,7 @@ use crate::{
 
 fn check_targets<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<Pasta, ProductionRank, H>,
+    pcd: &Pcd<Pasta, WalletRank, H>,
     label: &str,
     rng: &mut StdRng,
 ) {
@@ -42,7 +43,7 @@ fn check_targets<H: Header<Fp>>(
     let compressed = app.compress(pcd, &mut *rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap(), "{label}");
     let instance = &compressed.proof().instance;
-    let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
+    let mut transcript = CycleTranscript::<Pasta>::fuse(crate::pasta::baked(), RAGU_TAG).unwrap();
     let challenges = instance.challenges(&mut transcript).unwrap().unwrap();
     let header = ky::output_header::<Pasta, H, HEADER_SIZE>(pcd.data().clone()).unwrap();
     let native_count =
@@ -62,7 +63,7 @@ fn check_targets<H: Header<Fp>>(
             Fq::random(|bytes| rng.fill_bytes(bytes)),
         ),
     ] {
-        let expected = ky::native_ky::<Pasta, ProductionRank, H, HEADER_SIZE>(pcd, y).unwrap();
+        let expected = ky::native_ky::<Pasta, WalletRank, H, HEADER_SIZE>(pcd, y).unwrap();
         let expected_nested = ky::NestedKy {
             c: pcd.proof().nested_c(),
             unified: ky::nested_ky(pcd.proof(), nested_y).unwrap(),
@@ -174,7 +175,7 @@ fn rejects_edit(
     app: &App,
     pcd: &TestPcd,
     label: &str,
-    edit: impl FnOnce(&mut Proof<Pasta, ProductionRank>),
+    edit: impl FnOnce(&mut Proof<Pasta, WalletRank>),
 ) {
     let mut proof = pcd.proof().clone();
     edit(&mut proof);
@@ -332,7 +333,7 @@ fn fuse_schedule() -> [(nested::RxIndex, usize); 8] {
 /// Replay without the pre_beta range check, so a changed bridge can be
 /// checked even when the last draw falls outside the endoscalar range.
 fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
-    let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
+    let mut transcript = CycleTranscript::<Pasta>::fuse(crate::pasta::baked(), RAGU_TAG).unwrap();
     let mut challenges = Vec::new();
     for (id, count) in fuse_schedule() {
         transcript
@@ -350,15 +351,22 @@ fn raw_fuse_challenges(instance: &Instance<Pasta>) -> Vec<Fp> {
 }
 
 fn first_ipa_challenge(instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    super::transcript::<_, ReferenceBackend>(crate::pasta::baked(), instance, header)
+    super::transcript::<_, ReferenceBackend, WalletRank>(crate::pasta::baked(), instance, header)
         .unwrap()
         .host()
         .squeeze_challenge()
         .unwrap()
 }
 
+/// The first challenge of a transcript under `tag` with the statement
+/// absorbed, the runs committed as the compression's are.
 fn statement_challenge(tag: &[u8], instance: &Instance<Pasta>, header: &[Fp]) -> Fp {
-    let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), tag).unwrap();
+    let mut transcript = CycleTranscript::<Pasta>::with_runs(
+        crate::pasta::baked(),
+        tag,
+        run_bases::<Pasta, WalletRank>(crate::pasta::baked()).unwrap(),
+    )
+    .unwrap();
     instance.absorb(&mut transcript).unwrap();
     for &value in header {
         transcript.host().write_scalar(value).unwrap();
@@ -376,7 +384,7 @@ fn every_fuse_input_is_bound_before_compression_challenges() {
         let instance = &compressed.proof().instance;
         let header = ky::output_header::<Pasta, Value, HEADER_SIZE>(*pcd.data()).unwrap();
         let baseline_fuse = raw_fuse_challenges(instance);
-        let mut replay = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
+        let mut replay = CycleTranscript::<Pasta>::fuse(crate::pasta::baked(), RAGU_TAG).unwrap();
         assert_eq!(
             baseline_fuse.as_slice(),
             &instance

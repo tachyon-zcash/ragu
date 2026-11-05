@@ -15,18 +15,21 @@ final MSMs must match the committed record.
 
 ## Profiles
 
-The wallet's standard profile and the aggregator profile both check the same
-fixtures in `standard/`. Until the aggregator's decompression circuits land,
-the profile declares nothing and produces identical proofs, so storing a
-second copy adds no coverage. Both profiles independently reproduce the
-snapshots and check the verifier fingerprints and tampered proofs. When the
-profiles diverge, the aggregator will need its own expected outputs.
+The wallet's standard profile checks the fixtures in `standard/` and the
+aggregator profile those in `aggregator/`. The aggregator's proofs carry the
+decompression circuits' polynomials, at the aggregator rank, run over the
+canonical compressed proof of the wallet application the aggregator holds as
+its context: the fixtures' own wallet application, its bootstrap proof
+compressed under a fixed seed. Each profile reproduces its snapshots and checks
+its verifier fingerprints and tampered proofs.
 
 ## Scenarios
 
 Six fixtures from a fixed tree of fuses over the harness's own steps
 (`Seed`, `Merge`, `UnitLeft`, and `UnitRight`, which is registered but never
-fused), at production rank with header size 4, on the baked Pasta parameters:
+fused), with header size 4, on the aggregator-rank Pasta parameters, which
+the aggregator's decompression needs and whose prefix is the Standard tables; the wallet at
+wallet rank and the aggregator at the aggregator rank:
 
 | Scenario      | Header  | Fuses                                   |
 | ------------- | ------- | --------------------------------------- |
@@ -68,7 +71,7 @@ Each scenario has four files.
   primary field of the uncompressed proof, in declaration order, over the
   field's canonical bytes (every coefficient of a polynomial, zeros included);
   then `rng.fuse.words`, `rng.compress.words` and `proof.bytes`. The
-  uncompressed proof is over ten megabytes at production rank, so this stands
+  uncompressed proof is over ten megabytes at wallet rank, so this stands
   in for committing it. A mismatch names the fields that drifted, and the
   file's diff in a pull request reads as the list of stages a change touched.
 - `<scenario>.fingerprint`: `key = value` lines recording the verifier's run
@@ -117,5 +120,5 @@ sibling inputs come from the harness's SplitMix64 generator, which is not
 cryptographically secure and exists only to make synthetic test data
 reproducible; it must never produce a real proof.
 
-The tests are ignored without `--release`: production-rank proving is
+The tests are ignored without `--release`: wallet-rank proving is
 impractically slow in debug builds.

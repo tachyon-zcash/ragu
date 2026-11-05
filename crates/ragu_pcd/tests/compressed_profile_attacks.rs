@@ -5,7 +5,7 @@ use ragu_core::pasta::Fq;
 use udon::field::Field;
 
 use super::*;
-use crate::profile::testing::{Crossing, CrossingBack, CrossingContext};
+use crate::profile::testing::{Crossing, CrossingBack, CrossingContext, Twin};
 
 fn reject<P: Profile, Rk: Rank>(
     app: &App<P, Rk>,
@@ -246,7 +246,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
 }
 
 fn check_splices<P: Profile>(
-    app: &App<P, ProductionRank>,
+    app: &App<P, WalletRank>,
     local: &CompressedProof<C<P>>,
     local_data: Fp,
     donor: &CompressedProof<C<P>>,
@@ -277,15 +277,15 @@ fn check_profile_packets<S: Profile, T: Profile>(
     edit_fields: bool,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let sender = application::<S, ProductionRank>(
+    let sender = application::<S, WalletRank>(
         RegistryTags::from_beacon(&[0x42; 32], SENDER_MANIFEST),
         SENDER_MANIFEST,
         source_constraint,
     )?;
-    let receiver = application::<T, ProductionRank>(
+    let receiver = application::<T, WalletRank>(
         RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
         RECEIVER_MANIFEST,
         Some(Fp::from(7)),
@@ -340,13 +340,13 @@ where
 }
 
 #[test]
-fn compressed_standard_rejects_aggregator_packets_and_edits() -> Result<()> {
-    check_profile_packets::<Aggregator, Standard>(Some(Fp::from(7)), Fp::from(7), true)
+fn compressed_standard_rejects_twin_packets_and_edits() -> Result<()> {
+    check_profile_packets::<Twin, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
-fn compressed_aggregator_rejects_standard_packets_and_edits() -> Result<()> {
-    check_profile_packets::<Standard, Aggregator>(Some(Fp::from(7)), Fp::from(7), true)
+fn compressed_twin_rejects_standard_packets_and_edits() -> Result<()> {
+    check_profile_packets::<Standard, Twin>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
@@ -356,9 +356,9 @@ fn compressed_standard_rejects_weaker_profile_packet_splices() -> Result<()> {
 
 fn check_fresh_weaker_proving<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let app = application::<P, ProductionRank>(
+    let app = application::<P, WalletRank>(
         RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
         RECEIVER_MANIFEST,
         Some(Fp::from(7)),
@@ -420,8 +420,8 @@ fn compressed_standard_rejects_fresh_weaker_proving_with_its_own_setup() -> Resu
 }
 
 #[test]
-fn compressed_aggregator_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<()> {
-    check_fresh_weaker_proving::<Aggregator>()
+fn compressed_twin_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<()> {
+    check_fresh_weaker_proving::<Twin>()
 }
 
 fn check_extension_edits<P>() -> Result<()>

@@ -17,4 +17,4 @@ path = "registry_tags.rs"
 [dependencies]
 udon = { workspace = true }
 ragu_core = { path = "../../crates/ragu_core", version = "0.0.0" }
-ragu_pcd = { path = "../../crates/ragu_pcd", version = "0.0.0", features = ["baked"] }
+ragu_pcd = { path = "../../crates/ragu_pcd", version = "0.0.0", features = ["baked", "unstable-aggregator"] }

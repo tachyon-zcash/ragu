@@ -8,7 +8,7 @@ use proptest::{
 use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    polynomials::{ProductionRank, Rank, sparse},
+    polynomials::{Rank, WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -180,8 +180,8 @@ const RNG_FINGERPRINT_WORDS: usize = 4;
 const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
-type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
-type TestPcd = Pcd<Pasta, ProductionRank, ()>;
+type TestApplication<'params, B> = Application<'params, Pasta, WalletRank, TEST_HEADER_SIZE, B>;
+type TestPcd = Pcd<Pasta, WalletRank, ()>;
 type TestCompressedPcd = CompressedPcd<Pasta, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
 type Outcome = (VerifierDecision, RngFingerprint);
@@ -234,15 +234,15 @@ struct Apps {
 
 impl Apps {
     fn build(dummy_circuits: usize) -> Self {
-        let pasta = ragu_pcd::pasta::baked();
-        let reference = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let pasta = ragu_pcd::pasta::baked_aggregator();
+        let reference = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let accelerated = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let accelerated = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
             .with_backend::<AcceleratedBackend>()
             .register(UnitStep)
             .unwrap()
@@ -250,7 +250,7 @@ impl Apps {
             .unwrap()
             .finalize(pasta)
             .unwrap();
-        let prover = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+        let prover = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
             .with_backend::<AcceleratedProver>()
             .register(UnitStep)
             .unwrap()
@@ -463,7 +463,7 @@ fn verifier_outcome<B: SelectableBackend>(
 }
 
 fn corruptions(
-    proof: &Proof<Pasta, ProductionRank>,
+    proof: &Proof<Pasta, WalletRank>,
     inputs: CorruptionInputs,
 ) -> impl IntoIterator<Item = (&'static str, ProofMutation<Fp>)> {
     [
@@ -955,11 +955,11 @@ impl crate::backend::TestSealed for SerialFuseBackend {
 
 #[test]
 fn serial_fuse_keeps_individual_msms_and_original_iteration() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
         .with_backend::<SerialFuseBackend>()
         .register(UnitStep)
         .unwrap()
-        .finalize(ragu_pcd::pasta::baked())
+        .finalize(ragu_pcd::pasta::baked_aggregator())
         .unwrap();
     let mut rng = StdRng::seed_from_u64(0);
     let (left, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
@@ -970,13 +970,13 @@ fn serial_fuse_keeps_individual_msms_and_original_iteration() {
 
 #[test]
 fn selected_backend_dispatch_reaches_protocol_phases() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
         .with_backend::<TrackingBackend>()
         .register(UnitStep)
         .unwrap()
         .register_dummy_circuits(0)
         .unwrap()
-        .finalize(ragu_pcd::pasta::baked())
+        .finalize(ragu_pcd::pasta::baked_aggregator())
         .unwrap();
     let mut rng = StdRng::seed_from_u64(0);
     let (left, _) = app.seed(&mut rng, UnitStep, ()).unwrap();
@@ -1045,18 +1045,23 @@ fn selected_backend_dispatch_reaches_protocol_phases() {
     );
 }
 
-/// The transcript's bridge commitments go through the selected backend, so a
-/// wrong `msm` changes the challenges without disturbing the agreement of a
-/// prover and a verifier that share it. Every selectable backend, and the
-/// verifier each selects, must derive the reference's challenges; a backend
-/// whose `msm` deviates must not, or this check could not catch an override.
+/// The transcript commits each run of scalar-field values through the
+/// selected backend, so a wrong `msm` changes the challenges without
+/// disturbing the agreement of a prover and a verifier that share it. Every
+/// selectable backend, and the verifier each selects, must derive the
+/// reference's run commitments and challenges; a backend whose `msm` deviates
+/// must not, or this check could not catch an override.
 #[test]
-fn bridge_challenges_match_the_reference() {
-    fn challenges<B: SelectableBackend>() -> [Fp; 2] {
+fn run_commitments_match_the_reference() {
+    fn transcript<B: SelectableBackend>() -> (Vec<<Pasta as Cycle>::NestedCurve>, [Fp; 2]) {
         let params = ragu_pcd::pasta::baked();
-        let mut transcript = CycleTranscript::<Pasta, B>::new(params, IPA_TAG).unwrap();
-        // A host point bridges its two coordinates and a nested scalar bridges
-        // one value; squeeze after each so both shapes reach the result.
+        let generators = Pasta::nested_generators(params).g();
+        // A host point's coordinates are one run and a nested scalar another,
+        // each at bases of its own; squeeze after each so both runs reach the
+        // result.
+        let bases = alloc::vec![generators[..2].to_vec(), generators[2..3].to_vec()];
+        let mut transcript =
+            CycleTranscript::<Pasta, B>::with_runs(params, IPA_TAG, bases).unwrap();
         transcript
             .host()
             .write_point(Pasta::host_generators(params).g()[1])
@@ -1064,33 +1069,34 @@ fn bridge_challenges_match_the_reference() {
         let after_point = transcript.host().squeeze_challenge().unwrap();
         transcript.nested().write_scalar(Fq::from(7)).unwrap();
         let after_scalar = transcript.host().squeeze_challenge().unwrap();
-        [after_point, after_scalar]
+        (transcript.runs().to_vec(), [after_point, after_scalar])
     }
 
-    let reference = challenges::<ReferenceBackend>();
+    let reference = transcript::<ReferenceBackend>();
+    assert_eq!(reference.0.len(), 2, "one commitment per run");
     assert_eq!(
-        challenges::<AcceleratedBackend>(),
+        transcript::<AcceleratedBackend>(),
         reference,
         "AcceleratedBackend"
     );
     assert_eq!(
-        challenges::<<AcceleratedBackend as SelectableBackend>::Verifier>(),
+        transcript::<<AcceleratedBackend as SelectableBackend>::Verifier>(),
         reference,
         "AcceleratedBackend's verifier"
     );
     assert_eq!(
-        challenges::<AcceleratedProver>(),
+        transcript::<AcceleratedProver>(),
         reference,
         "AcceleratedProver"
     );
     assert_eq!(
-        challenges::<<AcceleratedProver as SelectableBackend>::Verifier>(),
+        transcript::<<AcceleratedProver as SelectableBackend>::Verifier>(),
         reference,
         "AcceleratedProver's verifier"
     );
     assert_ne!(
-        challenges::<SkewedBackend>(),
-        reference,
+        transcript::<SkewedBackend>().1,
+        reference.1,
         "a deviating msm must change the challenges"
     );
 }

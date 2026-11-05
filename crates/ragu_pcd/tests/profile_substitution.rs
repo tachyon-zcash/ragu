@@ -5,7 +5,7 @@
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{ProductionRank, R, Rank},
+    polynomials::{AggregatorRank, R, Rank, WalletRank},
     registry::Tag,
 };
 use ragu_core::{
@@ -22,7 +22,10 @@ use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd, RegistryTags,
     compress::instance::Instance,
     ipa::IpaCycle,
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
+    profile::{
+        Aggregator, Decompression, Profile, Profiled, ProfiledCycle, Shape, Standard,
+        testing::{Proving, Twin},
+    },
     step::{Encoded, Index, Step},
 };
 
@@ -31,7 +34,7 @@ const SENDER_MANIFEST: &[u8] = &[0x24; 32];
 const RECEIVER_MANIFEST: &[u8] = &[0x25; 32];
 type C<P> = Profiled<Pasta, P>;
 type App<P, R> = Application<'static, C<P>, R, HEADER_SIZE>;
-type TestPcd<P> = Pcd<C<P>, ProductionRank, Value>;
+type TestPcd<P> = Pcd<C<P>, WalletRank, Value>;
 
 #[path = "compressed_profile_attacks.rs"]
 mod compressed_attacks;
@@ -345,11 +348,7 @@ where
         .register(Seed { expected })?
         .register(Sum)?
         .with_registry_tags(tags, manifest)?
-        .finalize(if Rk::RANK <= 13 {
-            crate::pasta::baked()
-        } else {
-            crate::pasta::baked_aggregator()
-        })
+        .finalize(crate::pasta::baked_aggregator())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -386,13 +385,13 @@ fn check_same_shape<S: Profile, T: Profile>(
     local_value: Fp,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
     let sender_tags = RegistryTags::<C<S>>::from_beacon(&[0x42; 32], SENDER_MANIFEST);
     let (native_tag, nested_tag) = (sender_tags.native(), sender_tags.nested());
-    let sender = application::<S, ProductionRank>(sender_tags, SENDER_MANIFEST, sender_constraint)?;
+    let sender = application::<S, WalletRank>(sender_tags, SENDER_MANIFEST, sender_constraint)?;
     let mut rng = StdRng::seed_from_u64(0x908_1501);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -427,8 +426,7 @@ where
             tags.nested() == nested_tag,
             matches!(changed, DifferentTags::Native)
         );
-        let receiver =
-            application::<T, ProductionRank>(tags, RECEIVER_MANIFEST, receiver_constraint)?;
+        let receiver = application::<T, WalletRank>(tags, RECEIVER_MANIFEST, receiver_constraint)?;
         let (local, ()) = receiver.seed(
             &mut rng,
             Seed {
@@ -438,7 +436,7 @@ where
         )?;
         check_both_verifiers(&receiver, &local, true, &mut rng)?;
 
-        let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
+        let foreign = copy_proof_payload::<C<S>, C<T>, WalletRank>(source.proof().clone())
             .carry::<Value>(foreign_value);
         assert!(
             foreign.proof().well_formed::<HEADER_SIZE>(),
@@ -482,8 +480,8 @@ where
 }
 
 #[test]
-fn standard_cannot_substitute_for_aggregator() -> Result<()> {
-    check_same_shape::<Standard, Aggregator>(
+fn standard_cannot_substitute_for_a_twin_profile() -> Result<()> {
+    check_same_shape::<Standard, Twin>(
         Some(Fp::from(7)),
         Some(Fp::from(7)),
         Fp::from(7),
@@ -492,8 +490,8 @@ fn standard_cannot_substitute_for_aggregator() -> Result<()> {
 }
 
 #[test]
-fn aggregator_cannot_substitute_for_standard() -> Result<()> {
-    check_same_shape::<Aggregator, Standard>(
+fn a_twin_profile_cannot_substitute_for_standard() -> Result<()> {
+    check_same_shape::<Twin, Standard>(
         Some(Fp::from(7)),
         Some(Fp::from(7)),
         Fp::from(7),
@@ -563,6 +561,80 @@ where
     let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed.into_parts().0)
         .carry::<Value>(Fp::from(7));
     assert!(!receiver.verify_compressed(&compressed)?);
+    Ok(())
+}
+
+/// The aggregator profile's proofs and Standard's substitute for each
+/// other in neither role, both at the aggregator rank: the aggregator's
+/// extension changes the shape, so a Standard proof is malformed for the
+/// aggregator's verifiers and an aggregator proof for Standard's,
+/// uncompressed and compressed. The inner role, the compressed proof a
+/// decompression verifies, takes a Standard-profile proof by type.
+#[test]
+fn standard_and_aggregator_cannot_substitute_for_each_other() -> Result<()> {
+    type Agg = Aggregator<HEADER_SIZE>;
+    assert_ne!(Shape::of::<Standard>(), Shape::of::<Agg>());
+    let params = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(0x908_a660);
+    let seed = || Seed {
+        expected: Some(Fp::from(7)),
+    };
+    let standard = application::<Standard, AggregatorRank>(
+        RegistryTags::from_beacon(&[0x42; 32], SENDER_MANIFEST),
+        SENDER_MANIFEST,
+        Some(Fp::from(7)),
+    )?;
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
+        .register(seed())?
+        .register(Sum)?
+        .finalize(params)?;
+    let aggregator = ApplicationBuilder::<C<Agg>, AggregatorRank, HEADER_SIZE>::new()
+        .register(seed())?
+        .register(Sum)?
+        .with_registry_tags(
+            RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
+            RECEIVER_MANIFEST,
+        )?
+        .finalize_with(params, Decompression::new(wallet, &mut rng)?)?;
+
+    let (from_standard, ()) = standard.seed(&mut rng, seed(), Fp::from(7))?;
+    let (from_aggregator, ()) = aggregator.seed(&mut rng, seed(), Fp::from(7))?;
+    assert!(standard.verify_uncompressed(&from_standard, &mut rng)?);
+    assert!(aggregator.verify_uncompressed(&from_aggregator, &mut rng)?);
+    let standard_compressed = standard.compress(&from_standard, &mut rng)?;
+    let aggregator_compressed = aggregator.compress(&from_aggregator, &mut rng)?;
+    assert!(standard.verify_compressed(&standard_compressed)?);
+    assert!(aggregator.verify_compressed(&aggregator_compressed)?);
+
+    // Standard's proofs in the aggregator's role.
+    let foreign =
+        copy_proof_payload::<C<Standard>, C<Agg>, AggregatorRank>(from_standard.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!aggregator.verify_uncompressed(&foreign, &mut rng)?);
+    assert!(matches!(
+        aggregator.compress(&foreign, &mut rng),
+        Err(Error::InvalidWitness(_))
+    ));
+    let foreign =
+        copy_compressed_payload::<C<Standard>, C<Agg>>(standard_compressed.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!aggregator.verify_compressed(&foreign)?);
+
+    // The aggregator's proofs in Standard's role.
+    let foreign =
+        copy_proof_payload::<C<Agg>, C<Standard>, AggregatorRank>(from_aggregator.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!standard.verify_uncompressed(&foreign, &mut rng)?);
+    assert!(matches!(
+        standard.compress(&foreign, &mut rng),
+        Err(Error::InvalidWitness(_))
+    ));
+    let foreign =
+        copy_compressed_payload::<C<Agg>, C<Standard>>(aggregator_compressed.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!standard.verify_compressed(&foreign)?);
     Ok(())
 }
 

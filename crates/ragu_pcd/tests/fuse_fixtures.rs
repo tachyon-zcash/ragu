@@ -52,12 +52,15 @@
 //! and review the diff: it should name exactly the stages the change was
 //! meant to touch.
 //!
-//! Every scenario runs once per profile, the wallet's [`Standard`] and the
-//! [`Aggregator`]. Both currently produce identical proofs, so they check
-//! the same fixtures in `standard/`. Only the standard prover writes them
-//! when regenerating.
+//! Every scenario runs once per profile, the wallet's [`Standard`] over
+//! the fixtures in `standard/` and the [`Aggregator`] over those in
+//! `aggregator/`: the aggregator's proofs carry the decompression
+//! circuits' polynomials, at the aggregator rank, run over the canonical
+//! compressed proof of the wallet application it holds as its context,
+//! itself compressed under a fixed seed.
 //!
 //! [`Standard`]: crate::profile::Standard
+//! [`Aggregator`]: crate::profile::Aggregator
 //!
 //! The steps are the fixtures' own: `ragu_testing`'s implement the `Step` of
 //! the dev-dependency copy of this crate and cannot be registered from inside
@@ -74,9 +77,8 @@ use core::{convert::Infallible, marker::PhantomData};
 use std::{fs, path::PathBuf};
 
 use blake2b_simd::{Params, State};
-use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
-    polynomials::{ProductionRank, Rank, sparse},
+    polynomials::{AggregatorRank, Rank, WalletRank, sparse},
     registry::CircuitIndex,
 };
 use ragu_core::{
@@ -108,35 +110,63 @@ use crate::{
         IpaCycle, IpaProof,
         fingerprint::{self, Event},
     },
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle},
+    profile::{Aggregator, Decompression, Profile, Profiled, ProfiledCycle},
     step::{Encoded, Index, Step, internal::bootstrap::Bootstrap},
 };
 
-type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
-type App<C> = Application<'static, C, R, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, R, Value>;
+type App<C> = Application<'static, C, <C as FixtureCycle>::Rank, HEADER_SIZE>;
+type TestPcd<C> = Pcd<C, <C as FixtureCycle>::Rank, Value>;
 
 /// A profile of the Pasta cycle the fixtures prove in.
 trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams> {
-    /// The fixtures' application: their four steps at production rank, on
-    /// the baked parameters.
+    /// The rank the profile proves at.
+    type Rank: Rank;
+    /// The profile's fixture directory, under `tests/fixtures/fuse`.
+    const DIR: &'static str;
+    /// The fixtures' application: their four steps, on the aggregator-rank
+    /// parameters, which the aggregator's decompression needs; their prefix
+    /// is the Standard tables, so the wallet's proofs are the same as over
+    /// those.
     fn app() -> App<Self>;
 }
 
-impl<C> FixtureCycle for C
-where
-    C: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, C::Base, R, ReferenceBackend>: Default,
-{
-    fn app() -> App<C> {
-        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
-            .register(Seed::new())
-            .and_then(|b| b.register(Merge::new()))
-            .and_then(|b| b.register(UnitLeft::new()))
-            .and_then(|b| b.register(UnitRight::new()))
-            .and_then(|b| b.finalize(crate::pasta::baked()))
-            .expect("the application must build")
+/// The fixtures' four steps, registered.
+fn steps<C: FixtureCycle>(
+    builder: ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE>,
+) -> ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE> {
+    builder
+        .register(Seed::new())
+        .and_then(|b| b.register(Merge::new()))
+        .and_then(|b| b.register(UnitLeft::new()))
+        .and_then(|b| b.register(UnitRight::new()))
+        .expect("the steps register")
+}
+
+impl FixtureCycle for Pasta {
+    type Rank = WalletRank;
+    const DIR: &'static str = "standard";
+
+    fn app() -> App<Self> {
+        steps(ApplicationBuilder::new())
+            .finalize(crate::pasta::baked_aggregator())
+            .expect("the wallet application must build")
+    }
+}
+
+impl FixtureCycle for Profiled<Pasta, Aggregator<HEADER_SIZE>> {
+    type Rank = AggregatorRank;
+    const DIR: &'static str = "aggregator";
+
+    /// The aggregator over the wallet application, whose canonical
+    /// compressed proof is compressed under a fixed seed, so that the
+    /// chunks every fuse runs over it are the same.
+    fn app() -> App<Self> {
+        let decompression = Decompression::new(Pasta::app(), &mut Tape::record(seed(0xa66)))
+            .expect("the canonical decompression prepares");
+        steps(ApplicationBuilder::new())
+            .finalize_with(crate::pasta::baked_aggregator(), decompression)
+            .expect("the aggregator application must build")
     }
 }
 
@@ -490,7 +520,7 @@ impl Lines {
 /// commitments are derived from the polynomials they commit, and the bridge
 /// `ab` polynomial from the commitments it carries, so they are not pinned
 /// separately.
-fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
+fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     let Proof {
         bridge_alpha,
         circuit_id,
@@ -1010,11 +1040,11 @@ struct Fixtures {
 }
 
 impl Fixtures {
-    fn of<C: ProfiledCycle>() -> Self {
+    fn of<C: FixtureCycle>() -> Self {
         let profile = <C::Profile as Profile>::NAME;
-        // Aggregator currently has the standard layout. Checking the same
-        // snapshots guards that agreement without storing duplicate files.
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fuse/standard");
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/fuse")
+            .join(C::DIR);
         if writing() {
             fs::create_dir_all(&dir).expect("the fixture directory can be created");
         }
@@ -1083,7 +1113,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     fixtures: &Fixtures,
     name: &str,
     tag: u64,
-    pcd: &Pcd<C, R, H>,
+    pcd: &Pcd<C, C::Rank, H>,
     tape: &Tape,
     failures: &mut Vec<String>,
 ) {
@@ -1276,7 +1306,7 @@ fn prover_fixtures<C: FixtureCycle>() {
 /// each payload as the wire format encodes it.
 /// These pin the wire format itself, apart from the fixture encoding above.
 fn wire_lines<C: FixtureCycle>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, C::Rank>,
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
 ) {
@@ -1515,7 +1545,7 @@ mod standard {
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "wallet-rank proving is impractically slow without --release"
     )]
     #[test]
     fn prover() {
@@ -1524,7 +1554,7 @@ mod standard {
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "wallet-rank proving is impractically slow without --release"
     )]
     #[test]
     fn verifier() {
@@ -1536,24 +1566,20 @@ mod standard {
 mod aggregator {
     use super::*;
 
-    type C = Profiled<Pasta, Aggregator>;
+    type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "aggregator-rank proving is impractically slow without --release"
     )]
     #[test]
     fn prover() {
-        // Standard is the only writer of the shared fixtures. In check
-        // mode, both profiles must independently reproduce them.
-        if !writing() {
-            prover_fixtures::<C>();
-        }
+        prover_fixtures::<C>();
     }
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "aggregator-rank proving is impractically slow without --release"
     )]
     #[test]
     fn verifier() {

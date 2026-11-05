@@ -1,4 +1,4 @@
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Pasta},
@@ -9,8 +9,8 @@ use rand::{SeedableRng, rngs::StdRng};
 
 #[test]
 fn various_merging_operations() -> Result<()> {
-    let pasta = ragu_pcd::pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let pasta = ragu_pcd::pasta::baked_aggregator();
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?

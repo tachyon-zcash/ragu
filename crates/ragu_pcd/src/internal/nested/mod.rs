@@ -81,7 +81,7 @@ impl<P: Profile> Len for NumPoints<P> {
 
 /// The endoscalings a nested step performs in the standard profile: what
 /// fits a step beside the stages it reserves, which hold every point the
-/// walk consumes, at the production rank. A profile sets its own
+/// walk consumes, at the wallet rank. A profile sets its own
 /// ([`Profile::NESTED_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
@@ -636,6 +636,9 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
+    let extension = C::Profile::nested_extension();
+    let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
+    let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all::<C::Profile>() {
@@ -709,20 +712,29 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R, C::Profile>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
-            ExtensionCircuit(k) => C::Profile::register_nested_circuit::<C::Base, R>(
-                k as usize,
-                CircuitSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
-            ExtensionBonding(j) => C::Profile::register_nested_bonding::<C::Base, R>(
-                j as usize,
-                BondingSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
+            ExtensionCircuit(k) => {
+                let (registry, registration) = C::Profile::register_nested_circuit::<C::Base, R>(
+                    k as usize,
+                    CircuitSlot::new(registry),
+                    params,
+                )?
+                .into_parts();
+                extension_circuits.push(registration);
+                registry
+            }
+            ExtensionBonding(j) => {
+                let (registry, registration) = C::Profile::register_nested_bonding::<C::Base, R>(
+                    j as usize,
+                    BondingSlot::new(registry),
+                    params,
+                )?
+                .into_parts();
+                extension_bondings.push(registration);
+                registry
+            }
         };
     }
+    extension.check_registered("nested", &extension_circuits, &extension_bondings)?;
 
     assert_eq!(
         registry.num_internal_circuits(),

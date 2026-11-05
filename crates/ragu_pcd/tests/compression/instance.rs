@@ -5,7 +5,7 @@
 //! extra openings hold against the polynomials.
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::{ProductionRank, Rank, sparse};
+use ragu_circuits::polynomials::{Rank, WalletRank, sparse};
 use ragu_core::{
     Cycle,
     pasta::{Fp, Fq, Pasta},
@@ -24,7 +24,7 @@ use crate::{
     ipa::CycleTranscript,
 };
 
-type TestR = ProductionRank;
+type TestR = WalletRank;
 const HEADER_SIZE: usize = 4;
 
 fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
@@ -46,7 +46,7 @@ fn setup() -> (
 
 /// The fuse's challenges, replayed on a transcript under the fuse's tag.
 fn replay(instance: &Instance<Pasta>) -> nested::Challenges<Fp> {
-    let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
+    let mut transcript = CycleTranscript::<Pasta>::fuse(crate::pasta::baked(), RAGU_TAG).unwrap();
     instance
         .challenges(&mut transcript)
         .unwrap()
@@ -125,6 +125,42 @@ fn check_bindings<F, Id, R>(
         assert_eq!(a.eval(r), poly(claim.poly).eval(r) - claim.expected_at(r));
         assert_eq!(b.eval(r), claim.mask_at::<R>(r));
         assert!(!claim.wires.is_empty());
+    }
+}
+
+/// The degrees the decompression lays the wire bindings out by are the
+/// ones the bindings pin: [`native_binding_degrees`](crate::decompress::program::native_binding_degrees) and
+/// [`nested_binding_degrees`](crate::decompress::program::nested_binding_degrees) list each binding's wires as
+/// `native_bindings` and `nested_bindings` do, in their order.
+#[test]
+fn binding_degrees_are_the_bindings() {
+    let (app, _, instance) = setup();
+    let challenges = replay(&instance);
+    fn pinned<F: Copy>(wires: &[(usize, F)]) -> alloc::vec::Vec<usize> {
+        wires.iter().map(|&(degree, _)| degree).collect()
+    }
+
+    let native = instance
+        .native_bindings::<TestR, ReferenceBackend, HEADER_SIZE>(
+            &challenges,
+            &app.native_registry,
+            Fp::ONE,
+        )
+        .unwrap();
+    let degrees =
+        crate::decompress::program::native_binding_degrees::<Pasta, TestR, HEADER_SIZE>().unwrap();
+    assert_eq!(native.len(), degrees.len());
+    for (index, (binding, degrees)) in native.iter().zip(degrees).enumerate() {
+        assert_eq!(pinned(&binding.wires), degrees, "native binding {index}");
+    }
+
+    let nested = instance
+        .nested_bindings::<TestR, ReferenceBackend>(&challenges, &app.nested_registry, Fq::ONE)
+        .unwrap();
+    let degrees = crate::decompress::program::nested_binding_degrees::<Pasta, TestR>().unwrap();
+    assert_eq!(nested.len(), degrees.len());
+    for (index, (binding, degrees)) in nested.iter().zip(degrees).enumerate() {
+        assert_eq!(pinned(&binding.wires), degrees, "nested binding {index}");
     }
 }
 
@@ -318,5 +354,5 @@ fn extra_openings_hold() {
     assert_eq!(claims[1].value, proof.nested_v().unwrap());
 }
 
-#[path = "backend_equivalence/compress_instance.rs"]
+#[path = "../backend_equivalence/compress_instance.rs"]
 mod backend_equivalence;

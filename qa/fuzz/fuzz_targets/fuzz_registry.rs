@@ -76,7 +76,7 @@ use udon::field::Field;
 /// Registering a circuit synthesizes it, so the count is what sets this
 /// target's cost per input. Six is enough to cross a power-of-two domain
 /// boundary twice (1→2, 2→4, 4→8) and to put several circuits in every
-/// category, without making a production-rank input unaffordable.
+/// category, without making a wallet-rank input unaffordable.
 const MAX_REGISTRATIONS: usize = 6;
 
 /// `REGISTRY_STATS=1` reports how much of each input actually reaches an
@@ -89,7 +89,7 @@ static MULTI_CATEGORY: AtomicUsize = AtomicUsize::new(0);
 /// programs differ — the only inputs for which the ordering oracle can
 /// discriminate at all.
 static ORDER_DISCRIMINATING: AtomicUsize = AtomicUsize::new(0);
-static PRODUCTION_RANK: AtomicUsize = AtomicUsize::new(0);
+static WALLET_RANK: AtomicUsize = AtomicUsize::new(0);
 static CAPACITY_PROBES: AtomicUsize = AtomicUsize::new(0);
 
 fn bump(c: &AtomicUsize) {
@@ -109,11 +109,11 @@ fn report() {
     }
     eprintln!(
         "[registry] runs {runs}: built {}, multi-category {}, order-discriminating {}, \
-         production-rank {}, capacity probes {}",
+         wallet-rank {}, capacity probes {}",
         BUILT.load(Ordering::Relaxed),
         MULTI_CATEGORY.load(Ordering::Relaxed),
         ORDER_DISCRIMINATING.load(Ordering::Relaxed),
-        PRODUCTION_RANK.load(Ordering::Relaxed),
+        WALLET_RANK.load(Ordering::Relaxed),
         CAPACITY_PROBES.load(Ordering::Relaxed),
     );
 }
@@ -173,7 +173,7 @@ fuzz_target!(|input: Input| {
     if stats_on() {
         report();
         if input.rank == RankChoice::Production {
-            bump(&PRODUCTION_RANK);
+            bump(&WALLET_RANK);
         }
     }
     with_rank!(input.rank, |R| {
@@ -382,7 +382,7 @@ fn bonding_mask<'a, R: Rank>() -> Option<ragu_circuits::BondingObject<'a, Fp, R>
 /// Checks that `finalize` refuses one circuit past the rank's capacity and
 /// accepts exactly at it.
 ///
-/// Only meaningful at test rank: `ProductionRank::num_coeffs()` is 8192, and
+/// Only meaningful at test rank: `WalletRank::num_coeffs()` is 8192, and
 /// registering 8193 circuits to watch the check fire would cost more than
 /// the rest of the campaign put together.
 fn probe_capacity<R: Rank>() {

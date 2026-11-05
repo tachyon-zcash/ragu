@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -167,7 +167,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
 #[test]
 fn register_steps_success_and_finalize() {
     let pasta = ragu_pcd::pasta::baked();
-    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let builder = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
@@ -178,7 +178,7 @@ fn register_steps_success_and_finalize() {
 #[test]
 #[should_panic(expected = "steps must be registered in sequential order")]
 fn register_steps_out_of_order_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(Step1)
         .unwrap();
 }
@@ -186,7 +186,7 @@ fn register_steps_out_of_order_should_fail() {
 #[test]
 #[should_panic(expected = "two different Header implementations using the same suffix")]
 fn register_steps_duplicate_suffix_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1Dup)
@@ -244,9 +244,8 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
 }
 
 fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {
-    let result =
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-            .register(HeaderStep::<L, R, O>(PhantomData));
+    let result = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
+        .register(HeaderStep::<L, R, O>(PhantomData));
     assert!(matches!(
         result,
         Err(Error::Initialization(message))
@@ -268,7 +267,7 @@ fn register_rejects_reserved_suffix_in_each_header_position() {
 
 #[test]
 fn register_accepts_unit_in_every_header_position() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(HeaderStep::<(), (), ()>(PhantomData))
         .unwrap();
 }

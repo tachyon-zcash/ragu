@@ -15,12 +15,12 @@ use super::_10_p::{NativeInputs, NativeWalk};
 use crate::{
     Application,
     internal::{native, native::total_circuit_counts, nested},
-    profile::{Profile, ProfiledCycle},
+    profile::{Profile, ProfiledCycle, Source},
     proof::ProofBuilder,
 };
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Traces this step's native internal circuits, assembles their Rx
     /// polynomials, and stores them in the proof builder.
@@ -45,6 +45,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         eval_witness: &native::stages::eval::Witness<C>,
         native_points: &NativeInputs<C>,
         native_walk: &NativeWalk<C>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
@@ -225,6 +226,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let extension = C::Profile::native_extension();
         let rxs = C::Profile::native_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
+            source,
             &self.native_registry,
             rng,
         )?;
@@ -260,6 +262,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_f_witness: &nested::stages::f::Witness<C::HostCurve>,
         nested_eval_witness: &nested::stages::eval::Witness<C::HostCurve, C::Profile>,
         nested_challenges_witness: &nested::stages::challenges::Witness<C::ScalarField>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let instance = nested::unified::Instance {
@@ -336,6 +339,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let extension = C::Profile::nested_extension();
         let rxs = C::Profile::nested_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
+            source,
             &self.nested_registry,
             rng,
         )?;

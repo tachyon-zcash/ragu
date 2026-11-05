@@ -1,4 +1,4 @@
-//! Reference verification at the production rank, excluding proof construction.
+//! Reference verification at the wallet rank, excluding proof construction.
 //!
 //! `verify_*` times the uncompressed test oracle, `verify_compressed_*` the
 //! production verifier over the same proofs, compressed outside the timed loop.
@@ -6,7 +6,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -18,7 +18,7 @@ use rand::{SeedableRng, rngs::StdRng};
 fn verify_bench(c: &mut Criterion) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()
         .register(nontrivial::Hash2 { poseidon_params })

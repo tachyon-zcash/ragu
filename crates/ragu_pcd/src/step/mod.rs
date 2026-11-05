@@ -250,6 +250,28 @@ mod tests {
         Ok(())
     }
 
+    /// The aggregator profile registers the decompression step after the
+    /// two every profile has, and its application steps after it.
+    #[test]
+    fn test_aggregator_registers_the_decompression_step() -> Result<()> {
+        use crate::profile::{Aggregator, Standard};
+        assert_eq!(num_internal_steps::<Standard>(), NUM_INTERNAL_STEPS);
+        assert_eq!(
+            num_internal_steps::<Aggregator<4>>(),
+            NUM_INTERNAL_STEPS + 1
+        );
+        let internal = InternalCircuitIndex::num::<Aggregator<4>>();
+        assert_eq!(
+            Index::internal(InternalStepIndex::Decompress).circuit_index::<Aggregator<4>>(1)?,
+            CircuitIndex::new(internal + 2)
+        );
+        assert_eq!(
+            Index::new(0).circuit_index::<Aggregator<4>>(1)?,
+            CircuitIndex::new(internal + 3)
+        );
+        Ok(())
+    }
+
     /// An internal step a profile does not register has no circuit index
     /// in it: resolving the decompression step for the standard profile
     /// fails rather than naming its first application step.

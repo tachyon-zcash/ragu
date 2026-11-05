@@ -55,11 +55,11 @@ Vesta, loaded from data embedded in the binary. Poseidon parameters are
 compile-time constants and do not require initialization.
 
 Standard uses the original tables of $2^{13}$ vector generators per curve.
-For larger Aggregator extensions, `baked-aggregator` adds separate $2^{14}$
-tables through `ragu_pcd::pasta::baked_aggregator()`. The regular `baked()`
-tables remain the same size even when that feature is enabled; the larger
-tables are initialized only when their loader is called. The production
-Aggregator rank will be fixed when its decompression circuits land.
+For the Aggregator profile, which the `unstable-aggregator` feature exposes,
+`baked-aggregator` adds separate $2^{15}$ tables through
+`ragu_pcd::pasta::baked_aggregator()`, sized for the aggregator rank.
+The regular `baked()` tables remain the same size even when that feature is
+enabled; the larger tables are initialized only when their loader is called.
 
 ### Why Pasta?
 
@@ -353,7 +353,7 @@ let test_app = ApplicationBuilder::<Pasta, TestRank, 1>::new()
     .finalize(pasta)?;
 
 // Production application, with tags drawn for exactly this set of steps
-let prod_app = ApplicationBuilder::<Pasta, ProductionRank, 8>::new()
+let prod_app = ApplicationBuilder::<Pasta, WalletRank, 8>::new()
     .register(complex_step)?
     .with_registry_tags(prod_tags, &expected_prod_manifest_digest)?
     .finalize(pasta)?;

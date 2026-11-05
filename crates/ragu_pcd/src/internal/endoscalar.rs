@@ -385,7 +385,7 @@ mod tests {
         profile::Standard,
     };
 
-    type R = polynomials::ProductionRank;
+    type R = polynomials::WalletRank;
 
     /// Computes the effective scalar for an endoscalar via emulated `lift`.
     fn compute_effective_scalar(endo: Uendo) -> Fq {

@@ -8,7 +8,7 @@ use rand::CryptoRng;
 use udon::curve::Affine;
 
 use super::{
-    CompressedPcd, CompressedProof, Messages, Sampled,
+    CompressedPcd, CompressedProof, Lifted, Messages, Sampled,
     batch::{self, Batch},
     instance::Instance,
     revdot::{self, Openings},
@@ -79,8 +79,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         // A later refactor may have `fuse` rederive a child's challenges from
         // its bridge commitments and treat the stored ones as a cache it
         // refreshes; then nothing reads the cache and this check can go.
-        let mut fuse_transcript =
-            CycleTranscript::<C, <B as SelectableBackend>::Verifier>::new(self.params, RAGU_TAG)?;
+        let mut fuse_transcript = CycleTranscript::<C>::fuse(self.params, RAGU_TAG)?;
         let challenges = instance.challenges(&mut fuse_transcript)?.ok_or_else(|| {
             Error::InvalidWitness(
                 "proof transcript challenge is outside the endoscalar range".into(),
@@ -92,9 +91,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             ));
         }
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
-        let mut transcript = transcript::<C, B>(self.params, &instance, &output_header)?;
-        let native_sampled = Sampled::squeeze(&mut transcript.host())?;
-        let nested_sampled = Sampled::squeeze(&mut transcript.nested())?;
+        let mut transcript = transcript::<C, B, R>(self.params, &instance, &output_header)?;
+        let native_sampled = Sampled::squeeze(&mut Lifted(transcript.host()))?;
+        let nested_sampled = Sampled::squeeze(&mut Lifted(transcript.nested()))?;
 
         let native = {
             let registry = &self.native_registry;
@@ -109,7 +108,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 y,
                 z,
                 &masked,
-                &mut transcript.host(),
+                &mut Lifted(transcript.host()),
             )?;
             let mut openings = witness.openings(&reduction, z)?;
             let mut polys = witness.polys();
@@ -132,7 +131,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &openings,
                 generators,
                 u,
-                &mut transcript.host(),
+                &mut Lifted(transcript.host()),
                 rng,
             )?;
             Messages {
@@ -154,7 +153,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 y,
                 z,
                 &masked,
-                &mut transcript.nested(),
+                &mut Lifted(transcript.nested()),
             )?;
             let mut openings = witness.openings(&reduction, z)?;
             let mut polys = witness.polys();
@@ -177,7 +176,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &openings,
                 generators,
                 u,
-                &mut transcript.nested(),
+                &mut Lifted(transcript.nested()),
                 rng,
             )?;
             Messages {

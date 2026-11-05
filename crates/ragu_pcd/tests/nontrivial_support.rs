@@ -1,6 +1,6 @@
 //! Shared proof constructors with nontrivial application headers.
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -10,11 +10,11 @@ use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, Witne
 use rand::{SeedableRng, rngs::StdRng};
 
 pub(super) type C = Pasta;
-pub(super) type R = ProductionRank;
+pub(super) type R = WalletRank;
 pub(super) const HEADER_SIZE: usize = 4;
 
 pub(super) fn app() -> Application<'static, C, R, HEADER_SIZE> {
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu_pcd::pasta::baked_aggregator();
     let poseidon = Pasta::circuit_poseidon(pasta);
     ApplicationBuilder::<C, R, HEADER_SIZE>::new()
         .register(WitnessLeaf {

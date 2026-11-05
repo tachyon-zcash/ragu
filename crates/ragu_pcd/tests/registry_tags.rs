@@ -1,4 +1,4 @@
-use ragu_circuits::{polynomials::ProductionRank, registry::Tag};
+use ragu_circuits::{polynomials::WalletRank, registry::Tag};
 use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Fq, Pasta},
@@ -10,11 +10,9 @@ use ragu_pcd::{
 use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
 
-fn application(
-    tags: RegistryTags<Pasta>,
-) -> Result<Application<'static, Pasta, ProductionRank, 4>> {
+fn application(tags: RegistryTags<Pasta>) -> Result<Application<'static, Pasta, WalletRank, 4>> {
     let pasta = ragu_pcd::pasta::baked();
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
@@ -49,7 +47,7 @@ fn beacon_tags_support_recursive_proofs() -> Result<()> {
 fn tags_for_another_manifest_are_rejected() {
     let tags = RegistryTags::<Pasta>::from_beacon(&[0x42; 32], &[0x25; 20]);
     let result =
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new().with_registry_tags(tags, &[0x24; 20]);
+        ApplicationBuilder::<Pasta, WalletRank, 4>::new().with_registry_tags(tags, &[0x24; 20]);
     assert!(
         matches!(result, Err(ragu_core::Error::Initialization(message))
         if message.to_string() == "registry tags do not match the expected setup manifest")
@@ -61,7 +59,7 @@ fn profiles_derive_distinct_tags() {
     let (beacon, manifest_digest) = ([0x42; 32], [0x24; 20]);
     let standard = RegistryTags::<Pasta>::from_beacon(&beacon, &manifest_digest);
     let aggregator =
-        RegistryTags::<Profiled<Pasta, Aggregator>>::from_beacon(&beacon, &manifest_digest);
+        RegistryTags::<Profiled<Pasta, Aggregator<4>>>::from_beacon(&beacon, &manifest_digest);
     assert_ne!(standard.native(), aggregator.native());
     assert_ne!(standard.nested(), aggregator.nested());
 

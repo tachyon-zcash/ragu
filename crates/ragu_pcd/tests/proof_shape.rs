@@ -4,7 +4,7 @@
 use alloc::format;
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::{ProductionRank, R, Rank};
+use ragu_circuits::polynomials::{R, Rank, WalletRank};
 use ragu_core::{Error, pasta::Pasta};
 use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
@@ -149,8 +149,8 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
 
 #[test]
 fn malformed_standard_proof_shapes_are_rejected() {
-    let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
-        .finalize(crate::pasta::baked())
+    let app = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
+        .finalize(crate::pasta::baked_aggregator())
         .unwrap();
     check_shapes(&app);
 }
