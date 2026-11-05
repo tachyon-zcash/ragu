@@ -384,7 +384,7 @@ impl Proof {
 
     /// The exact length of a mock proof encoding, checked as
     /// [`from_bytes`](Self::from_bytes) checks it.
-    #[cfg(any(test, feature = "serde"))]
+    #[cfg(feature = "serde")]
     fn framed_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
         open(bytes, PayloadKind::MockProof)?;
         Ok(Self::encoded_len())
@@ -550,7 +550,7 @@ impl<H: WireHeader> Pcd<H> {
 
     /// The exact length of the encoding whose envelope `bytes` begins with,
     /// checked as [`from_bytes`](Self::from_bytes) checks it.
-    #[cfg(any(test, feature = "serde"))]
+    #[cfg(feature = "serde")]
     fn framed_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
         let (_, elements) = open(bytes, PayloadKind::MockPcd)?;
         Ok(ENVELOPE_SIZE + PCD_HEAD_LEN + (elements as usize) * 32)
