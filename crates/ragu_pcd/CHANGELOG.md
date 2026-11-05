@@ -53,8 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documentation now makes declaration/circuit agreement a setup obligation
   rather than claiming a mismatch always rejects.
 - `ApplicationBuilder::finalize` derives both registry tags from the registered
-  circuits; there is no tag to supply. Proofs made under externally supplied
-  tags do not verify.
+  circuits.
 - Fuse batches independent registry commitments and challenge binding partials
   through the selected backend. Its two error-term layers and child rx
   evaluations use ordered backend iteration, with a lazy serial default.

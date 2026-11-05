@@ -239,10 +239,9 @@ polynomial $s_i(X, Y)$ is written down as the list of its nonzero monomials
 $c \cdot X^e Y^q$ in canonical order, and the lists are hashed, in registration
 order, with the rank and the number of circuits, into a BLAKE2b digest that is
 reduced to a field element. Two registries have the same tag exactly when they
-hold the same polynomials, unless BLAKE2b collides. There is no setup
-parameter to supply, publish, or keep: any application built from the same
-steps, in the same order, with the same profile and rank, derives the same
-tags, and any change to a circuit changes them. Tests that need two
+hold the same polynomials, unless BLAKE2b collides. Any application built from
+the same steps, in the same order, with the same profile and rank, derives the
+same tags, and any change to a circuit changes them. Tests that need two
 applications with identical circuits but different tags, or different circuits
 with identical ones, override the derived tags through a `test-utils` seam.
 

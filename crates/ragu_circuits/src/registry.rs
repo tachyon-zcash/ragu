@@ -321,9 +321,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// not of how the circuit code emitted them, and the byte encoding is
 /// injective: every item is fixed-width or length-prefixed. Two registries
 /// with the same tag therefore have the same polynomial unless BLAKE2b
-/// collides. Nothing is sampled, so nothing has to be committed, published
-/// or kept; and no evaluation is involved, so there is no number of points
-/// to get right. A tag of zero has probability $1/|\mathbb{F}|$ over the
+/// collides. A tag of zero has probability $1/|\mathbb{F}|$ over the
 /// hash; soundness arguments that assume a nonzero tag must include it.
 ///
 /// # Break self-reference without preprocessing
