@@ -21,8 +21,8 @@ rejects the proof. Each identity a challenge checks is a nonzero polynomial
 in it of degree at most $2D$, with $D = 2^k$ the rank, the largest being a
 product of two polynomials of degree below $D$, so a lift drawn from
 $2^{143}$ values satisfies it with probability at most $2D / 2^{143}$.
-Compression squeezes $15 + k$ challenges per curve and Fuse eight, so the
-union bound over all of them is $(38 + 2k) \cdot 2D / 2^{143}$, about
+Compression squeezes $15 + k$ challenges per curve and Fuse nine, so the
+union bound over all of them is $(39 + 2k) \cdot 2D / 2^{143}$, about
 $2^{-123}$ at the wallet rank $k = 13$, before the IPA's extraction loss.
 
 **Shared inputs:** registry, output header, rank $D=2^k$, and generators

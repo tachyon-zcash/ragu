@@ -31,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added optional `baked-aggregator` parameters through
   `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
   the aggregator profile proves at. Standard's `baked()` keeps its original
-  `R<13>` table sizes and generators, including when the additional Aggregator
-  parameters are enabled and loaded.
+  `R<13>` tables and adds the stage reach past them (`pasta::STAGE_REACH`),
+  including when the additional Aggregator parameters are enabled and loaded.
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_backend::ReferenceBackend`.
@@ -66,10 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serves a Standard application that compresses; the aggregator's own tables
   hold the same points.
 - `CycleTranscript::new` commits each run of consecutive scalar-field values
-  over the parameters' first nested generators, as the fuse's bridge stages
-  commit, so a standalone IPA over `ipa` round-trips on either curve; the fuse
-  opens its own transcript without run bases and the compression with its run
-  stages'. Consecutive scalar-field writes share one commitment, where each
+  over the parameters' first nested generators, so a standalone IPA over
+  `ipa` round-trips on either curve; the fuse opens its own transcript without
+  run bases and the compression with its run stages'. Consecutive scalar-field writes share one commitment, where each
   was committed on its own before, so standalone transcripts from earlier
   versions do not replay.
 - `ApplicationBuilder`, `Application`, and their proving, verification and

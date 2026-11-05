@@ -10,10 +10,11 @@
 //! the native verifier makes has a circuit mechanism:
 //!
 //! - **Transcript.** The native verifier squeezes its challenges from a
-//!   Poseidon transcript over the instance and its messages. The circuit
-//!   replays it with the [`Transcript`](crate::internal::transcript::Transcript)
-//!   gadget over the allocated messages; host-curve points and scalar-field
-//!   values, which lie in the other field, enter as the native verifier
+//!   Poseidon transcript over the instance and its messages. The transcript
+//!   chunks replay it with the Poseidon `Sponge` gadget over the loaded
+//!   messages, sliced at the sponge's permutation boundaries; host-curve
+//!   points and scalar-field values, which lie in the other field, enter as
+//!   the native verifier
 //!   absorbs them, one nested-curve commitment per run of them before a
 //!   challenge, the commitment of the stage that holds the run on the
 //!   scalar-field side, which the circuit-field side absorbs as a witness
@@ -29,7 +30,7 @@
 //!   the registry as the fuse's query stage holds its own; that check is
 //!   not yet made (see *What remains*).
 //! - **Derived commitments.** $\[A\]$, the dilated and raw polynomials'
-//!   commitments, the batched $\[p\]$ and the IPA's folded commitment are
+//!   commitments, the batched $\[H\]$ and the IPA's folded commitment are
 //!   multi-scalar multiplications of the instance's points. Those live on
 //!   the other curve, so the circuit over the points' base field derives
 //!   them by endoscalar Horner chains, as the fuse's endoscaling steps do,
@@ -101,7 +102,7 @@
 //! application's [`Decompression`](crate::profile::Decompression) holds,
 //! so each child carries the extension's polynomials, which
 //! [`Shape`](crate::profile::Shape) counts, for the fuse to hash, evaluate
-//! and fold, which the fuse's circuits carry at four times the production
+//! and fold, which the fuse's circuits carry at four times the wallet
 //! rank's budget. The decompression
 //! step runs the chunks over the wallet's proof it is given and outputs
 //! that proof's header, which the statement circuit's claim holds to the
@@ -168,7 +169,7 @@
 //! 2. **$G'$ is unbound.** The IPA's final check takes $G' = \langle s,
 //!    G \rangle$ as a witness point, so as the circuits stand that check
 //!    binds nothing: a prover who chooses $G'$ satisfies it for any
-//!    left-hand side. Everything before the IPA's final check is bound.
+//!    left-hand side. Everything else before the IPA's final check is bound.
 //!    $G'$ is the commitment to $s(X) = \prod\_{i < k} (1 + u\_{k-1-i}
 //!    X^{2^i})$ over the same generators, so the fix is to witness $s$ as
 //!    a polynomial of the decompression proof, take its commitment as

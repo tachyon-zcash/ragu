@@ -19,8 +19,8 @@
 //! binds the run's values before the challenge that follows them (see
 //! [`stages`](crate::decompress::stages)). A transcript opened with
 //! [`new`](CycleTranscript::new) commits each run over the parameters'
-//! first nested generators instead, as the fuse's bridge stages commit: a
-//! standalone IPA's. The fuse's own transcript takes no scalar-field value
+//! first nested generators instead: a standalone IPA's. The fuse's own
+//! transcript takes no scalar-field value
 //! ([`fuse`](CycleTranscript::fuse)). A run that precedes no
 //! challenge is never absorbed: no challenge depends on it. Challenges for
 //! the host curve are the raw squeeze. Nested challenges preserve its
@@ -95,8 +95,8 @@ enum RunBases<C: Cycle> {
     /// Each run at its stage's generators, in absorption order: the
     /// compression's.
     Positioned(Vec<Vec<C::NestedCurve>>),
-    /// Each run over the parameters' first nested generators, as the fuse's
-    /// bridge stages commit: a standalone IPA's.
+    /// Each run over the parameters' first nested generators: a standalone
+    /// IPA's.
     First,
 }
 
