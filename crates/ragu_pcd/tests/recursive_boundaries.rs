@@ -21,20 +21,19 @@ mod registry {
     use alloc::{format, vec, vec::Vec};
 
     use proptest::prelude::*;
-    use ragu_circuits::registry::{CircuitIndex, Tag};
+    use ragu_circuits::registry::CircuitIndex;
     use ragu_core::{
         Result,
         drivers::{Driver, DriverValue},
         maybe::Maybe,
-        pasta::{Fp, Fq},
+        pasta::Fp,
     };
     use ragu_primitives::{Element, allocator::Standard};
-    use rand::Rng;
     use udon::field::Field;
 
     use super::support::{self, C, HEADER_SIZE, R, Value};
     use crate::{
-        ApplicationBuilder, RegistryTags,
+        ApplicationBuilder,
         internal::native::InternalCircuitIndex,
         step::{Encoded, Index, Step},
     };
@@ -78,25 +77,12 @@ mod registry {
     }
 
     fn app(first: Fp, second: Fp, extra_steps: usize) -> Result<support::App> {
-        app_with_tags(first, second, extra_steps, None)
-    }
-
-    fn app_with_tags(
-        first: Fp,
-        second: Fp,
-        extra_steps: usize,
-        tags: Option<RegistryTags<C>>,
-    ) -> Result<support::App> {
-        let builder = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
             .register(ConstantSeed::<0>(first))?
             .register(support::Merge::new())?
             .register(ConstantSeed::<2>(second))?
-            .register_dummy_circuits(extra_steps)?;
-        match tags {
-            Some(tags) => builder.with_registry_tags(tags, b"recursive boundary test setup")?,
-            None => builder,
-        }
-        .finalize(crate::pasta::baked())
+            .register_dummy_circuits(extra_steps)?
+            .finalize(crate::pasta::baked())
     }
 
     /// Exercise the ordinary size and both sides of a registry-domain expansion.
@@ -108,41 +94,12 @@ mod registry {
     }
 
     fn check_registries(inputs: &support::Inputs, extra_steps: usize, reblind: bool) -> Result<()> {
-        // Tags are setup inputs, not hashes computed by finalization. Give
-        // each different setup its own tags and reuse both for an equivalent
-        // setup. These reproducible draws are test fixtures only.
-        let mut tag_rng = inputs.prover_rng();
-        let first_native = Fp::random(|bytes| tag_rng.fill_bytes(bytes));
-        let first_nested = Fq::random(|bytes| tag_rng.fill_bytes(bytes));
-        let second_native = Fp::random(|bytes| tag_rng.fill_bytes(bytes));
-        let second_nested = Fq::random(|bytes| tag_rng.fill_bytes(bytes));
-        let tags = |native, nested| {
-            Some(RegistryTags {
-                native: Tag::new(native),
-                nested: Tag::new(nested),
-                // This private construction is a unit-test seam for changing
-                // each final tag independently of the beacon derivation.
-                manifest_digest: b"recursive boundary test setup".to_vec(),
-            })
-        };
-        let first = app_with_tags(
-            inputs.left,
-            inputs.right,
-            extra_steps,
-            tags(first_native, first_nested),
-        )?;
-        let second = app_with_tags(
-            inputs.right,
-            inputs.left,
-            extra_steps,
-            tags(second_native, second_nested),
-        )?;
-        let equivalent = app_with_tags(
-            inputs.left,
-            inputs.right,
-            extra_steps,
-            tags(first_native, first_nested),
-        )?;
+        // Finalization derives the tags from the registered circuits: the two
+        // setups differ in their native application circuits alone, and the
+        // equivalent setup repeats the first.
+        let first = app(inputs.left, inputs.right, extra_steps)?;
+        let second = app(inputs.right, inputs.left, extra_steps)?;
+        let equivalent = app(inputs.left, inputs.right, extra_steps)?;
         assert_ne!(inputs.left, inputs.right);
         assert_eq!(
             first.native_registry.num_circuits(),
@@ -152,7 +109,7 @@ mod registry {
             first.native_registry.log2_domain(),
             second.native_registry.log2_domain()
         );
-        assert_ne!(first.nested_registry.tag(), second.nested_registry.tag());
+        assert_eq!(first.nested_registry.tag(), second.nested_registry.tag());
         assert_ne!(first.native_registry.tag(), second.native_registry.tag());
         assert_eq!(
             first.native_registry.tag(),

@@ -127,8 +127,9 @@ pub struct RegistryBuilder<'params, F: Field, R: Rank> {
     bonding: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     internal_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
     application_steps: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-    /// A tag to install instead of the derived one.
-    tag: Option<Tag<F>>,
+    /// A tag to install instead of the derived one; a test seam only.
+    #[cfg(any(test, feature = "test-utils"))]
+    tag: Option<F>,
 }
 
 impl<F: Field, R: Rank> Default for RegistryBuilder<'_, F, R> {
@@ -145,13 +146,21 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             bonding: Vec::new(),
             internal_steps: Vec::new(),
             application_steps: Vec::new(),
+            #[cfg(any(test, feature = "test-utils"))]
             tag: None,
         }
     }
 
     /// Installs `tag` at finalization instead of the tag derived from the
-    /// registered circuits (see [`Tag`]).
-    pub fn with_tag(mut self, tag: Tag<F>) -> Self {
+    /// registered circuits.
+    ///
+    /// This exists for adversarial tests, which use it to model a tag
+    /// collision between different registries or a tag mismatch between
+    /// identical ones. It has no production use: a registry's tag is a
+    /// function of its circuits (see [`Tag`]), and overriding it forfeits
+    /// the binding the tag provides.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_tag(mut self, tag: F) -> Self {
         self.tag = Some(tag);
         self
     }
@@ -223,7 +232,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     }
 
     /// Builds the [`Registry`], deriving its [`Tag`] from the registered
-    /// circuits unless one was supplied through [`Self::with_tag`].
+    /// circuits.
     ///
     /// Circuits are concatenated in the following order for proper indexing:
     /// 1. Internal circuits: System circuits for the PCD construction
@@ -263,9 +272,9 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
             .collect();
 
-        let tag = self
-            .tag
-            .unwrap_or_else(|| Tag::derive(&circuits, &floor_plans));
+        let tag = Tag::derive(&circuits, &floor_plans);
+        #[cfg(any(test, feature = "test-utils"))]
+        let tag = self.tag.map_or(tag, Tag);
 
         Ok(Registry {
             domain,
@@ -352,11 +361,6 @@ impl<F: Field> Tag<F> {
             circuit.monomials(floor_plan).hash_into(&mut state);
         }
         Self(F::from_uniform_bytes(state.finalize().as_array()))
-    }
-
-    /// Wraps a supplied tag value without hashing it.
-    pub fn new(val: F) -> Self {
-        Self(val)
     }
 
     /// Returns the registry tag value.
@@ -843,7 +847,7 @@ mod tests {
     use rand::Rng;
     use udon::{fft::bit_reverse, field::Field};
 
-    use super::{CircuitIndex, RegistryBuilder, Tag};
+    use super::{CircuitIndex, RegistryBuilder};
     use crate::{
         polynomials::{ProductionRank, Rank, TestRank},
         staging::mask::StageMask,
@@ -904,7 +908,7 @@ mod tests {
             .tag();
         let forced = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 2 })?
-            .with_tag(Tag::new(Fp::from(7)))
+            .with_tag(Fp::from(7))
             .finalize()?
             .tag();
         assert_ne!(derived, Fp::from(7));

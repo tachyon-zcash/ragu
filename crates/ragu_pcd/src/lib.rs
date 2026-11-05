@@ -84,17 +84,17 @@ mod decompress_statement_tests;
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::collections::BTreeMap;
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
-use profile::{Profile, ProfiledCycle, Standard};
+use profile::{Profile, ProfiledCycle};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
@@ -115,114 +115,6 @@ use step::{Step, internal::adapter::Adapter};
 pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
 
 pub use backend::SelectableBackend;
-
-/// Temporary setup tags for an [`Application`]'s native and nested registries.
-///
-/// These are setup parameters for the temporary registry-collision workaround
-/// in [#78](https://github.com/tachyon-zcash/ragu/issues/78). API consumers must
-/// supply them through [`ApplicationBuilder::with_registry_tags`], satisfying
-/// [`Tag`]'s [sampling requirement](Tag#sampling-requirement) for the complete
-/// setup of both registries. Production consumers must not use a fixed test key.
-///
-/// The profile is part of the setup the tags are sampled for (see
-/// [`Profile`]): an application in another profile is another setup, with
-/// its own manifest digest and its own tags, even over the same curves and
-/// steps. [`Self::from_beacon`] names the profile in its labels, so one
-/// beacon output and manifest digest give each profile its own tags.
-///
-/// [`Self::from_beacon`] retains the manifest digest alongside the derived
-/// tags. [`ApplicationBuilder::with_registry_tags`] checks it against the
-/// verifier's expected manifest before installing the final tag values.
-/// The fields are private so tags cannot be relabeled with another profile
-/// or manifest through this API. Finalization does not hash them again.
-///
-/// This checks the association with the expected setup record. The setup
-/// procedure must still authenticate that record, check its artifacts against
-/// the deployed code and parameters, and verify the beacon's provenance.
-///
-/// Tag values can be inspected through the public accessors:
-///
-/// ```
-/// use ragu_core::pasta::Pasta;
-/// use ragu_pcd::RegistryTags;
-///
-/// fn inspect(tags: &RegistryTags<Pasta>) {
-///     let _ = (tags.native(), tags.nested());
-/// }
-/// ```
-///
-/// The fields are private, so those values cannot be used to assemble another
-/// profile's tags through a struct literal:
-///
-/// ```compile_fail,E0451
-/// use ragu_circuits::registry::Tag;
-/// use ragu_core::pasta::Pasta;
-/// use ragu_pcd::{RegistryTags, profile::{Aggregator, Profiled}};
-///
-/// fn relabel(standard: RegistryTags<Pasta>) -> RegistryTags<Profiled<Pasta, Aggregator>> {
-///     RegistryTags {
-///         native: Tag::new(standard.native()),
-///         nested: Tag::new(standard.nested()),
-///         manifest_digest: Vec::new(),
-///     }
-/// }
-/// ```
-pub struct RegistryTags<C: Cycle> {
-    native: Tag<C::CircuitField>,
-    nested: Tag<C::ScalarField>,
-    manifest_digest: Vec<u8>,
-}
-
-impl<C: Cycle> RegistryTags<C> {
-    /// The native registry's final tag value.
-    pub fn native(&self) -> C::CircuitField {
-        self.native.value()
-    }
-
-    /// The nested registry's final tag value.
-    pub fn nested(&self) -> C::ScalarField {
-        self.nested.value()
-    }
-}
-
-impl<C: ProfiledCycle> RegistryTags<C> {
-    /// Derives both tags from a public randomness beacon and a manifest digest,
-    /// with distinct labels for the two registries, which name every profile
-    /// but the standard one: the standard profile's labels are
-    /// `ragu_pcd native registry` and `ragu_pcd nested registry`, the ones
-    /// its ceremony fixed, and another profile's labels follow those with
-    /// the profile's [`NAME`](Profile::NAME) in parentheses.
-    /// `manifest_digest` covers the complete setup of both registries. Both
-    /// inputs are raw bytes, not hex strings. See [`Tag::from_beacon`].
-    pub fn from_beacon(beacon: &[u8], manifest_digest: &[u8]) -> Self {
-        Self {
-            manifest_digest: manifest_digest.to_vec(),
-            native: Tag::from_beacon(
-                beacon,
-                manifest_digest,
-                &Self::label(b"ragu_pcd native registry"),
-            ),
-            nested: Tag::from_beacon(
-                beacon,
-                manifest_digest,
-                &Self::label(b"ragu_pcd nested registry"),
-            ),
-        }
-    }
-
-    /// The label a registry's tag is derived under: `registry` alone in the
-    /// standard profile, and `registry` followed by the profile's name in
-    /// parentheses otherwise.
-    fn label(registry: &[u8]) -> Vec<u8> {
-        let mut label = registry.to_vec();
-        if TypeId::of::<C::Profile>() != TypeId::of::<Standard>() {
-            label.extend_from_slice(b" (");
-            label.extend_from_slice(C::Profile::NAME.as_bytes());
-            label.push(b')');
-        }
-        label
-    }
-}
 
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<
@@ -265,36 +157,24 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
     }
 
-    /// Checks the tags against the verifier's expected setup manifest and
-    /// supplies their final values to both registries.
+    /// Installs `tag` as the native registry's tag instead of the one
+    /// [`finalize`](Self::finalize) derives from the registered circuits.
     ///
-    /// The caller's setup procedure must satisfy the
-    /// [sampling requirement](Tag#sampling-requirement) for the complete
-    /// application, including the public parameters supplied to [`Self::finalize`].
-    /// `expected_manifest_digest` must come from trusted verifier configuration,
-    /// fixed independently of incoming proofs or setup records. It identifies
-    /// the complete versioned setup, including this profile, the application
-    /// steps and the public parameters supplied to [`Self::finalize`].
-    /// Matching the actual code and parameters to the manifest and verifying
-    /// the beacon remain the setup procedure's responsibility.
-    ///
-    /// # Errors
-    ///
-    /// Returns an initialization error if the tags were derived for a different
-    /// manifest. The tag type fixes the profile used in their derivation.
-    pub fn with_registry_tags(
-        mut self,
-        tags: RegistryTags<C>,
-        expected_manifest_digest: &[u8],
-    ) -> Result<Self> {
-        if tags.manifest_digest != expected_manifest_digest {
-            return Err(Error::Initialization(
-                "registry tags do not match the expected setup manifest".into(),
-            ));
-        }
-        self.native_registry = self.native_registry.with_tag(tags.native);
-        self.nested_registry = self.nested_registry.with_tag(tags.nested);
-        Ok(self)
+    /// A test seam for adversarial tests, which use it to model another setup
+    /// over the same circuits or a tag collision between different ones; see
+    /// [`RegistryBuilder::with_tag`].
+    #[cfg(test)]
+    pub(crate) fn with_native_tag(mut self, tag: C::CircuitField) -> Self {
+        self.native_registry = self.native_registry.with_tag(tag);
+        self
+    }
+
+    /// Installs `tag` as the nested registry's tag; see
+    /// [`with_native_tag`](Self::with_native_tag).
+    #[cfg(test)]
+    pub(crate) fn with_nested_tag(mut self, tag: C::ScalarField) -> Self {
+        self.nested_registry = self.nested_registry.with_tag(tag);
+        self
     }
 
     /// Supplies the proof that bootstraps the recursion instead of building
@@ -400,10 +280,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Perform finalization and optimization steps to produce the
     /// [`Application`].
     ///
-    /// Requires [`Self::with_registry_tags`] with values chosen after the
-    /// complete application was fixed and publicly committed. The
-    /// `ragu_circuits/insecure-test-registry-tag` feature supplies a fixed
-    /// fallback for tests and must not be enabled in production.
+    /// This derives each registry's [`Tag`](ragu_circuits::registry::Tag)
+    /// from the circuits it holds: the application's steps, and the profile's
+    /// internal circuits.
     ///
     /// This also bootstraps the recursion: it fuses two synthesized dummies
     /// through an internal step — the only fuse treated as the base case — to

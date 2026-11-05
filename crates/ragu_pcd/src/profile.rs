@@ -44,9 +44,8 @@
 //! declarations, registered stages and masks, and the intended circuit relation.
 //!
 //! The verifier fixes its profile, registries and public parameters at setup.
-//! Registry tags must be sampled for that complete setup. Matching an expected
-//! manifest digest is a mix-up check; the setup procedure must authenticate the
-//! manifest and its artifacts independently.
+//! Each registry's tag is derived from the circuits it holds, so profiles that
+//! register different circuits have different tags.
 
 use alloc::vec::Vec;
 use core::{
@@ -113,23 +112,16 @@ use crate::{
 /// Nothing checks that agreement; it is part of the setup description the
 /// profile's tags cover.
 ///
-/// A profile is part of an application's setup description, so its
-/// registries take their own [`RegistryTags`](crate::RegistryTags): the
-/// standard profile's tags are not another profile's, even over the same
-/// curves and steps. [`from_beacon`](crate::RegistryTags::from_beacon)
-/// names every profile but the standard one in the labels it derives the
-/// tags under, so one beacon output and manifest digest give each profile
-/// its own tags.
+/// A profile is part of an application's setup, and each of its registries
+/// derives its [`Tag`](ragu_circuits::registry::Tag) from the circuits it
+/// holds. Two profiles whose registries hold different circuits therefore
+/// have different tags, and the verifiers tell their proofs apart by them;
+/// two whose registries hold the same circuits are the same proof system.
 pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
-    /// The profile's name, which
-    /// [`from_beacon`](crate::RegistryTags::from_beacon) puts in the labels
-    /// it derives the setup tags under, for every profile but the standard
-    /// one, whose labels its ceremony fixed. For one beacon output and
-    /// manifest digest the name is all that separates two such profiles'
-    /// tags, so it must be distinct across the profiles over a cycle and
-    /// fixed: two profiles sharing a name share their tags, and a renamed
-    /// profile derives other tags. [`check`](Self::check) refuses an empty
-    /// name, and a built-in profile's name on any other profile.
+    /// The profile's name, which identifies it in diagnostics and setup
+    /// records. It must be distinct across the profiles over a cycle:
+    /// [`check`](Self::check) refuses an empty name, and a built-in profile's
+    /// name on any other profile.
     const NAME: &'static str;
 
     /// The native rx polynomials the profile adds: its native extension's.
@@ -2231,10 +2223,9 @@ mod tests {
         assert!(StrayNestedBinding::check().is_err());
     }
 
-    /// A profile's name is what separates its tags from another profile's
-    /// under one beacon output and manifest digest, so the checks refuse an
-    /// empty name and a built-in profile's name on any other profile, and
-    /// accept the built-in profiles' own.
+    /// A profile's name identifies it in diagnostics and setup records, so
+    /// the checks refuse an empty name and a built-in profile's name on any
+    /// other profile, and accept the built-in profiles' own.
     #[test]
     fn names_are_checked() {
         macro_rules! named {

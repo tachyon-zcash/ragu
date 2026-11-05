@@ -872,19 +872,6 @@ fn test_non_step_slots_reject_application_instances() {
     );
 }
 
-#[test]
-fn supplied_tags_reach_both_registries() -> Result<()> {
-    let tags = RegistryTags::<Pasta>::from_beacon(&[0x42; 32], &[0x24; 20]);
-    let native = tags.native.value();
-    let nested = tags.nested.value();
-    let app = ApplicationBuilder::<Pasta, R, 4>::new()
-        .with_registry_tags(tags, &[0x24; 20])?
-        .finalize(crate::pasta::baked())?;
-    assert_eq!(app.native_registry.tag(), native);
-    assert_eq!(app.nested_registry.tag(), nested);
-    Ok(())
-}
-
 /// Both tags are derived from the registered circuits: the same application
 /// derives the same tags, and one more application step changes the native
 /// registry's tag.

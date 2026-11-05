@@ -12,13 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Rank` support for `R<14>` for extension circuits that exceed the
   production rank's capacity. `ProductionRank` remains `R<13>`.
 - Added iteration over the stored coefficients of sparse polynomials.
-- Added `Tag::from_beacon` and `RegistryBuilder::with_tag` for caller-supplied
-  tags chosen after the circuits are fixed. Finalization requires a tag;
-  `insecure-test-registry-tag` enables a fixed fallback for tests only.
+- Added `RegistryBuilder::with_tag` under `test-utils`, a test seam that
+  installs a tag in place of the derived one.
 
 ### Changed
 
-- Temporarily replaced evaluation-based registry tags with caller-supplied tags.
+- Registry tags are derived at finalization by hashing every registered
+  wiring polynomial, written out as its nonzero monomials in canonical order,
+  rather than by evaluating the registry polynomial at a handful of points.
+  The tag is a function of the registered circuits alone.
 
 - Renamed `registry::Key` to `registry::Tag` and `Registry::digest()` to
   `Registry::tag()`.

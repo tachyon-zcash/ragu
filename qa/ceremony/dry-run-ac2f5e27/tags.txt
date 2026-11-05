@@ -1,4 +1,0 @@
-beacon: pending
-manifest digest (32 bytes): 3b91865817fcb38e83f398ce6c9257bb9701ae9650e115ac5d1dd0b94ec06708
-native tag (Fp): pending
-nested tag (Fq): pending

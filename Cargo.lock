@@ -765,15 +765,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ragu_ceremony"
-version = "0.0.0"
-dependencies = [
- "ragu_core",
- "ragu_pcd",
- "zakura-udon",
-]
-
-[[package]]
 name = "ragu_circuits"
 version = "0.0.0"
 dependencies = [
