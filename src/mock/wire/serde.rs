@@ -13,6 +13,8 @@
 use alloc::vec::Vec;
 use core::{fmt, marker::PhantomData};
 
+use ragu_circuits::polynomials::Rank;
+use ragu_core::Cycle;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, SeqAccess, Visitor},
@@ -39,11 +41,11 @@ trait Framed: Sized {
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>>;
 }
 
-impl Framed for Proof {
+impl<C: Cycle, R: Rank> Framed for Proof<C, R> {
     const EXPECTING: &'static str = "a mock proof in its wire format";
 
     fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
-        Ok(Self::to_bytes(self))
+        Self::to_bytes(self)
     }
 
     fn from_wire(bytes: &[u8]) -> Result<Self, Error<'_>> {
@@ -55,7 +57,7 @@ impl Framed for Proof {
     }
 }
 
-impl<H: WireHeader> Framed for Pcd<H> {
+impl<C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Framed for Pcd<C, R, H> {
     const EXPECTING: &'static str = "a mock PCD in its wire format";
 
     fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
@@ -125,25 +127,25 @@ impl<'de, T: Framed> Visitor<'de> for Bytes<T> {
     }
 }
 
-impl Serialize for Proof {
+impl<C: Cycle, R: Rank> Serialize for Proof<C, R> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serialize_framed(self, serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for Proof {
+impl<'de, C: Cycle, R: Rank> Deserialize<'de> for Proof<C, R> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(Bytes(PhantomData))
     }
 }
 
-impl<H: WireHeader> Serialize for Pcd<H> {
+impl<C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Serialize for Pcd<C, R, H> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serialize_framed(self, serializer)
     }
 }
 
-impl<'de, H: WireHeader> Deserialize<'de> for Pcd<H> {
+impl<'de, C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Deserialize<'de> for Pcd<C, R, H> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(Bytes(PhantomData))
     }

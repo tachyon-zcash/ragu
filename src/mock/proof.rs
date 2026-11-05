@@ -90,20 +90,21 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
-    pub fn encoded_len<const HEADER_SIZE: usize>() -> usize {
+    pub(crate) fn reusable_len() -> usize {
         PROOF_SIZE_COMPRESSED
             + HEADER_POLYNOMIALS * R::num_coeffs() * C::CircuitField::ZERO.to_bytes().as_ref().len()
     }
 
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+    pub(crate) fn to_reusable_bytes(&self) -> Result<Vec<u8>> {
         if self.polynomials.iter().any(Vec::is_empty)
+            || self.polynomials.iter().any(|p| p.len() > R::num_coeffs())
             || self.commitments.iter().any(|p| p.is_identity())
         {
             return Err(Error::MalformedEncoding(
                 "proof has no reusable polynomial representation".into(),
             ));
         }
-        let mut bytes = Vec::with_capacity(Self::encoded_len::<0>());
+        let mut bytes = Vec::with_capacity(Self::reusable_len());
         bytes.extend_from_slice(self.serialize().as_ref());
         for coefficients in &self.polynomials {
             for coefficient in coefficients.iter().copied().chain(core::iter::repeat_n(
@@ -116,8 +117,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         Ok(bytes)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != Self::encoded_len::<0>() {
+    pub(crate) fn from_reusable_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != Self::reusable_len() {
             return Err(Error::MalformedEncoding(
                 "invalid reusable mock proof length".into(),
             ));

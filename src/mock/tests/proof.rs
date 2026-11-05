@@ -1,4 +1,4 @@
-use ragu_circuits::polynomials::ProductionRank as TestRank;
+use ragu_circuits::polynomials::{ProductionRank as TestRank, Rank};
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
@@ -96,16 +96,21 @@ pub(super) fn check_codecs(
     let bytes = merged.proof().serialize();
     let decoded = Proof::try_from(bytes.as_ref())?.carry::<PolynomialHeader>(*merged.data());
     assert!(app.verify(&decoded, &mut *rng)?);
-    let bytes = merged.proof().to_bytes()?;
+    let bytes = merged.proof().to_bytes().expect("encode reusable proof");
     assert_eq!(bytes.len(), Proof::encoded_len::<4>());
-    let decoded = Proof::from_bytes(&bytes)?.carry::<PolynomialHeader>(*merged.data());
+    let decoded = Proof::from_bytes(&bytes)
+        .expect("decode reusable proof")
+        .carry::<PolynomialHeader>(*merged.data());
     assert_eq!(decoded.polynomials(), merged.polynomials());
     assert!(app.verify_uncompressed(&decoded, &mut *rng)?);
     let (resumed, ()) = app.fuse(rng, Merge(false), None, decoded, right.clone())?;
     assert!(app.verify(&resumed, &mut *rng)?);
     let mut corrupt = bytes;
-    corrupt[PROOF_SIZE_COMPRESSED] ^= 2; // Alter a coefficient, not its commitment.
-    let corrupt = Proof::from_bytes(&corrupt)?.carry::<PolynomialHeader>(*merged.data());
+    let first_coefficient = corrupt.len() - 3 * TestRank::num_coeffs() * 32;
+    corrupt[first_coefficient] ^= 2; // Alter a coefficient, not its commitment.
+    let corrupt = Proof::from_bytes(&corrupt)
+        .expect("decode changed coefficient")
+        .carry::<PolynomialHeader>(*merged.data());
     assert!(!app.verify(&corrupt, &mut *rng)?);
     assert!(
         app.fuse(rng, Merge(false), None, corrupt, right.clone())
