@@ -72,7 +72,7 @@ pub struct Oracles<'a, 'dr, D: Driver<'dr>> {
     bridge_hash: [Element<'dr, D>; 2],
     staged: Vec<Element<'dr, D>>,
     slots: DriverValue<D, [&'a [Vec<D::F>; HEADER_POLYNOMIALS]; 3]>,
-    queries: [[bool; 2]; 3 * HEADER_POLYNOMIALS],
+    queries: [DriverValue<D, [bool; 2]>; 3 * HEADER_POLYNOMIALS],
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
@@ -89,7 +89,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
             bridge_hash: [alloc(bridge_hash[0])?, alloc(bridge_hash[1])?],
             staged: staged.into_iter().map(alloc).collect::<Result<_>>()?,
             slots: D::just(|| slots),
-            queries: [[false; 2]; 3 * HEADER_POLYNOMIALS],
+            queries: core::array::from_fn(|_| D::just(|| [false; 2])),
         })
     }
 
@@ -114,8 +114,9 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         let x = x.value();
         let zeta = self.zeta.value();
         let slots = self.slots.as_ref();
-        let queries = &mut self.queries[slot.offset()];
-        let y = D::try_just(|| {
+        let queries = self.queries[slot.offset()].as_ref();
+        let (y, queries) = D::try_just(|| {
+            let mut queries = *queries.take();
             let x = *x.take();
             let class = usize::from(x != *zeta.take());
             if queries[class] {
@@ -126,11 +127,14 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
             queries[class] = true;
             let slots = slots.take();
             let header = slots[slot.offset() / HEADER_POLYNOMIALS];
-            Ok(header[slot.index]
+            let y = header[slot.index]
                 .iter()
                 .rev()
-                .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient))
-        })?;
+                .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient);
+            Ok((y, queries))
+        })?
+        .cast();
+        self.queries[slot.offset()] = queries;
         Element::alloc(dr, &mut (), y)
     }
 }
