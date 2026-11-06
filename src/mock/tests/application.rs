@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, string::ToString as _, vec, vec::Vec};
 
 use ragu_circuits::polynomials::{ProductionRank as TestRank, Rank};
 use ragu_core::{
@@ -858,15 +858,27 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
         app.fuse(&mut rng, Merge(false), None, foreign, right)
             .is_err()
     );
-    let mut oversized = vec![Fp::ONE];
+    let root = Fp::from(5u64);
+    let (valid, ()) = app.seed(&mut rng, Seed::<0>(None), root)?;
+    assert!(app.verify_uncompressed(&valid, &mut rng)?);
+    let mut oversized = valid.polynomials()[2].clone();
     oversized.resize(TestRank::num_coeffs() + 1, Fp::ZERO);
     // Existing zero rejection, the trailing-zero capacity bug, and a nonzero
     // polynomial whose commitment cancels in the extra (non-bridge) slot.
-    for polynomial in [vec![Fp::ZERO], oversized, vec![Fp::from(2), -Fp::ONE]] {
-        assert!(
-            app.seed(&mut rng, Seed::<0>(Some(polynomial)), Fp::ONE)
-                .is_err()
-        );
+    for (polynomial, expected) in [
+        (vec![Fp::ZERO], "an online polynomial must not be zero"),
+        (oversized, "polynomial exceeds rank capacity"),
+        (
+            vec![Fp::from(2), -Fp::ONE],
+            "an online commitment must not be the identity",
+        ),
+    ] {
+        let Err(Error::InvalidWitness(message)) =
+            app.seed(&mut rng, Seed::<0>(Some(polynomial)), root)
+        else {
+            panic!("expected {expected}");
+        };
+        assert_eq!(message.to_string(), expected);
     }
     assert!(
         ApplicationBuilder::new()
