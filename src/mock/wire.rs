@@ -46,6 +46,80 @@ impl core::error::Error for Error<'_> {}
 
 pub(crate) const MAX_RANK: u32 = 32;
 pub(crate) const MAX_HEADER_SIZE: usize = 1 << 12;
+pub(crate) const ENVELOPE_SIZE: usize = 28;
+const MAGIC: &[u8; 8] = b"RAGUPCD\0";
+const ENVELOPE_VERSION: u16 = 3;
+const PROOF_SCHEMA_VERSION: u16 = 2;
+const COMPRESSED_SCHEMA_VERSION: u16 = 2;
+const PROTOCOL_VERSION: u16 = 1;
+
+#[derive(Clone, Copy)]
+pub(crate) enum PayloadKind {
+    Proof = 1,
+    Compressed = 2,
+}
+
+pub(crate) fn write_envelope(
+    kind: PayloadKind,
+    rank: u32,
+    header_size: usize,
+    bytes: &mut alloc::vec::Vec<u8>,
+) {
+    bytes.extend_from_slice(MAGIC);
+    let schema = match kind {
+        PayloadKind::Proof => PROOF_SCHEMA_VERSION,
+        PayloadKind::Compressed => COMPRESSED_SCHEMA_VERSION,
+    };
+    for word in [ENVELOPE_VERSION, kind as u16, schema, PROTOCOL_VERSION] {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    bytes.extend_from_slice(&rank.to_le_bytes());
+    bytes.extend_from_slice(&(header_size as u64).to_le_bytes());
+}
+
+pub(crate) fn open(
+    bytes: &[u8],
+    kind: PayloadKind,
+    expected_rank: Option<u32>,
+) -> Result<(Reader<'_>, u32, usize), Error<'_>> {
+    let mut reader = Reader::new(bytes);
+    let envelope = reader.take(ENVELOPE_SIZE)?;
+    let mut known = alloc::vec::Vec::with_capacity(ENVELOPE_SIZE);
+    write_envelope(kind, 0, 0, &mut known);
+    for (start, end, reason) in [
+        (0, 8, "invalid proof magic"),
+        (8, 10, "unsupported proof envelope version"),
+        (10, 12, "proof payload kind mismatch"),
+        (12, 14, "unsupported proof schema version"),
+        (14, 16, "unsupported proof protocol version"),
+    ] {
+        if envelope[start..end] != known[start..end] {
+            return Err(Error::Invalid {
+                offset: start,
+                bytes: &envelope[start..end],
+                reason,
+            });
+        }
+    }
+    let rank = u32::from_le_bytes(envelope[16..20].try_into().expect("four-byte rank"));
+    if rank > MAX_RANK || expected_rank.is_some_and(|expected| rank != expected) {
+        return Err(Error::Invalid {
+            offset: 16,
+            bytes: &envelope[16..20],
+            reason: "invalid proof rank",
+        });
+    }
+    let header_size =
+        u64::from_le_bytes(envelope[20..28].try_into().expect("eight-byte header size"));
+    if header_size > MAX_HEADER_SIZE as u64 {
+        return Err(Error::Invalid {
+            offset: 20,
+            bytes: &envelope[20..28],
+            reason: "proof header size exceeds the limit",
+        });
+    }
+    Ok((reader, rank, header_size as usize))
+}
 
 pub(crate) struct Reader<'a> {
     input: &'a [u8],

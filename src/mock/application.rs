@@ -37,6 +37,7 @@ pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     params: &'params C::Params,
     registered_outputs: Vec<Suffix>,
     bootstrap: Proof<C, R>,
+    setup_hash: [u8; 32],
 }
 
 impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
@@ -114,6 +115,7 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             ));
         }
         let polynomials = core::array::from_fn(|_| vec![C::CircuitField::ONE]);
+        let setup_hash = proof::compute_setup_hash::<C, R>(params);
         let commitment = sparse::Polynomial::<_, R>::from_coeffs(vec![C::CircuitField::ONE])
             .commit_to_affine(C::host_generators(params));
         let header = Encoded::<_, (), HEADER_SIZE>::from_gadget(());
@@ -126,12 +128,14 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                 &[],
                 polynomials,
                 [commitment; HEADER_POLYNOMIALS],
+                setup_hash,
             )?,
         };
         Ok(Application {
             params,
             registered_outputs: self.registered_outputs,
             bootstrap,
+            setup_hash,
         })
     }
 
@@ -306,12 +310,8 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
         let left_proof = left.proof;
         let right_proof = right.proof;
-        let left_bytes = left_proof
-            .to_bytes()
-            .map_err(|_| Error::InvalidWitness("unencodable child proof".into()))?;
-        let right_bytes = right_proof
-            .to_bytes()
-            .map_err(|_| Error::InvalidWitness("unencodable child proof".into()))?;
+        let left_bytes = left_proof.hash_input();
+        let right_bytes = right_proof.hash_input();
         let mut witness_data = Vec::with_capacity(left_bytes.len() + right_bytes.len());
         witness_data.extend_from_slice(left_bytes.as_ref());
         witness_data.extend_from_slice(right_bytes.as_ref());
@@ -323,6 +323,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &witness_data,
             polynomials,
             commitments,
+            self.setup_hash,
         )?;
         Ok((
             proof_value.carry::<S::Output>(output_data.take()),
@@ -375,7 +376,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         proof: &CompressedProof<C>,
         data: &H::Data,
     ) -> Result<bool> {
-        if proof.rank != R::RANK || proof.header_size != HEADER_SIZE {
+        if proof.rank != R::RANK
+            || proof.header_size != HEADER_SIZE
+            || proof.setup_hash != self.setup_hash
+        {
             return Ok(false);
         }
         if proof.step_index != Index::internal(1) || TypeId::of::<H>() != TypeId::of::<()>() {
@@ -400,6 +404,9 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             &proof.header_hash,
             &proof.witness_hash,
             &proof.commitments,
+            &proof.setup_hash,
+            proof.rank,
+            proof.header_size,
         );
         Ok(expected_binding == proof.binding)
     }
