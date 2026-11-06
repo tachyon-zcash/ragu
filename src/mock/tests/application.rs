@@ -621,7 +621,7 @@ fn verify_rejects_input_only_header_as_output() {
     );
 }
 
-pub(super) struct Seed<const I: usize, const STAGED: usize = 1>(pub(super) Option<Vec<Fp>>);
+pub(super) struct Seed<const I: usize, const STAGED: usize = 1>;
 impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
     const INDEX: Index = Index::new(I);
     const NUM_STAGED: usize = STAGED;
@@ -643,16 +643,8 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
         root: &Fp,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; 3]> {
-        let mut polynomials = [
-            vec![Fp::ONE],
-            vec![-*root, Fp::ONE, Fp::ZERO],
-            vec![Fp::ONE],
-        ];
-        if let Some(polynomial) = &self.0 {
-            polynomials[2] = polynomial.clone();
-        }
-        Ok(polynomials)
+    ) -> Result<[Vec<Fp>; 2]> {
+        Ok([vec![Fp::ONE], vec![-*root, Fp::ONE, Fp::ZERO]])
     }
     fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
@@ -734,7 +726,7 @@ impl Step<Pasta> for Merge {
         _: &Option<Fp>,
         left: HeaderInput<'_, Fp, ValueHeader>,
         right: HeaderInput<'_, Fp, ValueHeader>,
-    ) -> Result<[Vec<Fp>; 3]> {
+    ) -> Result<[Vec<Fp>; 2]> {
         let (l, r) = (&left.polynomials[1], &right.polynomials[1]);
         let mut product = vec![Fp::ZERO; l.len() + r.len() - 1];
         for (i, a) in l.iter().enumerate() {
@@ -745,7 +737,7 @@ impl Step<Pasta> for Merge {
         if self.0 {
             product[0] += Fp::ONE;
         }
-        Ok([vec![Fp::ONE], product, vec![Fp::ONE]])
+        Ok([vec![Fp::ONE], product])
     }
     fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
@@ -784,12 +776,12 @@ impl Step<Pasta> for Merge {
 fn polynomial_flow_and_header_binding() -> Result<()> {
     let params = test_params();
     let app = ApplicationBuilder::new()
-        .register(Seed::<0>(None))?
+        .register(Seed::<0>)?
         .register(Merge(false))?
         .finalize(params)?;
     let mut rng = StdRng::seed_from_u64(0);
-    let (left, ()) = app.seed(&mut rng, Seed::<0>(None), Fp::from(5u64))?;
-    let (right, ()) = app.seed(&mut rng, Seed::<0>(None), Fp::from(7u64))?;
+    let (left, ()) = app.seed(&mut rng, Seed::<0>, Fp::from(5u64))?;
+    let (right, ()) = app.seed(&mut rng, Seed::<0>, Fp::from(7u64))?;
     assert_eq!(left.polynomials()[1].len(), 2);
     assert_eq!(app.commit(&left.polynomials()[1])?, left.commitments()[1]);
     let point = left.commitments()[1];
@@ -830,41 +822,19 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
     super::proof::check_codecs(&app, &merged, &right, &mut rng)?;
     // Correct header and polynomial data, but an index this app does not accept.
     let other = ApplicationBuilder::new()
-        .register(Seed::<0>(None))?
+        .register(Seed::<0>)?
         .register(Merge(false))?
-        .register(Seed::<2>(None))?
+        .register(Seed::<2>)?
         .finalize(test_params())?;
-    let (foreign, ()) = other.seed(&mut rng, Seed::<2>(None), Fp::from(5u64))?;
+    let (foreign, ()) = other.seed(&mut rng, Seed::<2>, Fp::from(5u64))?;
     assert!(!app.verify_uncompressed(&foreign, &mut rng)?);
     assert!(
         app.fuse(&mut rng, Merge(false), None, foreign, right)
             .is_err()
     );
-    let root = Fp::from(5u64);
-    let (valid, ()) = app.seed(&mut rng, Seed::<0>(None), root)?;
-    assert!(app.verify_uncompressed(&valid, &mut rng)?);
-    let mut oversized = valid.polynomials()[2].clone();
-    oversized.resize(TestRank::num_coeffs() + 1, Fp::ZERO);
-    // Existing zero rejection, the trailing-zero capacity bug, and a nonzero
-    // polynomial whose commitment cancels in the extra (non-bridge) slot.
-    for (polynomial, expected) in [
-        (vec![Fp::ZERO], "an online polynomial must not be zero"),
-        (oversized, "polynomial exceeds rank capacity"),
-        (
-            vec![Fp::from(2), -Fp::ONE],
-            "an online commitment must not be the identity",
-        ),
-    ] {
-        let Err(Error::InvalidWitness(message)) =
-            app.seed(&mut rng, Seed::<0>(Some(polynomial)), root)
-        else {
-            panic!("expected {expected}");
-        };
-        assert_eq!(message.to_string(), expected);
-    }
     assert!(
         ApplicationBuilder::new()
-            .register(Seed::<0, { 2 << (TestRank::RANK - 2) }>(None))
+            .register(Seed::<0, { 2 << (TestRank::RANK - 2) }>)
             .is_err()
     );
     Ok(())
