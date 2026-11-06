@@ -395,7 +395,8 @@ mod tests {
             Fp::from(5 + 5u64)
         );
         assert!(oracles.query(dr, Slot::output(1), &x).is_err());
-        assert!(oracles.query_at_zeta(dr, Slot::output(0)).is_ok());
+        let zeta = oracles.zeta().clone();
+        assert!(oracles.query(dr, Slot::output(0), &zeta).is_ok());
         let (zeta, queries, _) = oracles.finish(dr).unwrap();
         assert_eq!(*zeta.value().take(), Fp::from(3u64));
         assert_eq!(*queries[0].x.value().take(), Fp::from(3u64));

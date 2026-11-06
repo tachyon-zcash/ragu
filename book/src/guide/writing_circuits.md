@@ -213,9 +213,9 @@ of `witness` lets the circuit open each slot once:
 // values were committed.
 let zeta = oracles.zeta().clone();
 // The value of the left header's first polynomial at zeta, as a wire.
-let l0 = oracles.query_at_zeta(dr, Slot::left(0))?;
+let l0 = oracles.query(dr, Slot::left(0), &zeta)?;
 // The output polynomial at the same point.
-let o0 = oracles.query_at_zeta(dr, Slot::output(0))?;
+let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
 // The root this step multiplies in, staged before zeta (see below).
 let t = oracles.staged()[0].clone();
 // Enforce O0(zeta) = L0(zeta) * (zeta - t), the relation the step proves.
