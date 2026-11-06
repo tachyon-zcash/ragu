@@ -39,7 +39,8 @@ pub struct Accumulator;
 /// Opens the output header's second slot at $\zeta$ and holds it to one,
 /// the padding an [`Accumulator`] carries there.
 fn pin_padding<'dr, D: Driver<'dr>>(dr: &mut D, oracles: &mut Oracles<'_, 'dr, D>) -> Result<()> {
-    let padding = oracles.query_at_zeta(dr, Slot::output(1))?;
+    let zeta = oracles.zeta().clone();
+    let padding = oracles.query(dr, Slot::output(1), &zeta)?;
     padding.enforce_equal(dr, &Element::one())
 }
 
@@ -146,7 +147,7 @@ impl<C: Cycle> Step<C> for SeedAccumulator {
             let factor = zeta.sub(dr, &root);
             product = product.mul(dr, &factor)?;
         }
-        let at_zeta = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let at_zeta = oracles.query(dr, Slot::output(0), &zeta)?;
         at_zeta.enforce_equal(dr, &product)?;
 
         pin_padding(dr, oracles)?;
@@ -226,8 +227,8 @@ impl<C: Cycle> Step<C> for ExtendAccumulator {
         let root = oracles.staged()[0].clone();
 
         let zeta = oracles.zeta().clone();
-        let input = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let output = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let input = oracles.query(dr, Slot::left(0), &zeta)?;
+        let output = oracles.query(dr, Slot::output(0), &zeta)?;
         let factor = zeta.sub(dr, &root);
         let expected = input.mul(dr, &factor)?;
         output.enforce_equal(dr, &expected)?;
@@ -286,9 +287,10 @@ impl<C: Cycle> Step<C> for MergeAccumulators {
         let left: Encoded<'dr, D, Accumulator, HEADER_SIZE> = Encoded::new(dr, allocator, left)?;
         let right: Encoded<'dr, D, Accumulator, HEADER_SIZE> = Encoded::new(dr, allocator, right)?;
 
-        let l = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let r = oracles.query_at_zeta(dr, Slot::right(0))?;
-        let output = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let zeta = oracles.zeta().clone();
+        let l = oracles.query(dr, Slot::left(0), &zeta)?;
+        let r = oracles.query(dr, Slot::right(0), &zeta)?;
+        let output = oracles.query(dr, Slot::output(0), &zeta)?;
         let expected = l.mul(dr, &r)?;
         output.enforce_equal(dr, &expected)?;
 

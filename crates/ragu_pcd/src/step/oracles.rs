@@ -161,13 +161,6 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         Ok(y)
     }
 
-    /// Opens `slot` at $\zeta$: [`query`](Self::query) at
-    /// [`zeta`](Self::zeta).
-    pub fn query_at_zeta(&mut self, dr: &mut D, slot: Slot) -> Result<Element<'dr, D>> {
-        let zeta = self.zeta.clone();
-        self.query(dr, slot, &zeta)
-    }
-
     /// Opens every slot the step did not query at $\zeta$, and returns
     /// $\zeta$ with the six openings, in slot order, and the bridge hash's
     /// coordinates, for the instance.
@@ -176,9 +169,10 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         mut self,
         dr: &mut D,
     ) -> Result<(Element<'dr, D>, QueriesOutput<'dr, D>, [Element<'dr, D>; 2])> {
+        let zeta = self.zeta.clone();
         for slot in Slot::all() {
             if self.queries[slot.offset()].is_none() {
-                self.query_at_zeta(dr, slot)?;
+                self.query(dr, slot, &zeta)?;
             }
         }
         let queries = FixedVec::try_from(

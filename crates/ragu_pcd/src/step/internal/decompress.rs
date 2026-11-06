@@ -117,8 +117,9 @@ fn pin_output_slots<'dr, D: Driver<'dr>>(
     dr: &mut D,
     oracles: &mut Oracles<'_, 'dr, D>,
 ) -> Result<()> {
+    let zeta = oracles.zeta().clone();
     for i in 0..HEADER_POLYNOMIALS {
-        let value = oracles.query_at_zeta(dr, Slot::output(i))?;
+        let value = oracles.query(dr, Slot::output(i), &zeta)?;
         value.enforce_equal(dr, &Element::one())?;
     }
     Ok(())
@@ -227,8 +228,9 @@ mod tests {
                 let right = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let output =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
+                let zeta = oracles.zeta().clone();
                 for i in 0..HEADER_POLYNOMIALS {
-                    let value = oracles.query_at_zeta(dr, Slot::output(i))?;
+                    let value = oracles.query(dr, Slot::output(i), &zeta)?;
                     value.enforce_equal(dr, &Element::one())?;
                 }
                 Ok(((left, right, output), witness, D::unit()))

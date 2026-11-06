@@ -9,7 +9,7 @@
 //! | Section | Use case | API shown |
 //! |---|---|---|
 //! | [1. Headers](#1-headers) | C1: two polynomial slots per header | [`Header`], [`HEADER_POLYNOMIALS`], padding |
-//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::polynomials`], [`Step::NUM_STAGED`], [`Step::staged`], [`Oracles::zeta`], [`Oracles::query_at_zeta`], [`Oracles::staged`] |
+//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::polynomials`], [`Step::NUM_STAGED`], [`Step::staged`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
 //! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
 //! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
@@ -143,7 +143,8 @@ fn pin_padding<'dr, D: Driver<'dr, F = Fp>>(
     oracles: &mut Oracles<'_, 'dr, D>,
     slot: Slot,
 ) -> Result<()> {
-    let value = oracles.query_at_zeta(dr, slot)?;
+    let zeta = oracles.zeta().clone();
+    let value = oracles.query(dr, slot, &zeta)?;
     value.enforce_equal(dr, &Element::one())
 }
 
@@ -244,7 +245,7 @@ impl Step<C> for SeedSet {
             let factor = zeta.sub(dr, &tachygram);
             product = product.mul(dr, &factor)?;
         }
-        let set = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let set = oracles.query(dr, Slot::output(0), &zeta)?;
         set.enforce_equal(dr, &product)?;
         pin_padding(dr, oracles, Slot::output(1))?;
 
@@ -323,8 +324,8 @@ impl Step<C> for InsertTachygram {
         // here: see the rule at the top of this file.
         let tachygram = oracles.staged()[0].clone();
         let zeta = oracles.zeta().clone();
-        let input = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let output = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let input = oracles.query(dr, Slot::left(0), &zeta)?;
+        let output = oracles.query(dr, Slot::output(0), &zeta)?;
         let factor = zeta.sub(dr, &tachygram);
         let expected = input.mul(dr, &factor)?;
         output.enforce_equal(dr, &expected)?;
@@ -385,9 +386,10 @@ impl Step<C> for MergeSets {
         let right: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, right)?;
 
         // O0(zeta) = L0(zeta) * R0(zeta).
-        let l = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let r = oracles.query_at_zeta(dr, Slot::right(0))?;
-        let output = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let zeta = oracles.zeta().clone();
+        let l = oracles.query(dr, Slot::left(0), &zeta)?;
+        let r = oracles.query(dr, Slot::right(0), &zeta)?;
+        let output = oracles.query(dr, Slot::output(0), &zeta)?;
         let expected = l.mul(dr, &r)?;
         output.enforce_equal(dr, &expected)?;
         pin_padding(dr, oracles, Slot::output(1))?;
@@ -647,8 +649,9 @@ impl Step<C> for AdvanceAnchor {
         let previous: Encoded<'dr, D, Anchor, HS> = Encoded::new(dr, allocator, previous)?;
 
         // The copy: O1(zeta) = L0(zeta), so O1 is the block's set polynomial.
-        let set = oracles.query_at_zeta(dr, Slot::left(0))?;
-        let copy = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let zeta = oracles.zeta().clone();
+        let set = oracles.query(dr, Slot::left(0), &zeta)?;
+        let copy = oracles.query(dr, Slot::output(1), &zeta)?;
         copy.enforce_equal(dr, &set)?;
         pin_padding(dr, oracles, Slot::output(0))?;
 
@@ -745,10 +748,10 @@ impl Step<C> for PairSeed {
         let a = oracles.staged().to_vec();
         let zeta = oracles.zeta().clone();
         let two = Element::constant(dr, Fp::from(2));
-        let o0 = oracles.query_at_zeta(dr, Slot::output(0))?;
+        let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
         let expected = zeta.add(dr, &a[0]);
         o0.enforce_equal(dr, &expected)?;
-        let o1 = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let o1 = oracles.query(dr, Slot::output(1), &zeta)?;
         let expected = zeta.mul(dr, &two)?.add(dr, &a[1]);
         o1.enforce_equal(dr, &expected)?;
         let data = D::just(|| [*a[0].value().take(), *a[1].value().take()]);

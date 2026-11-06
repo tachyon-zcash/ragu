@@ -104,9 +104,10 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // The output polynomials are the left input's: open both slots of
         // each at zeta and hold them equal. The right input's slots, the
         // unit header's, go unqueried.
+        let zeta = oracles.zeta().clone();
         for i in 0..HEADER_POLYNOMIALS {
-            let left = oracles.query_at_zeta(dr, Slot::left(i))?;
-            let output = oracles.query_at_zeta(dr, Slot::output(i))?;
+            let left = oracles.query(dr, Slot::left(i), &zeta)?;
+            let output = oracles.query(dr, Slot::output(i), &zeta)?;
             output.enforce_equal(dr, &left)?;
         }
 
@@ -231,9 +232,10 @@ mod tests {
                 let left_encoded =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, left.clone())?;
                 let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
+                let zeta = oracles.zeta().clone();
                 for i in 0..HEADER_POLYNOMIALS {
-                    let left = oracles.query_at_zeta(dr, Slot::left(i))?;
-                    let output = oracles.query_at_zeta(dr, Slot::output(i))?;
+                    let left = oracles.query(dr, Slot::left(i), &zeta)?;
+                    let output = oracles.query(dr, Slot::output(i), &zeta)?;
                     output.enforce_equal(dr, &left)?;
                 }
                 Ok((
