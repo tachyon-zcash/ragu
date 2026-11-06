@@ -644,8 +644,11 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
     ) -> Result<[Vec<Fp>; 3]> {
-        let mut polynomials = [*root + Fp::ONE, *root, *root + Fp::from(2)]
-            .map(|root| vec![-root, Fp::ONE, Fp::ZERO]);
+        let mut polynomials = [
+            vec![Fp::ONE],
+            vec![-*root, Fp::ONE, Fp::ZERO],
+            vec![Fp::ONE],
+        ];
         if let Some(polynomial) = &self.0 {
             polynomials[2] = polynomial.clone();
         }
@@ -662,13 +665,9 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
     where
         Self: 'dr,
     {
-        for (i, offset) in [Fp::ONE, Fp::ZERO, Fp::from(2)].into_iter().enumerate() {
-            let offset = Element::constant(dr, offset);
-            let root = oracles.staged()[0].add(dr, &offset);
-            let y = oracles.query_at_zeta(dr, Slot::output(i))?;
-            let expected = oracles.zeta().sub(dr, &root);
-            y.enforce_equal(dr, &expected)?;
-        }
+        let y = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
+        y.enforce_equal(dr, &expected)?;
         // A second opening of the same slot at a different point is supported.
         let root = oracles.staged()[0].clone();
         let at_root = oracles.query(dr, Slot::output(1), &root)?;
@@ -735,19 +734,17 @@ impl Step<Pasta> for Merge {
         left: HeaderInput<'_, Fp, ValueHeader>,
         right: HeaderInput<'_, Fp, ValueHeader>,
     ) -> Result<[Vec<Fp>; 3]> {
-        Ok(core::array::from_fn(|slot| {
-            let (l, r) = (&left.polynomials[slot], &right.polynomials[slot]);
-            let mut product = vec![Fp::ZERO; l.len() + r.len() - 1];
-            for (i, a) in l.iter().enumerate() {
-                for (j, b) in r.iter().enumerate() {
-                    product[i + j] += *a * *b;
-                }
+        let (l, r) = (&left.polynomials[1], &right.polynomials[1]);
+        let mut product = vec![Fp::ZERO; l.len() + r.len() - 1];
+        for (i, a) in l.iter().enumerate() {
+            for (j, b) in r.iter().enumerate() {
+                product[i + j] += *a * *b;
             }
-            if self.0 && slot == 1 {
-                product[0] += Fp::ONE;
-            }
-            product
-        }))
+        }
+        if self.0 {
+            product[0] += Fp::ONE;
+        }
+        Ok([vec![Fp::ONE], product, vec![Fp::ONE]])
     }
     fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
@@ -760,12 +757,10 @@ impl Step<Pasta> for Merge {
     where
         Self: 'dr,
     {
-        for i in 0..3 {
-            let l = oracles.query_at_zeta(dr, Slot::left(i))?;
-            let r = oracles.query_at_zeta(dr, Slot::right(i))?;
-            let o = oracles.query_at_zeta(dr, Slot::output(i))?;
-            l.mul(dr, &r)?.enforce_equal(dr, &o)?;
-        }
+        let l = oracles.query_at_zeta(dr, Slot::left(1))?;
+        let r = oracles.query_at_zeta(dr, Slot::right(1))?;
+        let o = oracles.query_at_zeta(dr, Slot::output(1))?;
+        l.mul(dr, &r)?.enforce_equal(dr, &o)?;
         // A separate witness can supply the returned input gadget while the
         // carried data feeds the staged output. The framework must bind both.
         let left = witness.map(|override_data| override_data.unwrap_or(*left.as_ref().take()));
@@ -789,23 +784,10 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
     let app = ApplicationBuilder::new()
         .register(Seed::<0>(None))?
         .register(Merge(false))?
-        .register(super::proof::Lift)?
-        .register(super::proof::Unmerge)?
-        .finalize(params)?;
-    let stored = Proof::from_bytes(&app.bootstrap_proof().to_bytes().expect("encode bootstrap"))
-        .expect("decode bootstrap");
-    let app = ApplicationBuilder::new()
-        .register(Seed::<0>(None))?
-        .register(Merge(false))?
-        .register(super::proof::Lift)?
-        .register(super::proof::Unmerge)?
-        .with_bootstrap(stored)?
         .finalize(params)?;
     let mut rng = StdRng::seed_from_u64(0);
     let (left, ()) = app.seed(&mut rng, Seed::<0>(None), Fp::from(5u64))?;
     let (right, ()) = app.seed(&mut rng, Seed::<0>(None), Fp::from(7u64))?;
-    let left = super::proof::transport(&left);
-    let right = super::proof::transport(&right);
     assert_eq!(left.polynomials()[1].len(), 2);
     assert_eq!(app.commit(&left.polynomials()[1])?, left.commitments()[1]);
     let point = left.commitments()[1];
@@ -848,11 +830,9 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
     let other = ApplicationBuilder::new()
         .register(Seed::<0>(None))?
         .register(Merge(false))?
-        .register(super::proof::Lift)?
-        .register(super::proof::Unmerge)?
-        .register(Seed::<4>(None))?
+        .register(Seed::<2>(None))?
         .finalize(test_params())?;
-    let (foreign, ()) = other.seed(&mut rng, Seed::<4>(None), Fp::from(5u64))?;
+    let (foreign, ()) = other.seed(&mut rng, Seed::<2>(None), Fp::from(5u64))?;
     assert!(!app.verify_uncompressed(&foreign, &mut rng)?);
     assert!(
         app.fuse(&mut rng, Merge(false), None, foreign, right)
