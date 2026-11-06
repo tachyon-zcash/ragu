@@ -8,7 +8,7 @@ use ragu_core::{
     maybe::Maybe as _,
     pasta::{Ep, EpAffine, Eq, Fp, Fq, PallasGenerators, Pasta, PastaParams, VestaGenerators},
 };
-use ragu_primitives::{Element, GadgetExt as _, allocator::Allocator};
+use ragu_primitives::{Element, GadgetExt as _, Simulator, allocator::Allocator};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::{
     curve::{Affine as _, AffineAdapter, Projective as _},
@@ -665,7 +665,8 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
     where
         Self: 'dr,
     {
-        let y = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let zeta = oracles.zeta().clone();
+        let y = oracles.query(dr, Slot::output(1), &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
         // A second opening of the same slot at a different point is supported.
@@ -757,9 +758,10 @@ impl Step<Pasta> for Merge {
     where
         Self: 'dr,
     {
-        let l = oracles.query_at_zeta(dr, Slot::left(1))?;
-        let r = oracles.query_at_zeta(dr, Slot::right(1))?;
-        let o = oracles.query_at_zeta(dr, Slot::output(1))?;
+        let zeta = oracles.zeta().clone();
+        let l = oracles.query(dr, Slot::left(1), &zeta)?;
+        let r = oracles.query(dr, Slot::right(1), &zeta)?;
+        let o = oracles.query(dr, Slot::output(1), &zeta)?;
         l.mul(dr, &r)?.enforce_equal(dr, &o)?;
         // A separate witness can supply the returned input gadget while the
         // carried data feeds the staged output. The framework must bind both.
@@ -865,5 +867,48 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
             .register(Seed::<0, { 2 << (TestRank::RANK - 2) }>(None))
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn slot_queries_allow_one_zeta_and_one_other_point() -> Result<()> {
+    let mut dr = Simulator::<Fp>::new();
+    let polynomials = core::array::from_fn(|_| vec![Fp::ONE, Fp::ONE]);
+    let mut oracles = Oracles::alloc(
+        &mut dr,
+        Fp::from(3),
+        [Fp::ONE; 2],
+        Vec::new(),
+        [&polynomials; 3],
+    )?;
+    let zeta = oracles.zeta().clone();
+    let equal_zeta = Element::constant(&mut dr, Fp::from(3));
+    let other = Element::constant(&mut dr, Fp::from(4));
+    let third = Element::constant(&mut dr, Fp::from(5));
+    let expected = "an online slot may be queried once per step";
+    assert_eq!(
+        *oracles
+            .query(&mut dr, Slot::output(0), &zeta)?
+            .value()
+            .take(),
+        Fp::from(4)
+    );
+    assert!(
+        matches!(oracles.query(&mut dr, Slot::output(0), &equal_zeta),
+        Err(Error::Initialization(message)) if message.to_string() == expected)
+    );
+    assert_eq!(
+        *oracles
+            .query(&mut dr, Slot::output(0), &other)?
+            .value()
+            .take(),
+        Fp::from(5)
+    );
+    assert!(matches!(oracles.query(&mut dr, Slot::output(0), &third),
+        Err(Error::Initialization(message)) if message.to_string() == expected));
+    assert!(oracles.query(&mut dr, Slot::output(1), &other).is_ok());
+    assert!(matches!(oracles.query(&mut dr, Slot::output(1), &third),
+        Err(Error::Initialization(message)) if message.to_string() == expected));
+    assert!(oracles.query(&mut dr, Slot::output(1), &zeta).is_ok());
     Ok(())
 }

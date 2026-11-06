@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
@@ -72,6 +72,7 @@ pub struct Oracles<'a, 'dr, D: Driver<'dr>> {
     bridge_hash: [Element<'dr, D>; 2],
     staged: Vec<Element<'dr, D>>,
     slots: DriverValue<D, [&'a [Vec<D::F>; HEADER_POLYNOMIALS]; 3]>,
+    queries: [[bool; 2]; 3 * HEADER_POLYNOMIALS],
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
@@ -88,6 +89,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
             bridge_hash: [alloc(bridge_hash[0])?, alloc(bridge_hash[1])?],
             staged: staged.into_iter().map(alloc).collect::<Result<_>>()?,
             slots: D::just(|| slots),
+            queries: [[false; 2]; 3 * HEADER_POLYNOMIALS],
         })
     }
 
@@ -110,19 +112,25 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         x: &Element<'dr, D>,
     ) -> Result<Element<'dr, D>> {
         let x = x.value();
-        let y = self.slots.as_ref().map(|slots| {
-            let header = slots[slot.offset() / HEADER_POLYNOMIALS];
+        let zeta = self.zeta.value();
+        let slots = self.slots.as_ref();
+        let queries = &mut self.queries[slot.offset()];
+        let y = D::try_just(|| {
             let x = *x.take();
-            header[slot.index]
+            let class = usize::from(x != *zeta.take());
+            if queries[class] {
+                return Err(Error::Initialization(
+                    "an online slot may be queried once per step".into(),
+                ));
+            }
+            queries[class] = true;
+            let slots = slots.take();
+            let header = slots[slot.offset() / HEADER_POLYNOMIALS];
+            Ok(header[slot.index]
                 .iter()
                 .rev()
-                .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient)
-        });
+                .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient))
+        })?;
         Element::alloc(dr, &mut (), y)
-    }
-
-    pub fn query_at_zeta(&mut self, dr: &mut D, slot: Slot) -> Result<Element<'dr, D>> {
-        let zeta = self.zeta.clone();
-        self.query(dr, slot, &zeta)
     }
 }
