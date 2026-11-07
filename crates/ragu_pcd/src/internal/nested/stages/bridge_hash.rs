@@ -5,8 +5,10 @@
 //! encoding fixes, and the points stage, so its gates do not move when the
 //! walk or the preamble grows. It is committed unblinded under a
 //! [canonical mask](ragu_circuits::staging::StageExt::canonical_mask), which
-//! holds every wire but the point's two coordinates to zero: the stage
-//! polynomial is then a function of the point, and so is its commitment,
+//! holds every wire but the point's two coordinates to zero (the `SYSTEM`
+//! gate's `c[0]` through the registry tag, which finalization requires to
+//! be nonzero): the stage polynomial is then a function of the point, and
+//! so is its commitment,
 //! $H^{bridge}(O_1) = x \cdot G_i + y \cdot G_j$ for two fixed generators.
 //! The nested collapse circuit holds the point to the step's own `O1` in
 //! the preamble, which $w$ absorbs, so the digest is fixed before $w$

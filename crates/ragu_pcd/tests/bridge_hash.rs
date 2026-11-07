@@ -164,7 +164,9 @@ fn a_step_reads_the_digest_of_its_last_slot() {
 
 /// The nested registry's bridge-hash mask is canonical: the bonding check
 /// accepts the unblinded stage and rejects the same stage with a blinding
-/// factor, which a standard stage mask accepts.
+/// factor, which a standard stage mask accepts. It also rejects a nonzero
+/// `c[0]`, which only the registry tag holds, and finalization refuses a
+/// zero tag.
 #[test]
 fn the_registry_pins_the_bridge_hash_stage() {
     let app = app();
@@ -189,4 +191,11 @@ fn the_registry_pins_the_bridge_hash_stage() {
 
     let blinded = <bridge_hash::Stage<_> as StageExt<Fq, R>>::rx(Fq::from(5u64), o1).unwrap();
     assert!(!bonds(&blinded));
+
+    assert_ne!(app.nested_registry.tag(), Fq::ZERO);
+    let mut c0 = sparse::View::<Fq, R, _>::trace();
+    c0.c.push(Fq::from(5u64));
+    let mut shifted = honest.clone();
+    shifted.add_assign(&c0.build());
+    assert!(!bonds(&shifted));
 }

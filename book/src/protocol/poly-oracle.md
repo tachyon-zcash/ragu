@@ -270,7 +270,7 @@ computes the trace `bridge_hash_rx` as a stage polynomial $\in\F_q[X]$, then com
 For the digest to be a function of the point, the `BridgeHash` stage is committed unblinded (every other stage takes a random blinding), and every wire of the stage is fixed by the point.
 
 A standard stage mask does not enforce this: it leaves free the blinding slot $a_0$ (and $b_0, d_0$) of the `SYSTEM` gate, and the $b, c$ wires of the stage's gates (any $c = a \cdot b$ satisfies the gate).
-Thus `BridgeHash` registers a stricter, _canonical_ stage mask that also holds these wires to zero ($c_0$ is already held by the registry tag $\kappa$).
+Thus `BridgeHash` registers a stricter, _canonical_ stage mask that also holds these wires to zero ($c_0$ is already held by the registry tag $\kappa$, which registry finalization requires to be nonzero).
 Then the stage polynomial holds only $x$ and $y$ of the point, and the digest is the fixed linear combination $x \cdot G_i + y \cdot G_j$ of two generators.
 `BridgeHash` comes directly after the endoscalar stage and before the points stage.
 The digest depends on the stage's position.
