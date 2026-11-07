@@ -93,9 +93,10 @@ The presence of the `SYSTEM` gate reduces the number of usable gates to $n - 1$.
 There is also a special constraint $\color{#7e22ce}{\kappa} \v{c}_0 = 0$
 injected in all wiring polynomials at the $Y^{4n - 1}$ position; circuits are
 restricted in the number of constraints they emit to avoid overlapping this
-term. This so-called [registry constraint](../extensions/registry.md) is
-trivially satisfied for all values of $\color{#7e22ce}{\kappa}$, since $\v{c}_0
-= 0$ anyway. In practice, $\color{#7e22ce}{\kappa}$ is the public registry
+term. This so-called [registry constraint](../extensions/registry.md) is the
+only constraint on $\v{c}_0$, and holds it to zero, as every trace sets it,
+only for $\color{#7e22ce}{\kappa} \neq 0$; registry finalization refuses a
+zero $\color{#7e22ce}{\kappa}$. In practice, $\color{#7e22ce}{\kappa}$ is the public registry
 binding tag. The temporary registry-collision workaround accepts it as a setup
 parameter, sampled after the complete pre-keyed system description has been
 fixed and publicly committed; see
@@ -175,6 +176,10 @@ stage's padding $\v{d}$ wire. To hold $\v{d}_0$, it keeps the $Y^0$ term
 that other bonding polynomials omit; the verifier still checks it against
 $k = 0$. An unblinded stage under a canonical mask is then a function of its
 values, and its commitment is a deterministic, binding digest of them.
+Holding $\v{c}_0$ through $\kappa \v{c}_0 = 0$ relies on $\kappa \neq 0$,
+which finalization enforces: under $\kappa = 0$, two stages summed into one
+trace could shift opposite amounts into their $\v{c}_0$, changing each
+stage's commitment but not the trace.
 
 A canonical stage has no $\alpha$, so use one only for values that are
 never all zero (for example, the coordinates of a curve point). An all-zero
