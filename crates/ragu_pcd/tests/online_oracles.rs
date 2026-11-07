@@ -15,7 +15,7 @@
 //! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
 //! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Slot::left`], [`Slot::right`], [`Slot::output`] |
-//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, the wire format |
+//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
 //!
 //! ## The rule for checks at $\zeta$
 //!
@@ -876,7 +876,10 @@ fn unit(app: &App) -> Result<Pcd<C, R, ()>> {
 
 /// What an application does with a proof: verify it, compress it and
 /// verify the compressed proof, and send it over the wire. Also checks that
-/// the proof carries the `expected` polynomials.
+/// the proof carries the `expected` polynomials, and that both proof forms
+/// expose their commitments: a verifier that expects particular polynomials
+/// compares these after verifying, rather than copying them into the
+/// header.
 fn check<H: Header<Fp>>(
     app: &App,
     pcd: &Pcd<C, R, H>,
@@ -888,6 +891,10 @@ fn check<H: Header<Fp>>(
     let compressed = app.compress(pcd, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
     assert_eq!(pcd.polynomials(), expected);
+    let commitments = expected.each_ref().map(|poly| app.commit(poly).unwrap());
+    assert_eq!(pcd.commitments(), commitments);
+    assert_eq!(compressed.online_commitments(), commitments);
+    assert_eq!(compressed.proof().online_commitments(), commitments);
 
     let bytes = pcd.proof().to_bytes().unwrap();
     let decoded = Proof::<C, R>::from_bytes(&bytes)
