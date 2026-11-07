@@ -28,6 +28,7 @@ mock = [
   "dep:ragu_primitives",
   "dep:ragu_circuits",
   "dep:ragu_pcd",
+  "ragu_pcd/baked",
   "dep:ragu_backend",
   "dep:rand",
 ]
