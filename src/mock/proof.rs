@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Cycle, Error, FixedGenerators, PoseidonPermutation, Result, maybe::Maybe as _};
+use ragu_pcd::profile::ProfiledCycle;
 use ragu_primitives::{GadgetExt as _, Simulator};
 use udon::{curve::Affine, field::Field};
 
@@ -16,9 +17,9 @@ const STEP_INDEX_SIZE: usize = 8;
 const HASH_SIZE: usize = 32;
 
 /// Mocks `ragu_pcd::Proof`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Proof<C: Cycle, R: Rank> {
-    pub(crate) step_index: Index,
+    pub(crate) step_index: u64,
     pub(crate) header_hash: [u8; HASH_SIZE],
     pub(crate) witness_hash: [u8; HASH_SIZE],
     pub(crate) binding: [u8; HASH_SIZE],
@@ -90,12 +91,18 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
 }
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
-    pub fn encoded_len<const HEADER_SIZE: usize>() -> usize {
+    pub fn encoded_len<const HEADER_SIZE: usize>() -> usize
+    where
+        C: ProfiledCycle,
+    {
         CompressedProof::<C>::encoded_len::<R, HEADER_SIZE>()
             + HEADER_POLYNOMIALS * R::num_coeffs() * C::CircuitField::ZERO.to_bytes().as_ref().len()
     }
 
-    pub fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>> {
+    pub fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>>
+    where
+        C: ProfiledCycle,
+    {
         if self
             .polynomials
             .iter()
@@ -116,7 +123,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         Ok(bytes)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>> {
+    pub fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>
+    where
+        C: ProfiledCycle,
+    {
         let (mut reader, rank, header_size) =
             wire::open(bytes, wire::PayloadKind::Proof, Some(R::RANK))?;
         if bytes.len() != Self::encoded_len::<0>() {
@@ -182,6 +192,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         commitments: [C::HostCurve; HEADER_POLYNOMIALS],
         setup_hash: [u8; HASH_SIZE],
     ) -> Result<Self> {
+        let step_index = step_index.get();
         let header_hash = compute_header_hash(dr, encoded_header)?;
         let witness_hash = compute_witness_hash(witness_data);
         let binding = compute_binding(
@@ -254,7 +265,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
 #[derive(Clone, Debug)]
 pub struct CompressedProof<C: Cycle> {
-    pub(crate) step_index: Index,
+    pub(crate) step_index: u64,
     pub(crate) header_hash: [u8; HASH_SIZE],
     pub(crate) witness_hash: [u8; HASH_SIZE],
     pub(crate) binding: [u8; HASH_SIZE],
@@ -265,7 +276,14 @@ pub struct CompressedProof<C: Cycle> {
     pub(crate) setup_hash: [u8; HASH_SIZE],
 }
 
-impl<C: Cycle> CompressedProof<C> {
+impl<C: ProfiledCycle> CompressedProof<C> {
+    /// The commitments of the step's own online polynomials, as
+    /// [`Pcd::commitments`] returns them before compression. The mock's
+    /// verifier binds these to its hash-based proof representation.
+    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.commitments
+    }
+
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> CompressedPcd<C, H> {
         CompressedPcd { proof: self, data }
     }
@@ -297,7 +315,7 @@ impl<C: Cycle> CompressedProof<C> {
             0,
         >());
         wire::write_envelope(kind, self.rank, self.header_size, &mut bytes);
-        bytes.extend_from_slice(&self.step_index.get().to_le_bytes());
+        bytes.extend_from_slice(&self.step_index.to_le_bytes());
         bytes.extend_from_slice(&self.header_hash);
         for point in &self.commitments {
             bytes.extend_from_slice(point.to_bytes().as_ref());
@@ -331,11 +349,13 @@ impl<C: Cycle> CompressedProof<C> {
         let index_bytes = reader.take(STEP_INDEX_SIZE)?;
         let step_index_value =
             u64::from_le_bytes(index_bytes.try_into().expect("eight-byte index"));
-        let step_index = Index::from_value(step_index_value).map_err(|_| wire::Error::Invalid {
-            offset: index_offset,
-            bytes: index_bytes,
-            reason: "invalid step index",
-        })?;
+        let step_index = Index::from_value(step_index_value)
+            .map_err(|_| wire::Error::Invalid {
+                offset: index_offset,
+                bytes: index_bytes,
+                reason: "invalid step index",
+            })?
+            .get();
         let header_hash = reader.array()?;
         let mut repr = C::HostCurve::identity().to_bytes();
         let mut commitments = [C::HostCurve::identity(); HEADER_POLYNOMIALS];
@@ -399,6 +419,12 @@ pub struct CompressedPcd<C: Cycle, H: Header<C::CircuitField>> {
 }
 
 impl<C: Cycle, H: Header<C::CircuitField>> CompressedPcd<C, H> {
+    /// The commitments of the step's own online polynomials; see
+    /// [`CompressedProof::online_commitments`].
+    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.proof.commitments
+    }
+
     pub fn data(&self) -> &H::Data {
         &self.data
     }
@@ -468,7 +494,7 @@ pub(crate) fn compute_witness_hash(witness_bytes: &[u8]) -> [u8; HASH_SIZE] {
 }
 
 pub(crate) fn compute_binding<A: Affine>(
-    step_index: Index,
+    step_index: u64,
     header_hash: &[u8; HASH_SIZE],
     witness_hash: &[u8; HASH_SIZE],
     commitments: &[A; HEADER_POLYNOMIALS],
@@ -481,7 +507,7 @@ pub(crate) fn compute_binding<A: Affine>(
         .personal(b"MkRagu_Binding_\0")
         .to_state();
     state
-        .update(&step_index.get().to_le_bytes())
+        .update(&step_index.to_le_bytes())
         .update(header_hash)
         .update(witness_hash);
     for point in commitments {

@@ -8,7 +8,7 @@ use ragu_core::{
 use ragu_primitives::Element;
 use udon::field::Field;
 
-use super::super::header::HEADER_POLYNOMIALS;
+pub use super::super::header::HEADER_POLYNOMIALS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
@@ -72,7 +72,7 @@ pub struct Oracles<'a, 'dr, D: Driver<'dr>> {
     bridge_hash: [Element<'dr, D>; 2],
     staged: Vec<Element<'dr, D>>,
     slots: DriverValue<D, [&'a [Vec<D::F>; HEADER_POLYNOMIALS]; 3]>,
-    queries: [DriverValue<D, [bool; 2]>; 3 * HEADER_POLYNOMIALS],
+    queries: [bool; 3 * HEADER_POLYNOMIALS],
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
@@ -89,7 +89,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
             bridge_hash: [alloc(bridge_hash[0])?, alloc(bridge_hash[1])?],
             staged: staged.into_iter().map(alloc).collect::<Result<_>>()?,
             slots: D::just(|| slots),
-            queries: core::array::from_fn(|_| D::just(|| [false; 2])),
+            queries: [false; 3 * HEADER_POLYNOMIALS],
         })
     }
 
@@ -105,36 +105,33 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         &self.staged
     }
 
+    /// Opens a slot at `x`. Each slot may be queried once per step;
+    /// a second query is refused, regardless of its point.
     pub fn query(
         &mut self,
         dr: &mut D,
         slot: Slot,
         x: &Element<'dr, D>,
     ) -> Result<Element<'dr, D>> {
+        let i = slot.offset();
+        if self.queries[i] {
+            return Err(Error::Initialization(
+                "an online slot may be queried once per step".into(),
+            ));
+        }
         let x = x.value();
-        let zeta = self.zeta.value();
         let slots = self.slots.as_ref();
-        let queries = self.queries[slot.offset()].as_ref();
-        let (y, queries) = D::try_just(|| {
-            let mut queries = *queries.take();
+        let y = D::just(|| {
             let x = *x.take();
-            let class = usize::from(x != *zeta.take());
-            if queries[class] {
-                return Err(Error::Initialization(
-                    "an online slot may be queried once per step".into(),
-                ));
-            }
-            queries[class] = true;
             let slots = slots.take();
             let header = slots[slot.offset() / HEADER_POLYNOMIALS];
-            let y = header[slot.index]
+            header[slot.index]
                 .iter()
                 .rev()
-                .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient);
-            Ok((y, queries))
-        })?
-        .cast();
-        self.queries[slot.offset()] = queries;
-        Element::alloc(dr, &mut (), y)
+                .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient)
+        });
+        let y = Element::alloc(dr, &mut (), y)?;
+        self.queries[i] = true;
+        Ok(y)
     }
 }

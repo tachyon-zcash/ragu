@@ -6,6 +6,7 @@
 
 pub use application::{Application, ApplicationBuilder};
 pub use proof::{CompressedPcd, CompressedProof, Pcd, Proof};
+pub use ragu_pcd::{RegistryTags, SelectableBackend, ipa, profile};
 
 mod application;
 pub mod header;

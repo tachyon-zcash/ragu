@@ -65,7 +65,6 @@ enum StepIndex {
 ///
 /// Variants are crate-private. Construct via [`Index::new`] for application
 /// steps; only mock_ragu itself constructs internal-step indexes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Index {
     index: StepIndex,
 }
@@ -73,10 +72,6 @@ pub struct Index {
 impl Index {
     #[must_use]
     pub const fn new(value: usize) -> Self {
-        assert!(
-            value <= usize::MAX - NUM_INTERNAL_STEPS,
-            "step index overflow"
-        );
         Self {
             index: StepIndex::Application(value),
         }
@@ -92,7 +87,7 @@ impl Index {
     /// Returns the encoded value mapping internal vs application into a
     /// single `u64` namespace. Internal values occupy `0..NUM_INTERNAL_STEPS`
     /// and application values follow.
-    pub(crate) fn get(self) -> u64 {
+    pub(crate) fn get(&self) -> u64 {
         match self.index {
             StepIndex::Internal(value) => value as u64,
             StepIndex::Application(value) => (value + NUM_INTERNAL_STEPS) as u64,

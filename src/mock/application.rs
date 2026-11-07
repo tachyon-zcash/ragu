@@ -3,9 +3,18 @@
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::{any::TypeId, marker::PhantomData};
 
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_backend::ReferenceBackend;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{Registry, RegistryBuilder, Tag},
+};
 use ragu_core::{
     Cycle, Error, FixedGenerators as _, Result, drivers::Driver as _, maybe::Maybe as _,
+};
+use ragu_pcd::{
+    RegistryTags, SelectableBackend,
+    ipa::IpaCycle,
+    profile::{Profile, ProfiledCycle},
 };
 use ragu_primitives::{ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, Simulator};
 use rand::CryptoRng;
@@ -17,39 +26,53 @@ use udon::{
 use super::{
     header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, Suffix},
     proof::{self, CompressedPcd, CompressedProof, Pcd, Proof},
-    step::{Encoded, Index, Oracles, Step},
+    step::{Encoded, Index, NUM_INTERNAL_STEPS, Oracles, Step},
 };
 
 const BRIDGE_HASH_OFFSET: usize = 2 + (ENDOSCALAR_BITS + ENDOSCALAR_PRODUCTS).div_ceil(2);
 
 /// Mocks `ragu_pcd::ApplicationBuilder`.
-#[derive(Clone, Debug)]
-pub struct ApplicationBuilder<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct ApplicationBuilder<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    B: SelectableBackend = ReferenceBackend,
+> {
     registered_outputs: Vec<Suffix>,
     header_map: BTreeMap<Suffix, TypeId>,
     bootstrap: Option<Proof<C, R>>,
-    _marker: PhantomData<(&'params C::Params, R)>,
+    native_registry: RegistryBuilder<'params, C::CircuitField, R>,
+    nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    _marker: PhantomData<(&'params C::Params, B)>,
 }
 
 /// Mocks `ragu_pcd::Application`.
-#[derive(Clone, Debug)]
-pub struct Application<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
+pub struct Application<
+    'params,
+    C: ProfiledCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    B: SelectableBackend = ReferenceBackend,
+> {
     params: &'params C::Params,
     registered_outputs: Vec<Suffix>,
     bootstrap: Proof<C, R>,
     setup_hash: [u8; 32],
+    native_registry: Registry<'params, C::CircuitField, R>,
+    context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize> Default
-    for ApplicationBuilder<'params, C, R, HEADER_SIZE>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
+    for ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
-    ApplicationBuilder<'params, C, R, HEADER_SIZE>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
 {
     #[must_use]
     pub fn new() -> Self {
@@ -57,13 +80,43 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             registered_outputs: Vec::new(),
             header_map: BTreeMap::new(),
             bootstrap: None,
+            native_registry: RegistryBuilder::new(),
+            nested_registry: RegistryBuilder::new(),
             _marker: PhantomData,
         }
     }
 
+    pub fn with_backend<SelectedBackend: SelectableBackend>(
+        self,
+    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, SelectedBackend> {
+        ApplicationBuilder {
+            registered_outputs: self.registered_outputs,
+            header_map: self.header_map,
+            bootstrap: self.bootstrap,
+            native_registry: self.native_registry,
+            nested_registry: self.nested_registry,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn with_registry_tags(
+        mut self,
+        tags: RegistryTags<C>,
+        expected_manifest_digest: &[u8],
+    ) -> Result<Self> {
+        let native = Tag::new(tags.native());
+        let nested = Tag::new(tags.nested());
+        // Reuse the real API's check of the opaque manifest association.
+        let _ = ragu_pcd::ApplicationBuilder::<'params, C, R, HEADER_SIZE, B>::new()
+            .with_registry_tags(tags, expected_manifest_digest)?;
+        self.native_registry = self.native_registry.with_tag(native);
+        self.nested_registry = self.nested_registry.with_tag(nested);
+        Ok(self)
+    }
+
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
         let header = Encoded::<_, (), HEADER_SIZE>::from_gadget(());
-        if proof.step_index != Index::internal(1)
+        if proof.step_index != Index::internal(1).get()
             || proof.header_size != HEADER_SIZE
             || proof.header_hash
                 != proof::compute_header_hash(&mut Simulator::<C::CircuitField>::new(), &header)?
@@ -104,7 +157,19 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     pub fn finalize(
         self,
         params: &'params C::Params,
-    ) -> Result<Application<'params, C, R, HEADER_SIZE>> {
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>>
+    where
+        <C::Profile as Profile>::Context<'params, C::Base, R, B>: Default,
+    {
+        self.finalize_with(params, Default::default())
+    }
+
+    pub fn finalize_with(
+        self,
+        params: &'params C::Params,
+        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
+        C::Profile::check()?;
         if HEADER_SIZE == 0
             || R::n() < BRIDGE_HASH_OFFSET
             || C::host_generators(params).g().len() < R::num_coeffs()
@@ -114,10 +179,23 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
                 "invalid header size, rank, or insufficient generators".into(),
             ));
         }
+        // Registries are placeholders: the mock does not compile step circuits.
+        // Finalizing them retains the real tag requirement and access type.
+        let native_registry = self.native_registry.finalize()?;
+        let nested_registry = self.nested_registry.finalize()?;
         let polynomials = core::array::from_fn(|_| vec![C::CircuitField::ONE]);
         let setup_hash = proof::compute_setup_hash::<C, R>(params);
-        let commitment = sparse::Polynomial::<_, R>::from_coeffs(vec![C::CircuitField::ONE])
-            .commit_to_affine(C::host_generators(params));
+        let mut setup = blake2b_simd::Params::new().hash_length(32).to_state();
+        setup.update(&setup_hash);
+        setup.update(native_registry.tag().to_bytes().as_ref());
+        setup.update(nested_registry.tag().to_bytes().as_ref());
+        setup.update(C::Profile::NAME.as_bytes());
+        let mut setup_hash = setup_hash;
+        setup_hash.copy_from_slice(setup.finalize().as_bytes());
+        let commitment = B::sparse_commit_to_affine(
+            &sparse::Polynomial::<_, R>::from_coeffs(vec![C::CircuitField::ONE]),
+            C::host_generators(params),
+        );
         let header = Encoded::<_, (), HEADER_SIZE>::from_gadget(());
         let bootstrap = match self.bootstrap {
             Some(proof) => proof,
@@ -136,6 +214,8 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
             registered_outputs: self.registered_outputs,
             bootstrap,
             setup_hash,
+            native_registry,
+            context,
         })
     }
 
@@ -160,7 +240,17 @@ impl<'params, C: Cycle, R: Rank, const HEADER_SIZE: usize>
     }
 }
 
-impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_SIZE> {
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
+{
+    pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
+        &self.context
+    }
+
+    /// The mock's placeholder registry; step circuit wiring is not modeled.
+    pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
+        &self.native_registry
+    }
     pub fn bootstrap_proof(&self) -> &Proof<C, R> {
         &self.bootstrap
     }
@@ -171,10 +261,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                 "polynomial exceeds rank capacity".into(),
             ));
         }
-        Ok(
-            sparse::Polynomial::<_, R>::from_coeffs(coefficients.to_vec())
-                .commit_to_affine(C::host_generators(self.params)),
-        )
+        Ok(B::sparse_commit_to_affine(
+            &sparse::Polynomial::<_, R>::from_coeffs(coefficients.to_vec()),
+            C::host_generators(self.params),
+        ))
     }
 
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
@@ -185,7 +275,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         let i = 2 * n - BRIDGE_HASH_OFFSET;
         let j = 4 * n - BRIDGE_HASH_OFFSET;
         let generators = C::nested_generators(self.params).g();
-        Ok(ragu_core::msm([x, y], [generators[i], generators[j]]).to_affine())
+        Ok(B::msm(&[x, y], &[generators[i], generators[j]]).to_affine())
     }
 
     /// Mirrors `ragu_pcd::Application::seed`: runs a unit-input step over the
@@ -220,17 +310,11 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         }
         // Bind the carried data before the hooks can stage or commit anything
         // derived from it. Returned gadgets are checked independently below.
-        if !self.verify_uncompressed(&left, &mut *rng)?
-            || !self.verify_uncompressed(&right, &mut *rng)?
+        if !self.check_uncompressed(&left, &mut *rng)?
+            || !self.check_uncompressed(&right, &mut *rng)?
         {
             return Err(Error::InvalidWitness(
                 "child proof or carried header is not accepted by this application".into(),
-            ));
-        }
-        let staged = step.staged(&witness, left.input(), right.input())?;
-        if staged.len() != S::NUM_STAGED {
-            return Err(Error::InvalidWitness(
-                "a step must stage exactly NUM_STAGED values".into(),
             ));
         }
         let mut polynomials = step.polynomials(&witness, left.input(), right.input())?;
@@ -255,6 +339,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
                     "an online commitment must not be the identity".into(),
                 ));
             }
+        }
+        let staged = step.staged(&witness, left.input(), right.input())?;
+        if staged.len() != S::NUM_STAGED {
+            return Err(Error::InvalidWitness(
+                "a step must stage exactly NUM_STAGED values".into(),
+            ));
         }
         let mut transcript = blake2b_simd::Params::new()
             .hash_length(64)
@@ -331,7 +421,7 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         ))
     }
 
-    pub fn verify_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
+    fn check_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         _rng: RNG,
@@ -343,7 +433,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
             if coefficients.is_empty()
                 || coefficients.len() > R::num_coeffs()
                 || point.is_identity()
-                || self.commit(coefficients)? != point
+                || <<B as SelectableBackend>::Verifier as ragu_backend::Backend>::sparse_commit_to_affine(
+                    &sparse::Polynomial::<_, R>::from_coeffs(coefficients.clone()),
+                    C::host_generators(self.params),
+                ) != point
             {
                 return Ok(false);
             }
@@ -351,12 +444,52 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         self.verify_statement::<H>(&pcd.proof.compressed(), &pcd.data)
     }
 
+    /// Test-only uncompressed verifier, matching #944's `test-utils` surface.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn verify_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
+        rng: RNG,
+    ) -> Result<bool> {
+        self.check_uncompressed(pcd, rng)
+    }
+
+    /// Compares uncompressed and compressed acceptance, returning the
+    /// uncompressed verdict. Available only for tests and `test-utils`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the two verifier paths disagree on acceptance.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn verify_differential<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: &Pcd<C, R, H>,
+        mut rng: RNG,
+    ) -> Result<bool>
+    where
+        C: IpaCycle,
+    {
+        let uncompressed = self.verify_uncompressed(pcd, &mut rng);
+        let compressed = self
+            .compress(pcd, &mut rng)
+            .and_then(|compressed| self.verify_compressed(&compressed));
+        assert_eq!(
+            matches!(uncompressed, Ok(true)),
+            matches!(compressed, Ok(true)),
+            "the verifiers disagree: uncompressed {uncompressed:?}, compressed {compressed:?}",
+        );
+        uncompressed
+    }
+
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
         rng: &mut RNG,
-    ) -> Result<CompressedPcd<C, H>> {
-        if !self.verify_uncompressed(pcd, rng)? {
+    ) -> Result<CompressedPcd<C, H>>
+    where
+        C: IpaCycle,
+    {
+        if !self.check_uncompressed(pcd, rng)? {
             return Err(Error::InvalidWitness(
                 "cannot compress an invalid proof".into(),
             ));
@@ -367,7 +500,10 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
-    ) -> Result<bool> {
+    ) -> Result<bool>
+    where
+        C: IpaCycle,
+    {
         self.verify_statement::<H>(&pcd.proof, &pcd.data)
     }
 
@@ -382,8 +518,12 @@ impl<C: Cycle, R: Rank, const HEADER_SIZE: usize> Application<'_, C, R, HEADER_S
         {
             return Ok(false);
         }
-        if proof.step_index != Index::internal(1) || TypeId::of::<H>() != TypeId::of::<()>() {
-            let Some(application_index) = proof.step_index.application() else {
+        if proof.step_index != Index::internal(1).get() || TypeId::of::<H>() != TypeId::of::<()>() {
+            let Some(application_index) = proof
+                .step_index
+                .checked_sub(NUM_INTERNAL_STEPS as u64)
+                .and_then(|i| usize::try_from(i).ok())
+            else {
                 return Ok(false);
             };
             // The header must match the output registered for the proof's step.

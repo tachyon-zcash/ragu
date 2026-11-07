@@ -12,12 +12,13 @@ use udon::curve::AffineAdapter;
 
 use super::{
     super::{
-        ApplicationBuilder, CompressedProof,
+        CompressedProof,
         header::{Header, Suffix},
         step::{Encoded, Index, Oracles, Step},
     },
     application::{
-        Merge, ValueHeader as PolynomialHeader, Witnessed, test_params, test_params_for,
+        Merge, ValueHeader as PolynomialHeader, Witnessed, test_builder_for, test_params,
+        test_params_for,
     },
 };
 
@@ -74,7 +75,7 @@ impl Step<Pasta> for ValueSeedStep {
 
 /// Application with [`ValueSeedStep`] registered.
 fn value_app() -> Application {
-    ApplicationBuilder::new()
+    test_builder_for::<TestRank>()
         .register(ValueSeedStep)
         .expect("register")
         .finalize(test_params())
@@ -93,6 +94,17 @@ fn round_trip() {
         pcd.proof().to_bytes().expect("encode proof"),
         recovered.to_bytes().expect("encode proof")
     );
+}
+
+#[test]
+fn differential_verification_accepts_and_rejects() -> Result<()> {
+    let mut rng = StdRng::seed_from_u64(3);
+    let app = value_app();
+    let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7)?;
+    assert!(app.verify_differential(&pcd, &mut rng)?);
+    let mismatched = pcd.proof().clone().carry::<ValueHeader>(8);
+    assert!(!app.verify_differential(&mismatched, &mut rng)?);
+    Ok(())
 }
 
 pub(super) fn check_codecs(
@@ -121,6 +133,11 @@ pub(super) fn check_codecs(
             .is_err()
     );
     let compressed = app.compress(&resumed, rng)?;
+    assert_eq!(compressed.online_commitments(), resumed.commitments());
+    assert_eq!(
+        compressed.proof().online_commitments(),
+        resumed.commitments()
+    );
     let bytes = compressed
         .proof()
         .to_bytes()
@@ -129,6 +146,8 @@ pub(super) fn check_codecs(
         .expect("decode compressed proof")
         .carry::<PolynomialHeader>(*compressed.data());
     assert!(app.verify_compressed(&decoded)?);
+    assert_eq!(decoded.online_commitments(), resumed.commitments());
+    assert_eq!(decoded.proof().online_commitments(), resumed.commitments());
     let ordinary = resumed.proof().to_bytes().expect("encode ordinary proof");
     assert!(matches!(
         CompressedProof::<Pasta>::from_bytes(&ordinary[..bytes.len()]),
@@ -144,7 +163,7 @@ pub(super) fn check_codecs(
 fn compressed_proofs_reject_other_setup_and_rank() -> Result<()> {
     type LargerRank = ragu_circuits::polynomials::R<14>;
     let params = test_params_for::<LargerRank>();
-    let app = ApplicationBuilder::<Pasta, TestRank, 4>::new()
+    let app = test_builder_for::<TestRank>()
         .register(ValueSeedStep)?
         .finalize(params)?;
     let mut rng = StdRng::seed_from_u64(1);
@@ -170,11 +189,11 @@ fn compressed_proofs_reject_other_setup_and_rank() -> Result<()> {
             AffineAdapter::as_slice(&[*host.h()])[0],
         ),
     );
-    let other = ApplicationBuilder::<Pasta, TestRank, 4>::new()
+    let other = test_builder_for::<TestRank>()
         .register(ValueSeedStep)?
         .finalize(&other_params)?;
     assert!(!other.verify_compressed(&decoded)?);
-    let wide = ApplicationBuilder::<Pasta, LargerRank, 4>::new()
+    let wide = test_builder_for::<LargerRank>()
         .register(ValueSeedStep)?
         .finalize(params)?;
     let (pcd, ()) = wide.seed(&mut rng, ValueSeedStep, 7)?;

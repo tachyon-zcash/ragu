@@ -24,6 +24,93 @@ type ApplicationBuilder = crate::ApplicationBuilder<'static, Pasta, TestRank, 4>
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
 type Proof = crate::Proof<Pasta, TestRank>;
 
+fn test_builder() -> ApplicationBuilder {
+    test_builder_for::<TestRank>()
+}
+
+pub(super) fn test_builder_for<R: Rank>() -> crate::ApplicationBuilder<'static, Pasta, R, 4> {
+    crate::ApplicationBuilder::new()
+        .with_registry_tags(
+            crate::RegistryTags::from_beacon(b"mock test beacon", b"mock test manifest"),
+            b"mock test manifest",
+        )
+        .expect("test tags")
+}
+
+#[test]
+fn registry_tags_check_manifest_and_bind_the_mock_setup() -> Result<()> {
+    let manifest = b"setup manifest";
+    let tags = crate::RegistryTags::<Pasta>::from_beacon(b"beacon one", manifest);
+    let native_tag = tags.native();
+    let app = ApplicationBuilder::new()
+        .with_registry_tags(tags, manifest)?
+        .with_backend::<ragu_backend::ReferenceBackend>()
+        .finalize_with(test_params(), ())?;
+    assert_eq!(app.context(), &());
+    assert_eq!(app.native_registry().tag(), native_tag);
+    assert!(matches!(
+        ApplicationBuilder::new().with_registry_tags(
+            crate::RegistryTags::from_beacon(b"beacon one", manifest),
+            b"another manifest",
+        ),
+        Err(Error::Initialization(message))
+            if message.to_string() == "registry tags do not match the expected setup manifest"
+    ));
+    let other = ApplicationBuilder::new()
+        .with_registry_tags(
+            crate::RegistryTags::from_beacon(b"beacon two", manifest),
+            manifest,
+        )?
+        .finalize(test_params())?;
+    let mut rng = StdRng::seed_from_u64(4);
+    let bootstrap = app.bootstrap_proof().clone().carry::<()>(());
+    assert!(app.verify_uncompressed(&bootstrap, &mut rng)?);
+    assert!(!other.verify_uncompressed(&bootstrap, &mut rng)?);
+    // Respect exactly the registry crate's feature-controlled test fallback.
+    let registry_requires_tags = ragu_circuits::registry::RegistryBuilder::<Fp, TestRank>::new()
+        .finalize()
+        .is_err();
+    assert_eq!(
+        ApplicationBuilder::new().finalize(test_params()).is_err(),
+        registry_requires_tags,
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ContextProfile;
+
+struct ProverContext(u64);
+
+impl crate::profile::Profile for ContextProfile {
+    const NAME: &'static str = "mock-context-test";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+
+    type Context<'params, Base, R, B>
+        = ProverContext
+    where
+        Base: crate::ipa::IpaCycle
+            + crate::profile::ProfiledCycle<Profile = crate::profile::Standard>,
+        R: Rank,
+        B: crate::SelectableBackend;
+}
+
+#[test]
+fn finalize_with_preserves_a_nondefault_profile_context() -> Result<()> {
+    type Profiled = crate::profile::Profiled<Pasta, ContextProfile>;
+    let manifest = b"profiled setup";
+    let app = crate::ApplicationBuilder::<Profiled, TestRank, 4>::new()
+        .with_registry_tags(
+            crate::RegistryTags::from_beacon(b"beacon", manifest),
+            manifest,
+        )?
+        .with_backend::<ragu_backend::ReferenceBackend>()
+        .finalize_with(test_params(), ProverContext(19))?;
+    assert_eq!(app.context().0, 19);
+    Ok(())
+}
+
 pub(super) fn test_params() -> &'static PastaParams {
     test_params_for::<TestRank>()
 }
@@ -127,7 +214,7 @@ impl Step<Pasta> for MergeStep {
 #[test]
 fn serialized_proof_rejects_mismatched_header_data() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = test_builder()
         .register(SeedStep)
         .expect("register should succeed")
         .finalize(test_params())
@@ -153,7 +240,7 @@ fn serialized_proof_rejects_mismatched_header_data() {
 #[test]
 fn tampered_serialized_proof_fails_to_deserialize() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = test_builder()
         .register(SeedStep)
         .expect("register should succeed")
         .finalize(test_params())
@@ -174,7 +261,7 @@ fn tampered_serialized_proof_fails_to_deserialize() {
 #[test]
 fn rerandomize_preserves_validity() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = test_builder()
         .register(SeedStep)
         .expect("register should succeed")
         .finalize(test_params())
@@ -274,7 +361,7 @@ impl Step<Pasta> for SuffixCollisionStep {
 
 #[test]
 fn duplicate_index_rejects_registration() {
-    let result = ApplicationBuilder::new()
+    let result = test_builder()
         .register(SeedStep)
         .expect("register first step should succeed")
         .register(DuplicateIndexStep);
@@ -283,7 +370,7 @@ fn duplicate_index_rejects_registration() {
 
 #[test]
 fn non_sequential_index_rejects_registration() {
-    let result = ApplicationBuilder::new().register(MergeStep);
+    let result = test_builder().register(MergeStep);
     assert!(
         result.is_err(),
         "non-sequential INDEX (1 before 0) must be rejected"
@@ -292,7 +379,7 @@ fn non_sequential_index_rejects_registration() {
 
 #[test]
 fn duplicate_suffix_distinct_types_rejects_registration() {
-    let result = ApplicationBuilder::new()
+    let result = test_builder()
         .register(SeedStep)
         .expect("register first step should succeed")
         .register(SuffixCollisionStep);
@@ -304,7 +391,7 @@ fn duplicate_suffix_distinct_types_rejects_registration() {
 
 #[test]
 fn same_suffix_same_type_succeeds_registration() {
-    let result = ApplicationBuilder::new()
+    let result = test_builder()
         .register(SeedStep)
         .expect("register SeedStep should succeed")
         .register(MergeStep);
@@ -338,7 +425,7 @@ fn internal_step_index_rejects_registration() {
         }
     }
 
-    let result = ApplicationBuilder::new().register(InternalIndexStep);
+    let result = test_builder().register(InternalIndexStep);
     assert!(
         result.is_err(),
         "application-defined steps must not use Index::Internal"
@@ -433,7 +520,7 @@ impl Step<Pasta> for PointConsumeStep {
 
 /// Application with [`PointSeedStep`] registered.
 fn point_app() -> Application {
-    ApplicationBuilder::new()
+    test_builder()
         .register(PointSeedStep)
         .expect("register")
         .finalize(test_params())
@@ -468,7 +555,7 @@ fn identity_point_in_output_header_fails_fuse() {
 #[test]
 fn identity_point_in_input_header_fails_fuse() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = test_builder()
         .register(PointSeedStep)
         .expect("register")
         .register(PointConsumeStep)
@@ -546,7 +633,7 @@ fn verify_rejects_unregistered_output_header() {
 #[test]
 fn verify_rejects_header_registered_for_another_step() {
     let mut rng = StdRng::seed_from_u64(0);
-    let app = ApplicationBuilder::new()
+    let app = test_builder()
         .register(PointSeedStep)
         .expect("register point output")
         .register(PointConsumeStep)
@@ -661,11 +748,6 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
         let y = oracles.query(dr, Slot::output(1), &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
-        // A second opening of the same slot at a different point is supported.
-        let root = oracles.staged()[0].clone();
-        let at_root = oracles.query(dr, Slot::output(1), &root)?;
-        let zero = Element::constant(dr, Fp::ZERO);
-        at_root.enforce_equal(dr, &zero)?;
         let stamp = oracles.bridge_hash()[0].clone();
         let data = stamp.value().map(|v| *v);
         Ok((
@@ -775,7 +857,7 @@ impl Step<Pasta> for Merge {
 #[test]
 fn polynomial_flow_and_header_binding() -> Result<()> {
     let params = test_params();
-    let app = ApplicationBuilder::new()
+    let app = test_builder()
         .register(Seed::<0>)?
         .register(Merge(false))?
         .finalize(params)?;
@@ -821,7 +903,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
     assert!(app.verify_uncompressed(&merged, &mut rng)?);
     super::proof::check_codecs(&app, &merged, &right, &mut rng)?;
     // Correct header and polynomial data, but an index this app does not accept.
-    let other = ApplicationBuilder::new()
+    let other = test_builder()
         .register(Seed::<0>)?
         .register(Merge(false))?
         .register(Seed::<2>)?
@@ -833,7 +915,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
             .is_err()
     );
     assert!(
-        ApplicationBuilder::new()
+        test_builder()
             .register(Seed::<0, { 2 << (TestRank::RANK - 2) }>)
             .is_err()
     );
@@ -841,7 +923,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
 }
 
 #[test]
-fn slot_queries_allow_one_zeta_and_one_other_point() -> Result<()> {
+fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
     let mut dr = Simulator::<Fp>::new();
     let polynomials = core::array::from_fn(|_| vec![Fp::ONE, Fp::ONE]);
     let mut oracles = Oracles::alloc(
@@ -867,18 +949,148 @@ fn slot_queries_allow_one_zeta_and_one_other_point() -> Result<()> {
         matches!(oracles.query(&mut dr, Slot::output(0), &equal_zeta),
         Err(Error::Initialization(message)) if message.to_string() == expected)
     );
+    assert!(matches!(oracles.query(&mut dr, Slot::output(0), &other),
+        Err(Error::Initialization(message)) if message.to_string() == expected));
+    assert!(matches!(oracles.query(&mut dr, Slot::output(0), &third),
+        Err(Error::Initialization(message)) if message.to_string() == expected));
     assert_eq!(
         *oracles
-            .query(&mut dr, Slot::output(0), &other)?
+            .query(&mut dr, Slot::output(1), &other)?
             .value()
             .take(),
         Fp::from(5)
     );
-    assert!(matches!(oracles.query(&mut dr, Slot::output(0), &third),
-        Err(Error::Initialization(message)) if message.to_string() == expected));
-    assert!(oracles.query(&mut dr, Slot::output(1), &other).is_ok());
     assert!(matches!(oracles.query(&mut dr, Slot::output(1), &third),
         Err(Error::Initialization(message)) if message.to_string() == expected));
-    assert!(oracles.query(&mut dr, Slot::output(1), &zeta).is_ok());
+    assert!(matches!(oracles.query(&mut dr, Slot::output(1), &zeta),
+        Err(Error::Initialization(message)) if message.to_string() == expected));
+    // Query budgets belong to slots, not points or headers.
+    for slot in [Slot::left(0), Slot::left(1), Slot::right(0), Slot::right(1)] {
+        assert!(oracles.query(&mut dr, slot, &zeta).is_ok());
+    }
+    Ok(())
+}
+
+#[test]
+fn slot_query_limit_is_enforced_without_witness_values() -> Result<()> {
+    let mut dr = core::marker::PhantomData::<Fp>;
+    let polynomials = core::array::from_fn(|_| vec![Fp::ONE]);
+    let mut oracles = Oracles::alloc(
+        &mut dr,
+        Fp::from(3),
+        [Fp::ONE; 2],
+        Vec::new(),
+        [&polynomials; 3],
+    )?;
+    let zeta = oracles.zeta().clone();
+    oracles.query(&mut dr, Slot::left(0), &zeta)?;
+    assert!(matches!(
+        oracles.query(&mut dr, Slot::left(0), &zeta),
+        Err(Error::Initialization(message))
+            if message.to_string() == "an online slot may be queried once per step"
+    ));
+    Ok(())
+}
+
+#[test]
+fn step_index_constructor_accepts_the_full_usize_range() {
+    const MAX: Index = Index::new(usize::MAX);
+    assert_eq!(MAX.application(), Some(usize::MAX));
+    assert!(MAX.assert_sequential(0).is_err());
+}
+
+struct HookOrder {
+    calls: alloc::sync::Arc<core::sync::atomic::AtomicUsize>,
+    fail_polynomials: bool,
+}
+
+impl Step<Pasta> for HookOrder {
+    const INDEX: Index = Index::new(0);
+    const NUM_STAGED: usize = 1;
+    type Witness<'s> = Fp;
+    type Aux<'s> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ValueHeader;
+
+    fn polynomials<'s>(
+        &self,
+        root: &Fp,
+        left: HeaderInput<'_, Fp, ()>,
+        right: HeaderInput<'_, Fp, ()>,
+    ) -> Result<[Vec<Fp>; 2]> {
+        assert_eq!(
+            self.calls
+                .fetch_add(1, core::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        if self.fail_polynomials {
+            return Err(Error::InvalidWitness("polynomials failed".into()));
+        }
+        Seed::<0>.polynomials(root, left, right)
+    }
+
+    fn staged<'s>(
+        &self,
+        root: &Fp,
+        left: HeaderInput<'_, Fp, ()>,
+        right: HeaderInput<'_, Fp, ()>,
+    ) -> Result<Vec<Fp>> {
+        assert_eq!(
+            self.calls
+                .fetch_add(1, core::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        Seed::<0>.staged(root, left, right)
+    }
+
+    fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        witness: DriverValue<D, Fp>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Witnessed<'dr, 's, Self, D, N>
+    where
+        Self: 'dr,
+    {
+        assert_eq!(self.calls.load(core::sync::atomic::Ordering::SeqCst), 2);
+        Seed::<0>.witness(dr, oracles, witness, left, right)
+    }
+}
+
+#[test]
+fn polynomials_run_before_staging_and_errors_stop_staging() -> Result<()> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut rng = StdRng::seed_from_u64(2);
+    for fail_polynomials in [false, true] {
+        let calls = alloc::sync::Arc::new(AtomicUsize::new(0));
+        let app = test_builder()
+            .register(HookOrder {
+                calls: calls.clone(),
+                fail_polynomials,
+            })?
+            .finalize(test_params())?;
+        let result = app.seed(
+            &mut rng,
+            HookOrder {
+                calls: calls.clone(),
+                fail_polynomials,
+            },
+            Fp::from(5),
+        );
+        if fail_polynomials {
+            assert!(
+                matches!(result, Err(Error::InvalidWitness(message)) if message.to_string() == "polynomials failed")
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        } else {
+            let (pcd, ()) = result?;
+            assert!(app.verify_uncompressed(&pcd, &mut rng)?);
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        }
+    }
     Ok(())
 }
