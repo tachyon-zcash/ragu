@@ -5,17 +5,14 @@
 //! implementation.
 
 pub use application::{Application, ApplicationBuilder};
-pub use ctx::StepCtx;
-pub use header::{Header, Suffix};
-pub use proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
-pub use step::{Index, Step};
+pub use proof::{CompressedPcd, CompressedProof, Pcd, Proof};
+pub use ragu_pcd::{RegistryTags, SelectableBackend, ipa, profile};
 
 mod application;
-mod ctx;
-mod header;
-mod hooks;
+pub mod header;
 mod proof;
-mod step;
+pub mod step;
+pub mod wire;
 
 #[cfg(test)]
 mod tests;
