@@ -30,9 +30,32 @@ pub trait Step<C: Cycle> {
     type Right: Header<C::CircuitField>;
     type Output: Header<C::CircuitField>;
 
+    // Optional: how many values the step stages. Defaults to none.
+    const NUM_STAGED: usize = 0;
+
+    // Optional: the polynomials the output header carries, committed before
+    // the step's challenge is drawn. Defaults to the constant one in every
+    // slot.
+    fn polynomials<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, Self::Left>,
+        right: HeaderInput<'_, C::CircuitField, Self::Right>,
+    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]>;
+
+    // Optional: the `NUM_STAGED` staged values, committed before the step's
+    // challenge is drawn. Defaults to none.
+    fn staged<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, Self::Left>,
+        right: HeaderInput<'_, C::CircuitField, Self::Right>,
+    ) -> Result<Vec<C::CircuitField>>;
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -84,13 +107,33 @@ type Right = LeafNode;  // Right proof type
 type Output = InternalNode;  // What this step creates
 ```
 
-### 3. The witness Function
+### 3. The `witness` Function
 
 This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
 2. Receives left/right header data as `DriverValue`s
-3. Performs computation (constraints)
-4. Returns encoded proofs and auxiliary output
+3. Receives the step's polynomial oracles (see
+   [Polynomial Oracles](#polynomial-oracles)); a step whose headers carry no
+   polynomials ignores them
+4. Performs computation (constraints)
+5. Returns encoded proofs and auxiliary output
+
+### 4. The `polynomials` and `staged` Functions
+
+Every header carries `HEADER_POLYNOMIALS` (two) polynomials beside its field
+data; the count is a parameter of the protocol, not of the header type. A
+step whose output header uses them implements `polynomials`, which runs
+before the step's challenge is drawn and returns the output polynomials'
+coefficients, one vector per slot, computed from the witness and from the
+inputs' data and polynomials. Ragu commits them, and they travel with the
+proof. The default puts the constant one in every slot, which is right for
+headers without polynomials; a step that uses one slot returns the constant
+one for the other.
+
+`staged` runs beside `polynomials` and returns the `NUM_STAGED` values the
+step's checks at $\zeta$ read but no header carries, such as the roots it
+multiplies into an accumulator polynomial (see
+[Polynomial Oracles](#polynomial-oracles)).
 
 ## Two Types of Steps
 
@@ -154,13 +197,77 @@ let left_data = left.as_gadget();
 let right_data = right.as_gadget();
 ```
 
+## Polynomial Oracles
+
+A step can relate the polynomials its headers carry without putting their
+coefficients in the circuit. Each of the three headers has two polynomial
+slots, `Slot::left(i)`, `Slot::right(i)` and `Slot::output(i)`, holding
+whatever the step that produced the header committed. What a slot means is
+your convention for that header, as the meaning of its fields is: the
+circuits of the steps that produce the header constrain it, and Ragu proves
+that every opening is of the committed polynomial. The `Oracles` argument
+of `witness` lets the circuit open each slot once:
+
+```rust
+// A random point squeezed after every slot's polynomial and the staged
+// values were committed.
+let zeta = oracles.zeta().clone();
+// The value of the left header's first polynomial at zeta, as a wire.
+let l0 = oracles.query(dr, Slot::left(0), &zeta)?;
+// The output polynomial at the same point.
+let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
+// The root this step multiplies in, staged before zeta (see below).
+let t = oracles.staged()[0].clone();
+// Enforce O0(zeta) = L0(zeta) * (zeta - t), the relation the step proves.
+o0.enforce_equal(dr, &l0.mul(dr, &zeta.sub(dr, &t))?)?;
+// A slot may also be opened at any wire, such as a witnessed nullifier.
+let membership = oracles.query(dr, Slot::left(1), &nullifier)?;
+```
+
+A check at `zeta` is sound only if every value it reads was fixed before
+`zeta` was drawn: an opening at `zeta` (or at a point itself fixed before
+it), an input header's field, a staged value, or a wire computed from
+those; or an in-circuit hash output, or a value from a small set such as a
+bit. Any other wire `witness` allocates, the output header's fields
+included, is chosen with `zeta` in hand. Had `t` above been witnessed in
+`witness`, the prover could set `t = zeta - O0(zeta) / L0(zeta)` and the
+check would hold whatever the polynomials. So a step stages such values: it
+declares `const NUM_STAGED: usize = 1;` and returns them from `staged`, which
+runs beside `polynomials`, before `zeta`:
+
+```rust
+fn staged<'source>(
+    &self,
+    root: &Self::Witness<'source>,
+    _: HeaderInput<'_, Fp, Self::Left>,
+    _: HeaderInput<'_, Fp, Self::Right>,
+) -> Result<Vec<Fp>> {
+    Ok(vec![*root])
+}
+```
+
+Ragu commits the staged values in the proof's application stage before
+`zeta` is drawn and hands them to `witness` as wires through
+`oracles.staged()`, each bound to the committed value. Every step circuit
+of the application reserves room for the largest `NUM_STAGED` any of its
+steps declares, `ceil(n / 2)` gates.
+
+The returned wire is a witness: nothing in the circuit checks that it is the
+polynomial's value at the point. Ragu's polynomial commitment scheme proves
+every opening, in the same batch as the rest of the step's claims, and the
+parent step holds the circuit's instance to the openings that were proved. A
+slot the circuit does not query is opened at `zeta` to the polynomial's value
+there, so every step pays for all six openings whether it uses them or not.
+
 ## Working with Headers
 
 Headers define what data flows through the proof tree. Each header
 implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 (the native Rust value), an `Output` type (the circuit gadget
-representation), and an `encode` function that converts `Data` into
-`Output` by allocating circuit elements.
+representation), an `encode` function that converts `Data` into
+`Output` by allocating circuit elements. Every header also carries
+`HEADER_POLYNOMIALS` polynomials beside its data (see
+[Polynomial Oracles](#polynomial-oracles)).
 
 For a complete example with multiple header types, see
 [Getting Started — Define Header Types](getting_started.md#step-1-define-header-types).

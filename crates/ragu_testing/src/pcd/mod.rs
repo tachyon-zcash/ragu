@@ -2,4 +2,5 @@
 //!
 //! This module provides reusable Header and Step implementations for benchmarks.
 
+pub mod accumulator;
 pub mod nontrivial;

@@ -12,9 +12,10 @@ A circuit's public inputs are encoded as a polynomial $k(Y)$, introduced in the
 [NARK](../core/nark.md) chapter. The verifier evaluates $k(y)$ at a random point
 $y$ and checks it against the revdot claim.
 
-Recursion instantiates $k(Y)$ three times: once for the values the internal
-circuits share, once for those same values bound to the child headers, and once
-for the application's own step circuit.
+Recursion instantiates $k(Y)$ four times: once for the values the internal
+circuits share, once for those same values bound to the child headers, once for
+those same values bound to the step's online openings, and once for the
+application's own step circuit.
 
 ### `unified_ky`
 
@@ -28,8 +29,8 @@ has been absorbed. The zero before it is the suffix that separates internal
 circuits from application circuits, described under
 [substitution](#substitution).
 
-The `hashes_2`, `collapse`, `compute_v`, `bind_challenges`, `bind_beta`
-and `bind_endoscalar` circuits use this value directly. The stage and
+The `hashes_2`, `collapse`, `bind_challenges`, `bind_beta` and
+`bind_endoscalar` circuits use this value directly. The stage and
 final-staged masks take zero for their $k(y)$ values, since staging masks
 enforce those constraints instead.
 
@@ -43,11 +44,32 @@ Binding the headers is what stops a proof from claiming one pair of headers
 while proving a different pair. `hashes_1` uses this rather than
 $k_\text{unified}(y)$, because it is the circuit that binds child headers.
 
+### `compute_v_bridge_ky`
+
+The same wires, extended with the step's online openings: the point and the
+claimed value of each of its six online slots, as the `query` stage holds them.
+
+$$k_\text{compute\_v}(Y) = \text{Horner}(\texttt{unified\_output} \,\|\, x_0 \,\|\, y_0 \,\|\, \cdots \,\|\, x_5 \,\|\, y_5 \,\|\, 0 \,\|\, 1, \; Y)$$
+
+`compute_v` folds those openings into the batch it verifies, so exporting them
+is what lets the parent hold the step's application instance to the openings
+the step actually proved. `compute_v` uses this rather than
+$k_\text{unified}(y)$ for the same reason `hashes_1` uses $k_\text{bridge}(y)$.
+
 ### `application_ky`
 
-The step circuit's own public inputs, with no unified output and no zero suffix:
+The step circuit's own public inputs, with no unified output and no zero
+suffix: the step's challenge $\zeta$, its six online openings and its three
+headers.
 
-$$k_\text{app}(Y) = \text{Horner}(\texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
+$$k_\text{app}(Y) = \text{Horner}(\zeta \,\|\, x_0 \,\|\, y_0 \,\|\, \cdots \,\|\, x_5 \,\|\, y_5 \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
+
+The parent computes it from the wires it already holds: $\zeta$ is the
+child's $w$ in the unified output, and the openings are the ones the
+`compute_v` bridge carries. The step circuit's instance is therefore held to
+the openings the step proved, with nothing exported for the purpose. The
+online prefix has a fixed size, so the headers keep their positions and the
+output header's suffix stays the linear term.
 
 ### Horner Evaluation
 
@@ -78,10 +100,11 @@ between them, as the [transcript split](index.md#transcript-split) describes.
 Staging circuit outputs are the internal circuits' public inputs: the values the
 recursive verifier actually checks, carried through the $k(Y)$ mechanism above.
 
-The shared `Output` structure holds 29 wires: eight nested-curve commitments at
-two wires each, and thirteen field elements covering the Fiat-Shamir challenges
-and the final values $c$ and $v$. `hashes_1` emits a wider structure that adds
-the two child headers.
+The shared `Output` structure holds 37 wires: twelve nested-curve commitments
+at two wires each, and thirteen field elements covering the Fiat-Shamir
+challenges and the final values $c$ and $v$. `hashes_1` emits a wider structure
+that adds the two child headers, and `compute_v` one that adds the step's
+online openings.
 
 Each circuit constrains the wires it is responsible for and reads the rest from
 witness data, so every wire is constrained exactly once and no circuit repeats
@@ -93,9 +116,10 @@ The verifier then checks:
    revdot scalar rather than a $k(y)$ evaluation.
 2. $k_\text{app}(y)$ against the application circuit's claim.
 3. $k_\text{bridge}(y)$ against the bridge claim.
-4. $k_\text{unified}(y)$ against the claims of the four internal circuits that
+4. $k_\text{compute\_v}(y)$ against the `compute_v` claim.
+5. $k_\text{unified}(y)$ against the claims of the internal circuits that
    share it.
-5. Stage and final-staged mask claims against zero.
+6. Stage and final-staged mask claims against zero.
 
 ## Substitution {#substitution}
 

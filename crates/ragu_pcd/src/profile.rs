@@ -162,8 +162,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The circuits and stages the profile adds on the native side.
     ///
     /// The challenge binders load a native extension's stages, and at the
-    /// production rank their largest variant sits fifteen gates under the
-    /// gate budget with the standard header: an extension stage costing more
+    /// production rank their largest variant fills the
+    /// gate budget with the census header: an extension stage costing more
     /// needs a smaller header or a cheaper binder. The internal census tests
     /// pin that count.
     fn native_extension() -> Extension {
@@ -1012,7 +1012,7 @@ pub(crate) mod testing {
     use super::*;
     use crate::{
         internal::ky,
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Oracles, Step},
     };
 
     /// A step with unit headers and no witness.
@@ -1034,6 +1034,7 @@ pub(crate) mod testing {
         >(
             &self,
             dr: &mut D,
+            _: &mut Oracles<'_, 'dr, D>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, ()>,
             right: DriverValue<D, ()>,
@@ -2367,15 +2368,15 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 45,
-                nested_points: 105,
-                nested_steps: 26,
-                nested_rx: 39,
-                native_points: 93,
-                native_steps: 23,
+                native_rx: 48,
+                nested_points: 117,
+                nested_steps: 29,
+                nested_rx: 43,
+                native_points: 101,
+                native_steps: 25,
             }
         );
-        assert_eq!(shape.polynomials(), 92);
+        assert_eq!(shape.polynomials(), 99);
     }
 
     #[test]

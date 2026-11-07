@@ -399,6 +399,7 @@ fn horner(points: &[EpAffine], beta: Fq) -> EpAffine {
 fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
     native::unified::Instance {
         bridge_preamble_commitment: proof.bridge_preamble_commitment(),
+        bridge_hash_commitment: proof.bridge_hash_commitment(),
         w: proof.w(),
         bridge_s_prime_commitment: proof.bridge_s_prime_commitment(),
         y: proof.y(),

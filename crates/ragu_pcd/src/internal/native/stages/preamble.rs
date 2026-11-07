@@ -22,7 +22,7 @@ use ragu_primitives::{
 use crate::{
     Proof,
     header::{Header, Suffix},
-    internal::{ky, native::unified},
+    internal::{ky, native::unified, online},
     profile::{Profile, ProfiledCycle},
     step::{InternalStepIndex, internal::padded},
 };
@@ -90,6 +90,9 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// The child's online openings, as its `compute_v` exported them.
+    #[ragu(gadget)]
+    pub online: online::QueriesOutput<'dr, D>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
@@ -132,14 +135,33 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         ))
     }
 
-    /// Compute k(y) for the application circuit instance.
-    ///
-    /// Returns `application_ky` = k(y) for `(children.left, children.right, output_header)`.
+    /// Compute k(y) for the application circuit instance: k(y) for
+    /// `(zeta, online, children.left, children.right, output_header)`, where
+    /// the child's `zeta` is its `w` and `online` its openings, both as the
+    /// unified instance and the `compute_v` bridge hold them, so that the
+    /// instance the child's step circuit satisfied is held to the openings
+    /// its batch proved by construction (see
+    /// [`Adapter`](crate::step::internal::adapter::Adapter)).
     pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
+        self.unified.w.write(dr, &mut ky)?;
+        self.online.write(dr, &mut ky)?;
+        self.unified.bridge_hash_commitment.write(dr, &mut ky)?;
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
+        ky.finish_ky(dr)
+    }
+
+    /// Compute k(y) for the child's `compute_v` circuit: k(y) for
+    /// `(unified, online, 0)`, the unified instance followed by the online
+    /// openings the circuit exported (see
+    /// [`compute_v::Output`](crate::internal::native::circuits::compute_v::Output)).
+    pub fn compute_v_bridge_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
+        let mut ky = Horner::new(y);
+        self.unified.write(dr, &mut ky)?;
+        self.online.write(dr, &mut ky)?;
+        Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }
 
@@ -239,6 +261,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
             },
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
+            online: online::alloc_queries(
+                dr,
+                allocator,
+                proof.as_ref().map(|p| p.online_queries()),
+            )?,
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -249,13 +276,14 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 
     /// Allocate ProofInputs from the parts a proof's instance carries: the
-    /// child headers, the encoded output header, the circuit id as its
-    /// domain point, and the unified instance's values.
+    /// child headers, the encoded output header, the online openings, the
+    /// circuit id as its domain point, and the unified instance's values.
     pub fn alloc_from_parts(
         dr: &mut D,
         left_header: DriverValue<D, &[D::F]>,
         right_header: DriverValue<D, &[D::F]>,
         output_header: DriverValue<D, &[D::F]>,
+        online: DriverValue<D, &online::Queries<D::F>>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
     ) -> Result<Self> {
@@ -282,6 +310,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 right: alloc_header(dr, right_header)?,
             },
             output_header: alloc_header(dr, output_header)?,
+            online: online::alloc_queries(dr, &mut (), online)?,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
         })
@@ -356,9 +385,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + 1 circuit_id + unified
-        // instance wires)
-        2 * (3 * HEADER_SIZE + 1 + unified::NUM_WIRES)
+        // 2 proofs * (3 headers * HEADER_SIZE + the online openings + 1
+        // circuit_id + unified instance wires)
+        2 * (3 * HEADER_SIZE + 2 * online::NUM_ONLINE_QUERIES + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

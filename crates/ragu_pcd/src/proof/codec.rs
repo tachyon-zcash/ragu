@@ -70,6 +70,7 @@ codec! {
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     native_application_rx => wire::DefaultEncoding,
+    native_application_stage_rx => wire::DefaultEncoding,
     native_preamble_rx => wire::DefaultEncoding,
     native_inner_error_rx => wire::DefaultEncoding,
     native_outer_error_rx => wire::DefaultEncoding,
@@ -100,8 +101,15 @@ codec! {
     native_points_f_rx => wire::DefaultEncoding,
     native_points_walk_rx => wire::DefaultEncoding,
 
+    // The step's own online polynomials (CircuitField, HostCurve commitment),
+    // then the step's online openings, one per slot of its left, right and
+    // output headers
+    online_polys => wire::Array<wire::DefaultEncoding>,
+    online_queries => wire::Array<wire::DefaultEncoding>,
+
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => wire::DefaultEncoding,
+    bridge_hash_rx => wire::DefaultEncoding,
     bridge_s_prime_rx => wire::DefaultEncoding,
     bridge_inner_error_rx => wire::DefaultEncoding,
     bridge_outer_error_rx => wire::DefaultEncoding,
@@ -180,6 +188,7 @@ codec! {
 
     // Native commitment caches
     native_application_commitment => CachedPoint,
+    native_application_stage_commitment => CachedPoint,
     native_preamble_commitment => CachedPoint,
     native_inner_error_commitment => CachedPoint,
     native_outer_error_commitment => CachedPoint,
@@ -205,9 +214,11 @@ codec! {
     native_points_ab_commitment => CachedPoint,
     native_points_f_commitment => CachedPoint,
     native_points_walk_commitment => CachedPoint,
+    online_commitments => wire::Array<CachedPoint>,
 
     // Bridge commitments (non-cached)
     bridge_preamble_commitment => wire::Point,
+    bridge_hash_commitment => wire::Point,
     bridge_s_prime_commitment => wire::Point,
     bridge_inner_error_commitment => wire::Point,
     bridge_outer_error_commitment => wire::Point,

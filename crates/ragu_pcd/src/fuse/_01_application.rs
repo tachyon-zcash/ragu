@@ -1,41 +1,166 @@
-//! Evaluate the [`Step`] circuit.
+//! Evaluate the [`Step`] circuit, in its two phases.
 //!
-//! This creates a witness for the step circuit given the two input [`Pcd`]s and
-//! the step witness. This sets the application fields on the [`ProofBuilder`]
-//! and returns the child proofs along with the output data from the step circuit.
+//! Before the preamble bridge is committed, [`begin_application_proof`]
+//! fixes what the bridge carries about the application: the children's
+//! output headers, encoded from their data, the step's circuit id and, by
+//! the step's [`polynomials`](Step::polynomials) and
+//! [`staged`](Step::staged) phase, the step's own online polynomials and
+//! its application stage. After $w$ is squeezed,
+//! [`compute_application_proof`] synthesizes the step circuit with
+//! $\zeta = w$ and the six slots' polynomials (see
+//! [`online`]), and sets the application rx and
+//! the online openings on the [`ProofBuilder`].
+//!
+//! [`begin_application_proof`]: Application::begin_application_proof
+//! [`compute_application_proof`]: Application::compute_application_proof
 
-use ragu_circuits::{CircuitExt, polynomials::Rank};
-use ragu_core::Result;
+use alloc::vec::Vec;
+
+use ragu_circuits::{CircuitExt, polynomials::Rank, staging};
+use ragu_core::{Error, Result};
 use rand::CryptoRng;
+use udon::{curve::Affine as _, field::Field};
 
 use crate::{
-    Application, Header, Pcd, Proof,
+    Application, Header, Proof,
+    internal::{ky, online},
     profile::ProfiledCycle,
     proof::ProofBuilder,
-    step::{Step, internal::adapter::Adapter},
+    step::{HeaderInput, Step, internal::adapter::Adapter, oracles::OnlineWitness},
 };
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    /// The first phase: sets the children's output headers, the circuit id,
+    /// the step's own online polynomials and its application stage on the
+    /// builder, all of which the preamble bridge commits before $w$ is
+    /// squeezed. Returns the staged values, which the second phase binds.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the step's errors, and returns [`Error::InvalidWitness`]
+    /// if the step returns a polynomial with more coefficients than the
+    /// rank holds, or the zero polynomial, whose commitment the walk cannot
+    /// take, or other than [`NUM_STAGED`](Step::NUM_STAGED) staged values.
+    pub(super) fn begin_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: &S,
+        witness: &S::Witness<'source>,
+        left: (&Proof<C, R>, &<S::Left as Header<C::CircuitField>>::Data),
+        right: (&Proof<C, R>, &<S::Right as Header<C::CircuitField>>::Data),
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<Vec<C::CircuitField>> {
+        builder.set_circuit_id(S::INDEX.circuit_index::<C::Profile>(self.num_application_steps)?);
+        builder.set_left_header(ky::output_header::<C, S::Left, HEADER_SIZE>(
+            left.1.clone(),
+        )?);
+        builder.set_right_header(ky::output_header::<C, S::Right, HEADER_SIZE>(
+            right.1.clone(),
+        )?);
+
+        let left_polys = online::coefficients(left.0.online_polys());
+        let right_polys = online::coefficients(right.0.online_polys());
+        let polys = step.polynomials(
+            witness,
+            HeaderInput {
+                data: left.1,
+                polynomials: &left_polys,
+            },
+            HeaderInput {
+                data: right.1,
+                polynomials: &right_polys,
+            },
+        )?;
+        let own: Vec<_> = polys
+            .into_iter()
+            .map(|coeffs| {
+                if coeffs.len() > R::num_coeffs() {
+                    return Err(Error::InvalidWitness(
+                        "an online polynomial has more coefficients than the rank holds".into(),
+                    ));
+                }
+                if coeffs.iter().all(|c| *c == C::CircuitField::ZERO) {
+                    return Err(Error::InvalidWitness(
+                        "an online polynomial must not be zero".into(),
+                    ));
+                }
+                Ok(ragu_circuits::polynomials::sparse::Polynomial::from_coeffs(
+                    coeffs,
+                ))
+            })
+            .collect::<Result<_>>()?;
+        builder.set_online_polys(
+            own.try_into().unwrap_or_else(|_| {
+                unreachable!("the step returned HEADER_POLYNOMIALS polynomials")
+            }),
+        );
+
+        let staged = step.staged(
+            witness,
+            HeaderInput {
+                data: left.1,
+                polynomials: &left_polys,
+            },
+            HeaderInput {
+                data: right.1,
+                polynomials: &right_polys,
+            },
+        )?;
+        if staged.len() != S::NUM_STAGED {
+            return Err(Error::InvalidWitness(
+                "a step must stage exactly NUM_STAGED values".into(),
+            ));
+        }
+        // The application stage, after the SYSTEM gate, blinded: its values
+        // are the step's secrets. Its commitment joins the preamble bridge.
+        builder.set_native_application_stage_rx(staging::stage_rx::<_, R>(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            1,
+            self.stage_size,
+            &staged,
+        )?);
+        Ok(staged)
+    }
+
+    /// The second phase: synthesizes the step circuit with $\zeta$, the
+    /// slots' polynomials and the `staged` values the first phase
+    /// committed, and sets the application rx and the online openings on
+    /// the builder. Returns the output header's data and the
+    /// step's auxiliary output.
     pub(super) fn compute_application_proof<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
+        left: (&Proof<C, R>, <S::Left as Header<C::CircuitField>>::Data),
+        right: (&Proof<C, R>, <S::Right as Header<C::CircuitField>>::Data),
+        zeta: C::CircuitField,
+        staged: Vec<C::CircuitField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
-        Proof<C, R>,
-        Proof<C, R>,
         <S::Output as Header<C::CircuitField>>::Data,
         S::Aux<'source>,
     )> {
-        let (left_proof, left_data) = left.into_parts();
-        let (right_proof, right_data) = right.into_parts();
-        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::new(step)
-            .trace((left_data, right_data, witness))?
+        // The slots' polynomials, cloned for the circuit's witness, whose
+        // lifetime the step's own witness fixes.
+        let online = OnlineWitness {
+            zeta,
+            polys: online::polys(left.0, right.0, builder.online_polys()).map(Clone::clone),
+            staged,
+            bridge_hash: {
+                let (x, y) = builder
+                    .bridge_hash_commitment()
+                    .coordinates()
+                    .ok_or_else(|| {
+                        Error::InvalidWitness("the bridge hash is the point at infinity".into())
+                    })?;
+                [x, y]
+            },
+        };
+        let (trace, aux) = Adapter::<C, S, R, HEADER_SIZE>::with_stage(step, self.stage_size)?
+            .trace((left.1, right.1, witness, online))?
             .into_parts();
         let rx = self.native_registry.assemble(
             &trace,
@@ -43,13 +168,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut *rng,
         )?;
 
-        let ((left_header, right_header), output_data, step_aux) = aux;
+        let ((left_header, right_header), output_data, step_aux, queries) = aux;
+        // The step's circuit must encode the headers the preamble committed,
+        // which were fixed from the inputs' data before the circuit ran.
+        if left_header.into_inner()[..] != *builder.left_header()
+            || right_header.into_inner()[..] != *builder.right_header()
+        {
+            return Err(Error::InvalidWitness(
+                "the step encodes other input headers than its inputs' data".into(),
+            ));
+        }
 
-        builder.set_circuit_id(S::INDEX.circuit_index::<C::Profile>(self.num_application_steps)?);
-        builder.set_left_header(left_header.into_inner());
-        builder.set_right_header(right_header.into_inner());
         builder.set_native_application_rx(rx);
+        builder.set_online_queries(queries);
 
-        Ok((left_proof, right_proof, output_data, step_aux))
+        Ok((output_data, step_aux))
     }
 }

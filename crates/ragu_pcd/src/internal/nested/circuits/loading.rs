@@ -4,10 +4,10 @@
 //! `inner_error`, `ab`, `query`, `f`) and enforces equality for all
 //! [`PointsStage`] positions: every input (matched against
 //! [`ChildWitness`](crate::internal::nested::stages::preamble::ChildWitness)
-//! stash fields and current-step bridge stage fields) plus `initial`
-//! (matched against `BridgeF.native_f`). The accumulation walk mirrors
-//! `compute_p` in `_10_p` so that correctness can be verified by visual
-//! comparison.
+//! stash fields, current-step bridge stage fields and the online
+//! commitments the preamble holds) plus `initial` (matched against
+//! `BridgeF.native_f`). The accumulation walk mirrors `compute_p` in
+//! `_10_p` so that correctness can be verified by visual comparison.
 
 use core::marker::PhantomData;
 
@@ -97,6 +97,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         _witness: DriverValue<D, ()>,
     ) -> Result<WithAux<Bound<'dr, D, ()>, DriverValue<D, ()>>> {
         let dr = dr.skip_stage::<EndoscalarStage>()?;
+        let dr = dr.skip_stage::<stages::bridge_hash::Stage<C>>()?;
         let (points_guard, dr) = dr.add_stage::<PointsStage<C, P>>()?;
         let (preamble_guard, dr) = dr.add_stage::<stages::preamble::Stage<C, R, P>>()?;
         let (s_prime_guard, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, P>>()?;
@@ -143,6 +144,17 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         walker.enforce_equal(dr, &ab.a)?;
         walker.enforce_equal(dr, &ab.b)?;
         walker.enforce_equal(dr, &query.registry_xy)?;
+
+        // The online slots, in slot order: the children's exported
+        // polynomials as the left and right slots, then the step's own.
+        for child in [&preamble.left, &preamble.right] {
+            for point in child.stashed_online.iter() {
+                walker.enforce_equal(dr, point)?;
+            }
+        }
+        for point in preamble.online.iter() {
+            walker.enforce_equal(dr, point)?;
+        }
 
         walker.finish();
 

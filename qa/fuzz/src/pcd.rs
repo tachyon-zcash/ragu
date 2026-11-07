@@ -24,8 +24,8 @@ use ragu_core::{Cycle, Result, pasta::Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
-        NestedCommitment, NestedRx, RxComponent, Side,
+        Binding, BridgeCommitment, Challenge, Corruption, HEADER_POLYNOMIALS, NUM_ONLINE_QUERIES,
+        NativeCommitment, NativeRx, NestedCommitment, NestedRx, RxComponent, Side,
     },
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, WitnessLeaf};
@@ -404,6 +404,30 @@ pub enum FuzzCorruption {
         /// Bias the coefficient toward the low `n` coefficients.
         bound: bool,
     },
+    /// Perturb one coefficient of one of the step's own online polynomials.
+    OnlineCoeff {
+        /// Which polynomial, resolved modulo the header's polynomials.
+        index: u8,
+        /// Which coefficient.
+        coeff: u16,
+        /// What to add.
+        delta: u64,
+    },
+    /// Negate the cached commitment of one of the step's own online
+    /// polynomials.
+    NegateOnlineCommitment {
+        /// Which polynomial, resolved modulo the header's polynomials.
+        index: u8,
+    },
+    /// Perturb the point or the value of one online opening.
+    OnlineQuery {
+        /// Which slot, resolved modulo the slots.
+        slot: u8,
+        /// The value rather than the point.
+        value: bool,
+        /// What to add.
+        delta: u64,
+    },
 }
 
 /// The native polynomials a corruption can address, in a stable order.
@@ -496,6 +520,17 @@ impl FuzzCorruption {
                 9,
                 (index as usize % NestedRx::ALL.len()) << 16 | coeff_index(coeff, bound),
             ),
+            FuzzCorruption::OnlineCoeff { index, coeff, .. } => (
+                15,
+                (index as usize % HEADER_POLYNOMIALS) << 16 | coeff_index(coeff, false),
+            ),
+            FuzzCorruption::NegateOnlineCommitment { index } => {
+                (16, index as usize % HEADER_POLYNOMIALS)
+            }
+            FuzzCorruption::OnlineQuery { slot, value, .. } => (
+                17,
+                (usize::from(value) << 16) | (slot as usize % NUM_ONLINE_QUERIES),
+            ),
         }
     }
 
@@ -570,6 +605,23 @@ impl FuzzCorruption {
                 index: NestedRx::ALL[index as usize % NestedRx::ALL.len()],
                 coeff: coeff_index(coeff, bound),
                 delta: nonzero::<NestedField>(delta),
+            },
+            FuzzCorruption::OnlineCoeff {
+                index,
+                coeff,
+                delta,
+            } => Corruption::OnlineCoeff {
+                index: index as usize % HEADER_POLYNOMIALS,
+                coeff: coeff_index(coeff, false),
+                delta: nonzero(delta),
+            },
+            FuzzCorruption::NegateOnlineCommitment { index } => {
+                Corruption::NegateOnlineCommitment(index as usize % HEADER_POLYNOMIALS)
+            }
+            FuzzCorruption::OnlineQuery { slot, value, delta } => Corruption::OnlineQuery {
+                slot: slot as usize % NUM_ONLINE_QUERIES,
+                value,
+                delta: nonzero(delta),
             },
         }
     }

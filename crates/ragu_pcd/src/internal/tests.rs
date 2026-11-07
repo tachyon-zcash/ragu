@@ -47,7 +47,12 @@ where
 // When changing HEADER_SIZE, update the constraint counts by running:
 //   cargo test -p ragu_pcd --release print_internal_circuit -- --nocapture
 // Then copy-paste the output into the check_constraints! calls in the test below.
-pub const HEADER_SIZE: usize = 103;
+//
+// The largest header the production rank fits: the challenge binders load
+// the preamble, query and eval stages, and with the online openings and the
+// application stage and the children's bridge hashes in all three the last
+// binder fills the gate budget here.
+pub const HEADER_SIZE: usize = 96;
 
 // Number of trivial application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
@@ -225,19 +230,19 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1818, lin = 3085);
-    check_constraints!(Hashes2Circuit,              mul = 1875, lin = 2984);
-    check_constraints!(CollapseCircuit,             mul = 1364, lin = 1893);
-    check_constraints!(ComputeVCircuit,             mul = 1853, lin = 2749);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2017, lin = 3054);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2022, lin = 3064);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2022, lin = 3064);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2033, lin = 3086);
-    check_constraints!(BindBetaCircuit,             mul = 1891, lin = 3114);
-    check_constraints!(BindEndoscalarCircuit,       mul = 903,  lin = 1697);
+    check_constraints!(Hashes1Circuit,              mul = 1793, lin = 3030);
+    check_constraints!(Hashes2Circuit,              mul = 1874, lin = 2991);
+    check_constraints!(CollapseCircuit,             mul = 1455, lin = 2086);
+    check_constraints!(ComputeVCircuit,             mul = 1948, lin = 2930);
+    check_constraints!(BindChallengesCircuit(0),    mul = 2032, lin = 3061);
+    check_constraints!(BindChallengesCircuit(1),    mul = 2037, lin = 3071);
+    check_constraints!(BindChallengesCircuit(2),    mul = 2037, lin = 3071);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2048, lin = 3093);
+    check_constraints!(BindBetaCircuit,             mul = 1889, lin = 3125);
+    check_constraints!(BindEndoscalarCircuit,       mul = 940,  lin = 1760);
     // Every native endoscaling step walks four points and lays out the same.
     for step in 0..native::NUM_ENDOSCALING_STEPS as u32 {
-        check_constraints!(EndoscalingStep(step),   mul = 1985, lin = 3502);
+        check_constraints!(EndoscalingStep(step),   mul = 1995, lin = 3502);
     }
 }
 
@@ -251,17 +256,17 @@ fn test_internal_stage_parameters() {
         }};
     }
 
-    check_stage!(PointsBinding, skip = 1, num = 26);
-    check_stage!(Preamble, skip = 27, num = 347);
-    check_stage!(OuterError, skip = 374, num = 19);
-    check_stage!(InnerError, skip = 393, num = 42);
-    check_stage!(Query, skip = 374, num = 75);
-    check_stage!(Eval, skip = 449, num = 55);
-    check_stage!(PointsChildren, skip = 27, num = 60);
-    check_stage!(PointsRegistryWx, skip = 87, num = 2);
-    check_stage!(PointsAb, skip = 89, num = 3);
-    check_stage!(PointsF, skip = 92, num = 2);
-    check_stage!(PointsWalk, skip = 94, num = 142);
+    check_stage!(PointsBinding, skip = 1, num = 28);
+    check_stage!(Preamble, skip = 29, num = 340);
+    check_stage!(OuterError, skip = 369, num = 20);
+    check_stage!(InnerError, skip = 389, num = 42);
+    check_stage!(Query, skip = 369, num = 86);
+    check_stage!(Eval, skip = 455, num = 61);
+    check_stage!(PointsChildren, skip = 29, num = 66);
+    check_stage!(PointsRegistryWx, skip = 95, num = 2);
+    check_stage!(PointsAb, skip = 97, num = 3);
+    check_stage!(PointsF, skip = 100, num = 2);
+    check_stage!(PointsWalk, skip = 102, num = 144);
 }
 
 /// Every native internal circuit's claim in [`native::claims`] composes its
@@ -305,7 +310,7 @@ fn claimed_stages_lie_on_each_circuits_chain() {
     impl<P: crate::profile::Profile> Processor<P, RxComponent, ()> for Record {
         fn raw_claim(&mut self, _: RxComponent, _: RxComponent) {}
 
-        fn circuit_claim(&mut self, _: (), _: RxComponent) {}
+        fn circuit_claim(&mut self, _: (), _: impl Iterator<Item = RxComponent>) {}
 
         fn internal_circuit_claim(
             &mut self,
@@ -532,6 +537,8 @@ fn print_internal_circuit_constraint_counts() {
                 | InternalCircuitIndex::EvalFinalStaged
                 | InternalCircuitIndex::PointsWalkFinalStaged
                 | InternalCircuitIndex::PreambleFinalStaged
+                | InternalCircuitIndex::ApplicationStage
+                | InternalCircuitIndex::ApplicationFinalStaged
         )
     });
 
@@ -700,11 +707,11 @@ fn test_nested_circuit_constraint_counts() {
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2000, 3501)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2016, 3501)));
     }
-    expected.push((nested::InternalCircuitIndex::Collapse, (1493, 2338)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1397, 1737)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (527,  211)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1598, 2496)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1504, 1876)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (566, 235)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -726,16 +733,17 @@ fn test_nested_stage_parameters() {
     }
 
     check_stage!(endoscalar::EndoscalarStage, skip = 1, num = 119);
-    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 120, num = 131);
-    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 251, num = 106);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 357, num = 3);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 360, num = 37);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 397, num = 11);
-    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 408, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 411, num = 67);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 478, num = 2);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 480, num = 47);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 527, num = 10);
+    check_stage!(stages::bridge_hash::Stage<EqAffine>, skip = 120, num = 1);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 121, num = 146);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 267, num = 119);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 386, num = 3);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 389, num = 37);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 426, num = 11);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 437, num = 3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 440, num = 73);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 513, num = 2);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 515, num = 51);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 566, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -767,6 +775,7 @@ fn print_nested_circuit_constraint_counts() {
     }
     println!("\n// Copy-paste into test_nested_stage_parameters:");
     print_stage!("endoscalar", endoscalar::EndoscalarStage);
+    print_stage!("bridge_hash", stages::bridge_hash::Stage<EqAffine>);
     print_stage!("points", nested::PointsStage<EqAffine, crate::profile::Standard>);
     print_stage!("preamble", stages::preamble::Stage<EqAffine, R, crate::profile::Standard>);
     print_stage!("s_prime", stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>);
@@ -1106,7 +1115,12 @@ fn test_extension_claims_follow_the_declaration() {
     impl<P: Profile> Processor<P, (usize, RxComponent), CircuitIndex> for Recorder {
         fn raw_claim(&mut self, _: (usize, RxComponent), _: (usize, RxComponent)) {}
 
-        fn circuit_claim(&mut self, _: CircuitIndex, _: (usize, RxComponent)) {}
+        fn circuit_claim(
+            &mut self,
+            _: CircuitIndex,
+            _: impl Iterator<Item = (usize, RxComponent)>,
+        ) {
+        }
 
         fn internal_circuit_claim(
             &mut self,
@@ -1192,6 +1206,10 @@ fn test_extension_claims_follow_the_declaration() {
 
         fn unified_bridge_ky(&self) -> impl Iterator<Item = u32> {
             [30, 31].into_iter()
+        }
+
+        fn compute_v_bridge_ky(&self) -> impl Iterator<Item = u32> {
+            [50, 51].into_iter()
         }
 
         fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
@@ -1375,8 +1393,8 @@ fn test_extension_hooks_register_without_a_prover() {
         .into_registry();
     assert_eq!(registry.num_internal_circuits(), 3);
 
-    // The 143-bit challenge binders leave the last binder fifteen gates under
-    // the bound at the standard header, and the fixture's extension stage
+    // The 143-bit challenge binders fill the last binder up to
+    // the bound at the census header, and the fixture's extension stage
     // costs it thirteen more; a smaller header makes room to reach the
     // missing-prover check this test is about.
     const FITTING_HEADER_SIZE: usize = HEADER_SIZE - 8;
@@ -1413,8 +1431,8 @@ fn test_fold_groups_follow_the_profile() {
         profile::{Standard, testing::Wider},
     };
 
-    assert_eq!(native::num_claims::<Standard>(), 86);
-    assert_eq!(nested::num_claims::<Standard>(), 72);
+    assert_eq!(native::num_claims::<Standard>(), 92);
+    assert_eq!(nested::num_claims::<Standard>(), 79);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS

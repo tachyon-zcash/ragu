@@ -57,6 +57,18 @@
 //!   without its $\beta$ term, a point of the unified instance — is caught
 //!   as any instance edit is: the last `bind_challenges` circuit recomputes
 //!   it from the transcript challenges.
+//! * **The online openings** — the point and value of each of the step's
+//!   six slots — are instance edits: they enter the application circuit's
+//!   $k(y)$ and the `compute_v` bridge $k(y)$, which the verifier computes
+//!   from the proof's stored openings. **The step's own online
+//!   commitments** are bound as any other cache: both verifiers read them
+//!   into the nested instance's exported points. **The step's own online
+//!   polynomials** are prover data for the parent that opens them, and the
+//!   compressed statement carries only their commitments; the decider holds
+//!   them to their commitments, and compression does the same before
+//!   proving its statement, as it holds the stored challenges to the
+//!   transcript. A parent fused over the edited proof opens the wrong
+//!   polynomial and does not verify.
 //!
 //! `bridge_alpha` has no dedicated corruption variant yet, although the
 //! verifier uses it to reconstruct and check the cached `ab` bridge
@@ -91,6 +103,7 @@ use crate::{
     Application, Proof,
     profile::{Profile, ProfiledCycle},
 };
+pub use crate::{header::HEADER_POLYNOMIALS, internal::online::NUM_ONLINE_QUERIES};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the
@@ -137,6 +150,8 @@ pub enum RxComponent {
 pub enum NativeRx {
     /// The application circuit's rx polynomial.
     Application,
+    /// The application stage's rx polynomial.
+    ApplicationStage,
     /// The `hashes_1` circuit's rx polynomial.
     Hashes1,
     /// The `hashes_2` circuit's rx polynomial.
@@ -225,6 +240,7 @@ impl NativeRx {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),
             I::Application => Self::Application,
+            I::ApplicationStage => Self::ApplicationStage,
             I::Hashes1 => Self::Hashes1,
             I::Hashes2 => Self::Hashes2,
             I::Collapse => Self::Collapse,
@@ -267,6 +283,8 @@ pub enum NestedRx {
     PointsStage,
     /// Bridge `preamble` rx polynomial.
     BridgePreamble,
+    /// Bridge-hash stage rx polynomial.
+    BridgeHash,
     /// Bridge `s_prime` rx polynomial.
     BridgeSPrime,
     /// Bridge `inner_error` rx polynomial.
@@ -479,6 +497,8 @@ impl NestedCommitment {
 pub enum BridgeCommitment {
     /// The bridge `preamble` commitment.
     Preamble,
+    /// The bridge-hash commitment, $H^{bridge}(O_1)$.
+    Hash,
     /// The bridge `s'` commitment.
     SPrime,
     /// The bridge `inner_error` commitment.
@@ -497,8 +517,9 @@ pub enum BridgeCommitment {
 
 impl BridgeCommitment {
     /// All variants, in the order the unified instance writes them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Preamble,
+        Self::Hash,
         Self::SPrime,
         Self::InnerError,
         Self::OuterError,
@@ -611,6 +632,30 @@ pub enum Corruption<C: Cycle> {
         /// What to add.
         delta: C::ScalarField,
     },
+    /// Add `delta` to one coefficient of one of the step's own online
+    /// polynomials, leaving its cached commitment stale.
+    OnlineCoeff {
+        /// Which of the step's [`HEADER_POLYNOMIALS`] polynomials; out of
+        /// range is a no-op.
+        index: usize,
+        /// The coefficient's index; out of range is a no-op.
+        coeff: usize,
+        /// What to add.
+        delta: C::CircuitField,
+    },
+    /// Negate the cached commitment of one of the step's own online
+    /// polynomials, which the nested instance exports.
+    NegateOnlineCommitment(usize),
+    /// Add `delta` to the point or the value of one online opening, moving
+    /// the application circuit's and the `compute_v` bridge's $k(y)$.
+    OnlineQuery {
+        /// Which slot; out of range is a no-op.
+        slot: usize,
+        /// The value rather than the point.
+        value: bool,
+        /// What to add.
+        delta: C::CircuitField,
+    },
 }
 
 impl<C: Cycle> core::fmt::Debug for Corruption<C> {
@@ -661,6 +706,15 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
             }
             Corruption::NestedPCoeff { coeff, .. } => {
                 write!(f, "NestedPCoeff {{ coeff: {coeff} }}")
+            }
+            Corruption::OnlineCoeff { index, coeff, .. } => {
+                write!(f, "OnlineCoeff {{ index: {index}, coeff: {coeff} }}")
+            }
+            Corruption::NegateOnlineCommitment(index) => {
+                write!(f, "NegateOnlineCommitment({index})")
+            }
+            Corruption::OnlineQuery { slot, value, .. } => {
+                write!(f, "OnlineQuery {{ slot: {slot}, value: {value} }}")
             }
         }
     }
@@ -889,6 +943,48 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.nested_p_poly_mut().add_assign(&delta);
                 Binding::MustReject
             }
+
+            Corruption::OnlineCoeff {
+                index,
+                coeff,
+                delta,
+            } => {
+                let Some(delta) = monomial::<_, R>(coeff, delta) else {
+                    return Binding::Unbound;
+                };
+                let Some(poly) = self.online_poly_mut(index) else {
+                    return Binding::Unbound;
+                };
+                poly.add_assign(&delta);
+                Binding::MustReject
+            }
+
+            Corruption::NegateOnlineCommitment(index) => {
+                let Some(point) = self.online_commitment_cache_mut(index) else {
+                    return Binding::Unbound;
+                };
+                let negated = -*point;
+                if negated == *point {
+                    return Binding::Unbound;
+                }
+                *point = negated;
+                Binding::MustReject
+            }
+
+            Corruption::OnlineQuery { slot, value, delta } => {
+                let Some(query) = self.online_query_mut(slot) else {
+                    return Binding::Unbound;
+                };
+                if delta == C::CircuitField::ZERO {
+                    return Binding::Unbound;
+                }
+                if value {
+                    query.y += delta;
+                } else {
+                    query.x += delta;
+                }
+                Binding::MustReject
+            }
         }
     }
 
@@ -929,6 +1025,7 @@ impl NestedRx {
         matches!(
             self,
             Self::BridgePreamble
+                | Self::BridgeHash
                 | Self::BridgeSPrime
                 | Self::BridgeInnerError
                 | Self::BridgeOuterError
@@ -980,6 +1077,7 @@ impl NestedRx {
             I::EndoscalarStage => Self::EndoscalarStage,
             I::PointsStage => Self::PointsStage,
             I::BridgePreamble => Self::BridgePreamble,
+            I::BridgeHash => Self::BridgeHash,
             I::BridgeSPrime => Self::BridgeSPrime,
             I::BridgeInnerError => Self::BridgeInnerError,
             I::BridgeOuterError => Self::BridgeOuterError,

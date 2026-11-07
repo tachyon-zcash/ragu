@@ -11,7 +11,9 @@
 //!   `eval`, $a$, $b$, `registry_xy` and $P$, then the five native points
 //!   stages holding the walk's inputs, the native stages besides those whose
 //!   contents must be fixed before a challenge is squeezed (see
-//!   [`native::stages::points`](crate::internal::native::stages::points)).
+//!   [`native::stages::points`](crate::internal::native::stages::points)),
+//!   and the step's own online polynomials', which the parent opens as its
+//!   left or right slots (see [`online`](crate::internal::online)).
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage. Its
 //! [`collapse`](super::circuits::collapse) circuit computes the expected
@@ -43,10 +45,21 @@ use ragu_primitives::{
 };
 use udon::curve::EndomorphismAffine as Affine;
 
-use crate::internal::native::unified::Slot;
+use crate::internal::{native::unified::Slot, online::HEADER_POLYNOMIALS};
 
-/// The host-curve commitments the instance exports, in [`Write`] order.
-pub const NUM_EXPORTED: usize = 14;
+/// The host-curve commitments the instance exports, in [`Write`] order:
+/// the fourteen stage commitments, the step's own online commitments and
+/// its application stage's.
+pub const NUM_EXPORTED: usize = 15 + HEADER_POLYNOMIALS;
+
+// The exported lists (the proof's, the builder's, the compressed instance's,
+// nested collapse's held commitments and a child's stashed copies) spell
+// out the online commitments slot by slot, as `[0]` and `[1]`. A change to
+// the slot count must rewrite them, in the walk's order.
+const _: () = assert!(
+    HEADER_POLYNOMIALS == 2,
+    "the exported commitment lists spell out two online slots"
+);
 
 /// Length type for the exported commitments.
 pub type ExportedLen = ConstLen<NUM_EXPORTED>;
