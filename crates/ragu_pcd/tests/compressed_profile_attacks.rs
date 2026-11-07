@@ -84,6 +84,21 @@ fn check_edits<P: Profile, Rk: Rank>(
             p.instance.nested[i] = -p.instance.nested[i]
         });
     }
+    // A verifier reads the online commitments through `commitments()` to
+    // check what the proof attests, so each must be bound.
+    for i in 0..proof.instance.online_commitments.len() {
+        edit(&alloc::format!("online commitment {i}"), &|p| {
+            p.instance.online_commitments[i] = -p.instance.online_commitments[i]
+        });
+    }
+    for i in 0..proof.instance.online.len() {
+        edit(&alloc::format!("online query {i} point"), &|p| {
+            p.instance.online[i].x += Fp::ONE
+        });
+        edit(&alloc::format!("online query {i} value"), &|p| {
+            p.instance.online[i].y += Fp::ONE
+        });
+    }
     macro_rules! point {
         ($field:ident) => {
             edit(stringify!($field), &|p| {
