@@ -2,7 +2,9 @@
 //! two-layer revdot fold of the children's nested claims.
 //!
 //! It also pins the nested unified instance's lifted x, y and u to the
-//! challenge stage and its exported commitments to their stage copies, and
+//! challenge stage and its exported commitments to their stage copies,
+//! holds the step's own last online commitment $O_1$ to the challenge
+//! stage's [limbs](crate::internal::limbs), and
 //! re-emits the stage contracts the endoscaling walk rests on, which the
 //! loading circuit, a bonding claim, cannot: every point of the points stage
 //! lies on the curve, and the endoscalar stage's
@@ -63,7 +65,7 @@ use ragu_circuits::{
     staging::{MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
-    Result,
+    Coeff, Result,
     drivers::{Driver, DriverValue},
     gadgets::Bound,
     maybe::Maybe,
@@ -71,10 +73,11 @@ use ragu_core::{
 use ragu_primitives::{
     Element, GadgetExt as _, allocator::Standard, consistent::Consistent, vec::FixedVec,
 };
-use udon::curve::EndomorphismAffine as Affine;
+use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::common;
 use crate::{
+    header::HEADER_POLYNOMIALS,
     internal::{
         fold_revdot, ky,
         nested::{
@@ -174,6 +177,19 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let exported = unified.exported.receive(dr, allocator)?;
         for (instance, stage) in exported.iter().zip(held) {
             instance.enforce_equal(dr, stage)?;
+        }
+
+        // The step's own O1 is its limbs, which the challenge stage holds
+        // for the step's bridge hash: each coordinate is lo + 2^128 hi.
+        let shift = Coeff::Arbitrary(C::Base::from_u128(1 << 127).double());
+        let o1 = &stages.preamble.online[HEADER_POLYNOMIALS - 1];
+        let limbs = &stages.challenges.limbs;
+        for (coordinate, lo, hi) in [(o1.x(), 0, 1), (o1.y(), 2, 3)] {
+            limbs[hi]
+                .lift
+                .scale(dr, shift)
+                .add(dr, &limbs[lo].lift)
+                .enforce_equal(dr, coordinate)?;
         }
 
         let lifts = &stages.challenges.pairs;

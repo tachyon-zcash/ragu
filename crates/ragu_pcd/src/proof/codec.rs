@@ -145,6 +145,10 @@ codec! {
     // carried by the native unified instance so that a parent can complete
     // it and hold it against the stage it walks.
     nested_challenges_partial => wire::Point,
+    // The bridge hash H(O1): the challenge stage's limb terms, which the
+    // last two `bind_challenges` circuits recompute and a parent adds into
+    // the stage it walks.
+    bridge_hash => wire::Point,
 
     // Nested instance circuits (ScalarField, NestedCurve commitments): the
     // collapse circuit pins the nested unified instance to the stages and

@@ -298,6 +298,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     // Nested challenge stage, and its commitment without the beta term
     nested_challenges_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
     nested_challenges_partial: Option<C::NestedCurve>,
+    bridge_hash: Option<C::NestedCurve>,
 
     // Nested instance circuits
     nested_collapse_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
@@ -436,6 +437,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_p_poly: None,
             nested_challenges_rx: None,
             nested_challenges_partial: None,
+            bridge_hash: None,
             nested_collapse_rx: None,
             nested_compute_v_rx: None,
             nested_endoscaling_step_commitments: OnceCell::new(),
@@ -1023,6 +1025,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         nested_challenges_partial,
         C::NestedCurve
     );
+    setter!(set_bridge_hash, bridge_hash, C::NestedCurve);
+    getter!(bridge_hash, bridge_hash, C::NestedCurve);
     setter!(
         set_nested_collapse_rx,
         nested_collapse_rx,
@@ -1224,6 +1228,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_p_poly: take!(nested_p_poly),
             nested_challenges_rx: take!(nested_challenges_rx),
             nested_challenges_partial: take!(nested_challenges_partial),
+            bridge_hash: take!(bridge_hash),
             nested_collapse_rx: take!(nested_collapse_rx),
             nested_compute_v_rx: take!(nested_compute_v_rx),
 

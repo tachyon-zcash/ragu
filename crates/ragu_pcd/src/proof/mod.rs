@@ -285,6 +285,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     // carried by the native unified instance so that a parent can complete
     // it and hold it against the stage it walks.
     pub(crate) nested_challenges_partial: C::NestedCurve,
+    // The challenge stage's terms for the limbs of this step's own last
+    // online commitment: the bridge hash H(O1), which the last two
+    // `bind_challenges` circuits recompute and the native unified instance
+    // carries, for the application circuit and for the parent to add into
+    // the stage it walks.
+    pub(crate) bridge_hash: C::NestedCurve,
 
     // Nested instance circuits (ScalarField, NestedCurve commitments): the
     // collapse circuit pins the nested unified instance to the stages and
@@ -575,6 +581,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// the native unified instance carries it.
     pub(crate) fn nested_challenges_partial(&self) -> C::NestedCurve {
         self.nested_challenges_partial
+    }
+
+    /// The bridge hash $H(O_1)$, as the native unified instance carries it
+    /// (see [`limbs`](crate::internal::limbs)).
+    pub(crate) fn bridge_hash(&self) -> C::NestedCurve {
+        self.bridge_hash
     }
 
     pub(crate) fn nested_collapse_commitment(&self) -> C::NestedCurve {
@@ -1169,11 +1181,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .expect("one is in the endoscalar challenge range");
         let (challenge_lifts, beta_lift) = lifts.split_at(nested::stages::challenges::NUM);
         // A dummy proof has synthetic traces and a fixed +1 sign. Use the
-        // same witness for its binding partials and challenge stage.
+        // same witness for its binding partials and challenge stage. Its
+        // online slots are all padding, so its O1 is padding's commitment.
+        let padding_commitment =
+            B::sparse_commit_to_affine(&online::padding::<_, R>(), C::host_generators(self.params));
         let nested_challenges = nested::stages::challenges::Witness {
             lifts: FixedVec::new(challenge_lifts.to_vec()).expect("NUM challenge lifts"),
             base_case_sign: C::ScalarField::ONE,
             beta: beta_lift[0],
+            limbs: crate::internal::limbs::limbs(padding_commitment)
+                .expect("padding's commitment has limbs"),
         };
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
@@ -1207,10 +1224,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_challenges,
         );
         builder.set_nested_challenges_partial(binding.binding);
+        builder.set_bridge_hash(binding.bridge_hash);
         builder.set_native_eval_rx(
             native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
                 C::CircuitField::ONE,
-                &native::stages::eval::Witness::<C>::trivial(binding),
+                &native::stages::eval::Witness::<C>::trivial(
+                    binding,
+                    crate::internal::limbs::limbs(padding_commitment)
+                        .expect("padding's commitment has limbs"),
+                ),
             )
             .expect("trivial eval rx"),
         );

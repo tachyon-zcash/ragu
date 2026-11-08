@@ -139,6 +139,7 @@ codec!([C: ProfiledCycle] Instance<C> {
     nested_registry_xy => Point,
     nested_p => Point,
     nested_challenges_partial => Point,
+    bridge_hash => Point,
     bridge_alpha => Scalar,
     c => Scalar,
     v => Scalar,

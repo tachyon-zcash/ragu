@@ -68,6 +68,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             pre_beta: builder.pre_beta(),
             v: builder.v(),
             nested_challenges_partial: builder.nested_challenges_partial(),
+            bridge_hash: builder.bridge_hash(),
             nested_p_commitment: builder.nested_p_commitment(),
             nested_a_commitment: builder.nested_a_commitment(),
             nested_b_commitment: builder.nested_b_commitment(),

@@ -11,12 +11,15 @@
 //! $\beta$'s from the transcript challenges and export that partial sum as
 //! the [`nested_challenges_partial`] slot of the unified instance;
 //! `pre_beta` is squeezed after the native `eval` stage is committed, so
-//! its term cannot be bound by the same step. The parent completes the
-//! binding: for each child it takes the exported partial and `pre_beta`
-//! from the child's unified instance in the [`preamble`], decomposes
-//! `pre_beta` into bits ([`EndoscalarChallenge`]), endoscales the beta
-//! lift's generator by them ([`Endoscalar::group_scale`]), adds the term
-//! to the partial, and enforces the result equal to the child's
+//! its term cannot be bound by the same step. The stage also holds the
+//! limbs of the child's own last online commitment, whose terms the child's
+//! limb binders export as its [`bridge_hash`]. The parent completes the
+//! binding: for each child it takes the exported partial, the bridge hash
+//! and `pre_beta` from the child's unified instance in the [`preamble`],
+//! decomposes `pre_beta` into bits ([`EndoscalarChallenge`]), endoscales the
+//! beta lift's generator by them ([`Endoscalar::group_scale`]), adds the
+//! bridge hash and that term to the partial, and enforces the result equal
+//! to the child's
 //! challenge-stage commitment as the parent walks it, which the
 //! [`points::BindingStage`] holds at the root of the native stage tree.
 //! This checks the walked commitment against the child's exported partial
@@ -53,6 +56,7 @@
 //!
 //! [`challenges`]: crate::internal::nested::stages::challenges
 //! [`nested_challenges_partial`]: unified::Output::nested_challenges_partial
+//! [`bridge_hash`]: unified::Output::bridge_hash
 //! [`nested_p_commitment`]: unified::Output::nested_p_commitment
 //! [`points::BindingStage`]: super::super::stages::points::BindingStage
 //! [`preamble`]: super::super::stages::preamble
@@ -192,10 +196,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             let bits = Endoscalar::extract(pre_beta);
             let generator = Point::constant(dr, generator)?;
             let beta_term = bits.group_scale(dr, &generator)?;
+            // The stage is the challenge terms, the limb terms (the child's
+            // bridge hash) and beta's.
             let expected = NonzeroBank::scope(dr, |dr, bank| {
                 child
                     .unified
                     .nested_challenges_partial
+                    .add_incomplete(dr, &child.unified.bridge_hash, bank)?
                     .add_incomplete(dr, &beta_term, bank)
             })?;
             bound.challenges.enforce_equal(dr, &expected)?;

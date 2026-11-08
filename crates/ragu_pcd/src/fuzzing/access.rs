@@ -135,6 +135,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &mut self.nested_challenges_partial
     }
 
+    pub(crate) fn bridge_hash_mut(&mut self) -> &mut C::NestedCurve {
+        &mut self.bridge_hash
+    }
+
     /// The step's `index`-th own online polynomial, mutably, or `None` past
     /// the header's polynomials.
     pub(crate) fn online_poly_mut(

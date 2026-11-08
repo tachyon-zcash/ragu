@@ -939,6 +939,7 @@ mod challenge_stage {
                 !crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
                     &forged,
                     &forged.challenges().lifts::<C>()?,
+                    <C as ragu_core::Cycle>::nested_generators(app.params),
                 )?,
                 "{case}: the edit must break the root's challenge-stage equality"
             );

@@ -611,6 +611,7 @@ fn check_compressed_proofs_match(
         nested_registry_xy: _,
         nested_p: _,
         nested_challenges_partial: _,
+        bridge_hash: _,
         bridge_alpha: _,
         c: _,
         v: _,
@@ -672,6 +673,7 @@ fn check_compressed_proofs_match(
         instance.nested_registry_xy,
         instance.nested_p,
         instance.nested_challenges_partial,
+        instance.bridge_hash,
         instance.bridge_alpha,
         instance.c,
         instance.v,
@@ -1365,6 +1367,7 @@ mod proof_equivalence {
                 nested_p_poly: _,
                 nested_challenges_rx: _,
                 nested_challenges_partial: _,
+                bridge_hash: _,
                 nested_collapse_rx: _,
                 nested_compute_v_rx: _,
                 nested_endoscaling_step_commitments: _,
@@ -1572,6 +1575,7 @@ mod proof_equivalence {
                 || self.nested_p_commitment != other.nested_p_commitment
                 || self.nested_challenges_commitment != other.nested_challenges_commitment
                 || self.nested_challenges_partial != other.nested_challenges_partial
+                || self.bridge_hash != other.bridge_hash
                 || self.nested_collapse_commitment != other.nested_collapse_commitment
                 || self.nested_compute_v_commitment != other.nested_compute_v_commitment
             {

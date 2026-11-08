@@ -12,9 +12,10 @@
 //! ([`Endoscalar::group_scale`]), which yields exactly the lifted scalar
 //! times the generator. The sum so far is checked against the running
 //! partial the [`eval`] stage witnessed; circuit $k$ continues from partial
-//! $k - 1$. The last circuit also adds the base-case sign's term, reading the
-//! base case off the [`preamble`] as the native circuits do, and enforces
-//! the sum equal to the instance's [`nested_challenges_partial`] slot: the
+//! $k - 1$. The first limb binder (below) adds the base-case sign's term to
+//! the last partial, reading the base case off the [`preamble`] as the
+//! native circuits do, and enforces the sum equal to the instance's
+//! [`nested_challenges_partial`] slot: the
 //! challenge stage's commitment without its $\beta$ term, which the nested
 //! side reads the base case from and which a parent's
 //! [`bind_beta`](super::bind_beta) completes with $\beta$'s term and holds
@@ -26,17 +27,38 @@
 //! consume, through its [`bind_beta`](super::bind_beta), its endoscaling walk
 //! and its nested batch (see [`challenges`]).
 //!
+//! ## Limb binding
+//!
+//! The last [`NUM_LIMB_BINDERS`] circuits recompute the stage's terms for
+//! the [limbs](crate::internal::limbs) of the step's own last online
+//! commitment $O_1$, one coordinate each: the step's bridge hash
+//! $H(O_1) = \sum_{i < 4} \ell_i \cdot G_{\mathrm{idx}(i)}$. Each reads its
+//! coordinate's two limbs off the [`eval`] stage, decomposes the low limb into 128 bits and the
+//! high limb into the rest of the coordinate field's capacity, which makes
+//! the split unique, and adds each limb's multiple of its generator with
+//! [`Point::add_fixed_base_mul`], starting from the independent blinding
+//! generator $H$ so that no addition meets an exceptional case. The first
+//! enforces the $x$ limbs' terms equal to the [`eval`] stage's limb partial;
+//! the second adds the $y$ limbs' terms to it and enforces the sum equal to
+//! the instance's [`bridge_hash`] slot, which the application circuit
+//! reads and a parent's [`bind_beta`](super::bind_beta) adds into the stage
+//! as walked. That walk ties the native limbs to the stage's, which the
+//! nested `collapse` circuit holds to $O_1$.
+//!
 //! ## Staging
 //!
-//! Chained through [`eval`] for its partials. The last binding circuit reads
-//! [`preamble`] for base-case detection; the binding stage at the root and
-//! [`query`] are reserved but unused.
+//! Chained through [`eval`] for its partials. The first limb-binding
+//! circuit reads [`preamble`] for base-case detection; the binding stage at
+//! the root and [`query`] are reserved but unused.
 //!
 //! ## Instance
 //!
-//! Uses [`unified::Output`] via [`unified::InternalOutputKind`]. The circuits
-//! read challenges; the last covers [`nested_challenges_partial`].
+//! Uses [`unified::Output`] via [`unified::InternalOutputKind`]. The
+//! challenge-binding circuits read challenges; the first limb-binding
+//! circuit covers [`nested_challenges_partial`] and the last
+//! [`bridge_hash`].
 //!
+//! [`bridge_hash`]: unified::Output::bridge_hash
 //! [`nested_challenges_partial`]: unified::Output::nested_challenges_partial
 //!
 //! [`challenges`]: crate::internal::nested::stages::challenges
@@ -60,6 +82,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point,
     allocator::{Allocator, Standard},
+    decompose_bits,
 };
 
 use super::super::{
@@ -69,10 +92,21 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::{internal::nested, profile::ProfiledCycle};
+use crate::{
+    internal::{limbs, nested},
+    profile::ProfiledCycle,
+};
 
-/// The number of binding circuits, with two challenges per circuit.
-pub const NUM_BINDERS: usize = nested::stages::challenges::NUM / 2;
+/// The number of challenge-binding circuits, with two challenges per
+/// circuit.
+pub const NUM_CHALLENGE_BINDERS: usize = nested::stages::challenges::NUM / 2;
+
+/// The number of limb-binding circuits, one per coordinate of $O_1$.
+pub const NUM_LIMB_BINDERS: usize = limbs::NUM / 2;
+
+/// The number of binding circuits: the challenge binders, then the limb
+/// binders.
+pub const NUM_BINDERS: usize = NUM_CHALLENGE_BINDERS + NUM_LIMB_BINDERS;
 
 const _: () = assert!(nested::stages::challenges::NUM.is_multiple_of(2));
 
@@ -135,12 +169,13 @@ pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing the challenges and accumulated
     /// coverage.
     pub unified: unified::Instance<C>,
-    /// Witness for the preamble stage, used by the last binding circuit to
+    /// Witness for the preamble stage, used by the first limb binder to
     /// derive the base-case condition from the child headers.
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
     /// Witness for the query stage (reserved, unused).
     pub query_witness: &'a native_query::Witness<C>,
-    /// Witness for the eval stage (provides the binding partials).
+    /// Witness for the eval stage (provides the binding partials, and the
+    /// limbs the limb binders decompose).
     pub eval_witness: &'a native_eval::Witness<C>,
 }
 
@@ -185,8 +220,76 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
 
         let allocator = &mut Standard::new();
+        // A limb binder's coordinate, and its two limbs from the eval stage:
+        // the low one in 128 bits, the high one in the rest of the capacity,
+        // so the split is unique.
+        let coordinate = K.checked_sub(NUM_CHALLENGE_BINDERS);
+        let limb_bits = coordinate
+            .map(|coordinate| {
+                Ok::<_, ragu_core::Error>((
+                    decompose_bits(dr, allocator, &eval.limbs[2 * coordinate], limbs::LO_BITS)?,
+                    decompose_bits(
+                        dr,
+                        allocator,
+                        &eval.limbs[2 * coordinate + 1],
+                        limbs::hi_bits::<<C::HostCurve as udon::curve::Affine>::Base>(),
+                    )?,
+                ))
+            })
+            .transpose()?;
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
         let generators = C::nested_generators(self.params);
+
+        if let (Some(coordinate), Some((lo_bits, hi_bits))) = (coordinate, limb_bits) {
+            let (lo, hi) = (2 * coordinate, 2 * coordinate + 1);
+            let g = |i| generators.g()[limbs::limb_generator_index::<C, R>(i)];
+            if coordinate == 0 {
+                // The challenge binders' last sum, closed with the base-case
+                // sign's term, plus or minus the generator of the stage's
+                // sign value, and pinned to the instance. It is here rather
+                // than in the last challenge binder, which the preamble,
+                // query and eval stages leave no room for.
+                let is_base_case = preamble.is_base_case(dr, allocator)?;
+                let generator = generators.g()
+                    [native_eval::generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)];
+                let generator = Point::constant(dr, generator)?;
+                let negate = is_base_case.not(dr);
+                let term = generator.conditional_negate(dr, &negate)?;
+                let closed = NonzeroBank::scope(dr, |dr, bank| {
+                    eval.partials[NUM_CHALLENGE_BINDERS - 1].add_incomplete(dr, &term, bank)
+                })?;
+                let binding = unified_output
+                    .nested_challenges_partial
+                    .receive(dr, allocator)?;
+                closed.enforce_equal(dr, &binding)?;
+            }
+            let bridge_hash = (coordinate + 1 == NUM_LIMB_BINDERS)
+                .then(|| unified_output.bridge_hash.receive(dr, allocator))
+                .transpose()?;
+            NonzeroBank::scope(dr, |dr, bank| {
+                // Start from H, which no limb term can cancel, and take it
+                // off at the end, so that the checked point is computed
+                // forward from the bits and the stage.
+                let start = Point::constant(dr, *generators.h())?;
+                let unstart = Point::constant(dr, -*generators.h())?;
+                let mut sum = start
+                    .add_fixed_base_mul(dr, g(lo), &lo_bits, bank)?
+                    .add_fixed_base_mul(dr, g(hi), &hi_bits, bank)?;
+                if bridge_hash.is_some() {
+                    // The y terms join the x terms the limb partial holds.
+                    sum = sum.add_incomplete(dr, &eval.limb_partial, bank)?;
+                }
+                let sum = sum.add_incomplete(dr, &unstart, bank)?;
+                match &bridge_hash {
+                    // The x terms are the limb partial.
+                    None => sum.enforce_equal(dr, &eval.limb_partial),
+                    // All four are the bridge hash.
+                    Some(bridge_hash) => sum.enforce_equal(dr, bridge_hash),
+                }
+            })?;
+            let (output, aux) = unified_output.finish(dr, allocator)?;
+            return Ok(WithAux::new(output, aux));
+        }
 
         // Continue the running sum from the previous circuit's partial, or
         // start it.
@@ -210,27 +313,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
             });
         }
 
-        let mut acc = acc.expect("two terms were added");
-
-        // The last circuit adds the base-case sign's term, plus or minus the
-        // generator of the challenge stage's sign value, and pins the sum to
-        // the instance; the others check it against the eval stage's next
-        // partial.
-        if K + 1 == NUM_BINDERS {
-            let is_base_case = preamble.is_base_case(dr, allocator)?;
-            let generator = generators.g()
-                [native_eval::generator_index::<C, R>(nested::stages::challenges::SIGN_INDEX)];
-            let generator = Point::constant(dr, generator)?;
-            let negate = is_base_case.not(dr);
-            let term = generator.conditional_negate(dr, &negate)?;
-            acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
-            let binding = unified_output
-                .nested_challenges_partial
-                .receive(dr, allocator)?;
-            acc.enforce_equal(dr, &binding)?;
-        } else {
-            acc.enforce_equal(dr, &eval.partials[K])?;
-        }
+        // Every challenge binder checks its running sum against the eval
+        // stage's next partial; the first limb binder closes the last one.
+        acc.expect("two terms were added")
+            .enforce_equal(dr, &eval.partials[K])?;
 
         let (output, aux) = unified_output.finish(dr, allocator)?;
         Ok(WithAux::new(output, aux))
@@ -258,6 +344,14 @@ macro_rules! with_binder {
             }
             3 => {
                 let $circuit = Circuit::<$C, $R, $H, 3>::new($params);
+                $body
+            }
+            4 => {
+                let $circuit = Circuit::<$C, $R, $H, 4>::new($params);
+                $body
+            }
+            5 => {
+                let $circuit = Circuit::<$C, $R, $H, 5>::new($params);
                 $body
             }
             _ => panic!("no binding circuit {}", $k),

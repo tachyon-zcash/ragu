@@ -186,6 +186,7 @@ fn check_signs(app: &support::App, inputs: &support::Inputs) -> Result<()> {
                 &left_header,
                 &right_header,
                 Fq::ZERO,
+                [Fq::ZERO; crate::internal::limbs::NUM],
             );
             assert_eq!(
                 witness.base_case_sign,

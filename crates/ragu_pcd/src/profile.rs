@@ -2368,15 +2368,15 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 48,
-                nested_points: 117,
-                nested_steps: 29,
-                nested_rx: 42,
-                native_points: 99,
+                native_rx: 50,
+                nested_points: 121,
+                nested_steps: 30,
+                nested_rx: 43,
+                native_points: 101,
                 native_steps: 25,
             }
         );
-        assert_eq!(shape.polynomials(), 98);
+        assert_eq!(shape.polynomials(), 101);
     }
 
     #[test]

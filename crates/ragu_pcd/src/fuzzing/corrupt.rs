@@ -561,6 +561,9 @@ pub enum Corruption<C: Cycle> {
     /// Negate the exported challenge binding, moving its $y$ coordinate in
     /// the instance.
     NegateChallengesPartial,
+    /// Negate the bridge hash the unified instance carries, moving its $y$
+    /// coordinate in the instance.
+    NegateBridgeHash,
     /// Negate a cached native commitment, which the verifier recomputes.
     NegateNativeCommitment(NativeCommitment),
     /// Negate a cached nested commitment, which the verifier recomputes.
@@ -669,6 +672,7 @@ impl<C: Cycle> core::fmt::Debug for Corruption<C> {
                 write!(f, "NegateBridgeCommitment({which:?})")
             }
             Corruption::NegateChallengesPartial => write!(f, "NegateChallengesPartial"),
+            Corruption::NegateBridgeHash => write!(f, "NegateBridgeHash"),
             Corruption::NegateNativeCommitment(which) => {
                 write!(f, "NegateNativeCommitment({which:?})")
             }
@@ -809,6 +813,16 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::NegateChallengesPartial => {
                 let point = self.nested_challenges_partial_mut();
+                let negated = -*point;
+                if negated == *point {
+                    return Binding::Unbound;
+                }
+                *point = negated;
+                Binding::MustReject
+            }
+
+            Corruption::NegateBridgeHash => {
+                let point = self.bridge_hash_mut();
                 let negated = -*point;
                 if negated == *point {
                     return Binding::Unbound;

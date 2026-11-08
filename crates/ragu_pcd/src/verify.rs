@@ -239,12 +239,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         };
 
         // Recompute this proof's unblinded nested challenge stage from its
-        // native challenges, base-case sign and `pre_beta`, and compare its
-        // coefficients. A parent holds a child's stage to the child's headers
-        // through `bind_beta`, its walk and its nested batch; the root has no
-        // parent, so the decider holds the root's stage to its headers here.
-        let nested_challenges_claim =
-            nested_challenges_match::<C, R, HEADER_SIZE>(pcd.proof(), &lifts)?;
+        // native challenges, base-case sign, `pre_beta` and the limbs of its
+        // own O1, and compare its coefficients, and its bridge hash with
+        // those limbs' terms. A parent holds a child's stage to the child's
+        // headers and bridge hash through `bind_beta`, its walk and its
+        // nested batch; the root has no parent, so the decider holds the
+        // root's here.
+        let nested_challenges_claim = nested_challenges_match::<C, R, HEADER_SIZE>(
+            pcd.proof(),
+            &lifts,
+            C::nested_generators(self.params),
+        )?;
 
         // Check cached commitments against their polynomials in one batch
         // per curve, including P = Com(p) and P_n = Com(p_n). The endoscaling
@@ -630,7 +635,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 }
 
 /// Whether the proof's nested challenge stage equals the stage recomputed,
-/// with zero blinding, from `lifts` and the proof's headers.
+/// with zero blinding, from `lifts`, the proof's headers and the limbs of
+/// its own last online commitment, and whether its bridge hash is those
+/// limbs' terms.
 ///
 /// `lifts` holds the native challenges' lifts followed by the lift of
 /// `pre_beta`, and the headers fix the base-case sign. `verify_uncompressed`
@@ -639,7 +646,18 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
     proof: &Proof<C, R>,
     lifts: &[C::ScalarField; nested_challenges::NUM + 1],
+    generators: &impl ragu_core::FixedGenerators<C::NestedCurve>,
 ) -> Result<bool> {
+    let o1 = proof.online_commitments()[crate::header::HEADER_POLYNOMIALS - 1];
+    let (Ok(limbs), Ok(bridge_hash)) = (
+        crate::internal::limbs::limbs(o1),
+        crate::internal::limbs::digest::<C, R>(generators, o1),
+    ) else {
+        return Ok(false);
+    };
+    if bridge_hash != proof.bridge_hash() {
+        return Ok(false);
+    }
     let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
     let expected = nested_challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
         C::ScalarField::ZERO,
@@ -648,6 +666,7 @@ pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank, const HEADER_SI
             proof.left_header(),
             proof.right_header(),
             beta_lift[0],
+            limbs,
         ),
     )?;
     Ok(proof

@@ -280,6 +280,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &builder,
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
+        builder.set_bridge_hash(eval_witness.partials.bridge_hash);
 
         // Rejection-sample the eval-stage blinding until the squeezed `pre_beta`
         // lands in range as an endoscalar challenge. Unlike the single-shot

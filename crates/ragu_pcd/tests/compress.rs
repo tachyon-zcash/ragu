@@ -420,6 +420,9 @@ fn rejects_tampered_messages() {
     tamper("challenge stage commitment", &|p| {
         p.instance.nested_challenges_partial = -p.instance.nested_challenges_partial
     });
+    tamper("bridge hash", &|p| {
+        p.instance.bridge_hash = -p.instance.bridge_hash
+    });
     tamper("bridge commitment", &|p| {
         let bridge = nested_position::<crate::profile::Standard>(nested::RxComponent::Rx(
             nested::RxIndex::BridgeAB,

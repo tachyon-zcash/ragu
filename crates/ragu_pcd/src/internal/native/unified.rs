@@ -40,7 +40,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 37;
+pub const NUM_WIRES: usize = 39;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -315,6 +315,14 @@ define_unified_instance! {
     /// challenges, which a parent's `bind_beta` completes and holds against
     /// the stage as walked.
     nested_challenges_partial: Point,
+    /// The step's bridge hash $H(O_1)$: the challenge stage's terms for the
+    /// limbs of its own last online commitment, which the last two
+    /// `bind_challenges` circuits recompute from the limbs' bits and pin
+    /// here. The application circuit reads it, and a parent's `bind_beta`
+    /// adds it into the stage as walked (see [`limbs`]).
+    ///
+    /// [`limbs`]: crate::internal::limbs
+    bridge_hash: Point,
     /// The nested batch's commitment $P_n$: the last interstitial of the
     /// native endoscaling walk, which `bind_endoscalar` pins here and a
     /// parent's `bind_beta` holds against the copy it walks.
@@ -493,6 +501,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             pre_beta: element!(pre_beta),
             v: element!(v),
             nested_challenges_partial: point!(nested_challenges_partial),
+            bridge_hash: point!(bridge_hash),
             nested_p_commitment: point!(nested_p_commitment),
             nested_a_commitment: point!(nested_a_commitment),
             nested_b_commitment: point!(nested_b_commitment),
@@ -545,6 +554,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
         let v = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.v()))?;
         let nested_challenges_partial =
             Point::alloc(dr, proof.as_ref().map(|p| p.nested_challenges_partial()))?;
+        let bridge_hash = Point::alloc(dr, proof.as_ref().map(|p| p.bridge_hash()))?;
         let nested_p_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.nested_p_commitment()))?;
         let nested_a_commitment =
@@ -577,6 +587,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
             pre_beta,
             v,
             nested_challenges_partial,
+            bridge_hash,
             nested_p_commitment,
             nested_a_commitment,
             nested_b_commitment,
@@ -659,6 +670,7 @@ mod tests {
             pre_beta: true,
             v: true,
             nested_challenges_partial: true,
+            bridge_hash: true,
             nested_p_commitment: true,
             nested_a_commitment: true,
             nested_b_commitment: true,

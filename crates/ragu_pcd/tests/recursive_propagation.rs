@@ -1521,6 +1521,9 @@ mod commitments {
             parent.left_header(),
             parent.right_header(),
             beta_lift[0],
+            crate::internal::limbs::limbs(
+                parent.online_commitments()[crate::header::HEADER_POLYNOMIALS - 1],
+            )?,
         );
         assert_eq!(challenges.base_case_sign, sign);
         let expected = nested::stages::challenges::Stage::<

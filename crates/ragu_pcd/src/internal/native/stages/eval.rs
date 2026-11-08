@@ -46,32 +46,41 @@ use udon::field::Field;
 use crate::{
     Proof,
     internal::{
-        native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
+        native::{
+            RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_CHALLENGE_BINDERS,
+        },
         nested, online,
     },
     profile::{Profile, ProfiledCycle},
 };
 
-/// Length type for the binding partial sums: one per `bind_challenges`
-/// circuit but the last, whose sum the unified instance carries.
-pub type PartialsLen = ConstLen<{ NUM_BINDERS - 1 }>;
+/// Length type for the binding partial sums: one per challenge-binding
+/// circuit.
+pub type PartialsLen = ConstLen<NUM_CHALLENGE_BINDERS>;
 
 /// The running sums of the nested challenge binding: partial $k$ is the sum
 /// of the first $2(k+1)$ terms of the nested challenge stage's commitment,
 /// $\sum_{i < 2(k+1)} \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$.
-/// The binding is the sum of all challenge terms and the base-case sign's: the
-/// stage's commitment without its $\beta$ term, which the last binding
-/// circuit pins to the unified instance.
+/// The binding is the sum of all challenge terms and the base-case sign's,
+/// which the first limb-binding circuit pins to the unified instance.
+/// The limb terms are summed apart: `limb_partial` is the two limbs of
+/// $O_1$'s $x$ coordinate, which the first limb-binding circuit pins, and
+/// `bridge_hash` all four, which the second pins to the unified instance
+/// (see [`limbs`](crate::internal::limbs)). The stage's commitment is
+/// `binding + bridge_hash` and $\beta$'s term.
 #[derive(Clone)]
 pub struct BindingPartials<P> {
     pub partials: FixedVec<P, PartialsLen>,
     pub binding: P,
+    pub limb_partial: P,
+    pub bridge_hash: P,
 }
 
 impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
     /// Computes the partial sums and binding from the nested challenge
-    /// witness's lifts and base-case sign. The beta field is not used:
-    /// its term is added by the parent's binding circuit.
+    /// witness's lifts and base-case sign, and the limb sums from its limbs.
+    /// The beta field is not used: its term is added by the parent's
+    /// binding circuit.
     pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::Scalar> + ProfiledCycle, R: Rank, B>(
         params: &C::Params,
         challenges: &nested::stages::challenges::Witness<C::ScalarField>,
@@ -81,7 +90,7 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
     {
         use ragu_core::FixedGenerators;
 
-        assert_eq!(challenges.lifts.len(), 2 * NUM_BINDERS);
+        assert_eq!(challenges.lifts.len(), 2 * NUM_CHALLENGE_BINDERS);
         let generators = C::nested_generators(params);
         // The stage's values the binders cover: the lifts, then the
         // base-case sign.
@@ -90,21 +99,33 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
         let bases: alloc::vec::Vec<P> = (0..scalars.len())
             .map(|i| generators.g()[generator_index::<C, R>(i)])
             .collect();
-        let projective = B::msm_batch(core::array::from_fn::<_, NUM_BINDERS, _>(|k| {
-            // The last sum includes the sign term.
-            let n = if k + 1 == NUM_BINDERS {
-                scalars.len()
-            } else {
-                2 * (k + 1)
-            };
-            (scalars[..n].iter(), bases[..n].iter())
+        let limb_bases: [P; crate::internal::limbs::NUM] = core::array::from_fn(|i| {
+            generators.g()[generator_index::<C, R>(nested::stages::challenges::LIMBS_INDEX + i)]
+        });
+        const SUMS: usize = NUM_CHALLENGE_BINDERS + 3;
+        let projective = B::msm_batch(core::array::from_fn::<_, SUMS, _>(|k| {
+            match k {
+                // The running sums of the challenge terms.
+                k if k < NUM_CHALLENGE_BINDERS => {
+                    (scalars[..2 * (k + 1)].iter(), bases[..2 * (k + 1)].iter())
+                }
+                // Every challenge term and the sign's.
+                k if k == NUM_CHALLENGE_BINDERS => (scalars.iter(), bases.iter()),
+                // The x limbs, then all four.
+                k if k == NUM_CHALLENGE_BINDERS + 1 => {
+                    (challenges.limbs[..2].iter(), limb_bases[..2].iter())
+                }
+                _ => (challenges.limbs.iter(), limb_bases.iter()),
+            }
         }));
-        let mut sums = [P::identity(); NUM_BINDERS];
+        let mut sums = [P::identity(); SUMS];
         P::batch_to_affine(&projective, &mut sums);
-        let (partials, binding) = sums.split_at(NUM_BINDERS - 1);
+        let (partials, rest) = sums.split_at(NUM_CHALLENGE_BINDERS);
         Self {
-            partials: FixedVec::new(partials.to_vec()).expect("NUM_BINDERS - 1 partials"),
-            binding: binding[0],
+            partials: FixedVec::new(partials.to_vec()).expect("NUM_CHALLENGE_BINDERS partials"),
+            binding: rest[0],
+            limb_partial: rest[1],
+            bridge_hash: rest[2],
         }
     }
 }
@@ -223,12 +244,20 @@ pub struct Witness<C: ProfiledCycle> {
 
     /// The nested challenge binding's running sums.
     pub partials: BindingPartials<C::NestedCurve>,
+
+    /// The limbs of the step's own last online commitment, as native
+    /// elements: the limb binders' inputs (see
+    /// [`limbs`](crate::internal::limbs)).
+    pub limbs: [C::CircuitField; crate::internal::limbs::NUM],
 }
 
 impl<C: ProfiledCycle> Witness<C> {
     /// The all-zero evaluations of a proof that opens nothing, with the
-    /// given binding partials.
-    pub fn trivial(partials: BindingPartials<C::NestedCurve>) -> Self {
+    /// given binding partials and limbs.
+    pub fn trivial(
+        partials: BindingPartials<C::NestedCurve>,
+        limbs: [C::CircuitField; crate::internal::limbs::NUM],
+    ) -> Self {
         use udon::field::Field;
         let child = || ChildEvaluationsWitness {
             rx: RxValues::<_, C::Profile>::from_fn(|_| C::CircuitField::ZERO),
@@ -250,6 +279,7 @@ impl<C: ProfiledCycle> Witness<C> {
                 online: [C::CircuitField::ZERO; online::NUM_ONLINE_QUERIES],
             },
             partials,
+            limbs,
         }
     }
 }
@@ -338,6 +368,13 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     pub evaluations: Evaluations<'dr, D, C::Profile>,
     #[ragu(gadget)]
     pub partials: FixedVec<Point<'dr, D, C::NestedCurve>, PartialsLen>,
+    /// The terms of $O_1$'s $x$ limbs, handed from the first limb-binding
+    /// circuit to the second.
+    #[ragu(gadget)]
+    pub limb_partial: Point<'dr, D, C::NestedCurve>,
+    /// The limbs of $O_1$, which the limb binders decompose.
+    #[ragu(gadget)]
+    pub limbs: FixedVec<Element<'dr, D>, ConstLen<{ crate::internal::limbs::NUM }>>,
 }
 
 /// The eval stage of the fuse witness.
@@ -355,11 +392,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
 
     fn values() -> usize {
         // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
-        // + the online slots + (x, y) per binding partial
+        // + the online slots + (x, y) per binding partial and for the limb
+        // partial + the limbs
         2 * (RxIndex::num::<C::Profile>() + 4)
             + 6
             + online::NUM_ONLINE_QUERIES
-            + 2 * (NUM_BINDERS - 1)
+            + 2 * NUM_CHALLENGE_BINDERS
+            + 2
+            + crate::internal::limbs::NUM
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -401,6 +441,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
         let partials = FixedVec::try_from_fn(|k| {
             Point::alloc(dr, witness.as_ref().map(|w| w.partials.partials[k]))
         })?;
+        let limb_partial = Point::alloc(dr, witness.as_ref().map(|w| w.partials.limb_partial))?;
+        let limbs = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.limbs[i]))
+        })?;
         Ok(Output {
             evaluations: Evaluations {
                 left,
@@ -414,6 +458,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
                 online,
             },
             partials,
+            limb_partial,
+            limbs,
         })
     }
 }

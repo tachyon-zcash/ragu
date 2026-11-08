@@ -608,6 +608,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &builder,
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
+        builder.set_bridge_hash(eval_witness.partials.bridge_hash);
 
         // Mirrors `fuse`: `pre_beta` is ground rather than squeezed once, so
         // each attempt re-blinds the eval commitment and re-derives it from a
@@ -685,6 +686,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     pre_beta: builder.pre_beta(),
                     v: builder.v(),
                     nested_challenges_partial: builder.nested_challenges_partial(),
+                    bridge_hash: builder.bridge_hash(),
                     nested_p_commitment: builder.nested_p_commitment(),
                     nested_a_commitment: builder.nested_a_commitment(),
                     nested_b_commitment: builder.nested_b_commitment(),
@@ -919,8 +921,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The nested challenge binding circuits: circuit k endoscales two
         // generators by two challenges and checks the running sum against
-        // the k-th partial the eval stage witnessed, which is its output; the
-        // last one checks it against the instance's partial binding instead.
+        // the k-th partial the eval stage witnessed, which is its output. The
+        // first limb binder checks the x limbs' terms against the eval
+        // stage's limb partial and covers the instance's partial binding; the
+        // second covers the instance's bridge hash.
         type Eval<C, R, const HEADER_SIZE: usize> = native::stages::eval::Stage<C, R, HEADER_SIZE>;
         for k in 0..native::NUM_BINDERS {
             let bind_witness = || {
@@ -931,14 +935,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     eval_witness: &eval_witness,
                 })
             };
-            // The partial the circuit checks, for all but the last: that one
-            // covers the instance's partial binding, which its coverage
-            // declares.
+            // The partial the circuit checks, for those that check one: the
+            // others cover an instance slot, which their coverage declares.
             let partial: Vec<OutputRef> = if k + 1 == native::NUM_BINDERS {
                 Vec::new()
             } else {
                 stage_wire_indices::<_, R, Eval<C, R, HEADER_SIZE>>(|stage| {
-                    wires_of(&stage.partials[k])
+                    if k < native::circuits::bind_challenges::NUM_CHALLENGE_BINDERS {
+                        wires_of(&stage.partials[k])
+                    } else {
+                        wires_of(&stage.limb_partial)
+                    }
                 })?
                 .into_iter()
                 .map(OutputRef::Stage)

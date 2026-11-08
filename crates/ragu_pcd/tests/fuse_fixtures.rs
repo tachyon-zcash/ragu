@@ -546,6 +546,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         nested_p_poly,
         nested_challenges_rx,
         nested_challenges_partial,
+        bridge_hash,
         nested_collapse_rx,
         nested_compute_v_rx,
         nested_endoscaling_step_commitments: _,
@@ -667,6 +668,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.poly("nested_p_poly", nested_p_poly);
     lines.poly("nested_challenges_rx", nested_challenges_rx);
     lines.point("nested_challenges_partial", nested_challenges_partial);
+    lines.point("bridge_hash", bridge_hash);
     lines.poly("nested_collapse_rx", nested_collapse_rx);
     lines.poly("nested_compute_v_rx", nested_compute_v_rx);
 
@@ -813,6 +815,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         nested_registry_xy,
         nested_p,
         nested_challenges_partial,
+        bridge_hash,
         bridge_alpha,
         c,
         v,
@@ -842,6 +845,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.point(nested_registry_xy);
     out.point(nested_p);
     out.point(nested_challenges_partial);
+    out.point(bridge_hash);
     out.field(bridge_alpha);
     out.field(c);
     out.field(v);
@@ -938,6 +942,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_registry_xy = cursor.point()?;
     let nested_p = cursor.point()?;
     let nested_challenges_partial = cursor.point()?;
+    let bridge_hash = cursor.point()?;
     let bridge_alpha = cursor.field()?;
     let c = cursor.field()?;
     let v = cursor.field()?;
@@ -977,6 +982,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         nested_registry_xy,
         nested_p,
         nested_challenges_partial,
+        bridge_hash,
         bridge_alpha,
         c,
         v,

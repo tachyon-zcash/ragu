@@ -96,6 +96,7 @@ fn check_edits<P: Profile, Rk: Rank>(
     point!(nested_registry_xy);
     point!(nested_p);
     point!(nested_challenges_partial);
+    point!(bridge_hash);
 
     macro_rules! length {
         ($field:ident $(.$part:ident)*) => {
@@ -237,6 +238,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         nested_registry_xy: nested.nested_registry_xy,
         nested_p: nested.nested_p,
         nested_challenges_partial: nested.nested_challenges_partial,
+        bridge_hash: nested.bridge_hash,
         bridge_alpha: nested.bridge_alpha,
         nested_c: nested.nested_c,
         nested_v: nested.nested_v,

@@ -192,6 +192,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
         out.push(Corruption::NegateBridgeCommitment(which));
     }
     out.push(Corruption::NegateChallengesPartial);
+    out.push(Corruption::NegateBridgeHash);
 
     for which in NativeCommitment::ALL {
         out.push(Corruption::NegateNativeCommitment(which));
@@ -292,6 +293,7 @@ impl CorruptionGroup {
             | Corruption::OnlineQuery { .. } => Self::HeadersAndChallenges,
             Corruption::NegateBridgeCommitment(_)
             | Corruption::NegateChallengesPartial
+            | Corruption::NegateBridgeHash
             | Corruption::NegateNativeCommitment(_)
             | Corruption::NegateNestedCommitment(_)
             | Corruption::NegateOnlineCommitment(_)
@@ -825,6 +827,7 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
         Corruption::Challenge(which, value) => Corruption::Challenge(which, value),
         Corruption::NegateBridgeCommitment(which) => Corruption::NegateBridgeCommitment(which),
         Corruption::NegateChallengesPartial => Corruption::NegateChallengesPartial,
+        Corruption::NegateBridgeHash => Corruption::NegateBridgeHash,
         Corruption::NegateNativeCommitment(which) => Corruption::NegateNativeCommitment(which),
         Corruption::NegateNestedCommitment(which) => Corruption::NegateNestedCommitment(which),
         Corruption::RescaleNativeAccumulator(scale) => Corruption::RescaleNativeAccumulator(scale),

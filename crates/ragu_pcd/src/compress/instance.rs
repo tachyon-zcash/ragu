@@ -89,6 +89,8 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_registry_xy: C::NestedCurve,
     pub nested_p: C::NestedCurve,
     pub nested_challenges_partial: C::NestedCurve,
+    /// The bridge hash $H(O_1)$ of the step's own last online commitment.
+    pub bridge_hash: C::NestedCurve,
     /// The blinding source of the `ab` bridge stage.
     pub bridge_alpha: C::ScalarField,
 
@@ -214,6 +216,7 @@ impl<C: ProfiledCycle> Instance<C> {
             nested_registry_xy: proof.nested_registry_xy_commitment(),
             nested_p: proof.nested_p_commitment(),
             nested_challenges_partial: proof.nested_challenges_partial(),
+            bridge_hash: proof.bridge_hash(),
             bridge_alpha: proof.bridge_alpha,
             c: proof.native_c(),
             v: proof.v(),
@@ -305,6 +308,7 @@ impl<C: ProfiledCycle> Instance<C> {
             &self.nested_registry_xy,
             &self.nested_p,
             &self.nested_challenges_partial,
+            &self.bridge_hash,
         ]) {
             nested.write_point(point)?;
         }
@@ -405,6 +409,7 @@ impl<C: ProfiledCycle> Instance<C> {
             pre_beta: challenges.pre_beta,
             v: self.v,
             nested_challenges_partial: self.nested_challenges_partial,
+            bridge_hash: self.bridge_hash,
             nested_p_commitment: self.nested_p,
             nested_a_commitment: self.nested_commitment(nested::RxComponent::AbA),
             nested_b_commitment: self.nested_commitment(nested::RxComponent::AbB),
@@ -490,8 +495,11 @@ impl<C: ProfiledCycle> Instance<C> {
 
     /// Whether the two nested stages the decider recomputes from public data
     /// commit as the instance claims: the challenge stage from the
-    /// challenges' lifts and the headers, and the `ab` bridge stage from the
-    /// native $a$, $b$ and points commitments under `bridge_alpha`.
+    /// challenges' lifts, the headers and the limbs of the step's own last
+    /// online commitment, and the `ab` bridge stage from the native $a$, $b$
+    /// and points commitments under `bridge_alpha`; and whether the bridge
+    /// hash is those limbs' terms, which at the root no parent's `bind_beta`
+    /// checks.
     pub(crate) fn stages_match<R: Rank, B: Backend, const HEADER_SIZE: usize>(
         &self,
         challenges: &nested::Challenges<C::CircuitField>,
@@ -501,6 +509,16 @@ impl<C: ProfiledCycle> Instance<C> {
             return Ok(false);
         };
         let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
+        let o1 = self.online_commitments[HEADER_POLYNOMIALS - 1];
+        let (Ok(limbs), Ok(bridge_hash)) = (
+            crate::internal::limbs::limbs(o1),
+            crate::internal::limbs::digest::<C, R>(generators, o1),
+        ) else {
+            return Ok(false);
+        };
+        if bridge_hash != self.bridge_hash {
+            return Ok(false);
+        }
         let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::ZERO,
             &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
@@ -508,6 +526,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 &self.left_header,
                 &self.right_header,
                 beta_lift[0],
+                limbs,
             ),
         )?;
         let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(

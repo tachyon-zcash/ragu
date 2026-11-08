@@ -273,8 +273,9 @@ mod tests {
     };
 
     // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
-    // the online polynomials (see `internal::online`) in the batch and the
-    // application stage beside the application trace. A
+    // the online polynomials (see `internal::online`) in the batch, the
+    // application stage beside the application trace, and the limb binders
+    // and bridge hash (see `internal::limbs`). A
     // change to either moves the layout or the verifier semantics and needs
     // a new schema or protocol version, not a silent re-pin.
     #[test]
@@ -285,11 +286,11 @@ mod tests {
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 48,
-                nested_points: 117,
-                nested_steps: 29,
-                nested_rx: 42,
-                native_points: 99,
+                native_rx: 50,
+                nested_points: 121,
+                nested_steps: 30,
+                nested_rx: 43,
+                native_points: 101,
                 native_steps: 25,
             }
         );
@@ -299,13 +300,14 @@ mod tests {
     fn encoded_length_is_a_function_of_profile_rank_and_header_size() {
         // Every polynomial of the shape and the step's own online
         // polynomials, with `2^rank` coefficients each; a commitment per
-        // polynomial plus the nested challenges partial; two headers; the
+        // polynomial plus the nested challenges partial and the bridge hash;
+        // two headers; the
         // online openings; the bridge alpha and nine challenges; one
         // circuit index. The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
             let polynomials = Shape::of::<Standard>().polynomials() + HEADER_POLYNOMIALS;
             polynomials * R::num_coeffs() * 32
-                + (polynomials + 1) * 32
+                + (polynomials + 2) * 32
                 + 2 * H * 32
                 + 2 * NUM_ONLINE_QUERIES * 32
                 + 10 * 32
@@ -326,12 +328,12 @@ mod tests {
             Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
-        // 101 instance points; 27 instance scalars and the online openings'
+        // 105 instance points; 27 instance scalars and the online openings'
         // two scalars each; per side 6+2R points, 21 scalars; plus the
         // circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (101 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (105 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

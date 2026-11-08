@@ -3,8 +3,10 @@
 //!
 //! The nested side squeezes nothing; every challenge it uses is the lift
 //! ([`challenge`]) of a native one. This stage holds those lifts, one per
-//! native challenge, then the base-case sign and the lift of `pre_beta`, at
-//! the $a$-wire of consecutive gates with the $d$-wire zero, and is committed
+//! native challenge, then the base-case sign, the lift of `pre_beta` and
+//! the four [limbs](crate::internal::limbs) of the step's own last online
+//! commitment, at the $a$-wire of consecutive gates with the $d$-wire zero,
+//! and is committed
 //! **unblinded** (alpha zero). Its commitment is then a fixed linear
 //! combination of the nested-curve generators,
 //!
@@ -16,7 +18,8 @@
 //! That recomputation is split between the proof's own `bind_challenges`
 //! circuits, which cover the challenges squeezed before `pre_beta` and
 //! the sign and export their sum through the unified instance, and the
-//! parent's `bind_beta`, which adds `pre_beta`'s term and holds the result
+//! parent's `bind_beta`, which adds `pre_beta`'s term and the limbs' (the
+//! step's bridge hash, which the last two binders recompute) and holds the result
 //! against the commitment it walks: `pre_beta` is squeezed after the native
 //! `eval` stage carrying the binders' partials is committed.
 //!
@@ -93,11 +96,15 @@ pub const U: usize = ALPHA + 1;
 pub const SIGN_INDEX: usize = NUM;
 /// The position of the lift of `pre_beta`, $\beta$.
 pub const BETA_INDEX: usize = NUM + 1;
+/// The position of the first limb of the step's own last online commitment,
+/// $O_1$; the four limbs follow in [`limbs`](crate::internal::limbs) order.
+pub const LIMBS_INDEX: usize = NUM + 2;
 
 /// Length type for the challenge lifts before the sign and $\beta$.
 pub type Len = ConstLen<NUM>;
 
-/// The lifts, in stage order, the base-case sign and the lift of `pre_beta`.
+/// The lifts, in stage order, the base-case sign, the lift of `pre_beta`
+/// and the limbs of $O_1$.
 #[derive(Clone)]
 pub struct Witness<F> {
     pub lifts: FixedVec<F, Len>,
@@ -107,18 +114,22 @@ pub struct Witness<F> {
     pub base_case_sign: F,
     /// The lift of `pre_beta`.
     pub beta: F,
+    /// The limbs of the step's own last online commitment, $O_1$.
+    pub limbs: [F; crate::internal::limbs::NUM],
 }
 
 impl<F: Field> Witness<F> {
     /// Creates the witness from the lifts and the children's native output
     /// headers. The sign mirrors the native preamble's base-case predicate;
     /// the last native binding circuit derives that predicate independently
-    /// from its header wires. The beta lift is filled once `pre_beta` is known.
+    /// from its header wires. The beta lift is filled once `pre_beta` is
+    /// known; `limbs` are those of the step's own last online commitment.
     pub fn new<N: Field, const HEADER_SIZE: usize>(
         lifts: [F; NUM],
         left_header: &[N],
         right_header: &[N],
         beta: F,
+        limbs: [F; crate::internal::limbs::NUM],
     ) -> Self {
         let dummy_suffix =
             N::from(<crate::header::Dummy as crate::header::Header<N>>::SUFFIX.get());
@@ -132,13 +143,14 @@ impl<F: Field> Witness<F> {
                 -F::ONE
             },
             beta,
+            limbs,
         }
     }
 }
 
 /// Prover-internal output gadget for this stage: each lift followed by the
-/// zero that keeps the next lift at an $a$-wire, then the base-case sign and
-/// $\beta$ with theirs.
+/// zero that keeps the next lift at an $a$-wire, then the base-case sign,
+/// $\beta$ and the limbs of $O_1$ with theirs.
 ///
 /// This is stage communication data, not part of any circuit's public
 /// instance.
@@ -150,6 +162,8 @@ pub struct Output<'dr, D: Driver<'dr>> {
     pub base_case: Pair<'dr, D>,
     #[ragu(gadget)]
     pub beta: Pair<'dr, D>,
+    #[ragu(gadget)]
+    pub limbs: FixedVec<Pair<'dr, D>, ConstLen<{ crate::internal::limbs::NUM }>>,
 }
 
 /// One lift and its trailing zero.
@@ -172,9 +186,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _>];
 
     fn values() -> usize {
-        // One lift and one zero per challenge, then the base-case sign and
-        // beta with theirs: every value at an a-wire.
-        (NUM + 2) * 2
+        // One lift and one zero per challenge, then the base-case sign, beta
+        // and the limbs with theirs: every value at an a-wire.
+        (LIMBS_INDEX + crate::internal::limbs::NUM) * 2
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -195,10 +209,12 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         let pairs = FixedVec::try_from_fn(|i| pair(dr, witness.as_ref().map(|w| w.lifts[i])))?;
         let base_case = pair(dr, witness.as_ref().map(|w| w.base_case_sign))?;
         let beta = pair(dr, witness.as_ref().map(|w| w.beta))?;
+        let limbs = FixedVec::try_from_fn(|i| pair(dr, witness.as_ref().map(|w| w.limbs[i])))?;
         Ok(Output {
             pairs,
             base_case,
             beta,
+            limbs,
         })
     }
 }
@@ -233,7 +249,9 @@ mod tests {
         let lifts: [F; NUM] = core::array::from_fn(|i| F::from(3 + i as u64));
         let beta = F::from(99);
         let header = [ragu_core::pasta::Fp::from(crate::header::Suffix::new(0).get()); 4];
-        let witness = Witness::new::<_, 4>(lifts, &header, &header, beta);
+        let limbs: [F; crate::internal::limbs::NUM] =
+            core::array::from_fn(|i| F::from(50 + i as u64));
+        let witness = Witness::new::<_, 4>(lifts, &header, &header, beta, limbs);
         let rx = <Stage<EqAffine, R, Standard> as StageExt<F, R>>::rx(F::from(11), &witness)?;
         let reader = StageReader::<F, R>::new(&rx);
 
@@ -244,6 +262,9 @@ mod tests {
             }
             wires.extend(wires_of(&out.base_case.lift)?);
             wires.extend(wires_of(&out.beta.lift)?);
+            for pair in out.limbs.iter() {
+                wires.extend(wires_of(&pair.lift)?);
+            }
             Ok(wires)
         })?;
         for (i, lift) in lifts.iter().enumerate() {
@@ -251,6 +272,9 @@ mod tests {
         }
         assert_eq!(reader.read(indices[SIGN_INDEX]), -F::ONE);
         assert_eq!(reader.read(indices[BETA_INDEX]), beta);
+        for (i, limb) in limbs.iter().enumerate() {
+            assert_eq!(reader.read(indices[LIMBS_INDEX + i]), *limb, "limb {i}");
+        }
         Ok(())
     }
 }

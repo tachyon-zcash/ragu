@@ -18,6 +18,8 @@
 //!   curve scalar multiplication
 //! - [`online`] — the online polynomials a step's headers carry and its
 //!   batch opens
+//! - [`limbs`] — the limbs of a step's own last online commitment, which
+//!   carry it to the native side as its bridge hash
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
 //! - [`const_fns`] — compile-time helper functions for array construction
@@ -28,6 +30,7 @@ pub mod endoscalar;
 pub mod fold_revdot;
 pub mod inverter;
 pub mod ky;
+pub mod limbs;
 pub mod native;
 pub mod nested;
 pub mod online;

@@ -109,6 +109,9 @@ mod challenge_binding {
             proof.left_header(),
             proof.right_header(),
             lifts[challenges::NUM],
+            crate::internal::limbs::limbs(
+                proof.online_commitments()[crate::header::HEADER_POLYNOMIALS - 1],
+            )?,
         ))
     }
 
@@ -173,6 +176,7 @@ mod challenge_binding {
         crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
             proof,
             &proof.challenges().lifts::<C>()?,
+            C::nested_generators(crate::pasta::baked()),
         )
     }
 
@@ -418,6 +422,7 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
         pre_beta: proof.pre_beta(),
         v: proof.v(),
         nested_challenges_partial: proof.nested_challenges_partial(),
+        bridge_hash: proof.bridge_hash(),
         nested_p_commitment: proof.nested_p_commitment(),
         nested_a_commitment: proof.nested_a_commitment(),
         nested_b_commitment: proof.nested_b_commitment(),
