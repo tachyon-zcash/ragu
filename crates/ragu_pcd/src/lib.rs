@@ -816,7 +816,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// It is $\sum_i \ell_i \cdot G_i$ over the four limbs $\ell_i$ of
     /// `point`'s coordinates and fixed nested-curve generators, so it depends
     /// on the rank and the profile, which place the limbs in the nested
-    /// challenge stage (see [`limbs`](internal::limbs)).
+    /// challenge stage.
     ///
     /// # Errors
     ///

@@ -325,7 +325,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
 }
 
 impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
-    /// Computes `self` $+ [k]\,\mathtt{base}$ for a constant `base` and
+    /// Computes `self` $+ \[k\]\,\mathtt{base}$ for a constant `base` and
     /// $k = \sum_i 2^i \mathtt{bits}_i$, the little-endian integer of
     /// `bits`.
     ///
@@ -348,7 +348,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     /// # Soundness
     ///
     /// For boolean `bits`, any satisfying assignment for the enclosing bank
-    /// scope makes the returned point represent `self` $+ [k]\,\mathtt{base}$.
+    /// scope makes the returned point represent `self` $+ \[k\]\,\mathtt{base}$.
     ///
     /// # Errors
     ///

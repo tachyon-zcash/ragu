@@ -112,7 +112,8 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// The bridge hash $H(O_1)$ of the step's own last online commitment,
     /// as its two coordinates: a binding function of that commitment,
     /// fixed with $\zeta$, which the parent holds to the commitment the
-    /// step's transcript absorbed (see [`limbs`](crate::internal::limbs)).
+    /// step's transcript absorbed: the sum of its four limbs times fixed
+    /// nested-curve generators.
     /// A step that hashes its output polynomial's commitment into a header
     /// field, for instance into an anchor, reads it here;
     /// [`Application::bridge_hash`](crate::Application::bridge_hash)

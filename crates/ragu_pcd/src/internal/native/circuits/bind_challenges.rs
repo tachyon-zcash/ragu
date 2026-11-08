@@ -30,7 +30,7 @@
 //! ## Limb binding
 //!
 //! The last [`NUM_LIMB_BINDERS`] circuits recompute the stage's terms for
-//! the [limbs](crate::internal::limbs) of the step's own last online
+//! the [`limbs`] of the step's own last online
 //! commitment $O_1$, one coordinate each: the step's bridge hash
 //! $H(O_1) = \sum_{i < 4} \ell_i \cdot G_{\mathrm{idx}(i)}$. Each reads its
 //! coordinate's two limbs off the [`eval`] stage, decomposes the low limb into 128 bits and the
