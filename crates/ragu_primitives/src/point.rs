@@ -12,7 +12,10 @@ use ragu_core::{
     gadgets::Gadget,
     maybe::Maybe,
 };
-use udon::{curve::EndomorphismAffine as Affine, field::Field};
+use udon::{
+    curve::{EndomorphismAffine as Affine, Projective as _},
+    field::Field,
+};
 
 use crate::{
     Boolean, Element, Nonzero, NonzeroBank, comparison::GadgetEquals, consistent::Consistent,
@@ -96,6 +99,16 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
             Nonzero::new_unchecked(x),
             Nonzero::new_unchecked(y),
         ))
+    }
+
+    /// The $x$ coordinate.
+    pub fn x(&self) -> &Element<'dr, D> {
+        &self.x
+    }
+
+    /// The $y$ coordinate.
+    pub fn y(&self) -> &Element<'dr, D> {
+        &self.y
     }
 
     /// Embeds a constant point.
@@ -311,6 +324,123 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     }
 }
 
+impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
+    /// Computes `self` $+ [k]\,\mathtt{base}$ for a constant `base` and
+    /// $k = \sum_i 2^i \mathtt{bits}_i$, the little-endian integer of
+    /// `bits`.
+    ///
+    /// The bits are taken two at a time: window $j$ holds
+    /// $w_j = b_{2j} + 2 b_{2j+1}$, and adds the constant
+    /// $(w_j + 1) \cdot 4^j \cdot \mathtt{base}$, selected by a linear
+    /// combination of the window's bits and their product, so that no
+    /// addend is the identity. The added offset
+    /// $\sum_j 4^j \cdot \mathtt{base}$ is subtracted at the end. Each
+    /// two-bit window costs one gate for the product and one incomplete
+    /// addition; a trailing single bit costs the addition alone.
+    ///
+    /// # Exceptional Cases
+    ///
+    /// Every addition requires its two operands to have distinct $x$
+    /// coordinates; the `bank` discharges this. An honest accumulator stays
+    /// clear of them when `self` has no known discrete-log relation to
+    /// `base`, for instance an independent generator.
+    ///
+    /// # Soundness
+    ///
+    /// For boolean `bits`, any satisfying assignment for the enclosing bank
+    /// scope makes the returned point represent `self` $+ [k]\,\mathtt{base}$.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input error if `base` is the identity, and a
+    /// witness-generation error if an addition falls into an exceptional
+    /// case.
+    pub fn add_fixed_base_mul(
+        &self,
+        dr: &mut D,
+        base: C,
+        bits: &[Boolean<'dr, D>],
+        bank: &mut NonzeroBank<'dr, D>,
+    ) -> Result<Self> {
+        if base.coordinates().is_none() {
+            return Err(Error::InvalidWitness(
+                "the fixed base cannot be the identity".into(),
+            ));
+        }
+        let mut acc = self.clone();
+        let mut window = base.to_projective();
+        let mut offset = C::Projective::identity();
+        for chunk in bits.chunks(2) {
+            // The window's addends (w + 1) * 4^j * base, for each w.
+            let mut multiples = alloc::vec::Vec::with_capacity(4);
+            let mut multiple = window;
+            for _ in 0..(1 << chunk.len()) {
+                multiples.push(multiple.into());
+                multiple += window;
+            }
+            let coordinates = multiples
+                .iter()
+                .map(|p: &C| {
+                    p.coordinates()
+                        .expect("a nonzero multiple of a prime-order point")
+                })
+                .collect::<alloc::vec::Vec<_>>();
+            let addend = match chunk {
+                [b0] => {
+                    let mut select = |coordinate: fn(&(C::Base, C::Base)) -> C::Base| {
+                        let c = [coordinate(&coordinates[0]), coordinate(&coordinates[1])];
+                        let wire = dr.add(|lc| {
+                            lc.add_term(&D::ONE, Coeff::Arbitrary(c[0]))
+                                .add_term(b0.wire(), Coeff::Arbitrary(c[1] - c[0]))
+                        });
+                        let value = D::just(|| if b0.value().take() { c[1] } else { c[0] });
+                        (wire, value)
+                    };
+                    let (x, x_value) = select(|c| c.0);
+                    let (y, y_value) = select(|c| c.1);
+                    (x, x_value, y, y_value)
+                }
+                [b0, b1] => {
+                    let both = b0.and(dr, b1)?;
+                    let mut select = |coordinate: fn(&(C::Base, C::Base)) -> C::Base| {
+                        let c: [C::Base; 4] = core::array::from_fn(|w| coordinate(&coordinates[w]));
+                        let wire = dr.add(|lc| {
+                            lc.add_term(&D::ONE, Coeff::Arbitrary(c[0]))
+                                .add_term(b0.wire(), Coeff::Arbitrary(c[1] - c[0]))
+                                .add_term(b1.wire(), Coeff::Arbitrary(c[2] - c[0]))
+                                .add_term(both.wire(), Coeff::Arbitrary(c[3] - c[2] - c[1] + c[0]))
+                        });
+                        let value = D::just(|| {
+                            c[usize::from(b0.value().take()) + 2 * usize::from(b1.value().take())]
+                        });
+                        (wire, value)
+                    };
+                    let (x, x_value) = select(|c| c.0);
+                    let (y, y_value) = select(|c| c.1);
+                    (x, x_value, y, y_value)
+                }
+                _ => unreachable!("chunks of at most two"),
+            };
+            let (x, x_value, y, y_value) = addend;
+            // The selection lands on one of the window's constants, which
+            // are affine points with nonzero coordinates.
+            let addend = Point::new_unchecked(
+                Nonzero::new_unchecked(Element::promote(x, x_value)),
+                Nonzero::new_unchecked(Element::promote(y, y_value)),
+            );
+            acc = acc.add_incomplete(dr, &addend, bank)?;
+            offset += window;
+            window = window.double().double();
+        }
+        if bits.is_empty() {
+            return Ok(acc);
+        }
+        let offset: C = (-offset).into();
+        let offset = Point::constant(dr, offset)?;
+        acc.add_incomplete(dr, &offset, bank)
+    }
+}
+
 impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Consistent<'dr, D> for Point<'dr, D, C> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         Self::alloc(dr, self.value())?.enforce_conservative_equal(dr, self)
@@ -461,6 +591,51 @@ mod tests {
                     assert_eq!(sim.num_constraints(), 10);
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// `self + [k] base` over little-endian bits of every parity and none,
+    /// against the native sum, at one gate per two-bit window's product and
+    /// three per incomplete addition.
+    #[test]
+    fn test_add_fixed_base_mul() -> Result<()> {
+        use ragu_core::pasta::Fq;
+
+        let generator = C::generator().to_projective();
+        // Independent of `base` in the test only by choice of scalar; the
+        // gadget needs no relation to hold, only distinct x coordinates.
+        let start: C = (generator * Fq::from(0x5eed_0001u64)).into();
+        let base: C = (generator * Fq::from(0xba5e_0002u64)).into();
+        for bits in [
+            vec![],
+            vec![true],
+            vec![false, true],
+            vec![true, true, false],
+            vec![true, false, true, true, false, true, true, true],
+            (0..127).map(|i| i % 3 != 1).collect::<Vec<_>>(),
+        ] {
+            let n = bits.len();
+            let k = bits.iter().rev().fold(Fq::ZERO, |acc, &bit| {
+                acc.double() + Fq::from(u64::from(bit))
+            });
+            let expected: C = (start.to_projective() + base.to_projective() * k).into();
+            let sim = Simulator::simulate((bits.clone(), start), |dr, witness| {
+                let (bits, start) = witness.cast();
+                let allocator = &mut crate::allocator::Standard::new();
+                let start = Point::alloc(dr, start)?;
+                let bits = (0..n)
+                    .map(|i| Boolean::alloc(dr, allocator, bits.as_ref().map(|b| b[i])))
+                    .collect::<Result<Vec<_>>>()?;
+                dr.reset();
+                let mut bank = NonzeroBank::new_unchecked();
+                let result = start.add_fixed_base_mul(dr, base, &bits, &mut bank)?;
+                assert_eq!(result.value().take(), expected);
+                Ok(())
+            })?;
+            let windows = n.div_ceil(2);
+            let additions = windows + usize::from(n > 0);
+            assert_eq!(sim.num_gates(), n / 2 + 3 * additions, "{n} bits");
         }
         Ok(())
     }

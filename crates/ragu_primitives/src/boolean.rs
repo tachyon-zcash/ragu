@@ -330,8 +330,42 @@ pub(crate) fn decompose<'dr, D: Driver<'dr>>(
     allocator: &mut impl Allocator<'dr, D>,
     elem: &Element<'dr, D>,
 ) -> Result<Vec<Boolean<'dr, D>>> {
+    decompose_bits(dr, allocator, elem, D::F::CAPACITY as usize)
+}
+
+/// Decomposes a field element into its `n` low little-endian bits, which
+/// range-checks it below $2^n$.
+///
+/// Returns `n` booleans $b_0, \ldots, b_{n-1}$ constrained so that
+/// $\sum_i 2^i b_i = \mathtt{elem}$, at one gate per bit.
+///
+/// # Soundness
+///
+/// For `n` at most `D::F::CAPACITY`, any satisfying assignment makes the
+/// returned booleans the unique little-endian bit decomposition of
+/// $\mathtt{elem}$, and so places $\mathtt{elem}$ below $2^n$.
+///
+/// # Completeness
+///
+/// Honest proving succeeds exactly when $\mathtt{elem} < 2^n$.
+///
+/// # Errors
+///
+/// Returns a capacity error if `n` exceeds `D::F::CAPACITY`, where the sum
+/// could wrap the modulus.
+pub fn decompose_bits<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    allocator: &mut impl Allocator<'dr, D>,
+    elem: &Element<'dr, D>,
+    n: usize,
+) -> Result<Vec<Boolean<'dr, D>>> {
+    if n > D::F::CAPACITY as usize {
+        return Err(ragu_core::Error::GateBoundExceeded {
+            limit: D::F::CAPACITY as usize,
+        });
+    }
     let le_bits = elem.value().map(|value| value.to_le_bits());
-    let bits = (0..D::F::CAPACITY as usize)
+    let bits = (0..n)
         .map(|i| {
             let bit = le_bits.as_ref().map(move |le_bits| le_bits.as_ref()[i]);
             Boolean::alloc(dr, allocator, bit)
@@ -589,6 +623,26 @@ mod tests {
         });
         assert!(too_large.is_err());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_decompose_bits() -> Result<()> {
+        let decomposes = |x: F, n: usize| {
+            Simulator::simulate(x, |dr, x| {
+                let allocator = &mut Standard::new();
+                let x = Element::alloc(dr, allocator, x)?;
+                let bits = decompose_bits(dr, allocator, &x, n)?;
+                assert_eq!(bits.len(), n);
+                Ok(())
+            })
+            .is_ok()
+        };
+        assert!(decomposes(F::from(0xffu64), 8));
+        assert!(!decomposes(F::from(0x100u64), 8));
+        assert!(decomposes(F::ZERO, 0));
+        assert!(!decomposes(F::ONE, 0));
+        assert!(!decomposes(F::ZERO, F::CAPACITY as usize + 1));
         Ok(())
     }
 

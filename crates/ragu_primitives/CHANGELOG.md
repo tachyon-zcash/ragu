@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `decompose_bits`, which decomposes an element into its `n` low bits and so
+  range-checks it below `2^n`.
+- `Point::add_fixed_base_mul`, which adds `[k] base` for a constant `base` and
+  the little-endian integer `k` of a slice of booleans, two bits per addition.
+- `Point::x` and `Point::y`, the coordinates' elements.
+
 ## [0.0.0] - 2025-07-30
 
 ### Added
