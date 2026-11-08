@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stage any other value it reads. Every step circuit reserves `ceil(n / 2)`
   gates for the largest `NUM_STAGED` registered, and the step circuits are
   constructed at `finalize`.
+- Added `Oracles::bridge_hash` and `Application::bridge_hash`: a step reads
+  $H(O_1)$, a binding hash of its own last online commitment as two field
+  elements, and an application computes the same value outside the circuit,
+  for instance to recompute an anchor that hashes a polynomial commitment.
+  $H(O_1)$ is the commitment's four limbs times fixed nested-curve generators,
+  which the nested challenge stage carries and two more native binding
+  circuits recompute.
 
 ### Changed
 

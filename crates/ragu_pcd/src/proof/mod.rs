@@ -24,6 +24,9 @@ mod app_stage_tests;
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
 #[cfg(test)]
+#[path = "../../tests/bridge_hash.rs"]
+mod bridge_hash_tests;
+#[cfg(test)]
 #[path = "../../tests/compress_blinding.rs"]
 mod compress_blinding_tests;
 #[cfg(test)]

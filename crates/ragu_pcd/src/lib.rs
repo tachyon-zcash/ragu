@@ -807,6 +807,26 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         .map(|(pcd, ())| pcd)
     }
 
+    /// $H(P)$: the bridge hash a step reads as
+    /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash) when `point` is
+    /// its own last online commitment. An application that hashes a
+    /// polynomial commitment, for instance into an anchor it also
+    /// recomputes outside the circuit, calls this.
+    ///
+    /// It is $\sum_i \ell_i \cdot G_i$ over the four limbs $\ell_i$ of
+    /// `point`'s coordinates and fixed nested-curve generators, so it depends
+    /// on the rank and the profile, which place the limbs in the nested
+    /// challenge stage (see [`limbs`](internal::limbs)).
+    ///
+    /// # Errors
+    ///
+    /// Fails if `point` is the identity, or if a coordinate is at or above
+    /// $2^{\mathtt{CAPACITY}}$ (probability about $2^{-129}$), which has no
+    /// limbs.
+    pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
+        internal::limbs::digest::<C, R>(C::nested_generators(self.params), point)
+    }
+
     /// Returns a reference to the native [`Registry`].
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry

@@ -146,6 +146,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         let mut ky = Horner::new(y);
         self.unified.w.write(dr, &mut ky)?;
         self.online.write(dr, &mut ky)?;
+        self.unified.bridge_hash.write(dr, &mut ky)?;
         self.children.left.write(dr, &mut ky)?;
         self.children.right.write(dr, &mut ky)?;
         self.output_header.write(dr, &mut ky)?;
