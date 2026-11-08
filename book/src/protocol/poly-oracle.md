@@ -240,39 +240,45 @@ There are two parts within the header-carry check, mirroring those of the field 
 The first half `A.O = S.L` is enforced within `S`, one step early: `S`'s nested `Preamble` stashes `A`'s and `B`'s exported points next to its own `L0, L1, R0, R1` wires, `S`'s nested `collapse` computes `A`'s and `B`'s collapse `ky` from the stash and enforces `L0, L1, R0, R1` equal to the stashed `A.O0, A.O1, B.O0, B.O1`, a 4-point equality.
 The second half `S.fold.L = S.app.L` holds when we fold revdot claims of these nested traces in the parent step `T`: the `ky` computation in `S.nested.collapse` takes `S`'s exported `[L0, L1, R0, R1, O0, O1]` from `T`'s stash, the same points `T` uses as `S.app`'s commitments.
 
-### V2: bridge commitment for one public poly {#v2}
+### V2: bridge hash of one public poly {#v2}
 
-- Goal: design a binding hash function that takes in `CurvePoint`, outputs `Fp/CircuitField` $H^{bridge}(P\in\E_q) \in\F_p^2$ with verifiable trace
-- Solution: add a dedicated nested stage for this point, and use its bridge commitment as its hash digest, its correctness is automatically folded within Ragu
+- Goal: a binding hash that takes the `CurvePoint` $O_1 \in \E_q$ and outputs `Fp/CircuitField` values $H^{bridge}(O_1) \in \F_p^2$ the app circuit can hash further, with a verifiable trace
+- Solution: carry $O_1$'s coordinates across the cycle as small limbs, through the channel the nested challenges already use: an unblinded nested stage whose commitment the native side recomputes
+
+$O_1$'s coordinates live in $\F_q$, which the $\F_p$ app circuit cannot read, and an $\F_q$ element generally does not fit in $\F_p$.
+Split each coordinate into two limbs, $c = c_{lo} + 2^{128} c_{hi}$ with $c_{lo} < 2^{128}$ and $c_{hi} < 2^{\mathtt{CAPACITY}-128}$ (126 bits for Pasta).
+Each limb is the same integer in both fields, and $c_{lo} + 2^{128} c_{hi} < 2^{\mathtt{CAPACITY}} \le q$, so the split is unique.
+(A coordinate at or above $2^{\mathtt{CAPACITY}}$ has no split; it occurs with probability about $2^{-129}$, as for `boolean::decompose`.)
+
+The nested challenge stage already carries native values to the nested side: it holds the lifts of the native challenges at fixed positions, is committed unblinded, and the native `bind_challenges` circuits recompute its commitment from the transcript challenges by scaling fixed generators, so the commitment, and with it every coefficient, is pinned.
+The same channel runs the other way when the nested side constrains the values and the native side holds claimed ones: the commitment equality binds in both directions.
 
 ```
-Before:
+     ERROR           QUERY          NESTED
 
-     ERROR          QUERY          POINTS            NESTED
-
-   Preamble                    PointsChildren       Preamble (witness L0,L1,R0,R1,O0,O1)
-       ├──────────────┐               │                 │
-       │              │               │                 │
-─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-
-After:
-
-   Preamble                    PointsChildren       BridgeHash (witness O1)
-       ├──────────────┐               │                 │
-       │              │               │             Preamble (witness L0,L1,R0,R1,O0)
-       │              │               │                 │
-─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+   Preamble                       Preamble (witness L0,L1,R0,R1,O0,O1)
+       │                              │
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+       ⋮                              ⋮
+     Eval (+ limbs of O1)         Challenges (lifts, sign, beta, + limbs of O1)
+       │
+ BindChallenges(0..3): challenge terms    ──┐
+ BindChallenges(4): x limbs' terms, sign    ├─ nested_challenges_partial, H^bridge(O1)
+ BindChallenges(5): y limbs' terms         ──┘
 ```
 
-This gives us a hash `bridge_o1_hash` native on the `Fp` side that we can use for constraining hash chain that takes in polynomial commitments as one of the preimages.
-Importantly, we need to synchronize our outside-the-circuit code to use this non-standard hash function:
-computes the trace `bridge_hash_rx` as a stage polynomial $\in\F_q[X]$, then computes its commitment as a $\E_p$/`NestedCurve` point, and uses its two coordinates as the hash digest.
-For the digest to be a function of the point, the `BridgeHash` stage is committed unblinded (every other stage takes a random blinding), and every wire of the stage is fixed by the point.
-`BridgeHash` is the first nested stage: the digest depends on the stage's position, which then does not move when `Preamble` grows.
-Binding follows from the binding of the commitment: two points with the same digest are two openings of one commitment.
+1. The challenge stage holds the four limbs after $\beta$; the nested `collapse` circuit holds them to the coordinates of the $O_1$ in the nested `Preamble` with two linear constraints. The limbs' terms in the stage's commitment are
+$$H^{bridge}(O_1) = \sum_{i<4} \ell_i \cdot G_{\mathrm{idx}(i)}.$$
+2. Two more native binders recompute $H^{bridge}(O_1)$: each reads one coordinate's limbs off the native `Eval` stage, decomposes them into $128$ and $\mathtt{CAPACITY}-128$ bits (the range checks that make the split unique), and adds $\ell \cdot G$ for each with a fixed-base multiplication over $\E_p$, which a native circuit can do since $\E_p$'s base field is $\F_p$. The first also closes the challenge binders' sum with the base-case sign (moved from the last challenge binder, which the preamble, query and eval stages leave no room for), and the second pins $H^{bridge}(O_1)$ to the `unified` instance.
+3. The parent's `bind_beta` checks the walked challenge stage against `nested_challenges_partial` $+ H^{bridge}(O_1) +$ $\beta$'s term. Binding of the commitment makes the stage's limb coefficients the native limbs, which `collapse` holds to $O_1$. At the root, the decider checks $H^{bridge}(O_1)$ against $O_1$ directly.
 
-Unlike [v1](#v1), this changes the transcript: the `BridgeHash` commitment joins the `unified` instance next to `bridge_preamble_commitment`, and `hashes_1` absorbs it before squeezing $w$, so $\zeta$ binds `O1` too.
-The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.
+The digest is a point of $\E_p$; its two coordinates are $\F_p$ values.
+The app circuit claims them the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.
+Outside the circuit, an application computes the same digest from $O_1$ alone, with `Application::bridge_hash`.
+
+The transcript does not change: $H^{bridge}(O_1)$ is a function of $O_1$, which $w$ absorbs through the `Preamble` bridge.
+No nested stage is added: the challenge stage grows by four values, and the native side gains two internal circuits, whose commitments add one step to the nested endoscaling walk.
+The census header drops from 98 to 97 elements: the limbs and the limb partial in the `Eval` stage, the new circuits' evaluations and the children's bridge hashes in the `Preamble` put the challenge binders at 2047 of 2048 gates.
 
 ### V3: witness private poly via 2-stage app circuit {#v3}
 
@@ -295,9 +301,7 @@ Before:
 
      ERROR                           NESTED
 
-   Preamble                         BridgeHash (witness O1)
-       │                                │
-       │                            Preamble (witness L0,L1,R0,R1,O0)
+   Preamble                         Preamble (witness L0,L1,R0,R1,O0,O1)
        │                                │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
@@ -305,9 +309,7 @@ After:
 
      ERROR           APP             NESTED
 
-   Preamble      PrivatePoly        BridgeHash (witness O1)
-       │              │                 │
-       │              │             Preamble (witness L0,L1,R0,R1,O0, pri_poly_rx_comm)
+   Preamble      PrivatePoly        Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
        │              │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ```
@@ -354,9 +356,7 @@ Before:
 
      ERROR           APP             NESTED
 
-   Preamble      PrivatePoly        BridgeHash (witness O1)
-       │              │                 │
-       │              │             Preamble (witness L0,L1,R0,R1,O0, pri_poly_rx_comm)
+   Preamble      PrivatePoly        Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
        │              │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
@@ -364,9 +364,7 @@ After:
 
      ERROR           APP           QUERY        NESTED
 
-   Preamble      PrivatePoly                BridgeHash (witness O1)
-       │              │                           │
-       │              │                    Preamble (witness L0,L1,R0,R1,O0, pri_poly_rx_comm)
+   Preamble      PrivatePoly                Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
        │              │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
        │              │                           │
