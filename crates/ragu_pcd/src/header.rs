@@ -26,15 +26,17 @@ use udon::field::Field;
 /// [`Step`]: crate::step::Step
 pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 
-/// The polynomial commitments every [`Header`] carries beside its field
-/// data.
+/// The number of online polynomial slots stored in each [`Proof`](crate::Proof).
+/// Their commitments are associated with the output header and exposed by
+/// [`Pcd::commitments`](crate::Pcd::commitments); the [`Header`] trait
+/// defines the field encoding separately.
 ///
-/// This is a parameter of the protocol, not of a header type: every header
-/// carries exactly this many polynomials, every step commits this many for
+/// This is a parameter of the protocol, not of a header type: every proof
+/// stores exactly this many polynomials, every step commits this many for
 /// its output through [`Step::polynomials`](crate::step::Step::polynomials)
-/// and may open any of its three headers' through
-/// [`Oracles`](crate::step::Oracles). A step's six online slots are its
-/// headers' polynomials in the order left, right, output; they are opened
+/// and may open its own or either child's through
+/// [`Oracles`](crate::step::Oracles). A step's six online slots are the
+/// polynomials in left, right, output order; they are opened
 /// by the step's own batch, so every step pays for all of them whether its
 /// headers use them or not.
 ///
@@ -118,6 +120,11 @@ impl Suffix {
 /// Headers are succinct representations of data, essentially used as public
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
+///
+/// This trait defines the field encoding of the application data. The
+/// associated online polynomials and their commitments are stored in
+/// [`Proof`](crate::Proof), separately from [`Data`](Self::Data) and
+/// [`Output`](Self::Output).
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.

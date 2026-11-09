@@ -1,9 +1,11 @@
 //! The online polynomial oracles a step queries while its circuit is
 //! synthesized.
 //!
-//! A step's three headers carry [`HEADER_POLYNOMIALS`] polynomials each,
-//! committed before the step's challenge $\zeta$ is squeezed: the
-//! children's in their proofs, the step's own by its
+//! A step opens [`HEADER_POLYNOMIALS`] polynomials from each child's proof
+//! and from its own output proof, associated with the three headers. Their
+//! commitments are stored in [`Proof`](crate::Proof) and fixed before the
+//! step's challenge $\zeta$ is squeezed: the children's in their proofs,
+//! the step's own by its
 //! [`polynomials`](super::Step::polynomials) phase. In the step's
 //! [`witness`](super::Step::witness) phase, [`Oracles`] stands for those six
 //! commitments. The step may [`query`](Oracles::query) each slot once, at
@@ -22,7 +24,7 @@
 //! circuit witnesses, the output header's fields included, is the prover's
 //! choice given $\zeta$.
 //!
-//! The slots are the headers' polynomials in order `[L0, L1, R0, R1, O0,
+//! The slots are the proofs' polynomials in order `[L0, L1, R0, R1, O0,
 //! O1]`. Every slot holds whatever polynomial the step that produced the
 //! header committed, the constant one where that step used fewer; what a
 //! slot means is the application's convention for the header, which the

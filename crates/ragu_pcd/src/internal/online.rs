@@ -1,10 +1,12 @@
-//! The online polynomials a fuse step opens: the polynomial commitments its
-//! three headers carry, which the step's own PCS batch opens at points the
-//! application circuit chooses.
+//! The online polynomials a fuse step opens: those stored in its two child
+//! proofs and its own output proof, which the step's PCS batch opens at
+//! points the application circuit chooses.
 //!
-//! Each header carries [`HEADER_POLYNOMIALS`] polynomials beside its field
-//! data, a parameter of the protocol rather than of the header type. A
-//! step's online slots are its headers' polynomials in the fixed order
+//! Each proof stores [`HEADER_POLYNOMIALS`] polynomials associated with its
+//! output header, a parameter of the protocol rather than of the header type.
+//! The header's field encoding is separate from these polynomials and their
+//! commitments. A step's online slots are the proofs' polynomials in the
+//! fixed order
 //! `[L0, L1, R0, R1, O0, O1]` (see [`Slot`]): the left and right slots are
 //! the children's output polynomials, which the children committed and
 //! exported, and the output slots are the step's own, committed before $w$
@@ -52,11 +54,10 @@ pub const NUM_ONLINE_QUERIES: usize = 3 * HEADER_POLYNOMIALS;
 /// Length type for a step's online slots.
 pub type QueriesLen = ConstLen<NUM_ONLINE_QUERIES>;
 
-/// Length type for one header's polynomials.
+/// Length type for one proof's online polynomials.
 pub type HeaderLen = ConstLen<HEADER_POLYNOMIALS>;
 
-/// The headers of a step whose polynomials fill its online slots, in slot
-/// order.
+/// The input or output position whose proof supplies a step's online slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
     /// The left input header.
@@ -72,7 +73,7 @@ impl Position {
     pub const ALL: [Self; 3] = [Self::Left, Self::Right, Self::Output];
 }
 
-/// An online slot: one of a header's polynomials.
+/// An online slot: one of an input or output proof's polynomials.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Slot {
     position: Position,
@@ -113,7 +114,7 @@ impl Slot {
         self.position
     }
 
-    /// The slot's index among its header's polynomials.
+    /// The slot's index among its proof's online polynomials.
     pub const fn index(self) -> usize {
         self.index
     }
@@ -137,7 +138,7 @@ impl Slot {
 }
 
 /// The coefficients of `polys`, ascending in degree with trailing zeros
-/// stripped: how a step's first phase reads a header's polynomials.
+/// stripped: how a step's first phase reads a proof's online polynomials.
 pub fn coefficients<F: Field, R: Rank>(
     polys: &[sparse::Polynomial<F, R>; HEADER_POLYNOMIALS],
 ) -> [alloc::vec::Vec<F>; HEADER_POLYNOMIALS] {

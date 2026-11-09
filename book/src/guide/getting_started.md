@@ -137,7 +137,7 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,  // No header carries a polynomial
+        _: &mut Oracles<'_, 'dr, D>,  // Only padding polynomials
         witness: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         _: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

@@ -33,7 +33,7 @@ pub trait Step<C: Cycle> {
     // Optional: how many values the step stages. Defaults to none.
     const NUM_STAGED: usize = 0;
 
-    // Optional: the polynomials the output header carries, committed before
+    // Optional: the output proof's polynomials, committed before
     // the step's challenge is drawn. Defaults to the constant one in every
     // slot.
     fn polynomials<'source>(
@@ -113,22 +113,23 @@ This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
 2. Receives left/right header data as `DriverValue`s
 3. Receives the step's polynomial oracles (see
-   [Polynomial Oracles](#polynomial-oracles)); a step whose headers carry no
+   [Polynomial Oracles](#polynomial-oracles)); a step that uses only padding
    polynomials ignores them
 4. Performs computation (constraints)
 5. Returns encoded proofs and auxiliary output
 
 ### 4. The `polynomials` and `staged` Functions
 
-Every header carries `HEADER_POLYNOMIALS` (two) polynomials beside its field
-data; the count is a parameter of the protocol, not of the header type. A
-step whose output header uses them implements `polynomials`, which runs
-before the step's challenge is drawn and returns the output polynomials'
+Every proof stores `HEADER_POLYNOMIALS` (two) online polynomials and their
+commitments, associated with its output header. The header's field encoding
+is separate; the polynomial count is a parameter of the protocol, not of
+the header type. A step that uses these slots implements `polynomials`,
+which runs before the step's challenge is drawn and returns the output polynomials'
 coefficients, one vector per slot, computed from the witness and from the
 inputs' data and polynomials. Ragu commits them, and they travel with the
 proof. The default puts the constant one in every slot, which is right for
-headers without polynomials; a step that uses one slot returns the constant
-one for the other.
+steps that use no online polynomials; a step that uses one slot returns the
+constant one for the other.
 
 `staged` runs beside `polynomials` and returns the `NUM_STAGED` values the
 step's checks at $\zeta$ read but no header carries, such as the roots it
@@ -199,10 +200,10 @@ let right_data = right.as_gadget();
 
 ## Polynomial Oracles
 
-A step can relate the polynomials its headers carry without putting their
-coefficients in the circuit. Each of the three headers has two polynomial
-slots, `Slot::left(i)`, `Slot::right(i)` and `Slot::output(i)`, holding
-whatever the step that produced the header committed. What a slot means is
+A step can relate its input and output proofs' polynomials without putting
+their coefficients in the circuit. Each proof has two polynomial slots,
+accessed as `Slot::left(i)`, `Slot::right(i)` and `Slot::output(i)`, holding
+whatever the producing step committed. What a slot means is
 your convention for that header, as the meaning of its fields is: the
 circuits of the steps that produce the header constrain it, and Ragu proves
 that every opening is of the committed polynomial. The `Oracles` argument
@@ -265,8 +266,9 @@ Headers define what data flows through the proof tree. Each header
 implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 (the native Rust value), an `Output` type (the circuit gadget
 representation), an `encode` function that converts `Data` into
-`Output` by allocating circuit elements. Every header also carries
-`HEADER_POLYNOMIALS` polynomials beside its data (see
+`Output` by allocating circuit elements. The accompanying proof stores
+`HEADER_POLYNOMIALS` online polynomials and their commitments, exposed by
+`Pcd::polynomials()` and `Pcd::commitments()` (see
 [Polynomial Oracles](#polynomial-oracles)).
 
 For a complete example with multiple header types, see

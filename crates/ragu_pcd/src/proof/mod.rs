@@ -140,9 +140,9 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
         (self.proof, self.data)
     }
 
-    /// The polynomials the header carries, one coefficient vector in
-    /// ascending degree per slot, as the step that produced this proof
-    /// committed them.
+    /// The proof's polynomials associated with its output header, one
+    /// coefficient vector in ascending degree per slot, as the step that
+    /// produced this proof committed them.
     pub fn polynomials(&self) -> [Vec<C::CircuitField>; HEADER_POLYNOMIALS] {
         online::coefficients(self.proof.online_polys())
     }
@@ -1216,7 +1216,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_b_poly(ones_host.clone(), host_commitment);
         builder.set_native_query_rx(ones_host.clone());
         builder.set_native_registry_xy_poly(registry_xy_poly);
-        // The unit header carries no polynomial: every online slot is
+        // This dummy proof uses padding: every online slot is
         // padding, opened at the all-one challenge to its value one.
         builder.set_online_polys(core::array::from_fn(|_| online::padding()));
         builder.set_online_queries(online::queries_at(C::CircuitField::ONE, |_, _| {

@@ -16,7 +16,7 @@
 //!   revdot claims
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
-//! - [`online`] — the online polynomials a step's headers carry and its
+//! - [`online`] — the online polynomials associated with a step's headers and its
 //!   batch opens
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation

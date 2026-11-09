@@ -145,13 +145,13 @@ impl Index {
     }
 }
 
-/// A header's data with the polynomials it carries: what a step's
-/// [`polynomials`](Step::polynomials) phase reads of each input.
+/// An input header's data with its proof's associated polynomials: what a
+/// step's [`polynomials`](Step::polynomials) phase reads of each input.
 pub struct HeaderInput<'a, F: Field, H: Header<F>> {
     /// The header's data, as the step's [`witness`](Step::witness) phase
     /// also receives it.
     pub data: &'a H::Data,
-    /// The coefficients of each of the header's [`HEADER_POLYNOMIALS`]
+    /// The coefficients of the input proof's [`HEADER_POLYNOMIALS`]
     /// polynomials, in ascending degree with trailing zeros stripped, as
     /// the step that produced the input committed them.
     pub polynomials: &'a [Vec<F>; HEADER_POLYNOMIALS],
@@ -161,12 +161,13 @@ pub struct HeaderInput<'a, F: Field, H: Header<F>> {
 /// tree) that represents the merging of two pieces of proof-carrying data.
 ///
 /// A step proves in two phases. Before its challenge is drawn,
-/// [`polynomials`](Self::polynomials) commits the polynomials its output
-/// header carries, from the witness and the inputs' data and polynomials,
-/// and [`staged`](Self::staged) commits the step's staged values, the
-/// secret values its checks at $\zeta$ read that no header carries. After
+/// [`polynomials`](Self::polynomials) supplies the output proof's
+/// polynomials, from the witness and the inputs' data and polynomials,
+/// and [`staged`](Self::staged) supplies the step's staged values, the
+/// secret values its checks at $\zeta$ read that no header field contains.
+/// Ragu commits both before drawing the challenge. After
 /// the challenge $\zeta$ is drawn, [`witness`](Self::witness) synthesizes
-/// the circuit, with [`Oracles`] standing for the three headers'
+/// the circuit, with [`Oracles`] standing for the three proofs'
 /// polynomials and the staged values: the step may open each polynomial
 /// once, at $\zeta$ or at any wire, and relate the values in its
 /// constraints. Ragu proves the openings; see [`oracles`].
@@ -223,14 +224,14 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         Ok(Vec::new())
     }
 
-    /// The polynomials the output header carries, computed before the
-    /// step's challenge is drawn: one coefficient vector, ascending in
-    /// degree, for each of the header's [`HEADER_POLYNOMIALS`] slots. Ragu
-    /// commits them; the parent opens them as its left or right slots, and
-    /// this step's [`witness`](Self::witness) may open them as its output
-    /// slots. The default puts the constant one in every slot, which is
-    /// what a step whose output needs fewer polynomials returns for the
-    /// slots it leaves unused.
+    /// The output proof's online polynomials, associated with its header.
+    /// Returns one coefficient vector, ascending in degree, for each of the
+    /// proof's [`HEADER_POLYNOMIALS`] slots before the challenge is drawn.
+    /// Ragu commits them and stores the polynomials and commitments in
+    /// [`Proof`](crate::Proof). The parent opens them as its left or right
+    /// slots, and this step's [`witness`](Self::witness) may open them as
+    /// its output slots. The default puts the constant one in every slot;
+    /// a step that uses fewer polynomials returns it for the unused slots.
     ///
     /// A polynomial may have at most as many coefficients as the
     /// application's rank holds, and must not be zero.

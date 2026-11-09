@@ -15,7 +15,7 @@ The correctness of online polynomial openings is not enforced in circuit, but fu
 All usages of the online poly oracle in Tachyon's [proof tree](https://tachyon.z.cash/book/revisit.html#prooftree) can be categorized as:
 
 - T1: algebraic relation among _public_ online polynomials: $L(X)\cdot R(X) = O(X)$
-  - here commitments of $L(X), R(X), O(X)$ are in the public headers of PCD proofs
+  - here commitments of $L(X), R(X), O(X)$ are associated with the public headers of PCD proofs
 - T2: algebraic relation among public _and private_ online polynomial: $L(X)\cdot \prod_i (X-\tg_i) = O(X)$
   - here $tg_i$ are private witness, thus $\prod_i (X - \tg_i)$ is a private online poly
 - T3: random challenge sampling after committing online polynomials, public or private
@@ -27,12 +27,32 @@ All usages of the online poly oracle in Tachyon's [proof tree](https://tachyon.z
 
 For Tachyon developers, this is your mental model of what Ragu's online polynomial oracle provides/allows:
 
-- C1: supports $2$ poly commitment slots in every `Header`: `[Fp; HEADER_SIZE] | [Eq; 2]`
+A **header** is application state passed between steps, such as a state
+root or item count. The Rust `Header` trait defines how that state is
+encoded as `Fp` elements. Ragu adds padding and the header's suffix to
+produce `HEADER_SIZE` field elements.
+
+A circuit's **public instance** is the tuple of values its circuit claim
+is bound to. Ragu encodes that tuple as an instance polynomial $k(Y)$ and
+uses $k(y)$ as the circuit claim's target. The application circuit's instance
+contains the left, right and output header fields, together with $\zeta$,
+the six opening pairs and the bridge digest. Header fields are one part of
+that instance.
+
+`Pcd` pairs the header's data with a `Proof`. The proof stores two `Eq`
+polynomial commitments for the step's output, exposed by
+`Pcd::commitments()`. These points are carried in the nested `Preamble` and
+exported through the public instance shared by nested `collapse` and
+`compute_v`. That **nested unified instance** contains accumulator values,
+challenge lifts and proof commitments: it is a statement for Ragu's
+internal circuits.
+
+- C1: each proof carries $2$ public polynomial commitment slots associated with its output header
   - `Eq` is alias for `HostCurve` type and $\E_q$ in math
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
 - C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. A private polynomial has no commitment slot and no oracle
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
-  - public poly commitments live in public headers
+  - public poly commitments are carried in proofs and associated with their output headers
   - staged values, and so any private polynomial built from them, live in the application stage, whose commitment is absorbed in the FS transcript during `fuse()`
   - consequently, a check at $\zeta$ may only read values fixed before $\zeta$: openings $y_i = f_i(x_i)$ at $x_i = \zeta$ or at an $x_i$ itself fixed before $\zeta$, the left/right header fields, the first-stage values, `h_O1`, and anything the final stage computes from them; or an in-circuit hash output, or a value from a small set (e.g. a bit).
   Any other value the final stage witnesses, including the output header's fields, is chosen _after_ $\zeta$: a check $O(\zeta) = L(\zeta)\cdot(\zeta - t)$ with such a $t$ is forgeable by solving $t = \zeta - O(\zeta)/L(\zeta)$. Witness $t$ in the first stage instead.
@@ -45,9 +65,9 @@ For Tachyon developers, this is your mental model of what Ragu's online polynomi
   Integrity of the challenge $\zeta$ and the $H^{bridge}(\cm_{O_1})$ is guaranteed by Ragu.
   - importantly, we **only allow one opening per public online polynomial**; a private polynomial is evaluated in-circuit from its staged roots or coefficients, as many times as the circuit budget permits
   - all declared queries follow the canonical order, targeting $L_0, L_1, R_0, R_1, O_0, O_1$ respectively
-  - public instance $k(Y)$ of the app circuit changes from `[L/R/O headers]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O headers]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
+  - public instance $k(Y)$ of the app circuit changes from `[L/R/O header fields]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O header fields]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
   - the special hash only commits the step's own `O1` slot, so if the app circuit wants to compute
-  $\anchor' = H(\anchor \| e \| \acc^\tg)$ then $\acc^\tg$ must be publicized as `O1` in the respective header
+  $\anchor' = H(\anchor \| e \| \acc^\tg)$ then $\acc^\tg$ must occupy the output polynomial slot `O1`
 
 ## Changes to Tachyon Proof Tree {#changes}
 
