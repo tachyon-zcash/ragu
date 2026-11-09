@@ -235,6 +235,16 @@ omitted, even though they do not change the rounded estimate of about
 127 bits. The $u_n$ entry conservatively clears the quotient denominators;
 it does not treat the rational identity as a degree-$D-1$ polynomial.
 
+The native $w$ also serves as the application challenge $\zeta$ (see the
+[online polynomial oracle](../poly-oracle.md)): the step's online slots are
+opened at it, and the step's circuit checks its polynomial identities
+there. Those checks are native, over the full field rather than the 143-bit
+lifts, so they do not enter this ledger; each identity of degree below $D$
+adds at most $D-1$ roots to the native $w$ against a sample space of about
+$2^{254}$. Every value such a check reads is committed in the `preamble`
+bridge that $w$ absorbs, which is what lets one squeeze serve both the
+registry restrictions and the application's identities.
+
 This is a conditional per-step accounting, not an end-to-end security
 theorem. A full reduction must justify the choice of a first invalid
 relation, the transcript timing, commitment and stage binding, and
