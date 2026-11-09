@@ -58,7 +58,7 @@ pub const NUM_EXPORTED: usize = 15 + HEADER_POLYNOMIALS;
 // the slot count must rewrite them, in the walk's order.
 const _: () = assert!(
     HEADER_POLYNOMIALS == 2,
-    "the exported commitment lists spell out two online slots"
+    "the exported commitment lists spell out two oracle slots"
 );
 
 /// Length type for the exported commitments.
@@ -80,6 +80,8 @@ pub struct Instance<C: Affine> {
     pub x: C::Base,
     pub y: C::Base,
     pub u: C::Base,
+    /// Commitments exported for the parent, bound to this step's bridge
+    /// stages by one of the nested circuits.
     pub exported: [C; NUM_EXPORTED],
     /// Accumulated coverage from prior circuits.
     pub coverage: Coverage,
@@ -148,6 +150,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub y: Element<'dr, D>,
     #[ragu(gadget)]
     pub u: Element<'dr, D>,
+    /// Commitments exported for the parent, bound to this step's bridge
+    /// stages by one of the nested circuits.
     #[ragu(gadget)]
     pub exported: FixedVec<Point<'dr, D, C>, ExportedLen>,
 }

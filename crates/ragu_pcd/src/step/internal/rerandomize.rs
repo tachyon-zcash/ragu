@@ -7,7 +7,7 @@
 //! a witness wire rather than a constant. The right header is the unit header
 //! carried by the cached proof.
 //!
-//! The output header's polynomials are copies of the left input's, which
+//! The output proof's polynomials are copies of the left input proof's, which
 //! the circuit holds equal at $\zeta$ slot by slot: the parent sees only
 //! the output slots, so a copy alone would let a rerandomizing prover swap
 //! the polynomial.

@@ -80,7 +80,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
             native_points_children: builder.native_points_children_commitment(),
-            online: builder.online_commitments(),
+            oracle_commitments: builder.oracle_commitments(),
             application_stage: builder.native_application_stage_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
@@ -95,7 +95,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The bridge-hash stage: the own last online commitment, unblinded,
         // so its commitment is the digest the step's instance carries.
-        let o1 = builder.online_commitments()[HEADER_POLYNOMIALS - 1];
+        let o1 = builder.oracle_commitments()[HEADER_POLYNOMIALS - 1];
         let hash_rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)?;
         let hash_commitment =
             B::sparse_commit_to_affine(&hash_rx, C::nested_generators(self.params));

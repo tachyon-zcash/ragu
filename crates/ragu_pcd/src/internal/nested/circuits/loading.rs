@@ -148,11 +148,11 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // The online slots, in slot order: the children's exported
         // polynomials as the left and right slots, then the step's own.
         for child in [&preamble.left, &preamble.right] {
-            for point in child.stashed_online.iter() {
+            for point in child.stashed_oracle_commitments.iter() {
                 walker.enforce_equal(dr, point)?;
             }
         }
-        for point in preamble.online.iter() {
+        for point in preamble.oracle_commitments.iter() {
             walker.enforce_equal(dr, point)?;
         }
 

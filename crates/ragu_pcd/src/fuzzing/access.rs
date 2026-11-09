@@ -136,33 +136,33 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &mut self.nested_challenges_partial
     }
 
-    /// The step's `index`-th own online polynomial, mutably, or `None` past
-    /// the header's polynomials.
-    pub(crate) fn online_poly_mut(
+    /// The proof's `index`-th oracle polynomial, mutably, or `None` past
+    /// its polynomial slots.
+    pub(crate) fn oracle_polynomial_mut(
         &mut self,
         index: usize,
     ) -> Option<&mut sparse::Polynomial<C::CircuitField, R>> {
-        self.online_polys.get_mut(index)
+        self.oracle_polynomials.get_mut(index)
     }
 
-    /// The cached commitment of the step's `index`-th own online polynomial,
-    /// mutably, or `None` past the header's polynomials.
-    pub(crate) fn online_commitment_cache_mut(
+    /// The cached commitment of the proof's `index`-th oracle polynomial,
+    /// mutably, or `None` past its polynomial slots.
+    pub(crate) fn oracle_commitment_cache_mut(
         &mut self,
         index: usize,
     ) -> Option<&mut C::HostCurve> {
-        self.online_commitments
+        self.oracle_commitments
             .get_mut(index)
             .map(|commitment| &mut commitment.0)
     }
 
-    /// The step's `slot`-th online opening, mutably, or `None` past the
+    /// The step's `slot`-th oracle opening, mutably, or `None` past the
     /// slots.
-    pub(crate) fn online_query_mut(
+    pub(crate) fn oracle_opening_mut(
         &mut self,
         slot: usize,
     ) -> Option<&mut crate::internal::online::Query<C::CircuitField>> {
-        self.online_queries.get_mut(slot)
+        self.oracle_openings.get_mut(slot)
     }
 
     /// The cached native commitment named by `which`, mutably.

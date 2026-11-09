@@ -78,8 +78,8 @@ While it suffices for the majority of Tachyon's [current steps](https://github.c
   - two problems: 
     - during `QrIntakeSplit`, we have to query the NQR set $q_0(X)$ both at random challenge $\zeta$ and at discriminant $-R_j$, the only step in the entire proof tree where we query more than one point on a committed online poly. Querying at challenge is to ensure "decomposition" relation, querying at discriminant offset is to ensure "zero-value QR assignment".
     - during `QrSideDescend`, the prover needs to commit two private online polynomials $g(X), h(X)$, see [protocol here](https://tachyon.z.cash/book/revisit.html#partition).
-    The input left header `QrIntakeSides` already occupies 2 public online-poly slots, the output header `QrIntake` already occupies 1 public online-poly slot. Our app's first stage can only witness simple closed-form online polynomials in coefficient or roots form, but not directly a private commitment. Naively pushing $\cm_g, \cm_h$ to output headers would exceed the $2$-per-header capacity
-  - solve both problems using one trick: a new header `QrDescendWitness` holding $\cm_g, \cm_h$ in its two public online poly commitments
+    The left input proof with header `QrIntakeSides` already occupies 2 public online-poly slots, and the output proof with header `QrIntake` already occupies 1. Our app's first stage can only witness simple closed-form online polynomials in coefficient or roots form, but not directly a private commitment. Putting $\cm_g, \cm_h$ in the output proof would exceed the $2$-per-proof capacity
+  - solve both problems using one trick: a proof with a new header `QrDescendWitness` and $\cm_g, \cm_h$ in its two public polynomial commitment slots
     - add two seed steps to generate `QrDescendWitness` for QR and NQR sides: these seed steps take `QrIntakeSides` as input and output `QrDescendWitness`, with no constraints on $g, h$ (they are hints, committed before `QrSideDescend`'s $\zeta$). Importantly, $q_0(-R_j)$ check is relocated from `QrIntakeSplit` to the seed step for NQR side here.
     - the NQR seed's input must be the `QrIntakeSides` that `QrSideDescend` descends, and header fields alone do not bind commitments. So `QrIntakeSplit` places $q_0$ in `O1` and writes $H^{bridge}(\cm_{q_0})$ into a `QrIntakeSides` field; the NQR seed copies it (and $R_j$) into `QrDescendWitness`, and `QrSideDescend` checks they match its left input's. Equal digests mean the same $q_0$.
     - current `QrSideDescend<Left=QrIntakeSides, Right=(), Output=QrIntake>`, change to `QrSideDescend<Left=QrIntakeSides, Right=QrDescendWitness, Output=QrIntake>` and query all 6 online polynomials within the step, perfectly fitting in our capacity
@@ -232,16 +232,16 @@ Nested Internal Circuits:
 ### V1: witness public poly, piggyback existing Fiat-Shamir challenge {#v1}
 
 - Goal: piggyback an application-level Polynomial IOP flow into Ragu's existing machinery.
-  - allows polynomial commitments in `Header`
+  - allows proofs to carry polynomial commitments associated with their output headers
   - commits them to the FS transcript
   - then draws a verifier challenge accessible from the application circuit
 - Solution: 2-phase, singleton/non-stage application circuit, piggybacking on nested `Preamble` and challenge $w$.
 
-To witness a polynomial in the header, we obviously cannot use its coefficient form since that would take up the entire circuit budget.
-Instead, we include their commitment which are `HostCurve`/$\E_q$ points with coordinates in non-native fields.
+To witness a proof's polynomial in a circuit, we cannot use all its coefficients since that would take up the entire circuit budget.
+Instead, we witness its commitment, a `HostCurve`/$\E_q$ point with coordinates in the non-native field.
 Luckily, Ragu already have a mechanism called **bridge commitment** to witness a batch of `HostCurve` points natively on a nested stage and commits the nested stage trace into a so-called bridge commitment of `NestedCurve`/$\E_p$ type.
 
-In the first phase, we witness the `[L0, L1, R0, R1, O0, O1]` 6 poly commitments from the headers in the nested `Preamble` stage trace.
+In the first phase, we witness the `[L0, L1, R0, R1, O0, O1]` 6 poly commitments from the input and output proofs in the nested `Preamble` stage trace.
 Absorbing `bridge_preamble_commitment` and squeezing challenge $w$ remains unchanged.
 We set $\zeta = w$, maximally piggybacking the existing staging pipeline and introducing no change to the transcript.
 
@@ -250,7 +250,7 @@ We compute the full trace `app_rx` and its commitment to be folded in the next s
 
 The main challenges are
 1) ensuring $\zeta$ used by the app circuit is correct given the externalized challenge squeezing;
-2) extending ["header-carry check"](#ragu) to these poly commitments in the header.
+2) extending ["header-carry check"](#ragu) to the proofs' associated poly commitments.
 
 For (1), we update the public instance $k(Y)$ to include $\zeta$ used to synthesize `app_rx`.
 During the `application_ky()` computation in the parent step's folding circuit, we Horner over `[zeta, L/R/O headers]` where `zeta` slot is filled with the `unified.w` challenge value witnessed in the native `Preamble` stage, effectively copy-constraining the correct $\zeta$ used in `app_rx` and derived from FS transcript.
@@ -286,7 +286,7 @@ After:
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ```
 
-This gives us a hash `bridge_o1_hash` native on the `Fp` side that we can use for constraining hash chain that takes in polynomial commitments as one of the preimages.
+This gives us a digest `bridge_hash_commitment`, exposed to the application circuit by `Oracles::bridge_hash()`, whose coordinates are native on the `Fp` side and can be used to constrain a hash chain that takes polynomial commitments as preimages.
 Importantly, we need to synchronize our outside-the-circuit code to use this non-standard hash function:
 computes the trace `bridge_hash_rx` as a stage polynomial $\in\F_q[X]$, then computes its commitment as a $\E_p$/`NestedCurve` point, and uses its two coordinates as the hash digest.
 The prover constructs the `BridgeHash` stage unblinded (every other stage takes a random blinding), with only $x$ and $y$ of the point as nonzero coefficients.
@@ -309,6 +309,7 @@ The app circuit claims the digest the same way it claims $\zeta$: its public ins
 - Solution: 2-phase application circuit with an application stage of a single, maximally permissible size
 
 Give the application circuit a stage committed before $\zeta$.
+The diagrams label this stage `AppStage`; the application trace synthesized by `Step::witness` is labeled `Application`.
 
 - stage the roots (or coefficients) of the private polynomial: the step returns them from `Step::staged`, and Ragu commits them in the application stage
 - commit the stage trace and append to the nested `Preamble` stage
@@ -362,7 +363,7 @@ The validity of the app trace is exactly as [the last variant](#v3): folded at t
 To connect the claims across these two validity checks, we need to further extend the public instance $k(Y)$ to Horner over:
 
 ```
-[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O headers]
+[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O header fields]
 ```
 
 Here we make the simplification to only allow _one query per public online polynomial_.
@@ -400,7 +401,7 @@ After:
        │              │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
        │              │                           │
-       │         FinalStage                       │
+       │         Application                      │
        │       (claims x_i, y_i)                  │
        │                                          │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   x  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -409,4 +410,4 @@ After:
                              Eval (+ f_i(u))
 ```
 
-`FinalStage` stays a native trace folded in the parent, as in [v3](#v3); only the claims it makes are folded here.
+`Application` is the native trace synthesized by `Step::witness` and folded in the parent, as in [v3](#v3); only its opening claims are folded here.

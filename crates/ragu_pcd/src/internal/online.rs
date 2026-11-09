@@ -48,7 +48,7 @@ use udon::field::Field;
 use crate::Proof;
 pub use crate::header::HEADER_POLYNOMIALS;
 
-/// The online polynomials a step opens: those of its three headers.
+/// The number of online polynomials a step opens across its input and output proofs.
 pub const NUM_ONLINE_QUERIES: usize = 3 * HEADER_POLYNOMIALS;
 
 /// Length type for a step's online slots.
@@ -60,11 +60,11 @@ pub type HeaderLen = ConstLen<HEADER_POLYNOMIALS>;
 /// The input or output position whose proof supplies a step's online slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
-    /// The left input header.
+    /// The left input proof.
     Left,
-    /// The right input header.
+    /// The right input proof.
     Right,
-    /// The output header.
+    /// The output proof.
     Output,
 }
 
@@ -81,7 +81,7 @@ pub struct Slot {
 }
 
 impl Slot {
-    /// The `index`-th polynomial of the header at `position`.
+    /// The `index`-th polynomial of the proof at `position`.
     ///
     /// # Panics
     ///
@@ -94,22 +94,22 @@ impl Slot {
         Slot { position, index }
     }
 
-    /// The `index`-th polynomial of the left header.
+    /// The `index`-th polynomial of the left input proof.
     pub const fn left(index: usize) -> Self {
         Self::new(Position::Left, index)
     }
 
-    /// The `index`-th polynomial of the right header.
+    /// The `index`-th polynomial of the right input proof.
     pub const fn right(index: usize) -> Self {
         Self::new(Position::Right, index)
     }
 
-    /// The `index`-th polynomial of the output header.
+    /// The `index`-th polynomial of the output proof.
     pub const fn output(index: usize) -> Self {
         Self::new(Position::Output, index)
     }
 
-    /// The header this slot belongs to.
+    /// The input or output proof this slot belongs to.
     pub const fn position(self) -> Position {
         self.position
     }
@@ -158,7 +158,7 @@ pub fn polys<'a, C: Cycle, R: Rank>(
     right: &'a Proof<C, R>,
     own: &'a [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS],
 ) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_QUERIES] {
-    let headers = [left.online_polys(), right.online_polys(), own];
+    let headers = [left.oracle_polynomials(), right.oracle_polynomials(), own];
     core::array::from_fn(|slot| &headers[slot / HEADER_POLYNOMIALS][slot % HEADER_POLYNOMIALS])
 }
 
@@ -169,7 +169,7 @@ pub fn commitments<C: Cycle, R: Rank>(
     right: &Proof<C, R>,
     own: [C::HostCurve; HEADER_POLYNOMIALS],
 ) -> [C::HostCurve; NUM_ONLINE_QUERIES] {
-    let headers = [left.online_commitments(), right.online_commitments(), own];
+    let headers = [left.oracle_commitments(), right.oracle_commitments(), own];
     core::array::from_fn(|slot| headers[slot / HEADER_POLYNOMIALS][slot % HEADER_POLYNOMIALS])
 }
 

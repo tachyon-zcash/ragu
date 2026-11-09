@@ -11,7 +11,7 @@ use super::{Oracles, Slot};
 use crate::header::HEADER_POLYNOMIALS;
 
 /// Opens each output slot at $\zeta$ and holds it to one: the padding an
-/// internal step's output header carries, which a prover cannot replace
+/// internal step's output proof carries, which a prover cannot replace
 /// with a polynomial of its choosing.
 pub(crate) fn pin_output_slots<'dr, D: Driver<'dr>>(
     dr: &mut D,

@@ -240,8 +240,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         }
 
         // The online openings, in slot order, each at its own point.
-        let polys = online::polys(left, right, builder.online_polys());
-        for (poly, query) in polys.into_iter().zip(builder.online_queries()) {
+        let polys = online::polys(left, right, builder.oracle_polynomials());
+        for (poly, query) in polys.into_iter().zip(builder.oracle_openings()) {
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 

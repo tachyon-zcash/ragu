@@ -606,7 +606,7 @@ fn check_compressed_proofs_match(
         native: _,
         native_registry_xy: _,
         native_p: _,
-        online_commitments: _,
+        oracle_commitments: _,
         nested: _,
         nested_registry_xy: _,
         nested_p: _,
@@ -1344,8 +1344,8 @@ mod proof_equivalence {
                 native_points_ab_rx: _,
                 native_points_f_rx: _,
                 native_points_walk_rx: _,
-                online_polys: _,
-                online_queries: _,
+                oracle_polynomials: _,
+                oracle_openings: _,
                 bridge_preamble_rx: _,
                 bridge_hash_rx: _,
                 bridge_s_prime_rx: _,
@@ -1416,7 +1416,7 @@ mod proof_equivalence {
                 native_points_ab_commitment: _,
                 native_points_f_commitment: _,
                 native_points_walk_commitment: _,
-                online_commitments: _,
+                oracle_commitments: _,
                 bridge_preamble_commitment: _,
                 bridge_hash_commitment: _,
                 bridge_s_prime_commitment: _,
@@ -1475,15 +1475,15 @@ mod proof_equivalence {
                 return Some("native protocol polynomials");
             }
             if self
-                .online_polys
+                .oracle_polynomials
                 .iter()
-                .zip(&other.online_polys)
+                .zip(&other.oracle_polynomials)
                 .any(|(ours, theirs)| !polynomial_eq(ours, theirs))
-                || self.online_commitments != other.online_commitments
+                || self.oracle_commitments != other.oracle_commitments
             {
                 return Some("online polynomials");
             }
-            if self.online_queries != other.online_queries {
+            if self.oracle_openings != other.oracle_openings {
                 return Some("online openings");
             }
             if nested::RxIndex::ALL

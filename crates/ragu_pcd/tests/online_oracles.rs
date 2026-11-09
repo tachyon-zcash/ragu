@@ -8,14 +8,14 @@
 //!
 //! | Section | Use case | API shown |
 //! |---|---|---|
-//! | [1. Headers](#1-headers) | C1: two polynomial slots per header | [`Header`], [`HEADER_POLYNOMIALS`], padding |
+//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header`], [`HEADER_POLYNOMIALS`], padding |
 //! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::polynomials`], [`Step::NUM_STAGED`], [`Step::staged`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
 //! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
 //! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
 //! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Slot::left`], [`Slot::right`], [`Slot::output`] |
-//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
+//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::oracle_commitments`](ragu_pcd::CompressedPcd::oracle_commitments), the wire format |
 //!
 //! ## The rule for checks at $\zeta$
 //!
@@ -68,8 +68,8 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 
 // # 1. Headers
 //
-// C1. Every header carries `HEADER_POLYNOMIALS` (two) polynomial commitments
-// beside its field data. What each slot holds is the application's
+// C1. Every proof carries `HEADER_POLYNOMIALS` (two) polynomial commitments
+// associated with its output header. What each slot holds is the application's
 // convention for that header, which the steps that produce the header
 // constrain, as they do its fields. An unused slot holds the constant one
 // (the padding): a step that outputs the header opens such a slot at zeta
@@ -113,7 +113,7 @@ impl Header<Fp> for Anchor {
     }
 }
 
-/// A header whose two slots both carry a real polynomial, $X + a_0$ and
+/// A header for proofs whose slots hold the polynomials $X + a_0$ and
 /// $2X + a_1$, for its data $(a_0, a_1)$ (see section 7).
 struct Pair;
 
@@ -181,7 +181,7 @@ fn times(a: &[Fp], b: &[Fp]) -> Vec<Fp> {
 // T2 and T3. A step commits a polynomial built from secret roots, and checks
 // it at zeta against those roots. A step proves in two phases:
 //
-// 1. Before zeta is drawn: `polynomials` returns the output header's
+// 1. Before zeta is drawn: `polynomials` returns the output proof's
 //    polynomials (coefficients, not wires), and `staged` returns the values
 //    the checks at zeta will read but no header carries. Ragu commits both.
 // 2. After zeta is drawn: `witness` builds the circuit. `Oracles` gives it
@@ -694,7 +694,7 @@ fn next_anchor(app: &App, previous: Fp, set: <Pasta as Cycle>::HostCurve) -> Res
 // C4. One step opens all six slots: the left and right inputs' and the
 // output's, both polynomials each, every one at its own point.
 
-/// The polynomials of a [`Pair`] header with data `a`.
+/// The polynomials associated with a [`Pair`] header with data `a`.
 fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; HEADER_POLYNOMIALS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
@@ -893,8 +893,8 @@ fn check<H: Header<Fp>>(
     assert_eq!(pcd.polynomials(), expected);
     let commitments = expected.each_ref().map(|poly| app.commit(poly).unwrap());
     assert_eq!(pcd.commitments(), commitments);
-    assert_eq!(compressed.online_commitments(), commitments);
-    assert_eq!(compressed.proof().online_commitments(), commitments);
+    assert_eq!(compressed.oracle_commitments(), commitments);
+    assert_eq!(compressed.proof().oracle_commitments(), commitments);
 
     let bytes = pcd.proof().to_bytes().unwrap();
     let decoded = Proof::<C, R>::from_bytes(&bytes)

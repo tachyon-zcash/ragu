@@ -15,9 +15,9 @@
 //!
 //! The step's circuit constrains nothing about the header data it outputs;
 //! the binding is the claims'. The statement carries no polynomials, so the
-//! decompressed header carries padding: the circuit opens each output slot
+//! resulting proof carries padding: the circuit opens each output slot
 //! at $\zeta$ and holds it to the constant one, so a prover cannot put a
-//! polynomial of its choosing there, and a header whose slots carry
+//! polynomial of its choosing there, and a proof whose slots carry
 //! meaningful polynomials does not survive decompression. The native
 //! extension's statement circuit exposes the output header the extension
 //! verified as its public output, and its claim's $k(y)$, computed by the
@@ -35,11 +35,11 @@
 //! agreement, which the setup description a profile's tags cover must
 //! record.
 //!
-//! A decompressed header's fields still describe the polynomials the
-//! statement left behind while its slots hold padding, and a step that
+//! A decompressed proof's header fields still describe the polynomials the
+//! statement left behind while the proof's slots hold padding, and a step that
 //! consumes it cannot tell it from one a registered step produced. The
 //! header types registered at those suffixes must therefore treat their
-//! slots as padding: no step may open a slot of such a header expecting the
+//! associated proof slots as padding: no step may open such a slot expecting the
 //! polynomial its fields describe, since a non-membership check against the
 //! constant one holds at every point and a product $O = L \cdot R$ computes
 //! with $L = 1$. Binding the output slots to the polynomials the statement

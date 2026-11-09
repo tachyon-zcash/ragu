@@ -14,7 +14,7 @@
 //! rerandomization. An ordinary step consuming
 //! the resulting `Pcd<()>` still verifies its child claim.
 //!
-//! The unit header's polynomial slots carry padding: the circuit opens each
+//! The bootstrap proof's polynomial slots carry padding: the circuit opens each
 //! output slot at $\zeta$ and holds it to the constant one, as the
 //! decompression step does, so a bootstrap proof installed through
 //! [`with_bootstrap`] cannot hand every seed's unit inputs polynomials of a

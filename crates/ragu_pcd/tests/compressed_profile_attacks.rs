@@ -86,9 +86,9 @@ fn check_edits<P: Profile, Rk: Rank>(
     }
     // A verifier reads the online commitments through `commitments()` to
     // check what the proof attests, so each must be bound.
-    for i in 0..proof.instance.online_commitments.len() {
+    for i in 0..proof.instance.oracle_commitments.len() {
         edit(&alloc::format!("online commitment {i}"), &|p| {
-            p.instance.online_commitments[i] = -p.instance.online_commitments[i]
+            p.instance.oracle_commitments[i] = -p.instance.oracle_commitments[i]
         });
     }
     for i in 0..proof.instance.online.len() {
@@ -241,7 +241,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         native: native.native.clone(),
         native_registry_xy: native.native_registry_xy,
         native_p: native.native_p,
-        online_commitments: native.online_commitments,
+        oracle_commitments: native.oracle_commitments,
         c: native.c,
         v: native.v,
         left: native.left,

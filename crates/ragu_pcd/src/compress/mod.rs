@@ -100,8 +100,8 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// compression. The instance carries them and the verifier binds them,
     /// so a verifier that accepts the proof may compare them to the
     /// commitments it expects.
-    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
-        self.instance.online_commitments
+    pub fn oracle_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.instance.oracle_commitments
     }
 
     /// Whether the messages have the shape the verifier reads: one
@@ -142,9 +142,9 @@ impl<C: Cycle, H: Header<C::CircuitField>> CompressedPcd<C, H> {
     }
 
     /// The commitments of the step's own online polynomials; see
-    /// [`CompressedProof::online_commitments`].
-    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
-        self.proof.instance.online_commitments
+    /// [`CompressedProof::oracle_commitments`].
+    pub fn oracle_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.proof.instance.oracle_commitments
     }
 
     /// Consumes the compressed proof-carrying data and returns the proof and

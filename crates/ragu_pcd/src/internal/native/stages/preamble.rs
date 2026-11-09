@@ -90,7 +90,9 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// The child's online openings, as its `compute_v` exported them.
+    /// Six opening claims, in [L0, L1, R0, R1, O0, O1] order.
+    /// The parent uses these same values in the application and `compute_v`
+    /// k(y) targets, binding the application's queries to the proved openings.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
     #[ragu(gadget)]
@@ -264,7 +266,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             online: online::alloc_queries(
                 dr,
                 allocator,
-                proof.as_ref().map(|p| p.online_queries()),
+                proof.as_ref().map(|p| p.oracle_openings()),
             )?,
             circuit_id: Element::alloc(
                 dr,

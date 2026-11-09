@@ -105,9 +105,9 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub stashed_points_ab: C,
     /// Stashed commitment from the child's native `f` points stage.
     pub stashed_points_f: C,
-    /// Stashed commitments of the child's own online polynomials, which
-    /// this step opens as its left or right slots.
-    pub stashed_online: [C; HEADER_POLYNOMIALS],
+    /// The child's exported polynomial-query commitments, which this step
+    /// opens as its left or right slots.
+    pub stashed_oracle_commitments: [C; HEADER_POLYNOMIALS],
     /// Stashed commitment of the child's application stage, which this
     /// step folds with the child's application trace.
     pub stashed_application_stage: C,
@@ -177,7 +177,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_registry_wx: proof.native_rx_commitment(RxIndex::PointsRegistryWx),
             stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
-            stashed_online: proof.online_commitments(),
+            stashed_oracle_commitments: proof.oracle_commitments(),
             stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
             nested: NestedValues {
                 c: instance.c,
@@ -200,9 +200,11 @@ pub struct Witness<C: Affine, P: Profile> {
     /// Commitment of the native points children stage, fixed here before
     /// $w$ is squeezed.
     pub native_points_children: C,
-    /// The commitments of the step's own online polynomials, fixed here
-    /// before $w$ is squeezed and exported for the parent.
-    pub online: [C; HEADER_POLYNOMIALS],
+    /// Commitments to this step's output polynomials.
+    /// Nested collapse binds their exported instance values to the points
+    /// in this step's prechallenge Preamble. The parent uses those same
+    /// exported points as its input polynomial commitments.
+    pub oracle_commitments: [C; HEADER_POLYNOMIALS],
     /// The commitment of the step's own application stage, fixed here
     /// before $w$ is squeezed and exported for the parent, which folds the
     /// stage against it.
@@ -297,9 +299,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Stashed commitment from the child's native `f` points stage.
     #[ragu(gadget)]
     pub stashed_points_f: Point<'dr, D, C>,
-    /// Stashed commitments of the child's own online polynomials.
+    /// The child's exported polynomial-query commitments.
     #[ragu(gadget)]
-    pub stashed_online: FixedVec<Point<'dr, D, C>, online::HeaderLen>,
+    pub stashed_oracle_commitments: FixedVec<Point<'dr, D, C>, online::HeaderLen>,
     /// Stashed commitment of the child's application stage.
     #[ragu(gadget)]
     pub stashed_application_stage: Point<'dr, D, C>,
@@ -349,8 +351,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 self.stashed_points_registry_wx.clone(),
                 self.stashed_points_ab.clone(),
                 self.stashed_points_f.clone(),
-                self.stashed_online[0].clone(),
-                self.stashed_online[1].clone(),
+                self.stashed_oracle_commitments[0].clone(),
+                self.stashed_oracle_commitments[1].clone(),
                 self.stashed_application_stage.clone(),
             ])
             .expect("NUM_EXPORTED commitments"),
@@ -439,8 +441,11 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
             )?,
             stashed_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_ab))?,
             stashed_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_f))?,
-            stashed_online: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.stashed_online[i]))
+            stashed_oracle_commitments: FixedVec::try_from_fn(|i| {
+                Point::alloc(
+                    dr,
+                    witness.as_ref().map(|w| w.stashed_oracle_commitments[i]),
+                )
             })?,
             stashed_application_stage: Point::alloc(
                 dr,
@@ -476,9 +481,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Point commitment from the native points children stage.
     #[ragu(gadget)]
     pub native_points_children: Point<'dr, D, C>,
-    /// The commitments of the step's own online polynomials.
+    /// The step's polynomial-query commitments, bound to the nested unified
+    /// instance's exported commitments by nested collapse.
     #[ragu(gadget)]
-    pub online: FixedVec<Point<'dr, D, C>, online::HeaderLen>,
+    pub oracle_commitments: FixedVec<Point<'dr, D, C>, online::HeaderLen>,
     /// The commitment of the step's own application stage.
     #[ragu(gadget)]
     pub application_stage: Point<'dr, D, C>,
@@ -523,8 +529,8 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
                 dr,
                 witness.as_ref().map(|w| w.native_points_children),
             )?,
-            online: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.online[i]))
+            oracle_commitments: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.oracle_commitments[i]))
             })?,
             application_stage: Point::alloc(dr, witness.as_ref().map(|w| w.application_stage))?,
             left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,

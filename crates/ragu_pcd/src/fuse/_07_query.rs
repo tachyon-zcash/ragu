@@ -114,7 +114,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_wxy,
             left: left_witness,
             right: right_witness,
-            online: *builder.online_queries(),
+            online: *builder.oracle_openings(),
         };
 
         let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(

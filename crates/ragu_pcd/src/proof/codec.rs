@@ -104,8 +104,8 @@ codec! {
     // The step's own online polynomials (CircuitField, HostCurve commitment),
     // then the step's online openings, one per slot of its left, right and
     // output headers
-    online_polys => wire::Array<wire::DefaultEncoding>,
-    online_queries => wire::Array<wire::DefaultEncoding>,
+    oracle_polynomials => wire::Array<wire::DefaultEncoding>,
+    oracle_openings => wire::Array<wire::DefaultEncoding>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => wire::DefaultEncoding,
@@ -214,7 +214,7 @@ codec! {
     native_points_ab_commitment => CachedPoint,
     native_points_f_commitment => CachedPoint,
     native_points_walk_commitment => CachedPoint,
-    online_commitments => wire::Array<CachedPoint>,
+    oracle_commitments => wire::Array<CachedPoint>,
 
     // Bridge commitments (non-cached)
     bridge_preamble_commitment => wire::Point,

@@ -213,7 +213,7 @@ of `witness` lets the circuit open each slot once:
 // A random point squeezed after every slot's polynomial and the staged
 // values were committed.
 let zeta = oracles.zeta().clone();
-// The value of the left header's first polynomial at zeta, as a wire.
+// The value of the left input proof's first polynomial at zeta, as a wire.
 let l0 = oracles.query(dr, Slot::left(0), &zeta)?;
 // The output polynomial at the same point.
 let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
