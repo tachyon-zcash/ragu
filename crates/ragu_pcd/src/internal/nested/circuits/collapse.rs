@@ -173,8 +173,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.preamble.application_stage,
         ];
         // The bridge-hash stage holds the step's own last online commitment,
-        // the one the preamble holds and w absorbed: its commitment, the
-        // digest, is then a function of a point fixed before w.
+        // the one the preamble holds and w absorbed.
         stages
             .bridge_hash
             .o1

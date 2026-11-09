@@ -165,26 +165,14 @@ mod tests {
         let x = Fp::from(2);
         let y = Fp::from(3);
         let tagged = registry.wxy(w, x, y);
-        let unit = RegistryBuilder::<Fp, TestRank>::new()
-            .with_tag(Tag::new(Fp::ONE))
+        let untagged = RegistryBuilder::<Fp, TestRank>::new()
+            .with_tag(Tag::new(Fp::ZERO))
             .register_circuit(())?
             .finalize()?;
         assert_eq!(
-            tagged - unit.wxy(w, x, y),
-            (value - Fp::ONE) * (x * y).pow_u64((4 * TestRank::n() - 1) as u64),
+            tagged - untagged.wxy(w, x, y),
+            value * (x * y).pow_u64((4 * TestRank::n() - 1) as u64),
         );
-        Ok(())
-    }
-
-    /// The tag's constraint `kappa * c[0] = 0` is the only one on the SYSTEM
-    /// gate's `c[0]`, so finalization refuses a zero tag.
-    #[test]
-    fn a_zero_tag_cannot_finalize() -> Result<()> {
-        let zero = RegistryBuilder::<Fp, TestRank>::new()
-            .with_tag(Tag::new(Fp::ZERO))
-            .register_circuit(())?
-            .finalize();
-        assert!(matches!(zero, Err(ragu_core::Error::Initialization(_))));
         Ok(())
     }
 }

@@ -326,8 +326,7 @@ pub enum InternalCircuitIndex {
     PointsFinalStaged,
     /// Bridge `preamble` stage mask.
     BridgePreamble,
-    /// Bridge-hash stage mask, [canonical](ragu_circuits::staging::StageExt::canonical_mask):
-    /// the stage's commitment is a function of the point it holds.
+    /// Bridge-hash stage mask.
     BridgeHash,
     /// Bridge `s_prime` stage mask.
     BridgeSPrime,
@@ -680,8 +679,9 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                     stages::preamble::Stage::<C::HostCurve, R, C::Profile>::mask()?,
                 )
             }
-            BridgeHash => registry
-                .register_bonding(stages::bridge_hash::Stage::<C::HostCurve>::canonical_mask()?),
+            BridgeHash => {
+                registry.register_bonding(stages::bridge_hash::Stage::<C::HostCurve>::mask()?)
+            }
             BridgeSPrime => registry.register_bonding(stages::s_prime::Stage::<
                 C::HostCurve,
                 R,

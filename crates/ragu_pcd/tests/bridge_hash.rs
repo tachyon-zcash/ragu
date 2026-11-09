@@ -1,14 +1,11 @@
 //! The bridge hash $H^{bridge}(O_1)$: a step reads the digest of its own
-//! last online commitment, the digest is the commitment of a stage the
-//! registry holds to the point's coordinates alone, and an application can
-//! recompute it outside the circuit.
+//! last online commitment, the prover constructs its stage from the
+//! point's coordinates alone, and an application can recompute it outside
+//! the circuit.
 
 use alloc::{vec, vec::Vec};
 
-use ragu_circuits::{
-    polynomials::{ProductionRank, sparse},
-    staging::StageExt,
-};
+use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Cycle, FixedGenerators, Result,
     drivers::{Driver, DriverValue},
@@ -26,7 +23,7 @@ use udon::{
 use crate::{
     Application, ApplicationBuilder,
     header::{HEADER_POLYNOMIALS, Header, Suffix},
-    internal::nested::{self, InternalCircuitIndex, stages::bridge_hash},
+    internal::nested::stages::bridge_hash,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
 
@@ -160,42 +157,4 @@ fn a_step_reads_the_digest_of_its_last_slot() {
     // Different points, different digests.
     let (other, ()) = app.seed(&mut rng, HashOut, Fp::from(8)).unwrap();
     assert_ne!(*other.data(), *pcd.data());
-}
-
-/// The nested registry's bridge-hash mask is canonical: the bonding check
-/// accepts the unblinded stage and rejects the same stage with a blinding
-/// factor, which a standard stage mask accepts. It also rejects a nonzero
-/// `c[0]`, which only the registry tag holds, and finalization refuses a
-/// zero tag.
-#[test]
-fn the_registry_pins_the_bridge_hash_stage() {
-    let app = app();
-    let mut rng = StdRng::seed_from_u64(0xb416);
-    let (pcd, ()) = app.seed(&mut rng, HashOut, Fp::from(7)).unwrap();
-    let o1 = pcd.proof().online_commitments()[HEADER_POLYNOMIALS - 1];
-
-    let id = InternalCircuitIndex::BridgeHash.circuit_index::<crate::profile::Standard>();
-    // Any y away from zero; the check holds with overwhelming probability.
-    let y = Fq::from(0x1234_5678_9abc_def0u64);
-    let s = app.nested_registry.circuit_y(id, y);
-    let bonds = |rx: &sparse::Polynomial<Fq, R>| rx.revdot(&s) == Fq::ZERO;
-
-    let honest = bridge_hash::rx::<_, R>(o1).unwrap();
-    assert_eq!(
-        honest.iter_coeffs().collect::<Vec<_>>(),
-        pcd.proof()[nested::RxIndex::BridgeHash]
-            .iter_coeffs()
-            .collect::<Vec<_>>()
-    );
-    assert!(bonds(&honest));
-
-    let blinded = <bridge_hash::Stage<_> as StageExt<Fq, R>>::rx(Fq::from(5u64), o1).unwrap();
-    assert!(!bonds(&blinded));
-
-    assert_ne!(app.nested_registry.tag(), Fq::ZERO);
-    let mut c0 = sparse::View::<Fq, R, _>::trace();
-    c0.c.push(Fq::from(5u64));
-    let mut shifted = honest.clone();
-    shifted.add_assign(&c0.build());
-    assert!(!bonds(&shifted));
 }

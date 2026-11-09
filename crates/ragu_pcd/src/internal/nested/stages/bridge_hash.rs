@@ -3,16 +3,15 @@
 //!
 //! The stage sits between the endoscalar stage, whose size the endoscalar
 //! encoding fixes, and the points stage, so its gates do not move when the
-//! walk or the preamble grows. It is committed unblinded under a
-//! [canonical mask](ragu_circuits::staging::StageExt::canonical_mask), which
-//! holds every wire but the point's two coordinates to zero (the `SYSTEM`
-//! gate's `c[0]` through the registry tag, which finalization requires to
-//! be nonzero): the stage polynomial is then a function of the point, and
-//! so is its commitment,
+//! walk or the preamble grows. The prover constructs an unblinded stage
+//! polynomial with only the point's two coordinates as nonzero
+//! coefficients, giving the commitment
 //! $H^{bridge}(O_1) = x \cdot G_i + y \cdot G_j$ for two fixed generators.
+//! The stage uses the ordinary mask, which does not by itself require
+//! this unblinded encoding.
 //! The nested collapse circuit holds the point to the step's own `O1` in
-//! the preamble, which $w$ absorbs, so the digest is fixed before $w$
-//! without being absorbed itself. The unified instance carries it, the
+//! the preamble, which $w$ absorbs. The unified instance carries the
+//! bridge-hash commitment without absorbing it into the transcript, the
 //! parent binds it to the stage it folds, and the step's application
 //! instance carries it too (see [`digest`]).
 
@@ -65,8 +64,7 @@ impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C> 
     }
 }
 
-/// The stage polynomial of `o1`: unblinded, so that the canonical mask
-/// accepts it and its commitment is [`digest`].
+/// The unblinded stage polynomial of `o1`, whose commitment is [`digest`].
 ///
 /// # Errors
 ///

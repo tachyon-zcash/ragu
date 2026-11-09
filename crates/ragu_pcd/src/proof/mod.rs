@@ -258,8 +258,8 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    /// The bridge-hash stage: the step's own `O1`, unblinded under a
-    /// canonical mask (see `nested::stages::bridge_hash`).
+    /// The bridge-hash stage: the step's own `O1`, constructed unblinded
+    /// (see `nested::stages::bridge_hash`).
     pub(crate) bridge_hash_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,

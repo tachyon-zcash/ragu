@@ -807,9 +807,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         .map(|(pcd, ())| pcd)
     }
 
-    /// $H^{bridge}(P)$: the digest a proof's bridge-hash stage gives the
-    /// commitment `point` when it is the step's own last online commitment,
-    /// and the value the step reads as
+    /// Computes $H^{bridge}(P)$ from the unblinded stage polynomial the
+    /// prover constructs for `point`. When `point` is the step's own last
+    /// online commitment, this is the value the step reads as
     /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash). An application
     /// that hashes a polynomial commitment, for instance into an anchor it
     /// also recomputes outside the circuit, calls this.

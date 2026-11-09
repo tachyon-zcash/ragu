@@ -93,10 +93,9 @@ The presence of the `SYSTEM` gate reduces the number of usable gates to $n - 1$.
 There is also a special constraint $\color{#7e22ce}{\kappa} \v{c}_0 = 0$
 injected in all wiring polynomials at the $Y^{4n - 1}$ position; circuits are
 restricted in the number of constraints they emit to avoid overlapping this
-term. This so-called [registry constraint](../extensions/registry.md) is the
-only constraint on $\v{c}_0$, and holds it to zero, as every trace sets it,
-only for $\color{#7e22ce}{\kappa} \neq 0$; registry finalization refuses a
-zero $\color{#7e22ce}{\kappa}$. In practice, $\color{#7e22ce}{\kappa}$ is the public registry
+term. This so-called [registry constraint](../extensions/registry.md) is
+trivially satisfied for all values of $\color{#7e22ce}{\kappa}$, since $\v{c}_0
+= 0$ anyway. In practice, $\color{#7e22ce}{\kappa}$ is the public registry
 binding tag. The temporary registry-collision workaround accepts it as a setup
 parameter, sampled after the complete pre-keyed system description has been
 fixed and publicly committed; see
@@ -159,31 +158,6 @@ s_{\text{mask}}(X, Y) &= \color{#7e22ce}{\kappa}\color{black} \cdot (XY)^{4n - 1
 &- \bigl(1 + (XY)^{2n}\bigr)\bigl((XY)^g + (XY)^{2n-g-m}\bigr)\sum_{i=0}^{m-1}(XY)^i.
 \end{array}
 $$
-
-### Canonical Stage Masks
-
-A stage mask leaves free every wire of the stage's gates, and the `SYSTEM`
-gate, which carries the stage's blinding factor $\alpha$ in $\v{a}_0$. The
-stage allocator puts the stage's values on the $\v{a}$ and $\v{d}$ wires,
-so the $\v{b}$ wires (and the $\v{c} = \v{a} \cdot \v{b}$ wires) and an
-odd stage's last $\v{d}$ wire stay free. Thus a stage polynomial, and its
-commitment, is not a function of the stage's values.
-
-A _canonical_ stage mask also holds these wires to zero: $\v{a}_0$,
-$\v{b}_0$ and $\v{d}_0$ of the `SYSTEM` gate ($\v{c}_0$ is already held by
-$\kappa$), the $\v{b}$ and $\v{c}$ wires of the stage's gates, and an odd
-stage's padding $\v{d}$ wire. To hold $\v{d}_0$, it keeps the $Y^0$ term
-that other bonding polynomials omit; the verifier still checks it against
-$k = 0$. An unblinded stage under a canonical mask is then a function of its
-values, and its commitment is a deterministic, binding digest of them.
-Holding $\v{c}_0$ through $\kappa \v{c}_0 = 0$ relies on $\kappa \neq 0$,
-which finalization enforces: under $\kappa = 0$, two stages summed into one
-trace could shift opposite amounts into their $\v{c}_0$, changing each
-stage's commitment but not the trace.
-
-A canonical stage has no $\alpha$, so use one only for values that are
-never all zero (for example, the coordinates of a curve point). An all-zero
-stage commits to the point at infinity.
 
 ## Layout for Wiring Polynomials
 

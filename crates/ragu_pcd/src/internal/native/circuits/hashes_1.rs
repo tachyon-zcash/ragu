@@ -250,10 +250,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         };
         unified_output.w.provide(w.clone());
 
-        // The bridge hash is not absorbed: it is a function of the step's own
-        // `O1`, which the preamble bridge already binds before w. It is
-        // exposed here, and the parent binds it to the bridge-hash stage it
-        // folds (see `bind_beta`).
+        // Expose the bridge-hash commitment without absorbing it into the
+        // transcript. The parent binds it to the bridge-hash stage it folds
+        // (see `bind_beta`).
         unified_output
             .bridge_hash_commitment
             .receive(dr, allocator)?;

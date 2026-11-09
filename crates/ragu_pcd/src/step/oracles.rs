@@ -109,11 +109,11 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         &self.zeta
     }
 
-    /// $H^{bridge}(O_1)$, the digest of the step's own last online
-    /// commitment, as its two coordinates: fixed with $\zeta$, and held by
-    /// the parent to the commitment the step's transcript absorbed. A step
-    /// that hashes its output polynomial's commitment into a header field,
-    /// for instance into an anchor, reads it here.
+    /// The bridge-hash stage's commitment, as its two coordinates. The
+    /// stage holds the step's own last online commitment, and the parent
+    /// binds this value to the stage it folds. A step that hashes its
+    /// output polynomial's commitment into a header field, for instance
+    /// into an anchor, reads it here.
     pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
         &self.bridge_hash
     }

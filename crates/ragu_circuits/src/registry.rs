@@ -244,7 +244,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     /// Returns [`Error::CircuitBoundExceeded`] if the total number of
     /// registered circuits exceeds the rank capacity, or
     /// [`Error::Initialization`] if no tag was supplied and the test-only
-    /// fallback is disabled, or if the tag is zero.
+    /// fallback is disabled.
     pub fn finalize(self) -> Result<Registry<'params, F, R>>
     where
         F: Field,
@@ -281,13 +281,6 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             tag: Tag::default(),
         };
         registry.tag = Tag::new(registry.compute_registry_tag(self.tag)?);
-        // The tag's constraint kappa * c[0] = 0 is the only one on the SYSTEM
-        // gate's c[0] wire, in every circuit and every stage mask.
-        if registry.tag.value() == F::ZERO {
-            return Err(Error::Initialization(
-                "the registry tag must be nonzero".into(),
-            ));
-        }
 
         Ok(registry)
     }
@@ -365,12 +358,10 @@ impl<F: Field> Tag<F> {
     /// This wraps an already-derived value without hashing it. The caller
     /// must satisfy the [sampling requirement](Tag#sampling-requirement).
     ///
-    /// Any value is accepted here, but [`RegistryBuilder::finalize`]
-    /// refuses zero: the tag's constraint $\kappa \cdot c_0 = 0$ is the only
-    /// one on the `SYSTEM` gate's $c_0$ wire, in every circuit and stage
-    /// mask. Under independent uniform sampling, zero occurs with
-    /// probability `1 / |F|` per registry, and the setup then samples
-    /// again.
+    /// Zero is intentionally accepted: setup sampling is over the whole field.
+    /// Under independent uniform sampling, zero occurs with probability
+    /// `1 / |F|` per registry. Soundness arguments that assume a nonzero tag
+    /// must include this setup error, summed across registries.
     pub fn new(val: F) -> Self {
         Self(val)
     }

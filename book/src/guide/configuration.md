@@ -274,12 +274,10 @@ The registry tag ($\kappa$) must be sampled independently and without bias
 after the complete pre-keyed system description has been fixed and publicly
 committed, then permanently bound to that description.
 
-Registry finalization refuses a zero tag: the tag's constraint
-$\kappa \v{c}_0 = 0$ is the only one on the `SYSTEM` gate's $\v{c}_0$ wire
-(see [Wiring Polynomials](../protocol/local/wiring.md)). Under independent
-uniform sampling, the probability that either Pasta registry tag is zero is
-at most $1/|\mathbb{F}_p| + 1/|\mathbb{F}_q|$; the setup then samples
-again.
+Sampling is over the whole field, so zero is intentionally accepted. Under
+independent uniform sampling, the probability that either Pasta registry tag
+is zero is at most $1/|\mathbb{F}_p| + 1/|\mathbb{F}_q|$. Soundness arguments
+that require nonzero tags must include this setup error.
 
 The description covers the complete setup of both native and nested registries:
 the code and dependencies, ordered circuit manifests (including internal
