@@ -1420,6 +1420,46 @@ fn test_extension_overflowing_the_fuse_is_rejected() {
     );
 }
 
+/// Finalization accepts the header bound and rejects the next size. A
+/// statement extension lengthens the walks and lowers that bound.
+#[test]
+fn test_header_capacity_at_finalize() {
+    use crate::profile::{Profiled, testing::Decompressing};
+
+    const MANIFEST: &[u8] = &[0x94; 32];
+    let params = crate::pasta::baked();
+    let tags = || RegistryTags::from_beacon(&[0x42; 32], MANIFEST);
+    let standard = ApplicationBuilder::<Pasta, R, 96>::new()
+        .with_registry_tags(tags(), MANIFEST)
+        .unwrap()
+        .finalize(params);
+    assert!(standard.is_ok(), "96 fields must fit: {:?}", standard.err());
+    let oversized = ApplicationBuilder::<Pasta, R, 97>::new()
+        .with_registry_tags(tags(), MANIFEST)
+        .unwrap()
+        .finalize(params);
+    assert!(matches!(
+        oversized,
+        Err(Error::GateBoundExceeded { limit: 2048 })
+    ));
+
+    type Extended = Profiled<Pasta, Decompressing>;
+    let tags = || RegistryTags::<Extended>::from_beacon(&[0x42; 32], MANIFEST);
+    let extended = ApplicationBuilder::<Extended, R, 94>::new()
+        .with_registry_tags(tags(), MANIFEST)
+        .unwrap()
+        .finalize_with(params, Default::default());
+    assert!(extended.is_ok(), "94 fields must fit: {:?}", extended.err());
+    let oversized = ApplicationBuilder::<Extended, R, 95>::new()
+        .with_registry_tags(tags(), MANIFEST)
+        .unwrap()
+        .finalize_with(params, Default::default());
+    assert!(matches!(
+        oversized,
+        Err(Error::GateBoundExceeded { limit: 2048 })
+    ));
+}
+
 /// The fold's groups are the standard profile's for the standard profile,
 /// pinned, and grow with a profile's claims so that every claim has a slot.
 #[test]

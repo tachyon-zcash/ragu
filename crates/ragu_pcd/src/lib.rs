@@ -808,8 +808,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     /// Computes $H^{bridge}(P)$ from the unblinded stage polynomial the
-    /// prover constructs for `point`. When `point` is the step's own last
-    /// online commitment, this is the value the step reads as
+    /// honest prover constructs for `point`. When `point` is the step's own last
+    /// online commitment, this is the honest prover's value of
     /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash). An application
     /// that hashes a polynomial commitment, for instance into an anchor it
     /// also recomputes outside the circuit, calls this.
@@ -817,6 +817,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// It is the commitment of the stage holding `point`'s coordinates
     /// alone, so it depends on the rank and the nested generators; binding
     /// rests on the commitment's.
+    ///
+    /// An accepted bridge digest binds the point but need not use this
+    /// canonical unblinded encoding or be fixed before the step's challenge.
+    /// Anchor applications must compare natively recomputed advancement
+    /// against canonical-chain anchors.
     ///
     /// # Errors
     ///

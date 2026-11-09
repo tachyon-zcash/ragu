@@ -274,8 +274,8 @@ macro_rules! define_unified_instance {
 define_unified_instance! {
     /// Bridge commitment from the preamble proof component.
     bridge_preamble_commitment: Point,
-    /// Bridge-hash commitment, $H^{bridge}(O_1)$: not absorbed, being a
-    /// function of the `O1` the preamble commitment binds.
+    /// Bridge-hash commitment, bound to the `O1` in the preamble. It is not
+    /// absorbed and need not be canonical or fixed before $w$.
     bridge_hash_commitment: Point,
     /// Fiat-Shamir challenge $w$.
     w: Element,

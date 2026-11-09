@@ -48,6 +48,12 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 /// the polynomial the producing step committed; no header type can change
 /// how many a proof carries or which its slots are.
 ///
+/// The polynomial commitments are unblinded and deterministic for their
+/// coefficients; opening points and values are public. Values intended to
+/// stay out of the public instance belong in
+/// [`Step::staged`](crate::step::Step::staged), whose stage commitment is
+/// blinded; public openings can still reveal those values.
+///
 /// A compressed proof's statement carries only the header's fields, so a
 /// header type registered at a suffix a decompressed statement can land on
 /// must treat its slots as padding: the decompression step holds them to

@@ -54,7 +54,7 @@ internal circuits.
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
   - public poly commitments are carried in proofs and associated with their output headers
   - staged values, and so any private polynomial built from them, live in the application stage, whose commitment is absorbed in the FS transcript during `fuse()`
-  - consequently, a check at $\zeta$ may only read values fixed before $\zeta$: openings $y_i = f_i(x_i)$ at $x_i = \zeta$ or at an $x_i$ itself fixed before $\zeta$, the left/right header fields, the first-stage values, `h_O1`, and anything the final stage computes from them; or an in-circuit hash output, or a value from a small set (e.g. a bit).
+  - consequently, a check at $\zeta$ may only read values fixed before $\zeta$: openings $y_i = f_i(x_i)$ at $x_i = \zeta$ or at an $x_i$ itself fixed before $\zeta$, the left/right header fields, the first-stage values, and anything the final stage computes from them; or an in-circuit hash output, or a value from a small set (e.g. a bit).
   Any other value the final stage witnesses, including the output header's fields, is chosen _after_ $\zeta$: a check $O(\zeta) = L(\zeta)\cdot(\zeta - t)$ with such a $t$ is forgeable by solving $t = \zeta - O(\zeta)/L(\zeta)$. Witness $t$ in the first stage instead.
 - C4: the second/final app stage can "claim" the following values and constrain any relation for them during circuit synthesis
   1. the random evaluation point $\zeta$
@@ -62,7 +62,8 @@ internal circuits.
   3. a special binding hash $H^{bridge}(\cm_{O_1}) \in\F_p^2$ value<br>
 
   Correctness of all poly queries is folded into Ragu's running accumulator (i.e. PCD proof).
-  Integrity of the challenge $\zeta$ and the $H^{bridge}(\cm_{O_1})$ is guaranteed by Ragu.
+  Ragu binds $\zeta$ to its Fiat-Shamir challenge and the bridge digest to `O1`.
+  The digest is neither required to be canonical nor fixed before $\zeta$; applications that use it in anchors must recompute advancement natively and accept only canonical-chain anchors.
   - importantly, we **only allow one opening per public online polynomial**; a private polynomial is evaluated in-circuit from its staged roots or coefficients, as many times as the circuit budget permits
   - all declared queries follow the canonical order, targeting $L_0, L_1, R_0, R_1, O_0, O_1$ respectively
   - public instance $k(Y)$ of the app circuit changes from `[L/R/O header fields]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O header fields]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
@@ -298,7 +299,9 @@ The endoscalar stage has a fixed size (the 143-bit endoscalar encoding), thus th
 Binding follows from the binding of the commitment: two points with the same digest are two openings of one commitment.
 
 `O1` stays in the nested `Preamble`, and `BridgeHash` holds a copy; the nested `collapse` circuit enforces the two to be equal.
-The prover constructs the digest before $\zeta$; `w` absorbs `O1` through the `Preamble`, and the digest itself is not absorbed.
+The honest prover constructs the digest before $\zeta$; `w` absorbs `O1` through the `Preamble`, and the digest itself is not absorbed.
+The ordinary mask permits other encodings of the same `O1`, so an accepted digest need not equal the native recomputation and can be chosen after $\zeta$.
+It cannot be treated as a fixed input to a check at $\zeta$ without an additional binding to a value fixed beforehand.
 (Absorbing the digest would cost `hashes_1` one more Poseidon permutation, beyond its gate budget.)
 The digest joins the `unified` instance next to `bridge_preamble_commitment`, and the parent binds it to the `BridgeHash` stage it folds, as it binds the other bridge commitments.
 The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.

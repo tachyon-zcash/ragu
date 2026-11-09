@@ -56,7 +56,8 @@ pub(crate) struct OnlineWitness<F, R: Rank> {
     pub(crate) zeta: F,
     pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_QUERIES],
     pub(crate) staged: alloc::vec::Vec<F>,
-    /// The coordinates of $H^{bridge}(O_1)$, fixed with $\zeta$.
+    /// The bridge-hash stage's commitment coordinates. They bind `O1` but
+    /// need not be its canonical digest or be fixed before $\zeta$.
     pub(crate) bridge_hash: [F; 2],
 }
 
@@ -116,6 +117,12 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// binds this value to the stage it folds. A step that hashes its
     /// output polynomial's commitment into a header field, for instance
     /// into an anchor, reads it here.
+    ///
+    /// This digest binds `O1` but is neither unique to it nor fixed before
+    /// $\zeta$. [`Application::bridge_hash`](crate::Application::bridge_hash)
+    /// recomputes the honest prover's unblinded encoding. Applications that
+    /// use it in anchors must recompute advancement natively and compare
+    /// against canonical-chain anchors.
     pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
         &self.bridge_hash
     }
@@ -132,13 +139,8 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// returned wire is a witness the step may use in its constraints, and
     /// the pair $(x, y)$ enters the step's instance.
     ///
-    /// The pair is public, by design. The
-    /// [online polynomial oracle](https://tachyon.z.cash/ragu/protocol/poly-oracle.html)
-    /// page's capability C4 states: "public instance $k(Y)$ of the app
-    /// circuit changes from `[L/R/O headers]` of size `3*HEADER_SIZE` to:
-    /// `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O headers]`". The parent
-    /// reads every slot's point and value into its preamble, and a
-    /// compressed proof carries and absorbs them, so a point or value the
+    /// The point and value are public: the parent reads them into its preamble,
+    /// and a compressed proof carries and absorbs them, so a point or value the
     /// step must keep secret cannot be opened through this oracle.
     ///
     /// # Errors

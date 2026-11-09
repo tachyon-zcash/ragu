@@ -3,7 +3,7 @@
 //!
 //! The stage sits between the endoscalar stage, whose size the endoscalar
 //! encoding fixes, and the points stage, so its gates do not move when the
-//! walk or the preamble grows. The prover constructs an unblinded stage
+//! walk or the preamble grows. The honest prover constructs an unblinded stage
 //! polynomial with only the point's two coordinates as nonzero
 //! coefficients, giving the commitment
 //! $H^{bridge}(O_1) = x \cdot G_i + y \cdot G_j$ for two fixed generators.
@@ -14,6 +14,11 @@
 //! bridge-hash commitment without absorbing it into the transcript, the
 //! parent binds it to the stage it folds, and the step's application
 //! instance carries it too (see [`digest`]).
+//!
+//! Binding to `O1` does not make the digest unique or fixed before $w$.
+//! Only the honest prover's encoding is recomputed by [`digest`]; anchor
+//! applications must recompute advancement natively and accept only
+//! canonical-chain anchors.
 
 use core::marker::PhantomData;
 

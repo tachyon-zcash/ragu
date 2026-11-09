@@ -630,6 +630,20 @@ fn a_parent_rejects_a_child_with_edited_online_data() {
     let app = app();
     let leaf = fixture(&app, Shape::Leaf);
     let poseidon = Pasta::circuit_poseidon(ragu_pcd::pasta::baked());
+    let mut rng = StdRng::seed_from_u64(0x9a7e);
+    let honest = nontrivial_support::leaf(&app, &mut rng, 7);
+    let (control, ()) = app
+        .fuse(
+            &mut rng,
+            Hash2 {
+                poseidon_params: poseidon,
+            },
+            (),
+            leaf.proof.clone().carry::<LeafNode>(leaf.data),
+            honest.clone(),
+        )
+        .expect("the honest parent must prove");
+    assert!(app.verify_uncompressed(&control, &mut rng).unwrap());
     let delta = Fp::from(7u64);
     let corruptions = [
         Corruption::OnlineCoeff {
@@ -668,24 +682,22 @@ fn a_parent_rejects_a_child_with_edited_online_data() {
             "{described}"
         );
         let mut rng = StdRng::seed_from_u64(0x9a7e);
-        let honest = nontrivial_support::leaf(&app, &mut rng, 7);
-        let parent = app.fuse(
-            &mut rng,
-            Hash2 {
-                poseidon_params: poseidon,
-            },
-            (),
-            child.carry::<LeafNode>(leaf.data),
-            honest,
+        let (parent, ()) = app
+            .fuse(
+                &mut rng,
+                Hash2 {
+                    poseidon_params: poseidon,
+                },
+                (),
+                child.carry::<LeafNode>(leaf.data),
+                honest.clone(),
+            )
+            .unwrap_or_else(|error| panic!("{described} must reach the verifier: {error:?}"));
+        assert!(
+            !app.verify_uncompressed(&parent, &mut rng)
+                .expect("verify must not error"),
+            "a parent over a child with {described} verified",
         );
-        match parent {
-            Err(_) => {}
-            Ok((parent, ())) => assert!(
-                !app.verify_uncompressed(&parent, &mut rng)
-                    .expect("verify must not error"),
-                "a parent over a child with {described} verified",
-            ),
-        }
     }
 }
 

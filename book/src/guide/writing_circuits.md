@@ -131,6 +131,12 @@ proof. The default puts the constant one in every slot, which is right for
 steps that use no online polynomials; a step that uses one slot returns the
 constant one for the other.
 
+These polynomial commitments are unblinded and deterministic for the
+returned coefficients. Their opening points and values are public. Use
+`staged` for witness values that should stay out of the public instance;
+its stage commitment is blinded, but public openings or header fields can
+still reveal the staged values.
+
 `staged` runs beside `polynomials` and returns the `NUM_STAGED` values the
 step's checks at $\zeta$ read but no header carries, such as the roots it
 multiplies into an accumulator polynomial (see
@@ -220,7 +226,9 @@ let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
 // The root this step multiplies in, staged before zeta (see below).
 let t = oracles.staged()[0].clone();
 // Enforce O0(zeta) = L0(zeta) * (zeta - t), the relation the step proves.
-o0.enforce_equal(dr, &l0.mul(dr, &zeta.sub(dr, &t))?)?;
+let factor = zeta.sub(dr, &t);
+let expected = l0.mul(dr, &factor)?;
+o0.enforce_equal(dr, &expected)?;
 // A slot may also be opened at any wire, such as a witnessed nullifier.
 let membership = oracles.query(dr, Slot::left(1), &nullifier)?;
 ```

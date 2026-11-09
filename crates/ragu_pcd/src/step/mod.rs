@@ -233,6 +233,11 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// its output slots. The default puts the constant one in every slot;
     /// a step that uses fewer polynomials returns it for the unused slots.
     ///
+    /// The commitments are unblinded and deterministic for these coefficients;
+    /// opening points and values are public. Witness values that should stay
+    /// out of the public instance belong in [`staged`](Self::staged), whose
+    /// stage commitment is blinded. Public openings can still reveal them.
+    ///
     /// A polynomial may have at most as many coefficients as the
     /// application's rank holds, and must not be zero.
     fn polynomials<'source>(

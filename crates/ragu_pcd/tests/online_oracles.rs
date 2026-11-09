@@ -1041,16 +1041,13 @@ fn every_slot_proves_and_verifies() -> Result<()> {
 
 // # 9. What cannot prove
 
-/// A proof attempt is refused when proving fails outright, or when it
-/// yields a proof that does not verify.
-fn refused<H: Header<Fp>>(app: &App, attempt: Result<Pcd<C, R, H>>, what: &str) {
-    if let Ok(pcd) = attempt {
-        let mut rng = StdRng::seed_from_u64(0xdead);
-        assert!(
-            !app.verify_uncompressed(&pcd, &mut rng).unwrap(),
-            "{what}: the verifier accepted a false claim"
-        );
-    }
+/// A constructed proof of a false statement must reach verifier rejection.
+fn rejected<H: Header<Fp>>(app: &App, pcd: Pcd<C, R, H>, what: &str) {
+    let mut rng = StdRng::seed_from_u64(0xdead);
+    assert!(
+        !app.verify_uncompressed(&pcd, &mut rng).unwrap(),
+        "{what}: the verifier accepted a false claim"
+    );
 }
 
 /// A membership claim about an element the set does not hold, or a
@@ -1061,14 +1058,16 @@ fn a_false_membership_claim_cannot_prove() -> Result<()> {
     let app = app();
     let mut rng = StdRng::seed_from_u64(0xfa15e);
     let (a, ()) = app.seed(&mut rng, SeedSet, tachygrams(1))?;
-    let member = app
-        .fuse(&mut rng, ProveMember, Fp::from(99), a.clone(), unit(&app)?)
-        .map(|(pcd, ())| pcd);
-    refused(&app, member, "a non-member claimed as a member");
+    let (member, ()) = app.fuse(&mut rng, ProveMember, Fp::from(99), a.clone(), unit(&app)?)?;
+    rejected(&app, member, "a non-member claimed as a member");
     let non_member = app
         .fuse(&mut rng, ProveNonMember, Fp::from(2), a, unit(&app)?)
         .map(|(pcd, ())| pcd);
-    refused(&app, non_member, "a member claimed as a non-member");
+    assert!(
+        matches!(non_member, Err(Error::InvalidWitness(source))
+            if source.to_string() == "division by zero"),
+        "a member claimed as a non-member must fail when inverting its zero evaluation"
+    );
     Ok(())
 }
 
@@ -1185,8 +1184,15 @@ fn a_misstated_polynomial_cannot_prove() -> Result<()> {
             .map(|(pcd, ())| pcd);
         (app, attempt)
     }
-    assert!(matches!(attempt::<ZERO>().1, Err(Error::InvalidWitness(_))));
+    assert!(
+        matches!(attempt::<ZERO>().1, Err(Error::InvalidWitness(source))
+        if source.to_string() == "an online polynomial must not be zero")
+    );
     let (app, stale) = attempt::<STALE>();
-    refused(&app, stale, "stale polynomial");
+    rejected(
+        &app,
+        stale.expect("a stale polynomial must reach the verifier"),
+        "stale polynomial",
+    );
     Ok(())
 }
