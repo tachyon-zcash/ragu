@@ -741,7 +741,11 @@ name = "ragu"
 version = "0.0.0"
 dependencies = [
  "blake2b_simd",
+ "ragu_backend",
+ "ragu_circuits",
  "ragu_core",
+ "ragu_pcd",
+ "ragu_primitives",
  "rand 0.10.1",
  "zakura-udon",
 ]
