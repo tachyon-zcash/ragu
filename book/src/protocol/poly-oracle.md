@@ -254,7 +254,7 @@ The main challenges are
 2) extending ["header-carry check"](#ragu) to the proofs' associated poly commitments.
 
 For (1), we update the public instance $k(Y)$ to include $\zeta$ used to synthesize `app_rx`.
-During the `application_ky()` computation in the parent step's folding circuit, we Horner over `[zeta, L/R/O headers]` where `zeta` slot is filled with the `unified.w` challenge value witnessed in the native `Preamble` stage, effectively copy-constraining the correct $\zeta$ used in `app_rx` and derived from FS transcript.
+During the `application_ky()` computation in the parent step's folding circuit, we Horner over `[zeta, L/R/O header fields]` where `zeta` slot is filled with the `unified.w` challenge value witnessed in the native `Preamble` stage, effectively copy-constraining the correct $\zeta$ used in `app_rx` and derived from FS transcript.
 
 For (2), we generalize the same "cross-circuit copy-constraint via public instance" (i.e. `unified_bridge_ky`) idea to the nested side where our points are witnessed.
 Specifically, the nested unified instance, which both nested instance circuits (`collapse` and `compute_v`) Horner over, gains the exported commitments: `[unified_S, L0, L1, R0, R1, O0, O1, 1]`. The nested `collapse` circuit is the one that holds the exported wires to the `Preamble` stage's; the other circuit reads the same instance.
@@ -305,6 +305,11 @@ It cannot be treated as a fixed input to a check at $\zeta$ without an additiona
 (Absorbing the digest would cost `hashes_1` one more Poseidon permutation, beyond its gate budget.)
 The digest joins the `unified` instance next to `bridge_preamble_commitment`, and the parent binds it to the `BridgeHash` stage it folds, as it binds the other bridge commitments.
 The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.
+
+This malleability does not weaken the anchor chain, because a prover never chooses which anchors are canonical.
+Validators build the canonical chain themselves: they take the $\acc^\tg$ point the proof binds, compute $H^{bridge}(\acc^\tg)$ with `Application::bridge_hash()`, which fixes the canonical unblinded encoding of $\acc^\tg$ in the `O1` position, and advance $\anchor' = H(\anchor \| e \| H^{bridge}(\acc^\tg))$.
+A prover who uses another encoding still produces a valid proof, but its anchor is not in the canonical history.
+So a prover has to use the canonical encoding to produce a `Stamp.anchor` that appears in the canonical history.
 
 ### V3: stage a private polynomial's roots in the application stage {#v3}
 

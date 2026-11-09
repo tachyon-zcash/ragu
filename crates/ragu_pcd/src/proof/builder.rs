@@ -19,7 +19,7 @@ use ragu_core::{Cycle, Result};
 
 use super::{Cached, Proof};
 use crate::{
-    header::HEADER_POLYNOMIALS,
+    header::NUM_ONLINE_POLYNOMIALS,
     internal::{nested, online},
     profile::ProfiledCycle,
 };
@@ -254,8 +254,8 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_points_walk_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // The step's own online polynomials, with their commitments cached.
-    oracle_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS]>,
-    oracle_commitments: OnceCell<[C::HostCurve; HEADER_POLYNOMIALS]>,
+    oracle_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]>,
+    oracle_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_POLYNOMIALS]>,
     oracle_openings: Option<online::Queries<C::CircuitField>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
@@ -592,12 +592,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     setter!(
         set_oracle_polynomials,
         oracle_polynomials,
-        [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS]
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
     );
     ref_getter!(
         oracle_polynomials,
         oracle_polynomials,
-        [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS]
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
     );
 
     setter!(
@@ -613,7 +613,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     /// Lazily computes and caches the commitments of the step's own online
     /// polynomials.
-    pub(crate) fn oracle_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+    pub(crate) fn oracle_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         *self.oracle_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
             let polys = self.oracle_polynomials();

@@ -61,7 +61,7 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 /// the fields describe checks the wrong polynomial. Binding those slots to
 /// the compressed proof's own online commitments would be a change to the
 /// statement extension's contract.
-pub const HEADER_POLYNOMIALS: usize = 2;
+pub const NUM_ONLINE_POLYNOMIALS: usize = 2;
 
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
 /// application suffixes.

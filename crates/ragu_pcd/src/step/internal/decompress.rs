@@ -145,7 +145,7 @@ mod tests {
         use ragu_testing::registry::TestRegistryBuilder;
 
         use crate::{
-            header::{HEADER_POLYNOMIALS, Header, Suffix},
+            header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
             step::Slot,
         };
 
@@ -230,7 +230,7 @@ mod tests {
                 let output =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
                 let zeta = oracles.zeta().clone();
-                for i in 0..HEADER_POLYNOMIALS {
+                for i in 0..NUM_ONLINE_POLYNOMIALS {
                     let value = oracles.query(dr, Slot::output(i), &zeta)?;
                     value.enforce_equal(dr, &Element::one())?;
                 }

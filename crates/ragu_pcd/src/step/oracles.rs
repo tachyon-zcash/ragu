@@ -1,7 +1,7 @@
 //! The online polynomial oracles a step queries while its circuit is
 //! synthesized.
 //!
-//! A step opens [`HEADER_POLYNOMIALS`] polynomials from each child's proof
+//! A step opens [`NUM_ONLINE_POLYNOMIALS`] polynomials from each child's proof
 //! and from its own output proof, associated with the three headers. Their
 //! commitments are stored in [`Proof`](crate::Proof) and fixed before the
 //! step's challenge $\zeta$ is squeezed: the children's in their proofs,
@@ -42,7 +42,7 @@ use ragu_primitives::{Element, vec::FixedVec};
 use udon::field::Field;
 
 use crate::internal::online::{self, Queries, QueriesOutput, QueryOutput};
-pub use crate::internal::online::{HEADER_POLYNOMIALS, Position, Slot};
+pub use crate::internal::online::{NUM_ONLINE_POLYNOMIALS, Position, Slot};
 
 /// Evaluates a step's online polynomials: `evaluate(slot, x)` is the value
 /// of the polynomial in slot `slot` at `x`.

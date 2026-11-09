@@ -17,7 +17,7 @@ use udon::field::Field;
 
 use crate::{
     Application, Proof,
-    header::HEADER_POLYNOMIALS,
+    header::NUM_ONLINE_POLYNOMIALS,
     internal::{native, nested},
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -95,7 +95,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The bridge-hash stage: the own last online commitment, unblinded,
         // so its commitment is the digest the step's instance carries.
-        let o1 = builder.oracle_commitments()[HEADER_POLYNOMIALS - 1];
+        let o1 = builder.oracle_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
         let hash_rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)?;
         let hash_commitment =
             B::sparse_commit_to_affine(&hash_rx, C::nested_generators(self.params));

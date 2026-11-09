@@ -16,8 +16,8 @@
 //!   revdot claims
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
-//! - [`online`] — the online polynomials associated with a step's headers and its
-//!   batch opens
+//! - [`online`] — the online polynomials of a step's input and output proofs,
+//!   which its batch opens
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
 //! - [`const_fns`] — compile-time helper functions for array construction

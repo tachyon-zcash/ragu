@@ -151,8 +151,8 @@ new `PreambleFinalStaged` mask bonds `BindBeta`, which is removed from the
 `OuterErrorFinalStaged` bonding claim. Registration includes the new mask.
 The internal registry therefore has 53 native and 46 nested entries,
 including masks, with 25 native and 29 nested walk steps once the online
-polynomials of the headers, the application stage and the bridge-hash stage
-join the batch.
+polynomials of the input and output proofs, the application stage and the
+bridge-hash stage join the batch.
 
 The constraint census uses production rank `R<13>`, a 96-element header,
 and 6000 placeholder application circuits. In that fixture the largest

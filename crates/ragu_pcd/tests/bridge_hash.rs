@@ -22,7 +22,7 @@ use udon::{
 
 use crate::{
     Application, ApplicationBuilder,
-    header::{HEADER_POLYNOMIALS, Header, Suffix},
+    header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
     internal::nested::stages::bridge_hash,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
@@ -63,9 +63,9 @@ impl Step<Pasta> for HashOut {
         c: &Fp,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok(core::array::from_fn(|i| {
-            if i == HEADER_POLYNOMIALS - 1 {
+            if i == NUM_ONLINE_POLYNOMIALS - 1 {
                 vec![*c, Fp::ONE]
             } else {
                 vec![Fp::ONE]
@@ -124,7 +124,7 @@ fn a_step_reads_the_digest_of_its_last_slot() {
     assert!(app.verify_differential(&pcd, &mut rng).unwrap());
 
     let proof = pcd.proof();
-    let o1 = proof.oracle_commitments()[HEADER_POLYNOMIALS - 1];
+    let o1 = proof.oracle_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
     let digest = app.bridge_hash(o1).unwrap();
     assert_eq!(digest, proof.bridge_hash_commitment());
     let (x, y) = digest.coordinates().unwrap();

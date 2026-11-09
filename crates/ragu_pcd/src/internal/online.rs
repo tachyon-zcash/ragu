@@ -2,7 +2,7 @@
 //! proofs and its own output proof, which the step's PCS batch opens at
 //! points the application circuit chooses.
 //!
-//! Each proof stores [`HEADER_POLYNOMIALS`] polynomials associated with its
+//! Each proof stores [`NUM_ONLINE_POLYNOMIALS`] polynomials associated with its
 //! output header, a parameter of the protocol rather than of the header type.
 //! The header's field encoding is separate from these polynomials and their
 //! commitments. A step's online slots are the proofs' polynomials in the
@@ -46,16 +46,16 @@ use ragu_primitives::{
 use udon::field::Field;
 
 use crate::Proof;
-pub use crate::header::HEADER_POLYNOMIALS;
+pub use crate::header::NUM_ONLINE_POLYNOMIALS;
 
 /// The number of online polynomials a step opens across its input and output proofs.
-pub const NUM_ONLINE_QUERIES: usize = 3 * HEADER_POLYNOMIALS;
+pub const NUM_ONLINE_QUERIES: usize = 3 * NUM_ONLINE_POLYNOMIALS;
 
 /// Length type for a step's online slots.
 pub type QueriesLen = ConstLen<NUM_ONLINE_QUERIES>;
 
 /// Length type for one proof's online polynomials.
-pub type HeaderLen = ConstLen<HEADER_POLYNOMIALS>;
+pub type PolynomialsLen = ConstLen<NUM_ONLINE_POLYNOMIALS>;
 
 /// The input or output position whose proof supplies a step's online slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,11 +85,11 @@ impl Slot {
     ///
     /// # Panics
     ///
-    /// Panics if `index` is not below [`HEADER_POLYNOMIALS`].
+    /// Panics if `index` is not below [`NUM_ONLINE_POLYNOMIALS`].
     pub const fn new(position: Position, index: usize) -> Self {
         assert!(
-            index < HEADER_POLYNOMIALS,
-            "a header carries at most HEADER_POLYNOMIALS polynomials"
+            index < NUM_ONLINE_POLYNOMIALS,
+            "a proof carries at most NUM_ONLINE_POLYNOMIALS online polynomials"
         );
         Slot { position, index }
     }
@@ -121,18 +121,18 @@ impl Slot {
 
     /// The slot's index among the step's [`NUM_ONLINE_QUERIES`] slots.
     pub const fn offset(self) -> usize {
-        let header = match self.position {
+        let proof = match self.position {
             Position::Left => 0,
             Position::Right => 1,
             Position::Output => 2,
         };
-        header * HEADER_POLYNOMIALS + self.index
+        proof * NUM_ONLINE_POLYNOMIALS + self.index
     }
 
     /// Every slot, in slot order.
     pub fn all() -> impl Iterator<Item = Self> {
         Position::ALL.into_iter().flat_map(|position| {
-            (0..HEADER_POLYNOMIALS).map(move |index| Self::new(position, index))
+            (0..NUM_ONLINE_POLYNOMIALS).map(move |index| Self::new(position, index))
         })
     }
 }
@@ -140,8 +140,8 @@ impl Slot {
 /// The coefficients of `polys`, ascending in degree with trailing zeros
 /// stripped: how a step's first phase reads a proof's online polynomials.
 pub fn coefficients<F: Field, R: Rank>(
-    polys: &[sparse::Polynomial<F, R>; HEADER_POLYNOMIALS],
-) -> [alloc::vec::Vec<F>; HEADER_POLYNOMIALS] {
+    polys: &[sparse::Polynomial<F, R>; NUM_ONLINE_POLYNOMIALS],
+) -> [alloc::vec::Vec<F>; NUM_ONLINE_POLYNOMIALS] {
     core::array::from_fn(|i| {
         let mut coeffs: alloc::vec::Vec<F> = polys[i].iter_coeffs().collect();
         while coeffs.last() == Some(&F::ZERO) {
@@ -156,10 +156,12 @@ pub fn coefficients<F: Field, R: Rank>(
 pub fn polys<'a, C: Cycle, R: Rank>(
     left: &'a Proof<C, R>,
     right: &'a Proof<C, R>,
-    own: &'a [sparse::Polynomial<C::CircuitField, R>; HEADER_POLYNOMIALS],
+    own: &'a [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
 ) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_QUERIES] {
-    let headers = [left.oracle_polynomials(), right.oracle_polynomials(), own];
-    core::array::from_fn(|slot| &headers[slot / HEADER_POLYNOMIALS][slot % HEADER_POLYNOMIALS])
+    let proofs = [left.oracle_polynomials(), right.oracle_polynomials(), own];
+    core::array::from_fn(|slot| {
+        &proofs[slot / NUM_ONLINE_POLYNOMIALS][slot % NUM_ONLINE_POLYNOMIALS]
+    })
 }
 
 /// The commitments of [`polys`], in the same order, given the step's own
@@ -167,10 +169,12 @@ pub fn polys<'a, C: Cycle, R: Rank>(
 pub fn commitments<C: Cycle, R: Rank>(
     left: &Proof<C, R>,
     right: &Proof<C, R>,
-    own: [C::HostCurve; HEADER_POLYNOMIALS],
+    own: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
 ) -> [C::HostCurve; NUM_ONLINE_QUERIES] {
-    let headers = [left.oracle_commitments(), right.oracle_commitments(), own];
-    core::array::from_fn(|slot| headers[slot / HEADER_POLYNOMIALS][slot % HEADER_POLYNOMIALS])
+    let proofs = [left.oracle_commitments(), right.oracle_commitments(), own];
+    core::array::from_fn(|slot| {
+        proofs[slot / NUM_ONLINE_POLYNOMIALS][slot % NUM_ONLINE_POLYNOMIALS]
+    })
 }
 
 /// The polynomial of a slot a step leaves unused: the constant one, whose
@@ -246,8 +250,8 @@ mod tests {
             (0..NUM_ONLINE_QUERIES).collect::<alloc::vec::Vec<_>>()
         );
         assert_eq!(Slot::left(1).offset(), 1);
-        assert_eq!(Slot::right(0).offset(), HEADER_POLYNOMIALS);
-        assert_eq!(Slot::output(0).offset(), 2 * HEADER_POLYNOMIALS);
+        assert_eq!(Slot::right(0).offset(), NUM_ONLINE_POLYNOMIALS);
+        assert_eq!(Slot::output(0).offset(), 2 * NUM_ONLINE_POLYNOMIALS);
         assert_eq!(Slot::output(0).position(), Position::Output);
         assert_eq!(Slot::output(1).index(), 1);
     }

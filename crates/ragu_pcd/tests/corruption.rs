@@ -38,9 +38,9 @@ use ragu_core::{
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, HEADER_POLYNOMIALS, NUM_ONLINE_QUERIES,
-        NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment, NestedRx, RxComponent,
-        Side,
+        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_POLYNOMIALS,
+        NUM_ONLINE_QUERIES, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment,
+        NestedRx, RxComponent, Side,
     },
     header::Header,
     wire,
@@ -253,7 +253,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
     // The step's own online polynomials, their commitments and every
     // opening's point and value. The out-of-range ones are in
     // `no_op_edits`.
-    for index in 0..HEADER_POLYNOMIALS {
+    for index in 0..NUM_ONLINE_POLYNOMIALS {
         for coeff in coeffs {
             out.push(Corruption::OnlineCoeff {
                 index,
@@ -412,11 +412,11 @@ fn no_op_edits() -> Vec<Corruption<C>> {
     }
     let delta = Fp::from(7u64);
     out.push(Corruption::OnlineCoeff {
-        index: HEADER_POLYNOMIALS,
+        index: NUM_ONLINE_POLYNOMIALS,
         coeff: 0,
         delta,
     });
-    out.push(Corruption::NegateOnlineCommitment(HEADER_POLYNOMIALS));
+    out.push(Corruption::NegateOnlineCommitment(NUM_ONLINE_POLYNOMIALS));
     for value in [false, true] {
         out.push(Corruption::OnlineQuery {
             slot: 0,
@@ -713,7 +713,7 @@ fn online_polynomial_edits_bind_both_verifiers() {
     let app = app();
     for shape in [Shape::Leaf, Shape::Deep] {
         let fixture = fixture(&app, shape);
-        for index in 0..HEADER_POLYNOMIALS {
+        for index in 0..NUM_ONLINE_POLYNOMIALS {
             let mut corrupted = fixture.clone();
             let binding = corrupted.proof.corrupt(Corruption::OnlineCoeff {
                 index,

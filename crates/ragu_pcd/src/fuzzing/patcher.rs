@@ -1079,7 +1079,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // witnessed: that interstitial is its output; the endoscalar bits and
         // every other point are inputs. The points are the prover's own
         // witness, from `compute_p`.
-        let own_o1 = builder.oracle_commitments()[crate::header::HEADER_POLYNOMIALS - 1];
+        let own_o1 = builder.oracle_commitments()[crate::header::NUM_ONLINE_POLYNOMIALS - 1];
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
             stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,

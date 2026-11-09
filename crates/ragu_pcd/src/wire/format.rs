@@ -267,7 +267,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        header::HEADER_POLYNOMIALS,
+        header::NUM_ONLINE_POLYNOMIALS,
         internal::online::NUM_ONLINE_QUERIES,
         profile::{Shape, Standard},
     };
@@ -303,7 +303,7 @@ mod tests {
         // online openings; the bridge alpha and nine challenges; one
         // circuit index. The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
-            let polynomials = Shape::of::<Standard>().polynomials() + HEADER_POLYNOMIALS;
+            let polynomials = Shape::of::<Standard>().polynomials() + NUM_ONLINE_POLYNOMIALS;
             polynomials * R::num_coeffs() * 32
                 + (polynomials + 1) * 32
                 + 2 * H * 32

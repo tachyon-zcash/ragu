@@ -91,11 +91,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 ))
             })
             .collect::<Result<_>>()?;
-        builder.set_oracle_polynomials(
-            own.try_into().unwrap_or_else(|_| {
-                unreachable!("the step returned HEADER_POLYNOMIALS polynomials")
-            }),
-        );
+        builder.set_oracle_polynomials(own.try_into().unwrap_or_else(|_| {
+            unreachable!("the step returned NUM_ONLINE_POLYNOMIALS polynomials")
+        }));
 
         let staged = step.staged(
             witness,

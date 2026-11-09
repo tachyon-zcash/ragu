@@ -23,7 +23,7 @@ use crate::{
     internal::{
         native::{self, NUM_BINDERS, RxIndex},
         nested::{PointsStage, unified},
-        online::{self, HEADER_POLYNOMIALS},
+        online::{self, NUM_ONLINE_POLYNOMIALS},
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -34,7 +34,7 @@ use crate::{
 /// application stage's, then for each child every native rx commitment, its
 /// $a$, $b$, `registry_xy` and $P$, and its exported online commitments.
 pub fn num_points<P: Profile>() -> usize {
-    3 + HEADER_POLYNOMIALS + 1 + 2 * (RxIndex::num::<P>() + 4 + HEADER_POLYNOMIALS)
+    3 + NUM_ONLINE_POLYNOMIALS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_POLYNOMIALS)
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -107,7 +107,7 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub stashed_points_f: C,
     /// The child's exported polynomial-query commitments, which this step
     /// opens as its left or right slots.
-    pub stashed_oracle_commitments: [C; HEADER_POLYNOMIALS],
+    pub stashed_oracle_commitments: [C; NUM_ONLINE_POLYNOMIALS],
     /// Stashed commitment of the child's application stage, which this
     /// step folds with the child's application trace.
     pub stashed_application_stage: C,
@@ -204,7 +204,7 @@ pub struct Witness<C: Affine, P: Profile> {
     /// Nested collapse binds their exported instance values to the points
     /// in this step's prechallenge Preamble. The parent uses those same
     /// exported points as its input polynomial commitments.
-    pub oracle_commitments: [C; HEADER_POLYNOMIALS],
+    pub oracle_commitments: [C; NUM_ONLINE_POLYNOMIALS],
     /// The commitment of the step's own application stage, fixed here
     /// before $w$ is squeezed and exported for the parent, which folds the
     /// stage against it.
@@ -301,7 +301,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     pub stashed_points_f: Point<'dr, D, C>,
     /// The child's exported polynomial-query commitments.
     #[ragu(gadget)]
-    pub stashed_oracle_commitments: FixedVec<Point<'dr, D, C>, online::HeaderLen>,
+    pub stashed_oracle_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
     /// Stashed commitment of the child's application stage.
     #[ragu(gadget)]
     pub stashed_application_stage: Point<'dr, D, C>,
@@ -484,7 +484,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// The step's polynomial-query commitments, bound to the nested unified
     /// instance's exported commitments by nested collapse.
     #[ragu(gadget)]
-    pub oracle_commitments: FixedVec<Point<'dr, D, C>, online::HeaderLen>,
+    pub oracle_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
     /// The commitment of the step's own application stage.
     #[ragu(gadget)]
     pub application_stage: Point<'dr, D, C>,

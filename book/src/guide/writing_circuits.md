@@ -41,7 +41,7 @@ pub trait Step<C: Cycle> {
         witness: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Self::Left>,
         right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]>;
+    ) -> Result<[Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS]>;
 
     // Optional: the `NUM_STAGED` staged values, committed before the step's
     // challenge is drawn. Defaults to none.
@@ -120,7 +120,7 @@ This is where the circuit logic is implemented. The function:
 
 ### 4. The `polynomials` and `staged` Functions
 
-Every proof stores `HEADER_POLYNOMIALS` (two) online polynomials and their
+Every proof stores `NUM_ONLINE_POLYNOMIALS` (two) online polynomials and their
 commitments, associated with its output header. The header's field encoding
 is separate; the polynomial count is a parameter of the protocol, not of
 the header type. A step that uses these slots implements `polynomials`,
@@ -275,7 +275,7 @@ implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 (the native Rust value), an `Output` type (the circuit gadget
 representation), an `encode` function that converts `Data` into
 `Output` by allocating circuit elements. The accompanying proof stores
-`HEADER_POLYNOMIALS` online polynomials and their commitments, exposed by
+`NUM_ONLINE_POLYNOMIALS` online polynomials and their commitments, exposed by
 `Pcd::polynomials()` and `Pcd::commitments()` (see
 [Polynomial Oracles](#polynomial-oracles)).
 

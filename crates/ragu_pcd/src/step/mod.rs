@@ -15,7 +15,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::header::{HEADER_POLYNOMIALS, Header};
+use super::header::{Header, NUM_ONLINE_POLYNOMIALS};
 use crate::{internal::native::InternalCircuitIndex, profile::Profile};
 
 #[derive(Copy, Clone)]
@@ -151,10 +151,10 @@ pub struct HeaderInput<'a, F: Field, H: Header<F>> {
     /// The header's data, as the step's [`witness`](Step::witness) phase
     /// also receives it.
     pub data: &'a H::Data,
-    /// The coefficients of the input proof's [`HEADER_POLYNOMIALS`]
+    /// The coefficients of the input proof's [`NUM_ONLINE_POLYNOMIALS`]
     /// polynomials, in ascending degree with trailing zeros stripped, as
     /// the step that produced the input committed them.
-    pub polynomials: &'a [Vec<F>; HEADER_POLYNOMIALS],
+    pub polynomials: &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS],
 }
 
 /// Represents a node in the computational graph (or the proof-carrying data
@@ -226,7 +226,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
 
     /// The output proof's online polynomials, associated with its header.
     /// Returns one coefficient vector, ascending in degree, for each of the
-    /// proof's [`HEADER_POLYNOMIALS`] slots before the challenge is drawn.
+    /// proof's [`NUM_ONLINE_POLYNOMIALS`] slots before the challenge is drawn.
     /// Ragu commits them and stores the polynomials and commitments in
     /// [`Proof`](crate::Proof). The parent opens them as its left or right
     /// slots, and this step's [`witness`](Self::witness) may open them as
@@ -245,7 +245,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         witness: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Self::Left>,
         right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS]> {
         let _ = (witness, left, right);
         Ok(core::array::from_fn(|_| vec![C::CircuitField::ONE]))
     }

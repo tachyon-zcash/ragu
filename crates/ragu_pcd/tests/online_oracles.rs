@@ -8,7 +8,7 @@
 //!
 //! | Section | Use case | API shown |
 //! |---|---|---|
-//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header`], [`HEADER_POLYNOMIALS`], padding |
+//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header`], [`NUM_ONLINE_POLYNOMIALS`], padding |
 //! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::polynomials`], [`Step::NUM_STAGED`], [`Step::staged`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
 //! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
@@ -48,7 +48,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
-    header::{HEADER_POLYNOMIALS, Header, Suffix},
+    header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_primitives::{
@@ -68,7 +68,7 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 
 // # 1. Headers
 //
-// C1. Every proof carries `HEADER_POLYNOMIALS` (two) polynomial commitments
+// C1. Every proof carries `NUM_ONLINE_POLYNOMIALS` (two) polynomial commitments
 // associated with its output header. What each slot holds is the application's
 // convention for that header, which the steps that produce the header
 // constrain, as they do its fields. An unused slot holds the constant one
@@ -209,7 +209,7 @@ impl Step<C> for SeedSet {
         tachygrams: &Vec<Fp>,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok([vanishing(tachygrams), padding()])
     }
 
@@ -287,7 +287,7 @@ impl Step<C> for InsertTachygram {
         tachygram: &Fp,
         left: HeaderInput<'_, Fp, TgSet>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok([times_linear(&left.polynomials[0], *tachygram), padding()])
     }
 
@@ -358,7 +358,7 @@ impl Step<C> for MergeSets {
         _: &(),
         left: HeaderInput<'_, Fp, TgSet>,
         right: HeaderInput<'_, Fp, TgSet>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok([
             times(&left.polynomials[0], &right.polynomials[0]),
             padding(),
@@ -624,7 +624,7 @@ impl Step<C> for AdvanceAnchor {
         _: &(),
         block: HeaderInput<'_, Fp, TgSet>,
         _: HeaderInput<'_, Fp, Anchor>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok([padding(), block.polynomials[0].clone()])
     }
 
@@ -695,7 +695,7 @@ fn next_anchor(app: &App, previous: Fp, set: <Pasta as Cycle>::HostCurve) -> Res
 // output's, both polynomials each, every one at its own point.
 
 /// The polynomials associated with a [`Pair`] header with data `a`.
-fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; HEADER_POLYNOMIALS] {
+fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_POLYNOMIALS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
 
@@ -716,7 +716,7 @@ impl Step<C> for PairSeed {
         a: &[Fp; 2],
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok(pair_polys(*a))
     }
 
@@ -791,7 +791,7 @@ impl Step<C> for PairFuse {
         _: &(),
         left: HeaderInput<'_, Fp, Pair>,
         right: HeaderInput<'_, Fp, Pair>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         Ok(pair_polys([
             left.data[0] + right.data[0],
             left.data[1] + right.data[1],
@@ -883,7 +883,7 @@ fn unit(app: &App) -> Result<Pcd<C, R, ()>> {
 fn check<H: Header<Fp>>(
     app: &App,
     pcd: &Pcd<C, R, H>,
-    expected: [Vec<Fp>; HEADER_POLYNOMIALS],
+    expected: [Vec<Fp>; NUM_ONLINE_POLYNOMIALS],
     seed: u64,
 ) {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -1024,7 +1024,7 @@ fn every_slot_proves_and_verifies() -> Result<()> {
                 );
             }
         }
-        for index in 0..HEADER_POLYNOMIALS {
+        for index in 0..NUM_ONLINE_POLYNOMIALS {
             rejected(
                 Corruption::OnlineCoeff {
                     index,
@@ -1093,7 +1093,7 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
         _: &Fp,
         left: HeaderInput<'_, Fp, TgSet>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; HEADER_POLYNOMIALS]> {
+    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
         let first = match FAULT {
             ZERO => vec![Fp::ZERO; 4],
             _ => left.polynomials[0].clone(),
