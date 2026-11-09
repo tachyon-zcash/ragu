@@ -45,6 +45,14 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 /// header, which are registered. Ragu proves only that every opening is of
 /// the polynomial the producing step committed; no header type can change
 /// how many a proof carries or which its slots are.
+///
+/// A compressed proof's statement carries only the header's fields, so a
+/// header type registered at a suffix a decompressed statement can land on
+/// must treat its slots as padding: the decompression step holds them to
+/// the constant one, and a step that opens them expecting the polynomial
+/// the fields describe checks the wrong polynomial. Binding those slots to
+/// the compressed proof's own online commitments would be a change to the
+/// statement extension's contract.
 pub const HEADER_POLYNOMIALS: usize = 2;
 
 /// Internal representation of a [`Suffix`] distinguishing internal vs.

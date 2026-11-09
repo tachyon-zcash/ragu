@@ -18,14 +18,14 @@
 //! decompressed header carries padding: the circuit opens each output slot
 //! at $\zeta$ and holds it to the constant one, so a prover cannot put a
 //! polynomial of its choosing there, and a header whose slots carry
-//! meaningful polynomials does not survive decompression. The native extension's statement circuit exposes
-//! the output header the extension verified as its public output, and its
-//! claim's $k(y)$, computed by the verifier of this proof from this proof's
-//! circuit id and output header ([`statement_ky`]), is that header's when
-//! the circuit id is this step's and the unit header's for any other step.
-//! A proof of this step whose output header is not the decompressed
-//! statement's therefore has a false claim, as a proof with relabelled
-//! application headers does.
+//! meaningful polynomials does not survive decompression. The native
+//! extension's statement circuit exposes the output header the extension
+//! verified as its public output, and its claim's $k(y)$, computed by the
+//! verifier of this proof from this proof's circuit id and output header
+//! ([`statement_ky`]), is that header's when the circuit id is this step's
+//! and the unit header's for any other step. A proof of this step whose
+//! output header is not the decompressed statement's therefore has a false
+//! claim, as a proof with relabelled application headers does.
 //!
 //! The statement circuit exposes the compressed proof's padded output header,
 //! suffix included, so the suffix is what selects which of this application's
@@ -34,6 +34,18 @@
 //! with the inner application's encoding and meaning; nothing checks that
 //! agreement, which the setup description a profile's tags cover must
 //! record.
+//!
+//! A decompressed header's fields still describe the polynomials the
+//! statement left behind while its slots hold padding, and a step that
+//! consumes it cannot tell it from one a registered step produced. The
+//! header types registered at those suffixes must therefore treat their
+//! slots as padding: no step may open a slot of such a header expecting the
+//! polynomial its fields describe, since a non-membership check against the
+//! constant one holds at every point and a product $O = L \cdot R$ computes
+//! with $L = 1$. Binding the output slots to the polynomials the statement
+//! stood for, by having the statement extension expose the compressed
+//! proof's own online commitments and this circuit hold its output slots to
+//! them, would change the extension's contract and is not done here.
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its
@@ -54,11 +66,11 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, allocator::Standard};
+use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Oracles, Slot, Step};
+use super::super::{Encoded, Index, Oracles, Step};
+use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
-use crate::{Header, header::HEADER_POLYNOMIALS};
 
 pub(crate) struct Decompress<H> {
     _marker: PhantomData<H>,
@@ -106,23 +118,9 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` (see `Encoded::new_uniform`).
         let output = Encoded::new_uniform(dr, allocator, witness.clone())?;
-        pin_output_slots(dr, oracles)?;
+        super::pin_output_slots(dr, oracles)?;
         Ok(((left, right, output), witness, D::unit()))
     }
-}
-
-/// Opens each output slot at $\zeta$ and holds it to one: the padding a
-/// decompressed header carries.
-fn pin_output_slots<'dr, D: Driver<'dr>>(
-    dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
-) -> Result<()> {
-    let zeta = oracles.zeta().clone();
-    for i in 0..HEADER_POLYNOMIALS {
-        let value = oracles.query(dr, Slot::output(i), &zeta)?;
-        value.enforce_equal(dr, &Element::one())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -143,10 +141,13 @@ mod tests {
             maybe::Maybe,
             pasta::{Fp, Pasta},
         };
-        use ragu_primitives::{Element, allocator::Allocator};
+        use ragu_primitives::{Element, GadgetExt, allocator::Allocator};
         use ragu_testing::registry::TestRegistryBuilder;
 
-        use crate::header::{Header, Suffix};
+        use crate::{
+            header::{HEADER_POLYNOMIALS, Header, Suffix},
+            step::Slot,
+        };
 
         const HEADER_SIZE: usize = 4;
         type R = polynomials::TestRank;

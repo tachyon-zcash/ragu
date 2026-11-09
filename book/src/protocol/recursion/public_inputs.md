@@ -59,14 +59,15 @@ $k_\text{unified}(y)$ for the same reason `hashes_1` uses $k_\text{bridge}(y)$.
 ### `application_ky`
 
 The step circuit's own public inputs, with no unified output and no zero
-suffix: the step's challenge $\zeta$, its six online openings and its three
-headers.
+suffix: the step's challenge $\zeta$, its six online openings, the two
+coordinates of its bridge hash $H^{bridge}(O_1)$ and its three headers.
 
-$$k_\text{app}(Y) = \text{Horner}(\zeta \,\|\, x_0 \,\|\, y_0 \,\|\, \cdots \,\|\, x_5 \,\|\, y_5 \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
+$$k_\text{app}(Y) = \text{Horner}(\zeta \,\|\, x_0 \,\|\, y_0 \,\|\, \cdots \,\|\, x_5 \,\|\, y_5 \,\|\, \texttt{h\_O1} \,\|\, \texttt{left\_header} \,\|\, \texttt{right\_header} \,\|\, \texttt{output\_header} \,\|\, 1, \; Y)$$
 
 The parent computes it from the wires it already holds: $\zeta$ is the
-child's $w$ in the unified output, and the openings are the ones the
-`compute_v` bridge carries. The step circuit's instance is therefore held to
+child's $w$ in the unified output, the openings are the ones the
+`compute_v` bridge carries, and the bridge hash is the unified output's
+`bridge_hash_commitment`. The step circuit's instance is therefore held to
 the openings the step proved, with nothing exported for the purpose. The
 online prefix has a fixed size, so the headers keep their positions and the
 output header's suffix stays the linear term.
@@ -100,8 +101,8 @@ between them, as the [transcript split](index.md#transcript-split) describes.
 Staging circuit outputs are the internal circuits' public inputs: the values the
 recursive verifier actually checks, carried through the $k(Y)$ mechanism above.
 
-The shared `Output` structure holds 37 wires: twelve nested-curve commitments
-at two wires each, and thirteen field elements covering the Fiat-Shamir
+The shared `Output` structure holds 39 wires: fourteen nested-curve commitments
+at two wires each, and eleven field elements covering the Fiat-Shamir
 challenges and the final values $c$ and $v$. `hashes_1` emits a wider structure
 that adds the two child headers, and `compute_v` one that adds the step's
 online openings.

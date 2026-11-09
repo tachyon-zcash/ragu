@@ -130,6 +130,15 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// returned wire is a witness the step may use in its constraints, and
     /// the pair $(x, y)$ enters the step's instance.
     ///
+    /// The pair is public, by design. The
+    /// [online polynomial oracle](https://tachyon.z.cash/ragu/protocol/poly-oracle.html)
+    /// page's capability C4 states: "public instance $k(Y)$ of the app
+    /// circuit changes from `[L/R/O headers]` of size `3*HEADER_SIZE` to:
+    /// `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O headers]`". The parent
+    /// reads every slot's point and value into its preamble, and a
+    /// compressed proof carries and absorbs them, so a point or value the
+    /// step must keep secret cannot be opened through this oracle.
+    ///
     /// # Errors
     ///
     /// Each slot may be queried once; a second query of the same slot is
