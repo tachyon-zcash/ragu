@@ -30,10 +30,10 @@ For Tachyon developers, this is your mental model of what Ragu's online polynomi
 - C1: supports $2$ poly commitment slots in every `Header`: `[Fp; HEADER_SIZE] | [Eq; 2]`
   - `Eq` is alias for `HostCurve` type and $\E_q$ in math
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
-- C2: a 2-stage application circuit where the first stage is used to witness coefficients or roots of private online polynomial (e.g. all $\tg_i$ in the polynomial $\prod_i (X - \tg_i)$) and the second/final stage can enforce any evaluation on these private polynomials as parts of its application step
+- C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. A private polynomial has no commitment slot and no oracle
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
   - public poly commitments live in public headers
-  - private polys implicitly live in the first app stage, whose commitment is absorbed in the FS transcript during `fuse()`
+  - staged values, and so any private polynomial built from them, live in the application stage, whose commitment is absorbed in the FS transcript during `fuse()`
   - consequently, a check at $\zeta$ may only read values fixed before $\zeta$: openings $y_i = f_i(x_i)$ at $x_i = \zeta$ or at an $x_i$ itself fixed before $\zeta$, the left/right header fields, the first-stage values, `h_O1`, and anything the final stage computes from them; or an in-circuit hash output, or a value from a small set (e.g. a bit).
   Any other value the final stage witnesses, including the output header's fields, is chosen _after_ $\zeta$: a check $O(\zeta) = L(\zeta)\cdot(\zeta - t)$ with such a $t$ is forgeable by solving $t = \zeta - O(\zeta)/L(\zeta)$. Witness $t$ in the first stage instead.
 - C4: the second/final app stage can "claim" the following values and constrain any relation for them during circuit synthesis
@@ -43,7 +43,7 @@ For Tachyon developers, this is your mental model of what Ragu's online polynomi
 
   Correctness of all poly queries is folded into Ragu's running accumulator (i.e. PCD proof).
   Integrity of the challenge $\zeta$ and the $H^{bridge}(\cm_{O_1})$ is guaranteed by Ragu.
-  - importantly, we **only allow one query per public online polynomial, but allow as many queries on private online polynomials as circuit budget permits**.
+  - importantly, we **only allow one opening per public online polynomial**; a private polynomial is evaluated in-circuit from its staged roots or coefficients, as many times as the circuit budget permits
   - all declared queries follow the canonical order, targeting $L_0, L_1, R_0, R_1, O_0, O_1$ respectively
   - public instance $k(Y)$ of the app circuit changes from `[L/R/O headers]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O headers]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
   - the special hash only commits the step's own `O1` slot, so if the app circuit wants to compute
@@ -186,7 +186,9 @@ Native Internal Circuits:
 ┌────────────┬──────────────────────────────────────┐
 │ Last stage │               Checkers               │
 ├────────────┼──────────────────────────────────────┤
-│ OuterError │ hashes_1, hashes_2, bind_beta        │
+│ Preamble   │ bind_beta                            │
+├────────────┼──────────────────────────────────────┤
+│ OuterError │ hashes_1, hashes_2                   │
 ├────────────┼──────────────────────────────────────┤
 │ InnerError │ collapse                             │
 ├────────────┼──────────────────────────────────────┤
@@ -234,7 +236,7 @@ For (1), we update the public instance $k(Y)$ to include $\zeta$ used to synthes
 During the `application_ky()` computation in the parent step's folding circuit, we Horner over `[zeta, L/R/O headers]` where `zeta` slot is filled with the `unified.w` challenge value witnessed in the native `Preamble` stage, effectively copy-constraining the correct $\zeta$ used in `app_rx` and derived from FS transcript.
 
 For (2), we generalize the same "cross-circuit copy-constraint via public instance" (i.e. `unified_bridge_ky`) idea to the nested side where our points are witnessed.
-Specifically, we ask the public instance of the nested `collapse` internal circuit to Horner over `[unified_S, L0, L1, R0, R1, O0, O1, 1]`; while other nested circuits can still keep Hornering over `[unified_S, 1]` as before.
+Specifically, the nested unified instance, which both nested instance circuits (`collapse` and `compute_v`) Horner over, gains the exported commitments: `[unified_S, L0, L1, R0, R1, O0, O1, 1]`. The nested `collapse` circuit is the one that holds the exported wires to the `Preamble` stage's; the other circuit reads the same instance.
 The parent needs all 6 points: it uses `S.app`'s `L/R/O` commitments (and, before [v4](#v4), opens them), and `S.O` becomes its own `L` or `R`.
 There are two parts within the header-carry check, mirroring those of the field headers.
 The first half `A.O = S.L` is enforced within `S`, one step early: `S`'s nested `Preamble` stashes `A`'s and `B`'s exported points next to its own `L0, L1, R0, R1` wires, `S`'s nested `collapse` computes `A`'s and `B`'s collapse `ky` from the stash and enforces `L0, L1, R0, R1` equal to the stashed `A.O0, A.O1, B.O0, B.O1`, a 4-point equality.
@@ -281,18 +283,18 @@ The prover constructs the digest before $\zeta$; `w` absorbs `O1` through the `P
 The digest joins the `unified` instance next to `bridge_preamble_commitment`, and the parent binds it to the `BridgeHash` stage it folds, as it binds the other bridge commitments.
 The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.
 
-### V3: witness private poly via 2-stage app circuit {#v3}
+### V3: stage a private polynomial's roots in the application stage {#v3}
 
 - Goal: additionally commits online polynomial constructed from private witness before $\zeta$ (e.g. $\prod_i (X - \tg_i)$ where $\tg_i$ are not in headers but circuit witness)
-- Solution: 2-phase, 2-stage application circuit with a single, maximally permissible, first-stage size
+- Solution: 2-phase application circuit with an application stage of a single, maximally permissible size
 
-Turn our application circuit into a 2-stage circuit.
+Give the application circuit a stage committed before $\zeta$.
 
-- witness all roots (or coefficients) of the private online polynomial in the first `PrivatePoly` stage
+- stage the roots (or coefficients) of the private polynomial: the step returns them from `Step::staged`, and Ragu commits them in the application stage
 - commit the stage trace and append to the nested `Preamble` stage
 - absorb bridge preamble stage commitment into transcript
 - draw challenge $\zeta=w$ effectively committing to our private polynomial.
-- export `pri_poly_rx_comm` through the nested `collapse` instance, like `O0, O1`, so that the parent folds the very first stage that $\zeta$ absorbed; otherwise `S` could absorb one first stage and hand the parent another, whose values it chose after $\zeta$.
+- export the application stage's commitment through the nested instance, like `O0, O1`, so that the parent folds the very stage that $\zeta$ absorbed; otherwise `S` could absorb one stage and hand the parent another, whose values it chose after $\zeta$.
 
 Subsequently, we can enforce any evaluations on this private polynomial in the second/final stage.
 In fact, we can enforce as many as the circuit budget allows.
@@ -312,20 +314,21 @@ After:
 
      ERROR           APP             NESTED
 
-   Preamble      PrivatePoly        BridgeHash (copy of O1, not absorbed)
+   Preamble      AppStage           BridgeHash (copy of O1, not absorbed)
        │              │                 │
-       │              │             Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
+       │              │             Preamble (witness L0,L1,R0,R1,O0,O1, app_stage_comm)
        │              │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ```
 
-Like any multi-stage circuit, we need to register new bonding polynomials to the registry based on the size of the two stages.
-In theory, we don't know the degree of our private online polynomial, thus the first-stage size is only known at registry-time.
-To avoid overcrowding the registry, we enforce a universal, max size at `registry.finalize()`-time, and only register two new bonding polynomials.
-In practice, Tachyon's current proof tree only needs degree-$1$ private polynomials: only single-element first stage is needed.
+Like any staged circuit, this needs bonding polynomials in the registry sized by the stage.
+In theory, we don't know the degree of our private polynomial, thus the stage size is only known at registry-time.
+To avoid overcrowding the registry, we enforce a universal, max size at `registry.finalize()`-time (the largest `Step::NUM_STAGED` registered), and only register two new bonding polynomials.
+In practice, Tachyon's current proof tree only needs degree-$1$ private polynomials: only a single-element stage is needed.
 
-We skip elaborating the staging mechanism, as it's identical to that of any of the internal circuit for the `S.fold` circuit whose verification happens in the parent/next step.
-Extra stages require extra revdot claims to be folded, but the overhead is so small that they will fit into the buffer of the native `inner_error`, `outer_error`, and `compute_v` stage.
+The stage is not a type-level stage of the step circuit: every step circuit reserves $\lceil K/2 \rceil$ gates after the SYSTEM gate for the largest staged count $K$, the committed stage polynomial supplies those wires, and the two bonding polynomials hold the stage to its block and the step's own trace to zero there.
+The step binds its staged values to the first wires of the block; its trace is folded in the parent as before, together with the stage.
+The extra revdot claims are few, and they fit into the buffer of the native `inner_error`, `outer_error`, and `compute_v` stage.
 
 ### V4: fusing poly queries at current step {#v4}
 
@@ -353,7 +356,7 @@ Recalling our [earlier discussion](#ragu) of "folding `S.app` in `S.fold`" concl
 Analogously, we decide to fold poly query claims in the same step.
 
 Concretely, this reduces the cost of our header-carry check.
-Instead of exporting `L/R`'s and `O`'s poly commitments, now we only need to export `O`'s poly commitments (and `pri_poly_rx_comm`), cutting the public instance of nested `collapse` circuit by 4 points, leading to fewer copy-constraints in the parent step's folding.
+Instead of exporting `L/R`'s and `O`'s poly commitments, now we only need to export `O`'s poly commitments (and the application stage's), cutting the nested instance by 4 points, leading to fewer copy-constraints in the parent step's folding.
 The 4-point equality in `S` disappears too: `S` opens the stashed `A.O, B.O` directly as its `L, R` slots, so `S` has no separate `L, R` wires to compare.
 
 ```
@@ -361,9 +364,9 @@ Before:
 
      ERROR           APP             NESTED
 
-   Preamble      PrivatePoly        BridgeHash (copy of O1, not absorbed)
+   Preamble      AppStage           BridgeHash (copy of O1, not absorbed)
        │              │                 │
-       │              │             Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
+       │              │             Preamble (witness L0,L1,R0,R1,O0,O1, app_stage_comm)
        │              │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
@@ -371,9 +374,9 @@ After:
 
      ERROR           APP           QUERY        NESTED
 
-   Preamble      PrivatePoly                BridgeHash (copy of O1, not absorbed)
+   Preamble      AppStage                   BridgeHash (copy of O1, not absorbed)
        │              │                           │
-       │              │                    Preamble (witness L0,L1,R0,R1,O0,O1, pri_poly_rx_comm)
+       │              │                    Preamble (witness L0,L1,R0,R1,O0,O1, app_stage_comm)
        │              │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
        │              │                           │
