@@ -134,7 +134,7 @@ codec!([C: ProfiledCycle] Instance<C> {
     native => FixedSequence<Point, Native<C::Profile>>,
     native_registry_xy => Point,
     native_p => Point,
-    oracle_commitments => Array<Point>,
+    online_commitments => Array<Point>,
     nested => FixedSequence<Point, Nested<C::Profile>>,
     nested_registry_xy => Point,
     nested_p => Point,

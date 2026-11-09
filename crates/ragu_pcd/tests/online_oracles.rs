@@ -15,7 +15,7 @@
 //! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
 //! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Slot::left`], [`Slot::right`], [`Slot::output`] |
-//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::oracle_commitments`](ragu_pcd::CompressedPcd::oracle_commitments), the wire format |
+//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
 //!
 //! ## The rule for checks at $\zeta$
 //!
@@ -893,8 +893,8 @@ fn check<H: Header<Fp>>(
     assert_eq!(pcd.polynomials(), expected);
     let commitments = expected.each_ref().map(|poly| app.commit(poly).unwrap());
     assert_eq!(pcd.commitments(), commitments);
-    assert_eq!(compressed.oracle_commitments(), commitments);
-    assert_eq!(compressed.proof().oracle_commitments(), commitments);
+    assert_eq!(compressed.online_commitments(), commitments);
+    assert_eq!(compressed.proof().online_commitments(), commitments);
 
     let bytes = pcd.proof().to_bytes().unwrap();
     let decoded = Proof::<C, R>::from_bytes(&bytes)

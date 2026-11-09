@@ -58,7 +58,7 @@ pub const NUM_EXPORTED: usize = 15 + NUM_ONLINE_POLYNOMIALS;
 // the slot count must rewrite them, in the walk's order.
 const _: () = assert!(
     NUM_ONLINE_POLYNOMIALS == 2,
-    "the exported commitment lists spell out two oracle slots"
+    "the exported commitment lists spell out two online slots"
 );
 
 /// Length type for the exported commitments.

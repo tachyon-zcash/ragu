@@ -952,7 +952,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 let Some(delta) = monomial::<_, R>(coeff, delta) else {
                     return Binding::Unbound;
                 };
-                let Some(poly) = self.oracle_polynomial_mut(index) else {
+                let Some(poly) = self.online_polynomial_mut(index) else {
                     return Binding::Unbound;
                 };
                 poly.add_assign(&delta);
@@ -960,7 +960,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             }
 
             Corruption::NegateOnlineCommitment(index) => {
-                let Some(point) = self.oracle_commitment_cache_mut(index) else {
+                let Some(point) = self.online_commitment_cache_mut(index) else {
                     return Binding::Unbound;
                 };
                 let negated = -*point;
@@ -972,7 +972,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             }
 
             Corruption::OnlineQuery { slot, value, delta } => {
-                let Some(query) = self.oracle_opening_mut(slot) else {
+                let Some(query) = self.online_opening_mut(slot) else {
                     return Binding::Unbound;
                 };
                 if delta == C::CircuitField::ZERO {

@@ -158,7 +158,7 @@ pub fn polys<'a, C: Cycle, R: Rank>(
     right: &'a Proof<C, R>,
     own: &'a [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
 ) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_QUERIES] {
-    let proofs = [left.oracle_polynomials(), right.oracle_polynomials(), own];
+    let proofs = [left.online_polynomials(), right.online_polynomials(), own];
     core::array::from_fn(|slot| {
         &proofs[slot / NUM_ONLINE_POLYNOMIALS][slot % NUM_ONLINE_POLYNOMIALS]
     })
@@ -171,7 +171,7 @@ pub fn commitments<C: Cycle, R: Rank>(
     right: &Proof<C, R>,
     own: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
 ) -> [C::HostCurve; NUM_ONLINE_QUERIES] {
-    let proofs = [left.oracle_commitments(), right.oracle_commitments(), own];
+    let proofs = [left.online_commitments(), right.online_commitments(), own];
     core::array::from_fn(|slot| {
         proofs[slot / NUM_ONLINE_POLYNOMIALS][slot % NUM_ONLINE_POLYNOMIALS]
     })

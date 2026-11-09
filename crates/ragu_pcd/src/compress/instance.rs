@@ -81,7 +81,7 @@ pub(crate) struct Instance<C: Cycle> {
     pub native_p: C::HostCurve,
     /// The commitments of the step's own online polynomials, which its
     /// nested instance exports.
-    pub oracle_commitments: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
+    pub online_commitments: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.
@@ -197,13 +197,13 @@ impl<C: ProfiledCycle> Instance<C> {
             circuit_id: proof.circuit_id(),
             left_header: proof.left_header().to_vec(),
             right_header: proof.right_header().to_vec(),
-            online: *proof.oracle_openings(),
+            online: *proof.online_openings(),
             native: native_components::<C::Profile>()
                 .map(|component| proof.native_commitment(component))
                 .collect(),
             native_registry_xy: proof.native_registry_xy_commitment(),
             native_p: proof.native_p_commitment(),
-            oracle_commitments: proof.oracle_commitments(),
+            online_commitments: proof.online_commitments(),
             nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -280,7 +280,7 @@ impl<C: ProfiledCycle> Instance<C> {
             .native
             .iter()
             .chain([&self.native_registry_xy, &self.native_p])
-            .chain(&self.oracle_commitments)
+            .chain(&self.online_commitments)
         {
             host.write_point(point)?;
         }
@@ -442,8 +442,8 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),
-                self.oracle_commitments[0],
-                self.oracle_commitments[1],
+                self.online_commitments[0],
+                self.online_commitments[1],
                 self.native_commitment(Rx(ApplicationStage)),
             ],
             coverage: Default::default(),

@@ -407,7 +407,7 @@ pub enum FuzzCorruption {
     },
     /// Perturb one coefficient of one of the step's own online polynomials.
     OnlineCoeff {
-        /// Which polynomial, resolved modulo the proof's oracle polynomials.
+        /// Which polynomial, resolved modulo the proof's online polynomials.
         index: u8,
         /// Which coefficient.
         coeff: u16,
@@ -417,7 +417,7 @@ pub enum FuzzCorruption {
     /// Negate the cached commitment of one of the step's own online
     /// polynomials.
     NegateOnlineCommitment {
-        /// Which polynomial, resolved modulo the proof's oracle polynomials.
+        /// Which polynomial, resolved modulo the proof's online polynomials.
         index: u8,
     },
     /// Perturb the point or the value of one online opening.

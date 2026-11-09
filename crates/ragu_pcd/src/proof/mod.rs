@@ -144,7 +144,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// coefficient vector in ascending degree per slot, as the step that
     /// produced this proof committed them.
     pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS] {
-        online::coefficients(self.proof.oracle_polynomials())
+        online::coefficients(self.proof.online_polynomials())
     }
 
     /// The commitments of [`polynomials`](Self::polynomials), one per slot:
@@ -152,7 +152,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// [`Application::commit`](crate::Application::commit) computes from
     /// the coefficients.
     pub fn commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
-        self.proof.oracle_commitments()
+        self.proof.online_commitments()
     }
 }
 
@@ -250,11 +250,11 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// This step's output polynomials exposed through the polynomial-query API,
     /// padded with the constant one (see `internal::online`). Committed before
     /// `w`; the parent opens them as its left or right slots.
-    pub(crate) oracle_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
+    pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
     /// Six opening claims, in [L0, L1, R0, R1, O0, O1] order.
     /// The parent uses these same values in the application and `compute_v`
     /// k(y) targets, binding the application's queries to the proved openings.
-    pub(crate) oracle_openings: online::Queries<C::CircuitField>,
+    pub(crate) online_openings: online::Queries<C::CircuitField>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -371,7 +371,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Nested collapse binds their exported instance values to the points
     /// in this step's prechallenge Preamble. The parent uses those same
     /// exported points as its input polynomial commitments.
-    oracle_commitments: [Cached<C::HostCurve>; NUM_ONLINE_POLYNOMIALS],
+    online_commitments: [Cached<C::HostCurve>; NUM_ONLINE_POLYNOMIALS],
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -630,8 +630,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
-                self.oracle_commitments[0].0,
-                self.oracle_commitments[1].0,
+                self.online_commitments[0].0,
+                self.online_commitments[1].0,
                 self.native_rx_commitment(RxIndex::ApplicationStage),
             ],
             coverage: Default::default(),
@@ -640,24 +640,24 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
     /// This step's output polynomials exposed through the polynomial-query
     /// API, in slot order, padded with the constant one.
-    pub(crate) fn oracle_polynomials(
+    pub(crate) fn online_polynomials(
         &self,
     ) -> &[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS] {
-        &self.oracle_polynomials
+        &self.online_polynomials
     }
 
-    /// The commitments of [`oracle_polynomials`](Self::oracle_polynomials),
+    /// The commitments of [`online_polynomials`](Self::online_polynomials),
     /// which this proof's nested instance exports.
-    pub(crate) fn oracle_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
-        self.oracle_commitments
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        self.online_commitments
             .clone()
             .map(|commitment| commitment.0)
     }
 
     /// The step's polynomial-query openings, one per slot, which its `compute_v`
     /// circuit exported.
-    pub(crate) fn oracle_openings(&self) -> &online::Queries<C::CircuitField> {
-        &self.oracle_openings
+    pub(crate) fn online_openings(&self) -> &online::Queries<C::CircuitField> {
+        &self.online_openings
     }
 
     /// The native challenges of this proof, in challenge-stage order.
@@ -1222,8 +1222,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_registry_xy_poly(registry_xy_poly);
         // This dummy proof uses padding: every online slot is
         // padding, opened at the all-one challenge to its value one.
-        builder.set_oracle_polynomials(core::array::from_fn(|_| online::padding()));
-        builder.set_oracle_openings(online::queries_at(C::CircuitField::ONE, |_, _| {
+        builder.set_online_polynomials(core::array::from_fn(|_| online::padding()));
+        builder.set_online_openings(online::queries_at(C::CircuitField::ONE, |_, _| {
             C::CircuitField::ONE
         }));
         // The eval stage carries the binding partial sums over the challenge
@@ -1437,8 +1437,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             };
             let registry_xy_commitment = builder.native_registry_xy_commitment();
             let registry_xy = builder.native_registry_xy_poly();
-            let oracle_commitments = builder.oracle_commitments();
-            let online = builder.oracle_polynomials();
+            let online_commitments = builder.online_commitments();
+            let online = builder.online_polynomials();
 
             // Initial: native_f commitment.
             push(host_commitment, &ones_host);
@@ -1467,7 +1467,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             // as the children of the bootstrap fuse that opens them hold it.
             for _ in 0..3 {
                 for i in 0..NUM_ONLINE_POLYNOMIALS {
-                    push(oracle_commitments[i], &online[i]);
+                    push(online_commitments[i], &online[i]);
                 }
             }
 
@@ -1519,7 +1519,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_points_registry_wx: host_commitment,
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
-                stashed_oracle_commitments: builder.oracle_commitments(),
+                stashed_online_commitments: builder.online_commitments(),
                 stashed_application_stage: builder.native_application_stage_commitment(),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
@@ -1537,7 +1537,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
                     native_points_children: builder.native_points_children_commitment(),
-                    oracle_commitments: builder.oracle_commitments(),
+                    online_commitments: builder.online_commitments(),
                     application_stage: builder.native_application_stage_commitment(),
                     left: trivial_child_witness.clone(),
                     right: trivial_child_witness,
@@ -1547,7 +1547,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
 
-            let o1 = builder.oracle_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
+            let o1 = builder.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
             let rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)
                 .expect("trivial bridge-hash rx");
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);

@@ -254,9 +254,9 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_points_walk_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // The step's own online polynomials, with their commitments cached.
-    oracle_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]>,
-    oracle_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_POLYNOMIALS]>,
-    oracle_openings: Option<online::Queries<C::CircuitField>>,
+    online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]>,
+    online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_POLYNOMIALS]>,
+    online_openings: Option<online::Queries<C::CircuitField>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -409,9 +409,9 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_rx: None,
             native_points_f_rx: None,
             native_points_walk_rx: None,
-            oracle_polynomials: None,
-            oracle_commitments: OnceCell::new(),
-            oracle_openings: None,
+            online_polynomials: None,
+            online_commitments: OnceCell::new(),
+            online_openings: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
             bridge_hash_rx: None,
@@ -590,33 +590,33 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Vec<sparse::Polynomial<C::CircuitField, R>>
     );
     setter!(
-        set_oracle_polynomials,
-        oracle_polynomials,
+        set_online_polynomials,
+        online_polynomials,
         [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
     );
     ref_getter!(
-        oracle_polynomials,
-        oracle_polynomials,
+        online_polynomials,
+        online_polynomials,
         [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
     );
 
     setter!(
-        set_oracle_openings,
-        oracle_openings,
+        set_online_openings,
+        online_openings,
         online::Queries<C::CircuitField>
     );
     ref_getter!(
-        oracle_openings,
-        oracle_openings,
+        online_openings,
+        online_openings,
         online::Queries<C::CircuitField>
     );
 
     /// Lazily computes and caches the commitments of the step's own online
     /// polynomials.
-    pub(crate) fn oracle_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
-        *self.oracle_commitments.get_or_init(|| {
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        *self.online_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
-            let polys = self.oracle_polynomials();
+            let polys = self.online_polynomials();
             core::array::from_fn(|i| B::sparse_commit_to_affine(&polys[i], host_gen))
         })
     }
@@ -1131,7 +1131,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_points_ab_commitment();
         self.native_points_f_commitment();
         self.native_points_walk_commitment();
-        self.oracle_commitments();
+        self.online_commitments();
 
         // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
@@ -1202,8 +1202,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_rx: take!(native_points_ab_rx),
             native_points_f_rx: take!(native_points_f_rx),
             native_points_walk_rx: take!(native_points_walk_rx),
-            oracle_polynomials: take!(oracle_polynomials),
-            oracle_openings: take!(oracle_openings),
+            online_polynomials: take!(online_polynomials),
+            online_openings: take!(online_openings),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -1331,10 +1331,10 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_commitment: cached!(native_points_ab_commitment),
             native_points_f_commitment: cached!(native_points_f_commitment),
             native_points_walk_commitment: cached!(native_points_walk_commitment),
-            oracle_commitments: self
-                .oracle_commitments
+            online_commitments: self
+                .online_commitments
                 .take()
-                .expect("oracle_commitments not set")
+                .expect("online_commitments not set")
                 .map(Cached),
         })
     }

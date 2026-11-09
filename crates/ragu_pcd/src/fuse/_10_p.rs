@@ -231,8 +231,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
             // The online slots, in slot order, whose commitments the nested
             // `loading` circuit walks off the preamble bridge stage.
-            let polys = online::polys(left, right, builder.oracle_polynomials());
-            let commitments = online::commitments(left, right, builder.oracle_commitments());
+            let polys = online::polys(left, right, builder.online_polynomials());
+            let commitments = online::commitments(left, right, builder.online_commitments());
             for (poly, commitment) in polys.into_iter().zip(commitments) {
                 acc.acc(poly, commitment);
             }

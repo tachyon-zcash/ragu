@@ -100,8 +100,8 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         // cached commitments, as the decider does, so that an accepted
         // statement validates them for reuse too.
         if !commitments_match::<<B as SelectableBackend>::Verifier, _, _, R, _>(
-            &proof.oracle_polynomials().iter().collect::<Vec<_>>(),
-            &proof.oracle_commitments(),
+            &proof.online_polynomials().iter().collect::<Vec<_>>(),
+            &proof.online_commitments(),
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             C::host_generators(self.params),
         ) {

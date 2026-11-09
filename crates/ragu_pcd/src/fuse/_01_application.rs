@@ -60,8 +60,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right.1.clone(),
         )?);
 
-        let left_polys = online::coefficients(left.0.oracle_polynomials());
-        let right_polys = online::coefficients(right.0.oracle_polynomials());
+        let left_polys = online::coefficients(left.0.online_polynomials());
+        let right_polys = online::coefficients(right.0.online_polynomials());
         let polys = step.polynomials(
             witness,
             HeaderInput {
@@ -91,7 +91,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 ))
             })
             .collect::<Result<_>>()?;
-        builder.set_oracle_polynomials(own.try_into().unwrap_or_else(|_| {
+        builder.set_online_polynomials(own.try_into().unwrap_or_else(|_| {
             unreachable!("the step returned NUM_ONLINE_POLYNOMIALS polynomials")
         }));
 
@@ -145,7 +145,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // lifetime the step's own witness fixes.
         let online = OnlineWitness {
             zeta,
-            polys: online::polys(left.0, right.0, builder.oracle_polynomials()).map(Clone::clone),
+            polys: online::polys(left.0, right.0, builder.online_polynomials()).map(Clone::clone),
             staged,
             bridge_hash: {
                 let (x, y) = builder
@@ -178,7 +178,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         }
 
         builder.set_native_application_rx(rx);
-        builder.set_oracle_openings(queries);
+        builder.set_online_openings(queries);
 
         Ok((output_data, step_aux))
     }

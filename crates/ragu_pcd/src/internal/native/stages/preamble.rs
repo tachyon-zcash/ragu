@@ -266,7 +266,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             online: online::alloc_queries(
                 dr,
                 allocator,
-                proof.as_ref().map(|p| p.oracle_openings()),
+                proof.as_ref().map(|p| p.online_openings()),
             )?,
             circuit_id: Element::alloc(
                 dr,

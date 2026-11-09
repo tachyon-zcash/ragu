@@ -81,7 +81,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let native_a_poly = builder.native_a_poly();
         let native_b_poly = builder.native_b_poly();
         let native_registry_xy_poly = builder.native_registry_xy_poly();
-        let oracle_polynomials = online::polys(left, right, builder.oracle_polynomials());
+        let online_polynomials = online::polys(left, right, builder.online_polynomials());
         let nested_a_poly = builder.nested_a_poly();
         let nested_b_poly = builder.nested_b_poly();
         let nested_registry_xy_poly = builder.nested_registry_xy_poly();
@@ -98,7 +98,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 a_poly: B::sparse_eval(native_a_poly, u),
                 b_poly: B::sparse_eval(native_b_poly, u),
                 registry_xy: B::sparse_eval(native_registry_xy_poly, u),
-                online: oracle_polynomials.map(|poly| B::sparse_eval(poly, u)),
+                online: online_polynomials.map(|poly| B::sparse_eval(poly, u)),
             },
         );
 

@@ -168,15 +168,15 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.s_prime.native_points_registry_wx,
             &stages.ab.native_points_ab,
             &stages.f.native_points_f,
-            &stages.preamble.oracle_commitments[0],
-            &stages.preamble.oracle_commitments[1],
+            &stages.preamble.online_commitments[0],
+            &stages.preamble.online_commitments[1],
             &stages.preamble.application_stage,
         ];
         // The bridge-hash stage holds the step's own last online commitment,
         // the one the preamble holds and w absorbed.
         stages.bridge_hash.o1.enforce_equal(
             dr,
-            &stages.preamble.oracle_commitments[NUM_ONLINE_POLYNOMIALS - 1],
+            &stages.preamble.online_commitments[NUM_ONLINE_POLYNOMIALS - 1],
         )?;
 
         let exported = unified.exported.receive(dr, allocator)?;

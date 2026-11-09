@@ -124,7 +124,7 @@ fn a_step_reads_the_digest_of_its_last_slot() {
     assert!(app.verify_differential(&pcd, &mut rng).unwrap());
 
     let proof = pcd.proof();
-    let o1 = proof.oracle_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
+    let o1 = proof.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
     let digest = app.bridge_hash(o1).unwrap();
     assert_eq!(digest, proof.bridge_hash_commitment());
     let (x, y) = digest.coordinates().unwrap();

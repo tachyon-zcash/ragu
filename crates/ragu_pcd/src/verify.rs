@@ -270,9 +270,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 polys.push(proof.native_p_poly());
                 points.push(proof.native_p_commitment());
                 for (poly, point) in proof
-                    .oracle_polynomials()
+                    .online_polynomials()
                     .iter()
-                    .zip(proof.oracle_commitments())
+                    .zip(proof.online_commitments())
                 {
                     polys.push(poly);
                     points.push(point);
