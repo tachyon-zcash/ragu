@@ -54,6 +54,13 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// Together these checks also validate the original proof for reuse as a
     /// child.
     ///
+    /// The commitment check batches the online polynomials under a scalar
+    /// drawn from `rng`, so it vouches for the polynomials stored in `pcd`
+    /// only if `rng` is unpredictable to whoever produced `pcd`. This matters
+    /// only when reusing `pcd` as a child: the compressed proof carries the
+    /// commitments and not the polynomials, and
+    /// [`verify_compressed`](Self::verify_compressed) is sound without it.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed,
