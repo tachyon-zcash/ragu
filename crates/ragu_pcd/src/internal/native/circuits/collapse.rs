@@ -1,12 +1,13 @@
 //! Verifies both layers of the native quotient fold.
 //!
 //! The circuit enforces the children's application k(y) values against their
-//! headers. For each group of the children's claims, it enforces that folding
-//! the group's k(y) targets with the [`inner_error`] stage's quotient under mu
-//! gives the collapsed value the [`outer_error`] stage witnessed. Outside the
-//! base case, it enforces that folding the collapsed values with the outer
-//! quotient under mu' gives the unified instance's c. The unified k(y) values
-//! are enforced by [`super::hashes_1`].
+//! headers, and their `compute_v` bridge k(y) values against the online
+//! openings each child exported. For each group of the children's claims, it
+//! enforces that folding the group's k(y) targets with the [`inner_error`]
+//! stage's quotient under mu gives the collapsed value the [`outer_error`]
+//! stage witnessed. Outside the base case, it enforces that folding the
+//! collapsed values with the outer quotient under mu' gives the unified
+//! instance's c. The unified k(y) values are enforced by [`super::hashes_1`].
 //!
 //! A profile's statement targets come from its headers; its binding targets
 //! come from the extension commitments in the points binding stage. That
@@ -199,6 +200,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
 
         left_application_ky.enforce_equal(dr, &outer_error.left.application)?;
         right_application_ky.enforce_equal(dr, &outer_error.right.application)?;
+
+        // The compute_v bridge k(y) values, over the same unified and online
+        // wires: what ties the openings each child's batch verified to the
+        // openings its application circuit's instance will be held to.
+        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y)?;
+        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y)?;
+        left_compute_v_ky.enforce_equal(dr, &outer_error.left.compute_v_bridge)?;
+        right_compute_v_ky.enforce_equal(dr, &outer_error.right.compute_v_bridge)?;
 
         // Get layer 1 folding challenges from the unified instance.
         let mu = unified_output.mu.read(dr, allocator)?;

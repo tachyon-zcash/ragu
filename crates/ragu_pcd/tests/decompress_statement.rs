@@ -22,17 +22,18 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, allocator::Standard as Allocator};
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 use crate::{
     Application, ApplicationBuilder, Pcd, RegistryTags,
-    header::Header,
+    header::{Header, NUM_ONLINE_POLYNOMIALS},
     internal::ky,
     profile::{
         Profiled,
         testing::{Decompressing, StatementContext},
     },
     proof::recursive_propagation_tests::support::Value,
-    step::{Encoded, Index, Step, internal::decompress::Decompress},
+    step::{Encoded, Index, Oracles, Step, internal::decompress::Decompress},
 };
 
 const HEADER_SIZE: usize = 4;
@@ -55,6 +56,7 @@ impl Step<C> for Consume {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
@@ -143,6 +145,19 @@ fn a_decompression_exposing_its_output_header_verifies() -> Result<()> {
     )?;
     assert_eq!(*decompressed.data(), value);
     check_both(&app, &decompressed, true, &mut rng, "decompression")?;
+
+    // The statement binds the header's fields only: whatever polynomials
+    // the compressed proof carried, the decompressed proof's slots are the
+    // padding the step pins, so a `Value` header's slots must mean nothing.
+    let padding = app.commit(&[Fp::ONE])?;
+    assert_eq!(
+        decompressed.polynomials(),
+        core::array::from_fn(|_| alloc::vec![Fp::ONE])
+    );
+    assert_eq!(
+        decompressed.commitments(),
+        [padding; NUM_ONLINE_POLYNOMIALS]
+    );
 
     // Every other step's statement circuit exposes the unit header, as the
     // bootstrap's did under the default context.

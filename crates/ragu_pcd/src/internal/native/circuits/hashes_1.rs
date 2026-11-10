@@ -63,6 +63,7 @@
 //! $k(y)$ verification.
 //!
 //! [`bridge_preamble_commitment`]: unified::Output::bridge_preamble_commitment
+//! [`bridge_hash_commitment`]: unified::Output::bridge_hash_commitment
 //! [`bridge_s_prime_commitment`]: unified::Output::bridge_s_prime_commitment
 //! [`bridge_inner_error_commitment`]: unified::Output::bridge_inner_error_commitment
 //! [$w$]: unified::Output::w
@@ -248,6 +249,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             transcript.challenge(dr)?
         };
         unified_output.w.provide(w.clone());
+
+        // Expose the bridge-hash commitment without absorbing it into the
+        // transcript. The parent binds it to the bridge-hash stage it folds
+        // (see `bind_beta`).
+        unified_output
+            .bridge_hash_commitment
+            .receive(dr, allocator)?;
 
         // Derive (y, z) by absorbing bridge_s_prime_commitment and squeezing twice
         let (y, z) = {

@@ -47,7 +47,7 @@ use crate::{
     Proof,
     internal::{
         native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
-        nested,
+        nested, online,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -202,6 +202,12 @@ pub struct CurrentStepWitness<F> {
     /// committed in the `_07_query` step of the fuse operation, within the
     /// _nested_ `query` stage.
     pub registry_xy: F,
+
+    /// Evaluations at $u$ of the step's online polynomials, in slot order
+    /// (see [`online`]): the children's exported polynomials, committed in
+    /// their proofs and stashed in this step's nested `preamble` stage, then
+    /// the step's own, committed in that same stage.
+    pub online: [F; online::NUM_ONLINE_QUERIES],
 }
 
 /// Witness for the eval stage.
@@ -241,6 +247,7 @@ impl<C: ProfiledCycle> Witness<C> {
                 a_poly: C::CircuitField::ZERO,
                 b_poly: C::CircuitField::ZERO,
                 registry_xy: C::CircuitField::ZERO,
+                online: [C::CircuitField::ZERO; online::NUM_ONLINE_QUERIES],
             },
             partials,
         }
@@ -315,6 +322,9 @@ pub struct Evaluations<'dr, D: Driver<'dr>, P: Profile> {
     pub b_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub registry_xy: Element<'dr, D>,
+    /// The online polynomials at $u$, in slot order.
+    #[ragu(gadget)]
+    pub online: FixedVec<Element<'dr, D>, online::QueriesLen>,
 }
 
 /// Prover-internal output gadget for the eval stage.
@@ -345,8 +355,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
 
     fn values() -> usize {
         // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
-        // + (x, y) per binding partial
-        2 * (RxIndex::num::<C::Profile>() + 4) + 6 + 2 * (NUM_BINDERS - 1)
+        // + the online slots + (x, y) per binding partial
+        2 * (RxIndex::num::<C::Profile>() + 4)
+            + 6
+            + online::NUM_ONLINE_QUERIES
+            + 2 * (NUM_BINDERS - 1)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -382,6 +395,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             allocator,
             witness.as_ref().map(|w| w.current.registry_xy),
         )?;
+        let online = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.current.online[i]))
+        })?;
         let partials = FixedVec::try_from_fn(|k| {
             Point::alloc(dr, witness.as_ref().map(|w| w.partials.partials[k]))
         })?;
@@ -395,6 +411,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
                 a_poly,
                 b_poly,
                 registry_xy,
+                online,
             },
             partials,
         })

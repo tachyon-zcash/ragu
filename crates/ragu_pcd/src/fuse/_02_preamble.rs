@@ -6,7 +6,9 @@
 //! The children's nested-curve commitments are committed here as well, in
 //! the native points binding and children stages the endoscaling walk reads
 //! them from; the preamble bridge carries those stages' commitments, so the
-//! points are fixed before $w$ is squeezed.
+//! points are fixed before $w$ is squeezed. The step's own online
+//! polynomials' commitments go into the preamble bridge directly, beside the
+//! children's exported ones it stashes, for the same reason.
 
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::Result;
@@ -15,6 +17,7 @@ use udon::field::Field;
 
 use crate::{
     Application, Proof,
+    header::NUM_ONLINE_POLYNOMIALS,
     internal::{native, nested},
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -77,6 +80,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_preamble: builder.native_preamble_commitment(),
             native_points_binding: builder.native_points_binding_commitment(),
             native_points_children: builder.native_points_children_commitment(),
+            online_commitments: builder.online_commitments(),
+            application_stage: builder.native_application_stage_commitment(),
             left: nested::stages::preamble::ChildWitness::from_proof(left)?,
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };
@@ -87,6 +92,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_commitment =
             B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
         builder.set_bridge_preamble_rx(bridge_rx, bridge_commitment);
+
+        // The bridge-hash stage: the own last online commitment, unblinded,
+        // so its commitment is the digest the step's instance carries.
+        let o1 = builder.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
+        let hash_rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)?;
+        let hash_commitment =
+            B::sparse_commit_to_affine(&hash_rx, C::nested_generators(self.params));
+        builder.set_bridge_hash_rx(hash_rx, hash_commitment);
         Ok(bridge_witness)
     }
 }

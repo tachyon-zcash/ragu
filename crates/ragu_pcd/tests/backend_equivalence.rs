@@ -34,7 +34,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Oracles, Step},
 };
 
 static TRACKING_MSM_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -202,6 +202,7 @@ impl Step<Pasta> for UnitStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -601,9 +602,11 @@ fn check_compressed_proofs_match(
         circuit_id: _,
         left_header: _,
         right_header: _,
+        online: _,
         native: _,
         native_registry_xy: _,
         native_p: _,
+        online_commitments: _,
         nested: _,
         nested_registry_xy: _,
         nested_p: _,
@@ -1315,6 +1318,7 @@ mod proof_equivalence {
                 left_header: _,
                 right_header: _,
                 native_application_rx: _,
+                native_application_stage_rx: _,
                 native_preamble_rx: _,
                 native_inner_error_rx: _,
                 native_outer_error_rx: _,
@@ -1340,7 +1344,10 @@ mod proof_equivalence {
                 native_points_ab_rx: _,
                 native_points_f_rx: _,
                 native_points_walk_rx: _,
+                online_polynomials: _,
+                online_openings: _,
                 bridge_preamble_rx: _,
+                bridge_hash_rx: _,
                 bridge_s_prime_rx: _,
                 bridge_inner_error_rx: _,
                 bridge_f_rx: _,
@@ -1383,6 +1390,7 @@ mod proof_equivalence {
                 u: _,
                 pre_beta: _,
                 native_application_commitment: _,
+                native_application_stage_commitment: _,
                 native_preamble_commitment: _,
                 native_inner_error_commitment: _,
                 native_outer_error_commitment: _,
@@ -1408,7 +1416,9 @@ mod proof_equivalence {
                 native_points_ab_commitment: _,
                 native_points_f_commitment: _,
                 native_points_walk_commitment: _,
+                online_commitments: _,
                 bridge_preamble_commitment: _,
+                bridge_hash_commitment: _,
                 bridge_s_prime_commitment: _,
                 bridge_inner_error_commitment: _,
                 bridge_f_commitment: _,
@@ -1463,6 +1473,18 @@ mod proof_equivalence {
             ) || !polynomial_eq(&self.native_p_poly, &other.native_p_poly)
             {
                 return Some("native protocol polynomials");
+            }
+            if self
+                .online_polynomials
+                .iter()
+                .zip(&other.online_polynomials)
+                .any(|(ours, theirs)| !polynomial_eq(ours, theirs))
+                || self.online_commitments != other.online_commitments
+            {
+                return Some("online polynomials");
+            }
+            if self.online_openings != other.online_openings {
+                return Some("online openings");
             }
             if nested::RxIndex::ALL
                 .into_iter()
@@ -1559,6 +1581,7 @@ mod proof_equivalence {
             }
             if [
                 self.bridge_preamble_commitment(),
+                self.bridge_hash_commitment(),
                 self.bridge_s_prime_commitment(),
                 self.bridge_inner_error_commitment(),
                 self.bridge_outer_error_commitment(),
@@ -1568,6 +1591,7 @@ mod proof_equivalence {
                 self.bridge_eval_commitment(),
             ] != [
                 other.bridge_preamble_commitment(),
+                other.bridge_hash_commitment(),
                 other.bridge_s_prime_commitment(),
                 other.bridge_inner_error_commitment(),
                 other.bridge_outer_error_commitment(),

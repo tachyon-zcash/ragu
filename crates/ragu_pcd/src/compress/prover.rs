@@ -1,11 +1,11 @@
 //! The prover's side of the compression: [`Application::compress`].
 
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, vec::Vec};
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Error, FixedGenerators, Result};
 use rand::CryptoRng;
-use udon::curve::Affine;
+use udon::{curve::Affine, field::Field};
 
 use super::{
     CompressedPcd, CompressedProof, Messages, Sampled,
@@ -20,6 +20,7 @@ use crate::{
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
     profile::ProfiledCycle,
+    proof::commitments_match,
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the
@@ -47,16 +48,25 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// The result carries the proof's instance and, on each curve, the
     /// messages of the revdot reduction, the batch and the IPA opening, in
     /// place of the proof's polynomials. Compression checks the proof's shape,
-    /// circuit index and stored transcript challenges. Accept the result only
+    /// circuit index, stored transcript challenges and the commitments of
+    /// its own online polynomials. Accept the result only
     /// after [`verify_compressed`](Self::verify_compressed) succeeds.
     /// Together these checks also validate the original proof for reuse as a
     /// child.
     ///
+    /// The commitment check batches the online polynomials under a scalar
+    /// drawn from `rng`, so it vouches for the polynomials stored in `pcd`
+    /// only if `rng` is unpredictable to whoever produced `pcd`. This matters
+    /// only when reusing `pcd` as a child: the compressed proof carries the
+    /// commitments and not the polynomials, and
+    /// [`verify_compressed`](Self::verify_compressed) is sound without it.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed,
-    /// its circuit index is outside this application's registry domain, or
-    /// its stored challenges differ from the replayed transcript.
+    /// its circuit index is outside this application's registry domain, its
+    /// stored challenges differ from the replayed transcript, or its own
+    /// online polynomials differ from their cached commitments.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: &Pcd<C, R, H>,
@@ -89,6 +99,21 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         if challenges.in_order() != proof.challenges().in_order() {
             return Err(Error::InvalidWitness(
                 "stored proof challenges differ from the transcript".into(),
+            ));
+        }
+        // The step's own online polynomials are likewise prover data a
+        // parent consumes, opening them as its slots, while the compressed
+        // statement carries only their commitments. Hold them to their
+        // cached commitments, as the decider does, so that an accepted
+        // statement validates them for reuse too.
+        if !commitments_match::<<B as SelectableBackend>::Verifier, _, _, R, _>(
+            &proof.online_polynomials().iter().collect::<Vec<_>>(),
+            &proof.online_commitments(),
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            C::host_generators(self.params),
+        ) {
+            return Err(Error::InvalidWitness(
+                "an online polynomial differs from its cached commitment".into(),
             ));
         }
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;

@@ -11,7 +11,7 @@ use ragu_core::{
 use ragu_pcd::{
     ApplicationBuilder,
     header::{Header, Suffix},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{
     Element,
@@ -77,6 +77,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -110,6 +111,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -143,6 +145,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -223,6 +226,7 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, L::Data>,
         right: DriverValue<D, R::Data>,

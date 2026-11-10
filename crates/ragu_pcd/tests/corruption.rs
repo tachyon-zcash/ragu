@@ -38,14 +38,16 @@ use ragu_core::{
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NativeCommitment, NativeRx,
-        NestedAccumulator, NestedCommitment, NestedRx, RxComponent, Side,
+        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_POLYNOMIALS,
+        NUM_ONLINE_QUERIES, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment,
+        NestedRx, RxComponent, Side,
     },
     header::Header,
     wire,
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2};
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 /// Which header a fixture's proof carries, so it can be verified again after
 /// corruption.
@@ -248,6 +250,25 @@ fn vocabulary() -> Vec<Corruption<C>> {
         });
     }
 
+    // The step's own online polynomials, their commitments and every
+    // opening's point and value. The out-of-range ones are in
+    // `no_op_edits`.
+    for index in 0..NUM_ONLINE_POLYNOMIALS {
+        for coeff in coeffs {
+            out.push(Corruption::OnlineCoeff {
+                index,
+                coeff,
+                delta,
+            });
+        }
+        out.push(Corruption::NegateOnlineCommitment(index));
+    }
+    for slot in 0..NUM_ONLINE_QUERIES {
+        for value in [false, true] {
+            out.push(Corruption::OnlineQuery { slot, value, delta });
+        }
+    }
+
     out
 }
 
@@ -267,16 +288,19 @@ impl CorruptionGroup {
             | Corruption::HeaderElement { .. }
             | Corruption::HeaderLen { .. }
             | Corruption::SwapHeaders
-            | Corruption::Challenge(..) => Self::HeadersAndChallenges,
+            | Corruption::Challenge(..)
+            | Corruption::OnlineQuery { .. } => Self::HeadersAndChallenges,
             Corruption::NegateBridgeCommitment(_)
             | Corruption::NegateChallengesPartial
             | Corruption::NegateNativeCommitment(_)
             | Corruption::NegateNestedCommitment(_)
+            | Corruption::NegateOnlineCommitment(_)
             | Corruption::RescaleNativeAccumulator(_)
             | Corruption::RescaleNestedAccumulator(_) => Self::CommitmentsAndAccumulators,
             Corruption::NativeCoeff { .. }
             | Corruption::RegistryXyCoeff { .. }
-            | Corruption::PCoeff { .. } => Self::NativePolynomials,
+            | Corruption::PCoeff { .. }
+            | Corruption::OnlineCoeff { .. } => Self::NativePolynomials,
             Corruption::NestedCoeff { .. }
             | Corruption::NestedAccumulatorCoeff { .. }
             | Corruption::NestedRegistryXyCoeff { .. }
@@ -327,6 +351,7 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
                 | Corruption::NestedAccumulatorCoeff { .. }
                 | Corruption::NestedRegistryXyCoeff { .. }
                 | Corruption::NestedPCoeff { .. }
+                | Corruption::OnlineCoeff { .. }
         );
         if coefficient_edit {
             assert_eq!(
@@ -364,8 +389,8 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
     );
 }
 
-/// The edits that make no change: zero deltas and out-of-range coefficient
-/// indices.
+/// The edits that make no change: zero deltas, out-of-range coefficient
+/// indices, and online polynomials, commitments and openings past the end.
 fn no_op_edits() -> Vec<Corruption<C>> {
     let mut out = Vec::new();
     for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
@@ -378,6 +403,30 @@ fn no_op_edits() -> Vec<Corruption<C>> {
             index: NestedRx::BridgeEval,
             coeff,
             delta: Fq::from(delta),
+        });
+        out.push(Corruption::OnlineCoeff {
+            index: 0,
+            coeff,
+            delta: Fp::from(delta),
+        });
+    }
+    let delta = Fp::from(7u64);
+    out.push(Corruption::OnlineCoeff {
+        index: NUM_ONLINE_POLYNOMIALS,
+        coeff: 0,
+        delta,
+    });
+    out.push(Corruption::NegateOnlineCommitment(NUM_ONLINE_POLYNOMIALS));
+    for value in [false, true] {
+        out.push(Corruption::OnlineQuery {
+            slot: 0,
+            value,
+            delta: Fp::ZERO,
+        });
+        out.push(Corruption::OnlineQuery {
+            slot: NUM_ONLINE_QUERIES,
+            value,
+            delta,
         });
     }
     out
@@ -565,6 +614,125 @@ fn stored_challenge_edits_bind_both_verification_paths() {
     }
 }
 
+/// A child's online polynomials, their commitments and its exported openings
+/// are bound in the parent that opens them, not only in the child's own
+/// verification: a parent fused over a leaf with one of them edited either
+/// cannot be proved or does not verify. The parent reads the child's
+/// polynomial to open it, its stashed commitment to walk it and its openings
+/// to hold the child's instance to, so each edit leaves the parent's claims
+/// inconsistent.
+#[test]
+#[ignore = "corruption suite: run by the Linux corruption job"]
+fn a_parent_rejects_a_child_with_edited_online_data() {
+    use ragu_core::{Cycle, pasta::Pasta};
+    use ragu_testing::pcd::nontrivial::Hash2;
+
+    let app = app();
+    let leaf = fixture(&app, Shape::Leaf);
+    let poseidon = Pasta::circuit_poseidon(ragu_pcd::pasta::baked());
+    let mut rng = StdRng::seed_from_u64(0x9a7e);
+    let honest = nontrivial_support::leaf(&app, &mut rng, 7);
+    let (control, ()) = app
+        .fuse(
+            &mut rng,
+            Hash2 {
+                poseidon_params: poseidon,
+            },
+            (),
+            leaf.proof.clone().carry::<LeafNode>(leaf.data),
+            honest.clone(),
+        )
+        .expect("the honest parent must prove");
+    assert!(app.verify_uncompressed(&control, &mut rng).unwrap());
+    let delta = Fp::from(7u64);
+    let corruptions = [
+        Corruption::OnlineCoeff {
+            index: 0,
+            coeff: 0,
+            delta,
+        },
+        Corruption::OnlineCoeff {
+            index: 1,
+            coeff: 3,
+            delta,
+        },
+        Corruption::NegateOnlineCommitment(0),
+        Corruption::NegateOnlineCommitment(1),
+        Corruption::OnlineQuery {
+            slot: 4,
+            value: false,
+            delta,
+        },
+        Corruption::OnlineQuery {
+            slot: 5,
+            value: true,
+            delta,
+        },
+        Corruption::OnlineQuery {
+            slot: 0,
+            value: true,
+            delta,
+        },
+    ];
+    for corruption in corruptions {
+        let described = format!("{corruption:?}");
+        let mut child = leaf.proof.clone();
+        assert!(
+            child.corrupt(corruption).binds_uncompressed(),
+            "{described}"
+        );
+        let mut rng = StdRng::seed_from_u64(0x9a7e);
+        let (parent, ()) = app
+            .fuse(
+                &mut rng,
+                Hash2 {
+                    poseidon_params: poseidon,
+                },
+                (),
+                child.carry::<LeafNode>(leaf.data),
+                honest.clone(),
+            )
+            .unwrap_or_else(|error| panic!("{described} must reach the verifier: {error:?}"));
+        assert!(
+            !app.verify_uncompressed(&parent, &mut rng)
+                .expect("verify must not error"),
+            "a parent over a child with {described} verified",
+        );
+    }
+}
+
+/// The step's own online polynomials are prover data for a parent, which
+/// [`a_parent_rejects_a_child_with_edited_online_data`] shows cannot use an
+/// edited one, and the compressed statement carries only their commitments.
+/// Both paths still hold them to their cached commitments: the decider
+/// directly, and compression before proving the statement, so an edited
+/// polynomial neither verifies nor compresses.
+#[test]
+#[ignore = "corruption suite: run by the Linux corruption job"]
+fn online_polynomial_edits_bind_both_verifiers() {
+    let app = app();
+    for shape in [Shape::Leaf, Shape::Deep] {
+        let fixture = fixture(&app, shape);
+        for index in 0..NUM_ONLINE_POLYNOMIALS {
+            let mut corrupted = fixture.clone();
+            let binding = corrupted.proof.corrupt(Corruption::OnlineCoeff {
+                index,
+                coeff: 1,
+                delta: Fp::from(3u64),
+            });
+            assert_eq!(binding, Binding::MustReject, "{shape:?}: {index}");
+            assert!(
+                !corrupted.clone().verify(&app, 1234),
+                "the decider accepted a {shape:?} proof with an edited online polynomial {index}",
+            );
+            assert!(
+                !corrupted.verify_compressed(&app, 1234),
+                "{shape:?}: an edited online polynomial {index} compressed into an accepted statement",
+            );
+        }
+    }
+}
+
 /// The synthesized dummy the Bootstrap base case consumes is not a proof
 /// either verifier accepts — in the empty application or any other.
 ///
@@ -708,5 +876,18 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
             Corruption::NestedRegistryXyCoeff { coeff, delta }
         }
         Corruption::NestedPCoeff { coeff, delta } => Corruption::NestedPCoeff { coeff, delta },
+        Corruption::OnlineCoeff {
+            index,
+            coeff,
+            delta,
+        } => Corruption::OnlineCoeff {
+            index,
+            coeff,
+            delta,
+        },
+        Corruption::NegateOnlineCommitment(index) => Corruption::NegateOnlineCommitment(index),
+        Corruption::OnlineQuery { slot, value, delta } => {
+            Corruption::OnlineQuery { slot, value, delta }
+        }
     }
 }

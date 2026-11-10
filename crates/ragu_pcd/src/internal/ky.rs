@@ -28,6 +28,7 @@ use super::{
         unified as native_unified,
     },
     nested::{self, unified as nested_unified},
+    online,
 };
 #[cfg(test)]
 use crate::Pcd;
@@ -57,6 +58,9 @@ pub struct NativeKy<F> {
     /// The `hashes_1` circuit's $k(y)$, over the unified instance and the
     /// child headers.
     pub unified_bridge: F,
+    /// The `compute_v` circuit's $k(y)$, over the unified instance and the
+    /// online openings.
+    pub compute_v_bridge: F,
     /// The application circuit's $k(y)$.
     pub application: F,
     /// The statement circuit's $k(y)$, for a profile whose native extension
@@ -80,6 +84,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
         once(self.unified_bridge)
+    }
+
+    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = F> {
+        once(self.compute_v_bridge)
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
@@ -259,6 +267,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             ProofInputs::<_, C, HEADER_SIZE>::alloc::<R>(dr, proof, output_header.as_ref())?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
+        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
@@ -267,6 +276,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
+            compute_v_bridge: *compute_v_bridge.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
@@ -312,6 +322,8 @@ pub struct NativeParts<'a, C: Cycle> {
     pub left_header: &'a [C::CircuitField],
     pub right_header: &'a [C::CircuitField],
     pub output_header: &'a [C::CircuitField],
+    /// The online openings the proof's `compute_v` exported.
+    pub online: &'a online::Queries<C::CircuitField>,
     pub circuit_id: CircuitIndex,
     pub unified: &'a native_unified::Instance<C>,
     /// The nested extension stage commitments the native binding circuit
@@ -334,11 +346,13 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.left_header),
             parts.as_ref().map(|p| p.right_header),
             parts.as_ref().map(|p| p.output_header),
+            parts.as_ref().map(|p| p.online),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
+        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
@@ -347,6 +361,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
+            compute_v_bridge: *compute_v_bridge.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),

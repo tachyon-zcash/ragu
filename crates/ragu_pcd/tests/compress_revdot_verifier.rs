@@ -165,6 +165,7 @@ fn claim_targets_match_positional_ky_values() {
         c: Some(Fp::from(2)),
         unified: Fp::from(3),
         unified_bridge: Fp::from(5),
+        compute_v_bridge: Fp::from(13),
         application: Fp::from(7),
         statement: None,
         binding: None,

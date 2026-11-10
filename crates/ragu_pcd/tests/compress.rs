@@ -31,7 +31,7 @@ use crate::{
     header::{Header, Suffix},
     internal::{native, nested},
     proof::recursive_propagation_tests::support::{self, Cache},
-    step::{Encoded, Index, Step},
+    step::{Encoded, Index, Oracles, Step},
 };
 
 type TestR = ProductionRank;
@@ -70,6 +70,7 @@ impl Step<Pasta> for Seed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

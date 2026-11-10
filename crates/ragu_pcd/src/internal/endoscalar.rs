@@ -118,6 +118,33 @@ impl<F: Field, R: Rank> Stage<F, R> for EndoscalarStage {
     }
 }
 
+/// The stage between [`EndoscalarStage`] and [`PointsStage`] when nothing
+/// sits there: no values.
+#[derive(Default)]
+pub struct NoGap;
+
+impl<F: Field, R: Rank> Stage<F, R> for NoGap {
+    type Parent = EndoscalarStage;
+
+    fn values() -> usize {
+        0
+    }
+
+    type Witness<'source> = ();
+    type OutputKind = Kind![F; ()];
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        _: &mut D,
+        _: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(())
+    }
+}
+
 /// Witness for the points stage: initial, inputs, and interstitials.
 #[derive(Clone)]
 pub struct PointsWitness<C: Affine, N: Len, E: Len> {
@@ -189,17 +216,22 @@ pub struct Points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> {
     pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<N, E>>,
 }
 
-/// Stage for allocating all point witnesses (inputs and interstitials).
-pub struct PointsStage<C: Affine, N: Len, E: Len>(core::marker::PhantomData<(C, N, E)>);
+/// Stage for allocating all point witnesses (inputs and interstitials). It
+/// follows the gap stage `G`, which follows [`EndoscalarStage`].
+pub struct PointsStage<C: Affine, N: Len, E: Len, G = NoGap>(
+    core::marker::PhantomData<(C, N, E, G)>,
+);
 
-impl<C: Affine, N: Len, E: Len> Default for PointsStage<C, N, E> {
+impl<C: Affine, N: Len, E: Len, G> Default for PointsStage<C, N, E, G> {
     fn default() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len> Stage<C::Base, R> for PointsStage<C, N, E> {
-    type Parent = EndoscalarStage;
+impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
+    for PointsStage<C, N, E, G>
+{
+    type Parent = G;
 
     fn values() -> usize {
         // (x, y) coordinates for initial + inputs + interstitials.
@@ -239,12 +271,12 @@ impl<C: Affine, R: Rank, N: Len, E: Len> Stage<C::Base, R> for PointsStage<C, N,
 ///   `inputs[N*E..(N+1)*E]` (clamped to bounds)
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner result.
-pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len> {
+pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len, G = NoGap> {
     step: usize,
-    _marker: core::marker::PhantomData<(C, R, N, E)>,
+    _marker: core::marker::PhantomData<(C, R, N, E, G)>,
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len> Clone for EndoscalingStep<C, R, N, E> {
+impl<C: Affine, R: Rank, N: Len, E: Len, G> Clone for EndoscalingStep<C, R, N, E, G> {
     fn clone(&self) -> Self {
         Self {
             step: self.step,
@@ -253,7 +285,7 @@ impl<C: Affine, R: Rank, N: Len, E: Len> Clone for EndoscalingStep<C, R, N, E> {
     }
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len> EndoscalingStep<C, R, N, E> {
+impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
     /// Creates a new endoscaling step.
     ///
     /// Panics if `step >= NumStepsLen::<N, E>::len()`.
@@ -285,10 +317,12 @@ pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len> {
     pub points: &'source PointsWitness<C, N, E>,
 }
 
-impl<C: Affine, R: Rank, N: Len, E: Len> MultiStageCircuit<C::Base, R>
-    for EndoscalingStep<C, R, N, E>
+impl<C: Affine, R: Rank, N: Len, E: Len, G> MultiStageCircuit<C::Base, R>
+    for EndoscalingStep<C, R, N, E, G>
+where
+    G: Stage<C::Base, R, Parent = EndoscalarStage> + Default + Send + Sync + 'static,
 {
-    type Last = PointsStage<C, N, E>;
+    type Last = PointsStage<C, N, E, G>;
     type Instance<'source> = ();
     type Witness<'source> = EndoscalingStepWitness<'source, C, N, E>;
     type Output = Kind![C::Base; ()];
@@ -308,7 +342,8 @@ impl<C: Affine, R: Rank, N: Len, E: Len> MultiStageCircuit<C::Base, R>
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (endoscalar_guard, dr) = dr.add_stage::<EndoscalarStage>()?;
-        let (points_guard, dr) = dr.add_stage::<PointsStage<C, N, E>>()?;
+        let dr = dr.skip_stage::<G>()?;
+        let (points_guard, dr) = dr.add_stage::<PointsStage<C, N, E, G>>()?;
         let dr = dr.finish();
 
         // Stages are loaded unenforced here: the collapse circuit re-emits

@@ -34,6 +34,7 @@ use crate::{
 pub struct Witness<'a, C: Affine, P: Profile> {
     pub instance: unified::Instance<C>,
     pub endoscalar: Uendo,
+    pub bridge_hash: C,
     pub points: &'a PointsWitness<C, P>,
     pub preamble: &'a stages::preamble::Witness<C, P>,
     pub s_prime: &'a stages::s_prime::Witness<C>,
@@ -49,6 +50,7 @@ pub struct Witness<'a, C: Affine, P: Profile> {
 /// The output gadgets of the stages a circuit reads, once loaded.
 pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub endoscalar: HoistedEndoscalar<'dr, D>,
+    pub bridge_hash: stages::bridge_hash::Output<'dr, D, C>,
     pub points: Points<'dr, D, C, P>,
     pub preamble: stages::preamble::Output<'dr, D, C, P>,
     pub s_prime: stages::s_prime::Output<'dr, D, C>,
@@ -73,6 +75,7 @@ where
     P: Profile,
 {
     let (endoscalar, dr) = dr.add_stage::<EndoscalarStage>()?;
+    let (bridge_hash, dr) = dr.add_stage::<stages::bridge_hash::Stage<C>>()?;
     let (points, dr) = dr.add_stage::<PointsStage<C, P>>()?;
     let (preamble, dr) = dr.add_stage::<stages::preamble::Stage<C, R, P>>()?;
     let (s_prime, dr) = dr.add_stage::<stages::s_prime::Stage<C, R, P>>()?;
@@ -87,6 +90,7 @@ where
 
     let loaded = Loaded {
         endoscalar: endoscalar.unenforced(dr, witness.as_ref().map(|w| w.endoscalar))?,
+        bridge_hash: bridge_hash.unenforced(dr, witness.as_ref().map(|w| w.bridge_hash))?,
         points: points.unenforced(dr, witness.as_ref().map(|w| w.points))?,
         preamble: preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble))?,
         s_prime: s_prime.unenforced(dr, witness.as_ref().map(|w| w.s_prime))?,
