@@ -12,7 +12,6 @@ mod nontrivial_support;
 
 mod compressed;
 mod format;
-mod proof_form;
 #[cfg(feature = "serde")]
 mod serde;
 

@@ -13,8 +13,8 @@
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
-//! - [`ProofForm`] — common transport, slot commitments, carrying and production
-//!   verification for either proof form.
+//! - [`ProofForm`] — common transport, slot commitments and carrying for either
+//!   proof form.
 //! - [`profile`] — the proof shapes: the standard profile wallets prove in,
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
@@ -64,7 +64,6 @@ mod multicore;
 pub mod pasta;
 pub mod profile;
 mod proof;
-mod proof_form;
 pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
@@ -93,8 +92,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
-pub use proof::{Pcd, Proof};
-pub use proof_form::ProofForm;
+pub use proof::{Pcd, Proof, ProofForm};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,

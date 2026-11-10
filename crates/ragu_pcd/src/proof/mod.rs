@@ -92,6 +92,7 @@ use udon::{
 };
 
 use crate::{
+    CompressedPcd, CompressedProof,
     header::{Header, NUM_ONLINE_POLYNOMIALS},
     internal::{
         endoscalar::EndoscalarStage,
@@ -106,6 +107,7 @@ use crate::{
         online,
     },
     profile::{Profile, ProfiledCycle},
+    wire,
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -385,6 +387,111 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge commitment (cached, derived from the cached bridge rx)
     bridge_ab_commitment: Cached<C::NestedCurve>,
+}
+
+mod sealed {
+    use ragu_circuits::polynomials::Rank;
+    use ragu_core::Cycle;
+
+    use crate::{CompressedProof, Proof};
+
+    pub trait Sealed {}
+
+    impl<C: Cycle, R: Rank> Sealed for Proof<C, R> {}
+    impl<C: Cycle> Sealed for CompressedProof<C> {}
+}
+
+/// Common operations on [`Proof`] and [`CompressedProof`].
+///
+/// `R` specifies the expected rank for encoded length.
+/// This trait is sealed to the two built-in forms.
+pub trait ProofForm<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
+    /// This proof form with data described by `H` attached.
+    ///
+    /// This is [`Pcd<C, R, H>`] for [`Proof`] and [`CompressedPcd<C, H>`]
+    /// for [`CompressedProof`].
+    type Carried<H: Header<C::CircuitField>>;
+
+    /// The step's own online polynomial commitments, in slot order.
+    ///
+    /// These values are proof claims. Applications must authenticate the
+    /// proof and compare its slots against their expected commitments.
+    fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS];
+
+    /// Attaches data without checking that the proof attests it.
+    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Carried<H>;
+
+    /// The exact encoded length for the expected rank and header size,
+    /// including the envelope. Bound input before buffering it.
+    ///
+    /// This bound alone does not validate the encoded dimensions. In
+    /// particular, compressed proofs of different dimensions can have the
+    /// same length. The caller must check the expected dimensions separately.
+    fn encoded_len<const HEADER_SIZE: usize>() -> usize;
+
+    /// Encodes the proof with its version envelope, without verifying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`wire::Error::Unencodable`] for an unrepresentable proof.
+    fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>>;
+
+    /// Decodes the proof's envelope and payload, without verifying it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a wire error for invalid bytes. The uncompressed form also
+    /// requires the declared rank to match `R`; the compressed form admits
+    /// any bounded rank. The caller must check the expected dimensions separately.
+    fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>;
+}
+
+impl<C: ProfiledCycle, R: Rank> ProofForm<C, R> for Proof<C, R> {
+    type Carried<H: Header<C::CircuitField>> = Pcd<C, R, H>;
+
+    fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        self.online_commitments()
+    }
+
+    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Carried<H> {
+        self.carry::<H>(data)
+    }
+
+    fn encoded_len<const HEADER_SIZE: usize>() -> usize {
+        Self::encoded_len::<HEADER_SIZE>()
+    }
+
+    fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>> {
+        self.to_bytes()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>> {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl<C: ProfiledCycle, R: Rank> ProofForm<C, R> for CompressedProof<C> {
+    type Carried<H: Header<C::CircuitField>> = CompressedPcd<C, H>;
+
+    fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        self.online_commitments()
+    }
+
+    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Carried<H> {
+        self.carry::<H>(data)
+    }
+
+    fn encoded_len<const HEADER_SIZE: usize>() -> usize {
+        Self::encoded_len::<R, HEADER_SIZE>()
+    }
+
+    fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>> {
+        self.to_bytes()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>> {
+        Self::from_bytes(bytes)
+    }
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
