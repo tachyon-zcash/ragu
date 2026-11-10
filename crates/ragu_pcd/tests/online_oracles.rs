@@ -885,10 +885,10 @@ fn unit(app: &App) -> Result<Pcd<C, R, ()>> {
 
 /// What an application does with a proof: verify it, compress it and
 /// verify the compressed proof, and send it over the wire. Also checks that
-/// the proof carries the `expected` polynomials, and that both proof forms
-/// expose their commitments: a verifier that expects particular polynomials
-/// compares these after verifying, rather than copying them into the
-/// header.
+/// the proof carries the `expected` polynomials, and that a PCD's proof,
+/// uncompressed or compressed, exposes its commitments: a verifier that
+/// expects particular polynomials compares these after verifying, rather than
+/// copying them into the header.
 fn check<H: Header<Fp>>(
     app: &App,
     pcd: &Pcd<C, R, H>,

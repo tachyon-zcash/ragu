@@ -13,8 +13,7 @@
 //! - [`header::Header`] — the trait that defines succinct state representations.
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
-//! - [`ProofForm`] — common transport, slot commitments and carrying for either
-//!   proof form.
+//! - [`PcdProof`] — a PCD's proof, uncompressed or compressed.
 //! - [`profile`] — the proof shapes: the standard profile wallets prove in,
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
@@ -92,7 +91,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
-pub use proof::{Pcd, Proof, ProofForm};
+pub use proof::{Pcd, PcdProof, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,

@@ -401,12 +401,12 @@ mod sealed {
     impl<C: Cycle> Sealed for CompressedProof<C> {}
 }
 
-/// Common operations on [`Proof`] and [`CompressedProof`].
+/// A PCD's proof, uncompressed or compressed.
 ///
 /// `R` specifies the expected rank for encoded length.
-/// This trait is sealed to the two built-in forms.
-pub trait ProofForm<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
-    /// This proof form with data described by `H` attached.
+/// This trait is sealed to [`Proof`] and [`CompressedProof`].
+pub trait PcdProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
+    /// A PCD's proof with data described by `H` attached.
     ///
     /// This is [`Pcd<C, R, H>`] for [`Proof`] and [`CompressedPcd<C, H>`]
     /// for [`CompressedProof`].
@@ -446,7 +446,7 @@ pub trait ProofForm<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
     fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>;
 }
 
-impl<C: ProfiledCycle, R: Rank> ProofForm<C, R> for Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for Proof<C, R> {
     type Carried<H: Header<C::CircuitField>> = Pcd<C, R, H>;
 
     fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
@@ -470,7 +470,7 @@ impl<C: ProfiledCycle, R: Rank> ProofForm<C, R> for Proof<C, R> {
     }
 }
 
-impl<C: ProfiledCycle, R: Rank> ProofForm<C, R> for CompressedProof<C> {
+impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for CompressedProof<C> {
     type Carried<H: Header<C::CircuitField>> = CompressedPcd<C, H>;
 
     fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
