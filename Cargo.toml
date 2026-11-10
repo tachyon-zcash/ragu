@@ -25,8 +25,16 @@ mock = [
   "dep:blake2b_simd",
   "dep:udon",
   "dep:ragu_core",
+  "dep:ragu_primitives",
+  "dep:ragu_circuits",
+  "dep:ragu_pcd",
+  "ragu_pcd/baked",
+  "dep:ragu_backend",
   "dep:rand",
 ]
+# Exposes `Application::verify_uncompressed` and `verify_differential`, as
+# `ragu_pcd` does. Production verification goes through `verify_compressed`.
+test-utils = []
 # Kept for compatibility: the mock has no parallel stage of its own.
 multicore = []
 std = []
@@ -43,6 +51,10 @@ blake2b_simd = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 udon = { workspace = true, optional = true }
 ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_pcd = { path = "crates/ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_backend = { path = "crates/ragu_backend", version = "0.0.0", default-features = false, optional = true }
 
 [workspace]
 members = [

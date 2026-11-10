@@ -31,3 +31,4 @@ RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|191|The profile's
 RAGU005|crates/ragu_pcd/src/internal/ky.rs|199|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|162|A second query of the same slot is a structural API misuse by the step: which slots a step queries is fixed by its circuit, not by witness values.
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|192|Which slots the step left unqueried is structural: the step queries the same slots every synthesis, so the same slots are opened at zeta.
+RAGU005|src/mock/step/oracles.rs|117|Per-slot occupancy follows prior structural query calls; repeated queries fail before allocation, independently of query points or witness values.
