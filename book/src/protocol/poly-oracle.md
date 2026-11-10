@@ -54,8 +54,11 @@ internal circuits.
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
   - public poly commitments are carried in proofs and associated with their output headers
   - staged values, and so any private polynomial built from them, live in the application stage, whose commitment is absorbed in the FS transcript during `fuse()`
-  - consequently, a check at $\zeta$ may only read values fixed before $\zeta$: openings $y_i = f_i(x_i)$ at $x_i = \zeta$ or at an $x_i$ itself fixed before $\zeta$, the left/right header fields, the first-stage values, and anything the final stage computes from them; or an in-circuit hash output, or a value from a small set (e.g. a bit).
-  Any other value the final stage witnesses, including the output header's fields, is chosen _after_ $\zeta$: a check $O(\zeta) = L(\zeta)\cdot(\zeta - t)$ with such a $t$ is forgeable by solving $t = \zeta - O(\zeta)/L(\zeta)$. Witness $t$ in the first stage instead.
+  - consequently, a check at $\zeta$ is sound when it evaluates a residual polynomial, such as $O(X) - L(X)\cdot(X - t)$, whose coefficients were fixed before $\zeta$, whose degree is bounded, and which is nonzero whenever the intended identity is false: a false identity then passes only if $\zeta$ is a root of the residual.
+  Fixed before $\zeta$ are the committed polynomials (the rank bounds their degree), an opening at a point itself fixed before $\zeta$, the left/right header fields, the application stage's values and constants.
+  $\zeta$ and the openings at it evaluate the residual, but a value the final stage computes from them is not a fixed coefficient or root: computing $t = \zeta - O(\zeta)/L(\zeta)$ in the circuit is no safer than witnessing it.
+  Any other value the final stage witnesses, including the output header's fields, is likewise chosen _after_ $\zeta$. Witness $t$ in the application stage instead.
+  An in-circuit hash output whose preimage is witnessed after $\zeta$, or a value from a small set (e.g. a bit) chosen after $\zeta$, is not fixed either, and each needs its own argument: the first rests on the hash's preimage resistance, and the second multiplies the soundness error by up to the set's size.
 - C4: the second/final app stage can "claim" the following values and constrain any relation for them during circuit synthesis
   1. the random evaluation point $\zeta$
   2. $6$ polynomial queries on public online polynomials $\{(x_i, y_i = f_i(x_i))\}_{i\in [0, 5]}$
@@ -131,6 +134,10 @@ Current fuse step `S` produces traces for two relations:
 Every step outputs an updated accumulator and two pending traces to be folded in the next step (a.k.a. parent step).
 Thus `S.fold` circuit takes in `A.O = [acc, app_A_trace, fold_A_trace]` and `B.O = [acc, app_B_trace, fold_B_trace]`, folds all the claims in those 6 components into a new `acc'`.
 The `acc` carries three types of obligations: the revdot accumulator ($\revdot{\v{a}}{\v{b}}=c$), the PCS opening accumulator ($P(u)=v$), and the registry consistency restrictions ($m(W, x, y)$).
+
+The last step of a proof tree has no parent.
+Its accumulator and pending traces are closed by the terminal verifier instead: `Application::compress` reduces the root proof's revdot claims and accumulator to one IPA opening per curve, and `Application::verify_compressed` recomputes each claim's `ky` from the root's public data and checks those openings (see [Compression](recursion/compression.md)).
+The root's `app` and `fold` traces are thereby held to the same public instances a parent would hold them to.
 
 A satisfying trace for the `S.fold` circuit `fold_S_trace` (a.k.a. the `rx` in polynomial form) is included in `S` step's output to be further folded/recursed in the next step `T`.
 Actually, the folding circuit is not a monolithic circuit but a collective of multi-stage circuits (a.k.a. internal circuits) each constraining a sub-relation of the overall folding relation.
@@ -384,9 +391,15 @@ The only decision left is whether we should fold these evaluation claims in the 
 Recalling our [earlier discussion](#ragu) of "folding `S.app` in `S.fold`" concludes that folding `app_rx` in the same step leads to saving.
 Analogously, we decide to fold poly query claims in the same step.
 
+Folding the openings in `S` while `app_rx` is folded in `T` leaves a cross-circuit copy constraint between the two, of the kind the [header-carry check](#ragu) resolves.
+`S`'s `compute_v` reads the pairs off the native `Query` stage, folds each into $f(u)$ as it does every other opening, and exports them in its own public instance, `[unified_S, x_0, y_0, ..., x_5, y_5, 0, 1]`.
+`T` holds `S`'s pairs once, in its native `Preamble`, and computes both `S.app`'s `ky` and `S.compute_v`'s `ky` from those wires.
+The two revdot claims therefore close only if the pairs `S.app` claimed are the pairs `S`'s batch opened.
+
 Concretely, this reduces the cost of our header-carry check.
 Instead of exporting `L/R`'s and `O`'s poly commitments, now we only need to export `O`'s poly commitments (and the application stage's), cutting the nested instance by 4 points, leading to fewer copy-constraints in the parent step's folding.
 The 4-point equality in `S` disappears too: `S` opens the stashed `A.O, B.O` directly as its `L, R` slots, so `S` has no separate `L, R` wires to compare.
+The application's instance carries none of the six online commitments, so none need matching there: the nested walk takes the six points in slot order, the stashed `A.O0, A.O1, B.O0, B.O1` and then `S`'s own `O0, O1`, and the opening of slot $i$ is of the polynomial behind that point.
 
 ```
 Before:
