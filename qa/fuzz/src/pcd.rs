@@ -144,7 +144,7 @@ pub struct Fixture {
     /// Which header the proof carries.
     pub shape: Shape,
     /// The proof itself.
-    pub proof: Proof<C, R>,
+    pub proof: Proof<C, ragu_pcd::Uncompressed<R>>,
     /// The header data the proof's output header encodes.
     pub data: NativeField,
 }
@@ -241,9 +241,9 @@ pub fn node(
 }
 
 /// A proof carrying a [`LeafNode`] header.
-pub type LeafPcd = ragu_pcd::Pcd<C, R, LeafNode>;
+pub type LeafPcd = ragu_pcd::Pcd<C, ragu_pcd::Uncompressed<R>, LeafNode>;
 /// A proof carrying an [`InternalNode`] header.
-pub type InternalPcd = ragu_pcd::Pcd<C, R, InternalNode>;
+pub type InternalPcd = ragu_pcd::Pcd<C, ragu_pcd::Uncompressed<R>, InternalNode>;
 
 /// The cheapest fixture that actually verifies: one `WitnessLeaf` seed.
 ///
@@ -449,9 +449,9 @@ fn nonzero<F: Field + From<u64>>(v: u64) -> F {
 /// steering it into the low `n` coefficients reached by the $t_z$ term.
 fn coeff_index(raw: u16, bound: bool) -> usize {
     let modulus = if bound {
-        Proof::<C, R>::num_bound_coeffs()
+        Proof::<C, ragu_pcd::Uncompressed<R>>::num_bound_coeffs()
     } else {
-        Proof::<C, R>::num_coeffs()
+        Proof::<C, ragu_pcd::Uncompressed<R>>::num_coeffs()
     };
     raw as usize % modulus
 }
@@ -635,7 +635,7 @@ impl FuzzCorruption {
 /// Returns the corruptions actually applied alongside the verdict, so a
 /// panic message can name them.
 pub fn apply(
-    proof: &mut Proof<C, R>,
+    proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
     choices: &[FuzzCorruption],
     limit: usize,
 ) -> (Vec<FuzzCorruption>, Binding) {

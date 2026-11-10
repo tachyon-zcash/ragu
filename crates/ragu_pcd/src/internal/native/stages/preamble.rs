@@ -34,7 +34,7 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Output header for this child proof.
     pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     /// Reference to the child proof.
-    pub proof: &'a Proof<C, R>,
+    pub proof: &'a Proof<C, crate::Uncompressed<R>>,
 }
 
 /// Witness for the native preamble stage.
@@ -51,8 +51,8 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
     /// Create a witness from child proof references and pre-computed output headers.
     pub fn new(
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a Proof<C, crate::Uncompressed<R>>,
+        right: &'a Proof<C, crate::Uncompressed<R>>,
         left_output_header: &[C::CircuitField],
         right_output_header: &[C::CircuitField],
     ) -> Result<Self> {
@@ -233,7 +233,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Allocate ProofInputs from a proof reference and pre-computed output header.
     pub fn alloc<R: Rank>(
         dr: &mut D,
-        proof: DriverValue<D, &Proof<C, R>>,
+        proof: DriverValue<D, &Proof<C, crate::Uncompressed<R>>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(

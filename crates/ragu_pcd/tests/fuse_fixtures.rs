@@ -96,7 +96,7 @@ use udon::{curve::Affine, field::Field};
 
 use super::Proof;
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd,
+    Application, ApplicationBuilder, Pcd,
     compress::{
         Messages,
         batch::Batch,
@@ -116,7 +116,7 @@ use crate::{
 type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
 type App<C> = Application<'static, C, R, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, R, Value>;
+type TestPcd<C> = Pcd<C, ragu_pcd::Uncompressed<R>, Value>;
 
 /// A profile of the Pasta cycle the fixtures prove in.
 trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams> {
@@ -492,8 +492,8 @@ impl Lines {
 /// commitments are derived from the polynomials they commit, and the bridge
 /// `ab` polynomial from the commitments it carries, so they are not pinned
 /// separately.
-fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
-    let Proof {
+fn proof_lines<C: Cycle>(proof: &Proof<C, ragu_pcd::Uncompressed<R>>, lines: &mut Lines) {
+    let super::UncompressedData {
         bridge_alpha,
         circuit_id,
         left_header,
@@ -607,7 +607,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         bridge_f_commitment: _,
         bridge_eval_commitment: _,
         bridge_ab_commitment: _,
-    } = proof;
+    } = &proof.payload;
 
     lines.push("circuit_id", usize::from(*circuit_id));
     lines.fields("left_header", left_header);
@@ -795,12 +795,12 @@ impl<'a> Cursor<'a> {
 /// Encodes a compressed proof, exhaustively over its fields, so that a field
 /// added to the instance or the messages does not compile here until the
 /// fixtures account for it.
-fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
-    let CompressedProof {
+fn encode_compressed<C: Cycle>(proof: &ragu_pcd::Proof<C, ragu_pcd::Compressed>, out: &mut Writer) {
+    let crate::compress::CompressedData {
         instance,
         native,
         nested,
-    } = proof;
+    } = &proof.payload;
     out.0.extend_from_slice(MAGIC);
 
     let Instance {
@@ -916,7 +916,9 @@ fn encode_messages<P: Affine>(messages: &Messages<P>, out: &mut Writer) {
     out.field(c);
 }
 
-fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProof<C>> {
+fn decode_compressed<C: Cycle>(
+    cursor: &mut Cursor<'_>,
+) -> Option<ragu_pcd::Proof<C, ragu_pcd::Compressed>> {
     if cursor.take(MAGIC.len())? != MAGIC {
         return None;
     }
@@ -996,10 +998,12 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     };
     let native = decode_messages(cursor)?;
     let nested = decode_messages(cursor)?;
-    Some(CompressedProof {
-        instance,
-        native,
-        nested,
+    Some(Proof {
+        payload: crate::compress::CompressedData {
+            instance,
+            native,
+            nested,
+        },
     })
 }
 
@@ -1122,7 +1126,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     fixtures: &Fixtures,
     name: &str,
     tag: u64,
-    pcd: &Pcd<C, R, H>,
+    pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
     tape: &Tape,
     failures: &mut Vec<String>,
 ) {
@@ -1315,8 +1319,8 @@ fn prover_fixtures<C: FixtureCycle>() {
 /// each payload as the wire format encodes it.
 /// These pin the wire format itself, apart from the fixture encoding above.
 fn wire_lines<C: FixtureCycle>(
-    proof: &Proof<C, R>,
-    compressed: &CompressedProof<C>,
+    proof: &Proof<C, ragu_pcd::Uncompressed<R>>,
+    compressed: &ragu_pcd::Proof<C, ragu_pcd::Compressed>,
     lines: &mut Lines,
 ) {
     lines.push("wire.fields", super::codec::WIRE_FIELDS.join(","));
@@ -1334,7 +1338,7 @@ fn wire_lines<C: FixtureCycle>(
 /// nothing after.
 fn decode_fixture<C: Cycle, H: FixtureHeader>(
     bytes: &[u8],
-) -> Option<(H::Data, CompressedProof<C>)> {
+) -> Option<(H::Data, ragu_pcd::Proof<C, ragu_pcd::Compressed>)> {
     let mut cursor = Cursor::new(bytes);
     let data = H::read(&mut cursor)?;
     let proof = decode_compressed::<C>(&mut cursor)?;
@@ -1345,7 +1349,7 @@ fn decode_fixture<C: Cycle, H: FixtureHeader>(
 fn verifier_run<C: FixtureCycle, H: FixtureHeader>(
     app: &App<C>,
     data: H::Data,
-    proof: CompressedProof<C>,
+    proof: ragu_pcd::Proof<C, ragu_pcd::Compressed>,
 ) -> (Result<bool>, Vec<Event>) {
     fingerprint::capture(|| app.verify_compressed(&proof.carry::<H>(data)))
 }
@@ -1493,37 +1497,38 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
     // Tampered copies. Each is rejected, and those that reach the final
     // MSMs are rejected there: a wrong host-curve IPA scalar fails the host
     // MSM, and a wrong nested one passes the host MSM and fails the nested.
-    let mut rejected = |what: &str, proof: CompressedProof<C>, expected: Option<&[bool]>| {
-        let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof);
-        if !matches!(verdict, Ok(false)) {
-            failures.push(format!("{label}: a proof with {what} was not rejected"));
-        } else if let Some(expected) = expected
-            && msm_verdicts(&events) != expected
-        {
-            failures.push(format!(
-                "{label}: a proof with {what} was rejected at the wrong check"
-            ));
-        }
-    };
+    let mut rejected =
+        |what: &str, proof: ragu_pcd::Proof<C, ragu_pcd::Compressed>, expected: Option<&[bool]>| {
+            let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof);
+            if !matches!(verdict, Ok(false)) {
+                failures.push(format!("{label}: a proof with {what} was not rejected"));
+            } else if let Some(expected) = expected
+                && msm_verdicts(&events) != expected
+            {
+                failures.push(format!(
+                    "{label}: a proof with {what} was rejected at the wrong check"
+                ));
+            }
+        };
 
     let mut tampered = proof.clone();
-    tampered.native.opening.c += Fp::ONE;
+    tampered.payload.native.opening.c += Fp::ONE;
     rejected("a wrong host IPA scalar", tampered, Some(&[false]));
 
     let mut tampered = proof.clone();
-    tampered.nested.opening.c += C::ScalarField::ONE;
+    tampered.payload.nested.opening.c += C::ScalarField::ONE;
     rejected("a wrong nested IPA scalar", tampered, Some(&[true, false]));
 
     // Exercise InvalidWitness handling before either IPA MSM. Accepting a
     // transcript error must fail even when all honest captures still match.
     let mut tampered = proof.clone();
-    for commitment in &mut tampered.instance.nested {
+    for commitment in &mut tampered.payload.instance.nested {
         *commitment = C::NestedCurve::identity();
     }
     rejected("identity stage commitments", tampered, Some(&[]));
 
     let mut tampered = proof;
-    tampered.instance.v += Fp::ONE;
+    tampered.payload.instance.v += Fp::ONE;
     rejected("a wrong claimed v", tampered, None);
 }
 

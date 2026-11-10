@@ -87,24 +87,28 @@ impl Step<C> for UnitStep {
 /// native binder must still derive the original sign from the input headers.
 fn flipped_sign(
     app: &support::App,
-    proof: &Proof<C, R>,
+    proof: &Proof<C, ragu_pcd::Uncompressed<R>>,
     sign_wire: usize,
     sign: Fq,
-) -> Proof<C, R> {
+) -> Proof<C, ragu_pcd::Uncompressed<R>> {
     let mut changed = proof.clone();
     assert_eq!(
-        StageReader::new(&changed.nested_challenges_rx).read(sign_wire),
+        StageReader::new(&changed.payload.nested_challenges_rx).read(sign_wire),
         sign
     );
-    support::set_wires(&mut changed.nested_challenges_rx, &[sign_wire], &[-sign]);
-    changed.nested_challenges_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-        &changed.nested_challenges_rx,
+    support::set_wires(
+        &mut changed.payload.nested_challenges_rx,
+        &[sign_wire],
+        &[-sign],
+    );
+    changed.payload.nested_challenges_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+        &changed.payload.nested_challenges_rx,
         C::nested_generators(app.params),
     );
     let delta = -sign - sign;
     let generator = C::nested_generators(app.params).g()[wire_degree::<R>(sign_wire)];
-    changed.nested_challenges_partial =
-        (changed.nested_challenges_partial.to_projective() + generator * delta).to_affine();
+    changed.payload.nested_challenges_partial =
+        (changed.payload.nested_challenges_partial.to_projective() + generator * delta).to_affine();
     changed
 }
 
@@ -492,8 +496,8 @@ where
     Ok(constraints.hold(&coefficients))
 }
 
-fn nested_collapse_trace(proof: &Proof<C, R>) -> sparse::Polynomial<Fq, R> {
-    let mut nested_trace = proof.nested_collapse_rx.clone();
+fn nested_collapse_trace(proof: &Proof<C, ragu_pcd::Uncompressed<R>>) -> sparse::Polynomial<Fq, R> {
+    let mut nested_trace = proof.payload.nested_collapse_rx.clone();
     for stage in [
         nested::RxIndex::EndoscalarStage,
         nested::RxIndex::BridgeHash,
@@ -514,16 +518,16 @@ fn nested_collapse_trace(proof: &Proof<C, R>) -> sparse::Polynomial<Fq, R> {
 }
 
 fn check_proof_guards(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, ragu_pcd::Uncompressed<R>>,
     case: &str,
     exempt: bool,
     native_delta: Fp,
     nested_delta: Fq,
 ) -> Result<()> {
-    let mut native_trace = proof.native_collapse_rx.clone();
-    native_trace.add_assign(&proof.native_preamble_rx);
-    native_trace.add_assign(&proof.native_outer_error_rx);
-    native_trace.add_assign(&proof.native_inner_error_rx);
+    let mut native_trace = proof.payload.native_collapse_rx.clone();
+    native_trace.add_assign(&proof.payload.native_preamble_rx);
+    native_trace.add_assign(&proof.payload.native_outer_error_rx);
+    native_trace.add_assign(&proof.payload.native_inner_error_rx);
     assert_eq!(
         accepts_wrong_c(
             native::circuits::collapse::Circuit::<
@@ -739,20 +743,23 @@ fn noncanonical_unit_children_reject_through_two_generations() {
             // enforce the child's claim beyond checking its cached commitment.
             if nested {
                 proof
+                    .payload
                     .nested_p_poly
                     .add_assign(&sparse::Polynomial::from_coeffs(vec![Fq::ONE]));
-                proof.nested_p_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &proof.nested_p_poly,
+                proof.payload.nested_p_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+                    &proof.payload.nested_p_poly,
                     C::nested_generators(app.params),
                 );
             } else {
                 proof
+                    .payload
                     .native_application_rx
                     .add_assign(&sparse::Polynomial::from_coeffs(vec![Fp::ONE]));
-                proof.native_application_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &proof.native_application_rx,
-                    C::host_generators(app.params),
-                );
+                proof.payload.native_application_commitment.0 =
+                    ReferenceBackend::sparse_commit_to_affine(
+                        &proof.payload.native_application_rx,
+                        C::host_generators(app.params),
+                    );
             }
             let child = proof.carry::<()>(());
             assert!(

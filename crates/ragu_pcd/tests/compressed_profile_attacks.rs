@@ -9,7 +9,7 @@ use crate::profile::testing::{Crossing, CrossingBack, CrossingContext};
 
 fn reject<P: Profile, Rk: Rank>(
     app: &App<P, Rk>,
-    proof: CompressedProof<C<P>>,
+    proof: ragu_pcd::Proof<C<P>, ragu_pcd::Compressed>,
     data: Fp,
     case: &str,
 ) {
@@ -19,7 +19,7 @@ fn reject<P: Profile, Rk: Rank>(
 
 fn check_edits<P: Profile, Rk: Rank>(
     app: &App<P, Rk>,
-    proof: &CompressedProof<C<P>>,
+    proof: &ragu_pcd::Proof<C<P>, ragu_pcd::Compressed>,
     data: Fp,
 ) -> usize {
     assert!(
@@ -27,23 +27,24 @@ fn check_edits<P: Profile, Rk: Rank>(
             .unwrap()
     );
     let mut cases = 0;
-    let mut edit = |case: &str, mutate: &dyn Fn(&mut CompressedProof<C<P>>)| {
-        let mut changed = proof.clone();
-        mutate(&mut changed);
-        reject(app, changed, data, case);
-        cases += 1;
-    };
+    let mut edit =
+        |case: &str, mutate: &dyn Fn(&mut ragu_pcd::Proof<C<P>, ragu_pcd::Compressed>)| {
+            let mut changed = proof.clone();
+            mutate(&mut changed);
+            reject(app, changed, data, case);
+            cases += 1;
+        };
 
     edit("other application circuit", &|p| {
-        p.instance.circuit_id = CircuitIndex::new(0)
+        p.payload.instance.circuit_id = CircuitIndex::new(0)
     });
     edit("out-of-domain circuit", &|p| {
-        p.instance.circuit_id = CircuitIndex::new(u32::MAX as usize)
+        p.payload.instance.circuit_id = CircuitIndex::new(u32::MAX as usize)
     });
 
     macro_rules! scalar {
         ($field:ident $(.$part:ident)*, $one:expr) => {
-            edit(stringify!($field $(.$part)*), &|p| p.instance.$field $(.$part)* += $one);
+            edit(stringify!($field $(.$part)*), &|p| p.payload.instance.$field $(.$part)* += $one);
         };
     }
     scalar!(c, Fp::ONE);
@@ -68,41 +69,41 @@ fn check_edits<P: Profile, Rk: Rank>(
 
     for i in 0..HEADER_SIZE {
         edit(&alloc::format!("left header {i}"), &|p| {
-            p.instance.left_header[i] += Fp::ONE
+            p.payload.instance.left_header[i] += Fp::ONE
         });
         edit(&alloc::format!("right header {i}"), &|p| {
-            p.instance.right_header[i] += Fp::ONE
+            p.payload.instance.right_header[i] += Fp::ONE
         });
     }
-    for i in 0..proof.instance.native.len() {
+    for i in 0..proof.payload.instance.native.len() {
         edit(&alloc::format!("native component {i}"), &|p| {
-            p.instance.native[i] = -p.instance.native[i]
+            p.payload.instance.native[i] = -p.payload.instance.native[i]
         });
     }
-    for i in 0..proof.instance.nested.len() {
+    for i in 0..proof.payload.instance.nested.len() {
         edit(&alloc::format!("nested component {i}"), &|p| {
-            p.instance.nested[i] = -p.instance.nested[i]
+            p.payload.instance.nested[i] = -p.payload.instance.nested[i]
         });
     }
     // A verifier reads the online commitments through `commitments()` to
     // check what the proof attests, so each must be bound.
-    for i in 0..proof.instance.online_commitments.len() {
+    for i in 0..proof.payload.instance.online_commitments.len() {
         edit(&alloc::format!("online commitment {i}"), &|p| {
-            p.instance.online_commitments[i] = -p.instance.online_commitments[i]
+            p.payload.instance.online_commitments[i] = -p.payload.instance.online_commitments[i]
         });
     }
-    for i in 0..proof.instance.online.len() {
+    for i in 0..proof.payload.instance.online.len() {
         edit(&alloc::format!("online query {i} point"), &|p| {
-            p.instance.online[i].x += Fp::ONE
+            p.payload.instance.online[i].x += Fp::ONE
         });
         edit(&alloc::format!("online query {i} value"), &|p| {
-            p.instance.online[i].y += Fp::ONE
+            p.payload.instance.online[i].y += Fp::ONE
         });
     }
     macro_rules! point {
         ($field:ident) => {
             edit(stringify!($field), &|p| {
-                p.instance.$field = -p.instance.$field
+                p.payload.instance.$field = -p.payload.instance.$field
             });
         };
     }
@@ -115,11 +116,11 @@ fn check_edits<P: Profile, Rk: Rank>(
     macro_rules! length {
         ($field:ident $(.$part:ident)*) => {
             edit(concat!(stringify!($field $(.$part)*), " missing entry"), &|p| {
-                p.instance.$field $(.$part)* .pop().unwrap();
+                p.payload.instance.$field $(.$part)* .pop().unwrap();
             });
             edit(concat!(stringify!($field $(.$part)*), " trailing entry"), &|p| {
-                let extra = p.instance.$field $(.$part)* [0];
-                p.instance.$field $(.$part)* .push(extra);
+                let extra = p.payload.instance.$field $(.$part)* [0];
+                p.payload.instance.$field $(.$part)* .push(extra);
             });
         };
     }
@@ -127,94 +128,102 @@ fn check_edits<P: Profile, Rk: Rank>(
     length!(right_header);
     length!(native);
     length!(nested);
-    edit("native component order", &|p| p.instance.native.reverse());
-    edit("nested component order", &|p| p.instance.nested.reverse());
+    edit("native component order", &|p| {
+        p.payload.instance.native.reverse()
+    });
+    edit("nested component order", &|p| {
+        p.payload.instance.nested.reverse()
+    });
 
     macro_rules! messages {
         ($side:ident, $one:expr) => {{
             edit(
                 concat!(stringify!($side), " inner error commitment"),
-                &|p| p.$side.reduction.fold.inner = -p.$side.reduction.fold.inner,
+                &|p| p.payload.$side.reduction.fold.inner = -p.payload.$side.reduction.fold.inner,
             );
             edit(
                 concat!(stringify!($side), " outer error commitment"),
-                &|p| p.$side.reduction.fold.outer = -p.$side.reduction.fold.outer,
+                &|p| p.payload.$side.reduction.fold.outer = -p.payload.$side.reduction.fold.outer,
             );
             edit(concat!(stringify!($side), " inner error value"), &|p| {
-                p.$side.reduction.fold.inner_epsilon += $one
+                p.payload.$side.reduction.fold.inner_epsilon += $one
             });
             edit(concat!(stringify!($side), " outer error value"), &|p| {
-                p.$side.reduction.fold.outer_epsilon += $one
+                p.payload.$side.reduction.fold.outer_epsilon += $one
             });
             edit(concat!(stringify!($side), " reduction p"), &|p| {
-                p.$side.reduction.p = -p.$side.reduction.p
+                p.payload.$side.reduction.p = -p.payload.$side.reduction.p
             });
             edit(concat!(stringify!($side), " reduction q"), &|p| {
-                p.$side.reduction.q = -p.$side.reduction.q
+                p.payload.$side.reduction.q = -p.payload.$side.reduction.q
             });
             edit(concat!(stringify!($side), " p opening"), &|p| {
-                p.$side.reduction.p_at_inverse_r += $one
+                p.payload.$side.reduction.p_at_inverse_r += $one
             });
             edit(concat!(stringify!($side), " q opening"), &|p| {
-                p.$side.reduction.q_at_r += $one
+                p.payload.$side.reduction.q_at_r += $one
             });
-            for i in 0..proof.$side.reduction.openings.len() {
+            for i in 0..proof.payload.$side.reduction.openings.len() {
                 edit(
                     &alloc::format!("{} reduction opening {i}", stringify!($side)),
-                    &|p| p.$side.reduction.openings[i] += $one,
+                    &|p| p.payload.$side.reduction.openings[i] += $one,
                 );
             }
             edit(
                 concat!(stringify!($side), " missing reduction opening"),
                 &|p| {
-                    p.$side.reduction.openings.pop().unwrap();
+                    p.payload.$side.reduction.openings.pop().unwrap();
                 },
             );
             edit(
                 concat!(stringify!($side), " trailing reduction opening"),
-                &|p| p.$side.reduction.openings.push($one),
+                &|p| p.payload.$side.reduction.openings.push($one),
             );
             edit(concat!(stringify!($side), " batch quotient"), &|p| {
-                p.$side.batch.f = -p.$side.batch.f
+                p.payload.$side.batch.f = -p.payload.$side.batch.f
             });
-            for i in 0..proof.$side.batch.evaluations.len() {
+            for i in 0..proof.payload.$side.batch.evaluations.len() {
                 edit(
                     &alloc::format!("{} batch value {i}", stringify!($side)),
-                    &|p| p.$side.batch.evaluations[i] += $one,
+                    &|p| p.payload.$side.batch.evaluations[i] += $one,
                 );
             }
             edit(concat!(stringify!($side), " missing batch value"), &|p| {
-                p.$side.batch.evaluations.pop().unwrap();
+                p.payload.$side.batch.evaluations.pop().unwrap();
             });
             edit(concat!(stringify!($side), " trailing batch value"), &|p| {
-                p.$side.batch.evaluations.push($one)
+                p.payload.$side.batch.evaluations.push($one)
             });
             edit(
                 concat!(stringify!($side), " IPA masking commitment"),
-                &|p| p.$side.opening.s_commitment = -p.$side.opening.s_commitment,
+                &|p| p.payload.$side.opening.s_commitment = -p.payload.$side.opening.s_commitment,
             );
             edit(concat!(stringify!($side), " IPA coefficient"), &|p| {
-                p.$side.opening.c += $one
+                p.payload.$side.opening.c += $one
             });
-            for i in 0..proof.$side.opening.rounds.len() {
+            for i in 0..proof.payload.$side.opening.rounds.len() {
                 edit(&alloc::format!("{} IPA L {i}", stringify!($side)), &|p| {
-                    p.$side.opening.rounds[i].0 = -p.$side.opening.rounds[i].0
+                    p.payload.$side.opening.rounds[i].0 = -p.payload.$side.opening.rounds[i].0
                 });
                 edit(&alloc::format!("{} IPA R {i}", stringify!($side)), &|p| {
-                    p.$side.opening.rounds[i].1 = -p.$side.opening.rounds[i].1
+                    p.payload.$side.opening.rounds[i].1 = -p.payload.$side.opening.rounds[i].1
                 });
             }
             edit(concat!(stringify!($side), " missing IPA round"), &|p| {
-                p.$side.opening.rounds.pop().unwrap();
+                p.payload.$side.opening.rounds.pop().unwrap();
             });
             edit(concat!(stringify!($side), " trailing IPA round"), &|p| {
-                p.$side.opening.rounds.push(p.$side.opening.rounds[0])
+                p.payload
+                    .$side
+                    .opening
+                    .rounds
+                    .push(p.payload.$side.opening.rounds[0])
             });
             edit(concat!(stringify!($side), " IPA round order"), &|p| {
-                p.$side.opening.rounds.reverse()
+                p.payload.$side.opening.rounds.reverse()
             });
             edit(concat!(stringify!($side), " IPA L/R roles"), &|p| {
-                let (left, right) = &mut p.$side.opening.rounds[0];
+                let (left, right) = &mut p.payload.$side.opening.rounds[0];
                 core::mem::swap(left, right);
             });
         }};
@@ -264,9 +273,9 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
 
 fn check_splices<P: Profile>(
     app: &App<P, ProductionRank>,
-    local: &CompressedProof<C<P>>,
+    local: &ragu_pcd::Proof<C<P>, ragu_pcd::Compressed>,
     local_data: Fp,
-    donor: &CompressedProof<C<P>>,
+    donor: &ragu_pcd::Proof<C<P>, ragu_pcd::Compressed>,
     donor_data: Fp,
     donor_is_valid: bool,
 ) {
@@ -274,10 +283,12 @@ fn check_splices<P: Profile>(
     // and nested messages. The receiving application never changes.
     for mask in 0..16 {
         let choose = |bit| if mask & bit == 0 { local } else { donor };
-        let candidate = CompressedProof {
-            instance: mix_instance(&choose(1).instance, &choose(2).instance),
-            native: choose(4).native.clone(),
-            nested: choose(8).nested.clone(),
+        let candidate = Proof {
+            payload: crate::compress::CompressedData {
+                instance: mix_instance(&choose(1).payload.instance, &choose(2).payload.instance),
+                native: choose(4).payload.native.clone(),
+                nested: choose(8).payload.nested.clone(),
+            },
         };
         let expected = (mask == 0 && donor_data == local_data) || (mask == 15 && donor_is_valid);
         let result = app.verify_compressed(&candidate.carry::<Value>(donor_data));

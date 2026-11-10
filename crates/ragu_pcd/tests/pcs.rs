@@ -86,9 +86,9 @@ fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
 
 fn check_batch<H: Header<Fp>>(
     app: &support::App,
-    parent_pcd: &Pcd<C, R, H>,
-    left_pcd: &Pcd<C, R, H>,
-    right_pcd: &Pcd<C, R, H>,
+    parent_pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
+    left_pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
+    right_pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
     inputs: &support::Inputs,
 ) -> Result<()> {
     let (parent, left, right) = (parent_pcd.proof(), left_pcd.proof(), right_pcd.proof());
@@ -123,8 +123,8 @@ fn check_batch<H: Header<Fp>>(
         registry_wx1: &registry_wx1,
         registry_wy: &registry_wy,
         registry_xy: parent.nested_registry_xy_poly(),
-        a: &parent.nested_a_poly,
-        b: &parent.nested_b_poly,
+        a: &parent.payload.nested_a_poly,
+        b: &parent.payload.nested_b_poly,
     };
     let commit = |poly: &Poly| {
         ReferenceBackend::sparse_commit_to_affine(poly, C::nested_generators(app.params))
@@ -153,10 +153,10 @@ fn check_batch<H: Header<Fp>>(
         ("wy@right.x", batch.registry_wy, ch.right.x),
         ("wy@x", batch.registry_wy, ch.x),
         ("xy@w", batch.registry_xy, ch.w),
-        ("left.a@xz", &left.nested_a_poly, xz),
-        ("left.b@x", &left.nested_b_poly, ch.x),
-        ("right.a@xz", &right.nested_a_poly, xz),
-        ("right.b@x", &right.nested_b_poly, ch.x),
+        ("left.a@xz", &left.payload.nested_a_poly, xz),
+        ("left.b@x", &left.payload.nested_b_poly, ch.x),
+        ("right.a@xz", &right.payload.nested_a_poly, xz),
+        ("right.b@x", &right.payload.nested_b_poly, ch.x),
         ("a@xz", batch.a, xz),
         ("b@x", batch.b, ch.x),
     ]
@@ -179,8 +179,16 @@ fn check_batch<H: Header<Fp>>(
             ));
         }
         for (tag, poly, commitment) in [
-            ("a", &child.nested_a_poly, child.nested_a_commitment()),
-            ("b", &child.nested_b_poly, child.nested_b_commitment()),
+            (
+                "a",
+                &child.payload.nested_a_poly,
+                child.nested_a_commitment(),
+            ),
+            (
+                "b",
+                &child.payload.nested_b_poly,
+                child.nested_b_commitment(),
+            ),
             (
                 "xy",
                 child.nested_registry_xy_poly(),
@@ -248,7 +256,7 @@ fn check_batch<H: Header<Fp>>(
     // polynomial evaluations. The first two values hold native_eval.
     let values = stage_values::<
         nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>,
-    >(&parent.bridge_eval_rx);
+    >(&parent.payload.bridge_eval_rx);
     assert_eq!(values.len(), 2 + evaluated.len());
     for (value, (tag, poly, _)) in values[2..].iter().zip(&evaluated) {
         assert_eq!(*value, poly.eval(u), "eval bridge: {tag}");
@@ -400,8 +408,8 @@ mod folding {
     /// [`build`](nested::claims::build) emits them, with their $k(y)$ values.
     fn child_claims<'a>(
         app: &'a support::App,
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a Proof<C, ragu_pcd::Uncompressed<R>>,
+        right: &'a Proof<C, ragu_pcd::Uncompressed<R>>,
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
@@ -410,7 +418,7 @@ mod folding {
             &NestedFuseProofSource { left, right },
             &mut nested_claims,
         )?;
-        let unified_ky = |proof: &Proof<C, R>| -> Result<Fq> {
+        let unified_ky = |proof: &Proof<C, ragu_pcd::Uncompressed<R>>| -> Result<Fq> {
             NestedFuseEmulator::<C>::emulate_wireless(
                 (proof.nested_instance()?, y),
                 |dr, witness| {
@@ -437,8 +445,8 @@ mod folding {
     /// Whether every nested claim of the two children holds at `y` and `z`.
     pub(super) fn claims_hold(
         app: &support::App,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, ragu_pcd::Uncompressed<R>>,
+        right: &Proof<C, ragu_pcd::Uncompressed<R>>,
         y: Fq,
         z: Fq,
     ) -> Result<bool> {
@@ -452,9 +460,9 @@ mod folding {
 
     pub(super) fn check(
         app: &support::App,
-        parent: &Proof<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        parent: &Proof<C, ragu_pcd::Uncompressed<R>>,
+        left: &Proof<C, ragu_pcd::Uncompressed<R>>,
+        right: &Proof<C, ragu_pcd::Uncompressed<R>>,
     ) -> Result<()> {
         let y = nested::challenge::<C>(parent.y())?;
         let z = nested::challenge::<C>(parent.z())?;
@@ -523,7 +531,7 @@ mod folding {
                 R,
                 <C as ProfiledCycle>::Profile,
             >,
-        >(&parent.bridge_inner_error_rx);
+        >(&parent.payload.bridge_inner_error_rx);
         assert!(
             inner_values[4..]
                 .iter()
@@ -539,7 +547,7 @@ mod folding {
                 R,
                 <C as ProfiledCycle>::Profile,
             >,
-        >(&parent.bridge_outer_error_rx);
+        >(&parent.payload.bridge_outer_error_rx);
         let (stored_outer_errors, stored_collapsed) =
             outer_values[2..].split_at(outer_errors.len());
         assert_eq!(
@@ -556,13 +564,13 @@ mod folding {
         for (name, rx, commitment) in [
             (
                 "inner",
-                parent.bridge_inner_error_rx.as_ref(),
-                parent.bridge_inner_error_commitment,
+                parent.payload.bridge_inner_error_rx.as_ref(),
+                parent.payload.bridge_inner_error_commitment,
             ),
             (
                 "outer",
-                parent.bridge_outer_error_rx.as_ref(),
-                parent.bridge_outer_error_commitment,
+                parent.payload.bridge_outer_error_rx.as_ref(),
+                parent.payload.bridge_outer_error_commitment,
             ),
         ] {
             assert_eq!(
@@ -575,11 +583,15 @@ mod folding {
         let a_final = fold_revdot::fold_outer::<_, _, P>(a_folded, mu_prime);
         let b_final = fold_revdot::fold_outer::<_, _, P>(b_folded, mu_prime);
         assert!(
-            a_final.iter_coeffs().eq(parent.nested_a_poly.iter_coeffs()),
+            a_final
+                .iter_coeffs()
+                .eq(parent.payload.nested_a_poly.iter_coeffs()),
             "nested a is not the fold of the children's claims"
         );
         assert!(
-            b_final.iter_coeffs().eq(parent.nested_b_poly.iter_coeffs()),
+            b_final
+                .iter_coeffs()
+                .eq(parent.payload.nested_b_poly.iter_coeffs()),
             "nested b is not the fold of the children's claims"
         );
 
@@ -823,7 +835,7 @@ mod child_openings {
             "the honest root verifies"
         );
         let data = *parent.data();
-        let rejected = |proof: Proof<C, R>| -> Result<bool> {
+        let rejected = |proof: Proof<C, ragu_pcd::Uncompressed<R>>| -> Result<bool> {
             Ok(!app.verify_uncompressed(&proof.carry::<Value>(data), inputs.verifier_rng())?)
         };
 
@@ -923,10 +935,10 @@ mod challenge_stage {
             )?[0];
         let mut stale = child.proof().clone();
         assert_eq!(
-            StageReader::new(&stale.nested_challenges_rx).read(pad),
+            StageReader::new(&stale.payload.nested_challenges_rx).read(pad),
             Fq::ZERO
         );
-        support::set_wires(&mut stale.nested_challenges_rx, &[pad], &[delta]);
+        support::set_wires(&mut stale.payload.nested_challenges_rx, &[pad], &[delta]);
         let mut recommitted = stale.clone();
         support::recommit(app, &mut recommitted, Cache::NestedChallenges);
 

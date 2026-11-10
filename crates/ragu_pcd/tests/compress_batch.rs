@@ -241,7 +241,7 @@ where
 /// A verifier transcript that has replayed the native reduction.
 fn native_verifier(
     app: &Application<'static, Pasta, TestR, HEADER_SIZE>,
-    proof: &Proof<Pasta, TestR>,
+    proof: &Proof<Pasta, ragu_pcd::Uncompressed<TestR>>,
     y: Fp,
     z: Fp,
     targets: &NativeKy<Fp>,

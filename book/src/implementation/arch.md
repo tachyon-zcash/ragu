@@ -143,11 +143,11 @@ APIs that represent, compute, or manipulate them.
 | [Registry tags](../guide/configuration.md) | `RegistryTags::from_beacon()`, `ApplicationBuilder::with_registry_tags()` | `ragu_pcd` |
 | Computational backend | `Backend`, `ReferenceBackend`; selected through `ApplicationBuilder::with_backend()` | `ragu_backend`, `ragu_pcd` |
 | PCD step | `Step<C>` | `ragu_pcd` |
-| Recursive proof | `Proof<C, R>` | `ragu_pcd` |
-| Proof-carrying data | `Pcd<C, R, H>` | `ragu_pcd` |
+| Recursive proof | `Proof<C, Uncompressed<R>>` | `ragu_pcd` |
+| Proof-carrying data | `Pcd<C, F, H>` with `F: Form` | `ragu_pcd` |
 | Base proof | built once by `ApplicationBuilder::finalize()` | `ragu_pcd` |
 | Seed (first step) | `Application::seed()` | `ragu_pcd` |
 | Fuse (accumulate) | `Application::fuse()` | `ragu_pcd` |
-| [Compression](../protocol/recursion/compression.md) (terminal proof) | `Application::compress()`, `Application::verify_compressed()`, `CompressedProof<C>` | `ragu_pcd` |
+| [Compression](../protocol/recursion/compression.md) (terminal proof) | `Application::compress()`, `Application::verify_compressed()`, `Proof<C, Compressed>` | `ragu_pcd` |
 
 [Pasta curve cycle]: https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/

@@ -41,8 +41,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         z: &Element<'dr, D>,
         registry_wy: &RegistryWy<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::query::Witness<C>,
@@ -66,8 +66,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         registry_wy: &RegistryWy<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::query::Witness<C>>
     where
@@ -141,8 +141,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::query::Evaluations<C::ScalarField, C::Profile>>
     where

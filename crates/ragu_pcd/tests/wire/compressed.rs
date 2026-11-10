@@ -10,9 +10,9 @@ use crate::nontrivial_support::{app, leaf};
 fn compressed_transport_roundtrip_and_rejection() {
     let app = app();
     let mut rng = StdRng::seed_from_u64(0x51a1);
-    let proof = leaf(&app, &mut rng, 42);
+    let proof = super::roundtrip(&leaf(&app, &mut rng, 42));
     let data = *proof.data();
-    let compressed = app.compress(&proof, &mut rng).unwrap();
+    let compressed = super::roundtrip(&app.compress(&proof, &mut rng).unwrap());
     let bytes = compressed.proof().to_bytes().unwrap();
     assert_eq!(
         bytes.len(),
@@ -75,6 +75,25 @@ fn compressed_transport_roundtrip_and_rejection() {
         .unwrap()
         .carry::<LeafNode>(data);
     assert!(!app.verify_compressed(&decoded).unwrap());
+
+    // Compressed rank is genuinely erased: a canonical packet with one fewer
+    // IPA round on each curve still decodes, but this application's fixed
+    // rank rejects it. Schema v2 has six other points and 21 scalars per side;
+    // each side ends with its round pairs followed by the final scalar.
+    let rank = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+    let side_size = (6 + 2 * rank as usize + 21) * 32;
+    let nested_end = bytes.len();
+    let native_end = nested_end - side_size;
+    let mut other_rank = bytes.clone();
+    other_rank.drain(nested_end - 32 - 64..nested_end - 32);
+    other_rank.drain(native_end - 32 - 64..native_end - 32);
+    other_rank[16..20].copy_from_slice(&(rank - 1).to_le_bytes());
+    let decoded = TestCompressed::from_bytes(&other_rank).unwrap();
+    assert_eq!(decoded.to_bytes().unwrap(), other_rank);
+    assert!(
+        !app.verify_compressed(&decoded.carry::<LeafNode>(data))
+            .unwrap()
+    );
 
     // A canonical but false final IPA coefficient is representation-valid,
     // and must fail production verification rather than decoding.

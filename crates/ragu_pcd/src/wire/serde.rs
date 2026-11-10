@@ -1,6 +1,6 @@
-//! `serde` support for [`Proof`] and [`CompressedProof`]: each serializes as
-//! one byte string holding exactly the bytes [`Proof::to_bytes`] and
-//! [`CompressedProof::to_bytes`] write, envelope included, so every serde data
+//! `serde` support for both forms of [`Proof`]: each serializes as
+//! one byte string holding exactly the bytes [`Proof::to_bytes`]
+//! writes, envelope included, so every serde data
 //! format carries the same bytes and the same decoding checks apply.
 //!
 //! The envelope fixes the string's exact length, which deserialization checks
@@ -16,7 +16,6 @@
 use alloc::vec::Vec;
 use core::{fmt, marker::PhantomData};
 
-use ragu_circuits::polynomials::Rank;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, SeqAccess, Visitor},
@@ -24,7 +23,7 @@ use serde::{
 };
 
 use crate::{
-    CompressedProof, Proof,
+    Form, Proof,
     profile::ProfiledCycle,
     wire::{ENVELOPE_SIZE, Error},
 };
@@ -44,8 +43,8 @@ trait Framed: Sized {
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>>;
 }
 
-impl<C: ProfiledCycle, R: Rank> Framed for Proof<C, R> {
-    const EXPECTING: &'static str = "a proof in its wire format";
+impl<C: ProfiledCycle, F: Form> Framed for Proof<C, F> {
+    const EXPECTING: &'static str = F::EXPECTING;
 
     fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
         Self::to_bytes(self)
@@ -56,23 +55,7 @@ impl<C: ProfiledCycle, R: Rank> Framed for Proof<C, R> {
     }
 
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
-        Self::framed_len(bytes)
-    }
-}
-
-impl<C: ProfiledCycle> Framed for CompressedProof<C> {
-    const EXPECTING: &'static str = "a compressed proof in its wire format";
-
-    fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
-        Self::to_bytes(self)
-    }
-
-    fn from_wire(bytes: &[u8]) -> Result<Self, Error<'_>> {
-        Self::from_bytes(bytes)
-    }
-
-    fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
-        Self::framed_len(bytes)
+        F::framed_len::<C>(bytes)
     }
 }
 
@@ -130,25 +113,13 @@ impl<'de, T: Framed> Visitor<'de> for Bytes<T> {
     }
 }
 
-impl<C: ProfiledCycle, R: Rank> Serialize for Proof<C, R> {
+impl<C: ProfiledCycle, F: Form> Serialize for Proof<C, F> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serialize_framed(self, serializer)
     }
 }
 
-impl<'de, C: ProfiledCycle, R: Rank> Deserialize<'de> for Proof<C, R> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_bytes(Bytes(PhantomData))
-    }
-}
-
-impl<C: ProfiledCycle> Serialize for CompressedProof<C> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serialize_framed(self, serializer)
-    }
-}
-
-impl<'de, C: ProfiledCycle> Deserialize<'de> for CompressedProof<C> {
+impl<'de, C: ProfiledCycle, F: Form> Deserialize<'de> for Proof<C, F> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(Bytes(PhantomData))
     }
@@ -171,8 +142,8 @@ mod tests {
         format::{PayloadKind, write_envelope},
     };
 
-    type TestProof = Proof<Pasta, ProductionRank>;
-    type TestCompressed = CompressedProof<Pasta>;
+    type TestProof = Proof<Pasta, crate::Uncompressed<ProductionRank>>;
+    type TestCompressed = Proof<Pasta, crate::Compressed>;
 
     struct EmptyWithHugeHint;
 

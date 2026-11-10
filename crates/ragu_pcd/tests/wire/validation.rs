@@ -13,7 +13,7 @@ use crate::{
     wire::{Dimensions, Encode, Error},
 };
 
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestProof = Proof<Pasta, ragu_pcd::Uncompressed<ProductionRank>>;
 
 #[test]
 fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
@@ -42,7 +42,7 @@ fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {
         ($($field:ident),* $(,)?) => {$(
             let element = {
                 let mut bytes = Vec::new();
-                proof.$field[0].encode(&mut bytes, dims).unwrap();
+                proof.payload.$field[0].encode(&mut bytes, dims).unwrap();
                 bytes
             };
             for extra in [false, true] {
@@ -81,8 +81,8 @@ fn a_proof_of_another_shape_has_no_serialization() {
         .unwrap();
     let mut proof = app.bootstrap_pcd().into_parts().0;
     // The headers no longer share a length, so no envelope describes them.
-    let element = proof.left_header[0];
-    proof.left_header.push(element);
+    let element = proof.payload.left_header[0];
+    proof.payload.left_header.push(element);
     let error = serde_json::to_string(&proof).unwrap_err();
     assert!(error.to_string().contains("no encoding"), "{error}");
 }
@@ -160,7 +160,7 @@ fn a_supplied_bootstrap_proof_replaces_the_bootstrap_fuse() {
 
     // Refused: a proof of another shape, and a proof of another step.
     let mut short = TestProof::from_bytes(&stored).unwrap();
-    short.left_header.pop();
+    short.payload.left_header.pop();
     assert!(app_builder().unwrap().with_bootstrap(short).is_err());
     assert!(
         app_builder()

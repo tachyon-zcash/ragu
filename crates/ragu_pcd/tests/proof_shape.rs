@@ -29,7 +29,7 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     let compressed = app.compress(&honest, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
 
-    let mut reject = |proof: Proof<C, R>, label: &str| {
+    let mut reject = |proof: Proof<C, ragu_pcd::Uncompressed<R>>, label: &str| {
         let malformed = proof.carry::<()>(());
         assert!(
             !app.verify_uncompressed(&malformed, &mut rng).unwrap(),
@@ -69,20 +69,20 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
                 );
                 let mut proof = honest.proof().clone();
                 if polys {
-                    proof.$polys.push(($poly).clone());
+                    proof.payload.$polys.push(($poly).clone());
                 }
                 if cache {
-                    proof.$cache.push(($commitment).clone());
+                    proof.payload.$cache.push(($commitment).clone());
                 }
                 reject(proof, &format!("trailing {label}"));
 
-                if !honest.proof().$polys.is_empty() {
+                if !honest.proof().payload.$polys.is_empty() {
                     let mut proof = honest.proof().clone();
                     if polys {
-                        proof.$polys.pop().unwrap();
+                        proof.payload.$polys.pop().unwrap();
                     }
                     if cache {
-                        proof.$cache.pop().unwrap();
+                        proof.payload.$cache.pop().unwrap();
                     }
                     reject(proof, &format!("missing {label}"));
                 }
@@ -93,53 +93,53 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     check_pair!(
         native_extension_circuit_rxs,
         native_extension_circuit_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().payload.native_application_rx,
+        honest.proof().payload.native_application_commitment
     );
     check_pair!(
         native_extension_stage_rxs,
         native_extension_stage_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().payload.native_application_rx,
+        honest.proof().payload.native_application_commitment
     );
     check_pair!(
         nested_extension_circuit_rxs,
         nested_extension_circuit_commitments,
-        honest.proof().nested_collapse_rx,
-        honest.proof().nested_collapse_commitment
+        honest.proof().payload.nested_collapse_rx,
+        honest.proof().payload.nested_collapse_commitment
     );
     check_pair!(
         nested_extension_stage_rxs,
         nested_extension_stage_commitments,
-        honest.proof().nested_collapse_rx,
-        honest.proof().nested_collapse_commitment
+        honest.proof().payload.nested_collapse_rx,
+        honest.proof().payload.nested_collapse_commitment
     );
     check_pair!(
         native_endoscaling_step_rxs,
         native_endoscaling_step_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().payload.native_application_rx,
+        honest.proof().payload.native_application_commitment
     );
     check_pair!(
         nested_endoscaling_step_rxs,
         nested_endoscaling_step_commitments,
-        honest.proof().nested_collapse_rx,
-        honest.proof().nested_collapse_commitment
+        honest.proof().payload.nested_collapse_rx,
+        honest.proof().payload.nested_collapse_commitment
     );
     check_pair!(
         native_bind_challenges_rxs,
         native_bind_challenges_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().payload.native_application_rx,
+        honest.proof().payload.native_application_commitment
     );
 
     macro_rules! check_header {
         ($header:ident) => {
             let mut proof = honest.proof().clone();
-            proof.$header.push(C::CircuitField::ZERO);
+            proof.payload.$header.push(C::CircuitField::ZERO);
             reject(proof, concat!("trailing ", stringify!($header)));
             let mut proof = honest.proof().clone();
-            proof.$header.pop().unwrap();
+            proof.payload.$header.pop().unwrap();
             reject(proof, concat!("missing ", stringify!($header)));
         };
     }

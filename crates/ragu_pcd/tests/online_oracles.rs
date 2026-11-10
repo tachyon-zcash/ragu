@@ -15,7 +15,7 @@
 //! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
 //! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Slot::left`], [`Slot::right`], [`Slot::output`] |
-//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
+//! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`Pcd::online_commitments`](ragu_pcd::Pcd::online_commitments), the wire format |
 //!
 //! ## The rule for checks at $\zeta$
 //!
@@ -879,19 +879,19 @@ fn tachygrams(from: u64) -> Vec<Fp> {
     (from..from + SEED_SIZE as u64).map(Fp::from).collect()
 }
 
-fn unit(app: &App) -> Result<Pcd<C, R, ()>> {
+fn unit(app: &App) -> Result<Pcd<C, ragu_pcd::Uncompressed<R>, ()>> {
     Ok(app.seed(&mut StdRng::seed_from_u64(0), UnitSeed, ())?.0)
 }
 
 /// What an application does with a proof: verify it, compress it and
 /// verify the compressed proof, and send it over the wire. Also checks that
-/// the proof carries the `expected` polynomials, and that a PCD's proof,
-/// uncompressed or compressed, exposes its commitments: a verifier that
-/// expects particular polynomials compares these after verifying, rather than
-/// copying them into the header.
+/// the proof carries the `expected` polynomials, and that both proof forms
+/// expose their commitments: a verifier that expects particular polynomials
+/// compares these after verifying, rather than copying them into the
+/// header.
 fn check<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<C, R, H>,
+    pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
     expected: [Vec<Fp>; NUM_ONLINE_POLYNOMIALS],
     seed: u64,
 ) {
@@ -906,7 +906,7 @@ fn check<H: Header<Fp>>(
     assert_eq!(compressed.proof().online_commitments(), commitments);
 
     let bytes = pcd.proof().to_bytes().unwrap();
-    let decoded = Proof::<C, R>::from_bytes(&bytes)
+    let decoded = Proof::<C, ragu_pcd::Uncompressed<R>>::from_bytes(&bytes)
         .unwrap()
         .carry::<H>(pcd.data().clone());
     assert_eq!(decoded.polynomials(), expected);
@@ -1051,7 +1051,7 @@ fn every_slot_proves_and_verifies() -> Result<()> {
 // # 9. What cannot prove
 
 /// A constructed proof of a false statement must reach verifier rejection.
-fn rejected<H: Header<Fp>>(app: &App, pcd: Pcd<C, R, H>, what: &str) {
+fn rejected<H: Header<Fp>>(app: &App, pcd: Pcd<C, ragu_pcd::Uncompressed<R>, H>, what: &str) {
     let mut rng = StdRng::seed_from_u64(0xdead);
     assert!(
         !app.verify_uncompressed(&pcd, &mut rng).unwrap(),
@@ -1177,7 +1177,7 @@ impl Step<C> for UnitAt2 {
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn a_misstated_polynomial_cannot_prove() -> Result<()> {
-    fn attempt<const FAULT: u8>() -> (App, Result<Pcd<C, R, TgSet>>) {
+    fn attempt<const FAULT: u8>() -> (App, Result<Pcd<C, ragu_pcd::Uncompressed<R>, TgSet>>) {
         let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
             .register(SeedSet)
             .and_then(|b| b.register(Faulty::<FAULT>))

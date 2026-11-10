@@ -104,7 +104,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     #[cfg_attr(docsrs, doc(cfg(feature = "test-utils")))]
     pub fn verify_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         mut rng: RNG,
     ) -> Result<bool> {
         // Translate only proof-dependent failures. Header encoding may use
@@ -372,7 +372,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let proof = pcd.proof();
             let expected = nested_ab::Stage::<C::HostCurve, R, C::Profile>::rx(
                 crate::proof::bridge_alpha_power(
-                    proof.bridge_alpha,
+                    proof.payload.bridge_alpha,
                     nested_internal::RxIndex::BridgeAB,
                 ),
                 &nested_ab::Witness {
@@ -415,7 +415,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
     /// The native mesh claim: see
     /// [`verify_uncompressed`](Self::verify_uncompressed).
-    fn native_mesh_claim(&self, proof: &Proof<C, R>) -> Result<bool> {
+    fn native_mesh_claim(&self, proof: &Proof<C, crate::Uncompressed<R>>) -> Result<bool> {
         use native_internal::{InternalCircuitIndex, RxIndex, stages};
         type Preamble<C, R, const H: usize> = stages::preamble::Stage<C, R, H>;
         type Query<C, R, const H: usize> = stages::query::Stage<C, R, H>;
@@ -507,7 +507,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
     /// The nested mesh claim: see
     /// [`verify_uncompressed`](Self::verify_uncompressed).
-    fn nested_mesh_claim(&self, proof: &Proof<C, R>) -> Result<bool> {
+    fn nested_mesh_claim(&self, proof: &Proof<C, crate::Uncompressed<R>>) -> Result<bool> {
         use nested_internal::{InternalCircuitIndex, RxIndex, stages};
         type Preamble<C, R, P> = stages::preamble::Stage<C, R, P>;
         type Query<C, R, P> = stages::query::Stage<C, R, P>;
@@ -617,7 +617,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     #[cfg_attr(docsrs, doc(cfg(feature = "test-utils")))]
     pub fn verify_differential<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         mut rng: RNG,
     ) -> Result<bool> {
         let uncompressed = self.verify_uncompressed(pcd, &mut rng);
@@ -641,7 +641,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 /// checks this for the root; a parent enforces it for each child through
 /// `bind_beta`, its walk and its nested batch.
 pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, crate::Uncompressed<R>>,
     lifts: &[C::ScalarField; nested_challenges::NUM + 1],
 ) -> Result<bool> {
     let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
@@ -664,7 +664,9 @@ pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank, const HEADER_SI
 /// the proof's polynomial commitments. `verify_uncompressed` separately
 /// recomputes the caches; the recursive counterpart is `bind_endoscalar`'s
 /// exports and the parent's `bind_beta` checks.
-pub(crate) fn nested_points_match<C: ProfiledCycle, R: Rank>(proof: &Proof<C, R>) -> Result<bool> {
+pub(crate) fn nested_points_match<C: ProfiledCycle, R: Rank>(
+    proof: &Proof<C, crate::Uncompressed<R>>,
+) -> Result<bool> {
     use native_internal::{RxIndex, stages::points};
 
     let ab = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::PointsAb]);
@@ -704,7 +706,7 @@ mod native {
     use crate::internal::{claims::Source, native::RxComponent};
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
-        pub proof: &'rx Proof<C, R>,
+        pub proof: &'rx Proof<C, crate::Uncompressed<R>>,
     }
 
     impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {
@@ -736,7 +738,7 @@ mod nested {
 
     /// Source for nested field polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
-        pub proof: &'rx Proof<C, R>,
+        pub proof: &'rx Proof<C, crate::Uncompressed<R>>,
     }
 
     impl<'rx, C: Cycle, R: Rank> Source for SingleProofSource<'rx, C, R> {

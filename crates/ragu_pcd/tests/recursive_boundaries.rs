@@ -298,7 +298,7 @@ mod registry {
             );
         for (name, id) in cases {
             let (mut proof, data) = child.clone().into_parts();
-            proof.circuit_id = id;
+            proof.payload.circuit_id = id;
             assert!(
                 !app.verify_differential(&proof.carry::<Value>(data), inputs.verifier_rng())?,
                 "{name}"
@@ -313,7 +313,7 @@ mod registry {
             unassigned[selector % unassigned.len()],
         ] {
             let (mut proof, data) = child.clone().into_parts();
-            proof.circuit_id = id;
+            proof.payload.circuit_id = id;
             let changed = proof.carry::<Value>(data);
             for (position, descendant) in support::descendants(&app, &changed, &sibling, &mut rng)?
             {
@@ -534,73 +534,74 @@ mod stages {
             if native {
                 match mutation {
                     Mutation::Bits(pair) => same_lift_bits(
-                        &mut changed.native_points_walk_rx,
+                        &mut changed.payload.native_points_walk_rx,
                         &native_wires,
                         pair,
                         native_delta,
                     ),
                     Mutation::Product(selector) => corrupt_product(
-                        &mut changed.native_points_walk_rx,
+                        &mut changed.payload.native_points_walk_rx,
                         &native_wires,
                         selector,
                         native_delta,
                     ),
                     Mutation::Point(selector) => off_curve_point::<EpAffine>(
-                        &mut changed.native_points_walk_rx,
+                        &mut changed.payload.native_points_walk_rx,
                         &native_wires,
                         selector,
                         native_delta,
                     ),
                 }
-                changed.native_points_walk_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &changed.native_points_walk_rx,
-                    C::host_generators(app.params),
-                );
+                changed.payload.native_points_walk_commitment.0 =
+                    ReferenceBackend::sparse_commit_to_affine(
+                        &changed.payload.native_points_walk_rx,
+                        C::host_generators(app.params),
+                    );
             }
             if nested {
                 match mutation {
                     Mutation::Bits(pair) => {
                         same_lift_bits(
-                            &mut changed.nested_endoscalar_rx,
+                            &mut changed.payload.nested_endoscalar_rx,
                             &nested_wires,
                             pair,
                             nested_delta,
                         );
-                        changed.nested_endoscalar_commitment.0 =
+                        changed.payload.nested_endoscalar_commitment.0 =
                             ReferenceBackend::sparse_commit_to_affine(
-                                &changed.nested_endoscalar_rx,
+                                &changed.payload.nested_endoscalar_rx,
                                 C::nested_generators(app.params),
                             );
                     }
                     Mutation::Product(selector) => {
                         corrupt_product(
-                            &mut changed.nested_endoscalar_rx,
+                            &mut changed.payload.nested_endoscalar_rx,
                             &nested_wires,
                             selector,
                             nested_delta,
                         );
-                        changed.nested_endoscalar_commitment.0 =
+                        changed.payload.nested_endoscalar_commitment.0 =
                             ReferenceBackend::sparse_commit_to_affine(
-                                &changed.nested_endoscalar_rx,
+                                &changed.payload.nested_endoscalar_rx,
                                 C::nested_generators(app.params),
                             );
                     }
                     Mutation::Point(selector) => {
                         off_curve_point::<EqAffine>(
-                            Arc::make_mut(&mut changed.nested_points_rx),
+                            Arc::make_mut(&mut changed.payload.nested_points_rx),
                             &nested_wires,
                             selector,
                             nested_delta,
                         );
-                        changed.nested_points_commitment.0 =
+                        changed.payload.nested_points_commitment.0 =
                             ReferenceBackend::sparse_commit_to_affine(
-                                &changed.nested_points_rx,
+                                &changed.payload.nested_points_rx,
                                 C::nested_generators(app.params),
                             );
                     }
                 }
             }
-            let walked = StageReader::new(&changed.native_points_walk_rx);
+            let walked = StageReader::new(&changed.payload.native_points_walk_rx);
             assert_eq!(
                 nested_endpoint
                     .iter()
@@ -609,7 +610,7 @@ mod stages {
                 support::coordinates(honest.proof().nested_p_commitment()),
                 "{mutation:?}: the native walk must still end at the committed P_n"
             );
-            let walked = StageReader::new(&changed.nested_points_rx);
+            let walked = StageReader::new(&changed.payload.nested_points_rx);
             assert_eq!(
                 native_endpoint
                     .iter()

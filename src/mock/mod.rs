@@ -5,7 +5,7 @@
 //! implementation.
 
 pub use application::{Application, ApplicationBuilder};
-pub use proof::{CompressedPcd, CompressedProof, Pcd, Proof};
+pub use proof::{Compressed, Form, Pcd, Proof, Uncompressed};
 pub use ragu_pcd::{RegistryTags, SelectableBackend, ipa, profile};
 
 mod application;

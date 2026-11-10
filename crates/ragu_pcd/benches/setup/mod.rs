@@ -4,7 +4,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, CompressedPcd, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, Pcd};
 use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -53,8 +53,8 @@ pub fn setup_seed() -> (
 
 pub fn setup_fuse() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -83,8 +83,8 @@ pub fn setup_fuse() -> (
 /// baselines isolate the cost of the overridden operations.
 pub fn setup_fuse_accelerated() -> (
     Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -121,7 +121,7 @@ pub fn setup_fuse_accelerated() -> (
 
 pub fn setup_verify_leaf() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
@@ -139,7 +139,7 @@ pub fn setup_verify_leaf() -> (
 
 pub fn setup_verify_node() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::InternalNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
@@ -177,7 +177,7 @@ pub fn setup_verify_node() -> (
 /// baseline isolates compressed verification from compression.
 pub fn setup_verify_compressed_leaf() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    CompressedPcd<Pasta, nontrivial::LeafNode>,
+    ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, nontrivial::LeafNode>,
 ) {
     let (app, leaf, mut rng) = setup_verify_leaf();
     let compressed = app.compress(&leaf, &mut rng).unwrap();
@@ -187,7 +187,7 @@ pub fn setup_verify_compressed_leaf() -> (
 /// Mirrors [`setup_verify_node`], with the node compressed.
 pub fn setup_verify_compressed_node() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    CompressedPcd<Pasta, nontrivial::InternalNode>,
+    ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, nontrivial::InternalNode>,
 ) {
     let (app, node, mut rng) = setup_verify_node();
     let compressed = app.compress(&node, &mut rng).unwrap();

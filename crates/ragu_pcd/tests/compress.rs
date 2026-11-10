@@ -24,7 +24,6 @@ use ragu_primitives::{
 use rand::{SeedableRng, TryCryptoRng, TryRng, rngs::StdRng};
 use udon::field::Field;
 
-use super::{CompressedPcd, CompressedProof};
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
     compress::revdot::{native_position, nested_position},
@@ -107,21 +106,25 @@ fn app() -> App {
         .expect("failed to create test application")
 }
 
-fn decides<H: Header<Fp>>(app: &App, pcd: &Pcd<Pasta, TestR, H>, seed: u64) -> bool {
+fn decides<H: Header<Fp>>(
+    app: &App,
+    pcd: &Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, H>,
+    seed: u64,
+) -> bool {
     app.verify_uncompressed(pcd, StdRng::seed_from_u64(seed))
         .expect("verify should not error")
 }
 
 fn compress<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<Pasta, TestR, H>,
+    pcd: &Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, H>,
     seed: u64,
-) -> CompressedPcd<Pasta, H> {
+) -> ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, H> {
     app.compress(pcd, &mut StdRng::seed_from_u64(seed))
         .expect("compress should not error")
 }
 
-fn accepts<H: Header<Fp>>(app: &App, pcd: &CompressedPcd<Pasta, H>) -> bool {
+fn accepts<H: Header<Fp>>(app: &App, pcd: &ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, H>) -> bool {
     app.verify_compressed(pcd)
         .expect("verify_compressed should not error")
 }
@@ -158,15 +161,21 @@ fn rejects_what_the_decider_rejects() {
     let (seeded, ()) = app
         .seed(&mut StdRng::seed_from_u64(1), Seed, Fp::from(7))
         .expect("seed");
-    let edited = |edit: fn(&App, &mut Proof<Pasta, TestR>)| {
+    let edited = |edit: fn(&App, &mut Proof<Pasta, ragu_pcd::Uncompressed<TestR>>)| {
         let (mut proof, data) = seeded.clone().into_parts();
         edit(&app, &mut proof);
         proof.carry::<Value>(data)
     };
-    let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 3] = [
-        ("left header element", |_, p| p.left_header[0] += Fp::ONE),
+    let corruptions: [(
+        &str,
+        fn(&App, &mut Proof<Pasta, ragu_pcd::Uncompressed<TestR>>),
+    ); 3] = [
+        ("left header element", |_, p| {
+            p.payload.left_header[0] += Fp::ONE
+        }),
         ("polynomial with a stale commitment", |_, p| {
-            p.native_a_poly
+            p.payload
+                .native_a_poly
                 .add_assign(&sparse::Polynomial::from_coeffs(vec![Fp::ONE]))
         }),
         // The eval stage's m(w, u, y) wire, which the instance does not
@@ -180,8 +189,8 @@ fn rejects_what_the_decider_rejects() {
                 wires_of(&out.evaluations.registry_wy)
             })
             .expect("the eval stage lays out")[0];
-            let held = StageReader::<Fp, TestR>::new(&p.native_eval_rx).read(wire);
-            support::set_wires(&mut p.native_eval_rx, &[wire], &[held + Fp::ONE]);
+            let held = StageReader::<Fp, TestR>::new(&p.payload.native_eval_rx).read(wire);
+            support::set_wires(&mut p.payload.native_eval_rx, &[wire], &[held + Fp::ONE]);
             support::recommit(app, p, Cache::NativeEval);
         }),
     ];
@@ -194,10 +203,15 @@ fn rejects_what_the_decider_rejects() {
         );
     }
 
-    let malformed_headers: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 2] = [
-        ("left header too long", |_, p| p.left_header.push(Fp::ZERO)),
+    let malformed_headers: [(
+        &str,
+        fn(&App, &mut Proof<Pasta, ragu_pcd::Uncompressed<TestR>>),
+    ); 2] = [
+        ("left header too long", |_, p| {
+            p.payload.left_header.push(Fp::ZERO)
+        }),
         ("right header too short", |_, p| {
-            p.right_header.pop();
+            p.payload.right_header.pop();
         }),
     ];
     for (case, edit) in malformed_headers {
@@ -241,19 +255,19 @@ fn rejects_decoded_circuit_indices_and_challenge_caches_before_proving() {
     assert!(decides(&app, &decoded, 2));
     assert!(accepts(&app, &compress(&app, &decoded, 3)));
 
-    let edits: [(&str, fn(&mut Proof<Pasta, TestR>)); 10] = [
+    let edits: [(&str, fn(&mut Proof<Pasta, ragu_pcd::Uncompressed<TestR>>)); 10] = [
         ("circuit index", |p| {
-            p.circuit_id = CircuitIndex::from_u32(u32::MAX)
+            p.payload.circuit_id = CircuitIndex::from_u32(u32::MAX)
         }),
-        ("w", |p| p.w += Fp::ONE),
-        ("y", |p| p.y += Fp::ONE),
-        ("z", |p| p.z += Fp::ONE),
-        ("mu", |p| p.mu += Fp::ONE),
-        ("mu_prime", |p| p.mu_prime += Fp::ONE),
-        ("x", |p| p.x += Fp::ONE),
-        ("alpha", |p| p.alpha += Fp::ONE),
-        ("u", |p| p.u += Fp::ONE),
-        ("pre_beta", |p| p.pre_beta += Fp::ONE),
+        ("w", |p| p.payload.w += Fp::ONE),
+        ("y", |p| p.payload.y += Fp::ONE),
+        ("z", |p| p.payload.z += Fp::ONE),
+        ("mu", |p| p.payload.mu += Fp::ONE),
+        ("mu_prime", |p| p.payload.mu_prime += Fp::ONE),
+        ("x", |p| p.payload.x += Fp::ONE),
+        ("alpha", |p| p.payload.alpha += Fp::ONE),
+        ("u", |p| p.payload.u += Fp::ONE),
+        ("pre_beta", |p| p.payload.pre_beta += Fp::ONE),
     ];
     for (name, edit) in edits {
         let (mut proof, ()) = honest.clone().into_parts();
@@ -279,62 +293,64 @@ fn rejects_malformed_messages_without_error() {
     let compressed = compress(&app, &app.bootstrap_pcd(), 462);
     assert!(accepts(&app, &compressed));
     let (proof, ()) = compressed.into_parts();
-    let corruptions: &[(&str, fn(&mut CompressedProof<Pasta>))] = &[
+    let corruptions: &[(&str, fn(&mut ragu_pcd::Proof<Pasta, ragu_pcd::Compressed>))] = &[
         ("native IPA identity S", |p| {
-            p.native.opening.s_commitment = Default::default()
+            p.payload.native.opening.s_commitment = Default::default()
         }),
         ("nested IPA identity S", |p| {
-            p.nested.opening.s_commitment = Default::default()
+            p.payload.nested.opening.s_commitment = Default::default()
         }),
         ("zero nested IPA coefficient", |p| {
-            p.nested.opening.c = Fq::ZERO
+            p.payload.nested.opening.c = Fq::ZERO
         }),
-        ("zero nested instance c", |p| p.instance.nested_c = Fq::ZERO),
+        ("zero nested instance c", |p| {
+            p.payload.instance.nested_c = Fq::ZERO
+        }),
         ("native reduction identity p", |p| {
-            p.native.reduction.p = Default::default()
+            p.payload.native.reduction.p = Default::default()
         }),
         ("identity fuse bridge", |p| {
             let bridge = nested_position::<crate::profile::Standard>(nested::RxComponent::Rx(
                 nested::RxIndex::BridgePreamble,
             ));
-            p.instance.nested[bridge] = Default::default();
+            p.payload.instance.nested[bridge] = Default::default();
         }),
         ("identity native accumulator", |p| {
-            p.instance.native
+            p.payload.instance.native
                 [native_position::<crate::profile::Standard>(native::RxComponent::AbA)] =
                 Default::default()
         }),
         ("identity native registry restriction", |p| {
-            p.instance.native_registry_xy = Default::default()
+            p.payload.instance.native_registry_xy = Default::default()
         }),
         ("identity nested accumulator", |p| {
-            p.instance.nested
+            p.payload.instance.nested
                 [nested_position::<crate::profile::Standard>(nested::RxComponent::AbA)] =
                 Default::default()
         }),
         ("nested reduction identity p", |p| {
-            p.nested.reduction.p = Default::default()
+            p.payload.nested.reduction.p = Default::default()
         }),
         ("native batch identity quotient", |p| {
-            p.native.batch.f = Default::default()
+            p.payload.native.batch.f = Default::default()
         }),
         ("nested batch identity quotient", |p| {
-            p.nested.batch.f = Default::default()
+            p.payload.nested.batch.f = Default::default()
         }),
         ("native IPA identity L", |p| {
-            p.native.opening.rounds[0].0 = Default::default()
+            p.payload.native.opening.rounds[0].0 = Default::default()
         }),
         ("nested IPA identity R", |p| {
-            p.nested.opening.rounds[0].1 = Default::default()
+            p.payload.nested.opening.rounds[0].1 = Default::default()
         }),
         ("zero nested reduction opening", |p| {
-            p.nested.reduction.openings[0] = Fq::ZERO
+            p.payload.nested.reduction.openings[0] = Fq::ZERO
         }),
         ("native fold identity E", |p| {
-            p.native.reduction.fold.inner = Default::default()
+            p.payload.native.reduction.fold.inner = Default::default()
         }),
         ("zero nested batched value", |p| {
-            p.nested.batch.evaluations[0] = Fq::ZERO
+            p.payload.nested.batch.evaluations[0] = Fq::ZERO
         }),
     ];
     for &(case, edit) in corruptions {
@@ -383,115 +399,129 @@ fn propagates_header_encoding_errors() {
 fn rejects_tampered_messages() {
     let app = app();
     let (proof, ()) = compress(&app, &app.bootstrap_pcd(), 1).into_parts();
-    let tamper = |case: &str, edit: &dyn Fn(&mut CompressedProof<Pasta>)| {
+    let tamper = |case: &str, edit: &dyn Fn(&mut ragu_pcd::Proof<Pasta, ragu_pcd::Compressed>)| {
         let mut tampered = proof.clone();
         edit(&mut tampered);
         assert!(!accepts(&app, &tampered.carry::<()>(())), "{case}");
     };
 
     // The instance.
-    tamper("accumulator value", &|p| p.instance.c += Fp::ONE);
-    tamper("batch value", &|p| p.instance.v += Fp::ONE);
+    tamper("accumulator value", &|p| p.payload.instance.c += Fp::ONE);
+    tamper("batch value", &|p| p.payload.instance.v += Fp::ONE);
     tamper("nested accumulator value", &|p| {
-        p.instance.nested_c += Fq::ONE
+        p.payload.instance.nested_c += Fq::ONE
     });
-    tamper("nested batch value", &|p| p.instance.nested_v += Fq::ONE);
-    tamper("eval stage wire", &|p| p.instance.a_at_u += Fp::ONE);
+    tamper("nested batch value", &|p| {
+        p.payload.instance.nested_v += Fq::ONE
+    });
+    tamper("eval stage wire", &|p| p.payload.instance.a_at_u += Fp::ONE);
     tamper("nested eval stage wire", &|p| {
-        p.instance.nested_b_at_u += Fq::ONE
+        p.payload.instance.nested_b_at_u += Fq::ONE
     });
-    tamper("preamble stage wire", &|p| p.instance.left.x += Fp::ONE);
+    tamper("preamble stage wire", &|p| {
+        p.payload.instance.left.x += Fp::ONE
+    });
     tamper("nested preamble stage wire", &|p| {
-        p.instance.nested_right.y += Fq::ONE
+        p.payload.instance.nested_right.y += Fq::ONE
     });
-    tamper("bridge blinding", &|p| p.instance.bridge_alpha += Fq::ONE);
+    tamper("bridge blinding", &|p| {
+        p.payload.instance.bridge_alpha += Fq::ONE
+    });
     tamper("native commitment", &|p| {
-        p.instance.native[3] = p.instance.native[4]
+        p.payload.instance.native[3] = p.payload.instance.native[4]
     });
     tamper("nested commitment", &|p| {
-        p.instance.nested[0] = p.instance.nested[1]
+        p.payload.instance.nested[0] = p.payload.instance.nested[1]
     });
     tamper("registry restriction commitment", &|p| {
-        p.instance.native_registry_xy = p.instance.native_p
+        p.payload.instance.native_registry_xy = p.payload.instance.native_p
     });
     tamper("nested batch commitment", &|p| {
-        p.instance.nested_p = p.instance.nested_registry_xy
+        p.payload.instance.nested_p = p.payload.instance.nested_registry_xy
     });
     tamper("challenge stage commitment", &|p| {
-        p.instance.nested_challenges_partial = -p.instance.nested_challenges_partial
+        p.payload.instance.nested_challenges_partial = -p.payload.instance.nested_challenges_partial
     });
     tamper("bridge commitment", &|p| {
         let bridge = nested_position::<crate::profile::Standard>(nested::RxComponent::Rx(
             nested::RxIndex::BridgeAB,
         ));
-        p.instance.nested[bridge] = -p.instance.nested[bridge];
+        p.payload.instance.nested[bridge] = -p.payload.instance.nested[bridge];
     });
-    tamper("header element", &|p| p.instance.right_header[0] += Fp::ONE);
-    tamper("header length", &|p| p.instance.left_header.push(Fp::ZERO));
+    tamper("header element", &|p| {
+        p.payload.instance.right_header[0] += Fp::ONE
+    });
+    tamper("header length", &|p| {
+        p.payload.instance.left_header.push(Fp::ZERO)
+    });
     tamper("circuit id", &|p| {
-        p.instance.circuit_id = CircuitIndex::new(u32::MAX as usize)
+        p.payload.instance.circuit_id = CircuitIndex::new(u32::MAX as usize)
     });
     tamper("missing commitment", &|p| {
-        p.instance.native.pop();
+        p.payload.instance.native.pop();
     });
 
     // The reduction.
     tamper("error commitment", &|p| {
-        p.native.reduction.fold.inner = p.native.reduction.fold.outer
+        p.payload.native.reduction.fold.inner = p.payload.native.reduction.fold.outer
     });
     tamper("nested error commitment", &|p| {
-        p.nested.reduction.fold.outer = p.nested.reduction.fold.inner
+        p.payload.nested.reduction.fold.outer = p.payload.nested.reduction.fold.inner
     });
     tamper("weighted error terms", &|p| {
-        p.native.reduction.fold.inner_epsilon += Fp::ONE
+        p.payload.native.reduction.fold.inner_epsilon += Fp::ONE
     });
     tamper("nested weighted error terms", &|p| {
-        p.nested.reduction.fold.outer_epsilon += Fq::ONE
+        p.payload.nested.reduction.fold.outer_epsilon += Fq::ONE
     });
     tamper("p commitment", &|p| {
-        p.native.reduction.p = p.native.reduction.q
+        p.payload.native.reduction.p = p.payload.native.reduction.q
     });
     tamper("nested q commitment", &|p| {
-        p.nested.reduction.q = p.nested.reduction.p
+        p.payload.nested.reduction.q = p.payload.nested.reduction.p
     });
     tamper("an opening at r", &|p| {
-        p.native.reduction.openings[0] += Fp::ONE
+        p.payload.native.reduction.openings[0] += Fp::ONE
     });
     tamper("a nested opening at rz", &|p| {
-        p.nested.reduction.openings[1] += Fq::ONE
+        p.payload.nested.reduction.openings[1] += Fq::ONE
     });
     tamper("p at 1/r", &|p| {
-        p.native.reduction.p_at_inverse_r += Fp::ONE
+        p.payload.native.reduction.p_at_inverse_r += Fp::ONE
     });
-    tamper("nested q at r", &|p| p.nested.reduction.q_at_r += Fq::ONE);
+    tamper("nested q at r", &|p| {
+        p.payload.nested.reduction.q_at_r += Fq::ONE
+    });
     tamper("missing opening", &|p| {
-        p.native.reduction.openings.pop();
+        p.payload.native.reduction.openings.pop();
     });
 
     // The batch.
     tamper("quotient commitment", &|p| {
-        p.native.batch.f = p.native.reduction.p
+        p.payload.native.batch.f = p.payload.native.reduction.p
     });
     tamper("a nested batched value", &|p| {
-        p.nested.batch.evaluations[1] += Fq::ONE
+        p.payload.nested.batch.evaluations[1] += Fq::ONE
     });
     tamper("missing batched value", &|p| {
-        p.native.batch.evaluations.pop();
+        p.payload.native.batch.evaluations.pop();
     });
 
     // The IPA.
-    tamper("final coefficient", &|p| p.native.opening.c += Fp::ONE);
+    tamper("final coefficient", &|p| {
+        p.payload.native.opening.c += Fp::ONE
+    });
     tamper("nested final coefficient", &|p| {
-        p.nested.opening.c += Fq::ONE
+        p.payload.nested.opening.c += Fq::ONE
     });
     tamper("a round", &|p| {
-        let (l, r) = p.native.opening.rounds[0];
-        p.native.opening.rounds[0] = (r, l);
+        let (l, r) = p.payload.native.opening.rounds[0];
+        p.payload.native.opening.rounds[0] = (r, l);
     });
     tamper("missing nested round", &|p| {
-        p.nested.opening.rounds.pop();
+        p.payload.nested.opening.rounds.pop();
     });
     tamper("blinding commitment", &|p| {
-        p.native.opening.s_commitment = p.native.opening.rounds[0].0
+        p.payload.native.opening.s_commitment = p.payload.native.opening.rounds[0].0
     });
 }

@@ -48,8 +48,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         step: &S,
         witness: &S::Witness<'source>,
-        left: (&Proof<C, R>, &<S::Left as Header<C::CircuitField>>::Data),
-        right: (&Proof<C, R>, &<S::Right as Header<C::CircuitField>>::Data),
+        left: (
+            &Proof<C, crate::Uncompressed<R>>,
+            &<S::Left as Header<C::CircuitField>>::Data,
+        ),
+        right: (
+            &Proof<C, crate::Uncompressed<R>>,
+            &<S::Right as Header<C::CircuitField>>::Data,
+        ),
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<Vec<C::CircuitField>> {
         builder.set_circuit_id(S::INDEX.circuit_index::<C::Profile>(self.num_application_steps)?);
@@ -132,8 +138,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: (&Proof<C, R>, <S::Left as Header<C::CircuitField>>::Data),
-        right: (&Proof<C, R>, <S::Right as Header<C::CircuitField>>::Data),
+        left: (
+            &Proof<C, crate::Uncompressed<R>>,
+            <S::Left as Header<C::CircuitField>>::Data,
+        ),
+        right: (
+            &Proof<C, crate::Uncompressed<R>>,
+            <S::Right as Header<C::CircuitField>>::Data,
+        ),
         zeta: C::CircuitField,
         staged: Vec<C::CircuitField>,
         builder: &mut ProofBuilder<'_, C, R, B>,

@@ -103,7 +103,7 @@ fn check_openings<F, C>(
     assert_eq!(at_zero.value, witness.p[0], "p(0) is the combined target");
 }
 
-fn native_targets(pcd: &Pcd<Pasta, TestR, ()>, y: Fp) -> NativeKy<Fp> {
+fn native_targets(pcd: &Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, ()>, y: Fp) -> NativeKy<Fp> {
     NativeKy {
         c: Some(pcd.proof().native_c()),
         ..ky::native_ky::<Pasta, TestR, (), HEADER_SIZE>(pcd, y).unwrap()
@@ -111,7 +111,7 @@ fn native_targets(pcd: &Pcd<Pasta, TestR, ()>, y: Fp) -> NativeKy<Fp> {
 }
 
 struct NativeRound {
-    proof: Proof<Pasta, TestR>,
+    proof: Proof<Pasta, ragu_pcd::Uncompressed<TestR>>,
     y: Fp,
     z: Fp,
     reduction: Reduction<EqAffine>,

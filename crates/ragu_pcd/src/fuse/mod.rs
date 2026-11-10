@@ -76,9 +76,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
-    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        left: Pcd<C, crate::Uncompressed<R>, S::Left>,
+        right: Pcd<C, crate::Uncompressed<R>, S::Right>,
+    ) -> Result<(Pcd<C, crate::Uncompressed<R>, S::Output>, S::Aux<'source>)> {
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier
         // refuses it, rather than read past its ends.

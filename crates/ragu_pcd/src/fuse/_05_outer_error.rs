@@ -134,7 +134,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // The binding circuit's, over the children's nested
                 // extension stages its binding names: in the circuit the
                 // parent walks them, here they are read off the proofs.
-                let bound = |proof: &crate::Proof<C, R>| {
+                let bound = |proof: &crate::Proof<C, crate::Uncompressed<R>>| {
                     ky::native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
                 };
                 let left_bound = preamble_witness.as_ref().map(|w| bound(w.left.proof));

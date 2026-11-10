@@ -12,7 +12,6 @@ use udon::curve::AffineAdapter;
 
 use super::{
     super::{
-        CompressedProof,
         header::{Header, Suffix},
         step::{Encoded, Index, Oracles, Step},
     },
@@ -23,8 +22,8 @@ use super::{
 };
 
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
-type Pcd<H> = crate::Pcd<Pasta, TestRank, H>;
-type Proof = crate::Proof<Pasta, TestRank>;
+type Pcd<H> = crate::Pcd<Pasta, crate::Uncompressed<TestRank>, H>;
+type Proof = crate::Proof<Pasta, crate::Uncompressed<TestRank>>;
 
 /// Header carrying one field element, as an application header would.
 struct ValueHeader;
@@ -123,7 +122,7 @@ pub(super) fn check_codecs(
     let (resumed, ()) = app.fuse(rng, Merge(false), None, decoded, right.clone())?;
     assert!(app.verify_uncompressed(&resumed, &mut *rng)?);
     let mut corrupt = bytes;
-    corrupt[CompressedProof::<Pasta>::encoded_len::<TestRank, 4>()] ^= 2; // Alter a coefficient, not its commitment.
+    corrupt[crate::Proof::<Pasta, crate::Compressed>::encoded_len::<TestRank, 4>()] ^= 2; // Alter a coefficient, not its commitment.
     let corrupt = Proof::from_bytes(&corrupt)
         .expect("decode representation")
         .carry::<PolynomialHeader>(*merged.data());
@@ -142,7 +141,7 @@ pub(super) fn check_codecs(
         .proof()
         .to_bytes()
         .expect("encode compressed proof");
-    let decoded = CompressedProof::<Pasta>::from_bytes(&bytes)
+    let decoded = crate::Proof::<Pasta, crate::Compressed>::from_bytes(&bytes)
         .expect("decode compressed proof")
         .carry::<PolynomialHeader>(*compressed.data());
     assert!(app.verify_compressed(&decoded)?);
@@ -150,7 +149,7 @@ pub(super) fn check_codecs(
     assert_eq!(decoded.proof().online_commitments(), resumed.commitments());
     let ordinary = resumed.proof().to_bytes().expect("encode ordinary proof");
     assert!(matches!(
-        CompressedProof::<Pasta>::from_bytes(&ordinary[..bytes.len()]),
+        crate::Proof::<Pasta, crate::Compressed>::from_bytes(&ordinary[..bytes.len()]),
         Err(crate::wire::Error::Invalid {
             reason: "proof payload kind mismatch",
             ..
@@ -169,7 +168,7 @@ fn compressed_proofs_reject_other_setup_and_rank() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(1);
     let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7)?;
     let compressed = app.compress(&pcd, &mut rng)?;
-    let decoded = CompressedProof::<Pasta>::from_bytes(
+    let decoded = crate::Proof::<Pasta, crate::Compressed>::from_bytes(
         &compressed.proof().to_bytes().expect("encode compressed"),
     )
     .expect("decode compressed")
@@ -204,7 +203,7 @@ fn compressed_proofs_reject_other_setup_and_rank() -> Result<()> {
         .expect("encode wide proof");
     bytes[16..20].copy_from_slice(&TestRank::RANK.to_le_bytes());
     assert!(matches!(
-        CompressedProof::<Pasta>::from_bytes(&bytes),
+        crate::Proof::<Pasta, crate::Compressed>::from_bytes(&bytes),
         Err(crate::wire::Error::Invalid {
             reason: "mock proof binding mismatch",
             ..

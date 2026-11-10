@@ -102,7 +102,7 @@ fn check_descendants(
 mod challenge_binding {
     use super::*;
 
-    fn witness(proof: &Proof<C, R>) -> Result<challenges::Witness<Fq>> {
+    fn witness(proof: &Proof<C, ragu_pcd::Uncompressed<R>>) -> Result<challenges::Witness<Fq>> {
         let lifts = proof.challenges().lifts::<C>()?;
         Ok(challenges::Witness::new::<_, HEADER_SIZE>(
             lifts[..challenges::NUM].try_into().unwrap(),
@@ -117,16 +117,17 @@ mod challenge_binding {
     /// The native transcript challenges deliberately remain the original ones.
     fn install_lifts(
         app: &support::App,
-        proof: &mut Proof<C, R>,
+        proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
         changed: &challenges::Witness<Fq>,
     ) -> Result<()> {
         let partials = native::stages::eval::BindingPartials::compute::<C, R, ReferenceBackend>(
             app.params, changed,
         );
-        proof.nested_challenges_rx =
+        proof.payload.nested_challenges_rx =
             challenges::Stage::<EqAffine, R, crate::profile::Standard>::rx(Fq::ZERO, changed)?;
-        proof.nested_challenges_commitment.0 = nested_commit(app, &proof.nested_challenges_rx);
-        proof.nested_challenges_partial = partials.binding;
+        proof.payload.nested_challenges_commitment.0 =
+            nested_commit(app, &proof.payload.nested_challenges_rx);
+        proof.payload.nested_challenges_partial = partials.binding;
         let wires =
             stage_wire_indices::<_, R, native::stages::eval::Stage<C, R, HEADER_SIZE>>(|stage| {
                 wires_of(&stage.partials)
@@ -136,29 +137,32 @@ mod challenge_binding {
             .iter()
             .flat_map(|&point| support::coordinates(point))
             .collect();
-        support::set_wires(&mut proof.native_eval_rx, &wires, &values);
-        proof.native_eval_commitment.0 = native_commit(app, &proof.native_eval_rx);
+        support::set_wires(&mut proof.payload.native_eval_rx, &wires, &values);
+        proof.payload.native_eval_commitment.0 = native_commit(app, &proof.payload.native_eval_rx);
         let copy = stage_wire_indices::<
             _,
             R,
             nested::stages::eval::Stage<EqAffine, R, crate::profile::Standard>,
         >(|stage| wires_of(&stage.native_eval))?;
         support::set_wires(
-            Arc::make_mut(&mut proof.bridge_eval_rx),
+            Arc::make_mut(&mut proof.payload.bridge_eval_rx),
             &copy,
-            &support::coordinates(proof.native_eval_commitment.0),
+            &support::coordinates(proof.payload.native_eval_commitment.0),
         );
-        proof.bridge_eval_commitment = nested_commit(app, &proof.bridge_eval_rx);
+        proof.payload.bridge_eval_commitment = nested_commit(app, &proof.payload.bridge_eval_rx);
         assert_complete_binding(app, proof)?;
         Ok(())
     }
 
     /// This is precisely the equality the parent completes with pre_beta.
-    fn assert_complete_binding(app: &support::App, proof: &Proof<C, R>) -> Result<()> {
+    fn assert_complete_binding(
+        app: &support::App,
+        proof: &Proof<C, ragu_pcd::Uncompressed<R>>,
+    ) -> Result<()> {
         let beta_generator = C::nested_generators(app.params).g()
             [native::circuits::bind_beta::generator_index::<C, R>()];
         assert_eq!(
-            (proof.nested_challenges_partial.to_projective()
+            (proof.payload.nested_challenges_partial.to_projective()
                 + beta_generator * nested::challenge::<C>(proof.pre_beta())?)
             .to_affine(),
             proof.nested_challenges_commitment(),
@@ -169,7 +173,7 @@ mod challenge_binding {
 
     /// The decider's check of a root: its challenge stage is the stage of its
     /// own lifts and headers.
-    fn stage_matches(proof: &Proof<C, R>) -> Result<bool> {
+    fn stage_matches(proof: &Proof<C, ragu_pcd::Uncompressed<R>>) -> Result<bool> {
         crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
             proof,
             &proof.challenges().lifts::<C>()?,
@@ -266,9 +270,10 @@ mod challenge_binding {
         for case in ["partial", "pre_beta", "pre_beta_with_compensating_partial"] {
             let (mut proof, data) = honest.clone().into_parts();
             if case == "partial" {
-                proof.nested_challenges_partial = (proof.nested_challenges_partial.to_projective()
-                    + Ep::generator() * delta)
-                    .to_affine();
+                proof.payload.nested_challenges_partial =
+                    (proof.payload.nested_challenges_partial.to_projective()
+                        + Ep::generator() * delta)
+                        .to_affine();
             } else {
                 let old_beta = nested::challenge::<C>(proof.pre_beta())?;
                 let old_bits = extract_endoscalar(proof.pre_beta())?;
@@ -276,10 +281,10 @@ mod challenge_binding {
                 // challenge sits below 2^254 < p, so adding or subtracting the
                 // bit's power of two never wraps.
                 let flip = Fp::from(2).pow_u64(u64::from(bit));
-                proof.pre_beta = if !old_bits.bit(bit as usize) {
-                    proof.pre_beta + flip
+                proof.payload.pre_beta = if !old_bits.bit(bit as usize) {
+                    proof.payload.pre_beta + flip
                 } else {
-                    proof.pre_beta - flip
+                    proof.payload.pre_beta - flip
                 };
                 assert_eq!(
                     extract_endoscalar(proof.pre_beta())?,
@@ -288,8 +293,8 @@ mod challenge_binding {
                 let new_beta = nested::challenge::<C>(proof.pre_beta())?;
                 assert_ne!(new_beta, old_beta);
                 if case == "pre_beta_with_compensating_partial" {
-                    proof.nested_challenges_partial =
-                        (proof.nested_challenges_partial.to_projective()
+                    proof.payload.nested_challenges_partial =
+                        (proof.payload.nested_challenges_partial.to_projective()
                             + beta_generator * (old_beta - new_beta))
                             .to_affine();
                     // The entire parent binding still agrees, even though the
@@ -304,10 +309,11 @@ mod challenge_binding {
                 honest.proof().nested_challenges_commitment()
             );
             assert!(
-                proof
+                proof.payload.nested_challenges_rx.iter_coeffs().eq(honest
+                    .proof()
+                    .payload
                     .nested_challenges_rx
-                    .iter_coeffs()
-                    .eq(honest.proof().nested_challenges_rx.iter_coeffs())
+                    .iter_coeffs())
             );
             mutations.push((case, proof.carry::<Value>(data)));
         }
@@ -364,18 +370,18 @@ fn stage_points<S: Stage<Fp, R> + Default>(
 }
 
 fn walk_inputs(
-    proof: &Proof<C, R>,
-    left: &Proof<C, R>,
-    right: &Proof<C, R>,
+    proof: &Proof<C, ragu_pcd::Uncompressed<R>>,
+    left: &Proof<C, ragu_pcd::Uncompressed<R>>,
+    right: &Proof<C, ragu_pcd::Uncompressed<R>>,
 ) -> Result<points::Inputs<EpAffine, crate::profile::Standard>> {
     let f = stage_points::<points::FStage<EpAffine, crate::profile::Standard>>(
-        &proof.native_points_f_rx,
+        &proof.payload.native_points_f_rx,
     )?;
     let wx = stage_points::<points::RegistryWxStage<EpAffine, crate::profile::Standard>>(
-        &proof.native_points_registry_wx_rx,
+        &proof.payload.native_points_registry_wx_rx,
     )?;
     let ab = stage_points::<points::AbStage<EpAffine, crate::profile::Standard>>(
-        &proof.native_points_ab_rx,
+        &proof.payload.native_points_ab_rx,
     )?;
     let mut points = alloc::vec![f[1]];
     points.extend(nested::pcs::child_commitments(left));
@@ -396,7 +402,7 @@ fn horner(points: &[EpAffine], beta: Fq) -> EpAffine {
         .to_affine()
 }
 
-fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
+fn native_instance(proof: &Proof<C, ragu_pcd::Uncompressed<R>>) -> native::unified::Instance<C> {
     native::unified::Instance {
         bridge_preamble_commitment: proof.bridge_preamble_commitment(),
         bridge_hash_commitment: proof.bridge_hash_commitment(),
@@ -433,34 +439,37 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
 /// The endpoint the proof's native walk stage ends at, read from the stage
 /// polynomial itself rather than from the cached `P_n` commitment, which no
 /// mutation here writes.
-fn walked_endpoint(proof: &Proof<C, R>) -> Result<Vec<Fp>> {
+fn walked_endpoint(proof: &Proof<C, ragu_pcd::Uncompressed<R>>) -> Result<Vec<Fp>> {
     let wires = stage_wire_indices::<_, R, points::WalkStage<EpAffine, crate::profile::Standard>>(
         |stage| wires_of(stage.p()),
     )?;
-    let reader = StageReader::new(&proof.native_points_walk_rx);
+    let reader = StageReader::new(&proof.payload.native_points_walk_rx);
     Ok(wires.iter().map(|&wire| reader.read(wire)).collect())
 }
 
 fn install_walk(
     app: &support::App,
-    proof: &mut Proof<C, R>,
+    proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
     inputs: &points::Inputs<EpAffine, crate::profile::Standard>,
     rng: &mut StdRng,
 ) -> Result<()> {
     fn alpha(poly: &sparse::Polynomial<Fp, R>) -> Fp {
         poly.iter_coeffs().nth(2 * R::n() - 1).unwrap()
     }
-    proof.native_points_binding_rx =
+    proof.payload.native_points_binding_rx =
         <points::BindingStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
-            alpha(&proof.native_points_binding_rx),
+            alpha(&proof.payload.native_points_binding_rx),
             &inputs.binding,
         )?;
-    proof.native_points_binding_commitment.0 = native_commit(app, &proof.native_points_binding_rx);
-    proof.native_points_f_rx = <points::FStage<EpAffine, crate::profile::Standard> as StageExt<
-        Fp,
-        R,
-    >>::rx(alpha(&proof.native_points_f_rx), &inputs.f)?;
-    proof.native_points_f_commitment.0 = native_commit(app, &proof.native_points_f_rx);
+    proof.payload.native_points_binding_commitment.0 =
+        native_commit(app, &proof.payload.native_points_binding_rx);
+    proof.payload.native_points_f_rx =
+        <points::FStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
+            alpha(&proof.payload.native_points_f_rx),
+            &inputs.f,
+        )?;
+    proof.payload.native_points_f_commitment.0 =
+        native_commit(app, &proof.payload.native_points_f_rx);
 
     let binding_copy = stage_wire_indices::<
         _,
@@ -468,22 +477,23 @@ fn install_walk(
         nested::stages::preamble::Stage<EqAffine, R, crate::profile::Standard>,
     >(|stage| wires_of(&stage.native_points_binding))?;
     support::set_wires(
-        Arc::make_mut(&mut proof.bridge_preamble_rx),
+        Arc::make_mut(&mut proof.payload.bridge_preamble_rx),
         &binding_copy,
-        &support::coordinates(proof.native_points_binding_commitment.0),
+        &support::coordinates(proof.payload.native_points_binding_commitment.0),
     );
-    proof.bridge_preamble_commitment = nested_commit(app, &proof.bridge_preamble_rx);
+    proof.payload.bridge_preamble_commitment =
+        nested_commit(app, &proof.payload.bridge_preamble_rx);
     let f_copy = stage_wire_indices::<
         _,
         R,
         nested::stages::f::Stage<EqAffine, R, crate::profile::Standard>,
     >(|stage| wires_of(&stage.native_points_f))?;
     support::set_wires(
-        Arc::make_mut(&mut proof.bridge_f_rx),
+        Arc::make_mut(&mut proof.payload.bridge_f_rx),
         &f_copy,
-        &support::coordinates(proof.native_points_f_commitment.0),
+        &support::coordinates(proof.payload.native_points_f_commitment.0),
     );
-    proof.bridge_f_commitment = nested_commit(app, &proof.bridge_f_rx);
+    proof.payload.bridge_f_commitment = nested_commit(app, &proof.payload.bridge_f_rx);
 
     let bits = extract_endoscalar(proof.pre_beta())?;
     let walked = inputs.walk();
@@ -500,12 +510,13 @@ fn install_walk(
         horner(&walked, nested::challenge::<C>(proof.pre_beta())?),
         walk.p()
     );
-    proof.native_points_walk_rx =
+    proof.payload.native_points_walk_rx =
         <points::WalkStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
-            alpha(&proof.native_points_walk_rx),
+            alpha(&proof.payload.native_points_walk_rx),
             &walk,
         )?;
-    proof.native_points_walk_commitment.0 = native_commit(app, &proof.native_points_walk_rx);
+    proof.payload.native_points_walk_commitment.0 =
+        native_commit(app, &proof.payload.native_points_walk_rx);
     for step in 0..native::NUM_ENDOSCALING_STEPS {
         let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
             .trace(native::circuits::endoscaling_step::Witness {
@@ -513,14 +524,14 @@ fn install_walk(
                 walk: &walk,
             })?
             .into_output();
-        proof.native_endoscaling_step_rxs[step] = app.native_registry.assemble(
+        proof.payload.native_endoscaling_step_rxs[step] = app.native_registry.assemble(
             &trace,
             native::InternalCircuitIndex::EndoscalingStep(step as u32)
                 .circuit_index::<crate::profile::Standard>(),
             &mut *rng,
         )?;
-        proof.native_endoscaling_step_commitments[step].0 =
-            native_commit(app, &proof.native_endoscaling_step_rxs[step]);
+        proof.payload.native_endoscaling_step_commitments[step].0 =
+            native_commit(app, &proof.payload.native_endoscaling_step_rxs[step]);
     }
     let trace = native::circuits::bind_endoscalar::Circuit::<C, R>::new()
         .trace(native::circuits::bind_endoscalar::Witness {
@@ -529,14 +540,14 @@ fn install_walk(
             walk: &walk,
         })?
         .into_output();
-    proof.native_bind_endoscalar_rx = app.native_registry.assemble(
+    proof.payload.native_bind_endoscalar_rx = app.native_registry.assemble(
         &trace,
         native::InternalCircuitIndex::BindEndoscalarCircuit
             .circuit_index::<crate::profile::Standard>(),
         rng,
     )?;
-    proof.native_bind_endoscalar_commitment.0 =
-        native_commit(app, &proof.native_bind_endoscalar_rx);
+    proof.payload.native_bind_endoscalar_commitment.0 =
+        native_commit(app, &proof.payload.native_bind_endoscalar_rx);
     assert!(crate::verify::nested_points_match(proof)?);
     Ok(())
 }
@@ -661,9 +672,9 @@ mod walk_binding {
         assert!(
             expected
                 .iter_coeffs()
-                .eq(proof.nested_registry_xy_poly.iter_coeffs())
+                .eq(proof.payload.nested_registry_xy_poly.iter_coeffs())
         );
-        support::edit(&mut proof.nested_registry_xy_poly, |coefficients| {
+        support::edit(&mut proof.payload.nested_registry_xy_poly, |coefficients| {
             for (degree, value) in [(0, u * w), (1, -u - w), (2, Fq::ONE)] {
                 coefficients[offset + degree] -= delta * value;
                 coefficients[offset + domain_size + degree] += delta * value;
@@ -672,15 +683,16 @@ mod walk_binding {
         assert!(
             !expected
                 .iter_coeffs()
-                .eq(proof.nested_registry_xy_poly.iter_coeffs())
+                .eq(proof.payload.nested_registry_xy_poly.iter_coeffs())
         );
         for query in queries {
             assert_eq!(
-                proof.nested_registry_xy_poly.eval(query),
+                proof.payload.nested_registry_xy_poly.eval(query),
                 expected.eval(query)
             );
         }
-        proof.nested_registry_xy_commitment.0 = nested_commit(app, &proof.nested_registry_xy_poly);
+        proof.payload.nested_registry_xy_commitment.0 =
+            nested_commit(app, &proof.payload.nested_registry_xy_poly);
         let last = points.len() - 1;
         let difference =
             proof.nested_registry_xy_commitment().to_projective() - points[last].to_projective();
@@ -767,52 +779,53 @@ mod claim_values {
 
     fn changed(
         app: &support::App,
-        original: &Proof<C, R>,
+        original: &Proof<C, ragu_pcd::Uncompressed<R>>,
         native_delta: Option<Fp>,
         nested_delta: Option<Fq>,
         selector: usize,
-    ) -> Result<Proof<C, R>> {
+    ) -> Result<Proof<C, ragu_pcd::Uncompressed<R>>> {
         let mut proof = original.clone();
         if let Some(delta) = native_delta {
             change_c(
-                &mut proof.native_a_poly,
-                &proof.native_b_poly,
+                &mut proof.payload.native_a_poly,
+                &proof.payload.native_b_poly,
                 delta,
                 selector,
             );
-            proof.native_a_commitment.0 = native_commit(app, &proof.native_a_poly);
+            proof.payload.native_a_commitment.0 = native_commit(app, &proof.payload.native_a_poly);
         }
         if let Some(delta) = nested_delta {
             change_c(
-                &mut proof.nested_a_poly,
-                &proof.nested_b_poly,
+                &mut proof.payload.nested_a_poly,
+                &proof.payload.nested_b_poly,
                 delta,
                 selector,
             );
-            proof.nested_a_commitment.0 = nested_commit(app, &proof.nested_a_poly);
+            proof.payload.nested_a_commitment.0 = nested_commit(app, &proof.payload.nested_a_poly);
             let wires =
                 stage_wire_indices::<_, R, points::AbStage<EpAffine, crate::profile::Standard>>(
                     |stage| wires_of(&stage.a),
                 )?;
             support::set_wires(
-                &mut proof.native_points_ab_rx,
+                &mut proof.payload.native_points_ab_rx,
                 &wires,
-                &support::coordinates(proof.nested_a_commitment.0),
+                &support::coordinates(proof.payload.nested_a_commitment.0),
             );
-            proof.native_points_ab_commitment.0 = native_commit(app, &proof.native_points_ab_rx);
+            proof.payload.native_points_ab_commitment.0 =
+                native_commit(app, &proof.payload.native_points_ab_rx);
         }
         // Repair the deterministic AB bridge too, so this is not a mismatch
         // between a newly committed A and an old cached AB bridge.
         let bridge = nested::stages::ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
-            crate::proof::bridge_alpha_power(proof.bridge_alpha, nested::RxIndex::BridgeAB),
+            crate::proof::bridge_alpha_power(proof.payload.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested::stages::ab::Witness {
-                a: proof.native_a_commitment.0,
-                b: proof.native_b_commitment.0,
-                native_points_ab: proof.native_points_ab_commitment.0,
+                a: proof.payload.native_a_commitment.0,
+                b: proof.payload.native_b_commitment.0,
+                native_points_ab: proof.payload.native_points_ab_commitment.0,
             },
         )?;
-        proof.bridge_ab_commitment.0 = nested_commit(app, &bridge);
-        proof.bridge_ab_rx.0 = Arc::new(bridge);
+        proof.payload.bridge_ab_commitment.0 = nested_commit(app, &bridge);
+        proof.payload.bridge_ab_rx.0 = Arc::new(bridge);
         assert_eq!(
             proof.native_c(),
             original.native_c() + native_delta.unwrap_or(Fp::ZERO)
@@ -933,11 +946,11 @@ mod claim_values {
                 |stage| wires_of(&stage.base_case.lift),
             )?[0];
         assert_eq!(
-            StageReader::new(&honest.proof().nested_challenges_rx).read(sign),
+            StageReader::new(&honest.proof().payload.nested_challenges_rx).read(sign),
             -Fq::ONE
         );
         assert_eq!(
-            StageReader::new(&bootstrap.proof().nested_challenges_rx).read(sign),
+            StageReader::new(&bootstrap.proof().payload.nested_challenges_rx).read(sign),
             Fq::ONE
         );
         check_descendants(

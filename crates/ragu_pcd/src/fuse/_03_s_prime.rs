@@ -45,8 +45,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
@@ -84,8 +84,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_native_s_prime(
         &self,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
     ) -> Result<NativeSPrime<C, R>> {
         let x0 = left.x();
         let x1 = right.x();
@@ -111,8 +111,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_nested_s_prime(
         &self,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
     ) -> Result<NestedSPrime<C, R>> {
         let x0 = nested::challenge::<C>(left.x())?;
         let x1 = nested::challenge::<C>(right.x())?;

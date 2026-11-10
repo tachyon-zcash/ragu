@@ -117,7 +117,7 @@ impl<C: Affine, R: Rank> Witness<C, R> {
 /// The decider's polynomial [`Source`] over one proof, the raw accumulator
 /// claim included: what the compressor feeds
 /// [`claims::Builder`](crate::internal::claims::Builder).
-pub(crate) struct NativePolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, R>);
+pub(crate) struct NativePolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, crate::Uncompressed<R>>);
 
 impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {
     type RxComponent = native::RxComponent;
@@ -134,7 +134,7 @@ impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {
 }
 
 /// The nested counterpart of [`NativePolys`].
-pub(crate) struct NestedPolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, R>);
+pub(crate) struct NestedPolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, crate::Uncompressed<R>>);
 
 impl<'a, C: Cycle, R: Rank> Source for NestedPolys<'a, C, R> {
     type RxComponent = nested::RxComponent;
@@ -399,7 +399,7 @@ fn masked_claims<'a, F: Field, R: Rank, Id: Copy>(
 
 /// The prover's native reduction of `proof`'s claims at `y` and `z`.
 pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, crate::Uncompressed<R>>,
     registry: &Registry<'_, C::CircuitField, R>,
     generators: &C::HostGenerators,
     y: C::CircuitField,
@@ -430,7 +430,7 @@ pub(crate) fn reduce_native<C: ProfiledCycle, R: Rank, B: Backend>(
 /// The prover's nested reduction of `proof`'s claims at the nested `y` and
 /// `z`.
 pub(crate) fn reduce_nested<C: ProfiledCycle, R: Rank, B: Backend>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, crate::Uncompressed<R>>,
     registry: &Registry<'_, C::ScalarField, R>,
     generators: &C::NestedGenerators,
     y: C::ScalarField,

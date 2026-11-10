@@ -3,9 +3,9 @@
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
 
-use super::{CompressedPcd, Sampled, batch, revdot, transcript};
+use super::{Sampled, batch, revdot, transcript};
 use crate::{
-    Application, RAGU_TAG, SelectableBackend,
+    Application, Compressed, Pcd, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::ky,
     ipa::{CycleTranscript, IpaCycle},
@@ -19,7 +19,7 @@ type Verifier<B> = <B as SelectableBackend>::Verifier;
 impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Verifies some [`CompressedPcd`] for the provided [`Header`].
+    /// Verifies a [`Pcd`] in [`Compressed`] form for the provided [`Header`].
     ///
     /// Returns `Ok(true)` if every check passes, `Ok(false)` if any fails
     /// (an invalid circuit id, a malformed proof, a rejected reduction or
@@ -36,7 +36,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// transcript bridges, batch commitment combinations, and IPA MSMs.
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
-        pcd: &CompressedPcd<C, H>,
+        pcd: &Pcd<C, Compressed, H>,
     ) -> Result<bool> {
         // These checks report malformed proof messages and unusable
         // transcript challenges as InvalidWitness. Translate only those
@@ -52,7 +52,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             };
         }
 
-        let proof = pcd.proof();
+        let proof = &pcd.proof().payload;
         let instance = &proof.instance;
 
         // The proof's circuit_id must be in the registry's domain, for the

@@ -31,7 +31,7 @@ fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
 fn verifying_proof(
     app: &crate::Application<'static, Pasta, TestR, HEADER_SIZE>,
     rng: &mut StdRng,
-) -> Proof<Pasta, TestR> {
+) -> Proof<Pasta, ragu_pcd::Uncompressed<TestR>> {
     let bootstrap = app.bootstrap_pcd();
     assert!(
         app.verify_uncompressed(&bootstrap, &mut *rng)
@@ -146,7 +146,7 @@ fn verify_rejects_invalid_circuit_id() {
     let mut proof = verifying_proof(&app, &mut rng);
 
     // Corrupt the circuit_id to be outside the registry domain
-    proof.circuit_id = CircuitIndex::new(u32::MAX as usize);
+    proof.payload.circuit_id = CircuitIndex::new(u32::MAX as usize);
 
     let pcd = proof.carry::<()>(());
     let result = app
@@ -163,7 +163,7 @@ fn verify_rejects_wrong_left_header_size() {
     let mut proof = verifying_proof(&app, &mut rng);
 
     // Corrupt left_header to have wrong size
-    proof.left_header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE + 1];
+    proof.payload.left_header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE + 1];
 
     let pcd = proof.carry::<()>(());
     let result = app
@@ -180,7 +180,7 @@ fn verify_rejects_wrong_right_header_size() {
     let mut proof = verifying_proof(&app, &mut rng);
 
     // Corrupt right_header to have wrong size
-    proof.right_header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE - 1];
+    proof.payload.right_header = alloc::vec![<Pasta as Cycle>::CircuitField::ZERO; HEADER_SIZE - 1];
 
     let pcd = proof.carry::<()>(());
     let result = app
@@ -204,9 +204,12 @@ fn unit_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
 /// Corrupts a proof so that it no longer verifies on its own. The edited
 /// polynomial's commitment cache is left stale, so a parent fused from the
 /// result opens a polynomial that its walked commitment does not match.
-fn corrupt(pcd: Pcd<Pasta, TestR, ()>) -> Pcd<Pasta, TestR, ()> {
+fn corrupt(
+    pcd: Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, ()>,
+) -> Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, ()> {
     let (mut proof, ()) = pcd.into_parts();
     proof
+        .payload
         .native_a_poly
         .add_assign(&sparse::Polynomial::from_coeffs(alloc::vec![
             <Pasta as Cycle>::CircuitField::ONE,
@@ -219,9 +222,11 @@ fn corrupt(pcd: Pcd<Pasta, TestR, ()>) -> Pcd<Pasta, TestR, ()> {
 /// only into its copy of the child's instance, and every commitment cache
 /// stays consistent, so a parent fused from the result can be rejected only
 /// by enforcing its children's claims.
-fn invalidate(pcd: Pcd<Pasta, TestR, ()>) -> Pcd<Pasta, TestR, ()> {
+fn invalidate(
+    pcd: Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, ()>,
+) -> Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, ()> {
     let (mut proof, ()) = pcd.into_parts();
-    proof.mu += <Pasta as Cycle>::CircuitField::ONE;
+    proof.payload.mu += <Pasta as Cycle>::CircuitField::ONE;
     proof.carry(())
 }
 
@@ -328,8 +333,8 @@ fn forged_dummy_headers_cannot_trigger_the_base_case() {
             .expect("fuse assembles a proof regardless of satisfiability");
 
         let (mut proof, ()) = parent.into_parts();
-        proof.left_header.clone_from(&forged);
-        proof.right_header.clone_from(&forged);
+        proof.payload.left_header.clone_from(&forged);
+        proof.payload.right_header.clone_from(&forged);
         let parent = proof.carry::<()>(());
 
         assert!(

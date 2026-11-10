@@ -25,7 +25,7 @@ use udon::{
 
 use super::{
     header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, Suffix},
-    proof::{self, CompressedPcd, CompressedProof, Pcd, Proof},
+    proof::{self, Compressed, Pcd, Proof},
     step::{Encoded, Index, NUM_INTERNAL_STEPS, Oracles, Step},
 };
 
@@ -41,7 +41,7 @@ pub struct ApplicationBuilder<
 > {
     registered_outputs: Vec<Suffix>,
     header_map: BTreeMap<Suffix, TypeId>,
-    bootstrap: Option<Proof<C, R>>,
+    bootstrap: Option<Proof<C, crate::Uncompressed<R>>>,
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     _marker: PhantomData<(&'params C::Params, B)>,
@@ -57,7 +57,7 @@ pub struct Application<
 > {
     params: &'params C::Params,
     registered_outputs: Vec<Suffix>,
-    bootstrap: Proof<C, R>,
+    bootstrap: Proof<C, crate::Uncompressed<R>>,
     setup_hash: [u8; 32],
     native_registry: Registry<'params, C::CircuitField, R>,
     context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
@@ -114,13 +114,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         Ok(self)
     }
 
-    pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
+    pub fn with_bootstrap(mut self, proof: Proof<C, crate::Uncompressed<R>>) -> Result<Self> {
         let header = Encoded::<_, (), HEADER_SIZE>::from_gadget(());
-        if proof.step_index != Index::internal(1).get()
-            || proof.header_size != HEADER_SIZE
-            || proof.header_hash
+        if proof.payload.step_index != Index::internal(1).get()
+            || proof.payload.header_size != HEADER_SIZE
+            || proof.payload.header_hash
                 != proof::compute_header_hash(&mut Simulator::<C::CircuitField>::new(), &header)?
             || proof
+                .payload
                 .polynomials
                 .iter()
                 .any(|p| p.is_empty() || p.len() > R::num_coeffs())
@@ -251,7 +252,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
         &self.native_registry
     }
-    pub fn bootstrap_proof(&self) -> &Proof<C, R> {
+    pub fn bootstrap_proof(&self) -> &Proof<C, crate::Uncompressed<R>> {
         &self.bootstrap
     }
 
@@ -285,7 +286,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+    ) -> Result<(Pcd<C, crate::Uncompressed<R>, S::Output>, S::Aux<'source>)> {
         let left = self.bootstrap.clone().carry::<()>(());
         let right = self.bootstrap.clone().carry::<()>(());
         self.fuse(rng, step, witness, left, right)
@@ -296,9 +297,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
-    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        left: Pcd<C, crate::Uncompressed<R>, S::Left>,
+        right: Pcd<C, crate::Uncompressed<R>, S::Right>,
+    ) -> Result<(Pcd<C, crate::Uncompressed<R>, S::Output>, S::Aux<'source>)> {
         if S::INDEX
             .application()
             .and_then(|i| self.registered_outputs.get(i))
@@ -352,11 +353,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             .to_state();
         transcript
             .update(&S::INDEX.get().to_le_bytes())
-            .update(&left.proof.header_hash)
-            .update(&right.proof.header_hash);
+            .update(&left.proof.payload.header_hash)
+            .update(&right.proof.payload.header_hash);
         for points in [
-            &left.proof.commitments,
-            &right.proof.commitments,
+            &left.proof.payload.commitments,
+            &right.proof.payload.commitments,
             &commitments,
         ] {
             for point in points {
@@ -378,8 +379,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             [x, y],
             staged,
             [
-                &left.proof.polynomials,
-                &right.proof.polynomials,
+                &left.proof.payload.polynomials,
+                &right.proof.payload.polynomials,
                 &polynomials,
             ],
         )?;
@@ -391,8 +392,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 Simulator::<C::CircuitField>::just(|| left.data),
                 Simulator::<C::CircuitField>::just(|| right.data),
             )?;
-        if proof::compute_header_hash(&mut dr, &left_header)? != left.proof.header_hash
-            || proof::compute_header_hash(&mut dr, &right_header)? != right.proof.header_hash
+        if proof::compute_header_hash(&mut dr, &left_header)? != left.proof.payload.header_hash
+            || proof::compute_header_hash(&mut dr, &right_header)?
+                != right.proof.payload.header_hash
         {
             return Err(Error::InvalidWitness(
                 "input header does not match child proof".into(),
@@ -423,13 +425,19 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     fn check_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         _rng: RNG,
     ) -> Result<bool> {
-        if pcd.proof.header_size != HEADER_SIZE {
+        if pcd.proof.payload.header_size != HEADER_SIZE {
             return Ok(false);
         }
-        for (coefficients, point) in pcd.proof.polynomials.iter().zip(pcd.proof.commitments) {
+        for (coefficients, point) in pcd
+            .proof
+            .payload
+            .polynomials
+            .iter()
+            .zip(pcd.proof.payload.commitments)
+        {
             if coefficients.is_empty()
                 || coefficients.len() > R::num_coeffs()
                 || point.is_identity()
@@ -448,7 +456,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     #[cfg(any(test, feature = "test-utils"))]
     pub fn verify_uncompressed<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         rng: RNG,
     ) -> Result<bool> {
         self.check_uncompressed(pcd, rng)
@@ -463,7 +471,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     #[cfg(any(test, feature = "test-utils"))]
     pub fn verify_differential<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         mut rng: RNG,
     ) -> Result<bool>
     where
@@ -483,9 +491,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         rng: &mut RNG,
-    ) -> Result<CompressedPcd<C, H>>
+    ) -> Result<Pcd<C, Compressed, H>>
     where
         C: IpaCycle,
     {
@@ -499,7 +507,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
-        pcd: &CompressedPcd<C, H>,
+        pcd: &Pcd<C, Compressed, H>,
     ) -> Result<bool>
     where
         C: IpaCycle,
@@ -509,9 +517,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     fn verify_statement<H: Header<C::CircuitField>>(
         &self,
-        proof: &CompressedProof<C>,
+        proof: &Proof<C, Compressed>,
         data: &H::Data,
     ) -> Result<bool> {
+        let proof = &proof.payload;
         if proof.rank != R::RANK
             || proof.header_size != HEADER_SIZE
             || proof.setup_hash != self.setup_hash
@@ -553,9 +562,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: Pcd<C, R, H>,
+        pcd: Pcd<C, crate::Uncompressed<R>, H>,
         _rng: &mut RNG,
-    ) -> Result<Pcd<C, R, H>> {
+    ) -> Result<Pcd<C, crate::Uncompressed<R>, H>> {
         Ok(Pcd {
             proof: pcd.proof.rerandomize(),
             data: pcd.data,

@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::Rank;
 use ragu_primitives::vec::ConstLen;
 
-use super::{Cached, Proof};
+use super::{Cached, Form, Proof, UncompressedData};
 use crate::{
     internal::{native, nested},
     profile::ProfiledCycle,
@@ -33,7 +33,7 @@ macro_rules! codec {
         #[cfg(test)]
         pub(super) const WIRE_FIELDS: &[&str] = &[$(stringify!($field)),*];
 
-        impl<C: ProfiledCycle, R: Rank> Encode for Proof<C, R> {
+        impl<C: ProfiledCycle, R: Rank> Encode for UncompressedData<C, R> {
             fn encode(
                 &self,
                 output: &mut Vec<u8>,
@@ -44,7 +44,7 @@ macro_rules! codec {
             }
         }
 
-        impl<C: ProfiledCycle, R: Rank> Decode for Proof<C, R> {
+        impl<C: ProfiledCycle, R: Rank> Decode for UncompressedData<C, R> {
             fn encoded_len(dims: wire::Dimensions) -> usize {
                 0usize $( + wire::field_len::<Self, _, $codec>(|proof| &proof.$field, dims) )*
             }
@@ -58,6 +58,37 @@ macro_rules! codec {
             }
         }
     };
+}
+
+impl<C: ProfiledCycle, F: Form> Encode for Proof<C, F>
+where
+    F::Payload<C>: Encode,
+{
+    fn encode(
+        &self,
+        output: &mut Vec<u8>,
+        dims: wire::Dimensions,
+    ) -> Result<(), wire::Error<'static>> {
+        self.payload.encode(output, dims)
+    }
+}
+
+impl<C: ProfiledCycle, F: Form> Decode for Proof<C, F>
+where
+    F::Payload<C>: Decode,
+{
+    fn encoded_len(dims: wire::Dimensions) -> usize {
+        F::Payload::<C>::encoded_len(dims)
+    }
+
+    fn decode<'a>(
+        reader: &mut wire::Reader<'a>,
+        dims: wire::Dimensions,
+    ) -> Result<Self, wire::Error<'a>> {
+        Ok(Self {
+            payload: F::Payload::<C>::decode(reader, dims)?,
+        })
+    }
 }
 
 codec! {

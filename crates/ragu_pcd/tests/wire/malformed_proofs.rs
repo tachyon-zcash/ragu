@@ -10,7 +10,7 @@ use super::Proof;
 use crate::{Application, ApplicationBuilder, wire};
 
 type TestApp = Application<'static, Pasta, ProductionRank, 4>;
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestProof = Proof<Pasta, ragu_pcd::Uncompressed<ProductionRank>>;
 
 fn fixture() -> (TestApp, TestProof) {
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
@@ -45,10 +45,10 @@ fn rejects_malformed_vector_lengths() {
     let (app, original) = fixture();
     macro_rules! reject_lengths {
         ($($field:ident),+ $(,)?) => {$({
-            let len = original.$field.len();
+            let len = original.payload.$field.len();
             for malformed_len in [0, len - 1, len + 1] {
                 let mut proof = original.clone();
-                proof.$field.resize(malformed_len, original.$field[0].clone());
+                proof.payload.$field.resize(malformed_len, original.payload.$field[0].clone());
                 assert_rejected(&app, proof, stringify!($field));
             }
         })+};
@@ -82,7 +82,7 @@ fn assert_identity_rejected(app: &TestApp, proof: TestProof, field: &str) {
 macro_rules! reject_identities {
     ($app:expr, $original:expr, $($field:ident $(.$member:tt)?),+ $(,)?) => {$({
         let mut proof = $original.clone();
-        proof.$field$(.$member)? = CurveAffine::identity();
+        proof.payload.$field$(.$member)? = CurveAffine::identity();
         assert_identity_rejected(&$app, proof, stringify!($field$(.$member)?));
     })+};
 }
@@ -139,9 +139,9 @@ fn rejects_malformed_child_header_lengths() {
         for length in [0, 3, 5] {
             let mut proof = original.clone();
             let header = if left {
-                &mut proof.left_header
+                &mut proof.payload.left_header
             } else {
-                &mut proof.right_header
+                &mut proof.payload.right_header
             };
             header.resize(length, header[0]);
             assert_rejected(

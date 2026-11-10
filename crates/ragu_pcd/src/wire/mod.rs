@@ -2,7 +2,7 @@
 //!
 //! Proofs reach bytes through [`Proof::to_bytes`](crate::Proof::to_bytes) and
 //! [`Proof::from_bytes`](crate::Proof::from_bytes), and the corresponding
-//! [`CompressedProof`](crate::CompressedProof) methods, with a versioned
+//! [`Compressed`](crate::Compressed) form's methods, with a versioned
 //! envelope; the optional `serde` adapters carry the same bytes. [`Error`]
 //! reports malformed byte encodings.
 //!
@@ -59,7 +59,7 @@
 //! Bound transport input before buffering it. The versioned byte encoding's
 //! expected lengths are available from
 //! [`Proof::encoded_len`](crate::Proof::encoded_len) and
-//! [`CompressedProof::encoded_len`](crate::CompressedProof::encoded_len).
+//! `Proof::<C, Compressed>::encoded_len::<R, HEADER_SIZE>()`.
 //! A compressed proof's length does not fix its rank and header size;
 //! verification checks the application's shape.
 //! With `serde`, also configure the deserializer's size limit or

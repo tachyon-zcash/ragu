@@ -35,7 +35,7 @@ fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
 
 fn setup() -> (
     Application<'static, Pasta, TestR, HEADER_SIZE>,
-    Pcd<Pasta, TestR, ()>,
+    Pcd<Pasta, ragu_pcd::Uncompressed<TestR>, ()>,
     Instance<Pasta>,
 ) {
     let app = create_test_app();

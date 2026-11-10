@@ -732,7 +732,7 @@ fn monomial<F: Field, R: Rank>(coeff: usize, delta: F) -> Option<sparse::Polynom
     Some(sparse::Polynomial::from_coeffs(coeffs))
 }
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> Proof<C, crate::Uncompressed<R>> {
     /// Apply a [`Corruption`] to this proof, reporting which verifiers are
     /// obliged to reject afterwards.
     #[doc(hidden)]
@@ -740,17 +740,17 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         match corruption {
             Corruption::CircuitId(id) => {
                 let id = CircuitIndex::from_u32(id);
-                if self.circuit_id == id {
+                if self.payload.circuit_id == id {
                     return Binding::Unbound;
                 }
-                self.circuit_id = id;
+                self.payload.circuit_id = id;
                 Binding::MustReject
             }
 
             Corruption::HeaderElement { side, index, delta } => {
                 let header = match side {
-                    Side::Left => &mut self.left_header,
-                    Side::Right => &mut self.right_header,
+                    Side::Left => &mut self.payload.left_header,
+                    Side::Right => &mut self.payload.right_header,
                 };
                 match header.get_mut(index) {
                     Some(element) if delta != C::CircuitField::ZERO => {
@@ -763,8 +763,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
             Corruption::HeaderLen { side, len } => {
                 let header = match side {
-                    Side::Left => &mut self.left_header,
-                    Side::Right => &mut self.right_header,
+                    Side::Left => &mut self.payload.left_header,
+                    Side::Right => &mut self.payload.right_header,
                 };
                 if header.len() == len {
                     return Binding::Unbound;
@@ -774,24 +774,27 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             }
 
             Corruption::SwapHeaders => {
-                if self.left_header == self.right_header {
+                if self.payload.left_header == self.payload.right_header {
                     return Binding::Unbound;
                 }
-                core::mem::swap(&mut self.left_header, &mut self.right_header);
+                core::mem::swap(
+                    &mut self.payload.left_header,
+                    &mut self.payload.right_header,
+                );
                 Binding::MustReject
             }
 
             Corruption::Challenge(which, value) => {
                 let slot = match which {
-                    Challenge::W => &mut self.w,
-                    Challenge::Y => &mut self.y,
-                    Challenge::Z => &mut self.z,
-                    Challenge::Mu => &mut self.mu,
-                    Challenge::MuPrime => &mut self.mu_prime,
-                    Challenge::X => &mut self.x,
-                    Challenge::Alpha => &mut self.alpha,
-                    Challenge::U => &mut self.u,
-                    Challenge::PreBeta => &mut self.pre_beta,
+                    Challenge::W => &mut self.payload.w,
+                    Challenge::Y => &mut self.payload.y,
+                    Challenge::Z => &mut self.payload.z,
+                    Challenge::Mu => &mut self.payload.mu,
+                    Challenge::MuPrime => &mut self.payload.mu_prime,
+                    Challenge::X => &mut self.payload.x,
+                    Challenge::Alpha => &mut self.payload.alpha,
+                    Challenge::U => &mut self.payload.u,
+                    Challenge::PreBeta => &mut self.payload.pre_beta,
                 };
                 if *slot == value {
                     return Binding::Unbound;
@@ -1010,7 +1013,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 {
     /// Create the synthesized dummy proof used to bootstrap recursion.
     #[doc(hidden)]
-    pub fn test_dummy_proof(&self) -> Proof<C, R> {
+    pub fn test_dummy_proof(&self) -> Proof<C, crate::Uncompressed<R>> {
         self.dummy_proof()
     }
 }

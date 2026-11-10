@@ -514,7 +514,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     pub fn alloc_from_proof<R: Rank, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        proof: DriverValue<D, &Proof<C, R>>,
+        proof: DriverValue<D, &Proof<C, crate::Uncompressed<R>>>,
     ) -> Result<Self> {
         let bridge_preamble_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_preamble_commitment()))?;

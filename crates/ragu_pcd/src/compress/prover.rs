@@ -8,14 +8,14 @@ use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use super::{
-    CompressedPcd, CompressedProof, Messages, Sampled,
+    CompressedData, Messages, Sampled,
     batch::{self, Batch},
     instance::Instance,
     revdot::{self, Openings},
     transcript,
 };
 use crate::{
-    Application, Pcd, RAGU_TAG, SelectableBackend,
+    Application, Compressed, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
@@ -43,7 +43,7 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
 impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Compresses `pcd` into a [`CompressedPcd`] over the same data.
+    /// Compresses `pcd` into a [`Pcd`] in [`Compressed`] form over the same data.
     ///
     /// The result carries the proof's instance and, on each curve, the
     /// messages of the revdot reduction, the batch and the IPA opening, in
@@ -69,9 +69,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// online polynomials differ from their cached commitments.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, crate::Uncompressed<R>, H>,
         rng: &mut RNG,
-    ) -> Result<CompressedPcd<C, H>> {
+    ) -> Result<Pcd<C, Compressed, H>> {
         let proof = pcd.proof();
         if !proof.well_formed::<HEADER_SIZE>() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));
@@ -212,10 +212,12 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             }
         };
 
-        Ok(CompressedProof {
-            instance,
-            native,
-            nested,
+        Ok(Proof {
+            payload: CompressedData {
+                instance,
+                native,
+                nested,
+            },
         }
         .carry(pcd.data().clone()))
     }

@@ -12,7 +12,7 @@ use udon::{curve::Affine, field::Field};
 
 use crate::{
     compress::{
-        CompressedProof, Messages,
+        CompressedData, Messages,
         batch::Batch,
         instance::{Child, Instance, NestedChild, OPENED},
         revdot::{
@@ -153,7 +153,7 @@ codec!([C: ProfiledCycle] Instance<C> {
     nested_a_at_u => Scalar,
     nested_b_at_u => Scalar,
 });
-codec!([C: ProfiledCycle] CompressedProof<C> {
+codec!([C: ProfiledCycle] CompressedData<C> {
     instance => DefaultEncoding,
     native => DefaultEncoding,
     nested => DefaultEncoding,

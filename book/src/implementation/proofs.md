@@ -22,8 +22,8 @@ accumulator input, forming a lopsided binary tree.
 The primary type that applications interact with is `Pcd` (proof-carrying data):
 
 ```rust
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+pub struct Pcd<C: Cycle, F: Form, H: Header<C::CircuitField>> {
+    proof: Proof<C, F>,
     data: H::Data,
 }
 ```
@@ -39,8 +39,11 @@ A `Pcd` bundles two components:
 The type parameters configure the proof system:
 
 * **`C: Cycle`**: The elliptic curve cycle used for recursion (e.g., Pasta).
-* **`R: Rank`**: The circuit capacity as a power of two (e.g., `R<13>` for
-  2^13 constraints).
+* **`F: Form`**: The sealed representation: `Uncompressed<R>` retains the
+  rank-indexed polynomials needed to prove parent steps; `Compressed` carries
+  commitments and opening messages for terminal verification. Only the
+  uncompressed form has a rank parameter. A compressed proof's wire rank is
+  checked against the receiving application's rank during verification.
 * **`H: Header`**: The header type providing a succinct encoded representation
   of the proof's public inputs.
 

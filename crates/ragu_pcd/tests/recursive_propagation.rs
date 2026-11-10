@@ -59,8 +59,8 @@ pub(crate) mod support {
     };
 
     pub(crate) type App = Application<'static, C, R, HEADER_SIZE>;
-    pub(crate) type TestPcd = Pcd<C, R, Value>;
-    pub(crate) type UnitPcd = Pcd<C, R, ()>;
+    pub(crate) type TestPcd = Pcd<C, ragu_pcd::Uncompressed<R>, Value>;
+    pub(crate) type UnitPcd = Pcd<C, ragu_pcd::Uncompressed<R>, ()>;
 
     pub(crate) struct Value;
 
@@ -383,29 +383,30 @@ pub(crate) mod support {
     /// and `Application::fuse`, using generated header data.
     pub(crate) fn fused(app: &App, inputs: &Inputs) -> Result<(TestPcd, TestPcd, TestPcd)> {
         let mut rng = inputs.prover_rng();
-        let mut node = |value: Fp, depth: usize| -> Result<Pcd<C, R, Value>> {
-            let mut proof = app.seed(&mut rng, Seed::new(), value)?.0;
-            for level in 0..depth {
-                let sibling = app
-                    .seed(&mut rng, Seed::new(), value + Fp::from(level as u64 + 1))?
-                    .0;
-                let (left, right) = if level % 2 == 0 {
-                    (proof, sibling)
-                } else {
-                    (sibling, proof)
-                };
-                proof = app
-                    .fuse(
-                        &mut rng,
-                        Merge::new(),
-                        inputs.salt + Fp::from(level as u64),
-                        left,
-                        right,
-                    )?
-                    .0;
-            }
-            Ok(proof)
-        };
+        let mut node =
+            |value: Fp, depth: usize| -> Result<Pcd<C, ragu_pcd::Uncompressed<R>, Value>> {
+                let mut proof = app.seed(&mut rng, Seed::new(), value)?.0;
+                for level in 0..depth {
+                    let sibling = app
+                        .seed(&mut rng, Seed::new(), value + Fp::from(level as u64 + 1))?
+                        .0;
+                    let (left, right) = if level % 2 == 0 {
+                        (proof, sibling)
+                    } else {
+                        (sibling, proof)
+                    };
+                    proof = app
+                        .fuse(
+                            &mut rng,
+                            Merge::new(),
+                            inputs.salt + Fp::from(level as u64),
+                            left,
+                            right,
+                        )?
+                        .0;
+                }
+                Ok(proof)
+            };
         let left = node(inputs.left, inputs.left_depth)?;
         let right = node(inputs.right, inputs.right_depth)?;
         let proofs = (left.clone(), right.clone());
@@ -435,9 +436,9 @@ pub(crate) mod support {
 
     pub(crate) fn sibling(
         app: &App,
-        child: &Pcd<C, R, Value>,
+        child: &Pcd<C, ragu_pcd::Uncompressed<R>, Value>,
         rng: &mut StdRng,
-    ) -> Result<Pcd<C, R, Value>> {
+    ) -> Result<Pcd<C, ragu_pcd::Uncompressed<R>, Value>> {
         let salt = Fp::random(|bytes| rng.fill_bytes(bytes));
         let sibling = app
             .fuse(rng, Merge::new(), salt, child.clone(), child.clone())?
@@ -450,10 +451,10 @@ pub(crate) mod support {
     /// grandparent positions. Callers check whether each descendant verifies.
     pub(crate) fn descendants(
         app: &App,
-        child: &Pcd<C, R, Value>,
-        sibling: &Pcd<C, R, Value>,
+        child: &Pcd<C, ragu_pcd::Uncompressed<R>, Value>,
+        sibling: &Pcd<C, ragu_pcd::Uncompressed<R>, Value>,
         rng: &mut StdRng,
-    ) -> Result<Vec<(String, Pcd<C, R, Value>)>> {
+    ) -> Result<Vec<(String, Pcd<C, ragu_pcd::Uncompressed<R>, Value>)>> {
         let mut proofs = Vec::new();
         for parent_side in [Side::Left, Side::Right] {
             let (left, right) = match parent_side {
@@ -484,8 +485,8 @@ pub(crate) mod support {
     /// Check the production parent's stored stages to ensure substituted
     /// endpoints, claims, challenges and circuit ID reached the copied instance.
     pub(crate) fn assert_copied_endpoints(
-        parent: &Proof<C, R>,
-        child: &Proof<C, R>,
+        parent: &Proof<C, ragu_pcd::Uncompressed<R>>,
+        child: &Proof<C, ragu_pcd::Uncompressed<R>>,
         side: Side,
     ) -> Result<()> {
         let native =
@@ -529,7 +530,7 @@ pub(crate) mod support {
                 Ok(wires)
             },
         )?;
-        let reader = StageReader::new(&parent.native_points_binding_rx);
+        let reader = StageReader::new(&parent.payload.native_points_binding_rx);
         let expected: Vec<_> = [
             child.nested_p_commitment(),
             child.nested_a_commitment(),
@@ -566,7 +567,7 @@ pub(crate) mod support {
         })?;
         assert_eq!(circuit_id.len(), 1);
         assert_eq!(
-            StageReader::new(&parent.native_preamble_rx).read(circuit_id[0]),
+            StageReader::new(&parent.payload.native_preamble_rx).read(circuit_id[0]),
             child.circuit_id().omega_j(),
             "{side:?}: copied circuit id"
         );
@@ -584,7 +585,7 @@ pub(crate) mod support {
             wires.extend(wires_of(&child.unified.nested_challenges_partial)?);
             Ok(wires)
         })?;
-        let reader = StageReader::new(&parent.native_preamble_rx);
+        let reader = StageReader::new(&parent.payload.native_preamble_rx);
         let expected: Vec<_> = [child.native_c(), child.pre_beta()]
             .into_iter()
             .chain(coordinates(child.nested_challenges_partial()))
@@ -694,23 +695,31 @@ pub(crate) mod support {
     }
 
     /// Recomputes `cache` from the polynomial it caches.
-    pub(crate) fn recommit(app: &App, proof: &mut Proof<C, R>, cache: Cache) {
+    pub(crate) fn recommit(
+        app: &App,
+        proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
+        cache: Cache,
+    ) {
         match cache {
             Cache::NativePreamble => {
-                proof.native_preamble_commitment.0 = native_commit(app, &proof.native_preamble_rx);
+                proof.payload.native_preamble_commitment.0 =
+                    native_commit(app, &proof.payload.native_preamble_rx);
             }
             Cache::NativeEval => {
-                proof.native_eval_commitment.0 = native_commit(app, &proof.native_eval_rx);
+                proof.payload.native_eval_commitment.0 =
+                    native_commit(app, &proof.payload.native_eval_rx);
             }
             Cache::BridgePreamble => {
-                proof.bridge_preamble_commitment = nested_commit(app, &proof.bridge_preamble_rx);
+                proof.payload.bridge_preamble_commitment =
+                    nested_commit(app, &proof.payload.bridge_preamble_rx);
             }
             Cache::BridgeEval => {
-                proof.bridge_eval_commitment = nested_commit(app, &proof.bridge_eval_rx);
+                proof.payload.bridge_eval_commitment =
+                    nested_commit(app, &proof.payload.bridge_eval_rx);
             }
             Cache::NestedChallenges => {
-                proof.nested_challenges_commitment.0 =
-                    nested_commit(app, &proof.nested_challenges_rx);
+                proof.payload.nested_challenges_commitment.0 =
+                    nested_commit(app, &proof.payload.nested_challenges_rx);
             }
         }
     }
@@ -761,17 +770,17 @@ pub(crate) mod support {
         pub(crate) fn bump(
             self,
             app: &App,
-            proof: &mut Proof<C, R>,
+            proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
             delta: Fp,
             repair: bool,
         ) -> Result<()> {
             let wire = self.index()?;
             let (poly, cache) = match self {
                 Self::EvalLeftP | Self::EvalRightP => {
-                    (&mut proof.native_eval_rx, Cache::NativeEval)
+                    (&mut proof.payload.native_eval_rx, Cache::NativeEval)
                 }
                 Self::PreambleLeftV | Self::PreambleLeftU => {
-                    (&mut proof.native_preamble_rx, Cache::NativePreamble)
+                    (&mut proof.payload.native_preamble_rx, Cache::NativePreamble)
                 }
             };
             let old = StageReader::<Fp, R>::new(poly).read(wire);
@@ -786,7 +795,11 @@ pub(crate) mod support {
         /// into the bridge stage that carries it and recommits that bridge,
         /// so that no cache or copy is stale and only the transcript, which
         /// absorbed the old bridge, is left inconsistent.
-        pub(crate) fn repair_bridge(self, app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+        pub(crate) fn repair_bridge(
+            self,
+            app: &App,
+            proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
+        ) -> Result<()> {
             match self {
                 Self::EvalLeftP | Self::EvalRightP => repair_bridge_eval_slot(app, proof),
                 Self::PreambleLeftV | Self::PreambleLeftU => {
@@ -800,14 +813,17 @@ pub(crate) mod support {
     /// stage's `native_preamble` slot and recommits the bridge, the preamble
     /// counterpart of [`repair_bridge_eval_slot`]. What remains inconsistent
     /// is the transcript: `w` was squeezed over the old bridge commitment.
-    pub(crate) fn repair_bridge_preamble_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+    pub(crate) fn repair_bridge_preamble_slot(
+        app: &App,
+        proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
+    ) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Preamble));
         let wires =
             stage_wire_indices::<Fq, R, preamble::Stage<EqAffine, R, crate::profile::Standard>>(
                 |out| wires_of(&out.native_preamble),
             )?;
         set_wires(
-            Arc::make_mut(&mut proof.bridge_preamble_rx),
+            Arc::make_mut(&mut proof.payload.bridge_preamble_rx),
             &wires,
             &[x, y],
         );
@@ -820,13 +836,20 @@ pub(crate) mod support {
     /// circuit's stage copy matches the cache again. What remains
     /// inconsistent is the transcript: `pre_beta` was squeezed over the old
     /// bridge commitment.
-    pub(crate) fn repair_bridge_eval_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+    pub(crate) fn repair_bridge_eval_slot(
+        app: &App,
+        proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
+    ) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Eval));
         let wires =
             stage_wire_indices::<Fq, R, nested_eval::Stage<EqAffine, R, crate::profile::Standard>>(
                 |out| wires_of(&out.native_eval),
             )?;
-        set_wires(Arc::make_mut(&mut proof.bridge_eval_rx), &wires, &[x, y]);
+        set_wires(
+            Arc::make_mut(&mut proof.payload.bridge_eval_rx),
+            &wires,
+            &[x, y],
+        );
         recommit(app, proof, Cache::BridgeEval);
         Ok(())
     }
@@ -859,36 +882,36 @@ mod accumulator {
     /// commitment caches with the production backend.
     fn rescaled<H: Header<Fp>>(
         app: &support::App,
-        honest: &Pcd<C, R, H>,
+        honest: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
         native: Option<Fp>,
         nested: Option<Fq>,
-    ) -> Pcd<C, R, H> {
+    ) -> Pcd<C, ragu_pcd::Uncompressed<R>, H> {
         let (mut proof, data) = honest.clone().into_parts();
         if let Some(scale) = native {
-            proof.native_a_poly.scale(scale);
-            proof.native_b_poly.scale(scale.invert().unwrap());
-            proof.native_a_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                &proof.native_a_poly,
+            proof.payload.native_a_poly.scale(scale);
+            proof.payload.native_b_poly.scale(scale.invert().unwrap());
+            proof.payload.native_a_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+                &proof.payload.native_a_poly,
                 C::host_generators(app.params),
             );
-            proof.native_b_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                &proof.native_b_poly,
+            proof.payload.native_b_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+                &proof.payload.native_b_poly,
                 C::host_generators(app.params),
             );
             assert_ne!(
-                proof.native_a_commitment.0,
-                honest.proof().native_a_commitment.0
+                proof.payload.native_a_commitment.0,
+                honest.proof().payload.native_a_commitment.0
             );
         }
         if let Some(scale) = nested {
-            proof.nested_a_poly.scale(scale);
-            proof.nested_b_poly.scale(scale.invert().unwrap());
-            proof.nested_a_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                &proof.nested_a_poly,
+            proof.payload.nested_a_poly.scale(scale);
+            proof.payload.nested_b_poly.scale(scale.invert().unwrap());
+            proof.payload.nested_a_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+                &proof.payload.nested_a_poly,
                 C::nested_generators(app.params),
             );
-            proof.nested_b_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                &proof.nested_b_poly,
+            proof.payload.nested_b_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
+                &proof.payload.nested_b_poly,
                 C::nested_generators(app.params),
             );
             assert_ne!(
@@ -899,8 +922,14 @@ mod accumulator {
         // These edits must change the polynomials while preserving the raw
         // claims and satisfying the decider's commitment-cache comparisons.
         for (poly, commitment) in [
-            (&proof.native_a_poly, proof.native_a_commitment.0),
-            (&proof.native_b_poly, proof.native_b_commitment.0),
+            (
+                &proof.payload.native_a_poly,
+                proof.payload.native_a_commitment.0,
+            ),
+            (
+                &proof.payload.native_b_poly,
+                proof.payload.native_b_commitment.0,
+            ),
         ] {
             assert_eq!(
                 ReferenceBackend::sparse_commit_to_affine(poly, C::host_generators(app.params)),
@@ -908,8 +937,8 @@ mod accumulator {
             );
         }
         for (poly, commitment) in [
-            (&proof.nested_a_poly, proof.nested_a_commitment()),
-            (&proof.nested_b_poly, proof.nested_b_commitment()),
+            (&proof.payload.nested_a_poly, proof.nested_a_commitment()),
+            (&proof.payload.nested_b_poly, proof.nested_b_commitment()),
         ] {
             assert_eq!(
                 ReferenceBackend::sparse_commit_to_affine(poly, C::nested_generators(app.params)),
@@ -1030,28 +1059,29 @@ mod endpoints {
                 let old = changed.native_p_commitment();
                 let u = changed.u();
                 support::add_rooted_term(
-                    &mut changed.native_p_poly,
+                    &mut changed.payload.native_p_poly,
                     u,
                     native_positions,
                     native_delta,
                 );
                 let point = ReferenceBackend::sparse_commit_to_affine(
-                    &changed.native_p_poly,
+                    &changed.payload.native_p_poly,
                     C::host_generators(app.params),
                 );
-                changed.native_p_commitment.0 = point;
+                changed.payload.native_p_commitment.0 = point;
                 assert_ne!(old, point);
                 support::set_wires(
-                    Arc::make_mut(&mut changed.nested_points_rx),
+                    Arc::make_mut(&mut changed.payload.nested_points_rx),
                     &native_endpoint,
                     &coordinates(point),
                 );
-                changed.nested_points_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &changed.nested_points_rx,
-                    C::nested_generators(app.params),
-                );
+                changed.payload.nested_points_commitment.0 =
+                    ReferenceBackend::sparse_commit_to_affine(
+                        &changed.payload.nested_points_rx,
+                        C::nested_generators(app.params),
+                    );
                 assert_eq!(changed.nested_instance()?.exported[8], point);
-                let reader = StageReader::new(&changed.nested_points_rx);
+                let reader = StageReader::new(&changed.payload.nested_points_rx);
                 assert_eq!(
                     native_endpoint
                         .iter()
@@ -1064,27 +1094,28 @@ mod endpoints {
                 let old = changed.nested_p_commitment();
                 let u = nested::challenge::<C>(changed.u())?;
                 support::add_rooted_term(
-                    &mut changed.nested_p_poly,
+                    &mut changed.payload.nested_p_poly,
                     u,
                     nested_positions,
                     nested_delta,
                 );
                 let point = ReferenceBackend::sparse_commit_to_affine(
-                    &changed.nested_p_poly,
+                    &changed.payload.nested_p_poly,
                     C::nested_generators(app.params),
                 );
-                changed.nested_p_commitment.0 = point;
+                changed.payload.nested_p_commitment.0 = point;
                 assert_ne!(old, point);
                 support::set_wires(
-                    &mut changed.native_points_walk_rx,
+                    &mut changed.payload.native_points_walk_rx,
                     &nested_endpoint,
                     &coordinates(point),
                 );
-                changed.native_points_walk_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                    &changed.native_points_walk_rx,
-                    C::host_generators(app.params),
-                );
-                let reader = StageReader::new(&changed.native_points_walk_rx);
+                changed.payload.native_points_walk_commitment.0 =
+                    ReferenceBackend::sparse_commit_to_affine(
+                        &changed.payload.native_points_walk_rx,
+                        C::host_generators(app.params),
+                    );
+                let reader = StageReader::new(&changed.payload.native_points_walk_rx);
                 assert_eq!(
                     nested_endpoint
                         .iter()
@@ -1179,7 +1210,10 @@ mod timing {
 
     /// Derive expected challenges with the production transcript operations and
     /// an explicit absorption schedule, for comparison with the stored challenges.
-    fn challenges(app: &support::App, proof: &Proof<C, R>) -> Result<Vec<Fp>> {
+    fn challenges(
+        app: &support::App,
+        proof: &Proof<C, ragu_pcd::Uncompressed<R>>,
+    ) -> Result<Vec<Fp>> {
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(app.params), RAGU_TAG)?;
         let mut result = Vec::new();
@@ -1244,18 +1278,18 @@ mod timing {
                         stage_wire_indices::<_, R, AbStage<EpAffine, crate::profile::Standard>>(
                             |stage| wires_of(&stage.registry_wy),
                         )?;
-                    let reader = StageReader::new(&changed.native_points_ab_rx);
+                    let reader = StageReader::new(&changed.payload.native_points_ab_rx);
                     let old = EpAffine::from_xy(reader.read(wires[0]), reader.read(wires[1]))
                         .expect("the stored registry point is on the curve");
                     let replacement = (old * point_scale).to_affine();
                     assert_ne!(replacement, old);
                     let point = coordinates(replacement);
-                    support::set_wires(&mut changed.native_points_ab_rx, &wires, &point);
+                    support::set_wires(&mut changed.payload.native_points_ab_rx, &wires, &point);
                     let new_ab = ReferenceBackend::sparse_commit_to_affine(
-                        &changed.native_points_ab_rx,
+                        &changed.payload.native_points_ab_rx,
                         C::host_generators(app.params),
                     );
-                    changed.native_points_ab_commitment.0 = new_ab;
+                    changed.payload.native_points_ab_commitment.0 = new_ab;
                     assert_ne!(
                         new_ab,
                         honest
@@ -1266,18 +1300,19 @@ mod timing {
                     // Rebuild the deterministic AB bridge around the changed stage,
                     // including its original blinding, rather than leave a stale copy.
                     let bridge = ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
-                        bridge_alpha_power(changed.bridge_alpha, nested::RxIndex::BridgeAB),
+                        bridge_alpha_power(changed.payload.bridge_alpha, nested::RxIndex::BridgeAB),
                         &ab::Witness {
                             a: changed.native_commitment(native::RxComponent::AbA),
                             b: changed.native_commitment(native::RxComponent::AbB),
                             native_points_ab: new_ab,
                         },
                     )?;
-                    changed.bridge_ab_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                        &bridge,
-                        C::nested_generators(app.params),
-                    );
-                    changed.bridge_ab_rx.0 = Arc::new(bridge);
+                    changed.payload.bridge_ab_commitment.0 =
+                        ReferenceBackend::sparse_commit_to_affine(
+                            &bridge,
+                            C::nested_generators(app.params),
+                        );
+                    changed.payload.bridge_ab_rx.0 = Arc::new(bridge);
                     let replayed = challenges(app, &changed)?;
                     assert_eq!(replayed[..5], original[..5]);
                     assert_ne!(replayed[5], changed.x(), "the replacement must change x");
@@ -1287,46 +1322,50 @@ mod timing {
                     // old opening at u_n to exercise more than a changed evaluation.
                     let u = nested::challenge::<C>(changed.u())?;
                     let w = nested::challenge::<C>(changed.w())?;
-                    let old_u = changed.nested_registry_xy_poly.eval(u);
-                    let old_w = changed.nested_registry_xy_poly.eval(w);
+                    let old_u = changed.payload.nested_registry_xy_poly.eval(u);
+                    let old_w = changed.payload.nested_registry_xy_poly.eval(w);
                     if case == "registry_after_u" {
                         support::add_rooted_term(
-                            &mut changed.nested_registry_xy_poly,
+                            &mut changed.payload.nested_registry_xy_poly,
                             u,
                             registry_positions,
                             registry_delta,
                         );
-                        assert_ne!(changed.nested_registry_xy_poly.eval(w), old_w);
+                        assert_ne!(changed.payload.nested_registry_xy_poly.eval(w), old_w);
                     } else {
                         let domain_size = 1usize << app.nested_registry.log2_domain();
                         let openings: Vec<_> = (0..domain_size)
                             .map(|i| {
                                 let point = CircuitIndex::new(i).omega_j();
-                                (point, changed.nested_registry_xy_poly.eval(point))
+                                (point, changed.payload.nested_registry_xy_poly.eval(point))
                             })
                             .collect();
                         let offset = registry_positions.0 % (R::num_coeffs() - domain_size - 2);
                         // Add delta * X^offset * (X^N - 1) * (X-u) * (X-w).
                         // This preserves every registry-domain opening as well
                         // as both old transcript-derived evaluation points.
-                        support::edit(&mut changed.nested_registry_xy_poly, |coefficients| {
-                            for (degree, coefficient) in [(0, u * w), (1, -u - w), (2, Fq::ONE)] {
-                                coefficients[offset + degree] -= registry_delta * coefficient;
-                                coefficients[offset + domain_size + degree] +=
-                                    registry_delta * coefficient;
-                            }
-                        });
+                        support::edit(
+                            &mut changed.payload.nested_registry_xy_poly,
+                            |coefficients| {
+                                for (degree, coefficient) in [(0, u * w), (1, -u - w), (2, Fq::ONE)]
+                                {
+                                    coefficients[offset + degree] -= registry_delta * coefficient;
+                                    coefficients[offset + domain_size + degree] +=
+                                        registry_delta * coefficient;
+                                }
+                            },
+                        );
                         for (point, value) in openings {
-                            assert_eq!(changed.nested_registry_xy_poly.eval(point), value);
+                            assert_eq!(changed.payload.nested_registry_xy_poly.eval(point), value);
                         }
-                        assert_eq!(changed.nested_registry_xy_poly.eval(w), old_w);
+                        assert_eq!(changed.payload.nested_registry_xy_poly.eval(w), old_w);
                     }
-                    assert_eq!(changed.nested_registry_xy_poly.eval(u), old_u);
+                    assert_eq!(changed.payload.nested_registry_xy_poly.eval(u), old_u);
                     let point = ReferenceBackend::sparse_commit_to_affine(
-                        &changed.nested_registry_xy_poly,
+                        &changed.payload.nested_registry_xy_poly,
                         C::nested_generators(app.params),
                     );
-                    changed.nested_registry_xy_commitment.0 = point;
+                    changed.payload.nested_registry_xy_commitment.0 = point;
                     assert_ne!(point, honest.proof().nested_registry_xy_commitment());
 
                     let wires =
@@ -1334,27 +1373,27 @@ mod timing {
                             |stage| wires_of(&stage.registry_xy),
                         )?;
                     support::set_wires(
-                        &mut changed.native_points_f_rx,
+                        &mut changed.payload.native_points_f_rx,
                         &wires,
                         &coordinates(point),
                     );
                     let new_f = ReferenceBackend::sparse_commit_to_affine(
-                        &changed.native_points_f_rx,
+                        &changed.payload.native_points_f_rx,
                         C::host_generators(app.params),
                     );
-                    changed.native_points_f_commitment.0 = new_f;
+                    changed.payload.native_points_f_commitment.0 = new_f;
                     let copy = stage_wire_indices::<
                         _,
                         R,
                         f::Stage<EqAffine, R, crate::profile::Standard>,
                     >(|stage| wires_of(&stage.native_points_f))?;
                     support::set_wires(
-                        Arc::make_mut(&mut changed.bridge_f_rx),
+                        Arc::make_mut(&mut changed.payload.bridge_f_rx),
                         &copy,
                         &coordinates(new_f),
                     );
-                    changed.bridge_f_commitment = ReferenceBackend::sparse_commit_to_affine(
-                        &changed.bridge_f_rx,
+                    changed.payload.bridge_f_commitment = ReferenceBackend::sparse_commit_to_affine(
+                        &changed.payload.bridge_f_rx,
                         C::nested_generators(app.params),
                     );
                     let replayed = challenges(app, &changed)?;
@@ -1432,7 +1471,7 @@ mod commitments {
 
     fn check_coefficients<H: Header<ragu_core::pasta::Fp>>(
         app: &support::App,
-        pcd: &Pcd<C, R, H>,
+        pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
         inputs: &support::Inputs,
         delta: Fq,
     ) -> Result<()> {
@@ -1443,7 +1482,7 @@ mod commitments {
         >;
 
         let parent = pcd.proof();
-        let verify = |proof: Proof<C, R>| {
+        let verify = |proof: Proof<C, ragu_pcd::Uncompressed<R>>| {
             app.verify_differential(&proof.carry::<H>(pcd.data().clone()), inputs.verifier_rng())
         };
         assert!(verify(parent.clone())?, "the honest parent must verify");
@@ -1462,25 +1501,27 @@ mod commitments {
             .chain(core::iter::once(2 * R::n() - 1));
         for coefficient in coefficients {
             let mut changed = parent.clone();
-            let mut coefficients: Vec<_> = changed.nested_challenges_rx.iter_coeffs().collect();
+            let mut coefficients: Vec<_> =
+                changed.payload.nested_challenges_rx.iter_coeffs().collect();
             coefficients[coefficient] += delta;
-            changed.nested_challenges_rx = sparse::Polynomial::from_coeffs(coefficients);
+            changed.payload.nested_challenges_rx = sparse::Polynomial::from_coeffs(coefficients);
             assert!(
                 !verify(changed.clone())?,
                 "accepted changed challenge stage coefficient {coefficient}"
             );
-            changed.nested_challenges_commitment.0 = ReferenceBackend::sparse_commit_to_affine(
-                &changed.nested_challenges_rx,
-                C::nested_generators(app.params),
-            );
+            changed.payload.nested_challenges_commitment.0 =
+                ReferenceBackend::sparse_commit_to_affine(
+                    &changed.payload.nested_challenges_rx,
+                    C::nested_generators(app.params),
+                );
             // Keep the exported partial consistent with the edited commitment:
             // it contains every term except beta's. Rejection must still hold
             // after both commitment representations have been repaired.
             if coefficient
                 != crate::internal::native::circuits::bind_beta::generator_index::<C, R>()
             {
-                changed.nested_challenges_partial =
-                    (changed.nested_challenges_partial.to_projective()
+                changed.payload.nested_challenges_partial =
+                    (changed.payload.nested_challenges_partial.to_projective()
                         + C::nested_generators(app.params).g()[coefficient] * delta)
                         .to_affine();
             }
@@ -1495,7 +1536,7 @@ mod commitments {
 
     fn check_challenge_commitment(
         app: &support::App,
-        parent: &Proof<C, R>,
+        parent: &Proof<C, ragu_pcd::Uncompressed<R>>,
         sign: Fq,
     ) -> Result<()> {
         use ragu_circuits::staging::StageExt;
@@ -1589,9 +1630,9 @@ mod commitments {
     /// decider's caches, including $P_n$ at the walk's last interstitial.
     fn check_walk<H: Header<ragu_core::pasta::Fp>>(
         app: &support::App,
-        parent_pcd: &Pcd<C, R, H>,
-        left_pcd: &Pcd<C, R, H>,
-        right_pcd: &Pcd<C, R, H>,
+        parent_pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
+        left_pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
+        right_pcd: &Pcd<C, ragu_pcd::Uncompressed<R>, H>,
         inputs: &support::Inputs,
         replacement_scalar: Fq,
     ) -> Result<()> {
@@ -1668,10 +1709,10 @@ mod commitments {
 
         // Exercise the decider's point comparison in isolation: a valid point
         // in the cache must still be the one carried by the walk's stage.
-        let caches: [fn(&mut Proof<C, R>) -> &mut Nested; 3] = [
-            |proof| &mut proof.nested_a_commitment.0,
-            |proof| &mut proof.nested_b_commitment.0,
-            |proof| &mut proof.nested_registry_xy_commitment.0,
+        let caches: [fn(&mut Proof<C, ragu_pcd::Uncompressed<R>>) -> &mut Nested; 3] = [
+            |proof| &mut proof.payload.nested_a_commitment.0,
+            |proof| &mut proof.payload.nested_b_commitment.0,
+            |proof| &mut proof.payload.nested_registry_xy_commitment.0,
         ];
         let generated = (ragu_core::pasta::Ep::generator() * replacement_scalar).to_affine();
         for (name, cache) in ["A_n", "B_n", "registry_xy"].into_iter().zip(caches) {

@@ -355,8 +355,8 @@ pub fn capture_internal_circuits<'source, C, R, const HEADER_SIZE: usize, B, RNG
     rng: &mut RNG,
     step: S,
     witness: S::Witness<'source>,
-    left: Pcd<C, R, S::Left>,
-    right: Pcd<C, R, S::Right>,
+    left: Pcd<C, crate::Uncompressed<R>, S::Left>,
+    right: Pcd<C, crate::Uncompressed<R>, S::Right>,
     visitor: &mut V,
 ) -> Result<()>
 where
@@ -414,8 +414,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
+        left: Pcd<C, crate::Uncompressed<R>, S::Left>,
+        right: Pcd<C, crate::Uncompressed<R>, S::Right>,
         base_case: bool,
         visitor: &mut V,
     ) -> Result<()>

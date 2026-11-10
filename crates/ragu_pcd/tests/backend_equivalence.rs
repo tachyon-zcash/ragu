@@ -26,7 +26,7 @@ use udon::{
 };
 
 use crate::{
-    Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof, SelectableBackend,
+    Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
     compress::{
         Messages,
         batch::Batch,
@@ -181,8 +181,8 @@ const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
 type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
-type TestPcd = Pcd<Pasta, ProductionRank, ()>;
-type TestCompressedPcd = CompressedPcd<Pasta, ()>;
+type TestPcd = Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, ()>;
+type TestCompressedPcd = ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
 type Outcome = (VerifierDecision, RngFingerprint);
 
@@ -346,15 +346,17 @@ enum ProofMutation<F> {
 }
 
 fn apply_proof_mutation<C: Cycle, R: Rank>(
-    proof: &mut Proof<C, R>,
+    proof: &mut Proof<C, ragu_pcd::Uncompressed<R>>,
     mutation: ProofMutation<C::CircuitField>,
 ) {
     match mutation {
         ProofMutation::PBlind(value) => proof
+            .payload
             .native_p_poly
             .add_assign(&sparse::Polynomial::from_coeffs(alloc::vec![value])),
         ProofMutation::PEval(value) => {
             proof
+                .payload
                 .native_p_poly
                 .add_assign(&sparse::Polynomial::from_coeffs(alloc::vec![
                     C::CircuitField::ZERO,
@@ -362,17 +364,21 @@ fn apply_proof_mutation<C: Cycle, R: Rank>(
                 ]))
         }
         ProofMutation::AbC(value) => proof
+            .payload
             .native_a_poly
             .add_assign(&sparse::Polynomial::from_coeffs(alloc::vec![value])),
-        ProofMutation::CircuitId(id) => proof.circuit_id = CircuitIndex::from_u32(id),
-        ProofMutation::ChallengeU(value) => proof.u = value,
-        ProofMutation::ChallengeX(value) => proof.x = value,
-        ProofMutation::ChallengeY(value) => proof.y = value,
+        ProofMutation::CircuitId(id) => proof.payload.circuit_id = CircuitIndex::from_u32(id),
+        ProofMutation::ChallengeU(value) => proof.payload.u = value,
+        ProofMutation::ChallengeX(value) => proof.payload.x = value,
+        ProofMutation::ChallengeY(value) => proof.payload.y = value,
         ProofMutation::LeftHeaderLen(len) => {
-            proof.left_header.resize(len, C::CircuitField::ZERO);
+            proof.payload.left_header.resize(len, C::CircuitField::ZERO);
         }
         ProofMutation::RightHeaderLen(len) => {
-            proof.right_header.resize(len, C::CircuitField::ZERO);
+            proof
+                .payload
+                .right_header
+                .resize(len, C::CircuitField::ZERO);
         }
     }
 }
@@ -464,7 +470,7 @@ fn verifier_outcome<B: SelectableBackend>(
 }
 
 fn corruptions(
-    proof: &Proof<Pasta, ProductionRank>,
+    proof: &Proof<Pasta, ragu_pcd::Uncompressed<ProductionRank>>,
     inputs: CorruptionInputs,
 ) -> impl IntoIterator<Item = (&'static str, ProofMutation<Fp>)> {
     [
@@ -586,18 +592,18 @@ fn check_corrupted_pcd_equivalence(
 
 /// With identical inputs and RNGs, every transmitted field must match.
 fn check_compressed_proofs_match(
-    expected: &CompressedProof<Pasta>,
-    actual: &CompressedProof<Pasta>,
+    expected: &ragu_pcd::Proof<Pasta, ragu_pcd::Compressed>,
+    actual: &ragu_pcd::Proof<Pasta, ragu_pcd::Compressed>,
     backend: &str,
 ) -> TestCaseResult {
     // Exhaustive patterns: adding a field to a transmitted struct fails to
     // compile until the comparison below is reviewed, as `Proof::test_mismatch`
     // does for uncompressed proofs. `Messages` is one type on both curves.
-    let CompressedProof {
+    let crate::compress::CompressedData {
         instance,
         native,
         nested: _,
-    } = expected;
+    } = &expected.payload;
     let Instance {
         circuit_id: _,
         left_header: _,
@@ -652,8 +658,8 @@ fn check_compressed_proofs_match(
     macro_rules! compare_fields {
         ($($($field:ident).+),+ $(,)?) => {
             $(prop_assert_eq!(
-                &expected.$($field).+,
-                &actual.$($field).+,
+                &expected.payload.$($field).+,
+                &actual.payload.$($field).+,
                 "{} compressed proof differs in {}",
                 backend,
                 stringify!($($field).+),
@@ -741,32 +747,38 @@ fn check_compressed_pcd_equivalence(
         }
     }
 
-    type Mutation = fn(&mut CompressedProof<Pasta>);
+    type Mutation = fn(&mut ragu_pcd::Proof<Pasta, ragu_pcd::Compressed>);
     let corruptions: &[(&str, Mutation)] = &[
-        ("native instance value", |p| p.instance.c += Fp::ONE),
-        ("nested instance value", |p| p.instance.nested_c += Fq::ONE),
+        ("native instance value", |p| p.payload.instance.c += Fp::ONE),
+        ("nested instance value", |p| {
+            p.payload.instance.nested_c += Fq::ONE
+        }),
         ("native reduction opening", |p| {
-            p.native.reduction.openings[0] += Fp::ONE
+            p.payload.native.reduction.openings[0] += Fp::ONE
         }),
         ("nested reduction opening", |p| {
-            p.nested.reduction.openings[0] += Fq::ONE
+            p.payload.nested.reduction.openings[0] += Fq::ONE
         }),
         ("native batch commitment", |p| {
-            p.native.batch.f = -p.native.batch.f
+            p.payload.native.batch.f = -p.payload.native.batch.f
         }),
         ("nested batch commitment", |p| {
-            p.nested.batch.f = -p.nested.batch.f
+            p.payload.nested.batch.f = -p.payload.nested.batch.f
         }),
         ("native batch evaluation", |p| {
-            p.native.batch.evaluations[0] += Fp::ONE
+            p.payload.native.batch.evaluations[0] += Fp::ONE
         }),
         ("nested batch evaluation", |p| {
-            p.nested.batch.evaluations[0] += Fq::ONE
+            p.payload.nested.batch.evaluations[0] += Fq::ONE
         }),
         // These leave the reduction and batching messages intact, exercising
         // rejection by the IPA verifier on each curve.
-        ("native IPA coefficient", |p| p.native.opening.c += Fp::ONE),
-        ("nested IPA coefficient", |p| p.nested.opening.c += Fq::ONE),
+        ("native IPA coefficient", |p| {
+            p.payload.native.opening.c += Fp::ONE
+        }),
+        ("nested IPA coefficient", |p| {
+            p.payload.nested.opening.c += Fq::ONE
+        }),
     ];
     for &(case, edit) in corruptions {
         let mut corrupted = reference.clone();
@@ -1305,14 +1317,14 @@ mod proof_equivalence {
                 .all(|(ours, theirs)| polynomial_eq(ours, theirs))
     }
 
-    impl<C: Cycle, R: Rank> Proof<C, R> {
+    impl<C: Cycle, R: Rank> Proof<C, ragu_pcd::Uncompressed<R>> {
         /// Returns the first category in which two proofs differ semantically.
         ///
         /// The exhaustive pattern makes additions to [`Proof`] fail to compile
         /// until this comparison is reviewed. Polynomials are compared by their
         /// coefficient streams rather than their sparse storage layout.
         pub(crate) fn test_mismatch(&self, other: &Self) -> Option<&'static str> {
-            let Self {
+            let crate::proof::UncompressedData {
                 bridge_alpha: _,
                 circuit_id: _,
                 left_header: _,
@@ -1426,15 +1438,17 @@ mod proof_equivalence {
                 bridge_ab_commitment: _,
                 bridge_query_commitment: _,
                 bridge_eval_commitment: _,
-            } = self;
+            } = &self.payload;
 
-            if self.bridge_alpha != other.bridge_alpha {
+            if self.payload.bridge_alpha != other.payload.bridge_alpha {
                 return Some("bridge alpha");
             }
-            if self.circuit_id != other.circuit_id {
+            if self.payload.circuit_id != other.payload.circuit_id {
                 return Some("circuit id");
             }
-            if self.left_header != other.left_header || self.right_header != other.right_header {
+            if self.payload.left_header != other.payload.left_header
+                || self.payload.right_header != other.payload.right_header
+            {
                 return Some("headers");
             }
 
@@ -1445,45 +1459,46 @@ mod proof_equivalence {
                 return Some("native rx polynomials");
             }
             if !extension_eq(
-                &self.native_extension_circuit_rxs,
-                &other.native_extension_circuit_rxs,
+                &self.payload.native_extension_circuit_rxs,
+                &other.payload.native_extension_circuit_rxs,
             ) || !extension_eq(
-                &self.native_extension_stage_rxs,
-                &other.native_extension_stage_rxs,
+                &self.payload.native_extension_stage_rxs,
+                &other.payload.native_extension_stage_rxs,
             ) {
                 return Some("native extension polynomials");
             }
             if !extension_eq(
-                &self.nested_extension_circuit_rxs,
-                &other.nested_extension_circuit_rxs,
+                &self.payload.nested_extension_circuit_rxs,
+                &other.payload.nested_extension_circuit_rxs,
             ) || !extension_eq(
-                &self.nested_extension_stage_rxs,
-                &other.nested_extension_stage_rxs,
+                &self.payload.nested_extension_stage_rxs,
+                &other.payload.nested_extension_stage_rxs,
             ) {
                 return Some("nested extension polynomials");
             }
-            if !polynomial_eq(&self.native_a_poly, &other.native_a_poly)
-                || !polynomial_eq(&self.native_b_poly, &other.native_b_poly)
+            if !polynomial_eq(&self.payload.native_a_poly, &other.payload.native_a_poly)
+                || !polynomial_eq(&self.payload.native_b_poly, &other.payload.native_b_poly)
             {
                 return Some("native ab polynomials");
             }
             if !polynomial_eq(
-                &self.native_registry_xy_poly,
-                &other.native_registry_xy_poly,
-            ) || !polynomial_eq(&self.native_p_poly, &other.native_p_poly)
+                &self.payload.native_registry_xy_poly,
+                &other.payload.native_registry_xy_poly,
+            ) || !polynomial_eq(&self.payload.native_p_poly, &other.payload.native_p_poly)
             {
                 return Some("native protocol polynomials");
             }
             if self
+                .payload
                 .online_polynomials
                 .iter()
-                .zip(&other.online_polynomials)
+                .zip(&other.payload.online_polynomials)
                 .any(|(ours, theirs)| !polynomial_eq(ours, theirs))
-                || self.online_commitments != other.online_commitments
+                || self.payload.online_commitments != other.payload.online_commitments
             {
                 return Some("online polynomials");
             }
-            if self.online_openings != other.online_openings {
+            if self.payload.online_openings != other.payload.online_openings {
                 return Some("online openings");
             }
             if nested::RxIndex::ALL
@@ -1492,39 +1507,39 @@ mod proof_equivalence {
             {
                 return Some("nested polynomials");
             }
-            if !polynomial_eq(&self.nested_a_poly, &other.nested_a_poly)
-                || !polynomial_eq(&self.nested_b_poly, &other.nested_b_poly)
+            if !polynomial_eq(&self.payload.nested_a_poly, &other.payload.nested_a_poly)
+                || !polynomial_eq(&self.payload.nested_b_poly, &other.payload.nested_b_poly)
             {
                 return Some("nested ab polynomials");
             }
             if !polynomial_eq(
-                &self.nested_registry_xy_poly,
-                &other.nested_registry_xy_poly,
-            ) || !polynomial_eq(&self.nested_p_poly, &other.nested_p_poly)
+                &self.payload.nested_registry_xy_poly,
+                &other.payload.nested_registry_xy_poly,
+            ) || !polynomial_eq(&self.payload.nested_p_poly, &other.payload.nested_p_poly)
             {
                 return Some("nested protocol polynomials");
             }
 
             if [
-                self.w,
-                self.y,
-                self.z,
-                self.mu,
-                self.mu_prime,
-                self.x,
-                self.alpha,
-                self.u,
-                self.pre_beta,
+                self.payload.w,
+                self.payload.y,
+                self.payload.z,
+                self.payload.mu,
+                self.payload.mu_prime,
+                self.payload.x,
+                self.payload.alpha,
+                self.payload.u,
+                self.payload.pre_beta,
             ] != [
-                other.w,
-                other.y,
-                other.z,
-                other.mu,
-                other.mu_prime,
-                other.x,
-                other.alpha,
-                other.u,
-                other.pre_beta,
+                other.payload.w,
+                other.payload.y,
+                other.payload.z,
+                other.payload.mu,
+                other.payload.mu_prime,
+                other.payload.x,
+                other.payload.alpha,
+                other.payload.u,
+                other.payload.pre_beta,
             ] {
                 return Some("challenges");
             }
@@ -1548,34 +1563,40 @@ mod proof_equivalence {
                 return Some("native protocol commitments");
             }
 
-            if self.nested_endoscaling_step_commitments != other.nested_endoscaling_step_commitments
-                || self.nested_endoscalar_commitment != other.nested_endoscalar_commitment
-                || self.nested_points_commitment != other.nested_points_commitment
+            if self.payload.nested_endoscaling_step_commitments
+                != other.payload.nested_endoscaling_step_commitments
+                || self.payload.nested_endoscalar_commitment
+                    != other.payload.nested_endoscalar_commitment
+                || self.payload.nested_points_commitment != other.payload.nested_points_commitment
             {
                 return Some("nested commitments");
             }
-            if self.native_extension_circuit_commitments
-                != other.native_extension_circuit_commitments
-                || self.native_extension_stage_commitments
-                    != other.native_extension_stage_commitments
-                || self.nested_extension_circuit_commitments
-                    != other.nested_extension_circuit_commitments
-                || self.nested_extension_stage_commitments
-                    != other.nested_extension_stage_commitments
+            if self.payload.native_extension_circuit_commitments
+                != other.payload.native_extension_circuit_commitments
+                || self.payload.native_extension_stage_commitments
+                    != other.payload.native_extension_stage_commitments
+                || self.payload.nested_extension_circuit_commitments
+                    != other.payload.nested_extension_circuit_commitments
+                || self.payload.nested_extension_stage_commitments
+                    != other.payload.nested_extension_stage_commitments
             {
                 return Some("extension commitments");
             }
-            if self.nested_a_commitment != other.nested_a_commitment
-                || self.nested_b_commitment != other.nested_b_commitment
+            if self.payload.nested_a_commitment != other.payload.nested_a_commitment
+                || self.payload.nested_b_commitment != other.payload.nested_b_commitment
             {
                 return Some("nested ab commitments");
             }
-            if self.nested_registry_xy_commitment != other.nested_registry_xy_commitment
-                || self.nested_p_commitment != other.nested_p_commitment
-                || self.nested_challenges_commitment != other.nested_challenges_commitment
-                || self.nested_challenges_partial != other.nested_challenges_partial
-                || self.nested_collapse_commitment != other.nested_collapse_commitment
-                || self.nested_compute_v_commitment != other.nested_compute_v_commitment
+            if self.payload.nested_registry_xy_commitment
+                != other.payload.nested_registry_xy_commitment
+                || self.payload.nested_p_commitment != other.payload.nested_p_commitment
+                || self.payload.nested_challenges_commitment
+                    != other.payload.nested_challenges_commitment
+                || self.payload.nested_challenges_partial != other.payload.nested_challenges_partial
+                || self.payload.nested_collapse_commitment
+                    != other.payload.nested_collapse_commitment
+                || self.payload.nested_compute_v_commitment
+                    != other.payload.nested_compute_v_commitment
             {
                 return Some("nested protocol commitments");
             }

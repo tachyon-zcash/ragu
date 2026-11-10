@@ -41,15 +41,17 @@ fn check_identity_commitments<C: IpaCycle + ProfiledCycle, R: Rank>(
         use nested::RxIndex::*;
         let mut proof = honest.proof().clone();
         let point = match index {
-            BridgePreamble => &mut proof.bridge_preamble_commitment,
-            BridgeSPrime => &mut proof.bridge_s_prime_commitment,
-            BridgeInnerError => &mut proof.bridge_inner_error_commitment,
-            BridgeOuterError => &mut proof.bridge_outer_error_commitment,
-            BridgeAB => &mut proof.bridge_ab_commitment.0,
-            BridgeQuery => &mut proof.bridge_query_commitment,
-            BridgeF => &mut proof.bridge_f_commitment,
-            BridgeEval => &mut proof.bridge_eval_commitment,
-            ExtensionStage(j) => &mut proof.nested_extension_stage_commitments[j as usize].0,
+            BridgePreamble => &mut proof.payload.bridge_preamble_commitment,
+            BridgeSPrime => &mut proof.payload.bridge_s_prime_commitment,
+            BridgeInnerError => &mut proof.payload.bridge_inner_error_commitment,
+            BridgeOuterError => &mut proof.payload.bridge_outer_error_commitment,
+            BridgeAB => &mut proof.payload.bridge_ab_commitment.0,
+            BridgeQuery => &mut proof.payload.bridge_query_commitment,
+            BridgeF => &mut proof.payload.bridge_f_commitment,
+            BridgeEval => &mut proof.payload.bridge_eval_commitment,
+            ExtensionStage(j) => {
+                &mut proof.payload.nested_extension_stage_commitments[j as usize].0
+            }
             _ => continue,
         };
         *point = C::NestedCurve::identity();
@@ -61,13 +63,18 @@ fn check_identity_commitments<C: IpaCycle + ProfiledCycle, R: Rank>(
 
         let mut proof = compressed.proof().clone();
         let position = nested_position::<C::Profile>(nested::RxComponent::Rx(index));
-        proof.instance.nested[position] = C::NestedCurve::identity();
+        proof.payload.instance.nested[position] = C::NestedCurve::identity();
         assert!(!app.verify_compressed(&proof.carry::<()>(()))?);
     }
 
-    for j in 0..honest.proof().native_extension_stage_commitments.len() {
+    for j in 0..honest
+        .proof()
+        .payload
+        .native_extension_stage_commitments
+        .len()
+    {
         let mut proof = honest.proof().clone();
-        proof.native_extension_stage_commitments[j].0 = C::HostCurve::identity();
+        proof.payload.native_extension_stage_commitments[j].0 = C::HostCurve::identity();
         assert!(proof.well_formed::<HEADER_SIZE>());
         assert!(
             !app.verify_uncompressed(&proof.carry::<()>(()), &mut rng)?,
@@ -78,24 +85,24 @@ fn check_identity_commitments<C: IpaCycle + ProfiledCycle, R: Rank>(
         let position = native_position::<C::Profile>(native::RxComponent::Rx(
             native::RxIndex::ExtensionStage(j as u32),
         ));
-        proof.instance.native[position] = C::HostCurve::identity();
+        proof.payload.instance.native[position] = C::HostCurve::identity();
         assert!(!app.verify_compressed(&proof.carry::<()>(()))?);
     }
 
     // The unified claim targets also allocate the accumulator commitments
     // as points, before the verifier replays the bridge transcript.
     let mut proof = honest.proof().clone();
-    proof.native_p_commitment.0 = C::HostCurve::identity();
+    proof.payload.native_p_commitment.0 = C::HostCurve::identity();
     assert!(!app.verify_uncompressed(&proof.carry::<()>(()), &mut rng)?);
     let mut proof = compressed.proof().clone();
-    proof.instance.native_p = C::HostCurve::identity();
+    proof.payload.instance.native_p = C::HostCurve::identity();
     assert!(!app.verify_compressed(&proof.carry::<()>(()))?);
 
     let mut proof = honest.proof().clone();
-    proof.nested_p_commitment.0 = C::NestedCurve::identity();
+    proof.payload.nested_p_commitment.0 = C::NestedCurve::identity();
     assert!(!app.verify_uncompressed(&proof.carry::<()>(()), &mut rng)?);
     let mut proof = compressed.proof().clone();
-    proof.instance.nested_p = C::NestedCurve::identity();
+    proof.payload.instance.nested_p = C::NestedCurve::identity();
     assert!(!app.verify_compressed(&proof.carry::<()>(()))?);
     Ok(())
 }

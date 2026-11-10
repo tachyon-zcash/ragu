@@ -1103,7 +1103,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     /// Build the proof. All polynomial fields must have been set. Commitment
     /// caches that haven't been accessed yet are computed now.
-    pub(crate) fn build(mut self) -> Result<Proof<C, R>> {
+    pub(crate) fn build(mut self) -> Result<Proof<C, crate::Uncompressed<R>>> {
         // Force lazy evaluation of every native commitment cache by invoking
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
@@ -1169,173 +1169,175 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         }
 
         Ok(Proof {
-            bridge_alpha: self.bridge_alpha,
+            payload: super::UncompressedData {
+                bridge_alpha: self.bridge_alpha,
 
-            circuit_id: take!(circuit_id),
-            left_header: take!(left_header),
-            right_header: take!(right_header),
+                circuit_id: take!(circuit_id),
+                left_header: take!(left_header),
+                right_header: take!(right_header),
 
-            native_application_rx: take!(native_application_rx),
-            native_application_stage_rx: take!(native_application_stage_rx),
-            native_preamble_rx: take!(native_preamble_rx),
-            native_inner_error_rx: take!(native_inner_error_rx),
-            native_outer_error_rx: take!(native_outer_error_rx),
-            native_a_poly: take!(native_a_poly),
-            native_b_poly: take!(native_b_poly),
-            native_query_rx: take!(native_query_rx),
-            native_registry_xy_poly: take!(native_registry_xy_poly),
-            native_eval_rx: take!(native_eval_rx),
-            native_p_poly: take!(native_p_poly),
-            native_hashes_1_rx: take!(native_hashes_1_rx),
-            native_hashes_2_rx: take!(native_hashes_2_rx),
-            native_collapse_rx: take!(native_collapse_rx),
-            native_compute_v_rx: take!(native_compute_v_rx),
-            native_bind_challenges_rxs: take!(native_bind_challenges_rxs),
-            native_bind_beta_rx: take!(native_bind_beta_rx),
-            native_bind_endoscalar_rx: take!(native_bind_endoscalar_rx),
-            native_endoscaling_step_rxs: take!(native_endoscaling_step_rxs),
-            native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
-            native_extension_stage_rxs: take!(native_extension_stage_rxs),
-            native_points_binding_rx: take!(native_points_binding_rx),
-            native_points_children_rx: take!(native_points_children_rx),
-            native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
-            native_points_ab_rx: take!(native_points_ab_rx),
-            native_points_f_rx: take!(native_points_f_rx),
-            native_points_walk_rx: take!(native_points_walk_rx),
-            online_polynomials: take!(online_polynomials),
-            online_openings: take!(online_openings),
+                native_application_rx: take!(native_application_rx),
+                native_application_stage_rx: take!(native_application_stage_rx),
+                native_preamble_rx: take!(native_preamble_rx),
+                native_inner_error_rx: take!(native_inner_error_rx),
+                native_outer_error_rx: take!(native_outer_error_rx),
+                native_a_poly: take!(native_a_poly),
+                native_b_poly: take!(native_b_poly),
+                native_query_rx: take!(native_query_rx),
+                native_registry_xy_poly: take!(native_registry_xy_poly),
+                native_eval_rx: take!(native_eval_rx),
+                native_p_poly: take!(native_p_poly),
+                native_hashes_1_rx: take!(native_hashes_1_rx),
+                native_hashes_2_rx: take!(native_hashes_2_rx),
+                native_collapse_rx: take!(native_collapse_rx),
+                native_compute_v_rx: take!(native_compute_v_rx),
+                native_bind_challenges_rxs: take!(native_bind_challenges_rxs),
+                native_bind_beta_rx: take!(native_bind_beta_rx),
+                native_bind_endoscalar_rx: take!(native_bind_endoscalar_rx),
+                native_endoscaling_step_rxs: take!(native_endoscaling_step_rxs),
+                native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
+                native_extension_stage_rxs: take!(native_extension_stage_rxs),
+                native_points_binding_rx: take!(native_points_binding_rx),
+                native_points_children_rx: take!(native_points_children_rx),
+                native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
+                native_points_ab_rx: take!(native_points_ab_rx),
+                native_points_f_rx: take!(native_points_f_rx),
+                native_points_walk_rx: take!(native_points_walk_rx),
+                online_polynomials: take!(online_polynomials),
+                online_openings: take!(online_openings),
 
-            bridge_preamble_rx: take!(bridge_preamble_rx),
-            bridge_preamble_commitment: take!(bridge_preamble_commitment),
-            bridge_hash_rx: take!(bridge_hash_rx),
-            bridge_hash_commitment: take!(bridge_hash_commitment),
-            bridge_s_prime_rx: take!(bridge_s_prime_rx),
-            bridge_s_prime_commitment: take!(bridge_s_prime_commitment),
-            bridge_inner_error_rx: take!(bridge_inner_error_rx),
-            bridge_inner_error_commitment: take!(bridge_inner_error_commitment),
-            bridge_outer_error_rx: take!(bridge_outer_error_rx),
-            bridge_outer_error_commitment: take!(bridge_outer_error_commitment),
-            bridge_query_rx: take!(bridge_query_rx),
-            bridge_query_commitment: take!(bridge_query_commitment),
-            bridge_f_rx: take!(bridge_f_rx),
-            bridge_f_commitment: take!(bridge_f_commitment),
-            bridge_eval_rx: take!(bridge_eval_rx),
-            bridge_eval_commitment: take!(bridge_eval_commitment),
+                bridge_preamble_rx: take!(bridge_preamble_rx),
+                bridge_preamble_commitment: take!(bridge_preamble_commitment),
+                bridge_hash_rx: take!(bridge_hash_rx),
+                bridge_hash_commitment: take!(bridge_hash_commitment),
+                bridge_s_prime_rx: take!(bridge_s_prime_rx),
+                bridge_s_prime_commitment: take!(bridge_s_prime_commitment),
+                bridge_inner_error_rx: take!(bridge_inner_error_rx),
+                bridge_inner_error_commitment: take!(bridge_inner_error_commitment),
+                bridge_outer_error_rx: take!(bridge_outer_error_rx),
+                bridge_outer_error_commitment: take!(bridge_outer_error_commitment),
+                bridge_query_rx: take!(bridge_query_rx),
+                bridge_query_commitment: take!(bridge_query_commitment),
+                bridge_f_rx: take!(bridge_f_rx),
+                bridge_f_commitment: take!(bridge_f_commitment),
+                bridge_eval_rx: take!(bridge_eval_rx),
+                bridge_eval_commitment: take!(bridge_eval_commitment),
 
-            bridge_ab_rx: cached!(bridge_ab_rx),
-            bridge_ab_commitment: cached!(bridge_ab_commitment),
+                bridge_ab_rx: cached!(bridge_ab_rx),
+                bridge_ab_commitment: cached!(bridge_ab_commitment),
 
-            nested_endoscaling_step_rxs: take!(nested_endoscaling_step_rxs),
-            nested_extension_circuit_rxs: take!(nested_extension_circuit_rxs),
-            nested_extension_stage_rxs: take!(nested_extension_stage_rxs),
-            nested_endoscalar_rx: take!(nested_endoscalar_rx),
-            nested_points_rx: take!(nested_points_rx),
-            nested_a_poly: take!(nested_a_poly),
-            nested_b_poly: take!(nested_b_poly),
-            nested_registry_xy_poly: take!(nested_registry_xy_poly),
-            nested_p_poly: take!(nested_p_poly),
-            nested_challenges_rx: take!(nested_challenges_rx),
-            nested_challenges_partial: take!(nested_challenges_partial),
-            nested_collapse_rx: take!(nested_collapse_rx),
-            nested_compute_v_rx: take!(nested_compute_v_rx),
+                nested_endoscaling_step_rxs: take!(nested_endoscaling_step_rxs),
+                nested_extension_circuit_rxs: take!(nested_extension_circuit_rxs),
+                nested_extension_stage_rxs: take!(nested_extension_stage_rxs),
+                nested_endoscalar_rx: take!(nested_endoscalar_rx),
+                nested_points_rx: take!(nested_points_rx),
+                nested_a_poly: take!(nested_a_poly),
+                nested_b_poly: take!(nested_b_poly),
+                nested_registry_xy_poly: take!(nested_registry_xy_poly),
+                nested_p_poly: take!(nested_p_poly),
+                nested_challenges_rx: take!(nested_challenges_rx),
+                nested_challenges_partial: take!(nested_challenges_partial),
+                nested_collapse_rx: take!(nested_collapse_rx),
+                nested_compute_v_rx: take!(nested_compute_v_rx),
 
-            nested_endoscaling_step_commitments: self
-                .nested_endoscaling_step_commitments
-                .take()
-                .expect("nested_endoscaling_step_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            nested_extension_circuit_commitments: self
-                .nested_extension_circuit_commitments
-                .take()
-                .expect("nested_extension_circuit_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            nested_extension_stage_commitments: self
-                .nested_extension_stage_commitments
-                .take()
-                .expect("nested_extension_stage_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            nested_endoscalar_commitment: cached!(nested_endoscalar_commitment),
-            nested_points_commitment: cached!(nested_points_commitment),
-            nested_a_commitment: cached!(nested_a_commitment),
-            nested_b_commitment: cached!(nested_b_commitment),
-            nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
-            nested_p_commitment: cached!(nested_p_commitment),
-            nested_challenges_commitment: cached!(nested_challenges_commitment),
-            nested_collapse_commitment: cached!(nested_collapse_commitment),
-            nested_compute_v_commitment: cached!(nested_compute_v_commitment),
+                nested_endoscaling_step_commitments: self
+                    .nested_endoscaling_step_commitments
+                    .take()
+                    .expect("nested_endoscaling_step_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                nested_extension_circuit_commitments: self
+                    .nested_extension_circuit_commitments
+                    .take()
+                    .expect("nested_extension_circuit_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                nested_extension_stage_commitments: self
+                    .nested_extension_stage_commitments
+                    .take()
+                    .expect("nested_extension_stage_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                nested_endoscalar_commitment: cached!(nested_endoscalar_commitment),
+                nested_points_commitment: cached!(nested_points_commitment),
+                nested_a_commitment: cached!(nested_a_commitment),
+                nested_b_commitment: cached!(nested_b_commitment),
+                nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
+                nested_p_commitment: cached!(nested_p_commitment),
+                nested_challenges_commitment: cached!(nested_challenges_commitment),
+                nested_collapse_commitment: cached!(nested_collapse_commitment),
+                nested_compute_v_commitment: cached!(nested_compute_v_commitment),
 
-            w: take!(w),
-            y: take!(y),
-            z: take!(z),
-            mu: take!(mu),
-            mu_prime: take!(mu_prime),
-            x: take!(x),
-            alpha: take!(alpha),
-            u: take!(u),
-            pre_beta: take!(pre_beta),
+                w: take!(w),
+                y: take!(y),
+                z: take!(z),
+                mu: take!(mu),
+                mu_prime: take!(mu_prime),
+                x: take!(x),
+                alpha: take!(alpha),
+                u: take!(u),
+                pre_beta: take!(pre_beta),
 
-            native_application_commitment: cached!(native_application_commitment),
-            native_application_stage_commitment: cached!(native_application_stage_commitment),
-            native_preamble_commitment: cached!(native_preamble_commitment),
-            native_inner_error_commitment: cached!(native_inner_error_commitment),
-            native_outer_error_commitment: cached!(native_outer_error_commitment),
-            native_a_commitment: cached!(native_a_commitment),
-            native_b_commitment: cached!(native_b_commitment),
-            native_query_commitment: cached!(native_query_commitment),
-            native_registry_xy_commitment: cached!(native_registry_xy_commitment),
-            native_eval_commitment: cached!(native_eval_commitment),
-            native_p_commitment: cached!(native_p_commitment),
-            native_hashes_1_commitment: cached!(native_hashes_1_commitment),
-            native_hashes_2_commitment: cached!(native_hashes_2_commitment),
-            native_collapse_commitment: cached!(native_collapse_commitment),
-            native_compute_v_commitment: cached!(native_compute_v_commitment),
-            native_bind_challenges_commitments: self
-                .native_bind_challenges_commitments
-                .take()
-                .expect("native_bind_challenges_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            native_bind_beta_commitment: cached!(native_bind_beta_commitment),
-            native_bind_endoscalar_commitment: cached!(native_bind_endoscalar_commitment),
-            native_endoscaling_step_commitments: self
-                .native_endoscaling_step_commitments
-                .take()
-                .expect("native_endoscaling_step_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            native_extension_circuit_commitments: self
-                .native_extension_circuit_commitments
-                .take()
-                .expect("native_extension_circuit_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            native_extension_stage_commitments: self
-                .native_extension_stage_commitments
-                .take()
-                .expect("native_extension_stage_commitments not set")
-                .into_iter()
-                .map(Cached)
-                .collect(),
-            native_points_binding_commitment: cached!(native_points_binding_commitment),
-            native_points_children_commitment: cached!(native_points_children_commitment),
-            native_points_registry_wx_commitment: cached!(native_points_registry_wx_commitment),
-            native_points_ab_commitment: cached!(native_points_ab_commitment),
-            native_points_f_commitment: cached!(native_points_f_commitment),
-            native_points_walk_commitment: cached!(native_points_walk_commitment),
-            online_commitments: self
-                .online_commitments
-                .take()
-                .expect("online_commitments not set")
-                .map(Cached),
+                native_application_commitment: cached!(native_application_commitment),
+                native_application_stage_commitment: cached!(native_application_stage_commitment),
+                native_preamble_commitment: cached!(native_preamble_commitment),
+                native_inner_error_commitment: cached!(native_inner_error_commitment),
+                native_outer_error_commitment: cached!(native_outer_error_commitment),
+                native_a_commitment: cached!(native_a_commitment),
+                native_b_commitment: cached!(native_b_commitment),
+                native_query_commitment: cached!(native_query_commitment),
+                native_registry_xy_commitment: cached!(native_registry_xy_commitment),
+                native_eval_commitment: cached!(native_eval_commitment),
+                native_p_commitment: cached!(native_p_commitment),
+                native_hashes_1_commitment: cached!(native_hashes_1_commitment),
+                native_hashes_2_commitment: cached!(native_hashes_2_commitment),
+                native_collapse_commitment: cached!(native_collapse_commitment),
+                native_compute_v_commitment: cached!(native_compute_v_commitment),
+                native_bind_challenges_commitments: self
+                    .native_bind_challenges_commitments
+                    .take()
+                    .expect("native_bind_challenges_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                native_bind_beta_commitment: cached!(native_bind_beta_commitment),
+                native_bind_endoscalar_commitment: cached!(native_bind_endoscalar_commitment),
+                native_endoscaling_step_commitments: self
+                    .native_endoscaling_step_commitments
+                    .take()
+                    .expect("native_endoscaling_step_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                native_extension_circuit_commitments: self
+                    .native_extension_circuit_commitments
+                    .take()
+                    .expect("native_extension_circuit_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                native_extension_stage_commitments: self
+                    .native_extension_stage_commitments
+                    .take()
+                    .expect("native_extension_stage_commitments not set")
+                    .into_iter()
+                    .map(Cached)
+                    .collect(),
+                native_points_binding_commitment: cached!(native_points_binding_commitment),
+                native_points_children_commitment: cached!(native_points_children_commitment),
+                native_points_registry_wx_commitment: cached!(native_points_registry_wx_commitment),
+                native_points_ab_commitment: cached!(native_points_ab_commitment),
+                native_points_f_commitment: cached!(native_points_f_commitment),
+                native_points_walk_commitment: cached!(native_points_walk_commitment),
+                online_commitments: self
+                    .online_commitments
+                    .take()
+                    .expect("online_commitments not set")
+                    .map(Cached),
+            },
         })
     }
 }

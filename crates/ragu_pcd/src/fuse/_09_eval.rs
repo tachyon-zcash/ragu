@@ -40,8 +40,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(super) fn compute_eval(
         &self,
         bound_challenges: &[C::CircuitField; native::circuits::bind_challenges::NUM_BOUND],
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,

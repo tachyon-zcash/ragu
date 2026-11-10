@@ -156,8 +156,8 @@ pub fn coefficients<F: Field, R: Rank>(
 /// A step's online polynomials in slot order: the children's exported
 /// polynomials as its left and right slots, then its own, `own`.
 pub fn polys<'a, C: Cycle, R: Rank>(
-    left: &'a Proof<C, R>,
-    right: &'a Proof<C, R>,
+    left: &'a Proof<C, crate::Uncompressed<R>>,
+    right: &'a Proof<C, crate::Uncompressed<R>>,
     own: &'a [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
 ) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_QUERIES] {
     let proofs = [left.online_polynomials(), right.online_polynomials(), own];
@@ -169,8 +169,8 @@ pub fn polys<'a, C: Cycle, R: Rank>(
 /// The commitments of [`polys`], in the same order, given the step's own
 /// commitments `own`.
 pub fn commitments<C: Cycle, R: Rank>(
-    left: &Proof<C, R>,
-    right: &Proof<C, R>,
+    left: &Proof<C, crate::Uncompressed<R>>,
+    right: &Proof<C, crate::Uncompressed<R>>,
     own: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
 ) -> [C::HostCurve; NUM_ONLINE_QUERIES] {
     let proofs = [left.online_commitments(), right.online_commitments(), own];

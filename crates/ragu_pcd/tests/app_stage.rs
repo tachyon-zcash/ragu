@@ -259,11 +259,16 @@ fn app_with_stage<const N: usize>() -> App {
 }
 
 /// An honest proof over a nonzero stage: `x = 3`, `state = 9`, `n = 18`.
-fn honest(app: &App, rng: &mut StdRng) -> Pcd<Pasta, R, Number> {
+fn honest(app: &App, rng: &mut StdRng) -> Pcd<Pasta, ragu_pcd::Uncompressed<R>, Number> {
     app.seed(rng, Square(true), Fp::from(3)).unwrap().0
 }
 
-fn check<H: Header<Fp>>(app: &App, pcd: &Pcd<Pasta, R, H>, rng: &mut StdRng, expected: bool) {
+fn check<H: Header<Fp>>(
+    app: &App,
+    pcd: &Pcd<Pasta, ragu_pcd::Uncompressed<R>, H>,
+    rng: &mut StdRng,
+    expected: bool,
+) {
     assert_eq!(
         app.verify_differential(pcd, &mut *rng).unwrap(),
         expected,
@@ -276,8 +281,8 @@ fn check<H: Header<Fp>>(app: &App, pcd: &Pcd<Pasta, R, H>, rng: &mut StdRng, exp
 /// pass.
 fn check_through_recursion(
     app: &App,
-    pcd: Pcd<Pasta, R, Number>,
-    honest: &Pcd<Pasta, R, Number>,
+    pcd: Pcd<Pasta, ragu_pcd::Uncompressed<R>, Number>,
+    honest: &Pcd<Pasta, ragu_pcd::Uncompressed<R>, Number>,
     rng: &mut StdRng,
     expected: bool,
 ) {
@@ -300,21 +305,21 @@ fn check_through_recursion(
 /// polynomial and recommits it, as a prover bypassing the API would.
 fn edit<H: Header<Fp>>(
     app: &App,
-    pcd: Pcd<Pasta, R, H>,
+    pcd: Pcd<Pasta, ragu_pcd::Uncompressed<R>, H>,
     component: RxIndex,
     gate: usize,
     delta: Fp,
-) -> Pcd<Pasta, R, H> {
+) -> Pcd<Pasta, ragu_pcd::Uncompressed<R>, H> {
     let (mut proof, data) = pcd.into_parts();
     let edit = staging::stage_rx::<_, R>(Fp::ZERO, gate, 1, &[delta]).unwrap();
     let (rx, commitment) = match component {
         RxIndex::Application => (
-            &mut proof.native_application_rx,
-            &mut proof.native_application_commitment,
+            &mut proof.payload.native_application_rx,
+            &mut proof.payload.native_application_commitment,
         ),
         RxIndex::ApplicationStage => (
-            &mut proof.native_application_stage_rx,
-            &mut proof.native_application_stage_commitment,
+            &mut proof.payload.native_application_stage_rx,
+            &mut proof.payload.native_application_stage_commitment,
         ),
         other => panic!("not an application polynomial: {other:?}"),
     };

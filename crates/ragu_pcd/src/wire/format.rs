@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::Rank;
 
 use crate::{
-    CompressedProof, Proof,
+    Compressed, Proof,
     profile::ProfiledCycle,
     wire::{Decode, Dimensions, Encode, Error, MAX_HEADER_SIZE, MAX_RANK, Reader},
 };
@@ -40,7 +40,7 @@ const COMPRESSED_SCHEMA_VERSION: u16 = 2;
 const PROTOCOL_VERSION: u16 = 1;
 pub(crate) const ENVELOPE_SIZE: usize = 28;
 
-impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> Proof<C, crate::Uncompressed<R>> {
     /// Encodes this proof with its version envelope. The rank comes from `R`
     /// and the header size from the proof's child headers.
     ///
@@ -52,10 +52,10 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// Returns [`Error::Unencodable`] if dimensions exceed the limits in
     /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
     /// is the identity.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
+    pub(crate) fn encode_wire(&self) -> Result<Vec<u8>, Error<'static>> {
         let dims = Dimensions {
             rank: R::RANK,
-            header_size: self.left_header.len(),
+            header_size: self.payload.left_header.len(),
         };
         encode(self, PayloadKind::Proof, dims)
     }
@@ -75,7 +75,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// and verify with
     /// [`Application::verify_compressed`](crate::Application::verify_compressed)
     /// before accepting the proof or using it as a child.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
+    pub(crate) fn decode_wire(bytes: &[u8]) -> Result<Self, Error<'_>> {
         decode(bytes, PayloadKind::Proof, Some(R::RANK))
     }
 
@@ -87,7 +87,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: ProfiledCycle> CompressedProof<C> {
+impl<C: ProfiledCycle> Proof<C, Compressed> {
     /// Encodes this compressed proof with its version envelope. The rank
     /// comes from its IPA round count and the header size from its child
     /// headers. This checks representation, not proof validity.
@@ -97,16 +97,17 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// Returns [`Error::Unencodable`] if dimensions exceed the limits in
     /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
     /// is the identity.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
+    pub(crate) fn encode_wire(&self) -> Result<Vec<u8>, Error<'static>> {
         let dims = Dimensions {
             rank: self
+                .payload
                 .native
                 .opening
                 .rounds
                 .len()
                 .try_into()
                 .map_err(|_| Error::Unencodable)?,
-            header_size: self.instance.left_header.len(),
+            header_size: self.payload.instance.left_header.len(),
         };
         encode(self, PayloadKind::Compressed, dims)
     }
@@ -132,7 +133,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// Attach the accompanying output data with [`carry`](Self::carry) and
     /// use [`Application::verify_compressed`](crate::Application::verify_compressed)
     /// before accepting the proof.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
+    pub(crate) fn decode_wire(bytes: &[u8]) -> Result<Self, Error<'_>> {
         decode(bytes, PayloadKind::Compressed, None)
     }
 
@@ -312,25 +313,27 @@ mod tests {
                 + 4
         }
         assert_eq!(
-            <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
-                ProductionRank,
-                4,
-            >()),
+            <Proof<Pasta, crate::Uncompressed<ProductionRank>> as Decode>::encoded_len(
+                Dimensions::of::<ProductionRank, 4>()
+            ),
             payload::<ProductionRank, 4>()
         );
         assert_eq!(
-            <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank, 1>()),
+            <Proof<Pasta, crate::Uncompressed<TestRank>> as Decode>::encoded_len(Dimensions::of::<
+                TestRank,
+                1,
+            >()),
             payload::<TestRank, 1>()
         );
         assert_eq!(
-            Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
+            Proof::<Pasta, crate::Uncompressed<ProductionRank>>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
         // 102 instance points; 27 instance scalars and the online openings'
         // two scalars each; per side 6+2R points, 21 scalars; plus the
         // circuit index and common envelope.
         assert_eq!(
-            CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
+            Proof::<Pasta, Compressed>::encoded_len::<ProductionRank, 4>(),
             28 + 4 + (102 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
@@ -341,11 +344,11 @@ mod tests {
         for (kind, length) in [
             (
                 PayloadKind::Proof,
-                Proof::<Pasta, TestRank>::encoded_len::<4>(),
+                Proof::<Pasta, crate::Uncompressed<TestRank>>::encoded_len::<4>(),
             ),
             (
                 PayloadKind::Compressed,
-                CompressedProof::<Pasta>::encoded_len::<TestRank, 4>(),
+                Proof::<Pasta, Compressed>::encoded_len::<TestRank, 4>(),
             ),
         ] {
             let mut bytes = Vec::with_capacity(length);

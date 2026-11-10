@@ -16,9 +16,167 @@ use super::{
 const STEP_INDEX_SIZE: usize = 8;
 const HASH_SIZE: usize = 32;
 
+pub use ragu_pcd::{Compressed, Uncompressed};
+
+mod sealed {
+    use super::*;
+
+    pub trait Sealed {
+        type Payload<C: Cycle>: Clone + Payload<C>;
+    }
+
+    impl<R: Rank> Sealed for Uncompressed<R> {
+        type Payload<C: Cycle> = UncompressedData<C, R>;
+    }
+
+    impl Sealed for Compressed {
+        type Payload<C: Cycle> = CompressedData<C>;
+    }
+}
+
+/// The mock's sealed proof representation, mirroring `ragu_pcd::Form`.
+pub trait Form: sealed::Sealed {}
+impl<R: Rank> Form for Uncompressed<R> {}
+impl Form for Compressed {}
+
+pub trait Payload<C: Cycle>: Sized {
+    fn commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS];
+    fn to_wire(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>>
+    where
+        C: ProfiledCycle;
+    fn from_wire(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>
+    where
+        C: ProfiledCycle;
+}
+
+impl<C: Cycle, R: Rank> Payload<C> for UncompressedData<C, R> {
+    fn commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.commitments
+    }
+    fn to_wire(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>>
+    where
+        C: ProfiledCycle,
+    {
+        self.to_bytes()
+    }
+    fn from_wire(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>
+    where
+        C: ProfiledCycle,
+    {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl<C: Cycle> Payload<C> for CompressedData<C> {
+    fn commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.commitments
+    }
+    fn to_wire(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>>
+    where
+        C: ProfiledCycle,
+    {
+        self.to_bytes()
+    }
+    fn from_wire(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>
+    where
+        C: ProfiledCycle,
+    {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Mocks `ragu_pcd::Proof` with the same explicit form markers.
+pub struct Proof<C: Cycle, F: Form> {
+    pub(crate) payload: F::Payload<C>,
+}
+
+impl<C: Cycle, F: Form> Clone for Proof<C, F> {
+    fn clone(&self) -> Self {
+        Self {
+            payload: self.payload.clone(),
+        }
+    }
+}
+
+impl<C: Cycle + core::fmt::Debug> core::fmt::Debug for Proof<C, Compressed> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.payload.fmt(f)
+    }
+}
+
+impl<C: Cycle, F: Form> Proof<C, F> {
+    #[must_use]
+    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, F, H> {
+        Pcd { proof: self, data }
+    }
+
+    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.payload.commitments()
+    }
+}
+
+impl<C: ProfiledCycle, F: Form> Proof<C, F> {
+    pub fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>> {
+        self.payload.to_wire()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>> {
+        F::Payload::<C>::from_wire(bytes).map(|payload| Self { payload })
+    }
+}
+
+impl<C: ProfiledCycle, R: Rank> Proof<C, Uncompressed<R>> {
+    pub fn encoded_len<const HEADER_SIZE: usize>() -> usize {
+        UncompressedData::<C, R>::encoded_len::<HEADER_SIZE>()
+    }
+}
+
+impl<C: ProfiledCycle> Proof<C, Compressed> {
+    pub fn encoded_len<R: Rank, const HEADER_SIZE: usize>() -> usize {
+        CompressedData::<C>::encoded_len::<R, HEADER_SIZE>()
+    }
+}
+
+impl<C: Cycle, R: Rank> Proof<C, Uncompressed<R>> {
+    pub(crate) fn new<H: Header<C::CircuitField>, const HEADER_SIZE: usize>(
+        step_index: Index,
+        dr: &mut Simulator<C::CircuitField>,
+        encoded_header: &Encoded<'_, Simulator<C::CircuitField>, H, HEADER_SIZE>,
+        witness_data: &[u8],
+        polynomials: [Vec<C::CircuitField>; HEADER_POLYNOMIALS],
+        commitments: [C::HostCurve; HEADER_POLYNOMIALS],
+        setup_hash: [u8; HASH_SIZE],
+    ) -> Result<Self> {
+        UncompressedData::new(
+            step_index,
+            dr,
+            encoded_header,
+            witness_data,
+            polynomials,
+            commitments,
+            setup_hash,
+        )
+        .map(|payload| Self { payload })
+    }
+
+    pub(crate) fn compressed(&self) -> Proof<C, Compressed> {
+        Proof {
+            payload: self.payload.compressed(),
+        }
+    }
+
+    pub(crate) fn rerandomize(&self) -> Self {
+        Self {
+            payload: self.payload.rerandomize(),
+        }
+    }
+    pub(crate) fn hash_input(&self) -> [u8; 2 * HASH_SIZE] {
+        self.payload.hash_input()
+    }
+}
+
 /// Mocks `ragu_pcd::Proof`.
 #[derive(Clone)]
-pub struct Proof<C: Cycle, R: Rank> {
+pub struct UncompressedData<C: Cycle, R: Rank> {
     pub(crate) step_index: u64,
     pub(crate) header_hash: [u8; HASH_SIZE],
     pub(crate) witness_hash: [u8; HASH_SIZE],
@@ -32,12 +190,12 @@ pub struct Proof<C: Cycle, R: Rank> {
 }
 
 /// Mocks `ragu_pcd::Pcd`.
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    pub(crate) proof: Proof<C, R>,
+pub struct Pcd<C: Cycle, F: Form, H: Header<C::CircuitField>> {
+    pub(crate) proof: Proof<C, F>,
     pub(crate) data: H::Data,
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
+impl<C: Cycle, F: Form, H: Header<C::CircuitField>> Pcd<C, F, H> {
     /// Returns a reference to the data that the proof accompanies.
     ///
     /// Mirrors `ragu_pcd::Pcd::data`.
@@ -50,7 +208,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     ///
     /// Mirrors `ragu_pcd::Pcd::proof`.
     #[must_use]
-    pub fn proof(&self) -> &Proof<C, R> {
+    pub fn proof(&self) -> &Proof<C, F> {
         &self.proof
     }
 
@@ -59,29 +217,36 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     ///
     /// Mirrors `ragu_pcd::Pcd::into_parts`.
     #[must_use]
-    pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+    pub fn into_parts(self) -> (Proof<C, F>, H::Data) {
         (self.proof, self.data)
     }
 
+    #[must_use]
+    pub fn commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.proof.online_commitments()
+    }
+
+    #[must_use]
+    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
+        self.proof.online_commitments()
+    }
+}
+
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, Uncompressed<R>, H> {
     pub(crate) fn input(&self) -> HeaderInput<'_, C::CircuitField, H> {
         HeaderInput {
             data: &self.data,
-            polynomials: &self.proof.polynomials,
+            polynomials: &self.proof.payload.polynomials,
         }
     }
 
     #[must_use]
     pub fn polynomials(&self) -> [Vec<C::CircuitField>; HEADER_POLYNOMIALS] {
-        self.proof.polynomials.clone()
-    }
-
-    #[must_use]
-    pub fn commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
-        self.proof.commitments
+        self.proof.payload.polynomials.clone()
     }
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
+impl<C: Cycle, F: Form, H: Header<C::CircuitField>> Clone for Pcd<C, F, H> {
     fn clone(&self) -> Self {
         Self {
             proof: self.proof.clone(),
@@ -90,12 +255,12 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
     }
 }
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> UncompressedData<C, R> {
     pub fn encoded_len<const HEADER_SIZE: usize>() -> usize
     where
         C: ProfiledCycle,
     {
-        CompressedProof::<C>::encoded_len::<R, HEADER_SIZE>()
+        CompressedData::<C>::encoded_len::<R, HEADER_SIZE>()
             + HEADER_POLYNOMIALS * R::num_coeffs() * C::CircuitField::ZERO.to_bytes().as_ref().len()
     }
 
@@ -135,8 +300,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 actual: bytes.len(),
             });
         }
-        let metadata_size = CompressedProof::<C>::encoded_len::<R, 0>();
-        let metadata = CompressedProof::<C>::read(&mut reader, rank, header_size)?;
+        let metadata_size = CompressedData::<C>::encoded_len::<R, 0>();
+        let metadata = CompressedData::<C>::read(&mut reader, rank, header_size)?;
         let coefficients = &bytes[metadata_size..];
         let mut proof = Self {
             step_index: metadata.step_index,
@@ -218,14 +383,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         })
     }
 
-    /// Mirrors `ragu_pcd::Proof::carry`.
-    #[must_use]
-    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
-    }
-
-    pub(crate) fn compressed(&self) -> CompressedProof<C> {
-        CompressedProof {
+    pub(crate) fn compressed(&self) -> CompressedData<C> {
+        CompressedData {
             step_index: self.step_index,
             header_hash: self.header_hash,
             witness_hash: self.witness_hash,
@@ -264,7 +423,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 }
 
 #[derive(Clone, Debug)]
-pub struct CompressedProof<C: Cycle> {
+pub struct CompressedData<C: Cycle> {
     pub(crate) step_index: u64,
     pub(crate) header_hash: [u8; HASH_SIZE],
     pub(crate) witness_hash: [u8; HASH_SIZE],
@@ -276,16 +435,12 @@ pub struct CompressedProof<C: Cycle> {
     pub(crate) setup_hash: [u8; HASH_SIZE],
 }
 
-impl<C: ProfiledCycle> CompressedProof<C> {
+impl<C: ProfiledCycle> CompressedData<C> {
     /// The commitments of the step's own online polynomials, as
     /// [`Pcd::commitments`] returns them before compression. The mock's
     /// verifier binds these to its hash-based proof representation.
     pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
         self.commitments
-    }
-
-    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> CompressedPcd<C, H> {
-        CompressedPcd { proof: self, data }
     }
 
     pub fn encoded_len<R: Rank, const HEADER_SIZE: usize>() -> usize {
@@ -410,38 +565,6 @@ impl<C: ProfiledCycle> CompressedProof<C> {
             header_size,
             setup_hash,
         })
-    }
-}
-
-pub struct CompressedPcd<C: Cycle, H: Header<C::CircuitField>> {
-    pub(crate) proof: CompressedProof<C>,
-    pub(crate) data: H::Data,
-}
-
-impl<C: Cycle, H: Header<C::CircuitField>> CompressedPcd<C, H> {
-    /// The commitments of the step's own online polynomials; see
-    /// [`CompressedProof::online_commitments`].
-    pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
-        self.proof.commitments
-    }
-
-    pub fn data(&self) -> &H::Data {
-        &self.data
-    }
-    pub fn proof(&self) -> &CompressedProof<C> {
-        &self.proof
-    }
-    pub fn into_parts(self) -> (CompressedProof<C>, H::Data) {
-        (self.proof, self.data)
-    }
-}
-
-impl<C: Cycle, H: Header<C::CircuitField>> Clone for CompressedPcd<C, H> {
-    fn clone(&self) -> Self {
-        Self {
-            proof: self.proof.clone(),
-            data: self.data.clone(),
-        }
     }
 }
 

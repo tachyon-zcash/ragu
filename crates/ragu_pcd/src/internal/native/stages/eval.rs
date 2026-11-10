@@ -150,7 +150,7 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         R: Rank,
         B: ragu_backend::Backend,
     >(
-        proof: &Proof<C, R>,
+        proof: &Proof<C, crate::Uncompressed<R>>,
         u: F,
     ) -> Self {
         let mut rx = B::map(

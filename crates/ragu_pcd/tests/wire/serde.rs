@@ -1,7 +1,7 @@
 //! Proofs and compressed proofs serialize as one byte string in every serde
 //! format: exactly the bytes `to_bytes` writes, envelope included.
 
-use ragu_pcd::{CompressedProof, Proof};
+use ragu_pcd::Proof;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, de::value::BorrowedBytesDeserializer};
@@ -19,7 +19,7 @@ fn a_proof_serializes_as_its_wire_bytes() {
     assert_eq!(bytes, proof.to_bytes().unwrap());
 
     // The deserialized proof re-serializes to the same string.
-    let decoded: Proof<C, R> = serde_json::from_str(&json).unwrap();
+    let decoded: Proof<C, ragu_pcd::Uncompressed<R>> = serde_json::from_str(&json).unwrap();
     assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
     let decoded = decoded.carry::<LeafNode>(data);
     assert!(app.verify_uncompressed(&decoded, &mut rng).unwrap());
@@ -27,13 +27,13 @@ fn a_proof_serializes_as_its_wire_bytes() {
     assert!(app.verify_compressed(&compressed).unwrap());
 
     let borrowed = BorrowedBytesDeserializer::<serde::de::value::Error>::new(&bytes);
-    let decoded = Proof::<C, R>::deserialize(borrowed).unwrap();
+    let decoded = Proof::<C, ragu_pcd::Uncompressed<R>>::deserialize(borrowed).unwrap();
     assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
     let mut trailing = bytes.clone();
     trailing.push(0);
     for malformed in [&bytes[..bytes.len() - 1], &trailing] {
         let json = serde_json::to_string(malformed).unwrap();
-        assert!(serde_json::from_str::<Proof<C, R>>(&json).is_err());
+        assert!(serde_json::from_str::<Proof<C, ragu_pcd::Uncompressed<R>>>(&json).is_err());
     }
 }
 
@@ -48,7 +48,7 @@ fn a_compressed_proof_serializes_as_its_wire_bytes() {
     let bytes: Vec<u8> = serde_json::from_str(&json).unwrap();
     assert_eq!(bytes, compressed.to_bytes().unwrap());
 
-    let decoded: CompressedProof<C> = serde_json::from_str(&json).unwrap();
+    let decoded: ragu_pcd::Proof<C, ragu_pcd::Compressed> = serde_json::from_str(&json).unwrap();
     assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
     assert!(
         app.verify_compressed(&decoded.carry::<LeafNode>(data))
@@ -58,7 +58,7 @@ fn a_compressed_proof_serializes_as_its_wire_bytes() {
     trailing.push(0);
     for malformed in [&bytes[..bytes.len() - 1], &trailing] {
         let json = serde_json::to_string(malformed).unwrap();
-        assert!(serde_json::from_str::<CompressedProof<C>>(&json).is_err());
+        assert!(serde_json::from_str::<ragu_pcd::Proof<C, ragu_pcd::Compressed>>(&json).is_err());
     }
 }
 
@@ -72,7 +72,7 @@ fn an_envelope_this_type_cannot_have_is_rejected() {
         let mut bytes = bytes.clone();
         edit(&mut bytes);
         let json = serde_json::to_string(&bytes).unwrap();
-        let Err(error) = serde_json::from_str::<Proof<C, R>>(&json) else {
+        let Err(error) = serde_json::from_str::<Proof<C, ragu_pcd::Uncompressed<R>>>(&json) else {
             panic!("an edited envelope must not decode")
         };
         error.to_string()
@@ -90,7 +90,7 @@ fn an_envelope_this_type_cannot_have_is_rejected() {
     let mut edited = bytes.clone();
     edited[20] = 3;
     let borrowed = BorrowedBytesDeserializer::<serde::de::value::Error>::new(&edited);
-    let Err(error) = Proof::<C, R>::deserialize(borrowed) else {
+    let Err(error) = Proof::<C, ragu_pcd::Uncompressed<R>>::deserialize(borrowed) else {
         panic!("a byte string of another length must not decode")
     };
     let error = error.to_string();
@@ -104,7 +104,7 @@ fn malformed_bytes_are_a_serde_error() {
     let mut envelope = b"RAGUPCD\0".to_vec();
     envelope.extend_from_slice(&[2, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]);
     let json = serde_json::to_string(&envelope).unwrap();
-    let Err(error) = serde_json::from_str::<Proof<C, R>>(&json) else {
+    let Err(error) = serde_json::from_str::<Proof<C, ragu_pcd::Uncompressed<R>>>(&json) else {
         panic!("another envelope version must not decode")
     };
     assert!(
@@ -114,7 +114,7 @@ fn malformed_bytes_are_a_serde_error() {
         "{error}"
     );
     let json = serde_json::to_string(&[1u8, 13, 0]).unwrap();
-    let Err(error) = serde_json::from_str::<CompressedProof<C>>(&json) else {
+    let Err(error) = serde_json::from_str::<ragu_pcd::Proof<C, ragu_pcd::Compressed>>(&json) else {
         panic!("a short envelope must not decode")
     };
     assert!(error.to_string().contains("truncated"), "{error}");

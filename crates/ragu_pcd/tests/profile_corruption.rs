@@ -121,8 +121,8 @@ where
         native.len() + nested.len(),
         P::NATIVE_EXTENSION + P::NESTED_EXTENSION
     );
-    let n = Proof::<C<P>, Rk>::num_bound_coeffs();
-    let total = Proof::<C<P>, Rk>::num_coeffs();
+    let n = Proof::<C<P>, ragu_pcd::Uncompressed<Rk>>::num_bound_coeffs();
+    let total = Proof::<C<P>, ragu_pcd::Uncompressed<Rk>>::num_coeffs();
     let coeffs = [0, n - 1, n, total - 1];
 
     let mut corruptions: Vec<Corruption<C<P>>> = Vec::new();

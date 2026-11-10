@@ -11,7 +11,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, CompressedPcd, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, Pcd};
 use ragu_testing::pcd::nontrivial;
 use rand::rngs::StdRng;
 use setup::{
@@ -75,8 +75,8 @@ fn seed(
 fn fuse(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -103,8 +103,8 @@ library_benchmark_group!(
 fn fuse_accelerated(
     (app, leaf1, leaf2, poseidon_params, mut rng): (
         Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
         &'static <Pasta as Cycle>::CircuitPoseidon,
         StdRng,
     ),
@@ -132,7 +132,7 @@ library_benchmark_group!(
 fn verify_leaf(
     (app, leaf, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::LeafNode>,
         StdRng,
     ),
 ) {
@@ -144,7 +144,7 @@ fn verify_leaf(
 fn verify_node(
     (app, node, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
@@ -156,7 +156,7 @@ fn verify_node(
 fn rerandomize(
     (app, node, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
@@ -176,7 +176,7 @@ library_benchmark_group!(
 fn compress_node(
     (app, node, mut rng): (
         Application<'static, Pasta, ProductionRank, 4>,
-        Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+        Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, nontrivial::InternalNode>,
         StdRng,
     ),
 ) {
@@ -188,7 +188,7 @@ fn compress_node(
 fn verify_compressed_leaf(
     (app, compressed): (
         Application<'static, Pasta, ProductionRank, 4>,
-        CompressedPcd<Pasta, nontrivial::LeafNode>,
+        ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, nontrivial::LeafNode>,
     ),
 ) {
     black_box(app.verify_compressed(&compressed)).unwrap();
@@ -199,7 +199,7 @@ fn verify_compressed_leaf(
 fn verify_compressed_node(
     (app, compressed): (
         Application<'static, Pasta, ProductionRank, 4>,
-        CompressedPcd<Pasta, nontrivial::InternalNode>,
+        ragu_pcd::Pcd<Pasta, ragu_pcd::Compressed, nontrivial::InternalNode>,
     ),
 ) {
     black_box(app.verify_compressed(&compressed)).unwrap();

@@ -34,14 +34,14 @@ use crate::{
 
 fn check_targets<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<Pasta, ProductionRank, H>,
+    pcd: &Pcd<Pasta, ragu_pcd::Uncompressed<ProductionRank>, H>,
     label: &str,
     rng: &mut StdRng,
 ) {
     assert!(app.verify_uncompressed(pcd, &mut *rng).unwrap(), "{label}");
     let compressed = app.compress(pcd, &mut *rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap(), "{label}");
-    let instance = &compressed.proof().instance;
+    let instance = &compressed.proof().payload.instance;
     let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
     let challenges = instance.challenges(&mut transcript).unwrap().unwrap();
     let header = ky::output_header::<Pasta, H, HEADER_SIZE>(pcd.data().clone()).unwrap();
@@ -174,7 +174,7 @@ fn rejects_edit(
     app: &App,
     pcd: &TestPcd,
     label: &str,
-    edit: impl FnOnce(&mut Proof<Pasta, ProductionRank>),
+    edit: impl FnOnce(&mut Proof<Pasta, ragu_pcd::Uncompressed<ProductionRank>>),
 ) {
     let mut proof = pcd.proof().clone();
     edit(&mut proof);
@@ -201,7 +201,9 @@ fn decider_rejects_malformed_inputs_and_propagates_header_errors() {
 
         macro_rules! bump {
             ($field:ident, $one:expr) => {
-                rejects_edit(app, &pcd, stringify!($field), |proof| proof.$field += $one);
+                rejects_edit(app, &pcd, stringify!($field), |proof| {
+                    proof.payload.$field += $one
+                });
             };
         }
         bump!(w, Fp::ONE);
@@ -223,9 +225,9 @@ fn decider_rejects_malformed_inputs_and_propagates_header_errors() {
                     &format!("left={left}, header length={length}"),
                     |proof| {
                         let header = if left {
-                            &mut proof.left_header
+                            &mut proof.payload.left_header
                         } else {
-                            &mut proof.right_header
+                            &mut proof.payload.right_header
                         };
                         header.resize(length, Fp::ZERO);
                     },
@@ -237,25 +239,26 @@ fn decider_rejects_malformed_inputs_and_propagates_header_errors() {
                 &format!("left={left}, header content"),
                 |proof| {
                     let header = if left {
-                        &mut proof.left_header
+                        &mut proof.payload.left_header
                     } else {
-                        &mut proof.right_header
+                        &mut proof.payload.right_header
                     };
                     header[0] += Fp::ONE;
                 },
             );
         }
         rejects_edit(app, &pcd, "out-of-domain circuit", |proof| {
-            proof.circuit_id = CircuitIndex::new(u32::MAX as usize);
+            proof.payload.circuit_id = CircuitIndex::new(u32::MAX as usize);
         });
         rejects_edit(app, &pcd, "nonliftable pre_beta", |proof| {
-            proof.pre_beta = -Fp::ONE
+            proof.payload.pre_beta = -Fp::ONE
         });
 
         macro_rules! bump_poly {
             ($field:ident, $one:expr) => {
                 rejects_edit(app, &pcd, stringify!($field), |proof| {
                     proof
+                        .payload
                         .$field
                         .add_assign(&sparse::Polynomial::from_coeffs(vec![$one]));
                 });
@@ -373,7 +376,7 @@ fn every_fuse_input_is_bound_before_compression_challenges() {
         let (pcd, ()) = app.seed(&mut rng, Seed::new(), Fp::from(19)).unwrap();
         let compressed = app.compress(&pcd, &mut rng).unwrap();
         assert!(app.verify_compressed(&compressed).unwrap());
-        let instance = &compressed.proof().instance;
+        let instance = &compressed.proof().payload.instance;
         let header = ky::output_header::<Pasta, Value, HEADER_SIZE>(*pcd.data()).unwrap();
         let baseline_fuse = raw_fuse_challenges(instance);
         let mut replay = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
@@ -414,7 +417,7 @@ fn every_fuse_input_is_bound_before_compression_challenges() {
                 "{id:?}"
             );
             let mut altered = compressed.proof().clone();
-            altered.instance = changed;
+            altered.payload.instance = changed;
             assert!(
                 matches!(
                     app.verify_compressed(&altered.carry::<Value>(*pcd.data())),
@@ -433,7 +436,7 @@ fn every_fuse_input_is_bound_before_compression_challenges() {
         assert_eq!(raw_fuse_challenges(&changed), baseline_fuse);
         assert_ne!(first_ipa_challenge(&changed, &header), baseline_ipa);
         let mut altered = compressed.proof().clone();
-        altered.instance = changed;
+        altered.payload.instance = changed;
         assert!(matches!(
             app.verify_compressed(&altered.carry::<Value>(*pcd.data())),
             Ok(false)

@@ -11,6 +11,8 @@
 
 pub(crate) mod builder;
 mod codec;
+mod form;
+pub use form::{Compressed, Form, Uncompressed};
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of production-rank proofs each, so they are
@@ -92,7 +94,6 @@ use udon::{
 };
 
 use crate::{
-    CompressedPcd, CompressedProof,
     header::{Header, NUM_ONLINE_POLYNOMIALS},
     internal::{
         endoscalar::EndoscalarStage,
@@ -107,7 +108,6 @@ use crate::{
         online,
     },
     profile::{Profile, ProfiledCycle},
-    wire,
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -120,50 +120,118 @@ struct Cached<T>(T);
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+pub struct Pcd<C: Cycle, F: Form, H: Header<C::CircuitField>> {
+    proof: Proof<C, F>,
     data: H::Data,
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
+impl<C: Cycle, F: Form, H: Header<C::CircuitField>> Pcd<C, F, H> {
     /// Returns a reference to the data that the proof accompanies.
     pub fn data(&self) -> &H::Data {
         &self.data
     }
 
     /// Returns a reference to the recursive proof.
-    pub fn proof(&self) -> &Proof<C, R> {
+    pub fn proof(&self) -> &Proof<C, F> {
         &self.proof
     }
 
     /// Consumes the proof-carrying data and returns the proof and data
     /// separately.
-    pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+    pub fn into_parts(self) -> (Proof<C, F>, H::Data) {
         (self.proof, self.data)
     }
 
-    /// The proof's polynomials associated with its output header, one
-    /// coefficient vector in ascending degree per slot, as the step that
-    /// produced this proof committed them.
-    pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS] {
-        online::coefficients(self.proof.online_polynomials())
-    }
-
-    /// The commitments of [`polynomials`](Self::polynomials), one per slot:
+    /// The commitments of the proof's output polynomials, one per slot:
     /// what a parent opens as its left or right slots, and what
     /// [`Application::commit`](crate::Application::commit) computes from
     /// the coefficients.
     pub fn commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         self.proof.online_commitments()
     }
+
+    /// The commitments of the step's own online polynomials.
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        self.proof.online_commitments()
+    }
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
+impl<C: Cycle, F: Form, H: Header<C::CircuitField>> Clone for Pcd<C, F, H> {
     fn clone(&self) -> Self {
         Pcd {
             proof: self.proof.clone(),
             data: self.data.clone(),
         }
+    }
+}
+
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, Uncompressed<R>, H> {
+    /// The proof's output polynomials, one coefficient vector in ascending
+    /// degree per slot, as the step that produced this proof committed them.
+    pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS] {
+        online::coefficients(self.proof.online_polynomials())
+    }
+}
+
+/// A recursive proof in the selected [`Form`].
+///
+/// [`Uncompressed<R>`] retains rank-indexed polynomials for proving parent
+/// steps. [`Compressed`] holds commitments and opening messages for terminal
+/// verification; its decoded rank is checked by the receiving application.
+pub struct Proof<C: Cycle, F: Form> {
+    pub(crate) payload: F::Payload<C>,
+}
+
+impl<C: Cycle, F: Form> Clone for Proof<C, F> {
+    fn clone(&self) -> Self {
+        Self {
+            payload: self.payload.clone(),
+        }
+    }
+}
+
+impl<C: Cycle, F: Form> Proof<C, F> {
+    /// Attaches the data described by a [`Header`] to this proof.
+    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, F, H> {
+        Pcd { proof: self, data }
+    }
+
+    /// The commitments of the step's own online polynomials, in slot order.
+    /// Accept them only after verifying the proof against its application.
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        F::online_commitments(self)
+    }
+}
+
+impl<C: ProfiledCycle, F: Form> Proof<C, F> {
+    /// Encodes this proof with its version envelope. Uncompressed rank comes
+    /// from its type; compressed rank comes from its IPA round count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`wire::Error::Unencodable`](crate::wire::Error::Unencodable)
+    /// for excessive dimensions, inconsistent lengths or identity points.
+    /// This checks representation, not proof validity.
+    pub fn to_bytes(&self) -> core::result::Result<Vec<u8>, crate::wire::Error<'static>> {
+        F::to_bytes(self)
+    }
+
+    /// Decodes one proof, checking the envelope, bounded dimensions, exact
+    /// length and field encodings. Uncompressed rank must match its type;
+    /// compressed rank comes from the envelope and is checked at verification.
+    ///
+    /// Attach the output data with [`carry`](Self::carry). Before accepting
+    /// the proof, compress it if uncompressed and use
+    /// [`Application::verify_compressed`](crate::Application::verify_compressed)
+    /// with the expected application and parameters.
+    pub fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, crate::wire::Error<'_>> {
+        F::from_bytes(bytes)
+    }
+}
+
+impl<C: Cycle + core::fmt::Debug> core::fmt::Debug for Proof<C, Compressed> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.payload.fmt(f)
     }
 }
 
@@ -203,7 +271,7 @@ pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex
 /// carry prover-chosen data (the nested fold's error terms and the nested
 /// batch's values among them) and are primary.
 #[derive(Clone)]
-pub struct Proof<C: Cycle, R: Rank> {
+pub struct UncompressedData<C: Cycle, R: Rank> {
     /// Shared alpha source for deriving cached bridge polynomial alphas.
     pub(crate) bridge_alpha: C::ScalarField,
 
@@ -389,112 +457,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     bridge_ab_commitment: Cached<C::NestedCurve>,
 }
 
-mod sealed {
-    use ragu_circuits::polynomials::Rank;
-    use ragu_core::Cycle;
-
-    use crate::{CompressedProof, Proof};
-
-    pub trait Sealed {}
-
-    impl<C: Cycle, R: Rank> Sealed for Proof<C, R> {}
-    impl<C: Cycle> Sealed for CompressedProof<C> {}
-}
-
-/// A PCD's proof, uncompressed or compressed.
-///
-/// `R` specifies the expected rank for encoded length.
-/// This trait is sealed to [`Proof`] and [`CompressedProof`].
-pub trait AnyProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
-    /// A PCD's proof with data described by `H` attached.
-    ///
-    /// This is [`Pcd<C, R, H>`] for [`Proof`] and [`CompressedPcd<C, H>`]
-    /// for [`CompressedProof`].
-    type Pcd<H: Header<C::CircuitField>>;
-
-    /// The step's own online polynomial commitments, in slot order.
-    ///
-    /// These values are proof claims. Applications must authenticate the
-    /// proof and compare its slots against their expected commitments.
-    fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS];
-
-    /// Attaches data without checking that the proof attests it.
-    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Pcd<H>;
-
-    /// The exact encoded length for the expected rank and header size,
-    /// including the envelope. Bound input before buffering it.
-    ///
-    /// This bound alone does not validate the encoded dimensions. In
-    /// particular, compressed proofs of different dimensions can have the
-    /// same length. The caller must check the expected dimensions separately.
-    fn encoded_len<const HEADER_SIZE: usize>() -> usize;
-
-    /// Encodes the proof with its version envelope, without verifying it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`wire::Error::Unencodable`] for an unrepresentable proof.
-    fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>>;
-
-    /// Decodes the proof's envelope and payload, without verifying it.
-    ///
-    /// # Errors
-    ///
-    /// Returns a wire error for invalid bytes. The uncompressed form also
-    /// requires the declared rank to match `R`; the compressed form admits
-    /// any bounded rank. The caller must check the expected dimensions separately.
-    fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>;
-}
-
-impl<C: ProfiledCycle, R: Rank> AnyProof<C, R> for Proof<C, R> {
-    type Pcd<H: Header<C::CircuitField>> = Pcd<C, R, H>;
-
-    fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
-        self.online_commitments()
-    }
-
-    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Pcd<H> {
-        self.carry::<H>(data)
-    }
-
-    fn encoded_len<const HEADER_SIZE: usize>() -> usize {
-        Self::encoded_len::<HEADER_SIZE>()
-    }
-
-    fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>> {
-        self.to_bytes()
-    }
-
-    fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>> {
-        Self::from_bytes(bytes)
-    }
-}
-
-impl<C: ProfiledCycle, R: Rank> AnyProof<C, R> for CompressedProof<C> {
-    type Pcd<H: Header<C::CircuitField>> = CompressedPcd<C, H>;
-
-    fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
-        self.online_commitments()
-    }
-
-    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Pcd<H> {
-        self.carry::<H>(data)
-    }
-
-    fn encoded_len<const HEADER_SIZE: usize>() -> usize {
-        Self::encoded_len::<R, HEADER_SIZE>()
-    }
-
-    fn to_bytes(&self) -> core::result::Result<Vec<u8>, wire::Error<'static>> {
-        self.to_bytes()
-    }
-
-    fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>> {
-        Self::from_bytes(bytes)
-    }
-}
-
-impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> Proof<C, crate::Uncompressed<R>> {
     /// Whether the headers, polynomial vectors and commitment-cache vectors
     /// have exactly the receiving profile's shape. Check before traversing
     /// components so that missing entries cannot panic and trailing ones
@@ -505,100 +468,102 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
         let native_extension = C::Profile::native_extension();
         let nested_extension = C::Profile::nested_extension();
 
-        self.left_header.len() == HEADER_SIZE
-            && self.right_header.len() == HEADER_SIZE
-            && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
-            && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
-            && self.native_endoscaling_step_rxs.len() == native_steps
-            && self.native_endoscaling_step_commitments.len() == native_steps
-            && self.native_extension_circuit_rxs.len() == native_extension.circuits.len()
-            && self.native_extension_circuit_commitments.len() == native_extension.circuits.len()
-            && self.native_extension_stage_rxs.len() == native_extension.stages
-            && self.native_extension_stage_commitments.len() == native_extension.stages
-            && self.nested_endoscaling_step_rxs.len() == nested_steps
-            && self.nested_endoscaling_step_commitments.len() == nested_steps
-            && self.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
-            && self.nested_extension_circuit_commitments.len() == nested_extension.circuits.len()
-            && self.nested_extension_stage_rxs.len() == nested_extension.stages
-            && self.nested_extension_stage_commitments.len() == nested_extension.stages
+        self.payload.left_header.len() == HEADER_SIZE
+            && self.payload.right_header.len() == HEADER_SIZE
+            && self.payload.native_bind_challenges_rxs.len() == native::NUM_BINDERS
+            && self.payload.native_bind_challenges_commitments.len() == native::NUM_BINDERS
+            && self.payload.native_endoscaling_step_rxs.len() == native_steps
+            && self.payload.native_endoscaling_step_commitments.len() == native_steps
+            && self.payload.native_extension_circuit_rxs.len() == native_extension.circuits.len()
+            && self.payload.native_extension_circuit_commitments.len()
+                == native_extension.circuits.len()
+            && self.payload.native_extension_stage_rxs.len() == native_extension.stages
+            && self.payload.native_extension_stage_commitments.len() == native_extension.stages
+            && self.payload.nested_endoscaling_step_rxs.len() == nested_steps
+            && self.payload.nested_endoscaling_step_commitments.len() == nested_steps
+            && self.payload.nested_extension_circuit_rxs.len() == nested_extension.circuits.len()
+            && self.payload.nested_extension_circuit_commitments.len()
+                == nested_extension.circuits.len()
+            && self.payload.nested_extension_stage_rxs.len() == nested_extension.stages
+            && self.payload.nested_extension_stage_commitments.len() == nested_extension.stages
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, crate::Uncompressed<R>> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
     fn index(&self, idx: RxIndex) -> &sparse::Polynomial<C::CircuitField, R> {
         use RxIndex::*;
         match idx {
-            Preamble => &self.native_preamble_rx,
-            InnerError => &self.native_inner_error_rx,
-            OuterError => &self.native_outer_error_rx,
-            Query => &self.native_query_rx,
-            Eval => &self.native_eval_rx,
-            Application => &self.native_application_rx,
-            ApplicationStage => &self.native_application_stage_rx,
-            Hashes1 => &self.native_hashes_1_rx,
-            Hashes2 => &self.native_hashes_2_rx,
-            Collapse => &self.native_collapse_rx,
-            ComputeV => &self.native_compute_v_rx,
-            BindChallenges(k) => &self.native_bind_challenges_rxs[k as usize],
-            BindBeta => &self.native_bind_beta_rx,
-            BindEndoscalar => &self.native_bind_endoscalar_rx,
-            EndoscalingStep(step) => &self.native_endoscaling_step_rxs[step as usize],
-            ExtensionCircuit(k) => &self.native_extension_circuit_rxs[k as usize],
-            ExtensionStage(k) => &self.native_extension_stage_rxs[k as usize],
-            PointsBinding => &self.native_points_binding_rx,
-            PointsChildren => &self.native_points_children_rx,
-            PointsRegistryWx => &self.native_points_registry_wx_rx,
-            PointsAb => &self.native_points_ab_rx,
-            PointsF => &self.native_points_f_rx,
-            PointsWalk => &self.native_points_walk_rx,
+            Preamble => &self.payload.native_preamble_rx,
+            InnerError => &self.payload.native_inner_error_rx,
+            OuterError => &self.payload.native_outer_error_rx,
+            Query => &self.payload.native_query_rx,
+            Eval => &self.payload.native_eval_rx,
+            Application => &self.payload.native_application_rx,
+            ApplicationStage => &self.payload.native_application_stage_rx,
+            Hashes1 => &self.payload.native_hashes_1_rx,
+            Hashes2 => &self.payload.native_hashes_2_rx,
+            Collapse => &self.payload.native_collapse_rx,
+            ComputeV => &self.payload.native_compute_v_rx,
+            BindChallenges(k) => &self.payload.native_bind_challenges_rxs[k as usize],
+            BindBeta => &self.payload.native_bind_beta_rx,
+            BindEndoscalar => &self.payload.native_bind_endoscalar_rx,
+            EndoscalingStep(step) => &self.payload.native_endoscaling_step_rxs[step as usize],
+            ExtensionCircuit(k) => &self.payload.native_extension_circuit_rxs[k as usize],
+            ExtensionStage(k) => &self.payload.native_extension_stage_rxs[k as usize],
+            PointsBinding => &self.payload.native_points_binding_rx,
+            PointsChildren => &self.payload.native_points_children_rx,
+            PointsRegistryWx => &self.payload.native_points_registry_wx_rx,
+            PointsAb => &self.payload.native_points_ab_rx,
+            PointsF => &self.payload.native_points_f_rx,
+            PointsWalk => &self.payload.native_points_walk_rx,
         }
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for Proof<C, crate::Uncompressed<R>> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
     fn index(&self, component: RxComponent) -> &sparse::Polynomial<C::CircuitField, R> {
         match component {
-            RxComponent::AbA => &self.native_a_poly,
-            RxComponent::AbB => &self.native_b_poly,
+            RxComponent::AbA => &self.payload.native_a_poly,
+            RxComponent::AbB => &self.payload.native_b_poly,
             RxComponent::Rx(idx) => &self[idx],
         }
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, crate::Uncompressed<R>> {
     type Output = sparse::Polynomial<C::ScalarField, R>;
     fn index(&self, idx: nested::RxIndex) -> &sparse::Polynomial<C::ScalarField, R> {
         use nested::RxIndex::*;
         match idx {
-            EndoscalingStep(step) => &self.nested_endoscaling_step_rxs[step as usize],
-            ExtensionCircuit(k) => &self.nested_extension_circuit_rxs[k as usize],
-            ExtensionStage(k) => &self.nested_extension_stage_rxs[k as usize],
-            Collapse => &self.nested_collapse_rx,
-            ComputeV => &self.nested_compute_v_rx,
-            EndoscalarStage => &self.nested_endoscalar_rx,
-            PointsStage => self.nested_points_rx.as_ref(),
-            BridgePreamble => self.bridge_preamble_rx.as_ref(),
-            BridgeHash => self.bridge_hash_rx.as_ref(),
-            BridgeSPrime => self.bridge_s_prime_rx.as_ref(),
-            BridgeInnerError => self.bridge_inner_error_rx.as_ref(),
-            BridgeOuterError => self.bridge_outer_error_rx.as_ref(),
-            BridgeAB => self.bridge_ab_rx.0.as_ref(),
-            BridgeQuery => self.bridge_query_rx.as_ref(),
-            BridgeF => self.bridge_f_rx.as_ref(),
-            BridgeEval => self.bridge_eval_rx.as_ref(),
-            ChallengeStage => &self.nested_challenges_rx,
+            EndoscalingStep(step) => &self.payload.nested_endoscaling_step_rxs[step as usize],
+            ExtensionCircuit(k) => &self.payload.nested_extension_circuit_rxs[k as usize],
+            ExtensionStage(k) => &self.payload.nested_extension_stage_rxs[k as usize],
+            Collapse => &self.payload.nested_collapse_rx,
+            ComputeV => &self.payload.nested_compute_v_rx,
+            EndoscalarStage => &self.payload.nested_endoscalar_rx,
+            PointsStage => self.payload.nested_points_rx.as_ref(),
+            BridgePreamble => self.payload.bridge_preamble_rx.as_ref(),
+            BridgeHash => self.payload.bridge_hash_rx.as_ref(),
+            BridgeSPrime => self.payload.bridge_s_prime_rx.as_ref(),
+            BridgeInnerError => self.payload.bridge_inner_error_rx.as_ref(),
+            BridgeOuterError => self.payload.bridge_outer_error_rx.as_ref(),
+            BridgeAB => self.payload.bridge_ab_rx.0.as_ref(),
+            BridgeQuery => self.payload.bridge_query_rx.as_ref(),
+            BridgeF => self.payload.bridge_f_rx.as_ref(),
+            BridgeEval => self.payload.bridge_eval_rx.as_ref(),
+            ChallengeStage => &self.payload.nested_challenges_rx,
         }
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for Proof<C, crate::Uncompressed<R>> {
     type Output = sparse::Polynomial<C::ScalarField, R>;
     fn index(&self, component: nested::RxComponent) -> &sparse::Polynomial<C::ScalarField, R> {
         match component {
-            nested::RxComponent::AbA => &self.nested_a_poly,
-            nested::RxComponent::AbB => &self.nested_b_poly,
+            nested::RxComponent::AbA => &self.payload.nested_a_poly,
+            nested::RxComponent::AbB => &self.payload.nested_b_poly,
             nested::RxComponent::Rx(idx) => &self[idx],
         }
     }
@@ -636,12 +601,7 @@ where
     B::msm(weights.iter(), commitments.iter()).to_affine() == expected
 }
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
-    /// Augment a recursive proof with some data, described by a [`Header`].
-    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
-    }
-
+impl<C: Cycle, R: Rank> Proof<C, crate::Uncompressed<R>> {
     // TODO: Route this witness-value computation through the selected backend
     // without making `Proof` backend-parametric or threading `c` through the
     // backend-independent stage-witness APIs.
@@ -651,7 +611,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// This computes witness data, not circuit structure. An exact-equivalent
     /// backend implementation would leave the synthesized constraints unchanged.
     pub(crate) fn native_c(&self) -> C::CircuitField {
-        self.native_a_poly.revdot(&self.native_b_poly)
+        self.payload
+            .native_a_poly
+            .revdot(&self.payload.native_b_poly)
     }
 
     // TODO: Route this witness-value computation through the selected backend
@@ -663,7 +625,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// An exact-equivalent backend implementation would leave the synthesized
     /// constraints unchanged.
     pub(crate) fn v(&self) -> C::CircuitField {
-        self.native_p_poly.eval(self.u)
+        self.payload.native_p_poly.eval(self.payload.u)
     }
 
     /// Returns the nested accumulator's revdot product
@@ -671,7 +633,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     ///
     /// As with [`Self::native_c`], this computes witness data, not circuit structure.
     pub(crate) fn nested_c(&self) -> C::ScalarField {
-        self.nested_a_poly.revdot(&self.nested_b_poly)
+        self.payload
+            .nested_a_poly
+            .revdot(&self.payload.nested_b_poly)
     }
 
     /// Returns the nested batch's evaluation $v_n = p_n(u_n)$, at the nested
@@ -679,37 +643,40 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     ///
     /// As with [`Self::v`], this computes witness data, not circuit structure.
     pub(crate) fn nested_v(&self) -> Result<C::ScalarField> {
-        Ok(self.nested_p_poly.eval(nested::challenge::<C>(self.u)?))
+        Ok(self
+            .payload
+            .nested_p_poly
+            .eval(nested::challenge::<C>(self.payload.u)?))
     }
 
     pub(crate) fn nested_registry_xy_poly(&self) -> &sparse::Polynomial<C::ScalarField, R> {
-        &self.nested_registry_xy_poly
+        &self.payload.nested_registry_xy_poly
     }
 
     pub(crate) fn nested_p_poly(&self) -> &sparse::Polynomial<C::ScalarField, R> {
-        &self.nested_p_poly
+        &self.payload.nested_p_poly
     }
 
     pub(crate) fn nested_challenges_rx(&self) -> &sparse::Polynomial<C::ScalarField, R> {
-        &self.nested_challenges_rx
+        &self.payload.nested_challenges_rx
     }
 
     pub(crate) fn nested_challenges_commitment(&self) -> C::NestedCurve {
-        self.nested_challenges_commitment.0
+        self.payload.nested_challenges_commitment.0
     }
 
     /// The nested challenge stage's commitment without its $\beta$ term, as
     /// the native unified instance carries it.
     pub(crate) fn nested_challenges_partial(&self) -> C::NestedCurve {
-        self.nested_challenges_partial
+        self.payload.nested_challenges_partial
     }
 
     pub(crate) fn nested_collapse_commitment(&self) -> C::NestedCurve {
-        self.nested_collapse_commitment.0
+        self.payload.nested_collapse_commitment.0
     }
 
     pub(crate) fn nested_compute_v_commitment(&self) -> C::NestedCurve {
-        self.nested_compute_v_commitment.0
+        self.payload.nested_compute_v_commitment.0
     }
 
     /// This proof's nested unified instance, as its collapse circuit
@@ -719,9 +686,9 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         Ok(nested::unified::Instance {
             c: self.nested_c(),
             v: self.nested_v()?,
-            x: nested::challenge::<C>(self.x)?,
-            y: nested::challenge::<C>(self.y)?,
-            u: nested::challenge::<C>(self.u)?,
+            x: nested::challenge::<C>(self.payload.x)?,
+            y: nested::challenge::<C>(self.payload.y)?,
+            u: nested::challenge::<C>(self.payload.u)?,
             exported: [
                 self.native_rx_commitment(RxIndex::Preamble),
                 self.native_rx_commitment(RxIndex::InnerError),
@@ -737,8 +704,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
-                self.online_commitments[0].0,
-                self.online_commitments[1].0,
+                self.payload.online_commitments[0].0,
+                self.payload.online_commitments[1].0,
                 self.native_rx_commitment(RxIndex::ApplicationStage),
             ],
             coverage: Default::default(),
@@ -750,206 +717,199 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     pub(crate) fn online_polynomials(
         &self,
     ) -> &[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS] {
-        &self.online_polynomials
-    }
-
-    /// The commitments of the step's own online polynomials, one per slot,
-    /// as [`Pcd::commitments`] returns them after attaching data. These are
-    /// unverified until compression and compressed verification succeed.
-    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
-        self.online_commitments
-            .clone()
-            .map(|commitment| commitment.0)
+        &self.payload.online_polynomials
     }
 
     /// The step's polynomial-query openings, one per slot, which its `compute_v`
     /// circuit exported.
     pub(crate) fn online_openings(&self) -> &online::Queries<C::CircuitField> {
-        &self.online_openings
+        &self.payload.online_openings
     }
 
     /// The native challenges of this proof, in challenge-stage order.
     pub(crate) fn challenges(&self) -> nested::Challenges<C::CircuitField> {
         nested::Challenges {
-            w: self.w,
-            y: self.y,
-            z: self.z,
-            mu: self.mu,
-            mu_prime: self.mu_prime,
-            x: self.x,
-            alpha: self.alpha,
-            u: self.u,
-            pre_beta: self.pre_beta,
+            w: self.payload.w,
+            y: self.payload.y,
+            z: self.payload.z,
+            mu: self.payload.mu,
+            mu_prime: self.payload.mu_prime,
+            x: self.payload.x,
+            alpha: self.payload.alpha,
+            u: self.payload.u,
+            pre_beta: self.payload.pre_beta,
         }
     }
 
     pub(crate) fn circuit_id(&self) -> CircuitIndex {
-        self.circuit_id
+        self.payload.circuit_id
     }
 
     pub(crate) fn left_header(&self) -> &[C::CircuitField] {
-        &self.left_header
+        &self.payload.left_header
     }
 
     pub(crate) fn right_header(&self) -> &[C::CircuitField] {
-        &self.right_header
+        &self.payload.right_header
     }
 
     pub(crate) fn native_registry_xy_poly(&self) -> &sparse::Polynomial<C::CircuitField, R> {
-        &self.native_registry_xy_poly
+        &self.payload.native_registry_xy_poly
     }
 
     pub(crate) fn native_p_poly(&self) -> &sparse::Polynomial<C::CircuitField, R> {
-        &self.native_p_poly
+        &self.payload.native_p_poly
     }
 
     pub(crate) fn w(&self) -> C::CircuitField {
-        self.w
+        self.payload.w
     }
 
     pub(crate) fn y(&self) -> C::CircuitField {
-        self.y
+        self.payload.y
     }
 
     pub(crate) fn z(&self) -> C::CircuitField {
-        self.z
+        self.payload.z
     }
 
     pub(crate) fn mu(&self) -> C::CircuitField {
-        self.mu
+        self.payload.mu
     }
 
     pub(crate) fn mu_prime(&self) -> C::CircuitField {
-        self.mu_prime
+        self.payload.mu_prime
     }
 
     pub(crate) fn x(&self) -> C::CircuitField {
-        self.x
+        self.payload.x
     }
 
     pub(crate) fn alpha(&self) -> C::CircuitField {
-        self.alpha
+        self.payload.alpha
     }
 
     pub(crate) fn u(&self) -> C::CircuitField {
-        self.u
+        self.payload.u
     }
 
     pub(crate) fn pre_beta(&self) -> C::CircuitField {
-        self.pre_beta
+        self.payload.pre_beta
     }
 
     /// Returns the native commitment for the given [`RxIndex`].
     pub(crate) fn native_rx_commitment(&self, idx: RxIndex) -> C::HostCurve {
         use RxIndex::*;
         match idx {
-            Preamble => self.native_preamble_commitment.0,
-            InnerError => self.native_inner_error_commitment.0,
-            OuterError => self.native_outer_error_commitment.0,
-            Query => self.native_query_commitment.0,
-            Eval => self.native_eval_commitment.0,
-            Application => self.native_application_commitment.0,
-            ApplicationStage => self.native_application_stage_commitment.0,
-            Hashes1 => self.native_hashes_1_commitment.0,
-            Hashes2 => self.native_hashes_2_commitment.0,
-            Collapse => self.native_collapse_commitment.0,
-            ComputeV => self.native_compute_v_commitment.0,
-            BindChallenges(k) => self.native_bind_challenges_commitments[k as usize].0,
-            BindBeta => self.native_bind_beta_commitment.0,
-            BindEndoscalar => self.native_bind_endoscalar_commitment.0,
-            EndoscalingStep(step) => self.native_endoscaling_step_commitments[step as usize].0,
-            ExtensionCircuit(k) => self.native_extension_circuit_commitments[k as usize].0,
-            ExtensionStage(k) => self.native_extension_stage_commitments[k as usize].0,
-            PointsBinding => self.native_points_binding_commitment.0,
-            PointsChildren => self.native_points_children_commitment.0,
-            PointsRegistryWx => self.native_points_registry_wx_commitment.0,
-            PointsAb => self.native_points_ab_commitment.0,
-            PointsF => self.native_points_f_commitment.0,
-            PointsWalk => self.native_points_walk_commitment.0,
+            Preamble => self.payload.native_preamble_commitment.0,
+            InnerError => self.payload.native_inner_error_commitment.0,
+            OuterError => self.payload.native_outer_error_commitment.0,
+            Query => self.payload.native_query_commitment.0,
+            Eval => self.payload.native_eval_commitment.0,
+            Application => self.payload.native_application_commitment.0,
+            ApplicationStage => self.payload.native_application_stage_commitment.0,
+            Hashes1 => self.payload.native_hashes_1_commitment.0,
+            Hashes2 => self.payload.native_hashes_2_commitment.0,
+            Collapse => self.payload.native_collapse_commitment.0,
+            ComputeV => self.payload.native_compute_v_commitment.0,
+            BindChallenges(k) => self.payload.native_bind_challenges_commitments[k as usize].0,
+            BindBeta => self.payload.native_bind_beta_commitment.0,
+            BindEndoscalar => self.payload.native_bind_endoscalar_commitment.0,
+            EndoscalingStep(step) => {
+                self.payload.native_endoscaling_step_commitments[step as usize].0
+            }
+            ExtensionCircuit(k) => self.payload.native_extension_circuit_commitments[k as usize].0,
+            ExtensionStage(k) => self.payload.native_extension_stage_commitments[k as usize].0,
+            PointsBinding => self.payload.native_points_binding_commitment.0,
+            PointsChildren => self.payload.native_points_children_commitment.0,
+            PointsRegistryWx => self.payload.native_points_registry_wx_commitment.0,
+            PointsAb => self.payload.native_points_ab_commitment.0,
+            PointsF => self.payload.native_points_f_commitment.0,
+            PointsWalk => self.payload.native_points_walk_commitment.0,
         }
     }
 
     /// Returns the native commitment for the given [`RxComponent`].
     pub(crate) fn native_commitment(&self, component: RxComponent) -> C::HostCurve {
         match component {
-            RxComponent::AbA => self.native_a_commitment.0,
-            RxComponent::AbB => self.native_b_commitment.0,
+            RxComponent::AbA => self.payload.native_a_commitment.0,
+            RxComponent::AbB => self.payload.native_b_commitment.0,
             RxComponent::Rx(idx) => self.native_rx_commitment(idx),
         }
     }
 
     pub(crate) fn native_registry_xy_commitment(&self) -> C::HostCurve {
-        self.native_registry_xy_commitment.0
+        self.payload.native_registry_xy_commitment.0
     }
 
     pub(crate) fn native_p_commitment(&self) -> C::HostCurve {
-        self.native_p_commitment.0
+        self.payload.native_p_commitment.0
     }
 
     pub(crate) fn bridge_preamble_commitment(&self) -> C::NestedCurve {
-        self.bridge_preamble_commitment
+        self.payload.bridge_preamble_commitment
     }
 
     /// $H^{bridge}(O_1)$: the commitment of the bridge-hash stage holding
     /// the step's own `O1`.
     pub(crate) fn bridge_hash_commitment(&self) -> C::NestedCurve {
-        self.bridge_hash_commitment
+        self.payload.bridge_hash_commitment
     }
 
     pub(crate) fn bridge_s_prime_commitment(&self) -> C::NestedCurve {
-        self.bridge_s_prime_commitment
+        self.payload.bridge_s_prime_commitment
     }
 
     pub(crate) fn bridge_inner_error_commitment(&self) -> C::NestedCurve {
-        self.bridge_inner_error_commitment
+        self.payload.bridge_inner_error_commitment
     }
 
     pub(crate) fn bridge_f_commitment(&self) -> C::NestedCurve {
-        self.bridge_f_commitment
+        self.payload.bridge_f_commitment
     }
 
     pub(crate) fn bridge_outer_error_commitment(&self) -> C::NestedCurve {
-        self.bridge_outer_error_commitment
+        self.payload.bridge_outer_error_commitment
     }
 
     pub(crate) fn bridge_ab_commitment(&self) -> C::NestedCurve {
-        self.bridge_ab_commitment.0
+        self.payload.bridge_ab_commitment.0
     }
 
     pub(crate) fn bridge_query_commitment(&self) -> C::NestedCurve {
-        self.bridge_query_commitment
+        self.payload.bridge_query_commitment
     }
 
     pub(crate) fn bridge_eval_commitment(&self) -> C::NestedCurve {
-        self.bridge_eval_commitment
+        self.payload.bridge_eval_commitment
     }
 
     pub(crate) fn nested_endoscaling_step_commitment(&self, step: u32) -> C::NestedCurve {
-        self.nested_endoscaling_step_commitments[step as usize].0
+        self.payload.nested_endoscaling_step_commitments[step as usize].0
     }
 
     pub(crate) fn nested_endoscalar_commitment(&self) -> C::NestedCurve {
-        self.nested_endoscalar_commitment.0
+        self.payload.nested_endoscalar_commitment.0
     }
 
     pub(crate) fn nested_points_commitment(&self) -> C::NestedCurve {
-        self.nested_points_commitment.0
+        self.payload.nested_points_commitment.0
     }
 
     pub(crate) fn nested_a_commitment(&self) -> C::NestedCurve {
-        self.nested_a_commitment.0
+        self.payload.nested_a_commitment.0
     }
 
     pub(crate) fn nested_b_commitment(&self) -> C::NestedCurve {
-        self.nested_b_commitment.0
+        self.payload.nested_b_commitment.0
     }
 
     pub(crate) fn nested_registry_xy_commitment(&self) -> C::NestedCurve {
-        self.nested_registry_xy_commitment.0
+        self.payload.nested_registry_xy_commitment.0
     }
 
     pub(crate) fn nested_p_commitment(&self) -> C::NestedCurve {
-        self.nested_p_commitment.0
+        self.payload.nested_p_commitment.0
     }
 
     /// Returns the nested commitment for one of this proof's nested rx
@@ -958,22 +918,22 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         use nested::RxIndex::*;
         match idx {
             EndoscalingStep(step) => self.nested_endoscaling_step_commitment(step),
-            ExtensionCircuit(k) => self.nested_extension_circuit_commitments[k as usize].0,
-            ExtensionStage(k) => self.nested_extension_stage_commitments[k as usize].0,
+            ExtensionCircuit(k) => self.payload.nested_extension_circuit_commitments[k as usize].0,
+            ExtensionStage(k) => self.payload.nested_extension_stage_commitments[k as usize].0,
             EndoscalarStage => self.nested_endoscalar_commitment(),
             PointsStage => self.nested_points_commitment(),
-            BridgePreamble => self.bridge_preamble_commitment,
-            BridgeHash => self.bridge_hash_commitment,
-            BridgeSPrime => self.bridge_s_prime_commitment,
-            BridgeInnerError => self.bridge_inner_error_commitment,
-            BridgeOuterError => self.bridge_outer_error_commitment,
-            BridgeAB => self.bridge_ab_commitment.0,
-            BridgeQuery => self.bridge_query_commitment,
-            BridgeF => self.bridge_f_commitment,
-            BridgeEval => self.bridge_eval_commitment,
-            ChallengeStage => self.nested_challenges_commitment.0,
-            Collapse => self.nested_collapse_commitment.0,
-            ComputeV => self.nested_compute_v_commitment.0,
+            BridgePreamble => self.payload.bridge_preamble_commitment,
+            BridgeHash => self.payload.bridge_hash_commitment,
+            BridgeSPrime => self.payload.bridge_s_prime_commitment,
+            BridgeInnerError => self.payload.bridge_inner_error_commitment,
+            BridgeOuterError => self.payload.bridge_outer_error_commitment,
+            BridgeAB => self.payload.bridge_ab_commitment.0,
+            BridgeQuery => self.payload.bridge_query_commitment,
+            BridgeF => self.payload.bridge_f_commitment,
+            BridgeEval => self.payload.bridge_eval_commitment,
+            ChallengeStage => self.payload.nested_challenges_commitment.0,
+            Collapse => self.payload.nested_collapse_commitment.0,
+            ComputeV => self.payload.nested_compute_v_commitment.0,
         }
     }
 }
@@ -1049,8 +1009,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(crate) fn commit_native_points_children<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
@@ -1248,11 +1208,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// step's input slots.
     ///
     /// [`Dummy`]: crate::header::Dummy
-    pub(crate) fn dummy_pcd(&self) -> Pcd<C, R, crate::header::Dummy> {
+    pub(crate) fn dummy_pcd(&self) -> Pcd<C, crate::Uncompressed<R>, crate::header::Dummy> {
         self.dummy_proof().carry(())
     }
 
-    pub(crate) fn dummy_proof(&self) -> Proof<C, R> {
+    pub(crate) fn dummy_proof(&self) -> Proof<C, crate::Uncompressed<R>> {
         let ones_host = {
             let mut view = sparse::View::<_, R, _>::trace();
             view.a.push(C::CircuitField::ONE);
@@ -1679,7 +1639,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 }
 
 #[cfg(test)]
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> Proof<C, crate::Uncompressed<R>> {
     /// Doubles the native extension polynomial at `index` and recommits it,
     /// so that a test can check that the polynomial itself is bound and not
     /// only its cache.
@@ -1692,12 +1652,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
         let (rx, commitment) = match index {
             RxIndex::ExtensionCircuit(k) => (
-                &mut self.native_extension_circuit_rxs[k as usize],
-                &mut self.native_extension_circuit_commitments[k as usize],
+                &mut self.payload.native_extension_circuit_rxs[k as usize],
+                &mut self.payload.native_extension_circuit_commitments[k as usize],
             ),
             RxIndex::ExtensionStage(k) => (
-                &mut self.native_extension_stage_rxs[k as usize],
-                &mut self.native_extension_stage_commitments[k as usize],
+                &mut self.payload.native_extension_stage_rxs[k as usize],
+                &mut self.payload.native_extension_stage_commitments[k as usize],
             ),
             _ => panic!("{index:?} is not an extension polynomial"),
         };
@@ -1720,12 +1680,12 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
 
         let (rx, commitment) = match index {
             nested::RxIndex::ExtensionCircuit(k) => (
-                &mut self.nested_extension_circuit_rxs[k as usize],
-                &mut self.nested_extension_circuit_commitments[k as usize],
+                &mut self.payload.nested_extension_circuit_rxs[k as usize],
+                &mut self.payload.nested_extension_circuit_commitments[k as usize],
             ),
             nested::RxIndex::ExtensionStage(k) => (
-                &mut self.nested_extension_stage_rxs[k as usize],
-                &mut self.nested_extension_stage_commitments[k as usize],
+                &mut self.payload.nested_extension_stage_rxs[k as usize],
+                &mut self.payload.nested_extension_stage_commitments[k as usize],
             ),
             _ => panic!("{index:?} is not an extension polynomial"),
         };

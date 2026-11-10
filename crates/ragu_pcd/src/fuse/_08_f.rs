@@ -72,8 +72,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
     ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -139,8 +139,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         builder: &ProofBuilder<'_, C, R, B>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
     ) -> Result<NativeF<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -279,8 +279,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &'a ProofBuilder<'_, C, R, B>,
         nested_s_prime: &'a NestedSPrime<C, R>,
         nested_registry_wy: &'a NestedRegistryWy<C, R>,
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a Proof<C, crate::Uncompressed<R>>,
+        right: &'a Proof<C, crate::Uncompressed<R>>,
     ) -> pcs::Batch<'a, C, R> {
         pcs::Batch {
             left,
@@ -302,8 +302,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         x: &Element<'dr, D>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &Proof<C, crate::Uncompressed<R>>,
+        right: &Proof<C, crate::Uncompressed<R>>,
     ) -> Result<pcs::Challenges<C::ScalarField>> {
         Ok(pcs::Challenges {
             w: nested::challenge::<C>(*w.value().take())?,

@@ -238,7 +238,7 @@ pub fn native_ky<
     H: Header<C::CircuitField>,
     const HEADER_SIZE: usize,
 >(
-    pcd: &Pcd<C, R, H>,
+    pcd: &Pcd<C, crate::Uncompressed<R>, H>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
     native_ky_from_header::<C, R, HEADER_SIZE>(
@@ -253,7 +253,7 @@ pub fn native_ky<
 /// malformed proof points.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, crate::Uncompressed<R>>,
     output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     y: C::CircuitField,
 ) -> Result<NativeKy<C::CircuitField>> {
@@ -288,7 +288,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
 /// $c_n$ and $v_n$ derived from the proof's polynomials.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn nested_ky<C: Cycle, R: Rank>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, crate::Uncompressed<R>>,
     y: C::ScalarField,
 ) -> Result<C::ScalarField> {
     Emulator::emulate_wireless((proof.nested_instance()?, y), |dr, witness| {

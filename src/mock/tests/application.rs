@@ -22,7 +22,7 @@ use super::super::{
 
 type ApplicationBuilder = crate::ApplicationBuilder<'static, Pasta, TestRank, 4>;
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
-type Proof = crate::Proof<Pasta, TestRank>;
+type Proof = crate::Proof<Pasta, crate::Uncompressed<TestRank>>;
 
 fn test_builder() -> ApplicationBuilder {
     test_builder_for::<TestRank>()
@@ -619,9 +619,9 @@ fn verify_rejects_unregistered_output_header() {
         &mut dr,
         &encoded,
         b"forged-witness",
-        app.bootstrap_proof().polynomials.clone(),
-        app.bootstrap_proof().commitments,
-        app.bootstrap_proof().setup_hash,
+        app.bootstrap_proof().payload.polynomials.clone(),
+        app.bootstrap_proof().payload.commitments,
+        app.bootstrap_proof().payload.setup_hash,
     )
     .expect("proof");
     assert!(
@@ -674,9 +674,9 @@ fn verify_rejects_header_registered_for_another_step() {
         &mut dr,
         &encoded,
         b"forged-witness",
-        app.bootstrap_proof().polynomials.clone(),
-        app.bootstrap_proof().commitments,
-        app.bootstrap_proof().setup_hash,
+        app.bootstrap_proof().payload.polynomials.clone(),
+        app.bootstrap_proof().payload.commitments,
+        app.bootstrap_proof().payload.setup_hash,
     )
     .expect("proof");
     assert!(
@@ -697,9 +697,9 @@ fn verify_rejects_input_only_header_as_output() {
         &mut dr,
         &encoded,
         b"forged-witness",
-        app.bootstrap_proof().polynomials.clone(),
-        app.bootstrap_proof().commitments,
-        app.bootstrap_proof().setup_hash,
+        app.bootstrap_proof().payload.polynomials.clone(),
+        app.bootstrap_proof().payload.commitments,
+        app.bootstrap_proof().payload.setup_hash,
     )
     .expect("proof");
     assert!(

@@ -107,7 +107,7 @@ fn statement(value: Fp) -> Vec<Fp> {
 /// Both verifiers' verdicts on `pcd`.
 fn check_both<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<C, Rk, H>,
+    pcd: &Pcd<C, ragu_pcd::Uncompressed<Rk>, H>,
     expected: bool,
     rng: &mut StdRng,
     case: &str,

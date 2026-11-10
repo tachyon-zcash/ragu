@@ -109,7 +109,7 @@ pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM);
 /// its rx commitments in [`RxIndex::all`] order, then $a$, $b$,
 /// `registry_xy` and $p$.
 pub fn child_commitments<C: ProfiledCycle, R: Rank>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, crate::Uncompressed<R>>,
 ) -> impl Iterator<Item = C::NestedCurve> + '_ {
     RxIndex::all::<C::Profile>()
         .into_iter()
@@ -132,7 +132,9 @@ pub struct ChildChallenges<F> {
 
 impl<F: Field> ChildChallenges<F> {
     /// Derives a child's nested $x$, $y$ and $u$ (see [`challenge`]).
-    pub fn of<C: Cycle<ScalarField = F>, R: Rank>(proof: &Proof<C, R>) -> Result<Self> {
+    pub fn of<C: Cycle<ScalarField = F>, R: Rank>(
+        proof: &Proof<C, crate::Uncompressed<R>>,
+    ) -> Result<Self> {
         Ok(Self {
             x: challenge::<C>(proof.x())?,
             y: challenge::<C>(proof.y())?,
@@ -156,8 +158,8 @@ pub struct Challenges<F> {
 /// Everything one fuse step's nested batch opens: the two children and the
 /// current step's committed nested polynomials.
 pub struct Batch<'a, C: Cycle, R: Rank> {
-    pub left: &'a Proof<C, R>,
-    pub right: &'a Proof<C, R>,
+    pub left: &'a Proof<C, crate::Uncompressed<R>>,
+    pub right: &'a Proof<C, crate::Uncompressed<R>>,
     /// Current $m_n(w_n, x_0, Y)$.
     pub registry_wx0: &'a sparse::Polynomial<C::ScalarField, R>,
     /// Current $m_n(w_n, x_1, Y)$.

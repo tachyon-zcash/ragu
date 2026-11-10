@@ -20,7 +20,7 @@ use crate::{
 const HEADER_SIZE: usize = 4;
 const MANIFEST: &[u8] = &[0x24; 32];
 type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, ProductionRank, ()>;
+type TestPcd<C> = Pcd<C, ragu_pcd::Uncompressed<ProductionRank>, ()>;
 
 #[derive(Clone, Copy, Debug)]
 enum ChangedTag {

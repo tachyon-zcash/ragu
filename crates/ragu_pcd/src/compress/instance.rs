@@ -142,7 +142,9 @@ fn coordinates<P: Affine>(point: P) -> Result<[P::Base; 2]> {
 impl<C: ProfiledCycle> Instance<C> {
     /// The instance of `proof`, with the values the decider derives computed
     /// from its polynomials and the wires read off its stages.
-    pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>(proof: &Proof<C, R>) -> Result<Self> {
+    pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>(
+        proof: &Proof<C, crate::Uncompressed<R>>,
+    ) -> Result<Self> {
         let preamble = StageReader::<C::CircuitField, R>::new(&proof[native::RxIndex::Preamble]);
         let child = stage_wire_indices::<_, R, NativePreamble<C, R, HEADER_SIZE>>(|out| {
             let mut wires = Vec::new();
@@ -214,7 +216,7 @@ impl<C: ProfiledCycle> Instance<C> {
             nested_registry_xy: proof.nested_registry_xy_commitment(),
             nested_p: proof.nested_p_commitment(),
             nested_challenges_partial: proof.nested_challenges_partial(),
-            bridge_alpha: proof.bridge_alpha,
+            bridge_alpha: proof.payload.bridge_alpha,
             c: proof.native_c(),
             v: proof.v(),
             nested_c: proof.nested_c(),

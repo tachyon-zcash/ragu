@@ -31,9 +31,9 @@ fn rejects_recompressed_blinded_trace_commitments() {
         *Pasta::host_u(app.params),
     ] {
         let (mut proof, ()) = honest.clone().into_parts();
-        proof.native_hashes_1_commitment.0 = (proof.native_hashes_1_commitment.0.to_projective()
-            + (base * Fp::from(0x462)))
-        .to_affine();
+        proof.payload.native_hashes_1_commitment.0 =
+            (proof.payload.native_hashes_1_commitment.0.to_projective() + (base * Fp::from(0x462)))
+                .to_affine();
         let blinded = proof.carry::<()>(());
         assert!(
             !app.verify_uncompressed(&blinded, StdRng::seed_from_u64(0x462))
@@ -52,9 +52,10 @@ fn rejects_recompressed_blinded_trace_commitments() {
         *Pasta::nested_u(app.params),
     ] {
         let (mut proof, ()) = honest.clone().into_parts();
-        proof.nested_compute_v_commitment.0 = (proof.nested_compute_v_commitment.0.to_projective()
-            + (base * Fq::from(0x462)))
-        .to_affine();
+        proof.payload.nested_compute_v_commitment.0 =
+            (proof.payload.nested_compute_v_commitment.0.to_projective()
+                + (base * Fq::from(0x462)))
+            .to_affine();
         let blinded = proof.carry::<()>(());
         assert!(
             !app.verify_uncompressed(&blinded, StdRng::seed_from_u64(0x462))
