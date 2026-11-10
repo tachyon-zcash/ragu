@@ -646,9 +646,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         &self.online_polynomials
     }
 
-    /// The commitments of [`online_polynomials`](Self::online_polynomials),
-    /// which this proof's nested instance exports.
-    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    /// The commitments of the step's own online polynomials, one per slot,
+    /// as [`Pcd::commitments`] returns them after attaching data. These are
+    /// unverified until compression and compressed verification succeed.
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         self.online_commitments
             .clone()
             .map(|commitment| commitment.0)
