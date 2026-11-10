@@ -233,14 +233,14 @@ o0.enforce_equal(dr, &expected)?;
 let membership = oracles.query(dr, Slot::left(1), &nullifier)?;
 ```
 
-A check at `zeta` is sound only if every value it reads was fixed before
-`zeta` was drawn: an opening at `zeta` (or at a point itself fixed before
-it), an input header's field, a staged value, or a wire computed from
-those; or an in-circuit hash output, or a value from a small set such as a
-bit. Any other wire `witness` allocates, the output header's fields
-included, is chosen with `zeta` in hand. Had `t` above been witnessed in
-`witness`, the prover could set `t = zeta - O0(zeta) / L0(zeta)` and the
-check would hold whatever the polynomials. So a step stages such values: it
+A check at `zeta` is sound when it evaluates a residual polynomial whose
+coefficients were fixed before `zeta`, whose degree is bounded, and which is
+nonzero whenever the intended identity is false. The challenge and openings at
+it may be used to evaluate that residual, but values derived from them are not
+fixed coefficients or roots: computing `t = zeta - O0(zeta) / L0(zeta)` in the
+circuit is no safer than witnessing it. Input header fields, staged values and
+constants are fixed before `zeta`; hash outputs and choices from a small set
+each need their own argument. So a step stages such values: it
 declares `const NUM_STAGED: usize = 1;` and returns them from `staged`, which
 runs beside `polynomials`, before `zeta`:
 

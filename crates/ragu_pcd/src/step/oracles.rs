@@ -17,12 +17,17 @@
 //!
 //! [`Oracles`] also holds the step's [staged](super::Step::staged) values,
 //! committed before $\zeta$ in the proof's application stage. A check at
-//! $\zeta$ is sound only if every value it reads was fixed before $\zeta$:
-//! an opening at $\zeta$ or at a point itself fixed before $\zeta$, an
-//! input's header field, a staged value, or a wire computed from those; or
-//! an in-circuit hash output, or a value from a small set. Any other wire the
-//! circuit witnesses, the output header's fields included, is the prover's
-//! choice given $\zeta$.
+//! $\zeta$ is sound when it evaluates a residual polynomial whose
+//! coefficients were fixed before $\zeta$, whose degree is bounded, and
+//! which is nonzero whenever the intended identity is false. The challenge
+//! and the openings at it may evaluate that residual, but values derived
+//! from them are not fixed coefficients or roots: a root computed in the
+//! circuit from $\zeta$ and the openings is no safer than one witnessed
+//! with $\zeta$ in hand. Input header fields, staged values and constants
+//! are fixed before $\zeta$; in-circuit hash outputs and values from a
+//! small set each need their own argument. Any other wire the circuit
+//! witnesses, the output header's fields included, is the prover's choice
+//! given $\zeta$.
 //!
 //! The slots are the proofs' polynomials in order `[L0, L1, R0, R1, O0,
 //! O1]`. Every slot holds whatever polynomial the step that produced the
