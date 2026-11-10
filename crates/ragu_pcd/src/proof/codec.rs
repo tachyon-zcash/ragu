@@ -1,4 +1,4 @@
-//! The wire codec of [`Proof`]: every field in declaration order, each with
+//! The wire codec of [`UncompressedProof`]: every field in declaration order, each with
 //! the codec it encodes under. Decoding builds the struct from this list, so a
 //! field missing from it is a build error.
 //!
@@ -17,14 +17,14 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::Rank;
 use ragu_primitives::vec::ConstLen;
 
-use super::{Cached, Proof};
+use super::{Cached, UncompressedProof};
 use crate::{
     internal::{native, nested},
     profile::ProfiledCycle,
     wire::{self, Decode, Encode},
 };
 
-/// Generates the codec of [`Proof`] from its fields and their codecs. The
+/// Generates the codec of [`UncompressedProof`] from its fields and their codecs. The
 /// field types are inferred from the struct; `encoded_len` alone has no
 /// value to infer them from and takes them from a projection.
 macro_rules! codec {
@@ -33,7 +33,7 @@ macro_rules! codec {
         #[cfg(test)]
         pub(super) const WIRE_FIELDS: &[&str] = &[$(stringify!($field)),*];
 
-        impl<C: ProfiledCycle, R: Rank> Encode for Proof<C, R> {
+        impl<C: ProfiledCycle, R: Rank> Encode for UncompressedProof<C, R> {
             fn encode(
                 &self,
                 output: &mut Vec<u8>,
@@ -44,7 +44,7 @@ macro_rules! codec {
             }
         }
 
-        impl<C: ProfiledCycle, R: Rank> Decode for Proof<C, R> {
+        impl<C: ProfiledCycle, R: Rank> Decode for UncompressedProof<C, R> {
             fn encoded_len(dims: wire::Dimensions) -> usize {
                 0usize $( + wire::field_len::<Self, _, $codec>(|proof| &proof.$field, dims) )*
             }

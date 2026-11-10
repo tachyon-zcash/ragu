@@ -12,7 +12,7 @@
 //! unable to equal `Dummy` — constants for application steps and the
 //! decompression step, and a wire constrained away from it for
 //! rerandomization. An ordinary step consuming
-//! the resulting `Pcd<()>` still verifies its child claim.
+//! the resulting `UncompressedPcd<()>` still verifies its child claim.
 //!
 //! The bootstrap proof's polynomial slots carry padding: the circuit opens each
 //! output slot at $\zeta$ and holds it to the constant one, as the

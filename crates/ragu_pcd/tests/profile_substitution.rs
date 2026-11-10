@@ -17,9 +17,9 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt, allocator::Standard as Allocator};
 use rand::{SeedableRng, rngs::StdRng};
 
-use super::{Proof, recursive_propagation_tests::support::Value};
+use super::{UncompressedProof, recursive_propagation_tests::support::Value};
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd, RegistryTags,
+    Application, ApplicationBuilder, CompressedProof, RegistryTags, UncompressedPcd,
     compress::instance::Instance,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
@@ -31,7 +31,7 @@ const SENDER_MANIFEST: &[u8] = &[0x24; 32];
 const RECEIVER_MANIFEST: &[u8] = &[0x25; 32];
 type C<P> = Profiled<Pasta, P>;
 type App<P, R> = Application<'static, C<P>, R, HEADER_SIZE>;
-type TestPcd<P> = Pcd<C<P>, ProductionRank, Value>;
+type TestPcd<P> = UncompressedPcd<C<P>, ProductionRank, Value>;
 
 #[path = "compressed_profile_attacks.rs"]
 mod compressed_attacks;
@@ -56,11 +56,11 @@ fn copy_proof_payload<
         >,
     Rk: Rank,
 >(
-    proof: Proof<S, Rk>,
-) -> Proof<T, Rk> {
+    proof: UncompressedProof<S, Rk>,
+) -> UncompressedProof<T, Rk> {
     copy_fields!(
         proof,
-        Proof {
+        UncompressedProof {
             bridge_alpha,
             circuit_id,
             left_header,
@@ -372,7 +372,7 @@ enum DifferentTags {
 
 fn check_both_verifiers<P: Profile, Rk: Rank>(
     app: &App<P, Rk>,
-    pcd: &Pcd<C<P>, Rk, Value>,
+    pcd: &UncompressedPcd<C<P>, Rk, Value>,
     expected: bool,
     rng: &mut StdRng,
 ) -> Result<()> {

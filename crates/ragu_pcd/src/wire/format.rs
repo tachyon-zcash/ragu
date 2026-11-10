@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::Rank;
 
 use crate::{
-    CompressedProof, Proof,
+    CompressedProof, UncompressedProof,
     profile::ProfiledCycle,
     wire::{Decode, Dimensions, Encode, Error, MAX_HEADER_SIZE, MAX_RANK, Reader},
 };
@@ -40,7 +40,7 @@ const COMPRESSED_SCHEMA_VERSION: u16 = 2;
 const PROTOCOL_VERSION: u16 = 1;
 pub(crate) const ENVELOPE_SIZE: usize = 28;
 
-impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> UncompressedProof<C, R> {
     /// Encodes this proof with its version envelope. The rank comes from `R`
     /// and the header size from the proof's child headers.
     ///
@@ -312,18 +312,21 @@ mod tests {
                 + 4
         }
         assert_eq!(
-            <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
+            <UncompressedProof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
                 ProductionRank,
                 4,
             >()),
             payload::<ProductionRank, 4>()
         );
         assert_eq!(
-            <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank, 1>()),
+            <UncompressedProof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<
+                TestRank,
+                1,
+            >()),
             payload::<TestRank, 1>()
         );
         assert_eq!(
-            Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
+            UncompressedProof::<Pasta, ProductionRank>::encoded_len::<4>(),
             28 + payload::<ProductionRank, 4>()
         );
         // 102 instance points; 27 instance scalars and the online openings'
@@ -341,7 +344,7 @@ mod tests {
         for (kind, length) in [
             (
                 PayloadKind::Proof,
-                Proof::<Pasta, TestRank>::encoded_len::<4>(),
+                UncompressedProof::<Pasta, TestRank>::encoded_len::<4>(),
             ),
             (
                 PayloadKind::Compressed,

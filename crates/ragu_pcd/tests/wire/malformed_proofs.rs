@@ -6,11 +6,11 @@ use ragu_core::pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
 use udon::curve::Affine as CurveAffine;
 
-use super::Proof;
+use super::UncompressedProof;
 use crate::{Application, ApplicationBuilder, wire};
 
 type TestApp = Application<'static, Pasta, ProductionRank, 4>;
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestProof = UncompressedProof<Pasta, ProductionRank>;
 
 fn fixture() -> (TestApp, TestProof) {
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()

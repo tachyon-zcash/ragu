@@ -11,13 +11,13 @@
 //!   `test-utils` feature.
 //! - [`step::Step`] — the trait that defines computation nodes (transitions).
 //! - [`header::Header`] — the trait that defines succinct state representations.
-//! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
+//! - [`UncompressedProof`] / [`UncompressedPcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
 //! - [`profile`] — the proof shapes: the standard profile wallets prove in,
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
-//! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
+//! - [`UncompressedProof::to_bytes`] / [`UncompressedProof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs.
 //!
@@ -26,7 +26,7 @@
 //! fixed by the profile, rank and header size before decoding proof data. The
 //! caller selects the expected application and cryptographic parameters
 //! through its deployment or consensus rules. With the `serde` feature,
-//! [`Proof`] and [`CompressedProof`] implement `Serialize` and `Deserialize`
+//! [`UncompressedProof`] and [`CompressedProof`] implement `Serialize` and `Deserialize`
 //! directly, as the byte string `to_bytes` writes, envelope included.
 //! A receiver compresses a decoded proof and accepts it on
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
@@ -90,7 +90,7 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
-pub use proof::{Pcd, Proof};
+pub use proof::{UncompressedPcd, UncompressedProof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
@@ -258,7 +258,7 @@ pub struct ApplicationBuilder<
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
     /// which finalization installs instead of building one.
-    bootstrap: Option<Proof<C, R>>,
+    bootstrap: Option<UncompressedProof<C, R>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -322,7 +322,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Supplies the proof that bootstraps the recursion instead of building
     /// it: one that [`Application::bootstrap_proof`] returned for an
     /// application of the same configuration, stored by the caller, for
-    /// instance with [`Proof::to_bytes`]. Finalization installs it instead of
+    /// instance with [`UncompressedProof::to_bytes`]. Finalization installs it instead of
     /// running the bootstrap fuse.
     ///
     /// The proof is checked for this profile's shape and for being a proof of
@@ -338,7 +338,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Returns an initialization error if the proof does not have this
     /// profile's shape or is not a proof of the bootstrap step.
-    pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
+    pub fn with_bootstrap(mut self, proof: UncompressedProof<C, R>) -> Result<Self> {
         let bootstrap = step::InternalStepIndex::Bootstrap.circuit_index::<C::Profile>()?;
         if !proof.well_formed::<HEADER_SIZE>() || proof.circuit_id() != bootstrap {
             return Err(Error::Initialization(
@@ -666,17 +666,17 @@ pub struct Application<
     /// (see [`Profile::Context`]).
     context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     /// The proof that bootstraps the recursion: a genuine, verifying
-    /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
+    /// `UncompressedPcd<()>` consumed as a child by every [`seed`](Self::seed).
     ///
     /// Always `Some` once [`ApplicationBuilder::finalize`] returns, which
     /// installs the proof given to [`ApplicationBuilder::with_bootstrap`] or
     /// builds it. It is `None` only while `finalize` is building it, since
     /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
     /// `Application`.
-    bootstrap: Option<Proof<C, R>>,
-    /// A valid `Pcd<()>` used as the right child during rerandomization.
+    bootstrap: Option<UncompressedProof<C, R>>,
+    /// A valid `UncompressedPcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
-    seeded_trivial: OnceCell<Proof<C, R>>,
+    seeded_trivial: OnceCell<UncompressedProof<C, R>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -702,7 +702,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+    ) -> Result<(UncompressedPcd<C, R, S::Output>, S::Aux<'source>)> {
         self.fuse(
             rng,
             step,
@@ -727,7 +727,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// and public parameters, its profile, rank and header size, the circuits
     /// of the Ragu version in use, and for a profile with an extension the
     /// prover context at finalization. Store it, for instance with
-    /// [`Proof::to_bytes`], and supply it to later applications of the same
+    /// [`UncompressedProof::to_bytes`], and supply it to later applications of the same
     /// configuration with [`ApplicationBuilder::with_bootstrap`], so that
     /// their finalization skips the bootstrap fuse.
     ///
@@ -736,25 +736,28 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// computed over the prover context at finalization. Store or ship it
     /// only if that context holds nothing confidential. The built-in profiles
     /// have no extension, so their bootstrap proof reveals nothing.
-    pub fn bootstrap_proof(&self) -> &Proof<C, R> {
+    pub fn bootstrap_proof(&self) -> &UncompressedProof<C, R> {
         self.bootstrap
             .as_ref()
             .expect("finalize always sets the bootstrap proof")
     }
 
-    /// The bootstrap proof as the `Pcd<()>` that [`seed`](Self::seed) and
+    /// The bootstrap proof as the `UncompressedPcd<()>` that [`seed`](Self::seed) and
     /// rerandomization consume; see [`bootstrap_proof`](Self::bootstrap_proof).
-    fn bootstrap_pcd(&self) -> Pcd<C, R, ()> {
+    fn bootstrap_pcd(&self) -> UncompressedPcd<C, R, ()> {
         self.bootstrap_proof().clone().carry(())
     }
 
-    /// Returns the cached valid `Pcd<()>` used as the neutral right child of
+    /// Returns the cached valid `UncompressedPcd<()>` used as the neutral right child of
     /// rerandomization.
     ///
     /// The proof is lazily created by folding the bootstrap proof with itself
     /// through the unit instantiation of the rerandomization step. Subsequent
     /// calls reuse the same proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Result<Pcd<C, R, ()>> {
+    fn seeded_trivial_pcd<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+    ) -> Result<UncompressedPcd<C, R, ()>> {
         let proof = match self.seeded_trivial.get() {
             Some(proof) => proof,
             None => {
@@ -773,7 +776,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     /// Rerandomize proof-carrying data.
     ///
-    /// This will internally fold the [`Pcd`] with a cached seeded `Pcd<()>`
+    /// This will internally fold the [`UncompressedPcd`] with a cached seeded `UncompressedPcd<()>`
     /// using an internal rerandomization step, producing a
     /// fresh proof that is valid for the same [`Header`] and carries the same
     /// data. `Application::verify_uncompressed` produces the same result on
@@ -789,9 +792,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// or a second randomized pass). Both are future work, tracked separately.
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: Pcd<C, R, H>,
+        pcd: UncompressedPcd<C, R, H>,
         rng: &mut RNG,
-    ) -> Result<Pcd<C, R, H>> {
+    ) -> Result<UncompressedPcd<C, R, H>> {
         let seeded_trivial = self.seeded_trivial_pcd(rng)?;
 
         // The Rerandomize step's witness() returns the left input's data as

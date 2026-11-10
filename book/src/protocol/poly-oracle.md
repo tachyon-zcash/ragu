@@ -39,9 +39,9 @@ contains the left, right and output header fields, together with $\zeta$,
 the six opening pairs and the bridge digest. Header fields are one part of
 that instance.
 
-`Pcd` pairs the header's data with a `Proof`. The proof stores two `Eq`
+`UncompressedPcd` pairs the header's data with an `UncompressedProof`. The proof stores two `Eq`
 polynomial commitments for the step's output, exposed by
-`Pcd::commitments()`. These points are carried in the nested `Preamble` and
+`UncompressedPcd::commitments()`. These points are carried in the nested `Preamble` and
 exported through the public instance shared by nested `collapse` and
 `compute_v`. That **nested unified instance** contains accumulator values,
 challenge lifts and proof commitments: it is a statement for Ragu's

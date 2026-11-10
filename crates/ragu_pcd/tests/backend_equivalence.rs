@@ -26,7 +26,8 @@ use udon::{
 };
 
 use crate::{
-    Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof, SelectableBackend,
+    Application, ApplicationBuilder, CompressedPcd, CompressedProof, SelectableBackend,
+    UncompressedPcd, UncompressedProof,
     compress::{
         Messages,
         batch::Batch,
@@ -181,7 +182,7 @@ const MAX_DUMMY_CIRCUITS: usize = 3;
 const MAX_CORRUPTED_HEADER_LEN: usize = TEST_HEADER_SIZE * 2;
 
 type TestApplication<'params, B> = Application<'params, Pasta, ProductionRank, TEST_HEADER_SIZE, B>;
-type TestPcd = Pcd<Pasta, ProductionRank, ()>;
+type TestPcd = UncompressedPcd<Pasta, ProductionRank, ()>;
 type TestCompressedPcd = CompressedPcd<Pasta, ()>;
 type RngFingerprint = [u64; RNG_FINGERPRINT_WORDS];
 type Outcome = (VerifierDecision, RngFingerprint);
@@ -346,7 +347,7 @@ enum ProofMutation<F> {
 }
 
 fn apply_proof_mutation<C: Cycle, R: Rank>(
-    proof: &mut Proof<C, R>,
+    proof: &mut UncompressedProof<C, R>,
     mutation: ProofMutation<C::CircuitField>,
 ) {
     match mutation {
@@ -464,7 +465,7 @@ fn verifier_outcome<B: SelectableBackend>(
 }
 
 fn corruptions(
-    proof: &Proof<Pasta, ProductionRank>,
+    proof: &UncompressedProof<Pasta, ProductionRank>,
     inputs: CorruptionInputs,
 ) -> impl IntoIterator<Item = (&'static str, ProofMutation<Fp>)> {
     [
@@ -591,7 +592,7 @@ fn check_compressed_proofs_match(
     backend: &str,
 ) -> TestCaseResult {
     // Exhaustive patterns: adding a field to a transmitted struct fails to
-    // compile until the comparison below is reviewed, as `Proof::test_mismatch`
+    // compile until the comparison below is reviewed, as `UncompressedProof::test_mismatch`
     // does for uncompressed proofs. `Messages` is one type on both curves.
     let CompressedProof {
         instance,
@@ -1286,7 +1287,7 @@ mod proof_equivalence {
     use ragu_core::Cycle;
     use udon::field::Field;
 
-    use super::Proof;
+    use super::UncompressedProof;
     use crate::internal::{native, nested};
 
     fn polynomial_eq<F: Field, R: Rank>(left: &Polynomial<F, R>, right: &Polynomial<F, R>) -> bool {
@@ -1305,10 +1306,10 @@ mod proof_equivalence {
                 .all(|(ours, theirs)| polynomial_eq(ours, theirs))
     }
 
-    impl<C: Cycle, R: Rank> Proof<C, R> {
+    impl<C: Cycle, R: Rank> UncompressedProof<C, R> {
         /// Returns the first category in which two proofs differ semantically.
         ///
-        /// The exhaustive pattern makes additions to [`Proof`] fail to compile
+        /// The exhaustive pattern makes additions to [`UncompressedProof`] fail to compile
         /// until this comparison is reviewed. Polynomials are compared by their
         /// coefficient streams rather than their sparse storage layout.
         pub(crate) fn test_mismatch(&self, other: &Self) -> Option<&'static str> {

@@ -96,7 +96,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     }
 
     /// The commitments of the step's own online polynomials, one per slot,
-    /// as [`Pcd::commitments`](crate::Pcd::commitments) returns them before
+    /// as [`UncompressedPcd::commitments`](crate::UncompressedPcd::commitments) returns them before
     /// compression. The instance carries them and the verifier binds them,
     /// so a verifier that accepts the proof may compare them to the
     /// commitments it expects.
@@ -124,7 +124,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
 }
 
 /// Compressed proof-carrying data: a [`CompressedProof`] with the data it
-/// attests, as [`Pcd`](crate::Pcd) pairs a proof with its data.
+/// attests, as [`UncompressedPcd`](crate::UncompressedPcd) pairs a proof with its data.
 pub struct CompressedPcd<C: Cycle, H: Header<C::CircuitField>> {
     proof: CompressedProof<C>,
     data: H::Data,

@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
-- `Pcd::{data, proof, into_parts}` accessors.
+- `UncompressedPcd::{data, proof, into_parts}` accessors.
 - Online polynomial oracles: every proof stores `NUM_ONLINE_POLYNOMIALS`
   polynomials, a parameter of the protocol rather than of the header type; a
   step supplies its output proof's through `Step::polynomials` before its
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its input or output proofs' polynomials through `step::Oracles` at the
   challenge or at any wire. Ragu proves the openings in the step's own batch. What a slot
   means is the application's convention for the header, constrained by the
-  producing steps' circuits. `Pcd::polynomials` reads a proof's
+  producing steps' circuits. `UncompressedPcd::polynomials` reads a proof's
   polynomials back.
 - Staged values: `Step::NUM_STAGED` and `Step::staged` supply the values a
   step's checks at the challenge read but no header field contains. Ragu

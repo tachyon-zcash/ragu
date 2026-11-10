@@ -18,5 +18,5 @@ mod serde;
 /// The envelope ahead of every payload, under envelope version 3.
 const ENVELOPE: usize = 28;
 
-type TestProof = ragu_pcd::Proof<nontrivial_support::C, nontrivial_support::R>;
+type TestProof = ragu_pcd::UncompressedProof<nontrivial_support::C, nontrivial_support::R>;
 type TestCompressed = ragu_pcd::CompressedProof<nontrivial_support::C>;

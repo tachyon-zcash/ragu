@@ -23,7 +23,7 @@ use ragu_primitives::vec::Len;
 use udon::field::Field;
 
 use crate::{
-    Pcd,
+    UncompressedPcd,
     header::Header,
     internal::nested::{self, InternalCircuitIndex, RxIndex, pcs},
     profile::ProfiledCycle,
@@ -86,9 +86,9 @@ fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
 
 fn check_batch<H: Header<Fp>>(
     app: &support::App,
-    parent_pcd: &Pcd<C, R, H>,
-    left_pcd: &Pcd<C, R, H>,
-    right_pcd: &Pcd<C, R, H>,
+    parent_pcd: &UncompressedPcd<C, R, H>,
+    left_pcd: &UncompressedPcd<C, R, H>,
+    right_pcd: &UncompressedPcd<C, R, H>,
     inputs: &support::Inputs,
 ) -> Result<()> {
     let (parent, left, right) = (parent_pcd.proof(), left_pcd.proof(), right_pcd.proof());
@@ -350,7 +350,7 @@ mod folding {
         stage_values, support,
     };
     use crate::{
-        Proof,
+        UncompressedProof,
         internal::{
             claims,
             fold_revdot::{self, ClaimFolder},
@@ -400,8 +400,8 @@ mod folding {
     /// [`build`](nested::claims::build) emits them, with their $k(y)$ values.
     fn child_claims<'a>(
         app: &'a support::App,
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a UncompressedProof<C, R>,
+        right: &'a UncompressedProof<C, R>,
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
@@ -410,7 +410,7 @@ mod folding {
             &NestedFuseProofSource { left, right },
             &mut nested_claims,
         )?;
-        let unified_ky = |proof: &Proof<C, R>| -> Result<Fq> {
+        let unified_ky = |proof: &UncompressedProof<C, R>| -> Result<Fq> {
             NestedFuseEmulator::<C>::emulate_wireless(
                 (proof.nested_instance()?, y),
                 |dr, witness| {
@@ -437,8 +437,8 @@ mod folding {
     /// Whether every nested claim of the two children holds at `y` and `z`.
     pub(super) fn claims_hold(
         app: &support::App,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         y: Fq,
         z: Fq,
     ) -> Result<bool> {
@@ -452,9 +452,9 @@ mod folding {
 
     pub(super) fn check(
         app: &support::App,
-        parent: &Proof<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        parent: &UncompressedProof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
     ) -> Result<()> {
         let y = nested::challenge::<C>(parent.y())?;
         let z = nested::challenge::<C>(parent.z())?;
@@ -814,7 +814,7 @@ mod child_openings {
     use rand::{SeedableRng, rngs::StdRng};
 
     use super::support::{self, C, ChildWire, R, Value, dummy_as_value};
-    use crate::Proof;
+    use crate::UncompressedProof;
 
     fn check(app: &support::App, inputs: &support::Inputs, delta: Fp) -> Result<()> {
         let (parent, _, right) = support::fused(app, inputs)?;
@@ -823,7 +823,7 @@ mod child_openings {
             "the honest root verifies"
         );
         let data = *parent.data();
-        let rejected = |proof: Proof<C, R>| -> Result<bool> {
+        let rejected = |proof: UncompressedProof<C, R>| -> Result<bool> {
             Ok(!app.verify_uncompressed(&proof.carry::<Value>(data), inputs.verifier_rng())?)
         };
 

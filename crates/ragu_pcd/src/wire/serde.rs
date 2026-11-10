@@ -1,5 +1,5 @@
-//! `serde` support for [`Proof`] and [`CompressedProof`]: each serializes as
-//! one byte string holding exactly the bytes [`Proof::to_bytes`] and
+//! `serde` support for [`UncompressedProof`] and [`CompressedProof`]: each serializes as
+//! one byte string holding exactly the bytes [`UncompressedProof::to_bytes`] and
 //! [`CompressedProof::to_bytes`] write, envelope included, so every serde data
 //! format carries the same bytes and the same decoding checks apply.
 //!
@@ -10,7 +10,7 @@
 //! backend or its input.
 //!
 //! The caller selects the expected application and cryptographic parameters
-//! through its deployment or consensus rules, as with [`Proof::from_bytes`].
+//! through its deployment or consensus rules, as with [`UncompressedProof::from_bytes`].
 //! Deserialization checks representation; verification uses that application.
 
 use alloc::vec::Vec;
@@ -24,7 +24,7 @@ use serde::{
 };
 
 use crate::{
-    CompressedProof, Proof,
+    CompressedProof, UncompressedProof,
     profile::ProfiledCycle,
     wire::{ENVELOPE_SIZE, Error},
 };
@@ -44,7 +44,7 @@ trait Framed: Sized {
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>>;
 }
 
-impl<C: ProfiledCycle, R: Rank> Framed for Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> Framed for UncompressedProof<C, R> {
     const EXPECTING: &'static str = "a proof in its wire format";
 
     fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
@@ -130,13 +130,13 @@ impl<'de, T: Framed> Visitor<'de> for Bytes<T> {
     }
 }
 
-impl<C: ProfiledCycle, R: Rank> Serialize for Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> Serialize for UncompressedProof<C, R> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serialize_framed(self, serializer)
     }
 }
 
-impl<'de, C: ProfiledCycle, R: Rank> Deserialize<'de> for Proof<C, R> {
+impl<'de, C: ProfiledCycle, R: Rank> Deserialize<'de> for UncompressedProof<C, R> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(Bytes(PhantomData))
     }
@@ -171,7 +171,7 @@ mod tests {
         format::{PayloadKind, write_envelope},
     };
 
-    type TestProof = Proof<Pasta, ProductionRank>;
+    type TestProof = UncompressedProof<Pasta, ProductionRank>;
     type TestCompressed = CompressedProof<Pasta>;
 
     struct EmptyWithHugeHint;

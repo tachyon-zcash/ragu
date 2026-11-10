@@ -36,7 +36,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use crate::{
-    Application, Pcd, RAGU_TAG,
+    Application, RAGU_TAG, UncompressedPcd,
     internal::{nested, transcript::Transcript},
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -46,7 +46,7 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Fuse two [`Pcd`] into one using a provided [`Step`].
+    /// Fuse two [`UncompressedPcd`] into one using a provided [`Step`].
     ///
     /// The provided `step` must have been previously registered with this
     /// [`Application`] via [`ApplicationBuilder::register`](crate::ApplicationBuilder::register).
@@ -61,9 +61,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// * `step`: the [`Step`] instance that has been registered in this
     ///   [`Application`].
     /// * `witness`: the witness input for the [`Step`]
-    /// * `left`: the left [`Pcd`] to fuse in this step; must correspond to the
+    /// * `left`: the left [`UncompressedPcd`] to fuse in this step; must correspond to the
     ///   [`Step::Left`] header.
-    /// * `right`: the right [`Pcd`] to fuse in this step; must correspond to
+    /// * `right`: the right [`UncompressedPcd`] to fuse in this step; must correspond to
     ///   the [`Step::Right`] header.
     ///
     /// # Errors
@@ -76,9 +76,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
-    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        left: UncompressedPcd<C, R, S::Left>,
+        right: UncompressedPcd<C, R, S::Right>,
+    ) -> Result<(UncompressedPcd<C, R, S::Output>, S::Aux<'source>)> {
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier
         // refuses it, rather than read past its ends.

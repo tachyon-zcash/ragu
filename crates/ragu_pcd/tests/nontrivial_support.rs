@@ -5,7 +5,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, UncompressedPcd};
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -38,7 +38,7 @@ pub(super) fn leaf(
     app: &Application<'_, C, R, HEADER_SIZE>,
     rng: &mut StdRng,
     witness: u64,
-) -> Pcd<C, R, LeafNode> {
+) -> UncompressedPcd<C, R, LeafNode> {
     app.seed(
         rng,
         WitnessLeaf {
@@ -50,7 +50,9 @@ pub(super) fn leaf(
     .0
 }
 
-pub(super) fn deep(app: &Application<'_, C, R, HEADER_SIZE>) -> Pcd<C, R, InternalNode> {
+pub(super) fn deep(
+    app: &Application<'_, C, R, HEADER_SIZE>,
+) -> UncompressedPcd<C, R, InternalNode> {
     let poseidon = Pasta::circuit_poseidon(ragu_pcd::pasta::baked());
     let node = |rng: &mut StdRng, l: u64, r: u64| {
         let (left, right) = (leaf(app, rng, l), leaf(app, rng, r));

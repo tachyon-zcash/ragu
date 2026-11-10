@@ -26,9 +26,9 @@ use udon::field::Field;
 /// [`Step`]: crate::step::Step
 pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 
-/// The number of online polynomial slots stored in each [`Proof`](crate::Proof).
+/// The number of online polynomial slots stored in each [`UncompressedProof`](crate::UncompressedProof).
 /// Their commitments are associated with the output header and exposed by
-/// [`Pcd::commitments`](crate::Pcd::commitments); the [`Header`] trait
+/// [`UncompressedPcd::commitments`](crate::UncompressedPcd::commitments); the [`Header`] trait
 /// defines the field encoding separately.
 ///
 /// This is a parameter of the protocol, not of a header type: every proof
@@ -135,7 +135,7 @@ impl Suffix {
 ///
 /// This trait defines the field encoding of the application data. The
 /// associated online polynomials and their commitments are stored in
-/// [`Proof`](crate::Proof), separately from [`Data`](Self::Data) and
+/// [`UncompressedProof`](crate::UncompressedProof), separately from [`Data`](Self::Data) and
 /// [`Output`](Self::Output).
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)

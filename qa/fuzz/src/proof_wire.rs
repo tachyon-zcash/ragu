@@ -7,7 +7,7 @@
 //! for the encoded proof; mutation modes reach payloads beyond that limit.
 use std::sync::LazyLock;
 
-use ragu_pcd::{CompressedProof, Proof};
+use ragu_pcd::{CompressedProof, UncompressedProof};
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -112,7 +112,7 @@ pub fn exercise(kind: Kind, input: &[u8]) -> Outcome {
     let mut outcome = Outcome::default();
     match kind {
         Kind::Proof => {
-            if let Ok(decoded) = Proof::from_bytes(&bytes) {
+            if let Ok(decoded) = UncompressedProof::from_bytes(&bytes) {
                 outcome.decoded = true;
                 assert!(
                     decoded.to_bytes().unwrap() == bytes,

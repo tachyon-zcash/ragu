@@ -44,7 +44,7 @@ use ragu_primitives::{
 use udon::field::Field;
 
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::{
         native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
         nested, online,
@@ -150,7 +150,7 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         R: Rank,
         B: ragu_backend::Backend,
     >(
-        proof: &Proof<C, R>,
+        proof: &UncompressedProof<C, R>,
         u: F,
     ) -> Self {
         let mut rx = B::map(

@@ -312,7 +312,7 @@ implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 representation), an `encode` function that converts `Data` into
 `Output` by allocating circuit elements. The accompanying proof stores
 `NUM_ONLINE_POLYNOMIALS` online polynomials and their commitments, exposed by
-`Pcd::polynomials()` and `Pcd::commitments()` (see
+`UncompressedPcd::polynomials()` and `UncompressedPcd::commitments()` (see
 [Polynomial Oracles](#polynomial-oracles)).
 
 For a complete example with multiple header types, see

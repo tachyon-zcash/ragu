@@ -30,7 +30,7 @@ use super::revdot::{
     nested_position,
 };
 use crate::{
-    Proof, SelectableBackend,
+    SelectableBackend, UncompressedProof,
     header::NUM_ONLINE_POLYNOMIALS,
     internal::{
         ky::{self, NativeKy, NestedKy},
@@ -142,7 +142,9 @@ fn coordinates<P: Affine>(point: P) -> Result<[P::Base; 2]> {
 impl<C: ProfiledCycle> Instance<C> {
     /// The instance of `proof`, with the values the decider derives computed
     /// from its polynomials and the wires read off its stages.
-    pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>(proof: &Proof<C, R>) -> Result<Self> {
+    pub(crate) fn of<R: Rank, const HEADER_SIZE: usize>(
+        proof: &UncompressedProof<C, R>,
+    ) -> Result<Self> {
         let preamble = StageReader::<C::CircuitField, R>::new(&proof[native::RxIndex::Preamble]);
         let child = stage_wire_indices::<_, R, NativePreamble<C, R, HEADER_SIZE>>(|out| {
             let mut wires = Vec::new();

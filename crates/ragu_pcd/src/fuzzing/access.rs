@@ -1,16 +1,16 @@
 #![cfg(feature = "unstable-fuzzing")]
-//! Mutable access to a [`Proof`]'s components, for the corruption vocabulary
+//! Mutable access to an [`UncompressedProof`]'s components, for the corruption vocabulary
 //! in [`fuzzing::corrupt`](crate::fuzzing::corrupt).
 //!
 //! The source lives in `src/fuzzing/` with the rest of the fuzzing surface,
 //! but the module is mounted as a child of `proof` (see `proof/mod.rs`): that
-//! is what lets it reach `Proof`'s private fields — the `Cached` bridge
+//! is what lets it reach `UncompressedProof`'s private fields — the `Cached` bridge
 //! polynomials and the commitment caches — without loosening their
 //! visibility. It gates itself behind `unstable-fuzzing` with the inner
 //! attribute above, so `proof/mod.rs` carries no feature attribute.
 //!
 //! The accessors mirror the read-only [`Index`](core::ops::Index) impls on
-//! `Proof`, so a corruption names a component exactly the way a verifier
+//! `UncompressedProof`, so a corruption names a component exactly the way a verifier
 //! check does rather than reaching for whichever field happens to be
 //! reachable. Every `match` is exhaustive over the mirrors `corrupt`
 //! declares, which is what keeps them honest: a mirror variant with no field
@@ -21,13 +21,13 @@ use alloc::sync::Arc;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Cycle;
 
-use super::Proof;
+use super::UncompressedProof;
 use crate::fuzzing::corrupt::{
     BridgeCommitment, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment, NestedRx,
     RxComponent,
 };
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> UncompressedProof<C, R> {
     /// The native polynomial named by `component`, mutably.
     pub(crate) fn native_component_mut(
         &mut self,

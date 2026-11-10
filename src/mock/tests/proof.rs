@@ -23,8 +23,8 @@ use super::{
 };
 
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
-type Pcd<H> = crate::Pcd<Pasta, TestRank, H>;
-type Proof = crate::Proof<Pasta, TestRank>;
+type UncompressedPcd<H> = crate::UncompressedPcd<Pasta, TestRank, H>;
+type UncompressedProof = crate::UncompressedProof<Pasta, TestRank>;
 
 /// Header carrying one field element, as an application header would.
 struct ValueHeader;
@@ -89,7 +89,7 @@ fn round_trip() {
     let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7u64).expect("seed");
 
     let bytes = pcd.proof().to_bytes().expect("encode proof");
-    let recovered = Proof::from_bytes(&bytes).expect("round trip should succeed");
+    let recovered = UncompressedProof::from_bytes(&bytes).expect("round trip should succeed");
     assert_eq!(
         pcd.proof().to_bytes().expect("encode proof"),
         recovered.to_bytes().expect("encode proof")
@@ -109,13 +109,13 @@ fn differential_verification_accepts_and_rejects() -> Result<()> {
 
 pub(super) fn check_codecs(
     app: &Application,
-    merged: &Pcd<PolynomialHeader>,
-    right: &Pcd<PolynomialHeader>,
+    merged: &UncompressedPcd<PolynomialHeader>,
+    right: &UncompressedPcd<PolynomialHeader>,
     rng: &mut StdRng,
 ) -> Result<()> {
     let bytes = merged.proof().to_bytes().expect("encode proof");
-    assert_eq!(bytes.len(), Proof::encoded_len::<4>());
-    let decoded = Proof::from_bytes(&bytes)
+    assert_eq!(bytes.len(), UncompressedProof::encoded_len::<4>());
+    let decoded = UncompressedProof::from_bytes(&bytes)
         .expect("decode proof")
         .carry::<PolynomialHeader>(*merged.data());
     assert_eq!(decoded.polynomials(), merged.polynomials());
@@ -124,7 +124,7 @@ pub(super) fn check_codecs(
     assert!(app.verify_uncompressed(&resumed, &mut *rng)?);
     let mut corrupt = bytes;
     corrupt[CompressedProof::<Pasta>::encoded_len::<TestRank, 4>()] ^= 2; // Alter a coefficient, not its commitment.
-    let corrupt = Proof::from_bytes(&corrupt)
+    let corrupt = UncompressedProof::from_bytes(&corrupt)
         .expect("decode representation")
         .carry::<PolynomialHeader>(*merged.data());
     assert!(!app.verify_uncompressed(&corrupt, &mut *rng)?);

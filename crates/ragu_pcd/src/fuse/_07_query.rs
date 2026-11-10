@@ -22,7 +22,7 @@ use udon::{fft::bit_reverse, field::Field};
 
 use super::_04_inner_error::{NestedRegistryWy, RegistryWy};
 use crate::{
-    Application, Proof,
+    Application, UncompressedProof,
     internal::{native, nested},
     multicore::par_join,
     profile::ProfiledCycle,
@@ -41,8 +41,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         z: &Element<'dr, D>,
         registry_wy: &RegistryWy<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::query::Witness<C>,
@@ -66,8 +66,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         registry_wy: &RegistryWy<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::query::Witness<C>>
     where
@@ -141,8 +141,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::query::Evaluations<C::ScalarField, C::Profile>>
     where

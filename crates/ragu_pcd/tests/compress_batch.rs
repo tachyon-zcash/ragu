@@ -19,7 +19,7 @@ type EqAffine = <Pasta as Cycle>::HostCurve;
 
 use super::{Batch, Batched, batch, verifier::verify};
 use crate::{
-    Application, ApplicationBuilder, Proof,
+    Application, ApplicationBuilder, UncompressedProof,
     compress::revdot::{self, OpeningClaim, Openings, Reduction},
     internal::{
         ky::{self, NativeKy, NestedKy},
@@ -241,7 +241,7 @@ where
 /// A verifier transcript that has replayed the native reduction.
 fn native_verifier(
     app: &Application<'static, Pasta, TestR, HEADER_SIZE>,
-    proof: &Proof<Pasta, TestR>,
+    proof: &UncompressedProof<Pasta, TestR>,
     y: Fp,
     z: Fp,
     targets: &NativeKy<Fp>,

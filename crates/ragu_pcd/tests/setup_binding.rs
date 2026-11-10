@@ -12,7 +12,7 @@ use ragu_core::{
 use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
-    Application, ApplicationBuilder, Pcd, RegistryTags,
+    Application, ApplicationBuilder, RegistryTags, UncompressedPcd,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, testing::UnitStep},
 };
@@ -20,7 +20,7 @@ use crate::{
 const HEADER_SIZE: usize = 4;
 const MANIFEST: &[u8] = &[0x24; 32];
 type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, ProductionRank, ()>;
+type TestPcd<C> = UncompressedPcd<C, ProductionRank, ()>;
 
 #[derive(Clone, Copy, Debug)]
 enum ChangedTag {

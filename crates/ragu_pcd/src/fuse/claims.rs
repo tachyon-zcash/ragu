@@ -25,7 +25,7 @@ use ragu_core::{Cycle, Result};
 use udon::field::Field;
 
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::{
         claims::{Builder, Source},
         fold_revdot::{self, Foldable},
@@ -179,8 +179,8 @@ pub(super) type FoldKey = (Side, RxComponent);
 /// for claim building, and resolves [`FoldKey`] keys back to their
 /// commitments for the MSM in `_06_ab`.
 pub(super) struct NativeFuseProofSource<'rx, C: Cycle, R: Rank> {
-    pub(super) left: &'rx Proof<C, R>,
-    pub(super) right: &'rx Proof<C, R>,
+    pub(super) left: &'rx UncompressedProof<C, R>,
+    pub(super) right: &'rx UncompressedProof<C, R>,
 }
 
 impl<'rx, C: Cycle, R: Rank> NativeFuseProofSource<'rx, C, R> {
@@ -274,8 +274,8 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 /// by committing the folded polynomials directly, so the fold works on plain
 /// polynomial references.
 pub(super) struct NestedFuseProofSource<'rx, C: Cycle, R: Rank> {
-    pub(super) left: &'rx Proof<C, R>,
-    pub(super) right: &'rx Proof<C, R>,
+    pub(super) left: &'rx UncompressedProof<C, R>,
+    pub(super) right: &'rx UncompressedProof<C, R>,
 }
 
 impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {

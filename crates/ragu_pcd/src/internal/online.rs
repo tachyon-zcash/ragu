@@ -46,7 +46,7 @@ use ragu_primitives::{
 };
 use udon::field::Field;
 
-use crate::Proof;
+use crate::UncompressedProof;
 pub use crate::header::NUM_ONLINE_POLYNOMIALS;
 
 /// The number of online polynomials a step opens across its input and output proofs.
@@ -156,8 +156,8 @@ pub fn coefficients<F: Field, R: Rank>(
 /// A step's online polynomials in slot order: the children's exported
 /// polynomials as its left and right slots, then its own, `own`.
 pub fn polys<'a, C: Cycle, R: Rank>(
-    left: &'a Proof<C, R>,
-    right: &'a Proof<C, R>,
+    left: &'a UncompressedProof<C, R>,
+    right: &'a UncompressedProof<C, R>,
     own: &'a [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
 ) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_QUERIES] {
     let proofs = [left.online_polynomials(), right.online_polynomials(), own];
@@ -169,8 +169,8 @@ pub fn polys<'a, C: Cycle, R: Rank>(
 /// The commitments of [`polys`], in the same order, given the step's own
 /// commitments `own`.
 pub fn commitments<C: Cycle, R: Rank>(
-    left: &Proof<C, R>,
-    right: &Proof<C, R>,
+    left: &UncompressedProof<C, R>,
+    right: &UncompressedProof<C, R>,
     own: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
 ) -> [C::HostCurve; NUM_ONLINE_QUERIES] {
     let proofs = [left.online_commitments(), right.online_commitments(), own];
