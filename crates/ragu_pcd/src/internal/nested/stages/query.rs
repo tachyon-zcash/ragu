@@ -25,7 +25,7 @@ use ragu_primitives::{
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::nested::{
         self, RxComponent, RxIndex,
         pcs::{InternalLen, OwnRxLen},
@@ -60,7 +60,7 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         R: Rank,
         B: ragu_backend::Backend,
     >(
-        proof: &Proof<C, R>,
+        proof: &UncompressedProof<C, R>,
         w: F,
         x: F,
         xz: F,

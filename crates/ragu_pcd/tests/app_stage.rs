@@ -20,7 +20,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
 use crate::{
-    Application, ApplicationBuilder, Pcd,
+    Application, ApplicationBuilder, UncompressedPcd,
     header::{Header, Suffix},
     internal::native::RxIndex,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
@@ -259,11 +259,16 @@ fn app_with_stage<const N: usize>() -> App {
 }
 
 /// An honest proof over a nonzero stage: `x = 3`, `state = 9`, `n = 18`.
-fn honest(app: &App, rng: &mut StdRng) -> Pcd<Pasta, R, Number> {
+fn honest(app: &App, rng: &mut StdRng) -> UncompressedPcd<Pasta, R, Number> {
     app.seed(rng, Square(true), Fp::from(3)).unwrap().0
 }
 
-fn check<H: Header<Fp>>(app: &App, pcd: &Pcd<Pasta, R, H>, rng: &mut StdRng, expected: bool) {
+fn check<H: Header<Fp>>(
+    app: &App,
+    pcd: &UncompressedPcd<Pasta, R, H>,
+    rng: &mut StdRng,
+    expected: bool,
+) {
     assert_eq!(
         app.verify_differential(pcd, &mut *rng).unwrap(),
         expected,
@@ -276,8 +281,8 @@ fn check<H: Header<Fp>>(app: &App, pcd: &Pcd<Pasta, R, H>, rng: &mut StdRng, exp
 /// pass.
 fn check_through_recursion(
     app: &App,
-    pcd: Pcd<Pasta, R, Number>,
-    honest: &Pcd<Pasta, R, Number>,
+    pcd: UncompressedPcd<Pasta, R, Number>,
+    honest: &UncompressedPcd<Pasta, R, Number>,
     rng: &mut StdRng,
     expected: bool,
 ) {
@@ -300,11 +305,11 @@ fn check_through_recursion(
 /// polynomial and recommits it, as a prover bypassing the API would.
 fn edit<H: Header<Fp>>(
     app: &App,
-    pcd: Pcd<Pasta, R, H>,
+    pcd: UncompressedPcd<Pasta, R, H>,
     component: RxIndex,
     gate: usize,
     delta: Fp,
-) -> Pcd<Pasta, R, H> {
+) -> UncompressedPcd<Pasta, R, H> {
     let (mut proof, data) = pcd.into_parts();
     let edit = staging::stage_rx::<_, R>(Fp::ZERO, gate, 1, &[delta]).unwrap();
     let (rx, commitment) = match component {

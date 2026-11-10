@@ -20,7 +20,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    Proof,
+    UncompressedProof,
     header::{Header, Suffix},
     internal::{ky, native::unified, online},
     profile::{Profile, ProfiledCycle},
@@ -34,7 +34,7 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Output header for this child proof.
     pub output_header: FixedVec<C::CircuitField, ConstLen<HEADER_SIZE>>,
     /// Reference to the child proof.
-    pub proof: &'a Proof<C, R>,
+    pub proof: &'a UncompressedProof<C, R>,
 }
 
 /// Witness for the native preamble stage.
@@ -51,8 +51,8 @@ pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
 impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
     /// Create a witness from child proof references and pre-computed output headers.
     pub fn new(
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a UncompressedProof<C, R>,
+        right: &'a UncompressedProof<C, R>,
         left_output_header: &[C::CircuitField],
         right_output_header: &[C::CircuitField],
     ) -> Result<Self> {
@@ -233,7 +233,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Allocate ProofInputs from a proof reference and pre-computed output header.
     pub fn alloc<R: Rank>(
         dr: &mut D,
-        proof: DriverValue<D, &Proof<C, R>>,
+        proof: DriverValue<D, &UncompressedProof<C, R>>,
         output_header: DriverValue<D, &FixedVec<D::F, ConstLen<HEADER_SIZE>>>,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(

@@ -228,7 +228,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Returns one coefficient vector, ascending in degree, for each of the
     /// proof's [`NUM_ONLINE_POLYNOMIALS`] slots before the challenge is drawn.
     /// Ragu commits them and stores the polynomials and commitments in
-    /// [`Proof`](crate::Proof). The parent opens them as its left or right
+    /// [`UncompressedProof`](crate::UncompressedProof). The parent opens them as its left or right
     /// slots, and this step's [`witness`](Self::witness) may open them as
     /// its output slots. The default puts the constant one in every slot;
     /// a step that uses fewer polynomials returns it for the unused slots.

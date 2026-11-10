@@ -17,7 +17,7 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Result};
 
-use super::{Cached, Proof};
+use super::{Cached, UncompressedProof};
 use crate::{
     header::NUM_ONLINE_POLYNOMIALS,
     internal::{nested, online},
@@ -207,7 +207,7 @@ macro_rules! cached_bridge {
     };
 }
 
-/// Builder for incremental [`Proof`] construction.
+/// Builder for incremental [`UncompressedProof`] construction.
 ///
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
@@ -1103,7 +1103,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     /// Build the proof. All polynomial fields must have been set. Commitment
     /// caches that haven't been accessed yet are computed now.
-    pub(crate) fn build(mut self) -> Result<Proof<C, R>> {
+    pub(crate) fn build(mut self) -> Result<UncompressedProof<C, R>> {
         // Force lazy evaluation of every native commitment cache by invoking
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
@@ -1168,7 +1168,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             };
         }
 
-        Ok(Proof {
+        Ok(UncompressedProof {
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),

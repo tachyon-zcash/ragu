@@ -16,7 +16,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use crate::{
-    Application, Proof,
+    Application, UncompressedProof,
     header::NUM_ONLINE_POLYNOMIALS,
     internal::{native, nested},
     profile::ProfiledCycle,
@@ -32,8 +32,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(super) fn compute_preamble<'a, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a UncompressedProof<C, R>,
+        right: &'a UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
@@ -48,8 +48,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_native_preamble<'a, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &'a Proof<C, R>,
-        right: &'a Proof<C, R>,
+        left: &'a UncompressedProof<C, R>,
+        right: &'a UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>> {
         let preamble_witness = native::stages::preamble::Witness::new(
@@ -72,8 +72,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_bridge_preamble<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
         let bridge_witness = nested::stages::preamble::Witness {

@@ -1,7 +1,7 @@
 //! Proof and proof-carrying data structures.
 //!
-//! Defines the [`Proof`] structure containing trace polynomials, commitments,
-//! and accumulated claims, along with [`Pcd`] which bundles a [`Proof`] with
+//! Defines the [`UncompressedProof`] structure containing trace polynomials, commitments,
+//! and accumulated claims, along with [`UncompressedPcd`] which bundles an [`UncompressedProof`] with
 //! the data that a [`Header`] succinctly encodes. Fields are organized by
 //! protocol phase (application proof, folding, query/evaluation, and
 //! commitment opening) alongside verifier challenges and bridge/nested-curve
@@ -40,12 +40,12 @@ mod recursive_boundary_tests;
 pub(crate) mod recursive_propagation_tests;
 
 // Keep this beneath `proof` so the shared test helper can inspect private
-// `Proof` fields.
+// `UncompressedProof` fields.
 #[cfg(test)]
 #[path = "../../tests/backend_equivalence.rs"]
 mod backend_equivalence;
 // Golden fixtures of the fuse pipeline and the compressed verifier, under
-// `tests/fixtures/fuse/`. Mounted here so the digests destructure `Proof`
+// `tests/fixtures/fuse/`. Mounted here so the digests destructure `UncompressedProof`
 // exhaustively: a new field fails to compile until the fixture pins it.
 #[cfg(test)]
 #[path = "../../tests/fuse_fixtures.rs"]
@@ -66,7 +66,7 @@ mod verify_rejection_tests;
 // itself behind `unstable-fuzzing` with an inner `#![cfg]`, so no feature
 // attribute appears here.
 // TODO: Revisit this layout; for now, it keeps the fuzzing surface in one
-// directory without loosening `Proof`'s privacy or adding a feature
+// directory without loosening `UncompressedProof`'s privacy or adding a feature
 // attribute here.
 #[path = "../fuzzing/access.rs"]
 mod access;
@@ -120,25 +120,25 @@ struct Cached<T>(T);
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+pub struct UncompressedPcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
+    proof: UncompressedProof<C, R>,
     data: H::Data,
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> UncompressedPcd<C, R, H> {
     /// Returns a reference to the data that the proof accompanies.
     pub fn data(&self) -> &H::Data {
         &self.data
     }
 
     /// Returns a reference to the recursive proof.
-    pub fn proof(&self) -> &Proof<C, R> {
+    pub fn proof(&self) -> &UncompressedProof<C, R> {
         &self.proof
     }
 
     /// Consumes the proof-carrying data and returns the proof and data
     /// separately.
-    pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+    pub fn into_parts(self) -> (UncompressedProof<C, R>, H::Data) {
         (self.proof, self.data)
     }
 
@@ -158,9 +158,9 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for UncompressedPcd<C, R, H> {
     fn clone(&self) -> Self {
-        Pcd {
+        UncompressedPcd {
             proof: self.proof.clone(),
             data: self.data.clone(),
         }
@@ -203,7 +203,7 @@ pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex
 /// carry prover-chosen data (the nested fold's error terms and the nested
 /// batch's values among them) and are primary.
 #[derive(Clone)]
-pub struct Proof<C: Cycle, R: Rank> {
+pub struct UncompressedProof<C: Cycle, R: Rank> {
     /// Shared alpha source for deriving cached bridge polynomial alphas.
     pub(crate) bridge_alpha: C::ScalarField,
 
@@ -393,22 +393,22 @@ mod sealed {
     use ragu_circuits::polynomials::Rank;
     use ragu_core::Cycle;
 
-    use crate::{CompressedProof, Proof};
+    use crate::{CompressedProof, UncompressedProof};
 
     pub trait Sealed {}
 
-    impl<C: Cycle, R: Rank> Sealed for Proof<C, R> {}
+    impl<C: Cycle, R: Rank> Sealed for UncompressedProof<C, R> {}
     impl<C: Cycle> Sealed for CompressedProof<C> {}
 }
 
 /// A PCD's proof, uncompressed or compressed.
 ///
 /// `R` specifies the expected rank for encoded length.
-/// This trait is sealed to [`Proof`] and [`CompressedProof`].
+/// This trait is sealed to [`UncompressedProof`] and [`CompressedProof`].
 pub trait PcdProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
     /// A PCD's proof with data described by `H` attached.
     ///
-    /// This is [`Pcd<C, R, H>`] for [`Proof`] and [`CompressedPcd<C, H>`]
+    /// This is [`UncompressedPcd<C, R, H>`] for [`UncompressedProof`] and [`CompressedPcd<C, H>`]
     /// for [`CompressedProof`].
     type Carried<H: Header<C::CircuitField>>;
 
@@ -446,8 +446,8 @@ pub trait PcdProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
     fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>;
 }
 
-impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for Proof<C, R> {
-    type Carried<H: Header<C::CircuitField>> = Pcd<C, R, H>;
+impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for UncompressedProof<C, R> {
+    type Carried<H: Header<C::CircuitField>> = UncompressedPcd<C, R, H>;
 
     fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         self.online_commitments()
@@ -494,7 +494,7 @@ impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for CompressedProof<C> {
     }
 }
 
-impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> UncompressedProof<C, R> {
     /// Whether the headers, polynomial vectors and commitment-cache vectors
     /// have exactly the receiving profile's shape. Check before traversing
     /// components so that missing entries cannot panic and trailing ones
@@ -524,7 +524,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for UncompressedProof<C, R> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
     fn index(&self, idx: RxIndex) -> &sparse::Polynomial<C::CircuitField, R> {
         use RxIndex::*;
@@ -556,7 +556,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for UncompressedProof<C, R> {
     type Output = sparse::Polynomial<C::CircuitField, R>;
     fn index(&self, component: RxComponent) -> &sparse::Polynomial<C::CircuitField, R> {
         match component {
@@ -567,7 +567,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxComponent> for Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for UncompressedProof<C, R> {
     type Output = sparse::Polynomial<C::ScalarField, R>;
     fn index(&self, idx: nested::RxIndex) -> &sparse::Polynomial<C::ScalarField, R> {
         use nested::RxIndex::*;
@@ -593,7 +593,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<nested::RxIndex> for Proof<C, R> {
     }
 }
 
-impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for Proof<C, R> {
+impl<C: Cycle, R: Rank> core::ops::Index<nested::RxComponent> for UncompressedProof<C, R> {
     type Output = sparse::Polynomial<C::ScalarField, R>;
     fn index(&self, component: nested::RxComponent) -> &sparse::Polynomial<C::ScalarField, R> {
         match component {
@@ -636,14 +636,14 @@ where
     B::msm(weights.iter(), commitments.iter()).to_affine() == expected
 }
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> UncompressedProof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
-    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
+    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> UncompressedPcd<C, R, H> {
+        UncompressedPcd { proof: self, data }
     }
 
     // TODO: Route this witness-value computation through the selected backend
-    // without making `Proof` backend-parametric or threading `c` through the
+    // without making `UncompressedProof` backend-parametric or threading `c` through the
     // backend-independent stage-witness APIs.
     /// Returns the revdot product $c = \text{revdot}(A, B)$ for witness
     /// generation.
@@ -655,7 +655,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     // TODO: Route this witness-value computation through the selected backend
-    // without making `Proof` backend-parametric or threading `v` through the
+    // without making `UncompressedProof` backend-parametric or threading `v` through the
     // backend-independent stage-witness APIs.
     /// Returns the evaluation $v = p(u)$ for witness generation.
     ///
@@ -754,7 +754,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 
     /// The commitments of the step's own online polynomials, one per slot,
-    /// as [`Pcd::commitments`] returns them after attaching data. These are
+    /// as [`UncompressedPcd::commitments`] returns them after attaching data. These are
     /// unverified until compression and compressed verification succeed.
     pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         self.online_commitments
@@ -1049,8 +1049,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(crate) fn commit_native_points_children<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
@@ -1248,11 +1248,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// step's input slots.
     ///
     /// [`Dummy`]: crate::header::Dummy
-    pub(crate) fn dummy_pcd(&self) -> Pcd<C, R, crate::header::Dummy> {
+    pub(crate) fn dummy_pcd(&self) -> UncompressedPcd<C, R, crate::header::Dummy> {
         self.dummy_proof().carry(())
     }
 
-    pub(crate) fn dummy_proof(&self) -> Proof<C, R> {
+    pub(crate) fn dummy_proof(&self) -> UncompressedProof<C, R> {
         let ones_host = {
             let mut view = sparse::View::<_, R, _>::trace();
             view.a.push(C::CircuitField::ONE);
@@ -1679,7 +1679,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 }
 
 #[cfg(test)]
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> UncompressedProof<C, R> {
     /// Doubles the native extension polynomial at `index` and recommits it,
     /// so that a test can check that the polynomial itself is bound and not
     /// only its cache.

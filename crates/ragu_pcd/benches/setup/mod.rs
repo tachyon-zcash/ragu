@@ -4,7 +4,7 @@ use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::{Application, ApplicationBuilder, CompressedPcd, Pcd};
+use ragu_pcd::{Application, ApplicationBuilder, CompressedPcd, UncompressedPcd};
 use ragu_testing::pcd::nontrivial;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -53,8 +53,8 @@ pub fn setup_seed() -> (
 
 pub fn setup_fuse() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    UncompressedPcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    UncompressedPcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -83,8 +83,8 @@ pub fn setup_fuse() -> (
 /// baselines isolate the cost of the overridden operations.
 pub fn setup_fuse_accelerated() -> (
     Application<'static, Pasta, ProductionRank, 4, AcceleratedBackend>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    UncompressedPcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    UncompressedPcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     &'static <Pasta as Cycle>::CircuitPoseidon,
     StdRng,
 ) {
@@ -121,7 +121,7 @@ pub fn setup_fuse_accelerated() -> (
 
 pub fn setup_verify_leaf() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::LeafNode>,
+    UncompressedPcd<Pasta, ProductionRank, nontrivial::LeafNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();
@@ -139,7 +139,7 @@ pub fn setup_verify_leaf() -> (
 
 pub fn setup_verify_node() -> (
     Application<'static, Pasta, ProductionRank, 4>,
-    Pcd<Pasta, ProductionRank, nontrivial::InternalNode>,
+    UncompressedPcd<Pasta, ProductionRank, nontrivial::InternalNode>,
     StdRng,
 ) {
     let (app, poseidon_params, mut rng) = setup_seed();

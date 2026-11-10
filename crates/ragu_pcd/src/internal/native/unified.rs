@@ -28,7 +28,7 @@ use ragu_primitives::{
     Element, Point, WithSuffix, allocator::Allocator, consistent::Consistent, io::Write,
 };
 
-use crate::proof::Proof;
+use crate::proof::UncompressedProof;
 
 /// The gadget kind for internal circuit outputs.
 ///
@@ -514,7 +514,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     pub fn alloc_from_proof<R: Rank, A: Allocator<'dr, D>>(
         dr: &mut D,
         allocator: &mut A,
-        proof: DriverValue<D, &Proof<C, R>>,
+        proof: DriverValue<D, &UncompressedProof<C, R>>,
     ) -> Result<Self> {
         let bridge_preamble_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_preamble_commitment()))?;

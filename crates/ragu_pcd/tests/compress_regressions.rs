@@ -23,7 +23,7 @@ use super::{
     revdot::{claims, nested_position},
 };
 use crate::{
-    Pcd, Proof, RAGU_TAG,
+    RAGU_TAG, UncompressedPcd, UncompressedProof,
     header::{Header, Suffix},
     internal::{ky, native, nested},
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
@@ -34,7 +34,7 @@ use crate::{
 
 fn check_targets<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<Pasta, ProductionRank, H>,
+    pcd: &UncompressedPcd<Pasta, ProductionRank, H>,
     label: &str,
     rng: &mut StdRng,
 ) {
@@ -174,7 +174,7 @@ fn rejects_edit(
     app: &App,
     pcd: &TestPcd,
     label: &str,
-    edit: impl FnOnce(&mut Proof<Pasta, ProductionRank>),
+    edit: impl FnOnce(&mut UncompressedProof<Pasta, ProductionRank>),
 ) {
     let mut proof = pcd.proof().clone();
     edit(&mut proof);

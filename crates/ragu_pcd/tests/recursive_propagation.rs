@@ -42,7 +42,7 @@ pub(crate) mod support {
     pub(crate) type R = ProductionRank;
     pub(crate) const HEADER_SIZE: usize = 4;
     use crate::{
-        Application, ApplicationBuilder, Pcd, Proof,
+        Application, ApplicationBuilder, UncompressedPcd, UncompressedProof,
         header::{Header, Suffix},
         internal::{
             Side,
@@ -59,8 +59,8 @@ pub(crate) mod support {
     };
 
     pub(crate) type App = Application<'static, C, R, HEADER_SIZE>;
-    pub(crate) type TestPcd = Pcd<C, R, Value>;
-    pub(crate) type UnitPcd = Pcd<C, R, ()>;
+    pub(crate) type TestPcd = UncompressedPcd<C, R, Value>;
+    pub(crate) type UnitPcd = UncompressedPcd<C, R, ()>;
 
     pub(crate) struct Value;
 
@@ -383,7 +383,7 @@ pub(crate) mod support {
     /// and `Application::fuse`, using generated header data.
     pub(crate) fn fused(app: &App, inputs: &Inputs) -> Result<(TestPcd, TestPcd, TestPcd)> {
         let mut rng = inputs.prover_rng();
-        let mut node = |value: Fp, depth: usize| -> Result<Pcd<C, R, Value>> {
+        let mut node = |value: Fp, depth: usize| -> Result<UncompressedPcd<C, R, Value>> {
             let mut proof = app.seed(&mut rng, Seed::new(), value)?.0;
             for level in 0..depth {
                 let sibling = app
@@ -435,9 +435,9 @@ pub(crate) mod support {
 
     pub(crate) fn sibling(
         app: &App,
-        child: &Pcd<C, R, Value>,
+        child: &UncompressedPcd<C, R, Value>,
         rng: &mut StdRng,
-    ) -> Result<Pcd<C, R, Value>> {
+    ) -> Result<UncompressedPcd<C, R, Value>> {
         let salt = Fp::random(|bytes| rng.fill_bytes(bytes));
         let sibling = app
             .fuse(rng, Merge::new(), salt, child.clone(), child.clone())?
@@ -450,10 +450,10 @@ pub(crate) mod support {
     /// grandparent positions. Callers check whether each descendant verifies.
     pub(crate) fn descendants(
         app: &App,
-        child: &Pcd<C, R, Value>,
-        sibling: &Pcd<C, R, Value>,
+        child: &UncompressedPcd<C, R, Value>,
+        sibling: &UncompressedPcd<C, R, Value>,
         rng: &mut StdRng,
-    ) -> Result<Vec<(String, Pcd<C, R, Value>)>> {
+    ) -> Result<Vec<(String, UncompressedPcd<C, R, Value>)>> {
         let mut proofs = Vec::new();
         for parent_side in [Side::Left, Side::Right] {
             let (left, right) = match parent_side {
@@ -484,8 +484,8 @@ pub(crate) mod support {
     /// Check the production parent's stored stages to ensure substituted
     /// endpoints, claims, challenges and circuit ID reached the copied instance.
     pub(crate) fn assert_copied_endpoints(
-        parent: &Proof<C, R>,
-        child: &Proof<C, R>,
+        parent: &UncompressedProof<C, R>,
+        child: &UncompressedProof<C, R>,
         side: Side,
     ) -> Result<()> {
         let native =
@@ -694,7 +694,7 @@ pub(crate) mod support {
     }
 
     /// Recomputes `cache` from the polynomial it caches.
-    pub(crate) fn recommit(app: &App, proof: &mut Proof<C, R>, cache: Cache) {
+    pub(crate) fn recommit(app: &App, proof: &mut UncompressedProof<C, R>, cache: Cache) {
         match cache {
             Cache::NativePreamble => {
                 proof.native_preamble_commitment.0 = native_commit(app, &proof.native_preamble_rx);
@@ -761,7 +761,7 @@ pub(crate) mod support {
         pub(crate) fn bump(
             self,
             app: &App,
-            proof: &mut Proof<C, R>,
+            proof: &mut UncompressedProof<C, R>,
             delta: Fp,
             repair: bool,
         ) -> Result<()> {
@@ -786,7 +786,11 @@ pub(crate) mod support {
         /// into the bridge stage that carries it and recommits that bridge,
         /// so that no cache or copy is stale and only the transcript, which
         /// absorbed the old bridge, is left inconsistent.
-        pub(crate) fn repair_bridge(self, app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+        pub(crate) fn repair_bridge(
+            self,
+            app: &App,
+            proof: &mut UncompressedProof<C, R>,
+        ) -> Result<()> {
             match self {
                 Self::EvalLeftP | Self::EvalRightP => repair_bridge_eval_slot(app, proof),
                 Self::PreambleLeftV | Self::PreambleLeftU => {
@@ -800,7 +804,10 @@ pub(crate) mod support {
     /// stage's `native_preamble` slot and recommits the bridge, the preamble
     /// counterpart of [`repair_bridge_eval_slot`]. What remains inconsistent
     /// is the transcript: `w` was squeezed over the old bridge commitment.
-    pub(crate) fn repair_bridge_preamble_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+    pub(crate) fn repair_bridge_preamble_slot(
+        app: &App,
+        proof: &mut UncompressedProof<C, R>,
+    ) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Preamble));
         let wires =
             stage_wire_indices::<Fq, R, preamble::Stage<EqAffine, R, crate::profile::Standard>>(
@@ -820,7 +827,10 @@ pub(crate) mod support {
     /// circuit's stage copy matches the cache again. What remains
     /// inconsistent is the transcript: `pre_beta` was squeezed over the old
     /// bridge commitment.
-    pub(crate) fn repair_bridge_eval_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+    pub(crate) fn repair_bridge_eval_slot(
+        app: &App,
+        proof: &mut UncompressedProof<C, R>,
+    ) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Eval));
         let wires =
             stage_wire_indices::<Fq, R, nested_eval::Stage<EqAffine, R, crate::profile::Standard>>(
@@ -853,16 +863,16 @@ mod accumulator {
     use udon::field::Field;
 
     use super::support::{self, C, R};
-    use crate::{Pcd, header::Header};
+    use crate::{UncompressedPcd, header::Header};
 
     /// Rescale A and B inversely, preserve their raw c, and recompute their
     /// commitment caches with the production backend.
     fn rescaled<H: Header<Fp>>(
         app: &support::App,
-        honest: &Pcd<C, R, H>,
+        honest: &UncompressedPcd<C, R, H>,
         native: Option<Fp>,
         nested: Option<Fq>,
-    ) -> Pcd<C, R, H> {
+    ) -> UncompressedPcd<C, R, H> {
         let (mut proof, data) = honest.clone().into_parts();
         if let Some(scale) = native {
             proof.native_a_poly.scale(scale);
@@ -1162,7 +1172,7 @@ mod timing {
 
     use super::support::{self, C, R, Value, coordinates};
     use crate::{
-        Proof, RAGU_TAG,
+        RAGU_TAG, UncompressedProof,
         internal::{
             native::{
                 self,
@@ -1179,7 +1189,7 @@ mod timing {
 
     /// Derive expected challenges with the production transcript operations and
     /// an explicit absorption schedule, for comparison with the stored challenges.
-    fn challenges(app: &support::App, proof: &Proof<C, R>) -> Result<Vec<Fp>> {
+    fn challenges(app: &support::App, proof: &UncompressedProof<C, R>) -> Result<Vec<Fp>> {
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(app.params), RAGU_TAG)?;
         let mut result = Vec::new();
@@ -1428,11 +1438,14 @@ mod commitments {
     };
 
     use super::support::{self, C, HEADER_SIZE, R};
-    use crate::{Pcd, Proof, header::Header, internal::nested, profile::ProfiledCycle};
+    use crate::{
+        UncompressedPcd, UncompressedProof, header::Header, internal::nested,
+        profile::ProfiledCycle,
+    };
 
     fn check_coefficients<H: Header<ragu_core::pasta::Fp>>(
         app: &support::App,
-        pcd: &Pcd<C, R, H>,
+        pcd: &UncompressedPcd<C, R, H>,
         inputs: &support::Inputs,
         delta: Fq,
     ) -> Result<()> {
@@ -1443,7 +1456,7 @@ mod commitments {
         >;
 
         let parent = pcd.proof();
-        let verify = |proof: Proof<C, R>| {
+        let verify = |proof: UncompressedProof<C, R>| {
             app.verify_differential(&proof.carry::<H>(pcd.data().clone()), inputs.verifier_rng())
         };
         assert!(verify(parent.clone())?, "the honest parent must verify");
@@ -1495,7 +1508,7 @@ mod commitments {
 
     fn check_challenge_commitment(
         app: &support::App,
-        parent: &Proof<C, R>,
+        parent: &UncompressedProof<C, R>,
         sign: Fq,
     ) -> Result<()> {
         use ragu_circuits::staging::StageExt;
@@ -1589,9 +1602,9 @@ mod commitments {
     /// decider's caches, including $P_n$ at the walk's last interstitial.
     fn check_walk<H: Header<ragu_core::pasta::Fp>>(
         app: &support::App,
-        parent_pcd: &Pcd<C, R, H>,
-        left_pcd: &Pcd<C, R, H>,
-        right_pcd: &Pcd<C, R, H>,
+        parent_pcd: &UncompressedPcd<C, R, H>,
+        left_pcd: &UncompressedPcd<C, R, H>,
+        right_pcd: &UncompressedPcd<C, R, H>,
         inputs: &support::Inputs,
         replacement_scalar: Fq,
     ) -> Result<()> {
@@ -1668,7 +1681,7 @@ mod commitments {
 
         // Exercise the decider's point comparison in isolation: a valid point
         // in the cache must still be the one carried by the walk's stage.
-        let caches: [fn(&mut Proof<C, R>) -> &mut Nested; 3] = [
+        let caches: [fn(&mut UncompressedProof<C, R>) -> &mut Nested; 3] = [
             |proof| &mut proof.nested_a_commitment.0,
             |proof| &mut proof.nested_b_commitment.0,
             |proof| &mut proof.nested_registry_xy_commitment.0,

@@ -15,7 +15,7 @@ use udon::field::Field;
 
 use super::Instance;
 use crate::{
-    Application, ApplicationBuilder, Pcd, RAGU_TAG,
+    Application, ApplicationBuilder, RAGU_TAG, UncompressedPcd,
     compress::revdot::{
         claims::{self, Kind, Masked},
         fold::Derived,
@@ -35,7 +35,7 @@ fn create_test_app() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
 
 fn setup() -> (
     Application<'static, Pasta, TestR, HEADER_SIZE>,
-    Pcd<Pasta, TestR, ()>,
+    UncompressedPcd<Pasta, TestR, ()>,
     Instance<Pasta>,
 ) {
     let app = create_test_app();

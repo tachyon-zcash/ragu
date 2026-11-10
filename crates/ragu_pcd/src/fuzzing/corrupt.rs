@@ -1,7 +1,7 @@
 //! Proof corruption utilities for fuzz-testing the verifier.
 //!
-//! [`Corruption`] names one edit to a finished [`Proof`], and
-//! [`Proof::corrupt`] applies it and reports whether the verifier is obliged
+//! [`Corruption`] names one edit to a finished [`UncompressedProof`], and
+//! [`UncompressedProof::corrupt`] applies it and reports whether the verifier is obliged
 //! to notice. The vocabulary covers what
 //! [`verify_uncompressed`](crate::Application::verify_uncompressed) actually
 //! reads: the application metadata, every challenge and bridge commitment the
@@ -78,7 +78,7 @@
 //! [`Corruption::NegateBridgeCommitment`].
 //!
 //! The `registry_wx0`, `registry_wx1` and `registry_wy` polynomials are not
-//! stored in a [`Proof`]. The verifier checks their claimed evaluations
+//! stored in an [`UncompressedProof`]. The verifier checks their claimed evaluations
 //! against the registry by reading the query and eval stage polynomials.
 //! Those stored stages, rather than the ephemeral restriction polynomials,
 //! are the corresponding corruption targets.
@@ -100,7 +100,7 @@ use ragu_core::Cycle;
 use udon::field::Field;
 
 use crate::{
-    Application, Proof,
+    Application, UncompressedProof,
     profile::{Profile, ProfiledCycle},
 };
 pub use crate::{header::NUM_ONLINE_POLYNOMIALS, internal::online::NUM_ONLINE_QUERIES};
@@ -532,7 +532,7 @@ impl BridgeCommitment {
 
 /// Targeted corruption of a single proof component.
 ///
-/// Apply one with [`Proof::corrupt`]. Its [`Binding`] describes that edit in
+/// Apply one with [`UncompressedProof::corrupt`]. Its [`Binding`] describes that edit in
 /// isolation; a harness composing edits must account for cancellations.
 pub enum Corruption<C: Cycle> {
     /// Set `circuit_id` to the given index. Out-of-domain indices are
@@ -732,7 +732,7 @@ fn monomial<F: Field, R: Rank>(coeff: usize, delta: F) -> Option<sparse::Polynom
     Some(sparse::Polynomial::from_coeffs(coeffs))
 }
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> UncompressedProof<C, R> {
     /// Apply a [`Corruption`] to this proof, reporting which verifiers are
     /// obliged to reject afterwards.
     #[doc(hidden)]
@@ -1010,7 +1010,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 {
     /// Create the synthesized dummy proof used to bootstrap recursion.
     #[doc(hidden)]
-    pub fn test_dummy_proof(&self) -> Proof<C, R> {
+    pub fn test_dummy_proof(&self) -> UncompressedProof<C, R> {
         self.dummy_proof()
     }
 }

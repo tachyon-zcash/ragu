@@ -27,7 +27,7 @@ use super::{
     _04_inner_error::{NestedRegistryWy, RegistryWy},
 };
 use crate::{
-    Application, Proof,
+    Application, UncompressedProof,
     internal::{native, nested, online},
     multicore::par_join,
     profile::ProfiledCycle,
@@ -40,8 +40,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     pub(super) fn compute_eval(
         &self,
         bound_challenges: &[C::CircuitField; native::circuits::bind_challenges::NUM_BOUND],
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: &UncompressedProof<C, R>,
+        right: &UncompressedProof<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,

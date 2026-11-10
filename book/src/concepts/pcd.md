@@ -112,7 +112,7 @@ claims of both children enforced.
 
 That internal step declares a private `Dummy` header for both inputs, and
 `Dummy` is the sentinel that selects the base case. It outputs a data-less
-`Pcd<()>`, which [`seed`] supplies as both verified children of an
+`UncompressedPcd<()>`, which [`seed`] supplies as both verified children of an
 application [`Step`] with unit inputs. An ordinary unit-input step does not
 select the base case: its child claims are still enforced.
 

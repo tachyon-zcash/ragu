@@ -28,7 +28,7 @@
 //!   randomness comes from the frozen generator under a fixed seed and is
 //!   pinned by its word count and by these bytes.
 //! - `<scenario>.digests`: one BLAKE2b-256 digest per primary field of the
-//!   uncompressed [`Proof`] the fuse produced, in declaration order, then the
+//!   uncompressed [`UncompressedProof`] the fuse produced, in declaration order, then the
 //!   word counts the fuse and the compression drew and the `.proof` file's
 //!   length. The uncompressed proof is over ten megabytes at production
 //!   rank, so this stands in for committing it: a mismatch names the fields
@@ -94,9 +94,9 @@ use ragu_primitives::{
 use rand::{TryCryptoRng, TryRng};
 use udon::{curve::Affine, field::Field};
 
-use super::Proof;
+use super::UncompressedProof;
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd,
+    Application, ApplicationBuilder, CompressedProof, UncompressedPcd,
     compress::{
         Messages,
         batch::Batch,
@@ -116,7 +116,7 @@ use crate::{
 type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
 type App<C> = Application<'static, C, R, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, R, Value>;
+type TestPcd<C> = UncompressedPcd<C, R, Value>;
 
 /// A profile of the Pasta cycle the fixtures prove in.
 trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams> {
@@ -487,13 +487,13 @@ impl Lines {
 
 /// The digests of a proof's primary fields, in declaration order.
 ///
-/// The destructuring is exhaustive: a field added to [`Proof`] does not
+/// The destructuring is exhaustive: a field added to [`UncompressedProof`] does not
 /// compile here until the fixture decides whether to pin it. The cached
 /// commitments are derived from the polynomials they commit, and the bridge
 /// `ab` polynomial from the commitments it carries, so they are not pinned
 /// separately.
-fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
-    let Proof {
+fn proof_lines<C: Cycle>(proof: &UncompressedProof<C, R>, lines: &mut Lines) {
+    let UncompressedProof {
         bridge_alpha,
         circuit_id,
         left_header,
@@ -1122,7 +1122,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     fixtures: &Fixtures,
     name: &str,
     tag: u64,
-    pcd: &Pcd<C, R, H>,
+    pcd: &UncompressedPcd<C, R, H>,
     tape: &Tape,
     failures: &mut Vec<String>,
 ) {
@@ -1315,7 +1315,7 @@ fn prover_fixtures<C: FixtureCycle>() {
 /// each payload as the wire format encodes it.
 /// These pin the wire format itself, apart from the fixture encoding above.
 fn wire_lines<C: FixtureCycle>(
-    proof: &Proof<C, R>,
+    proof: &UncompressedProof<C, R>,
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
 ) {

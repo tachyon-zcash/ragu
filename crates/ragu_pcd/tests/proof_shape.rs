@@ -9,7 +9,7 @@ use ragu_core::{Error, pasta::Pasta};
 use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
-use super::Proof;
+use super::UncompressedProof;
 use crate::{
     Application, ApplicationBuilder,
     ipa::IpaCycle,
@@ -29,7 +29,7 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     let compressed = app.compress(&honest, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
 
-    let mut reject = |proof: Proof<C, R>, label: &str| {
+    let mut reject = |proof: UncompressedProof<C, R>, label: &str| {
         let malformed = proof.carry::<()>(());
         assert!(
             !app.verify_uncompressed(&malformed, &mut rng).unwrap(),

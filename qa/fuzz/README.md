@@ -205,7 +205,7 @@ constraint system reject it. The no-execution front end is described in
 | `fuzz_verify_reject_full` | The same vocabulary against **fused** proofs: a `Hash2` over two leaves and a `Merge2` over two of those, whose accumulators the leaf case leaves degenerate. |
 | `fuzz_pcd_lifecycle` | The whole lifecycle per input: a fuzzer-chosen registry size and tree shape, seeded from fuzzer-chosen witnesses, verified under both verifiers at every level, optionally rerandomized, then corrupted and required to be rejected. Seconds per iteration — a randomized integration test libFuzzer steers. |
 
-`Proof::corrupt` returns `Binding::Unbound` for no-op edits, such as setting a
+`UncompressedProof::corrupt` returns `Binding::Unbound` for no-op edits, such as setting a
 challenge to its existing value. Every effective coefficient edit requires
 rejection because it leaves a stale cached commitment, even if the coefficient
 is a blinding term or the derived `c` or `v` is unchanged. The harness asserts

@@ -22,7 +22,7 @@ use super::super::{
 
 type ApplicationBuilder = crate::ApplicationBuilder<'static, Pasta, TestRank, 4>;
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
-type Proof = crate::Proof<Pasta, TestRank>;
+type UncompressedProof = crate::UncompressedProof<Pasta, TestRank>;
 
 fn test_builder() -> ApplicationBuilder {
     test_builder_for::<TestRank>()
@@ -225,7 +225,8 @@ fn serialized_proof_rejects_mismatched_header_data() {
         .expect("seed should succeed");
 
     let bytes = pcd.proof.to_bytes().expect("encode proof");
-    let recovered_proof = Proof::from_bytes(&bytes).expect("recovered proof should deserialize");
+    let recovered_proof =
+        UncompressedProof::from_bytes(&bytes).expect("recovered proof should deserialize");
 
     let bad_pcd = recovered_proof.carry::<TestHeader>(TestHeaderData { value: 999 });
     let valid = app
@@ -253,7 +254,7 @@ fn tampered_serialized_proof_fails_to_deserialize() {
     let mut bytes = pcd.proof.to_bytes().expect("encode proof");
     bytes[0] ^= 0xFFu8;
     assert!(
-        Proof::from_bytes(&bytes).is_err(),
+        UncompressedProof::from_bytes(&bytes).is_err(),
         "tampered proof bytes must be rejected before reaching verify"
     );
 }
@@ -614,7 +615,7 @@ fn verify_rejects_unregistered_output_header() {
         ragu_primitives::Simulator::<Fp>::just(|| data.clone()),
     )
     .expect("encode");
-    let proof = Proof::new(
+    let proof = UncompressedProof::new(
         Index::new(0),
         &mut dr,
         &encoded,
@@ -669,7 +670,7 @@ fn verify_rejects_header_registered_for_another_step() {
         ragu_primitives::Simulator::<Fp>::just(|| data.clone()),
     )
     .expect("encode");
-    let proof = Proof::new(
+    let proof = UncompressedProof::new(
         Index::new(0),
         &mut dr,
         &encoded,
@@ -692,7 +693,7 @@ fn verify_rejects_input_only_header_as_output() {
     // Unit is registered as an input to PointSeedStep, but not as its output.
     let mut dr = ragu_primitives::Simulator::<Fp>::new();
     let encoded = Encoded::<_, (), 4>::from_gadget(());
-    let proof = Proof::new(
+    let proof = UncompressedProof::new(
         Index::new(0),
         &mut dr,
         &encoded,

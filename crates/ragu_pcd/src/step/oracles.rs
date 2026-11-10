@@ -3,7 +3,7 @@
 //!
 //! A step opens [`NUM_ONLINE_POLYNOMIALS`] polynomials from each child's proof
 //! and from its own output proof, associated with the three headers. Their
-//! commitments are stored in [`Proof`](crate::Proof) and fixed before the
+//! commitments are stored in [`UncompressedProof`](crate::UncompressedProof) and fixed before the
 //! step's challenge $\zeta$ is squeezed: the children's in their proofs,
 //! the step's own by its
 //! [`polynomials`](super::Step::polynomials) phase. In the step's

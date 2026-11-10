@@ -15,7 +15,7 @@ use super::{
     transcript,
 };
 use crate::{
-    Application, Pcd, RAGU_TAG, SelectableBackend,
+    Application, RAGU_TAG, SelectableBackend, UncompressedPcd,
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
@@ -69,7 +69,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// online polynomials differ from their cached commitments.
     pub fn compress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
-        pcd: &Pcd<C, R, H>,
+        pcd: &UncompressedPcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
         let proof = pcd.proof();

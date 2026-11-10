@@ -29,7 +29,7 @@ use udon::{
 
 use super::recursive_propagation_tests::support::{self, C, HEADER_SIZE, R, Value};
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::{
         Side,
         endoscalar::PointsWitness,
@@ -102,7 +102,7 @@ fn check_descendants(
 mod challenge_binding {
     use super::*;
 
-    fn witness(proof: &Proof<C, R>) -> Result<challenges::Witness<Fq>> {
+    fn witness(proof: &UncompressedProof<C, R>) -> Result<challenges::Witness<Fq>> {
         let lifts = proof.challenges().lifts::<C>()?;
         Ok(challenges::Witness::new::<_, HEADER_SIZE>(
             lifts[..challenges::NUM].try_into().unwrap(),
@@ -117,7 +117,7 @@ mod challenge_binding {
     /// The native transcript challenges deliberately remain the original ones.
     fn install_lifts(
         app: &support::App,
-        proof: &mut Proof<C, R>,
+        proof: &mut UncompressedProof<C, R>,
         changed: &challenges::Witness<Fq>,
     ) -> Result<()> {
         let partials = native::stages::eval::BindingPartials::compute::<C, R, ReferenceBackend>(
@@ -154,7 +154,7 @@ mod challenge_binding {
     }
 
     /// This is precisely the equality the parent completes with pre_beta.
-    fn assert_complete_binding(app: &support::App, proof: &Proof<C, R>) -> Result<()> {
+    fn assert_complete_binding(app: &support::App, proof: &UncompressedProof<C, R>) -> Result<()> {
         let beta_generator = C::nested_generators(app.params).g()
             [native::circuits::bind_beta::generator_index::<C, R>()];
         assert_eq!(
@@ -169,7 +169,7 @@ mod challenge_binding {
 
     /// The decider's check of a root: its challenge stage is the stage of its
     /// own lifts and headers.
-    fn stage_matches(proof: &Proof<C, R>) -> Result<bool> {
+    fn stage_matches(proof: &UncompressedProof<C, R>) -> Result<bool> {
         crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
             proof,
             &proof.challenges().lifts::<C>()?,
@@ -364,9 +364,9 @@ fn stage_points<S: Stage<Fp, R> + Default>(
 }
 
 fn walk_inputs(
-    proof: &Proof<C, R>,
-    left: &Proof<C, R>,
-    right: &Proof<C, R>,
+    proof: &UncompressedProof<C, R>,
+    left: &UncompressedProof<C, R>,
+    right: &UncompressedProof<C, R>,
 ) -> Result<points::Inputs<EpAffine, crate::profile::Standard>> {
     let f = stage_points::<points::FStage<EpAffine, crate::profile::Standard>>(
         &proof.native_points_f_rx,
@@ -396,7 +396,7 @@ fn horner(points: &[EpAffine], beta: Fq) -> EpAffine {
         .to_affine()
 }
 
-fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
+fn native_instance(proof: &UncompressedProof<C, R>) -> native::unified::Instance<C> {
     native::unified::Instance {
         bridge_preamble_commitment: proof.bridge_preamble_commitment(),
         bridge_hash_commitment: proof.bridge_hash_commitment(),
@@ -433,7 +433,7 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
 /// The endpoint the proof's native walk stage ends at, read from the stage
 /// polynomial itself rather than from the cached `P_n` commitment, which no
 /// mutation here writes.
-fn walked_endpoint(proof: &Proof<C, R>) -> Result<Vec<Fp>> {
+fn walked_endpoint(proof: &UncompressedProof<C, R>) -> Result<Vec<Fp>> {
     let wires = stage_wire_indices::<_, R, points::WalkStage<EpAffine, crate::profile::Standard>>(
         |stage| wires_of(stage.p()),
     )?;
@@ -443,7 +443,7 @@ fn walked_endpoint(proof: &Proof<C, R>) -> Result<Vec<Fp>> {
 
 fn install_walk(
     app: &support::App,
-    proof: &mut Proof<C, R>,
+    proof: &mut UncompressedProof<C, R>,
     inputs: &points::Inputs<EpAffine, crate::profile::Standard>,
     rng: &mut StdRng,
 ) -> Result<()> {
@@ -767,11 +767,11 @@ mod claim_values {
 
     fn changed(
         app: &support::App,
-        original: &Proof<C, R>,
+        original: &UncompressedProof<C, R>,
         native_delta: Option<Fp>,
         nested_delta: Option<Fq>,
         selector: usize,
-    ) -> Result<Proof<C, R>> {
+    ) -> Result<UncompressedProof<C, R>> {
         let mut proof = original.clone();
         if let Some(delta) = native_delta {
             change_c(

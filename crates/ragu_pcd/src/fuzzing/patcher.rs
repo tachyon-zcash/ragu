@@ -8,7 +8,7 @@
 //!
 //! The internal circuits' honest witnesses exist only mid-fuse — they depend
 //! on every interstitial witness and on the shared instance. A finished
-//! [`Proof`](crate::Proof) does not carry them, so there is no post-hoc seam
+//! [`UncompressedProof`](crate::UncompressedProof) does not carry them, so there is no post-hoc seam
 //! the way there is for proof corruption in [`corrupt`](crate::fuzzing::corrupt).
 //!
 //! And the *specification* the pinned-input oracle judges against — which
@@ -91,7 +91,7 @@ use udon::field::Field;
 
 use super::claims::{NativeFuseProofSource, NestedFuseProofSource};
 use crate::{
-    Application, Pcd, RAGU_TAG,
+    Application, RAGU_TAG, UncompressedPcd,
     internal::{
         endoscalar::EndoscalarStage,
         native::{self, stages::points as native_points, total_circuit_counts},
@@ -355,8 +355,8 @@ pub fn capture_internal_circuits<'source, C, R, const HEADER_SIZE: usize, B, RNG
     rng: &mut RNG,
     step: S,
     witness: S::Witness<'source>,
-    left: Pcd<C, R, S::Left>,
-    right: Pcd<C, R, S::Right>,
+    left: UncompressedPcd<C, R, S::Left>,
+    right: UncompressedPcd<C, R, S::Right>,
     visitor: &mut V,
 ) -> Result<()>
 where
@@ -414,8 +414,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         step: S,
         witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
+        left: UncompressedPcd<C, R, S::Left>,
+        right: UncompressedPcd<C, R, S::Right>,
         base_case: bool,
         visitor: &mut V,
     ) -> Result<()>

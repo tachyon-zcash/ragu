@@ -18,7 +18,7 @@
 //!   face.
 //! * `access.rs` — the mutable component accessors [`corrupt`] writes
 //!   through. Not a module of this namespace: it is mounted as a child of
-//!   `proof` (see `proof/mod.rs`) so it can reach `Proof`'s private fields
+//!   `proof` (see `proof/mod.rs`) so it can reach `UncompressedProof`'s private fields
 //!   without loosening them, the same arrangement as `patcher` under `fuse`.
 
 pub mod corrupt;

@@ -30,7 +30,7 @@ use super::recursive_propagation_tests::support::{
     self, C, HEADER_SIZE, Merge, R, Seed, UnitLeft, UnitRight, Value,
 };
 use crate::{
-    ApplicationBuilder, Proof,
+    ApplicationBuilder, UncompressedProof,
     header::{Dummy, Header},
     internal::{
         Side, native,
@@ -87,10 +87,10 @@ impl Step<C> for UnitStep {
 /// native binder must still derive the original sign from the input headers.
 fn flipped_sign(
     app: &support::App,
-    proof: &Proof<C, R>,
+    proof: &UncompressedProof<C, R>,
     sign_wire: usize,
     sign: Fq,
-) -> Proof<C, R> {
+) -> UncompressedProof<C, R> {
     let mut changed = proof.clone();
     assert_eq!(
         StageReader::new(&changed.nested_challenges_rx).read(sign_wire),
@@ -492,7 +492,7 @@ where
     Ok(constraints.hold(&coefficients))
 }
 
-fn nested_collapse_trace(proof: &Proof<C, R>) -> sparse::Polynomial<Fq, R> {
+fn nested_collapse_trace(proof: &UncompressedProof<C, R>) -> sparse::Polynomial<Fq, R> {
     let mut nested_trace = proof.nested_collapse_rx.clone();
     for stage in [
         nested::RxIndex::EndoscalarStage,
@@ -514,7 +514,7 @@ fn nested_collapse_trace(proof: &Proof<C, R>) -> sparse::Polynomial<Fq, R> {
 }
 
 fn check_proof_guards(
-    proof: &Proof<C, R>,
+    proof: &UncompressedProof<C, R>,
     case: &str,
     exempt: bool,
     native_delta: Fp,

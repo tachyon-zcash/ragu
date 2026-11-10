@@ -26,7 +26,7 @@ use udon::field::Field;
 
 use super::{CompressedPcd, CompressedProof};
 use crate::{
-    Application, ApplicationBuilder, Pcd, Proof,
+    Application, ApplicationBuilder, UncompressedPcd, UncompressedProof,
     compress::revdot::{native_position, nested_position},
     header::{Header, Suffix},
     internal::{native, nested},
@@ -107,14 +107,14 @@ fn app() -> App {
         .expect("failed to create test application")
 }
 
-fn decides<H: Header<Fp>>(app: &App, pcd: &Pcd<Pasta, TestR, H>, seed: u64) -> bool {
+fn decides<H: Header<Fp>>(app: &App, pcd: &UncompressedPcd<Pasta, TestR, H>, seed: u64) -> bool {
     app.verify_uncompressed(pcd, StdRng::seed_from_u64(seed))
         .expect("verify should not error")
 }
 
 fn compress<H: Header<Fp>>(
     app: &App,
-    pcd: &Pcd<Pasta, TestR, H>,
+    pcd: &UncompressedPcd<Pasta, TestR, H>,
     seed: u64,
 ) -> CompressedPcd<Pasta, H> {
     app.compress(pcd, &mut StdRng::seed_from_u64(seed))
@@ -158,12 +158,12 @@ fn rejects_what_the_decider_rejects() {
     let (seeded, ()) = app
         .seed(&mut StdRng::seed_from_u64(1), Seed, Fp::from(7))
         .expect("seed");
-    let edited = |edit: fn(&App, &mut Proof<Pasta, TestR>)| {
+    let edited = |edit: fn(&App, &mut UncompressedProof<Pasta, TestR>)| {
         let (mut proof, data) = seeded.clone().into_parts();
         edit(&app, &mut proof);
         proof.carry::<Value>(data)
     };
-    let corruptions: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 3] = [
+    let corruptions: [(&str, fn(&App, &mut UncompressedProof<Pasta, TestR>)); 3] = [
         ("left header element", |_, p| p.left_header[0] += Fp::ONE),
         ("polynomial with a stale commitment", |_, p| {
             p.native_a_poly
@@ -194,7 +194,7 @@ fn rejects_what_the_decider_rejects() {
         );
     }
 
-    let malformed_headers: [(&str, fn(&App, &mut Proof<Pasta, TestR>)); 2] = [
+    let malformed_headers: [(&str, fn(&App, &mut UncompressedProof<Pasta, TestR>)); 2] = [
         ("left header too long", |_, p| p.left_header.push(Fp::ZERO)),
         ("right header too short", |_, p| {
             p.right_header.pop();
@@ -237,11 +237,13 @@ fn rejects_decoded_circuit_indices_and_challenge_caches_before_proving() {
     let app = app();
     let honest = app.bootstrap_pcd();
     let bytes = honest.proof().to_bytes().unwrap();
-    let decoded = Proof::from_bytes(&bytes).unwrap().carry::<()>(());
+    let decoded = UncompressedProof::from_bytes(&bytes)
+        .unwrap()
+        .carry::<()>(());
     assert!(decides(&app, &decoded, 2));
     assert!(accepts(&app, &compress(&app, &decoded, 3)));
 
-    let edits: [(&str, fn(&mut Proof<Pasta, TestR>)); 10] = [
+    let edits: [(&str, fn(&mut UncompressedProof<Pasta, TestR>)); 10] = [
         ("circuit index", |p| {
             p.circuit_id = CircuitIndex::from_u32(u32::MAX)
         }),
@@ -261,7 +263,9 @@ fn rejects_decoded_circuit_indices_and_challenge_caches_before_proving() {
         // These changes preserve canonical field representations and layout;
         // decoding alone cannot reject them. Compression needs the application.
         let bytes = proof.to_bytes().unwrap();
-        let decoded = Proof::from_bytes(&bytes).unwrap().carry::<()>(());
+        let decoded = UncompressedProof::from_bytes(&bytes)
+            .unwrap()
+            .carry::<()>(());
         assert!(!decides(&app, &decoded, 2), "{name}");
         assert!(
             matches!(

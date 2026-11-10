@@ -19,7 +19,7 @@ use ragu_primitives::{
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::{
         native::{self, NUM_BINDERS, RxIndex},
         nested::{PointsStage, unified},
@@ -138,7 +138,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
     /// Fails if a challenge of the child lies outside the endoscalar range,
     /// which an honest transcript output does with negligible probability.
     pub fn from_proof<CC: Cycle<HostCurve = C> + ProfiledCycle<Profile = P>, R: Rank>(
-        proof: &Proof<CC, R>,
+        proof: &UncompressedProof<CC, R>,
     ) -> Result<Self> {
         use crate::internal::native::RxComponent;
         let instance = proof.nested_instance()?;

@@ -1,7 +1,7 @@
 # PCD Step and Proofs
 
 > API reference: see the [`ragu_pcd`](https://tachyon.z.cash/ragu/internal/ragu_pcd/) crate documentation
-> for `Application`, `Step`, `Header`, `Proof`, and `Pcd`.
+> for `Application`, `Step`, `Header`, `UncompressedProof`, and `UncompressedPcd`.
 
 The proof structure in Ragu represents the cryptographic evidence that a
 computation was performed correctly. Proofs are _recursive_ and each proof can
@@ -17,18 +17,18 @@ separate proof structures for IVC and PCD, and the performance cost is
 believed to be negligible. IVC emerges as the degenerate case with a dummy
 accumulator input, forming a lopsided binary tree.
 
-## The `Pcd` Type
+## The `UncompressedPcd` Type
 
-The primary type that applications interact with is `Pcd` (proof-carrying data):
+The primary type that applications interact with is `UncompressedPcd` (proof-carrying data):
 
 ```rust
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+pub struct UncompressedPcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
+    proof: UncompressedProof<C, R>,
     data: H::Data,
 }
 ```
 
-A `Pcd` bundles two components:
+An `UncompressedPcd` bundles two components:
 
 * **`proof`**: The cryptographic proof object containing all data necessary
   for verification.
@@ -165,11 +165,11 @@ when this proof is itself folded into a subsequent step.
 
 ## The `carry` Method
 
-The `carry` method converts a raw `Proof` into a `Pcd` by
+The `carry` method converts a raw `UncompressedProof` into an `UncompressedPcd` by
 attaching header data:
 
 ```rust
-let pcd: Pcd<'_, _, _, MyHeader> = proof.carry(header_data);
+let pcd: UncompressedPcd<'_, _, _, MyHeader> = proof.carry(header_data);
 ```
 
 This separation allows the proving methods to return auxiliary data that
@@ -204,7 +204,7 @@ let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 It is intended to support privacy-preserving applications, but the current
 construction does not yet establish zero knowledge or unlinkability.
 
-Internally, rerandomization folds the input proof with a cached seeded `Pcd<()>`
+Internally, rerandomization folds the input proof with a cached seeded `UncompressedPcd<()>`
 using a dedicated rerandomization step.
 
 ## Unified Accumulator Structure
@@ -216,7 +216,7 @@ verifying each child proof inside the circuit,
 proofs are _folded_ together deferring expensive verification work while
 accumulating claims that will eventually be checked.
 
-The `Proof` type serves as a **unified accumulator** that
+The `UncompressedProof` type serves as a **unified accumulator** that
 carries both:
 
 * The current computation's witness and commitments
@@ -276,7 +276,7 @@ For deeper background, see
 
 ## Internal Proof Structure
 
-The `Proof` type contains the cryptographic data required for
+The `UncompressedProof` type contains the cryptographic data required for
 verification, organized into components that mirror the protocol's
 [staging system](../protocol/extensions/staging.md). Each proof
 component captures polynomials and commitments on both the host and

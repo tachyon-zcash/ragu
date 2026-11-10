@@ -16,9 +16,9 @@ use super::{
 const STEP_INDEX_SIZE: usize = 8;
 const HASH_SIZE: usize = 32;
 
-/// Mocks `ragu_pcd::Proof`.
+/// Mocks `ragu_pcd::UncompressedProof`.
 #[derive(Clone)]
-pub struct Proof<C: Cycle, R: Rank> {
+pub struct UncompressedProof<C: Cycle, R: Rank> {
     pub(crate) step_index: u64,
     pub(crate) header_hash: [u8; HASH_SIZE],
     pub(crate) witness_hash: [u8; HASH_SIZE],
@@ -31,16 +31,16 @@ pub struct Proof<C: Cycle, R: Rank> {
     _rank: PhantomData<R>,
 }
 
-/// Mocks `ragu_pcd::Pcd`.
-pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    pub(crate) proof: Proof<C, R>,
+/// Mocks `ragu_pcd::UncompressedPcd`.
+pub struct UncompressedPcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
+    pub(crate) proof: UncompressedProof<C, R>,
     pub(crate) data: H::Data,
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> UncompressedPcd<C, R, H> {
     /// Returns a reference to the data that the proof accompanies.
     ///
-    /// Mirrors `ragu_pcd::Pcd::data`.
+    /// Mirrors `ragu_pcd::UncompressedPcd::data`.
     #[must_use]
     pub fn data(&self) -> &H::Data {
         &self.data
@@ -48,18 +48,18 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
 
     /// Returns a reference to the recursive proof.
     ///
-    /// Mirrors `ragu_pcd::Pcd::proof`.
+    /// Mirrors `ragu_pcd::UncompressedPcd::proof`.
     #[must_use]
-    pub fn proof(&self) -> &Proof<C, R> {
+    pub fn proof(&self) -> &UncompressedProof<C, R> {
         &self.proof
     }
 
     /// Consumes the proof-carrying data and returns the proof and data
     /// separately.
     ///
-    /// Mirrors `ragu_pcd::Pcd::into_parts`.
+    /// Mirrors `ragu_pcd::UncompressedPcd::into_parts`.
     #[must_use]
-    pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+    pub fn into_parts(self) -> (UncompressedProof<C, R>, H::Data) {
         (self.proof, self.data)
     }
 
@@ -81,7 +81,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 }
 
-impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
+impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for UncompressedPcd<C, R, H> {
     fn clone(&self) -> Self {
         Self {
             proof: self.proof.clone(),
@@ -90,7 +90,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
     }
 }
 
-impl<C: Cycle, R: Rank> Proof<C, R> {
+impl<C: Cycle, R: Rank> UncompressedProof<C, R> {
     pub fn encoded_len<const HEADER_SIZE: usize>() -> usize
     where
         C: ProfiledCycle,
@@ -218,10 +218,10 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         })
     }
 
-    /// Mirrors `ragu_pcd::Proof::carry`.
+    /// Mirrors `ragu_pcd::UncompressedProof::carry`.
     #[must_use]
-    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
+    pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> UncompressedPcd<C, R, H> {
+        UncompressedPcd { proof: self, data }
     }
 
     pub(crate) fn compressed(&self) -> CompressedProof<C> {
@@ -278,7 +278,7 @@ pub struct CompressedProof<C: Cycle> {
 
 impl<C: ProfiledCycle> CompressedProof<C> {
     /// The commitments of the step's own online polynomials, as
-    /// [`Pcd::commitments`] returns them before compression. The mock's
+    /// [`UncompressedPcd::commitments`] returns them before compression. The mock's
     /// verifier binds these to its hash-based proof representation.
     pub fn online_commitments(&self) -> [C::HostCurve; HEADER_POLYNOMIALS] {
         self.commitments

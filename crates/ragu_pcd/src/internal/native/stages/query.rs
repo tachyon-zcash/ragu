@@ -32,7 +32,7 @@ use ragu_primitives::{Element, allocator::Allocator};
 use udon::field::Field;
 
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::{
         native::{InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues},
         online,
@@ -68,7 +68,7 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         R: Rank,
         B: ragu_backend::Backend,
     >(
-        proof: &Proof<C, R>,
+        proof: &UncompressedProof<C, R>,
         w: F,
         x: F,
         xz: F,

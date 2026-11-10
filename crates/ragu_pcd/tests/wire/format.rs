@@ -25,7 +25,7 @@ fn decoded_proof_verifies_and_compresses() {
     let (proof, data) = leaf(&app, &mut rng, 7).into_parts();
     let bytes = proof.to_bytes().unwrap();
     // The application used below infers the cycle and rank.
-    let decoded = ragu_pcd::Proof::from_bytes(&bytes)
+    let decoded = ragu_pcd::UncompressedProof::from_bytes(&bytes)
         .unwrap()
         .carry::<LeafNode>(data);
     assert!(app.verify_uncompressed(&decoded, &mut rng).unwrap());

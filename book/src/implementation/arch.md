@@ -113,7 +113,7 @@ Ragu is developed as a Cargo workspace.
       `ragu_core` and `ragu_primitives`.
     * **`ragu_pcd`**: Top-level API for proof-carrying data applications,
       providing `ApplicationBuilder`, `Application`, `Step`, `Header`,
-      `Proof`, and `Pcd`. Its `pasta` module derives and loads Ragu's fixed
+      `UncompressedProof`, and `UncompressedPcd`. Its `pasta` module derives and loads Ragu's fixed
       generators, exposed through `ragu_pcd::pasta::baked()`.
     * **`ragu_testing`**: Test scaffolding and nontrivial example Steps/Headers
       used in integration tests.
@@ -143,8 +143,8 @@ APIs that represent, compute, or manipulate them.
 | [Registry tags](../guide/configuration.md) | `RegistryTags::from_beacon()`, `ApplicationBuilder::with_registry_tags()` | `ragu_pcd` |
 | Computational backend | `Backend`, `ReferenceBackend`; selected through `ApplicationBuilder::with_backend()` | `ragu_backend`, `ragu_pcd` |
 | PCD step | `Step<C>` | `ragu_pcd` |
-| Recursive proof | `Proof<C, R>` | `ragu_pcd` |
-| Proof-carrying data | `Pcd<C, R, H>` | `ragu_pcd` |
+| Recursive proof | `UncompressedProof<C, R>` | `ragu_pcd` |
+| Proof-carrying data | `UncompressedPcd<C, R, H>` | `ragu_pcd` |
 | Base proof | built once by `ApplicationBuilder::finalize()` | `ragu_pcd` |
 | Seed (first step) | `Application::seed()` | `ragu_pcd` |
 | Fuse (accumulate) | `Application::fuse()` | `ragu_pcd` |

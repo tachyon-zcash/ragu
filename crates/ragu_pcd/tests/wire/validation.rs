@@ -7,13 +7,13 @@ use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::pasta::Pasta;
 use rand::{SeedableRng, rngs::StdRng};
 
-use super::Proof;
+use super::UncompressedProof;
 use crate::{
     ApplicationBuilder,
     wire::{Dimensions, Encode, Error},
 };
 
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestProof = UncompressedProof<Pasta, ProductionRank>;
 
 #[test]
 fn decoded_proof_equals_the_original_and_rejects_wrong_vector_lengths() {

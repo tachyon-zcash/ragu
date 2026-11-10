@@ -40,7 +40,7 @@ use std::sync::LazyLock;
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use ragu_pcd::{Application, Pcd};
+use ragu_pcd::{Application, UncompressedPcd};
 use ragu_testing::pcd::nontrivial::{InternalNode, LeafNode};
 use ragu_testing_fuzz::pcd::{self, C, Fixture, HEADER_SIZE, NativeField, R, Shape, SyncApp};
 use rand::{SeedableRng, rngs::StdRng};
@@ -127,7 +127,7 @@ fn seed_leaf(
     rng: &mut StdRng,
     witnesses: &mut Witnesses<'_>,
     verify_seed: u64,
-) -> Pcd<C, R, LeafNode> {
+) -> UncompressedPcd<C, R, LeafNode> {
     let (pcd, ()) = app
         .seed(rng, pcd::witness_leaf(), witnesses.draw())
         .expect("seeding an honest leaf must succeed");
@@ -141,7 +141,7 @@ fn build_node(
     rng: &mut StdRng,
     witnesses: &mut Witnesses<'_>,
     verify_seed: u64,
-) -> Pcd<C, R, InternalNode> {
+) -> UncompressedPcd<C, R, InternalNode> {
     let left = seed_leaf(app, rng, witnesses, verify_seed);
     let right = seed_leaf(app, rng, witnesses, verify_seed);
     let (pcd, ()) = app
@@ -155,10 +155,10 @@ fn build_node(
 fn merge(
     app: &App,
     rng: &mut StdRng,
-    left: Pcd<C, R, InternalNode>,
-    right: Pcd<C, R, InternalNode>,
+    left: UncompressedPcd<C, R, InternalNode>,
+    right: UncompressedPcd<C, R, InternalNode>,
     verify_seed: u64,
-) -> Pcd<C, R, InternalNode> {
+) -> UncompressedPcd<C, R, InternalNode> {
     let (pcd, ()) = app
         .fuse(rng, pcd::merge2(), (), left, right)
         .expect("fusing two honest nodes must succeed");
@@ -170,7 +170,7 @@ fn merge(
 /// verifiers: `verify_differential` holds them to one verdict.
 fn assert_honest<H: ragu_pcd::header::Header<NativeField>>(
     app: &App,
-    pcd: &Pcd<C, R, H>,
+    pcd: &UncompressedPcd<C, R, H>,
     shape: Shape,
     verify_seed: u64,
 ) {
@@ -271,11 +271,11 @@ fuzz_target!(
 /// reaches.
 fn maybe_rerandomize(
     app: &App,
-    pcd: Pcd<C, R, InternalNode>,
+    pcd: UncompressedPcd<C, R, InternalNode>,
     yes: bool,
     rng: &mut StdRng,
     verify_seed: u64,
-) -> Pcd<C, R, InternalNode> {
+) -> UncompressedPcd<C, R, InternalNode> {
     if !yes {
         return pcd;
     }

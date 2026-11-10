@@ -2,7 +2,7 @@
 //!
 //! `qa/fuzz`'s `fuzz_verify_reject`, `fuzz_verify_reject_full` and
 //! `fuzz_pcd_lifecycle` all rest on one contract: when
-//! [`Proof::corrupt`](ragu_pcd::Proof::corrupt) reports a [`Binding`], the
+//! [`UncompressedProof::corrupt`](ragu_pcd::UncompressedProof::corrupt) reports a [`Binding`], the
 //! verification paths must not accept — `verify_uncompressed`, and `compress`
 //! followed by `verify_compressed` for [`Binding::MustReject`]. A wrong
 //! classification can either skip a required rejection check or report a false
@@ -36,7 +36,7 @@ use ragu_core::{
     pasta::{Fp, Fq},
 };
 use ragu_pcd::{
-    Application, ApplicationBuilder, Pcd, Proof,
+    Application, ApplicationBuilder, UncompressedPcd, UncompressedProof,
     fuzzing::corrupt::{
         Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_POLYNOMIALS,
         NUM_ONLINE_QUERIES, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment,
@@ -60,7 +60,7 @@ enum Shape {
 #[derive(Clone)]
 struct Fixture {
     shape: Shape,
-    proof: Proof<C, R>,
+    proof: UncompressedProof<C, R>,
     data: Fp,
 }
 
@@ -84,7 +84,7 @@ impl Fixture {
     fn verify_compressed(self, app: &Application<'_, C, R, HEADER_SIZE>, seed: u64) -> bool {
         fn judge<H: Header<Fp>>(
             app: &Application<'_, C, R, HEADER_SIZE>,
-            pcd: &Pcd<C, R, H>,
+            pcd: &UncompressedPcd<C, R, H>,
             seed: u64,
         ) -> bool {
             match app.compress(pcd, &mut StdRng::seed_from_u64(seed)) {
@@ -159,8 +159,8 @@ fn fixture(app: &Application<'_, C, R, HEADER_SIZE>, shape: Shape) -> &'static F
 /// the last coefficient. Every nonzero coefficient edit leaves a stale
 /// commitment, including those outside the `t_z` region.
 fn vocabulary() -> Vec<Corruption<C>> {
-    let n = Proof::<C, R>::num_bound_coeffs();
-    let total = Proof::<C, R>::num_coeffs();
+    let n = UncompressedProof::<C, R>::num_bound_coeffs();
+    let total = UncompressedProof::<C, R>::num_coeffs();
     let coeffs = [0, n - 1, n, total - 1];
     let delta = Fp::from(7u64);
     let nested_delta = Fq::from(7u64);
@@ -393,7 +393,11 @@ fn check_corruptions(shape: Shape, group: CorruptionGroup) {
 /// indices, and online polynomials, commitments and openings past the end.
 fn no_op_edits() -> Vec<Corruption<C>> {
     let mut out = Vec::new();
-    for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
+    for (coeff, delta) in [
+        (0, 0u64),
+        (UncompressedProof::<C, R>::num_coeffs(), 7),
+        (usize::MAX, 7),
+    ] {
         out.push(Corruption::NativeCoeff {
             component: RxComponent::Rx(NativeRx::Application),
             coeff,
@@ -500,7 +504,7 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
                 continue;
             }
         };
-        let decoded = Proof::<C, R>::from_bytes(&bytes)
+        let decoded = UncompressedProof::<C, R>::from_bytes(&bytes)
             .unwrap_or_else(|error| panic!("{shape:?}: {described}: {error}"));
         assert_eq!(
             decoded.to_bytes().expect("a decoded proof re-encodes"),

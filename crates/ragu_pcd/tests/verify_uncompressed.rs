@@ -31,7 +31,7 @@ fn create_test_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
 fn verifying_proof(
     app: &crate::Application<'static, Pasta, TestR, HEADER_SIZE>,
     rng: &mut StdRng,
-) -> Proof<Pasta, TestR> {
+) -> UncompressedProof<Pasta, TestR> {
     let bootstrap = app.bootstrap_pcd();
     assert!(
         app.verify_uncompressed(&bootstrap, &mut *rng)
@@ -89,7 +89,7 @@ impl Step<Pasta> for UnitSeed {
     }
 }
 
-/// A step with no predicate that fuses two `Pcd<()>` children into `()`.
+/// A step with no predicate that fuses two `UncompressedPcd<()>` children into `()`.
 struct UnitStep;
 
 impl Step<Pasta> for UnitStep {
@@ -190,7 +190,7 @@ fn verify_rejects_wrong_right_header_size() {
 }
 
 /// Builds an application with a unit seed step to seed and a unit step
-/// fusing two `Pcd<()>` children.
+/// fusing two `UncompressedPcd<()>` children.
 fn unit_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
     ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
         .register(UnitSeed)
@@ -204,7 +204,7 @@ fn unit_app() -> crate::Application<'static, Pasta, TestR, HEADER_SIZE> {
 /// Corrupts a proof so that it no longer verifies on its own. The edited
 /// polynomial's commitment cache is left stale, so a parent fused from the
 /// result opens a polynomial that its walked commitment does not match.
-fn corrupt(pcd: Pcd<Pasta, TestR, ()>) -> Pcd<Pasta, TestR, ()> {
+fn corrupt(pcd: UncompressedPcd<Pasta, TestR, ()>) -> UncompressedPcd<Pasta, TestR, ()> {
     let (mut proof, ()) = pcd.into_parts();
     proof
         .native_a_poly
@@ -219,7 +219,7 @@ fn corrupt(pcd: Pcd<Pasta, TestR, ()>) -> Pcd<Pasta, TestR, ()> {
 /// only into its copy of the child's instance, and every commitment cache
 /// stays consistent, so a parent fused from the result can be rejected only
 /// by enforcing its children's claims.
-fn invalidate(pcd: Pcd<Pasta, TestR, ()>) -> Pcd<Pasta, TestR, ()> {
+fn invalidate(pcd: UncompressedPcd<Pasta, TestR, ()>) -> UncompressedPcd<Pasta, TestR, ()> {
     let (mut proof, ()) = pcd.into_parts();
     proof.mu += <Pasta as Cycle>::CircuitField::ONE;
     proof.carry(())
@@ -232,7 +232,7 @@ fn base_case_confined_to_bootstrap_rejects_invalid_unit_children() {
     //
     // Previously any fuse whose step declared `()` inputs was treated as a
     // base case, so the child revdot claim was skipped and a corrupted
-    // `Pcd<()>` slipped through. Now only a step declaring `Dummy`
+    // `UncompressedPcd<()>` slipped through. Now only a step declaring `Dummy`
     // inputs triggers it, so an application step's children always have
     // their claims enforced and the forgery is rejected.
     //
@@ -342,7 +342,7 @@ fn forged_dummy_headers_cannot_trigger_the_base_case() {
 
 #[test]
 fn rerandomize_unit_proof_still_verifies() {
-    // A `Pcd<()>` used to trip the over-broad base case during
+    // An `UncompressedPcd<()>` used to trip the over-broad base case during
     // rerandomization (both fuse inputs carried a `()` output), silently
     // dropping its revdot claim. With the base case confined to `Bootstrap`
     // and `Rerandomize`'s suffix wire constrained away from `Dummy`,

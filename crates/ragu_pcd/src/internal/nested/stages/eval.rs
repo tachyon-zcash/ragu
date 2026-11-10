@@ -13,7 +13,7 @@
 //! computed with $\beta_n$ held fixed does not by itself establish a valid
 //! change to the proof.
 //!
-//! At the decider, [`Proof::nested_v`] derives $v_n$ from the retained
+//! At the decider, [`UncompressedProof::nested_v`] derives $v_n$ from the retained
 //! polynomial $p_n$. The nested revdot claims bind this value to the
 //! `compute_v` trace, and the commitment checks bind $p_n$ to $P_n$.
 //! Preserve this aggregate binding, the commitment's position before
@@ -39,7 +39,7 @@ use ragu_primitives::{
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
-    Proof,
+    UncompressedProof,
     internal::nested::{RxComponent, RxIndex, pcs::OwnRxLen},
     profile::{Profile, ProfiledCycle},
 };
@@ -69,7 +69,7 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         R: Rank,
         B: ragu_backend::Backend,
     >(
-        proof: &Proof<C, R>,
+        proof: &UncompressedProof<C, R>,
         u: F,
     ) -> Self {
         ChildEvaluationsWitness {

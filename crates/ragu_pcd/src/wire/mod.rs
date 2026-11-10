@@ -1,7 +1,7 @@
 //! Canonical byte encoding for proof data.
 //!
-//! Proofs reach bytes through [`Proof::to_bytes`](crate::Proof::to_bytes) and
-//! [`Proof::from_bytes`](crate::Proof::from_bytes), and the corresponding
+//! Proofs reach bytes through [`UncompressedProof::to_bytes`](crate::UncompressedProof::to_bytes) and
+//! [`UncompressedProof::from_bytes`](crate::UncompressedProof::from_bytes), and the corresponding
 //! [`CompressedProof`](crate::CompressedProof) methods, with a versioned
 //! envelope; the optional `serde` adapters carry the same bytes. [`Error`]
 //! reports malformed byte encodings.
@@ -58,7 +58,7 @@
 //!
 //! Bound transport input before buffering it. The versioned byte encoding's
 //! expected lengths are available from
-//! [`Proof::encoded_len`](crate::Proof::encoded_len) and
+//! [`UncompressedProof::encoded_len`](crate::UncompressedProof::encoded_len) and
 //! [`CompressedProof::encoded_len`](crate::CompressedProof::encoded_len).
 //! A compressed proof's length does not fix its rank and header size;
 //! verification checks the application's shape.
