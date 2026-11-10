@@ -119,7 +119,8 @@ impl Slot {
         self.index
     }
 
-    /// The slot's index among the step's [`NUM_ONLINE_QUERIES`] slots.
+    /// The slot's index among the step's slots, three proofs'
+    /// [`NUM_ONLINE_POLYNOMIALS`] each, in slot order.
     pub const fn offset(self) -> usize {
         let proof = match self.position {
             Position::Left => 0,

@@ -60,7 +60,8 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{Registry, RegistryBuilder},
 };
-#[cfg(feature = "baked")]
+// Without `baked` the module docs are its only use.
+#[cfg_attr(not(feature = "baked"), allow(unused_imports))]
 use ragu_core::pasta::Pasta;
 use ragu_core::{
     Cycle, Error, Result,
