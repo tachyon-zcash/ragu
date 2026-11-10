@@ -50,6 +50,8 @@ internal circuits.
 - C1: each proof carries $2$ public polynomial commitment slots associated with its output header
   - `Eq` is alias for `HostCurve` type and $\E_q$ in math
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
+  - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: `Step::polynomials` is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot a header treats as padding is pinned by every step that outputs the header, which opens it at $\zeta$ and holds the value to one; an unconstrained slot is a hint, as $\cm_g, \cm_h$ are [below](#changes)
+  - a compressed proof's statement carries the header's fields and not these commitments: under a profile that decompresses statements, the decompressed proof keeps the fields and carries padding in both slots, so a header that can pass through decompression must not rely on its slots
 - C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. A private polynomial has no commitment slot and no oracle
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
   - public poly commitments are carried in proofs and associated with their output headers

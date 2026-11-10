@@ -233,6 +233,17 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// its output slots. The default puts the constant one in every slot;
     /// a step that uses fewer polynomials returns it for the unused slots.
     ///
+    /// What this returns is prover data, not a constraint. An output slot
+    /// is held to a polynomial only by the constraints
+    /// [`witness`](Self::witness) places on its openings: a slot the
+    /// circuit does not open, or opens without constraining the value,
+    /// holds whatever the prover committed, whatever this function
+    /// returns. A step whose output header treats a slot as padding
+    /// therefore opens it at $\zeta$ and holds the value to one, and every
+    /// step producing that header does the same; a slot left unconstrained
+    /// is a hint to the steps that consume it, which must constrain it
+    /// themselves.
+    ///
     /// The commitments are unblinded and deterministic for these coefficients;
     /// opening points and values are public. Witness values that should stay
     /// out of the public instance belong in [`staged`](Self::staged), whose

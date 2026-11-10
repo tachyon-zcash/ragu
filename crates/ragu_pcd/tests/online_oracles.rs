@@ -20,17 +20,26 @@
 //! ## The rule for checks at $\zeta$
 //!
 //! $\zeta$ is drawn after every slot's polynomial and every staged value
-//! is committed. A check at $\zeta$ must read only values fixed before it:
+//! is committed. A check at $\zeta$ is sound when it evaluates a residual
+//! polynomial, such as $O(X) - L(X)(X - t)$, whose coefficients were fixed
+//! before $\zeta$, whose degree is bounded, and which is nonzero whenever
+//! the intended identity is false. Fixed before $\zeta$ are:
 //!
-//! - openings at $\zeta$, or at a point that is itself fixed before $\zeta$;
+//! - the slots' polynomials, and an opening at a point that is itself
+//!   fixed before $\zeta$;
 //! - the inputs' header fields;
-//! - staged values, and wires computed from all of the above;
-//! - in-circuit hash outputs, or values from a small set (such as a bit).
+//! - staged values and constants.
 //!
-//! Any other value the circuit witnesses, including the output header's
-//! fields, is the prover's choice after $\zeta$. For example, a check
-//! $O(\zeta) = L(\zeta)(\zeta - t)$ holds for $t = \zeta - O(\zeta)/L(\zeta)$
-//! whatever the polynomials are. So stage $t$, as [`InsertTachygram`] does.
+//! $\zeta$ and the openings at it evaluate the residual, but a value the
+//! circuit computes from them is not a fixed coefficient or root: the
+//! check $O(\zeta) = L(\zeta)(\zeta - t)$ holds for
+//! $t = \zeta - O(\zeta)/L(\zeta)$ whatever the polynomials are, whether
+//! the circuit witnesses that $t$ or computes it. So stage $t$, as
+//! [`InsertTachygram`] does. Any other value the circuit witnesses,
+//! including the output header's fields, is likewise the prover's choice
+//! after $\zeta$. An in-circuit hash output whose preimage is witnessed
+//! after $\zeta$, or a value from a small set (such as a bit) chosen after
+//! $\zeta$, is not fixed either, and each needs its own argument.
 //!
 //! ## Running
 //!

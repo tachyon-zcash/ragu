@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
-- Online polynomial oracles: every proof stores `HEADER_POLYNOMIALS`
+- Online polynomial oracles: every proof stores `NUM_ONLINE_POLYNOMIALS`
   polynomials, a parameter of the protocol rather than of the header type; a
   step supplies its output proof's through `Step::polynomials` before its
   challenge is drawn, the constant one by default, and `Step::witness` opens

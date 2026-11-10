@@ -13,7 +13,8 @@
 //! is squeezed and exported for the parent. Every slot holds a polynomial
 //! the producing step chose; a step that needs fewer puts [`padding`], the
 //! constant one, in the rest, whose commitment is a fixed generator and
-//! whose evaluation at any point is one. What a slot means is the
+//! whose evaluation at any point is one, and holds the slot to it in its
+//! circuit, since nothing else does. What a slot means is the
 //! application's convention for the header, constrained by the circuits of
 //! the steps that produce it, as the header's fields are; Ragu proves only
 //! that every opening is of the committed polynomial.

@@ -34,6 +34,18 @@
 //! header committed, the constant one where that step used fewer; what a
 //! slot means is the application's convention for the header, which the
 //! producing steps' circuits constrain, as they do the header's fields.
+//!
+//! An output slot is constrained only through its openings. The step's
+//! [`polynomials`](super::Step::polynomials) phase is prover data, so a
+//! slot the circuit does not open, or opens without constraining the
+//! value, holds whatever polynomial the prover committed. To pin a padding
+//! slot, open it at $\zeta$ and hold the value to one:
+//!
+//! ```rust,ignore
+//! let zeta = oracles.zeta().clone();
+//! let value = oracles.query(dr, Slot::output(1), &zeta)?;
+//! value.enforce_equal(dr, &Element::one())?;
+//! ```
 
 use core::marker::PhantomData;
 

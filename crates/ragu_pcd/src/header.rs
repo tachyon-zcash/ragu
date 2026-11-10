@@ -48,6 +48,12 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 /// the polynomial the producing step committed; no header type can change
 /// how many a proof carries or which its slots are.
 ///
+/// Ragu does not hold a slot to the constant one, or to anything else: a
+/// slot whose opening the producing step's circuit leaves unconstrained
+/// holds a polynomial of the prover's choosing. A header whose convention
+/// makes a slot padding needs every step that outputs it to open that slot
+/// at its challenge and hold the value to one.
+///
 /// The polynomial commitments are unblinded and deterministic for their
 /// coefficients; opening points and values are public. Values intended to
 /// stay out of the public instance belong in

@@ -113,8 +113,10 @@ This is where the circuit logic is implemented. The function:
 1. Receives witness data from the prover
 2. Receives left/right header data as `DriverValue`s
 3. Receives the step's polynomial oracles (see
-   [Polynomial Oracles](#polynomial-oracles)); a step that uses only padding
-   polynomials ignores them
+   [Polynomial Oracles](#polynomial-oracles)); a step of an application that
+   uses no online polynomials ignores them, and any other step pins the
+   output slots it leaves as padding (see
+   [Padding Slots](#padding-slots))
 4. Performs computation (constraints)
 5. Returns encoded proofs and auxiliary output
 
@@ -129,7 +131,9 @@ coefficients, one vector per slot, computed from the witness and from the
 inputs' data and polynomials. Ragu commits them, and they travel with the
 proof. The default puts the constant one in every slot, which is right for
 steps that use no online polynomials; a step that uses one slot returns the
-constant one for the other.
+constant one for the other. `polynomials` is prover code, not a constraint:
+the circuit must still hold each output slot to what it should contain (see
+[Padding Slots](#padding-slots)).
 
 These polynomial commitments are unblinded and deterministic for the
 returned coefficients. Their opening points and values are public. Use
@@ -267,6 +271,38 @@ every opening, in the same batch as the rest of the step's claims, and the
 parent step holds the circuit's instance to the openings that were proved. A
 slot the circuit does not query is opened at `zeta` to the polynomial's value
 there, so every step pays for all six openings whether it uses them or not.
+
+### Padding Slots
+
+Ragu proves that an opening is of the committed polynomial, not which
+polynomial was committed. An output slot is held to a polynomial only by the
+constraints `witness` places on its openings: a slot the circuit does not
+query, or queries without constraining the value, holds whatever the prover
+committed, whatever `polynomials` returns. If a header's convention makes a
+slot padding, every step that outputs that header must pin it, by opening it
+at `zeta` and holding the value to one:
+
+```rust
+let zeta = oracles.zeta().clone();
+let padding = oracles.query(dr, Slot::output(1), &zeta)?;
+padding.enforce_equal(dr, &Element::one())?;
+```
+
+Otherwise a prover can commit any polynomial there, and a later step that
+opens the slot expecting the constant one, or computes a product with it,
+checks a polynomial of the prover's choosing. A step may leave an output
+slot unconstrained on purpose, as a hint for the steps that consume it; those
+steps must then constrain it themselves. Ragu's own bootstrap and
+decompression steps pin both of their output slots, and rerandomization
+holds its output slots equal to its input's.
+
+A compressed proof's statement carries a header's fields but not its
+polynomials. In a profile that decompresses statements back into proofs, the
+decompressed proof has the original header fields and padding in both slots,
+and a step consuming it cannot tell it from one a registered step produced.
+Under such a profile, a header that can be compressed and decompressed must
+treat its slots as padding: no step may open them expecting the polynomials
+its fields describe.
 
 ## Working with Headers
 

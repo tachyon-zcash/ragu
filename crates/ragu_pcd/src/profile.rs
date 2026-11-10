@@ -562,6 +562,16 @@ pub struct Extension {
     /// the output header of the proof it verified, so that its claim's
     /// $k(y)$ binds the proof's own output header to it. `None` for any
     /// other extension, and always on the nested side.
+    ///
+    /// The statement binds the header's fields only. A profile that declares
+    /// one registers the decompression step, whose output proof carries the
+    /// verified header with the constant one in both online slots, and a
+    /// step consuming that proof cannot tell it from one a registered step
+    /// produced. Before declaring a statement, either every header a
+    /// decompressed statement can carry must treat its slots as padding, or
+    /// the statement must also expose the compressed proof's online
+    /// commitments for the decompression step to hold its output slots to
+    /// (see [`NUM_ONLINE_POLYNOMIALS`](crate::header::NUM_ONLINE_POLYNOMIALS)).
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is
