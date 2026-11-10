@@ -34,6 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with both verifiers and asserts they agree, returning the uncompressed
   verdict. The adversarial test suites and the fuzz harness check every proof
   with both verifiers.
+- Added an application stage: `Step::NUM_STAGED` and `Step::staged` commit a
+  step's staged values before its challenge $\zeta$ is drawn, and
+  `Oracles::staged` hands them to `Step::witness` as wires bound to the
+  committed stage. A check at $\zeta$ must read only values fixed before it;
+  stage any other value it reads. Every step circuit reserves `ceil(n / 2)`
+  gates for the largest `NUM_STAGED` registered, and the step circuits are
+  constructed at `finalize`.
+
+- Added `Pcd::commitments` and `Application::commit`: a proof's polynomial slot
+  commitments, and the commitment of given coefficients, so that an
+  application can recompute `Application::bridge_hash` outside the circuit.
 
 ### Changed
 

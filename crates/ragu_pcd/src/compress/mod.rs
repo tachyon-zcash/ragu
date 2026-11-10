@@ -56,7 +56,7 @@ use self::{
 };
 use crate::{
     SelectableBackend,
-    header::Header,
+    header::{Header, NUM_ONLINE_POLYNOMIALS},
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
     profile::ProfiledCycle,
 };
@@ -95,6 +95,15 @@ impl<C: ProfiledCycle> CompressedProof<C> {
         CompressedPcd { proof: self, data }
     }
 
+    /// The commitments of the step's own online polynomials, one per slot,
+    /// as [`Pcd::commitments`](crate::Pcd::commitments) returns them before
+    /// compression. The instance carries them and the verifier binds them,
+    /// so a verifier that accepts the proof may compare them to the
+    /// commitments it expects.
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        self.instance.online_commitments
+    }
+
     /// Whether the messages have the shape the verifier reads: one
     /// commitment per component, one opening per derived polynomial, one
     /// value per batched polynomial and one IPA round per bit of the rank.
@@ -130,6 +139,12 @@ impl<C: Cycle, H: Header<C::CircuitField>> CompressedPcd<C, H> {
     /// Returns a reference to the compressed proof.
     pub fn proof(&self) -> &CompressedProof<C> {
         &self.proof
+    }
+
+    /// The commitments of the step's own online polynomials; see
+    /// [`CompressedProof::online_commitments`].
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        self.proof.instance.online_commitments
     }
 
     /// Consumes the compressed proof-carrying data and returns the proof and

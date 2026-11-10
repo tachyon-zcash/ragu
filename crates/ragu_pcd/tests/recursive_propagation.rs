@@ -55,7 +55,7 @@ pub(crate) mod support {
                 stages::{eval as nested_eval, preamble},
             },
         },
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Oracles, Step},
     };
 
     pub(crate) type App = Application<'static, C, R, HEADER_SIZE>;
@@ -98,6 +98,7 @@ pub(crate) mod support {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
             &self,
             dr: &mut D,
+            _: &mut Oracles<'_, 'dr, D>,
             witness: DriverValue<D, Fp>,
             left: DriverValue<D, L::Data>,
             right: DriverValue<D, H::Data>,

@@ -67,7 +67,7 @@ fn envelope_rejects_mismatches_before_payload_decoding() {
     assert_eq!(&bytes[..8], b"RAGUPCD\0");
     assert_eq!(
         &bytes[8..28],
-        &[3, 0, 1, 0, 1, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
+        &[3, 0, 1, 0, 2, 0, 1, 0, 13, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0]
     );
     let decoded = TestProof::from_bytes(&bytes).unwrap();
     assert_eq!(decoded.to_bytes().unwrap(), bytes);

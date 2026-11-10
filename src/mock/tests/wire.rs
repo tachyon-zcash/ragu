@@ -1,13 +1,10 @@
 use ragu_circuits::polynomials::{ProductionRank as TestRank, Rank};
-use ragu_core::{
-    Cycle,
-    pasta::{Fp, Pasta},
-};
+use ragu_core::pasta::{Fp, Pasta};
 use rand::{SeedableRng as _, rngs::StdRng};
 use udon::curve::Affine;
 
-use super::application::{Seed, ValueHeader, test_params};
-use crate::{Application, ApplicationBuilder, Pcd, Proof, WireHeader, wire::Error};
+use super::application::{Seed, ValueHeader, test_builder_for, test_params};
+use crate::{Application, Pcd, Proof, WireHeader, wire::Error};
 
 type MockProof = Proof<Pasta, TestRank>;
 type MockPcd<H> = Pcd<Pasta, TestRank, H>;
@@ -23,8 +20,8 @@ impl WireHeader<Fp> for ValueHeader {
 }
 
 fn application() -> MockApplication {
-    ApplicationBuilder::<'static, Pasta, TestRank, 4>::new()
-        .register(Seed::<0>(None))
+    test_builder_for::<TestRank>()
+        .register(Seed::<0>)
         .expect("register")
         .finalize(test_params())
         .expect("finalize")
@@ -33,7 +30,7 @@ fn application() -> MockApplication {
 fn seeded_pcd() -> MockPcd<ValueHeader> {
     let mut rng = StdRng::seed_from_u64(7);
     application()
-        .seed(&mut rng, Seed::<0>(None), Fp::from(42))
+        .seed(&mut rng, Seed::<0>, Fp::from(42))
         .expect("seed")
         .0
 }
@@ -64,7 +61,7 @@ fn pcd_round_trip() {
     );
     assert!(
         application()
-            .verify(&decoded, StdRng::seed_from_u64(8))
+            .verify_uncompressed(&decoded, StdRng::seed_from_u64(8))
             .expect("verify")
     );
 
@@ -85,7 +82,7 @@ fn envelope_and_payload_layout() {
     );
     assert_eq!(
         u16::from_le_bytes(bytes[10..12].try_into().expect("kind")),
-        3
+        1
     );
     assert_eq!(
         u16::from_le_bytes(bytes[12..14].try_into().expect("schema")),
@@ -93,27 +90,37 @@ fn envelope_and_payload_layout() {
     );
     assert_eq!(
         u16::from_le_bytes(bytes[14..16].try_into().expect("protocol")),
-        2
+        1
     );
     assert_eq!(
         u32::from_le_bytes(bytes[16..20].try_into().expect("rank")),
         TestRank::RANK
     );
-    assert_eq!(&bytes[20..28], &[0; 8]);
-    let fixed = proof.serialize();
-    assert_eq!(&bytes[28..28 + 8], &fixed[..8]);
-    assert_eq!(bytes.len(), MockProof::encoded_len::<4>());
-    let digest = blake2b_simd::Params::new().hash_length(32).hash(&bytes);
     assert_eq!(
-        digest.to_hex().as_str(),
-        "d584171ba11855eefe0a1328ad0a48603b589b41d1e2af1c8849d5526d24c5b7"
+        u64::from_le_bytes(bytes[20..28].try_into().expect("size")),
+        4
     );
+    assert_eq!(bytes.len(), MockProof::encoded_len::<4>());
+
+    let pcd = seeded_pcd();
+    let framed = pcd.to_bytes().expect("encode PCD");
+    assert_eq!(&framed[..8], b"RAGUPCD\0");
+    assert_eq!(
+        u16::from_le_bytes(framed[10..12].try_into().expect("kind")),
+        4
+    );
+    assert_eq!(
+        u64::from_le_bytes(framed[20..28].try_into().expect("count")),
+        1
+    );
+    let inner = pcd.proof().to_bytes().expect("encode proof");
+    assert_eq!(&framed[28..28 + inner.len()], inner.as_slice());
 }
 
 #[test]
 fn rejects_every_envelope_component_mutation() {
     let bytes = bootstrap_proof().to_bytes().expect("encode");
-    for offset in [0, 8, 10, 12, 14, 16, 20] {
+    for offset in [0, 8, 10, 12, 14, 16] {
         let mut mutated = bytes.clone();
         mutated[offset] ^= 1;
         assert!(
@@ -121,11 +128,14 @@ fn rejects_every_envelope_component_mutation() {
             "offset {offset} must fail"
         );
     }
+    let mut mutated = bytes;
+    mutated[20] ^= 1;
+    assert!(MockProof::from_bytes(&mutated).is_err());
 }
 
 #[test]
-fn real_format_payload_kinds_fail_closed() {
-    for tag in [1u16, 2, 5] {
+fn other_payload_kinds_fail_closed() {
+    for tag in [2u16, 3, 4, 5] {
         let mut bytes = bootstrap_proof().to_bytes().expect("encode");
         bytes[10..12].copy_from_slice(&tag.to_le_bytes());
         assert!(matches!(
@@ -141,25 +151,25 @@ fn real_format_payload_kinds_fail_closed() {
 #[test]
 fn rejects_invalid_proof_payload() {
     let mut bytes = bootstrap_proof().to_bytes().expect("encode");
-    // Proof prefix: index, header hash, three commitments, witness hash, binding.
-    let binding = 28 + 8 + 32 + 3 * 32 + 32;
+    // Proof prefix: index, header hash, two commitments, witness hash, binding.
+    let binding = 28 + 8 + 32 + 2 * 32 + 32;
     bytes[binding] ^= 1;
     assert!(matches!(
         MockProof::from_bytes(&bytes),
         Err(Error::Invalid {
-            reason: "invalid mock proof payload",
+            reason: "mock proof binding mismatch",
             ..
         })
     ));
 
     let mut bytes = bootstrap_proof().to_bytes().expect("encode");
     let point_start = 28 + 8 + 32;
-    let identity = <Pasta as Cycle>::HostCurve::identity().to_bytes();
+    let identity = <Pasta as ragu_core::Cycle>::HostCurve::identity().to_bytes();
     bytes[point_start..point_start + identity.as_ref().len()].copy_from_slice(identity.as_ref());
     assert!(MockProof::from_bytes(&bytes).is_err());
 
     let mut bytes = bootstrap_proof().to_bytes().expect("encode");
-    let coefficients = 28 + 8 + 32 + 3 * 32 + 3 * 32;
+    let coefficients = crate::CompressedProof::<Pasta>::encoded_len::<TestRank, 4>();
     bytes[coefficients..coefficients + 32].fill(0xff);
     assert!(MockProof::from_bytes(&bytes).is_err());
 }
@@ -194,6 +204,24 @@ fn rejects_truncation_and_trailing_bytes() {
 #[test]
 fn rejects_suffix_and_count_mismatches() {
     let bytes = seeded_pcd().to_bytes().expect("encode");
+    let mut wrong_rank = bytes.clone();
+    wrong_rank[16] ^= 1;
+    assert!(matches!(
+        MockPcd::<ValueHeader>::from_bytes(&wrong_rank),
+        Err(Error::Invalid { offset: 16, .. })
+    ));
+
+    let mut oversized = bytes.clone();
+    oversized[20..28].copy_from_slice(&4097u64.to_le_bytes());
+    assert!(matches!(
+        MockPcd::<ValueHeader>::from_bytes(&oversized),
+        Err(Error::Invalid { offset: 20, .. })
+    ));
+
+    let mut invalid_proof = bytes.clone();
+    invalid_proof[28 + 10] ^= 1;
+    assert!(MockPcd::<ValueHeader>::from_bytes(&invalid_proof).is_err());
+
     assert!(matches!(
         MockPcd::<()>::from_bytes(&bytes),
         Err(Error::Invalid {
@@ -203,7 +231,7 @@ fn rejects_suffix_and_count_mismatches() {
     ));
 
     let mut bytes = bytes;
-    let count = MockProof::encoded_len::<4>() + 8;
+    let count = 28 + MockProof::encoded_len::<4>() + 8;
     bytes[count] ^= 1;
     assert!(matches!(
         MockPcd::<ValueHeader>::from_bytes(&bytes),
@@ -217,7 +245,7 @@ fn rejects_suffix_and_count_mismatches() {
 #[test]
 fn rejects_noncanonical_header_element() {
     let mut bytes = seeded_pcd().to_bytes().expect("encode");
-    let first = MockProof::encoded_len::<4>() + 16;
+    let first = 28 + MockProof::encoded_len::<4>() + 16;
     bytes[first..first + 32].fill(0xff);
     assert!(matches!(
         MockPcd::<ValueHeader>::from_bytes(&bytes),
@@ -232,11 +260,11 @@ fn rejects_noncanonical_header_element() {
 fn decoded_pcd_still_requires_application_verification() {
     let app = application();
     let mut bytes = seeded_pcd().to_bytes().expect("encode");
-    let first = MockProof::encoded_len::<4>() + 16;
+    let first = 28 + MockProof::encoded_len::<4>() + 16;
     bytes[first] ^= 1;
     let decoded = MockPcd::<ValueHeader>::from_bytes(&bytes).expect("valid representation");
     assert!(
-        !app.verify(&decoded, StdRng::seed_from_u64(8))
+        !app.verify_uncompressed(&decoded, StdRng::seed_from_u64(8))
             .expect("verify")
     );
 }
@@ -270,8 +298,9 @@ mod serde_tests {
         let mut bytes = bootstrap_proof().to_bytes().expect("encode");
         bytes[0] ^= 1;
         let json = serde_json::to_string(&bytes).expect("serialize bytes");
-        let error =
-            serde_json::from_str::<MockProof>(&json).expect_err("corrupted bytes must fail");
+        let error = serde_json::from_str::<MockProof>(&json)
+            .err()
+            .expect("corrupted bytes must fail");
         assert!(error.to_string().contains("invalid proof magic"), "{error}");
     }
 
@@ -311,7 +340,8 @@ mod serde_tests {
         }
         let error = ProofVisitor
             .visit_seq(EmptyWithHugeHint)
-            .expect_err("empty input must fail");
+            .err()
+            .expect("empty input must fail");
         assert!(error.to_string().contains("truncated"), "{error}");
     }
 
@@ -324,7 +354,8 @@ mod serde_tests {
             .into_iter()
             .chain(core::iter::repeat(0u8));
         let error = MockProof::deserialize(SeqDeserializer::<_, DeError>::new(input))
-            .expect_err("overlong input must fail");
+            .err()
+            .expect("overlong input must fail");
         assert!(
             error.to_string().contains("exceeds its fixed length"),
             "{error}"

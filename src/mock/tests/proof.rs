@@ -1,19 +1,25 @@
 use ragu_circuits::polynomials::{ProductionRank as TestRank, Rank};
 use ragu_core::{
-    Result,
+    Cycle as _, FixedGenerators as _, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Kind},
     maybe::Maybe as _,
-    pasta::{Fp, Pasta},
+    pasta::{Fp, PallasGenerators, Pasta, PastaParams, VestaGenerators},
 };
 use ragu_primitives::{Element, allocator::Allocator};
 use rand::{SeedableRng as _, rngs::StdRng};
+use udon::curve::AffineAdapter;
 
 use super::{
     super::{
-        ApplicationBuilder, Encoded, Header, Index, Oracles, PROOF_SIZE_COMPRESSED, Step, Suffix,
+        CompressedProof,
+        header::{Header, Suffix},
+        step::{Encoded, Index, Oracles, Step},
     },
-    application::{Merge, ValueHeader as PolynomialHeader, Witnessed, test_params},
+    application::{
+        Merge, ValueHeader as PolynomialHeader, Witnessed, test_builder_for, test_params,
+        test_params_for,
+    },
 };
 
 type Application = crate::Application<'static, Pasta, TestRank, 4>;
@@ -69,7 +75,7 @@ impl Step<Pasta> for ValueSeedStep {
 
 /// Application with [`ValueSeedStep`] registered.
 fn value_app() -> Application {
-    ApplicationBuilder::new()
+    test_builder_for::<TestRank>()
         .register(ValueSeedStep)
         .expect("register")
         .finalize(test_params())
@@ -82,9 +88,23 @@ fn round_trip() {
     let app = value_app();
     let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7u64).expect("seed");
 
-    let bytes: [u8; PROOF_SIZE_COMPRESSED] = pcd.proof().clone().into();
-    let recovered = Proof::try_from(&bytes).expect("round trip should succeed");
-    assert_eq!(pcd.proof().serialize(), recovered.serialize());
+    let bytes = pcd.proof().to_bytes().expect("encode proof");
+    let recovered = Proof::from_bytes(&bytes).expect("round trip should succeed");
+    assert_eq!(
+        pcd.proof().to_bytes().expect("encode proof"),
+        recovered.to_bytes().expect("encode proof")
+    );
+}
+
+#[test]
+fn differential_verification_accepts_and_rejects() -> Result<()> {
+    let mut rng = StdRng::seed_from_u64(3);
+    let app = value_app();
+    let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7)?;
+    assert!(app.verify_differential(&pcd, &mut rng)?);
+    let mismatched = pcd.proof().clone().carry::<ValueHeader>(8);
+    assert!(!app.verify_differential(&mismatched, &mut rng)?);
+    Ok(())
 }
 
 pub(super) fn check_codecs(
@@ -93,28 +113,102 @@ pub(super) fn check_codecs(
     right: &Pcd<PolynomialHeader>,
     rng: &mut StdRng,
 ) -> Result<()> {
-    let bytes = merged.proof().serialize();
-    let decoded = Proof::try_from(bytes.as_ref())?.carry::<PolynomialHeader>(*merged.data());
-    assert!(app.verify(&decoded, &mut *rng)?);
-    let bytes = merged.proof().to_bytes().expect("encode reusable proof");
+    let bytes = merged.proof().to_bytes().expect("encode proof");
     assert_eq!(bytes.len(), Proof::encoded_len::<4>());
     let decoded = Proof::from_bytes(&bytes)
-        .expect("decode reusable proof")
+        .expect("decode proof")
         .carry::<PolynomialHeader>(*merged.data());
     assert_eq!(decoded.polynomials(), merged.polynomials());
     assert!(app.verify_uncompressed(&decoded, &mut *rng)?);
     let (resumed, ()) = app.fuse(rng, Merge(false), None, decoded, right.clone())?;
-    assert!(app.verify(&resumed, &mut *rng)?);
+    assert!(app.verify_uncompressed(&resumed, &mut *rng)?);
     let mut corrupt = bytes;
-    let first_coefficient = corrupt.len() - 3 * TestRank::num_coeffs() * 32;
-    corrupt[first_coefficient] ^= 2; // Alter a coefficient, not its commitment.
+    corrupt[CompressedProof::<Pasta>::encoded_len::<TestRank, 4>()] ^= 2; // Alter a coefficient, not its commitment.
     let corrupt = Proof::from_bytes(&corrupt)
-        .expect("decode changed coefficient")
+        .expect("decode representation")
         .carry::<PolynomialHeader>(*merged.data());
-    assert!(!app.verify(&corrupt, &mut *rng)?);
+    assert!(!app.verify_uncompressed(&corrupt, &mut *rng)?);
     assert!(
         app.fuse(rng, Merge(false), None, corrupt, right.clone())
             .is_err()
     );
+    let compressed = app.compress(&resumed, rng)?;
+    assert_eq!(compressed.online_commitments(), resumed.commitments());
+    assert_eq!(
+        compressed.proof().online_commitments(),
+        resumed.commitments()
+    );
+    let bytes = compressed
+        .proof()
+        .to_bytes()
+        .expect("encode compressed proof");
+    let decoded = CompressedProof::<Pasta>::from_bytes(&bytes)
+        .expect("decode compressed proof")
+        .carry::<PolynomialHeader>(*compressed.data());
+    assert!(app.verify_compressed(&decoded)?);
+    assert_eq!(decoded.online_commitments(), resumed.commitments());
+    assert_eq!(decoded.proof().online_commitments(), resumed.commitments());
+    let ordinary = resumed.proof().to_bytes().expect("encode ordinary proof");
+    assert!(matches!(
+        CompressedProof::<Pasta>::from_bytes(&ordinary[..bytes.len()]),
+        Err(crate::wire::Error::Invalid {
+            reason: "proof payload kind mismatch",
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[test]
+fn compressed_proofs_reject_other_setup_and_rank() -> Result<()> {
+    type LargerRank = ragu_circuits::polynomials::R<14>;
+    let params = test_params_for::<LargerRank>();
+    let app = test_builder_for::<TestRank>()
+        .register(ValueSeedStep)?
+        .finalize(params)?;
+    let mut rng = StdRng::seed_from_u64(1);
+    let (pcd, ()) = app.seed(&mut rng, ValueSeedStep, 7)?;
+    let compressed = app.compress(&pcd, &mut rng)?;
+    let decoded = CompressedProof::<Pasta>::from_bytes(
+        &compressed.proof().to_bytes().expect("encode compressed"),
+    )
+    .expect("decode compressed")
+    .carry::<ValueHeader>(7);
+    assert!(app.verify_compressed(&decoded)?);
+    let host = Pasta::host_generators(params);
+    let nested = Pasta::nested_generators(params);
+    let mut host_g = host.g().to_vec();
+    host_g[0] = -host_g[0];
+    let other_params = PastaParams::new(
+        PallasGenerators::new(
+            AffineAdapter::as_slice(nested.g()),
+            AffineAdapter::as_slice(&[*nested.h()])[0],
+        ),
+        VestaGenerators::new(
+            AffineAdapter::as_slice(&host_g).to_vec().leak(),
+            AffineAdapter::as_slice(&[*host.h()])[0],
+        ),
+    );
+    let other = test_builder_for::<TestRank>()
+        .register(ValueSeedStep)?
+        .finalize(&other_params)?;
+    assert!(!other.verify_compressed(&decoded)?);
+    let wide = test_builder_for::<LargerRank>()
+        .register(ValueSeedStep)?
+        .finalize(params)?;
+    let (pcd, ()) = wide.seed(&mut rng, ValueSeedStep, 7)?;
+    let mut bytes = wide
+        .compress(&pcd, &mut rng)?
+        .proof()
+        .to_bytes()
+        .expect("encode wide proof");
+    bytes[16..20].copy_from_slice(&TestRank::RANK.to_le_bytes());
+    assert!(matches!(
+        CompressedProof::<Pasta>::from_bytes(&bytes),
+        Err(crate::wire::Error::Invalid {
+            reason: "mock proof binding mismatch",
+            ..
+        })
+    ));
     Ok(())
 }

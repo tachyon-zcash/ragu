@@ -26,6 +26,49 @@ use udon::field::Field;
 /// [`Step`]: crate::step::Step
 pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 
+/// The number of online polynomial slots stored in each [`Proof`](crate::Proof).
+/// Their commitments are associated with the output header and exposed by
+/// [`Pcd::commitments`](crate::Pcd::commitments); the [`Header`] trait
+/// defines the field encoding separately.
+///
+/// This is a parameter of the protocol, not of a header type: every proof
+/// stores exactly this many polynomials, every step commits this many for
+/// its output through [`Step::polynomials`](crate::step::Step::polynomials)
+/// and may open its own or either child's through
+/// [`Oracles`](crate::step::Oracles). A step's six online slots are the
+/// polynomials in left, right, output order; they are opened
+/// by the step's own batch, so every step pays for all of them whether its
+/// headers use them or not.
+///
+/// What a slot holds is the application's convention for that header, as
+/// the meaning of its fields is: a step whose output needs fewer
+/// polynomials puts the constant one in the rest, and a step that relies on
+/// a slot's content relies on the circuits of the steps that produce the
+/// header, which are registered. Ragu proves only that every opening is of
+/// the polynomial the producing step committed; no header type can change
+/// how many a proof carries or which its slots are.
+///
+/// Ragu does not hold a slot to the constant one, or to anything else: a
+/// slot whose opening the producing step's circuit leaves unconstrained
+/// holds a polynomial of the prover's choosing. A header whose convention
+/// makes a slot padding needs every step that outputs it to open that slot
+/// at its challenge and hold the value to one.
+///
+/// The polynomial commitments are unblinded and deterministic for their
+/// coefficients; opening points and values are public. Values intended to
+/// stay out of the public instance belong in
+/// [`Step::staged`](crate::step::Step::staged), whose stage commitment is
+/// blinded; public openings can still reveal those values.
+///
+/// A compressed proof's statement carries only the header's fields, so a
+/// header type registered at a suffix a decompressed statement can land on
+/// must treat its slots as padding: the decompression step holds them to
+/// the constant one, and a step that opens them expecting the polynomial
+/// the fields describe checks the wrong polynomial. Binding those slots to
+/// the compressed proof's own online commitments would be a change to the
+/// statement extension's contract.
+pub const NUM_ONLINE_POLYNOMIALS: usize = 2;
+
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
 /// application suffixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -89,6 +132,11 @@ impl Suffix {
 /// Headers are succinct representations of data, essentially used as public
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
+///
+/// This trait defines the field encoding of the application data. The
+/// associated online polynomials and their commitments are stored in
+/// [`Proof`](crate::Proof), separately from [`Data`](Self::Data) and
+/// [`Output`](Self::Output).
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.

@@ -106,7 +106,7 @@ fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
     let _ = Suffix::new(usize::MAX);
 }
 
-pub const HEADER_POLYNOMIALS: usize = 3;
+pub const HEADER_POLYNOMIALS: usize = 2;
 
 /// Mirrors `ragu_pcd::Header`.
 pub trait Header<F: Field>: Send + Sync + 'static {

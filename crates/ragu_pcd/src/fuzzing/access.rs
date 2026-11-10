@@ -44,6 +44,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 Query => &mut self.native_query_rx,
                 Eval => &mut self.native_eval_rx,
                 Application => &mut self.native_application_rx,
+                ApplicationStage => &mut self.native_application_stage_rx,
                 Hashes1 => &mut self.native_hashes_1_rx,
                 Hashes2 => &mut self.native_hashes_2_rx,
                 Collapse => &mut self.native_collapse_rx,
@@ -118,6 +119,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             EndoscalarStage => &mut self.nested_endoscalar_rx,
             PointsStage => Arc::make_mut(&mut self.nested_points_rx),
             BridgePreamble => Arc::make_mut(&mut self.bridge_preamble_rx),
+            BridgeHash => Arc::make_mut(&mut self.bridge_hash_rx),
             BridgeSPrime => Arc::make_mut(&mut self.bridge_s_prime_rx),
             BridgeInnerError => Arc::make_mut(&mut self.bridge_inner_error_rx),
             BridgeOuterError => Arc::make_mut(&mut self.bridge_outer_error_rx),
@@ -132,6 +134,35 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// The nested challenge stage's exported partial binding, mutably.
     pub(crate) fn nested_challenges_partial_mut(&mut self) -> &mut C::NestedCurve {
         &mut self.nested_challenges_partial
+    }
+
+    /// The proof's `index`-th online polynomial, mutably, or `None` past
+    /// its polynomial slots.
+    pub(crate) fn online_polynomial_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut sparse::Polynomial<C::CircuitField, R>> {
+        self.online_polynomials.get_mut(index)
+    }
+
+    /// The cached commitment of the proof's `index`-th online polynomial,
+    /// mutably, or `None` past its polynomial slots.
+    pub(crate) fn online_commitment_cache_mut(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut C::HostCurve> {
+        self.online_commitments
+            .get_mut(index)
+            .map(|commitment| &mut commitment.0)
+    }
+
+    /// The step's `slot`-th online opening, mutably, or `None` past the
+    /// slots.
+    pub(crate) fn online_opening_mut(
+        &mut self,
+        slot: usize,
+    ) -> Option<&mut crate::internal::online::Query<C::CircuitField>> {
+        self.online_openings.get_mut(slot)
     }
 
     /// The cached native commitment named by `which`, mutably.
@@ -155,6 +186,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 Query => &mut self.native_query_commitment.0,
                 Eval => &mut self.native_eval_commitment.0,
                 Application => &mut self.native_application_commitment.0,
+                ApplicationStage => &mut self.native_application_stage_commitment.0,
                 Hashes1 => &mut self.native_hashes_1_commitment.0,
                 Hashes2 => &mut self.native_hashes_2_commitment.0,
                 Collapse => &mut self.native_collapse_commitment.0,
@@ -199,6 +231,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 EndoscalarStage => &mut self.nested_endoscalar_commitment.0,
                 PointsStage => &mut self.nested_points_commitment.0,
                 BridgePreamble => &mut self.bridge_preamble_commitment,
+                BridgeHash => &mut self.bridge_hash_commitment,
                 BridgeSPrime => &mut self.bridge_s_prime_commitment,
                 BridgeInnerError => &mut self.bridge_inner_error_commitment,
                 BridgeOuterError => &mut self.bridge_outer_error_commitment,
@@ -219,6 +252,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
         use BridgeCommitment::*;
         match which {
             Preamble => &mut self.bridge_preamble_commitment,
+            Hash => &mut self.bridge_hash_commitment,
             SPrime => &mut self.bridge_s_prime_commitment,
             InnerError => &mut self.bridge_inner_error_commitment,
             F => &mut self.bridge_f_commitment,

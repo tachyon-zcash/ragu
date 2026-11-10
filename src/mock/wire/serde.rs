@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use core::{fmt, marker::PhantomData};
 
 use ragu_circuits::polynomials::Rank;
-use ragu_core::Cycle;
+use ragu_pcd::profile::ProfiledCycle;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, SeqAccess, Visitor},
@@ -23,7 +23,7 @@ use serde::{
 
 use super::{
     super::{Pcd, Proof},
-    ENVELOPE_SIZE, Error, WireHeader,
+    ENVELOPE_SIZE, Error, PayloadKind, WireHeader, open, pcd,
 };
 
 /// A type serialized as its versioned byte encoding.
@@ -41,7 +41,7 @@ trait Framed: Sized {
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>>;
 }
 
-impl<C: Cycle, R: Rank> Framed for Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> Framed for Proof<C, R> {
     const EXPECTING: &'static str = "a mock proof in its wire format";
 
     fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
@@ -53,11 +53,12 @@ impl<C: Cycle, R: Rank> Framed for Proof<C, R> {
     }
 
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
-        Self::framed_len(bytes)
+        open(bytes, PayloadKind::Proof, Some(R::RANK))?;
+        Ok(Self::encoded_len::<0>())
     }
 }
 
-impl<C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Framed for Pcd<C, R, H> {
+impl<C: ProfiledCycle, R: Rank, H: WireHeader<C::CircuitField>> Framed for Pcd<C, R, H> {
     const EXPECTING: &'static str = "a mock PCD in its wire format";
 
     fn to_wire(&self) -> Result<Vec<u8>, Error<'static>> {
@@ -69,7 +70,8 @@ impl<C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Framed for Pcd<C, R, H> 
     }
 
     fn wire_len(bytes: &[u8]) -> Result<usize, Error<'_>> {
-        Self::framed_len(bytes)
+        let (_, _, elements) = open(bytes, PayloadKind::Pcd, Some(R::RANK))?;
+        Ok(pcd::encoded_len::<C, R>(elements))
     }
 }
 
@@ -127,25 +129,27 @@ impl<'de, T: Framed> Visitor<'de> for Bytes<T> {
     }
 }
 
-impl<C: Cycle, R: Rank> Serialize for Proof<C, R> {
+impl<C: ProfiledCycle, R: Rank> Serialize for Proof<C, R> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serialize_framed(self, serializer)
     }
 }
 
-impl<'de, C: Cycle, R: Rank> Deserialize<'de> for Proof<C, R> {
+impl<'de, C: ProfiledCycle, R: Rank> Deserialize<'de> for Proof<C, R> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(Bytes(PhantomData))
     }
 }
 
-impl<C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Serialize for Pcd<C, R, H> {
+impl<C: ProfiledCycle, R: Rank, H: WireHeader<C::CircuitField>> Serialize for Pcd<C, R, H> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serialize_framed(self, serializer)
     }
 }
 
-impl<'de, C: Cycle, R: Rank, H: WireHeader<C::CircuitField>> Deserialize<'de> for Pcd<C, R, H> {
+impl<'de, C: ProfiledCycle, R: Rank, H: WireHeader<C::CircuitField>> Deserialize<'de>
+    for Pcd<C, R, H>
+{
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(Bytes(PhantomData))
     }

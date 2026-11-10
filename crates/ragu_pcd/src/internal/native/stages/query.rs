@@ -12,7 +12,9 @@
 //! need for separate $r\_i(x)$ queries.
 //!
 //! Additionally witnesses the $a$/$b$ polynomial evaluations and registry
-//! transition evaluations needed for mesh consistency checks.
+//! transition evaluations needed for mesh consistency checks, and the
+//! step's online openings (see [`online`]): the point each slot's
+//! polynomial is opened at and the claimed evaluation.
 
 use core::marker::PhantomData;
 
@@ -31,8 +33,9 @@ use udon::field::Field;
 
 use crate::{
     Proof,
-    internal::native::{
-        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
+    internal::{
+        native::{InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues},
+        online,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -102,6 +105,8 @@ pub struct Witness<C: ProfiledCycle> {
     pub left: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
     /// Right child proof polynomial evaluations.
     pub right: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
+    /// The step's online openings, one per slot (see [`online`]).
+    pub online: online::Queries<C::CircuitField>,
 }
 
 /// Allocate [`InternalCircuitValues`] of [`Element`]s from pre-computed witness
@@ -289,6 +294,10 @@ pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
     /// Right child proof polynomial evaluations.
     #[ragu(gadget)]
     pub right: ChildEvaluations<'dr, D, P>,
+    /// The step's online openings, one per slot: the point and the claimed
+    /// evaluation `compute_v` folds into the batch and exports.
+    #[ragu(gadget)]
+    pub online: online::QueriesOutput<'dr, D>,
 }
 
 /// The query stage of the fuse witness.
@@ -306,8 +315,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
 
     fn values() -> usize {
         // InternalCircuitIndex::num + registry_wxy (1) + 2 * ChildEvaluations
-        // (rx + 5 each)
-        InternalCircuitIndex::num::<C::Profile>() + 1 + 2 * (RxIndex::num::<C::Profile>() + 5)
+        // (rx + 5 each) + (x, y) per online slot
+        InternalCircuitIndex::num::<C::Profile>()
+            + 1
+            + 2 * (RxIndex::num::<C::Profile>() + 5)
+            + 2 * online::NUM_ONLINE_QUERIES
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -327,11 +339,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
         let registry_wxy = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.registry_wxy))?;
         let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
         let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
+        let online = online::alloc_queries(dr, allocator, witness.as_ref().map(|w| &w.online))?;
         Ok(Output {
             fixed_registry,
             registry_wxy,
             left,
             right,
+            online,
         })
     }
 }

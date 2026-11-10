@@ -429,8 +429,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        let (left, right, _application_data, _application_aux) =
-            self.compute_application_proof(rng, step, witness, left, right, &mut builder)?;
+        let (left, left_data) = left.into_parts();
+        let (right, right_data) = right.into_parts();
+        let staged = self.begin_application_proof(
+            rng,
+            &step,
+            &witness,
+            (&left, &left_data),
+            (&right, &right_data),
+            &mut builder,
+        )?;
 
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
@@ -441,6 +449,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
+        self.compute_application_proof(
+            rng,
+            step,
+            witness,
+            (&left, left_data),
+            (&right, right_data),
+            *w.value().take(),
+            staged,
+            &mut builder,
+        )?;
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry
@@ -648,6 +666,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             |builder: &ProofBuilder<'_, C, R, B>| -> Result<native::unified::Instance<C>> {
                 Ok(native::unified::Instance {
                     bridge_preamble_commitment: builder.bridge_preamble_commitment(),
+                    bridge_hash_commitment: builder.bridge_hash_commitment(),
                     w: builder.w(),
                     bridge_s_prime_commitment: builder.bridge_s_prime_commitment(),
                     y: builder.y(),
@@ -746,6 +765,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 hashes_1_witness()?,
                 coverage(&[
                     "bridge_preamble_commitment",
+                    // Exposed, not computed: the parent binds it to the
+                    // bridge-hash stage it folds.
+                    "bridge_hash_commitment",
                     "bridge_s_prime_commitment",
                     "bridge_inner_error_commitment",
                 ]),
@@ -818,7 +840,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         // collapse checks both fold layers and the children's application
-        // k(y) values. Only the final c comparison is waived at bootstrap.
+        // and compute_v bridge k(y) values. Only the final c comparison is
+        // waived at bootstrap.
         let collapse = native::circuits::collapse::Circuit::<
             C,
             R,
@@ -852,7 +875,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                             Ok(stage
                                 .collapsed
                                 .iter()
-                                .chain([&stage.left.application, &stage.right.application])
+                                .chain([
+                                    &stage.left.application,
+                                    &stage.left.compute_v_bridge,
+                                    &stage.right.application,
+                                    &stage.right.compute_v_bridge,
+                                ])
                                 .map(|e| *e.wire())
                                 .collect())
                         },
@@ -1051,8 +1079,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // witnessed: that interstitial is its output; the endoscalar bits and
         // every other point are inputs. The points are the prover's own
         // witness, from `compute_p`.
+        let own_o1 = builder.online_commitments()[crate::header::NUM_ONLINE_POLYNOMIALS - 1];
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
+            stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
             stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness)?,
         ]
         .concat();
@@ -1160,10 +1190,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         builder.native_points_registry_wx_commitment(),
                         builder.native_points_ab_commitment(),
                         builder.native_points_f_commitment(),
+                        builder.online_commitments()[0],
+                        builder.online_commitments()[1],
+                        builder.native_application_stage_commitment(),
                     ],
                     coverage: Default::default(),
                 },
                 endoscalar: beta_endo,
+                bridge_hash: own_o1,
                 points: &points_witness,
                 preamble: &nested_preamble,
                 s_prime: &nested_s_prime_witness,

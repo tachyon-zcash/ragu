@@ -12,9 +12,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
+- Online polynomial oracles: every proof stores `NUM_ONLINE_POLYNOMIALS`
+  polynomials, a parameter of the protocol rather than of the header type; a
+  step supplies its output proof's through `Step::polynomials` before its
+  challenge is drawn, the constant one by default, and `Step::witness` opens
+  its input or output proofs' polynomials through `step::Oracles` at the
+  challenge or at any wire. Ragu proves the openings in the step's own batch. What a slot
+  means is the application's convention for the header, constrained by the
+  producing steps' circuits. `Pcd::polynomials` reads a proof's
+  polynomials back.
+- Staged values: `Step::NUM_STAGED` and `Step::staged` supply the values a
+  step's checks at the challenge read but no header field contains. Ragu
+  commits them in an application stage before the challenge; `Oracles::staged` hands
+  them to `Step::witness`. A check at the challenge must read only values
+  fixed before it. See the `ragu_pcd` changelog.
+- Bridge hash: `Oracles::bridge_hash` gives a step the digest of its own last
+  online commitment, and `Application::bridge_hash` computes it outside the
+  circuit, for hash chains over polynomial commitments.
 
 ### Changed
 
+- `Step::witness` takes the step's `Oracles` after the driver, and the
+  application circuit's instance is prefixed by the challenge and the six
+  online openings, followed by the bridge hash. Every proof carries two more
+  online polynomials, the application stage and the bridge-hash stage, and
+  their commitments; the native and nested walks grow by two and three
+  steps (23 to 25, 26 to 29), and every step circuit reserves
+  `ceil(n / 2)` gates for the largest `Step::NUM_STAGED` registered.
+- For the Standard profile, the largest `HEADER_SIZE` the production rank
+  `R<13>` fits drops from 103 to 96 elements: the challenge binders load the
+  preamble, query and eval stages, which carry the online openings, the application stage and the
+  children's bridge hashes. At 96 the largest binder uses all 2048 gates; a
+  larger header fails `ApplicationBuilder::finalize` with
+  `GateBoundExceeded`. Profiles with extensions can have a lower limit.
 - Registry tags are supplied by the application from a randomness beacon;
   `ApplicationBuilder::finalize` requires them unless the test-only
   `insecure-test-registry-tag` feature is enabled.
@@ -27,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Header suffix `2` is reserved for the internal `Dummy` header; application
   suffixes begin at `3`.
 - The base proof is built once in `finalize`; `seed` is an ordinary step
-  against it.
+  against it. The bootstrap and decompression steps hold their output
+  header's polynomial slots to the constant one, so the unit header and a
+  decompressed header carry padding a prover cannot choose.
 
 ### Removed
 

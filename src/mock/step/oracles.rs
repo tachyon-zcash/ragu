@@ -1,14 +1,14 @@
 use alloc::vec::Vec;
 
 use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
 use ragu_primitives::Element;
 use udon::field::Field;
 
-use super::super::header::HEADER_POLYNOMIALS;
+pub use super::super::header::HEADER_POLYNOMIALS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
@@ -72,6 +72,7 @@ pub struct Oracles<'a, 'dr, D: Driver<'dr>> {
     bridge_hash: [Element<'dr, D>; 2],
     staged: Vec<Element<'dr, D>>,
     slots: DriverValue<D, [&'a [Vec<D::F>; HEADER_POLYNOMIALS]; 3]>,
+    queries: [bool; 3 * HEADER_POLYNOMIALS],
 }
 
 impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
@@ -88,6 +89,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
             bridge_hash: [alloc(bridge_hash[0])?, alloc(bridge_hash[1])?],
             staged: staged.into_iter().map(alloc).collect::<Result<_>>()?,
             slots: D::just(|| slots),
+            queries: [false; 3 * HEADER_POLYNOMIALS],
         })
     }
 
@@ -103,26 +105,33 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         &self.staged
     }
 
+    /// Opens a slot at `x`. Each slot may be queried once per step;
+    /// a second query is refused, regardless of its point.
     pub fn query(
         &mut self,
         dr: &mut D,
         slot: Slot,
         x: &Element<'dr, D>,
     ) -> Result<Element<'dr, D>> {
+        let i = slot.offset();
+        if self.queries[i] {
+            return Err(Error::Initialization(
+                "an online slot may be queried once per step".into(),
+            ));
+        }
         let x = x.value();
-        let y = self.slots.as_ref().map(|slots| {
-            let header = slots[slot.offset() / HEADER_POLYNOMIALS];
+        let slots = self.slots.as_ref();
+        let y = D::just(|| {
             let x = *x.take();
+            let slots = slots.take();
+            let header = slots[slot.offset() / HEADER_POLYNOMIALS];
             header[slot.index]
                 .iter()
                 .rev()
                 .fold(D::F::ZERO, |acc, coefficient| acc * x + *coefficient)
         });
-        Element::alloc(dr, &mut (), y)
-    }
-
-    pub fn query_at_zeta(&mut self, dr: &mut D, slot: Slot) -> Result<Element<'dr, D>> {
-        let zeta = self.zeta.clone();
-        self.query(dr, slot, &zeta)
+        let y = Element::alloc(dr, &mut (), y)?;
+        self.queries[i] = true;
+        Ok(y)
     }
 }

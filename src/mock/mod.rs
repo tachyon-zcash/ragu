@@ -5,17 +5,15 @@
 //! implementation.
 
 pub use application::{Application, ApplicationBuilder};
-pub use header::{HEADER_POLYNOMIALS, Header, Suffix};
-pub use proof::{PROOF_SIZE_COMPRESSED, Pcd, Proof};
-pub use step::{Encoded, HeaderInput, Index, Oracles, Position, Slot, Step};
+pub use proof::{CompressedPcd, CompressedProof, Pcd, Proof};
+pub use ragu_pcd::{RegistryTags, SelectableBackend, ipa, profile};
 pub use wire::WireHeader;
-
-pub mod wire;
 
 mod application;
 pub mod header;
 mod proof;
 pub mod step;
+pub mod wire;
 
 #[cfg(test)]
 mod tests;
