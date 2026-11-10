@@ -405,12 +405,12 @@ mod sealed {
 ///
 /// `R` specifies the expected rank for encoded length.
 /// This trait is sealed to [`UncompressedProof`] and [`CompressedProof`].
-pub trait PcdProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
+pub trait Proof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
     /// A PCD's proof with data described by `H` attached.
     ///
-    /// This is [`UncompressedPcd<C, R, H>`] for [`UncompressedProof`] and [`CompressedPcd<C, H>`]
-    /// for [`CompressedProof`].
-    type Carried<H: Header<C::CircuitField>>;
+    /// This is [`UncompressedPcd<C, R, H>`] for [`UncompressedProof`] and
+    /// [`CompressedPcd<C, H>`] for [`CompressedProof`].
+    type Pcd<H: Header<C::CircuitField>>;
 
     /// The step's own online polynomial commitments, in slot order.
     ///
@@ -419,7 +419,7 @@ pub trait PcdProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
     fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS];
 
     /// Attaches data without checking that the proof attests it.
-    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Carried<H>;
+    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Pcd<H>;
 
     /// The exact encoded length for the expected rank and header size,
     /// including the envelope. Bound input before buffering it.
@@ -446,14 +446,14 @@ pub trait PcdProof<C: ProfiledCycle, R: Rank>: sealed::Sealed + Sized {
     fn from_bytes(bytes: &[u8]) -> core::result::Result<Self, wire::Error<'_>>;
 }
 
-impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for UncompressedProof<C, R> {
-    type Carried<H: Header<C::CircuitField>> = UncompressedPcd<C, R, H>;
+impl<C: ProfiledCycle, R: Rank> Proof<C, R> for UncompressedProof<C, R> {
+    type Pcd<H: Header<C::CircuitField>> = UncompressedPcd<C, R, H>;
 
     fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         self.online_commitments()
     }
 
-    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Carried<H> {
+    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Pcd<H> {
         self.carry::<H>(data)
     }
 
@@ -470,14 +470,14 @@ impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for UncompressedProof<C, R> {
     }
 }
 
-impl<C: ProfiledCycle, R: Rank> PcdProof<C, R> for CompressedProof<C> {
-    type Carried<H: Header<C::CircuitField>> = CompressedPcd<C, H>;
+impl<C: ProfiledCycle, R: Rank> Proof<C, R> for CompressedProof<C> {
+    type Pcd<H: Header<C::CircuitField>> = CompressedPcd<C, H>;
 
     fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
         self.online_commitments()
     }
 
-    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Carried<H> {
+    fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Self::Pcd<H> {
         self.carry::<H>(data)
     }
 
