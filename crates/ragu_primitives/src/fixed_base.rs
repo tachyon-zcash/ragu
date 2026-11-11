@@ -18,6 +18,7 @@
 //! The variable-point join and top addition instead enforce nonzero x
 //! differences; their exceptional cases are unsatisfiable.
 
+use alloc::vec::Vec;
 use core::array;
 
 use ragu_core::{Error, Result, drivers::Driver, maybe::Maybe};
@@ -28,7 +29,7 @@ use udon::{
 
 use crate::{
     Boolean, Element, GadgetExt, Nonzero, NonzeroBank, Point, multiadd, multipack,
-    vec::{ConstLen, FixedVec, Len},
+    vec::{ConstLen, FixedVec},
 };
 
 /// Two-gate selection of eight finite points by three little-endian bits.
@@ -118,40 +119,42 @@ impl<F: Field> Window<F> {
         Ok(window)
     }
 
-    /// Selects an entry in two gates and four constraints.
+    /// Selects an entry in two, one, or zero gates for three, two, or one bits.
+    /// Requires between one and three little-endian bits.
     fn select<'dr, D: Driver<'dr, F = F>, C: EndomorphismAffine<Base = F>>(
         &self,
         dr: &mut D,
-        bits: [&Boolean<'dr, D>; 3],
+        bits: &[Boolean<'dr, D>],
     ) -> Result<Point<'dr, D, C>> {
-        let [low, middle, high] = bits.map(Boolean::element);
-        let left = multiadd(dr, &[low.clone(), middle.clone(), high.clone()], &self.left);
-        let right = multiadd(
-            dr,
-            &[low.clone(), middle.clone(), high.clone()],
-            &self.right,
-        );
-        let quadratic = left.mul(dr, &right)?;
-        let inner = multiadd(
-            dr,
-            &[low.clone(), middle.clone(), quadratic.clone()],
-            &self.inner,
-        );
-        let cubic = high.mul(dr, &inner)?;
+        let elements: [_; 3] = array::from_fn(|index| {
+            bits.get(index)
+                .map_or_else(|| Element::zero(dr), Boolean::element)
+        });
+        let quadratic = if bits.len() >= 2 {
+            let left = multiadd(dr, &elements[..bits.len()], &self.left[..bits.len()]);
+            let right = multiadd(dr, &elements[..bits.len()], &self.right[..bits.len()]);
+            left.mul(dr, &right)?
+        } else {
+            Element::zero(dr)
+        };
+        let cubic = if bits.len() == 3 {
+            let inner = multiadd(
+                dr,
+                &[elements[0].clone(), elements[1].clone(), quadratic.clone()],
+                &self.inner,
+            );
+            elements[2].mul(dr, &inner)?
+        } else {
+            Element::zero(dr)
+        };
+        let [low, middle, high] = elements;
         let basis = [Element::one(), low, middle, high, quadratic, cubic];
-        // Construction checked both coordinates on every Boolean assignment.
+        // Missing high bits are zero. Construction checked these assignments too,
+        // so the same table derives both coordinate contracts for short windows.
         Ok(Point::new_unchecked(
             Nonzero::new_unchecked(multiadd(dr, &basis, &self.x)),
             Nonzero::new_unchecked(multiadd(dr, &basis, &self.y)),
         ))
-    }
-}
-
-struct BitLen<const W: usize>;
-
-impl<const W: usize> Len for BitLen<W> {
-    fn len() -> usize {
-        3 * W
     }
 }
 
@@ -204,20 +207,21 @@ impl<C: EndomorphismAffine, const W: usize> FixedBaseTable<C, W> {
         })
     }
 
-    fn prefix_and_top<'dr, D: Driver<'dr, F = C::Base>, L: Len>(
+    fn prefix_and_top<'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,
-        bits: &FixedVec<Boolean<'dr, D>, L>,
+        bits: &[Boolean<'dr, D>],
     ) -> Result<(Point<'dr, D, C>, Point<'dr, D, C>)> {
-        let window = |index: usize| [&bits[3 * index], &bits[3 * index + 1], &bits[3 * index + 2]];
-        let mut prefix = self.windows[0].select(dr, window(0))?;
+        let (low, top) = bits.split_at(3 * (W - 1));
+        let mut chunks = low.chunks(3);
+        let mut prefix = self.windows[0].select(dr, chunks.next().expect("W is at least two"))?;
         // The module's offset argument proves every interior x difference nonzero.
         let mut bank = NonzeroBank::new_unchecked();
-        for index in 1..W - 1 {
-            let entry = self.windows[index].select(dr, window(index))?;
+        for (window, bits) in self.windows[1..W - 1].iter().zip(chunks) {
+            let entry = window.select(dr, bits)?;
             prefix = prefix.add_incomplete(dr, &entry, &mut bank)?;
         }
-        Ok((prefix, self.windows[W - 1].select(dr, window(W - 1))?))
+        Ok((prefix, self.windows[W - 1].select(dr, top)?))
     }
 
     /// Costs one gate for the nonzero check plus `add_incomplete`'s three.
@@ -231,10 +235,10 @@ impl<C: EndomorphismAffine, const W: usize> FixedBaseTable<C, W> {
         left.add_incomplete(dr, right, &mut NonzeroBank::new_unchecked())
     }
 
-    fn walk<'dr, D: Driver<'dr, F = C::Base>, L: Len>(
+    fn multiply<'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,
-        bits: &FixedVec<Boolean<'dr, D>, L>,
+        bits: &[Boolean<'dr, D>],
         onto: Option<&Point<'dr, D, C>>,
     ) -> Result<Point<'dr, D, C>> {
         let (mut sum, top) = self.prefix_and_top(dr, bits)?;
@@ -247,9 +251,11 @@ impl<C: EndomorphismAffine, const W: usize> FixedBaseTable<C, W> {
     /// Multiplies the base by the unsigned little-endian value of `bits`,
     /// optionally adding `onto` before the top window.
     ///
-    /// This costs $5W - 2$ gates and $10W - 4$ constraints, plus four gates
-    /// and eight constraints when `onto` is present. Bit allocation is extra.
-    /// `N` must equal $3W$. The caller owns binding the bits to other inputs;
+    /// With a full top window this costs $5W - 2$ gates and $10W - 4$
+    /// constraints. Each omitted top bit saves one gate and two constraints.
+    /// Adding `onto` costs four gates and eight constraints. Bit allocation is extra.
+    /// Requires $3(W-1) < N \le 3W$: the top window holds the remaining
+    /// $N - 3(W-1)$ bits. The caller owns binding the bits to other inputs;
     /// this method does not require a canonical scalar encoding.
     ///
     /// # Soundness
@@ -279,16 +285,16 @@ impl<C: EndomorphismAffine, const W: usize> FixedBaseTable<C, W> {
     ) -> Result<Point<'dr, D, C>> {
         const {
             // Construction already checked the window count and scalar capacity.
-            assert!(N == 3 * W);
+            assert!(3 * (W - 1) < N && N <= 3 * W);
         }
-        self.walk(dr, bits, onto)
+        self.multiply(dr, bits, onto)
     }
 
     /// Multiplies the base by the canonical integer represented by `value`,
     /// optionally adding `onto`.
     ///
     /// Decomposes into $n = \min(3W, \mathtt{C::Base::CAPACITY})$ bits, enforcing
-    /// recomposition, then pads with constant-false bits. Requires
+    /// recomposition, with a short top window when needed. Requires
     /// $3W < \mathtt{C::Base::CAPACITY} + 3$. Beyond [`Self::mul_bits`], this costs
     /// $n$ gates and $2n + 1$ constraints.
     ///
@@ -326,20 +332,18 @@ impl<C: EndomorphismAffine, const W: usize> FixedBaseTable<C, W> {
         }
         let n = core::cmp::min(3 * W, C::Base::CAPACITY as usize);
         let le_bits = value.value().map(|value| value.to_le_bits());
-        let bits = FixedVec::<_, BitLen<W>>::try_from_fn(|index| {
-            if index < n {
+        let bits = (0..n)
+            .map(|index| {
                 Boolean::alloc(
                     dr,
                     &mut (),
                     le_bits.as_ref().map(|bits| bits.as_ref()[index]),
                 )
-            } else {
-                Ok(Boolean::constant_false(dr))
-            }
-        })?;
+            })
+            .collect::<Result<Vec<_>>>()?;
         // At most CAPACITY bits: recomposition cannot wrap modulo the field.
-        multipack(dr, &bits[..n])?[0].enforce_equal(dr, value)?;
-        self.walk(dr, &bits, onto)
+        multipack(dr, &bits)?[0].enforce_equal(dr, value)?;
+        self.multiply(dr, &bits, onto)
     }
 }
 
@@ -369,7 +373,7 @@ mod tests {
         FixedVec::try_from_fn(|index| Boolean::alloc(dr, &mut (), Simulator::just(|| bits[index])))
     }
 
-    fn walk<const W: usize, const N: usize>(
+    fn multiply<const W: usize, const N: usize>(
         table: &FixedBaseTable<C, W>,
         bits: [bool; N],
         onto: Option<C>,
@@ -385,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn walks_compute_the_binary_value() -> Result<()> {
+    fn multiplication_computes_the_binary_value() -> Result<()> {
         let mut patterns = Vec::from([[false; 255], [true; 255]]);
         patterns.extend((0..255).map(|bit| array::from_fn(|index| index == bit)));
         patterns
@@ -400,18 +404,40 @@ mod tests {
             let table = FixedBaseTable::<_, 85>::new(base)?;
             for bits in &patterns {
                 let expected = (base * scalar(bits)).to_affine();
-                let result = walk(&table, *bits, None);
+                let result = multiply(&table, *bits, None);
                 if expected.is_identity() {
                     assert!(result.is_err());
                 } else {
                     assert_eq!(result?, expected);
                 }
             }
+            for bits in [
+                [true; 254],
+                array::from_fn(|index| index % 2 == 0),
+                array::from_fn(|index| index == 253),
+                array::from_fn(|index| index == 0),
+            ] {
+                assert_eq!(
+                    multiply(&table, bits, None)?,
+                    (base * scalar(&bits)).to_affine()
+                );
+            }
+            for bits in [
+                [true; 253],
+                array::from_fn(|index| index % 2 == 0),
+                array::from_fn(|index| index == 252),
+                array::from_fn(|index| index == 0),
+            ] {
+                assert_eq!(
+                    multiply(&table, bits, None)?,
+                    (base * scalar(&bits)).to_affine()
+                );
+            }
         }
         // Smallest permitted table exercises the empty interior-add loop.
         let base = C::generator();
         assert_eq!(
-            walk(&FixedBaseTable::<_, 2>::new(base)?, [true; 6], None)?,
+            multiply(&FixedBaseTable::<_, 2>::new(base)?, [true; 6], None)?,
             (base * S::from(63)).to_affine()
         );
         Ok(())
@@ -437,7 +463,7 @@ mod tests {
         for base in [C::generator(), (C::generator() * S::from(7)).to_affine()] {
             let table = FixedBaseTable::<_, 85>::new(base)?;
             for bits in [[false; 255], doubling_bits] {
-                assert!(walk(&table, bits, None).is_err());
+                assert!(multiply(&table, bits, None).is_err());
                 Simulator::simulate((), |dr, _| {
                     let bits = alloc_bits(dr, bits)?;
                     let (prefix, top) = table.prefix_and_top(dr, &bits)?;
@@ -447,12 +473,12 @@ mod tests {
                 })?;
             }
             let onto = base.to_projective().endomorphism().to_affine();
-            assert_eq!(walk(&table, [false; 255], Some(onto))?, onto);
+            assert_eq!(multiply(&table, [false; 255], Some(onto))?, onto);
             let offset = interior.double();
             let prefix = (base * offset).to_affine();
             // A = +/-onto: the join's nonzero check is unsatisfiable.
             for onto in [prefix, -prefix] {
-                assert!(walk(&table, [false; 255], Some(onto)).is_err());
+                assert!(multiply(&table, [false; 255], Some(onto)).is_err());
                 Simulator::simulate((), |dr, _| {
                     let bits = alloc_bits(dr, [false; 255])?;
                     let (prefix, _) = table.prefix_and_top(dr, &bits)?;
@@ -468,7 +494,7 @@ mod tests {
             let top = base * (power - offset);
             for target in [top, -top] {
                 let onto = (target - prefix.to_projective()).to_affine();
-                assert!(walk(&table, bits, Some(onto)).is_err());
+                assert!(multiply(&table, bits, Some(onto)).is_err());
                 Simulator::simulate((), |dr, _| {
                     let bits = alloc_bits(dr, bits)?;
                     let (prefix, top) = table.prefix_and_top(dr, &bits)?;
@@ -544,6 +570,22 @@ mod tests {
             })?;
             assert_eq!(sim.num_gates(), if with_onto { 427 } else { 423 });
             assert_eq!(sim.num_constraints(), if with_onto { 854 } else { 846 });
+            let sim = Simulator::simulate((), |dr, _| {
+                let bits = alloc_bits(dr, [true; 254])?;
+                let onto = if with_onto {
+                    Some(Point::constant(
+                        dr,
+                        base.to_projective().endomorphism().to_affine(),
+                    )?)
+                } else {
+                    None
+                };
+                dr.reset();
+                table.mul_bits(dr, &bits, onto.as_ref())?;
+                Ok(())
+            })?;
+            assert_eq!(sim.num_gates(), if with_onto { 426 } else { 422 });
+            assert_eq!(sim.num_constraints(), if with_onto { 852 } else { 844 });
         }
         Ok(())
     }

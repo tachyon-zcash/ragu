@@ -37,15 +37,6 @@ pub struct Boolean<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> Boolean<'dr, D> {
-    /// Returns a constant-false Boolean without gates or constraints.
-    /// The constant zero wire derives the Boolean wire contract directly.
-    pub(crate) fn constant_false(dr: &mut D) -> Self {
-        Self {
-            wire: dr.constant(Coeff::Zero),
-            value: D::just(|| false),
-        }
-    }
-
     /// Allocates a boolean with the provided witness input value.
     ///
     /// This costs one gate and two constraints.
