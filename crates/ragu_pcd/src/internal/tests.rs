@@ -232,7 +232,7 @@ fn test_internal_circuit_constraint_counts() {
 
     check_constraints!(Hashes1Circuit,              mul = 1806, lin = 3053);
     check_constraints!(Hashes2Circuit,              mul = 1880, lin = 2991);
-    check_constraints!(CollapseCircuit,             mul = 1568, lin = 2504);
+    check_constraints!(CollapseCircuit,             mul = 1572, lin = 2516);
     check_constraints!(ComputeVCircuit,             mul = 1933, lin = 2888);
     check_constraints!(BindChallengesCircuit(0),    mul = 2032, lin = 3061);
     check_constraints!(BindChallengesCircuit(1),    mul = 2037, lin = 3071);

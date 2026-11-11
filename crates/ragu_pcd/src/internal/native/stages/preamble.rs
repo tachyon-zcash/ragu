@@ -398,16 +398,26 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
     }
 
     /// Enforces that a step taking the base case is the bootstrap step with
-    /// the unit output header: when `is_base_case` holds, the own circuit
-    /// id must be [`Bootstrap`]'s and the own output header the unit
-    /// header's encoding.
+    /// the unit output header and padding output slots: when `is_base_case`
+    /// holds, the own circuit id must be [`Bootstrap`]'s, the own output
+    /// header the unit header's encoding, and each output slot opened at
+    /// `zeta`, the step's $w$, to the value one.
     ///
     /// The base case leaves the step's folded claim unconstrained, and that
     /// claim includes the step's own application claim. Without this, a
-    /// step could witness [`Dummy`] inputs and export any output header and
-    /// circuit id through its `hashes_1`. The constraint lives in the
+    /// step could witness [`Dummy`] inputs and export any output header,
+    /// circuit id and online polynomials. The constraint lives in the
     /// calling circuit, whose own claim the parent (or the decider)
     /// enforces, so it holds whatever the step's folded claim is.
+    ///
+    /// The slot pin repeats, outside the free claim, what the bootstrap
+    /// step's circuit enforces inside it (see
+    /// [`pin_output_slots`](crate::step::internal::pin_output_slots)). The
+    /// output commitments are absorbed before $w$, and `compute_v`, whose
+    /// claim is enforced like this circuit's, proves the openings over
+    /// these same wires. So each output polynomial takes the value one at
+    /// a point chosen after it, and is the constant one except with
+    /// probability at most its degree over the field size.
     ///
     /// [`Bootstrap`]: crate::step::internal::bootstrap
     /// [`Dummy`]: crate::header::Dummy
@@ -416,6 +426,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
         dr: &mut D,
         allocator: &mut impl Allocator<'dr, D>,
         is_base_case: &Boolean<'dr, D>,
+        zeta: &Element<'dr, D>,
     ) -> Result<()> {
         let bootstrap = InternalStepIndex::Bootstrap.circuit_index::<P>()?;
         let bootstrap = Element::constant(dr, bootstrap.omega_j());
@@ -424,6 +435,12 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
         for (wire, value) in self.own.output_header.iter().zip(unit) {
             let value = Element::constant(dr, value);
             is_base_case.conditional_enforce_equal(dr, allocator, wire, &value)?;
+        }
+        let one = Element::one();
+        for index in 0..online::NUM_ONLINE_POLYNOMIALS {
+            let opening = &self.own.online[online::Slot::output(index).offset()];
+            is_base_case.conditional_enforce_equal(dr, allocator, &opening.x, zeta)?;
+            is_base_case.conditional_enforce_equal(dr, allocator, &opening.y, &one)?;
         }
         Ok(())
     }

@@ -97,6 +97,7 @@ use crate::{
         endoscalar::EndoscalarStage,
         native::{self, stages::points as native_points, total_circuit_counts},
         nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
+        online,
         transcript::Transcript,
     },
     profile::ProfiledCycle,
@@ -869,7 +870,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             })
         };
         // At the base case the covered slot, c, is left free by design; the
-        // base-case pin forces the own output header and circuit id instead.
+        // base-case pin forces the own output header, circuit id and output
+        // openings instead.
         let collapse_covered = if base_case {
             Vec::new()
         } else {
@@ -880,6 +882,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 |stage| {
                     let mut wires = wires_of(&stage.own.output_header)?;
                     wires.extend(wires_of(&stage.own.circuit_id)?);
+                    for index in 0..online::NUM_ONLINE_POLYNOMIALS {
+                        let slot = online::Slot::output(index).offset();
+                        wires.extend(wires_of(&stage.own.online[slot])?);
+                    }
                     Ok(wires)
                 },
             )?

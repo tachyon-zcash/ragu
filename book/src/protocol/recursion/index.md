@@ -23,7 +23,7 @@ circuits:
 |---------|------|
 | `hashes_1` | Re-derives $w, y, z$ from the transcript (first half) and exports the step's own output header and circuit id |
 | `hashes_2` | Re-derives $\mu, \mu', x, \alpha, u, \text{pre\_beta}$ from the saved transcript state (second half) |
-| `collapse` | Computes the step's own application $k(y)$ and checks both quotient-fold layers under $\mu$ and $\mu'$; at bootstrap the final claim check is waived and the step's circuit id and output header are pinned to the bootstrap step's |
+| `collapse` | Computes the step's own application $k(y)$ and checks both quotient-fold layers under $\mu$ and $\mu'$; at bootstrap the final claim check is waived and the step's circuit id, output header and output slots are pinned to the bootstrap step's |
 | `compute_v` | Derives effective $\beta$ from $\text{pre\_beta}$ via endoscalar extraction and checks the batched evaluation $v$ |
 | `bind_challenges` | Binds the lifted nested challenges and base-case flag, two challenges per circuit |
 | `bind_beta` | Binds the walked child commitments and completes their challenge bindings |

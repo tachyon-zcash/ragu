@@ -44,11 +44,12 @@
 //! `Dummy` (see [`is_dummy_input`]). But that is a property of the step's own
 //! application claim, which this step folds into the very $c$ the base case
 //! leaves free. So the base case also pins, here, the step's own circuit id to
-//! [`Bootstrap`]'s and its own output header to the unit header (see
-//! [`enforce_base_case_is_bootstrap`]). This circuit's claim is enforced by
-//! the parent or the decider, outside this step's $c$, so a proof taking the
-//! base case is a bootstrap proof with the unit output header whatever its
-//! $c$, and attests nothing, as before. Conversely, a proof of the bootstrap
+//! [`Bootstrap`]'s, its own output header to the unit header and its output
+//! slots to padding (see [`enforce_base_case_is_bootstrap`]). This circuit's
+//! claim is enforced by the parent or the decider, outside this step's $c$,
+//! so a proof taking the base case is a bootstrap proof with the unit output
+//! header and padding slots whatever its $c$, and attests nothing, as
+//! before. Conversely, a proof of the bootstrap
 //! step not taking the base case has its own application claim enforced,
 //! and that claim requires `Dummy` inputs, so the circuit id alone decides
 //! the base case.
@@ -210,9 +211,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let application_ky = preamble.application_ky(dr, &y, &zeta, &bridge_hash)?;
 
         // The base case leaves the folded c free below, so pin it to the
-        // bootstrap step with the unit output header here.
+        // bootstrap step with the unit output header and padding output
+        // slots here.
         let is_base_case = preamble.is_base_case(dr, allocator)?;
-        preamble.enforce_base_case_is_bootstrap::<C::Profile>(dr, allocator, &is_base_case)?;
+        preamble.enforce_base_case_is_bootstrap::<C::Profile>(
+            dr,
+            allocator,
+            &is_base_case,
+            &zeta,
+        )?;
 
         // Get layer 1 folding challenges from the unified instance.
         let mu = unified_output.mu.read(dr, allocator)?;
