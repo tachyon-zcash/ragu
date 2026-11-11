@@ -71,6 +71,11 @@ use crate::{
 /// The number of online polynomials a step opens across its input and output proofs.
 pub const NUM_ONLINE_FP_QUERIES: usize = 3 * NUM_ONLINE_FP_POLYS;
 
+/// The slots of the step's own output polynomials among its
+/// [`NUM_ONLINE_FP_QUERIES`], which the instance orders left, right, output.
+pub(crate) const OUTPUT_SLOTS: core::ops::Range<usize> =
+    2 * NUM_ONLINE_FP_POLYS..NUM_ONLINE_FP_QUERIES;
+
 /// Length type for a step's online slots.
 pub(crate) type QueriesLen = ConstLen<NUM_ONLINE_FP_QUERIES>;
 

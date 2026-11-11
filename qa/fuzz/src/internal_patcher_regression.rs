@@ -367,10 +367,11 @@ fn expected(name: &str, point: &str) -> Census {
         // and circuit id.
         "hashes_1" => (200, 5466, 45, 12, 0, 12, 113),
         "hashes_2" => (200, 8069, 40, 5, 1, 5, 103),
-        // At the base case the step's own output header and circuit id,
-        // pinned to the bootstrap step's, replace c among the outputs.
-        "collapse" if point == "bootstrap" => (284, 1936, 40, 19, 0, 19, 159),
-        "collapse" if point == "leaves" || point == "nodes" => (284, 1936, 40, 15, 0, 15, 157),
+        // At the base case the step's own output header, circuit id and
+        // output openings, pinned to the bootstrap step's, replace c among
+        // the outputs.
+        "collapse" if point == "bootstrap" => (284, 1946, 40, 23, 0, 23, 157),
+        "collapse" if point == "leaves" || point == "nodes" => (284, 1946, 40, 15, 0, 15, 156),
         "compute_v" => (440, 7239, 40, 1, 0, 1, 474),
         "bind_challenges_0" => (440, 7816, 40, 2, 0, 2, 728),
         "bind_challenges_1" => (440, 7837, 40, 2, 0, 2, 728),
@@ -380,17 +381,16 @@ fn expected(name: &str, point: &str) -> Census {
             (440, 7886, 40, 2, 0, 2, 727)
         }
         "bind_beta" => (162, 7279, 40, 56, 0, 56, 615),
-        "bind_endoscalar" if point == "bootstrap" => (490, 3075, 40, 245, 0, 245, 498),
-        "bind_endoscalar" if point == "leaves" || point == "nodes" => {
-            (490, 3075, 40, 245, 0, 245, 497)
+        "bind_endoscalar" => (490, 3075, 40, 245, 0, 245, 498),
+        "native_endoscaling_step_0" if point == "bootstrap" || point == "nodes" => {
+            (490, 10605, 1, 2, 0, 2, 245)
         }
-        "native_endoscaling_step_0" => (490, 10605, 1, 2, 0, 2, 245),
         step if step.starts_with("native_endoscaling_step_") => (490, 10605, 1, 2, 0, 2, 244),
         "endoscaling_step_28" => (528, 5870, 0, 2, 0, 2, 263),
         step if step.starts_with("endoscaling_step_") => (528, 10680, 0, 2, 0, 2, 263),
         "nested_collapse" if point == "bootstrap" => (1140, 5622, 37, 45, 0, 45, 580),
         "nested_collapse" if point == "leaves" || point == "nodes" => {
-            (1140, 5622, 37, 46, 0, 46, 577)
+            (1140, 5622, 37, 46, 0, 46, 578)
         }
         "nested_compute_v" => (1140, 6796, 37, 1, 0, 1, 572),
         other => panic!("no census pinned for {other}"),
@@ -398,8 +398,8 @@ fn expected(name: &str, point: &str) -> Census {
     let (pinned, rejected) = match (name, point) {
         ("hashes_1", _) => (8, 105),
         ("hashes_2", _) => (9, 94),
-        ("collapse", "bootstrap") => (14, 145),
-        ("collapse", "leaves" | "nodes") => (12, 145),
+        ("collapse", "bootstrap") => (13, 144),
+        ("collapse", "leaves" | "nodes") => (11, 145),
         ("compute_v", _) => (9, 465),
         ("bind_challenges_0", _) => (9, 719),
         ("bind_challenges_1", _) => (9, 719),
@@ -407,22 +407,21 @@ fn expected(name: &str, point: &str) -> Census {
         ("bind_challenges_3", "bootstrap") => (11, 718),
         ("bind_challenges_3", "leaves" | "nodes") => (9, 718),
         ("bind_beta", _) => (7, 608),
-        ("bind_endoscalar", "bootstrap") => (104, 394),
-        ("bind_endoscalar", "leaves") => (104, 393),
-        ("bind_endoscalar", "nodes") => (102, 395),
-        ("native_endoscaling_step_0", "bootstrap") => (103, 142),
-        ("native_endoscaling_step_0", "leaves") => (103, 142),
+        ("bind_endoscalar", "bootstrap") => (107, 391),
+        ("bind_endoscalar", "leaves" | "nodes") => (102, 396),
+        ("native_endoscaling_step_0", "bootstrap") => (106, 139),
         ("native_endoscaling_step_0", "nodes") => (101, 144),
-        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (103, 141),
-        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (103, 141),
+        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (106, 138),
+        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (101, 143),
         (step, "nodes") if step.starts_with("native_endoscaling_step_") => (101, 143),
-        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (102, 161),
-        (step, "leaves") if step.starts_with("endoscaling_step_") => (102, 161),
+        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (105, 158),
+        (step, "leaves") if step.starts_with("endoscaling_step_") => (101, 162),
         (step, "nodes") if step.starts_with("endoscaling_step_") => (100, 163),
-        ("nested_collapse", "bootstrap") => (115, 465),
-        ("nested_collapse", "leaves") => (114, 463),
-        ("nested_collapse", "nodes") => (112, 465),
-        ("nested_compute_v", "bootstrap" | "leaves") => (114, 458),
+        ("nested_collapse", "bootstrap") => (118, 462),
+        ("nested_collapse", "leaves") => (113, 465),
+        ("nested_collapse", "nodes") => (112, 466),
+        ("nested_compute_v", "bootstrap") => (117, 455),
+        ("nested_compute_v", "leaves") => (113, 459),
         ("nested_compute_v", "nodes") => (112, 460),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
@@ -553,8 +552,8 @@ fn patcher_captures_internal_circuits() -> Result<()> {
 
     // Leaves and nodes agree on everything the witness' values do not
     // decide; the base case differs only in the c the two collapse circuits
-    // leave free, and in the own output header and circuit id the native
-    // collapse pins in its place.
+    // leave free, and in the own output header, circuit id and output
+    // openings the native collapse pins in its place.
     let structural = |census: &Census| {
         (
             census.name.clone(),
@@ -572,12 +571,14 @@ fn patcher_captures_internal_circuits() -> Result<()> {
     for (s, l) in bootstrap.census.iter().zip(&leaves.census) {
         if s.name == "collapse" {
             // c is not an output at the base case; the step's own output
-            // header and circuit id, which the base case pins, are.
-            let pinned = crate::pcd::HEADER_SIZE + 1;
+            // header, circuit id and output openings, which the base case
+            // pins, are.
+            let pinned =
+                crate::pcd::HEADER_SIZE + 1 + 2 * ragu_pcd::fuzzing::corrupt::NUM_ONLINE_FP_POLYS;
             assert_eq!(
                 s.outputs + 1,
                 l.outputs + pinned,
-                "{}: c is not an output at the base case, the pinned own header and id are",
+                "{}: c is not an output at the base case, the pinned own header, id and openings are",
                 s.name
             );
             assert_eq!(s.strongly_forced + 1, l.strongly_forced + pinned);

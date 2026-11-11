@@ -232,7 +232,7 @@ fn test_internal_circuit_constraint_counts() {
 
     check_constraints!(Hashes1Circuit,              mul = 1807, lin = 3053);
     check_constraints!(Hashes2Circuit,              mul = 1881, lin = 2991);
-    check_constraints!(CollapseCircuit,             mul = 1569, lin = 2506);
+    check_constraints!(CollapseCircuit,             mul = 1573, lin = 2518);
     check_constraints!(ComputeVCircuit,             mul = 1933, lin = 2888);
     check_constraints!(BindChallengesCircuit(0),    mul = 2032, lin = 3061);
     check_constraints!(BindChallengesCircuit(1),    mul = 2037, lin = 3071);
@@ -914,7 +914,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x202c7cf9d6eebec7f6a02c296ba43e8f1e75e577772bd2beb29753f0466be2f3"
+        "0x270606aaa3749357080e78b7d3682e2ead60771e134629dfdb030e0775730798"
     ));
 
     assert_eq!(
