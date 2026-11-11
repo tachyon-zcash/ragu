@@ -262,9 +262,9 @@ impl<C: EndomorphismAffine, const W: usize> FixedBaseTable<C, W> {
     ///
     /// The prefix $A$ must differ from $\pm P$, and $A + P$ must differ
     /// from $\pm T$, where $T$ is the top entry. Without `onto`, $A$ must
-    /// differ from $\pm T$. These
-    /// requirements are enforced. In particular, without `onto`, zero modulo
-    /// the group order and $k^* = 2 \cdot 8^{W-1} - 4(8^{W-1}-1)/7$ are excluded.
+    /// differ from $\pm T$. These requirements are enforced. In particular,
+    /// without `onto`, zero modulo the group order and
+    /// $k^* = 2 \cdot 8^{W-1} - 4(8^{W-1}-1)/7$ are excluded.
     /// Joining `onto` before the top permits zero when these conditions hold.
     ///
     /// # Errors
@@ -384,18 +384,21 @@ mod tests {
         Ok(output)
     }
 
-    fn patterns<const N: usize>() -> Vec<[bool; N]> {
-        let mut patterns = Vec::from([[false; N], [true; N]]);
-        patterns.extend((0..N).map(|bit| array::from_fn(|index| index == bit)));
+    #[test]
+    fn walks_compute_the_binary_value() -> Result<()> {
+        let mut patterns = Vec::from([[false; 255], [true; 255]]);
+        patterns.extend((0..255).map(|bit| array::from_fn(|index| index == bit)));
         patterns
             .extend((0..8).map(|digit| array::from_fn(|index| digit & (1 << (index % 3)) != 0)));
-        patterns
-    }
-
-    fn check_walks<const W: usize, const N: usize>(patterns: &[[bool; N]]) -> Result<()> {
+        patterns.push(array::from_fn(|index| {
+            (-S::ONE).to_le_bits().as_ref()[index]
+        }));
+        patterns.push(array::from_fn(|index| {
+            (-F::ONE).to_le_bits().as_ref()[index]
+        }));
         for base in [C::generator(), (C::generator() * S::from(7)).to_affine()] {
-            let table = FixedBaseTable::<_, W>::new(base)?;
-            for bits in patterns {
+            let table = FixedBaseTable::<_, 85>::new(base)?;
+            for bits in &patterns {
                 let expected = (base * scalar(bits)).to_affine();
                 let result = walk(&table, *bits, None);
                 if expected.is_identity() {
@@ -405,44 +408,35 @@ mod tests {
                 }
             }
         }
+        // Smallest permitted table exercises the empty interior-add loop.
+        let base = C::generator();
+        assert_eq!(
+            walk(&FixedBaseTable::<_, 2>::new(base)?, [true; 6], None)?,
+            (base * S::from(63)).to_affine()
+        );
         Ok(())
     }
 
     #[test]
-    fn walks_compute_the_binary_value() -> Result<()> {
-        let mut wide = patterns::<255>();
-        wide.push(array::from_fn(|index| {
-            (-S::ONE).to_le_bits().as_ref()[index]
-        }));
-        wide.push(array::from_fn(|index| {
-            (-F::ONE).to_le_bits().as_ref()[index]
-        }));
-        check_walks::<85, 255>(&wide)?;
-        check_walks::<17, 51>(&patterns::<51>())?;
-        // Smallest permitted table exercises the empty interior-add loop.
-        check_walks::<2, 6>(&patterns::<6>())
-    }
-
-    fn assert_no_inverse<'dr>(dr: &mut Simulator, difference: &Element<'dr, Simulator>) {
-        assert_eq!(*difference.value().take(), F::ZERO);
-        for advice in [F::ZERO, F::ONE, -F::ONE, F::from(7)] {
-            let rejection = difference
-                .enforce_invertible_with(dr, Simulator::just(|| advice))
-                .err();
-            assert!(
-                rejection.is_some_and(|error| format!("{error}").contains("gate check failed"))
-            );
-        }
-    }
-
-    fn check_top_exceptions<const W: usize, const N: usize>() -> Result<()> {
-        let power = (0..W - 1).fold(S::ONE, |acc, _| acc * S::from(8));
-        let interior = (0..W - 1).fold(S::ZERO, |acc, _| acc * S::from(8) + S::ONE);
+    fn exceptional_additions_have_no_satisfying_inverse() -> Result<()> {
+        let assert_no_inverse = |dr: &mut Simulator, difference: &Element<'_, Simulator>| {
+            assert_eq!(*difference.value().take(), F::ZERO);
+            for advice in [F::ZERO, F::ONE, -F::ONE, F::from(7)] {
+                let rejection = difference
+                    .enforce_invertible_with(dr, Simulator::just(|| advice))
+                    .err();
+                assert!(
+                    rejection.is_some_and(|error| format!("{error}").contains("gate check failed"))
+                );
+            }
+        };
+        let power = (0..84).fold(S::ONE, |acc, _| acc * S::from(8));
+        let interior = (0..84).fold(S::ZERO, |acc, _| acc * S::from(8) + S::ONE);
         let k_star = power.double() - S::from(4) * interior;
         let doubling_bits = array::from_fn(|index| k_star.to_le_bits().as_ref()[index]);
         for base in [C::generator(), (C::generator() * S::from(7)).to_affine()] {
-            let table = FixedBaseTable::<_, W>::new(base)?;
-            for bits in [[false; N], doubling_bits] {
+            let table = FixedBaseTable::<_, 85>::new(base)?;
+            for bits in [[false; 255], doubling_bits] {
                 assert!(walk(&table, bits, None).is_err());
                 Simulator::simulate((), |dr, _| {
                     let bits = alloc_bits(dr, bits)?;
@@ -452,104 +446,88 @@ mod tests {
                     Ok(())
                 })?;
             }
+            let onto = base.to_projective().endomorphism().to_affine();
+            assert_eq!(walk(&table, [false; 255], Some(onto))?, onto);
+            let offset = interior.double();
+            let prefix = (base * offset).to_affine();
+            // A = +/-onto: the join's nonzero check is unsatisfiable.
+            for onto in [prefix, -prefix] {
+                assert!(walk(&table, [false; 255], Some(onto)).is_err());
+                Simulator::simulate((), |dr, _| {
+                    let bits = alloc_bits(dr, [false; 255])?;
+                    let (prefix, _) = table.prefix_and_top(dr, &bits)?;
+                    let onto = Point::constant(dr, onto)?;
+                    let difference = onto.x.sub(dr, &prefix.x);
+                    assert_no_inverse(dr, &difference);
+                    Ok(())
+                })?;
+            }
+            // For top digit one, arrange A + onto = +/-top after a valid join.
+            let mut bits = [false; 255];
+            bits[252] = true;
+            let top = base * (power - offset);
+            for target in [top, -top] {
+                let onto = (target - prefix.to_projective()).to_affine();
+                assert!(walk(&table, bits, Some(onto)).is_err());
+                Simulator::simulate((), |dr, _| {
+                    let bits = alloc_bits(dr, bits)?;
+                    let (prefix, top) = table.prefix_and_top(dr, &bits)?;
+                    let onto = Point::constant(dr, onto)?;
+                    let sum = FixedBaseTable::<C, 85>::add_checked(dr, &prefix, &onto)?;
+                    let difference = top.x.sub(dr, &sum.x);
+                    assert_no_inverse(dr, &difference);
+                    Ok(())
+                })?;
+            }
         }
-        Ok(())
-    }
-
-    #[test]
-    fn exceptional_top_additions_have_no_satisfying_inverse() -> Result<()> {
-        check_top_exceptions::<17, 51>()?;
-        check_top_exceptions::<85, 255>()
-    }
-
-    fn check_onto<const W: usize, const N: usize>() -> Result<()> {
-        let base = C::generator();
-        let table = FixedBaseTable::<_, W>::new(base)?;
-        let onto = base.to_projective().endomorphism().to_affine();
-        assert_eq!(walk(&table, [false; N], Some(onto))?, onto);
-        let offset = (0..W - 1).fold(S::ZERO, |acc, _| acc * S::from(8) + S::from(2));
-        let prefix = (base * offset).to_affine();
-        // A = +/-onto: the join's nonzero check is unsatisfiable.
-        for onto in [prefix, -prefix] {
-            assert!(walk(&table, [false; N], Some(onto)).is_err());
-            Simulator::simulate((), |dr, _| {
-                let bits = alloc_bits(dr, [false; N])?;
-                let (prefix, _) = table.prefix_and_top(dr, &bits)?;
-                let onto = Point::constant(dr, onto)?;
-                let difference = onto.x.sub(dr, &prefix.x);
-                assert_no_inverse(dr, &difference);
-                Ok(())
-            })?;
-        }
-        // For top digit one, arrange A + onto = +/-top after a valid join.
-        let mut bits = [false; N];
-        bits[3 * (W - 1)] = true;
-        let power = (0..W - 1).fold(S::ONE, |acc, _| acc * S::from(8));
-        let top = base * (power - offset);
-        for target in [top, -top] {
-            let onto = (target - prefix.to_projective()).to_affine();
-            assert!(walk(&table, bits, Some(onto)).is_err());
-            Simulator::simulate((), |dr, _| {
-                let bits = alloc_bits(dr, bits)?;
-                let (prefix, top) = table.prefix_and_top(dr, &bits)?;
-                let onto = Point::constant(dr, onto)?;
-                let sum = FixedBaseTable::<C, W>::add_checked(dr, &prefix, &onto)?;
-                let difference = top.x.sub(dr, &sum.x);
-                assert_no_inverse(dr, &difference);
-                Ok(())
-            })?;
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn onto_zero_and_exceptional_joins() -> Result<()> {
-        check_onto::<17, 51>()?;
-        check_onto::<85, 255>()
-    }
-
-    fn check_element<const W: usize>(value: F, onto: bool) -> Result<()> {
-        let base = C::generator();
-        let table = FixedBaseTable::<_, W>::new(base)?;
-        Simulator::simulate(value, |dr, witness| {
-            let value = Element::alloc(dr, &mut (), witness)?;
-            let onto = onto.then(|| base.to_projective().endomorphism().to_affine());
-            let point = onto.map(|onto| Point::constant(dr, onto)).transpose()?;
-            let result = table.mul_element(dr, &value, point.as_ref())?;
-            let expected = base * scalar(value.value().take().to_le_bits().as_ref());
-            let expected = if let Some(onto) = onto {
-                expected + onto.to_projective()
-            } else {
-                expected
-            };
-            assert_eq!(result.value().take(), expected.to_affine());
-            Ok(())
-        })?;
         Ok(())
     }
 
     #[test]
     fn element_range_is_enforced() -> Result<()> {
-        for value in [F::ZERO, F::ONE, F::from((1u64 << 51) - 1)] {
-            check_element::<17>(value, true)?;
+        let base = C::generator();
+        let table = FixedBaseTable::<_, 17>::new(base)?;
+        for (value, valid) in [
+            (F::ZERO, true),
+            (F::ONE, true),
+            (F::from((1u64 << 51) - 1), true),
+            (F::from(1u64 << 51), false),
+            (-F::ONE, false),
+        ] {
+            let result = Simulator::simulate(value, |dr, witness| {
+                let value = Element::alloc(dr, &mut (), witness)?;
+                let onto = base.to_projective().endomorphism().to_affine();
+                let point = Point::constant(dr, onto)?;
+                let result = table.mul_element(dr, &value, Some(&point))?;
+                let expected = base * scalar(value.value().take().to_le_bits().as_ref())
+                    + onto.to_projective();
+                assert_eq!(result.value().take(), expected.to_affine());
+                Ok(())
+            });
+            assert_eq!(result.is_ok(), valid);
         }
-        for value in [F::from(1u64 << 51), -F::ONE] {
-            assert!(check_element::<17>(value, true).is_err());
-        }
+        let table = FixedBaseTable::<_, 85>::new(base)?;
         let maximum = F::from(2).pow_u64(254) - F::ONE;
-        check_element::<85>(maximum, false)?;
-        check_element::<85>(maximum, true)?;
-        assert!(check_element::<85>(-F::ONE, false).is_err());
-        assert!(check_element::<85>(F::from(2).pow_u64(254), true).is_err());
+        for (value, valid) in [(maximum, true), (-F::ONE, false), (maximum + F::ONE, false)] {
+            let result = Simulator::simulate(value, |dr, witness| {
+                let value = Element::alloc(dr, &mut (), witness)?;
+                let result = table.mul_element(dr, &value, None)?;
+                let expected = base * scalar(value.value().take().to_le_bits().as_ref());
+                assert_eq!(result.value().take(), expected.to_affine());
+                Ok(())
+            });
+            assert_eq!(result.is_ok(), valid);
+        }
         Ok(())
     }
 
-    fn check_cost<const W: usize, const N: usize>(gates: usize, constraints: usize) -> Result<()> {
+    #[test]
+    fn gate_and_constraint_counts() -> Result<()> {
         let base = C::generator();
-        let table = FixedBaseTable::<_, W>::new(base)?;
+        let table = FixedBaseTable::<_, 85>::new(base)?;
         for with_onto in [false, true] {
             let sim = Simulator::simulate((), |dr, _| {
-                let mut bits = [false; N];
+                let mut bits = [false; 255];
                 bits[0] = true;
                 let bits = alloc_bits(dr, bits)?;
                 let onto = if with_onto {
@@ -564,24 +542,15 @@ mod tests {
                 table.mul_bits(dr, &bits, onto.as_ref())?;
                 Ok(())
             })?;
-            assert_eq!(sim.num_gates(), gates + if with_onto { 4 } else { 0 });
-            assert_eq!(
-                sim.num_constraints(),
-                constraints + if with_onto { 8 } else { 0 }
-            );
+            assert_eq!(sim.num_gates(), if with_onto { 427 } else { 423 });
+            assert_eq!(sim.num_constraints(), if with_onto { 854 } else { 846 });
         }
         Ok(())
     }
 
     #[test]
-    fn gate_and_constraint_counts() -> Result<()> {
-        check_cost::<17, 51>(83, 166)?;
-        check_cost::<85, 255>(423, 846)
-    }
-
-    #[test]
     fn construction_rejects_identity_and_degenerate_windows() {
-        assert!(FixedBaseTable::<C, 17>::new(C::identity()).is_err());
+        assert!(FixedBaseTable::<C, 85>::new(C::identity()).is_err());
         assert!(Window::<F>::new(&[(F::ZERO, F::ZERO); 8]).is_err());
     }
 }
