@@ -1,13 +1,15 @@
 name: Benchmarks
 
+# The full gungraun suite runs under valgrind and takes hours, so it runs only
+# on demand: dispatched on `main` it records a baseline for that commit, and
+# dispatched on any other ref it compares against a recorded baseline. Pull
+# requests only check that the benchmarks compile.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
       base_sha:
-        description: 'Baseline commit SHA for regression comparison (defaults to latest main)'
+        description: 'Baseline commit SHA for regression comparison (defaults to latest main; it needs a recorded baseline from a run dispatched on main)'
         required: false
         default: ''
 
@@ -64,12 +66,13 @@ jobs:
       - name: Build benchmarks
         run: cargo bench --workspace --all-features --locked --bench gungraun --no-run
 
-  # Push-to-main: full run + save baseline for future comparisons
-  # Manual dispatch: full run + regression summary against a chosen baseline
+  # Manual dispatch: full run + regression summary against a chosen baseline,
+  # saved as the baseline for its commit when dispatched on main
   bench:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The hosted-runner maximum; the suite outgrew the old 45-minute limit.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -83,7 +86,6 @@ jobs:
           apt-packages: valgrind
 
       - name: Resolve baseline SHA
-        if: github.event_name == 'workflow_dispatch'
         id: baseline
         env:
           INPUT_BASE_SHA: ${{ inputs.base_sha }}
@@ -96,7 +98,6 @@ jobs:
           fi
 
       - name: Load baseline
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: target/gungraun
@@ -112,7 +113,6 @@ jobs:
         run: cargo bench --workspace --all-features --locked --bench gungraun -- --save-summary=json
 
       - name: Summarize benchmark regressions
-        if: github.event_name == 'workflow_dispatch'
         env:
           ALERT_THRESHOLD: '1.5'
         run: |
@@ -134,7 +134,6 @@ jobs:
           fi
 
       - name: Upload benchmark results artifact
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: gungraun-results
@@ -142,7 +141,7 @@ jobs:
           retention-days: 1
 
       - name: Save baseline
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: target/gungraun
