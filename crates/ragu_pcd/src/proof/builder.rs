@@ -511,6 +511,18 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         }
     }
 
+    /// Adds `delta` to the first field of the left input header, for a test
+    /// playing a prover that witnesses another input header in its preamble
+    /// than the one its circuit encoded.
+    #[cfg(test)]
+    pub(crate) fn forge_left_header_field(&mut self, delta: C::CircuitField) {
+        *self
+            .left_header
+            .as_mut()
+            .and_then(|header| header.first_mut())
+            .expect("the left input header is set") += delta;
+    }
+
     /// Replaces the circuit id, for a test playing a prover that forges it.
     #[cfg(test)]
     pub(crate) fn forge_circuit_id(&mut self, circuit_id: CircuitIndex) {

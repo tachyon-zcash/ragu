@@ -130,6 +130,25 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         })
     }
 
+    /// [`fuse`](Self::fuse) as a prover that, after $w$ is squeezed, witnesses
+    /// in its native preamble a left input header whose first field is off
+    /// by `delta`. The step's circuit ran on the honest header, and the
+    /// child's committed traces export the honest one.
+    #[cfg(test)]
+    pub(crate) fn fuse_editing_left_header<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        delta: C::CircuitField,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |builder, _| {
+            builder.forge_left_header_field(delta)
+        })
+    }
+
     /// [`fuse`](Self::fuse), with `edit` applied to the step's application
     /// data after its circuit ran and before anything commits to it. Only
     /// tests edit anything: `fuse` passes an edit that does nothing.

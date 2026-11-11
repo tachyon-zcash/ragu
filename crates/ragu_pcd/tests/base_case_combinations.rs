@@ -901,3 +901,395 @@ fn verifies_compressed<H: Header<Fp>>(
         .and_then(|compressed| app.verify_compressed(&compressed))
         .unwrap_or(false)
 }
+
+/// A unit-to-unit step whose prover commits non-padding output polynomials
+/// and whose circuit does not open them.
+struct ChosenSlots;
+
+impl Step<C> for ChosenSlots {
+    const INDEX: Index = Index::new(0);
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn polynomials<'source>(
+        &self,
+        _: &(),
+        _: crate::step::HeaderInput<'_, Fp, ()>,
+        _: crate::step::HeaderInput<'_, Fp, ()>,
+    ) -> Result<[Vec<Fp>; crate::header::NUM_ONLINE_POLYNOMIALS]> {
+        Ok([vec![Fp::from(5), Fp::ONE], vec![Fp::from(3), Fp::ONE]])
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D>,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, N>,
+            Encoded<'dr, D, Self::Right, N>,
+            Encoded<'dr, D, Self::Output, N>,
+        ),
+        DriverValue<D, ()>,
+        DriverValue<D, ()>,
+    )>
+    where
+        Self: 'dr,
+    {
+        let allocator = &mut Standard::new();
+        Ok((
+            (
+                Encoded::new(dr, allocator, left)?,
+                Encoded::new(dr, allocator, right)?,
+                Encoded::from_gadget(()),
+            ),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
+/// A consumer of a unit left input that holds the input's slot 0, at
+/// $\zeta$, to `X + offset`, or to the padding one for `None`. It holds its
+/// own output slots to padding.
+struct ReadLeftSlot(Option<u64>);
+
+impl Step<C> for ReadLeftSlot {
+    const INDEX: Index = Index::new(1);
+    type Witness<'source> = ();
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ();
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D>,
+        _: DriverValue<D, ()>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, Self::Left, N>,
+            Encoded<'dr, D, Self::Right, N>,
+            Encoded<'dr, D, Self::Output, N>,
+        ),
+        DriverValue<D, ()>,
+        DriverValue<D, ()>,
+    )>
+    where
+        Self: 'dr,
+    {
+        use ragu_primitives::Element;
+        let zeta = oracles.zeta().clone();
+        let value = oracles.query(dr, crate::step::Slot::left(0), &zeta)?;
+        let expected = match self.0 {
+            Some(offset) => {
+                let offset = Element::constant(dr, Fp::from(offset));
+                zeta.add(dr, &offset)
+            }
+            None => Element::one(),
+        };
+        value.enforce_equal(dr, &expected)?;
+        for i in 0..crate::header::NUM_ONLINE_POLYNOMIALS {
+            let value = oracles.query(dr, crate::step::Slot::output(i), &zeta)?;
+            value.enforce_equal(dr, &Element::one())?;
+        }
+        let allocator = &mut Standard::new();
+        Ok((
+            (
+                Encoded::new(dr, allocator, left)?,
+                Encoded::new(dr, allocator, right)?,
+                Encoded::from_gadget(()),
+            ),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
+/// The base-case pin holds a minted bootstrap proof's output slots to
+/// padding. The bootstrap circuit's own slot check is in its application
+/// claim, which the base case leaves free, so without the pin a prover
+/// mints a unit proof that carries polynomials of its choosing: both
+/// verifiers accept it, and so does a parent that reads the slots. A proof
+/// supplied through `with_bootstrap` is the same case.
+#[test]
+fn forged_base_case_carries_padding_slots() {
+    let bootstrap = InternalStepIndex::Bootstrap
+        .circuit_index::<<C as crate::profile::ProfiledCycle>::Profile>()
+        .expect("the bootstrap step is registered in every profile");
+    let build = |expected| {
+        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+            .register(ChosenSlots)
+            .expect("register the minting step")
+            .register(ReadLeftSlot(expected))
+            .expect("register the reading step")
+    };
+
+    // The reader that expects the minted polynomial is the attack; the
+    // reader that expects padding is the honest control.
+    for expected in [Some(5), None] {
+        let app = build(expected)
+            .finalize(crate::pasta::baked())
+            .expect("build application");
+        let mut rng = StdRng::seed_from_u64(946);
+        let unit = app.bootstrap_pcd();
+
+        let (minted, ()) = app
+            .fuse_forging_dummy_inputs(
+                &mut rng,
+                ChosenSlots,
+                (),
+                unit.clone(),
+                unit.clone(),
+                Some(bootstrap),
+            )
+            .expect("the forging prover assembles a proof");
+        assert_eq!(minted.proof().circuit_id(), bootstrap);
+        assert!(
+            !verifies(&app, &minted, &mut rng),
+            "a minted bootstrap proof with chosen slots must not verify"
+        );
+
+        for (child, honest) in [(unit.clone(), true), (minted.clone(), false)] {
+            let accepted = app
+                .fuse(&mut rng, ReadLeftSlot(expected), (), child, unit.clone())
+                .is_ok_and(|(parent, ())| verifies(&app, &parent, &mut rng));
+            assert_eq!(
+                accepted,
+                honest && expected.is_none(),
+                "expected {expected:?}, honest child {honest}"
+            );
+        }
+
+        // The same proof, installed as the bootstrap proof: every seed then
+        // reads it as its unit inputs.
+        let installed = build(expected)
+            .with_bootstrap(minted.proof().clone())
+            .expect("a proof of the bootstrap step with this shape is installed")
+            .finalize(crate::pasta::baked())
+            .expect("build application");
+        let accepted = installed
+            .seed(&mut rng, ReadLeftSlot(expected), ())
+            .is_ok_and(|(seeded, ())| verifies(&installed, &seeded, &mut rng));
+        assert!(
+            !accepted,
+            "expected {expected:?}: a seed over an installed minted proof must not verify"
+        );
+    }
+}
+
+/// Whether both verifiers accept `pcd`; they must agree.
+fn verifies<H: Header<Fp>>(
+    app: &crate::Application<'_, C, R, HEADER_SIZE>,
+    pcd: &crate::Pcd<C, R, H>,
+    rng: &mut StdRng,
+) -> bool {
+    let uncompressed = app
+        .verify_uncompressed(pcd, StdRng::seed_from_u64(5))
+        .unwrap();
+    assert_eq!(
+        uncompressed,
+        verifies_compressed(app, pcd, rng),
+        "the verifiers agree"
+    );
+    uncompressed
+}
+
+/// The native preamble is committed after $w$, so a prover can choose a
+/// child's values in it with $w$ in hand. The child's committed traces fix
+/// those values, and the step folds the child's claims at $y$ over the
+/// preamble's wires: a preamble that witnesses another input header than
+/// the child exported is rejected, at the step and through its parent.
+#[test]
+fn input_header_edited_after_w_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9461);
+        let unit = app.bootstrap_pcd();
+        let seed = |rng: &mut StdRng, value: u64| {
+            app.fuse(
+                rng,
+                Seed::new(),
+                Fp::from(value),
+                unit.clone(),
+                unit.clone(),
+            )
+            .expect("honest seed")
+            .0
+        };
+        let (left, right) = (seed(&mut rng, 7), seed(&mut rng, 8));
+        let (honest, ()) = app
+            .fuse(
+                &mut rng,
+                Merge::new(),
+                Fp::from(9),
+                left.clone(),
+                right.clone(),
+            )
+            .expect("honest merge");
+        assert!(
+            verifies(app, &honest, &mut rng),
+            "the honest control verifies"
+        );
+
+        let (edited, ()) = app
+            .fuse_editing_left_header(&mut rng, Merge::new(), Fp::from(9), left, right, Fp::ONE)
+            .expect("the editing prover assembles a proof");
+        assert!(
+            !verifies(app, &edited, &mut rng),
+            "a preamble with another input header must not verify"
+        );
+        let (parent, ()) = app
+            .fuse(&mut rng, Merge::new(), Fp::from(10), edited, honest)
+            .expect("fuse assembles a parent regardless of satisfiability");
+        assert!(
+            !verifies(app, &parent, &mut rng),
+            "the parent of such a proof must not verify"
+        );
+    });
+}
+
+/// A step folds its own application claim, so the decider has none to
+/// check: an application trace that does not satisfy the step's circuit is
+/// rejected through the root's own accumulator.
+#[test]
+fn unsatisfied_root_application_trace_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9462);
+        let unit = app.bootstrap_pcd();
+        let (root, ()) = app
+            .fuse_editing_application(
+                &mut rng,
+                Seed::new(),
+                Fp::from(7),
+                unit.clone(),
+                unit,
+                |application| {
+                    application.rx.scale(Fp::from(2));
+                    application.commitment = ReferenceBackend::sparse_commit_to_affine(
+                        &application.rx,
+                        C::host_generators(app.params),
+                    );
+                },
+            )
+            .expect("the editing prover assembles a proof");
+        assert!(
+            !verifies(app, &root, &mut rng),
+            "a root whose application trace is unsatisfied must not verify"
+        );
+    });
+}
+
+/// A proof carries no header: the decider encodes the output header from
+/// the data the `Pcd` carries and holds it to the one the proof's
+/// `hashes_1` exported.
+#[test]
+fn data_other_than_the_exported_header_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9463);
+        let unit = app.bootstrap_pcd();
+        let (honest, ()) = app
+            .fuse(&mut rng, Seed::new(), Fp::from(7), unit.clone(), unit)
+            .expect("honest seed");
+        assert!(
+            verifies(app, &honest, &mut rng),
+            "the honest control verifies"
+        );
+        let (proof, data) = honest.into_parts();
+        let relabelled = proof.carry::<Value>(data + Fp::ONE);
+        assert!(
+            !verifies(app, &relabelled, &mut rng),
+            "a proof carried with other data must not verify"
+        );
+    });
+}
+
+/// A proof of the bootstrap step with a non-unit output header passes
+/// `with_bootstrap`'s shape check, but the base-case pin rejects it, so no
+/// seed built on it verifies.
+#[test]
+fn installed_non_unit_bootstrap_proof_is_rejected() {
+    let bootstrap = InternalStepIndex::Bootstrap
+        .circuit_index::<<C as crate::profile::ProfiledCycle>::Profile>()
+        .expect("the bootstrap step is registered in every profile");
+    let build = || {
+        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+            .register(Seed::new())
+            .expect("register seed")
+    };
+    let app = build()
+        .finalize(crate::pasta::baked())
+        .expect("build application");
+    let mut rng = StdRng::seed_from_u64(9464);
+    let unit = app.bootstrap_pcd();
+    let (forged, ()) = app
+        .fuse_forging_dummy_inputs(
+            &mut rng,
+            Seed::new(),
+            Fp::from(7),
+            unit.clone(),
+            unit,
+            Some(bootstrap),
+        )
+        .expect("the forging prover assembles a proof");
+
+    let installed = build()
+        .with_bootstrap(forged.proof().clone())
+        .expect("a proof of the bootstrap step with this shape is installed")
+        .finalize(crate::pasta::baked())
+        .expect("build application");
+    let (seeded, ()) = installed
+        .seed(&mut rng, Seed::new(), Fp::from(8))
+        .expect("seed assembles a proof regardless of satisfiability");
+    assert!(
+        !verifies(&installed, &seeded, &mut rng),
+        "a seed over an installed non-unit bootstrap proof must not verify"
+    );
+}
+
+/// The rerandomization circuit holds its witnessed input suffix away from
+/// `Dummy`, but that is its application claim, which the base case leaves
+/// free. A rerandomizing prover that witnesses `Dummy` inputs is rejected
+/// by the base-case pin instead.
+#[test]
+fn rerandomize_forging_dummy_inputs_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9465);
+        let unit = app.bootstrap_pcd();
+        let (honest, ()) = app
+            .fuse(&mut rng, Seed::new(), Fp::from(7), unit.clone(), unit)
+            .expect("honest seed");
+        let seeded_trivial = app
+            .seeded_trivial_pcd(&mut rng)
+            .expect("the cached seeded unit proof");
+        let (forged, ()) = app
+            .fuse_forging_dummy_inputs(
+                &mut rng,
+                crate::step::internal::rerandomize::Rerandomize::new(),
+                (),
+                honest.clone(),
+                seeded_trivial,
+                None,
+            )
+            .expect("the forging prover assembles a proof");
+        assert!(
+            !verifies(app, &forged, &mut rng),
+            "a rerandomization that takes the base case must not verify"
+        );
+        let (parent, ()) = app
+            .fuse(&mut rng, Merge::new(), Fp::from(8), forged, honest)
+            .expect("fuse assembles a parent regardless of satisfiability");
+        assert!(
+            !verifies(app, &parent, &mut rng),
+            "the parent of such a rerandomization must not verify"
+        );
+    });
+}
