@@ -31,9 +31,11 @@
 //!
 //! ## Base case
 //!
-//! When the current step declares [`Dummy`] for both of its inputs — which
-//! only the internal [`Bootstrap`] step does — the prover may witness any $c$
-//! value without constraint. This is what lets [`finalize`] fold two
+//! When both input headers in the preamble carry the [`Dummy`] suffix, the
+//! prover may witness any $c$ value without constraint. Only the internal
+//! [`Bootstrap`] step declares such inputs, but the preamble's headers are
+//! the prover's witness, so the pin below is what holds such a step to be
+//! that one. This is what lets [`finalize`] fold two
 //! synthesized dummy proofs, which carry no meaningful revdot claim, into the
 //! bootstrap proof that verifies. The constraint is enforced whenever
 //! [`is_base_case`] returns false.
