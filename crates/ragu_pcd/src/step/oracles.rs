@@ -12,8 +12,8 @@
 //! any wire, and receives a wire holding the polynomial's value there; the
 //! opening $f_i(x_i) = y_i$ is not checked in the circuit but by Ragu's
 //! polynomial commitment scheme, which folds it into the step's own batch
-//! and whose verified openings the parent holds the step's instance to. A
-//! slot the step does not query is opened at $\zeta$ to its value there.
+//! and whose verified openings the step's own fold holds its instance to.
+//! A slot the step does not query is opened at $\zeta$ to its value there.
 //!
 //! [`Oracles`] also holds the step's [staged](super::Step::staged) values,
 //! committed before $\zeta$ in the proof's application stage. A check at
@@ -24,7 +24,8 @@
 //! from them are not fixed coefficients or roots: a root computed in the
 //! circuit from $\zeta$ and the openings is no safer than one witnessed
 //! with $\zeta$ in hand. Input header fields, staged values and constants
-//! are fixed before $\zeta$; in-circuit hash outputs and values from a
+//! are fixed before $\zeta$ (the input headers through the children's
+//! committed proofs, which $\zeta$ absorbs); in-circuit hash outputs and values from a
 //! small set each need their own argument. Any other wire the circuit
 //! witnesses, the output header's fields included, is the prover's choice
 //! given $\zeta$.
@@ -156,9 +157,9 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
     /// returned wire is a witness the step may use in its constraints, and
     /// the pair $(x, y)$ enters the step's instance.
     ///
-    /// The point and value are public: the parent reads them into its preamble,
-    /// and a compressed proof carries and absorbs them, so a point or value the
-    /// step must keep secret cannot be opened through this oracle.
+    /// The point and value are not hidden: the step's preamble stage holds
+    /// them in the clear, so a point or value the step must keep secret
+    /// cannot be opened through this oracle.
     ///
     /// # Errors
     ///

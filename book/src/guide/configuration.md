@@ -188,9 +188,9 @@ ApplicationBuilder::<Pasta, R<13>, 8>::new()
 over-allocate.
 
 **Upper bound**: for the Standard profile at the production rank `R<13>`,
-the largest header size is 96 elements. Ragu's challenge binder circuits
-load the headers of both children beside the online openings, and at 96 the largest binder uses all
-2048 gates. A larger header fails `finalize` with
+the largest header size is 201 elements. Ragu's challenge binder circuits
+load the headers of both children and the step's own beside the online
+openings, and at 201 the largest binder uses all 2048 gates. A larger header fails `finalize` with
 `Error: exceeded the maximum number of gates (2048)`.
 Profiles with extensions can have a lower limit because their additional
 claims and commitments also consume gates. Check capacity with `finalize`

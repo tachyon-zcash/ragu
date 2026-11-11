@@ -256,14 +256,14 @@ Absorbing `bridge_preamble_commitment` and squeezing challenge $w$ remains uncha
 We set $\zeta = w$, maximally piggybacking the existing staging pipeline and introducing no change to the transcript.
 
 The second phase has $\zeta$ available as an input to synthesize the circuit logic as usual.
-We compute the full trace `app_rx` and its commitment to be folded in the next step.
+We compute the full trace `app_rx` and its commitment, which the step folds itself (see [below](#ragu)): the `s_prime` bridge carries the commitment, so the trace is fixed before $y$.
 
 The main challenges are
 1) ensuring $\zeta$ used by the app circuit is correct given the externalized challenge squeezing;
 2) extending ["header-carry check"](#ragu) to the proofs' associated poly commitments.
 
 For (1), we update the public instance $k(Y)$ to include $\zeta$ used to synthesize `app_rx`.
-During the `application_ky()` computation in the parent step's folding circuit, we Horner over `[zeta, L/R/O header fields]` where `zeta` slot is filled with the `unified.w` challenge value witnessed in the native `Preamble` stage, effectively copy-constraining the correct $\zeta$ used in `app_rx` and derived from FS transcript.
+During the `application_ky()` computation in the step's own `collapse` circuit, we Horner over `[zeta, L/R/O header fields]` where the `zeta` slot is filled with the step's own `unified.w` challenge value, effectively copy-constraining the correct $\zeta$ used in `app_rx` and derived from FS transcript.
 
 For (2), we generalize the same "cross-circuit copy-constraint via public instance" (i.e. `unified_bridge_ky`) idea to the nested side where our points are witnessed.
 Specifically, the nested unified instance, which both nested instance circuits (`collapse` and `compute_v`) Horner over, gains the exported commitments: `[unified_S, L0, L1, R0, R1, O0, O1, 1]`. The nested `collapse` circuit is the one that holds the exported wires to the `Preamble` stage's; the other circuit reads the same instance.
@@ -313,7 +313,7 @@ The ordinary mask permits other encodings of the same `O1`, so an accepted diges
 It cannot be treated as a fixed input to a check at $\zeta$ without an additional binding to a value fixed beforehand.
 (Absorbing the digest would cost `hashes_1` one more Poseidon permutation, beyond its gate budget.)
 The digest joins the `unified` instance next to `bridge_preamble_commitment`, and the parent binds it to the `BridgeHash` stage it folds, as it binds the other bridge commitments.
-The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the parent's `application_ky()` fills from the child's `unified` value.
+The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the step's own `collapse` fills from its `unified` value.
 
 This malleability does not weaken the anchor chain, because a prover never chooses which anchors are canonical.
 Validators build the canonical chain themselves: they take the $\acc^\tg$ point the proof binds, compute $H^{bridge}(\acc^\tg)$ with `Application::bridge_hash()`, which fixes the canonical unblinded encoding of $\acc^\tg$ in the `O1` position, and advance $\anchor' = H(\anchor \| e \| H^{bridge}(\acc^\tg))$.
@@ -376,7 +376,7 @@ The extra revdot claims are few, and they fit into the buffer of the native `inn
 Recall in [v1](#v1), the app circuit can "claim" some challenge received, use it to synthesize the trace which gets copy-constrained in the next folding step.
 Similarly, the second app stage can claim some evaluations of the online polynomials.
 The validity of these evaluation claims is verified separately as the validity of the circuit trace `app_rx` which takes $(x_i, y_i)$ as input.
-The validity of the app trace is exactly as [the last variant](#v3): folded at the parent step, whereas the evaluation claims piggyback on the native `Query/Eval` stages to be folded into the accumulator during `compute_v` circuit.
+The validity of the app trace is exactly as [the last variant](#v3): folded by the step itself, whereas the evaluation claims piggyback on the native `Query/Eval` stages to be folded into the accumulator during `compute_v` circuit.
 To connect the claims across these two validity checks, we need to further extend the public instance $k(Y)$ to Horner over:
 
 ```
@@ -393,13 +393,13 @@ The only decision left is whether we should fold these evaluation claims in the 
 Recalling our [earlier discussion](#ragu) of "folding `S.app` in `S.fold`" concludes that folding `app_rx` in the same step leads to saving.
 Analogously, we decide to fold poly query claims in the same step.
 
-Folding the openings in `S` while `app_rx` is folded in `T` leaves a cross-circuit copy constraint between the two, of the kind the [header-carry check](#ragu) resolves.
-`S`'s `compute_v` reads the pairs off the native `Query` stage, folds each into $f(u)$ as it does every other opening, and exports them in its own public instance, `[unified_S, x_0, y_0, ..., x_5, y_5, 0, 1]`.
-`T` holds `S`'s pairs once, in its native `Preamble`, and computes both `S.app`'s `ky` and `S.compute_v`'s `ky` from those wires.
+Both folds happen in `S`, so the pairs need no cross-circuit copy constraint: `S`'s native `Preamble` stage holds them, committed after the step's circuit ran and before $y$ (the `s_prime` bridge carries its commitment).
+`S`'s `collapse` computes `S.app`'s `ky` over those wires, and `S`'s `compute_v` reads the same wires and folds each pair into $f(u)$ as it does every other opening.
 The two revdot claims therefore close only if the pairs `S.app` claimed are the pairs `S`'s batch opened.
 
 Concretely, this reduces the cost of our header-carry check.
-Instead of exporting `L/R`'s and `O`'s poly commitments, now we only need to export `O`'s poly commitments (and the application stage's), cutting the nested instance by 4 points, leading to fewer copy-constraints in the parent step's folding.
+Instead of exporting `L/R`'s and `O`'s poly commitments, now we only need to export `O`'s poly commitments, cutting the nested instance by 4 points, leading to fewer copy-constraints in the parent step's folding.
+The application stage's commitment is not exported either: `S` folds the stage's claims itself and walks the commitment with its own application trace.
 The 4-point equality in `S` disappears too: `S` opens the stashed `A.O, B.O` directly as its `L, R` slots, so `S` has no separate `L, R` wires to compare.
 The application's instance carries none of the six online commitments, so none need matching there: the nested walk takes the six points in slot order, the stashed `A.O0, A.O1, B.O0, B.O1` and then `S`'s own `O0, O1`, and the opening of slot $i$ is of the polynomial behind that point.
 

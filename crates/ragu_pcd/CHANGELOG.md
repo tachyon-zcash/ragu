@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test-utils` feature, which `unstable-fuzzing` enables. Production
   verification compresses a proof with `Application::compress` and checks it
   with `Application::verify_compressed`.
+- Each step folds its own application claim, with its application trace and
+  stage, instead of leaving it to its parent. A proof no longer carries its
+  application trace, its application stage, its input headers or its online
+  openings; its `hashes_1` exports its own output header and circuit id,
+  which the parent holds its copies to. At the base case, `collapse` pins a
+  step to the bootstrap circuit id and the unit output header. The proof and
+  compressed-proof schemas move to version 3, and `Proof::encoded_len` and
+  `CompressedProof::encoded_len` no longer take a header size.
 
 ## [0.0.0] - 2025-11-05
 

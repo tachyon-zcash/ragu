@@ -154,7 +154,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .last()
             .expect("every walk has at least one interstitial");
         let held = [
-            &stages.preamble.native_preamble,
+            &stages.s_prime.native_preamble,
             &stages.inner_error.native_inner_error,
             &stages.outer_error.native_outer_error,
             &stages.query.native_query,
@@ -170,7 +170,6 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.f.native_points_f,
             &stages.preamble.online_commitments[0],
             &stages.preamble.online_commitments[1],
-            &stages.preamble.application_stage,
         ];
         // The bridge-hash stage holds the step's own last online commitment,
         // the one the preamble holds and w absorbed.

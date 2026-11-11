@@ -1,24 +1,33 @@
 //! Internal step that bootstraps the recursion.
 //!
 //! This is the only step declaring [`Dummy`] inputs, and so the only circuit
-//! that can take the base case: its fuse skips the child revdot claim (see
-//! [`collapse`]). [`finalize`] runs it once over two synthesized
+//! whose proof can take the base case: its fuse skips the child revdot claim
+//! (see [`collapse`]). [`finalize`] runs it once over two synthesized
 //! [`dummy_pcd`] proofs to produce the bootstrap proof, which [`seed`] then
 //! consumes as an ordinary, fully verified child of every seed step.
 //!
 //! Because this step skips its children's claims and outputs the data-less unit
-//! header, its proof attests nothing and any prover can mint one. Confining the
-//! base case here rests on every other circuit's declared input suffixes being
-//! unable to equal `Dummy` — constants for application steps and the
-//! decompression step, and a wire constrained away from it for
-//! rerandomization. An ordinary step consuming
-//! the resulting `Pcd<()>` still verifies its child claim.
+//! header, its proof attests nothing and any prover can mint one.
 //!
-//! The bootstrap proof's polynomial slots carry padding: the circuit opens each
-//! output slot at $\zeta$ and holds it to the constant one, as the
-//! decompression step does, so a bootstrap proof installed through
-//! [`with_bootstrap`] cannot hand every seed's unit inputs polynomials of a
-//! prover's choosing.
+//! A step folds its own application claim, and the base case leaves the
+//! folded claim free. So this circuit does not confine the base case: a
+//! prover of any step can witness `Dummy` input suffixes in its preamble,
+//! and the step's circuit, whose input suffixes are constants (or, for
+//! rerandomization, a wire held away from `Dummy`), is then not enforced.
+//! The confinement is the base-case pin in [`collapse`], whose claim the
+//! parent or the decider enforces: a step that takes the base case has this
+//! step's circuit id, the unit output header and padding output slots.
+//! Conversely, a proof with this circuit id that does not take the base case
+//! has this circuit enforced, and this circuit's input suffixes are the
+//! constant `Dummy`. An ordinary step consuming the resulting `Pcd<()>`
+//! still verifies its child claim.
+//!
+//! The bootstrap proof's polynomial slots carry padding. This circuit opens
+//! each output slot at $\zeta$ and holds it to the constant one, as the
+//! decompression step does, and the pin holds the same openings where this
+//! circuit's claim is free. So neither a minted bootstrap proof nor one
+//! installed through [`with_bootstrap`] can hand a seed's unit inputs
+//! polynomials of a prover's choosing.
 //!
 //! [`with_bootstrap`]: crate::ApplicationBuilder::with_bootstrap
 //! [`dummy_pcd`]: crate::Application::dummy_pcd

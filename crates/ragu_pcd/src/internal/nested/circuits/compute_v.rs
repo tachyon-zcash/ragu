@@ -298,7 +298,7 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D
         [left, right].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
         core::iter::empty()
     }
 }

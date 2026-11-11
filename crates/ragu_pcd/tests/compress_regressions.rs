@@ -1,7 +1,7 @@
 //! Regression checks for shared verifier targets and the statement that
 //! connects Fuse's replayed challenges to the compression transcript.
 
-use alloc::{format, string::ToString, vec, vec::Vec};
+use alloc::{string::ToString, vec, vec::Vec};
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
@@ -45,10 +45,9 @@ fn check_targets<H: Header<Fp>>(
     let mut transcript = CycleTranscript::<Pasta>::new(crate::pasta::baked(), RAGU_TAG).unwrap();
     let challenges = instance.challenges(&mut transcript).unwrap().unwrap();
     let header = ky::output_header::<Pasta, H, HEADER_SIZE>(pcd.data().clone()).unwrap();
-    let native_count =
-        claims::native_shapes::<crate::profile::Standard, _>(instance.circuit_id, Fp::ONE, &[])
-            .unwrap()
-            .len();
+    let native_count = claims::native_shapes::<crate::profile::Standard, _>(Fp::ONE, &[])
+        .unwrap()
+        .len();
     let nested_count = claims::nested_shapes::<crate::profile::Standard, _>(Fq::ONE, &[])
         .unwrap()
         .len();
@@ -76,7 +75,6 @@ fn check_targets<H: Header<Fp>>(
         // compression carries it as the first target of its opening proof.
         assert_eq!(expected.c, None, "{label}");
         assert_eq!(native.c, Some(pcd.proof().native_c()), "{label}");
-        assert_eq!(native.application, expected.application, "{label}");
         assert_eq!(native.unified_bridge, expected.unified_bridge, "{label}");
         assert_eq!(native.unified, expected.unified, "{label}");
         assert_eq!(nested.c, expected_nested.c, "{label}");
@@ -215,36 +213,6 @@ fn decider_rejects_malformed_inputs_and_propagates_header_errors() {
         bump!(pre_beta, Fp::ONE);
         bump!(bridge_alpha, Fq::ONE);
 
-        for left in [true, false] {
-            for length in [0, 1, 2, 3, 5] {
-                rejects_edit(
-                    app,
-                    &pcd,
-                    &format!("left={left}, header length={length}"),
-                    |proof| {
-                        let header = if left {
-                            &mut proof.left_header
-                        } else {
-                            &mut proof.right_header
-                        };
-                        header.resize(length, Fp::ZERO);
-                    },
-                );
-            }
-            rejects_edit(
-                app,
-                &pcd,
-                &format!("left={left}, header content"),
-                |proof| {
-                    let header = if left {
-                        &mut proof.left_header
-                    } else {
-                        &mut proof.right_header
-                    };
-                    header[0] += Fp::ONE;
-                },
-            );
-        }
         rejects_edit(app, &pcd, "out-of-domain circuit", |proof| {
             proof.circuit_id = CircuitIndex::new(u32::MAX as usize);
         });

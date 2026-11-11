@@ -20,7 +20,10 @@ use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::{fft::bit_reverse, field::Field};
 
-use super::_04_inner_error::{NestedRegistryWy, RegistryWy};
+use super::{
+    _01_application::NativeApplication,
+    _04_inner_error::{NestedRegistryWy, RegistryWy},
+};
 use crate::{
     Application, Proof,
     internal::{native, nested},
@@ -43,6 +46,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &NestedRegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::query::Witness<C>,
@@ -51,8 +55,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let query_witness =
-            self.compute_native_query(rng, w, x, y, z, registry_wy, left, right, builder)?;
+        let query_witness = self.compute_native_query(
+            rng,
+            w,
+            x,
+            y,
+            z,
+            registry_wy,
+            left,
+            right,
+            application,
+            builder,
+        )?;
         let nested_query =
             self.compute_nested_query(rng, w, x, y, z, nested_registry_wy, left, right, builder)?;
         Ok((query_witness, nested_query))
@@ -68,6 +82,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         registry_wy: &RegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::query::Witness<C>>
     where
@@ -87,16 +102,25 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         });
         let registry_xy_poly = B::registry_interpolate_xy(&self.native_registry, registry_xy_evals);
 
-        // Evaluate the registry polynomial at w concurrently with the
-        // left/right child witness construction.
-        let (registry_wxy, left_witness, right_witness) = par_join!(
-            || B::sparse_eval(&registry_xy_poly, w),
+        // Evaluate the registry polynomial at w and at the step's own circuit
+        // id, and the step's own application trace and stage at xz,
+        // concurrently with the left/right child witness construction.
+        let (
+            (registry_wxy, registry_xy_at_circuit_id, application_at_xz, application_stage_at_xz),
+            left_witness,
+            right_witness,
+        ) = par_join!(
+            || (
+                B::sparse_eval(&registry_xy_poly, w),
+                B::sparse_eval(&registry_xy_poly, application.circuit_id.omega_j()),
+                B::sparse_eval(&application.rx, xz),
+                B::sparse_eval(&application.stage.rx, xz),
+            ),
             || native::stages::query::ChildEvaluationsWitness::from_proof::<C, R, B>(
                 left,
                 w,
                 x,
                 xz,
-                &registry_xy_poly,
                 &registry_wy.poly,
             ),
             || native::stages::query::ChildEvaluationsWitness::from_proof::<C, R, B>(
@@ -104,7 +128,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 w,
                 x,
                 xz,
-                &registry_xy_poly,
                 &registry_wy.poly,
             ),
         );
@@ -112,9 +135,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let query_witness = native::stages::query::Witness {
             fixed_registry,
             registry_wxy,
+            registry_xy_at_circuit_id,
+            application_at_xz,
+            application_stage_at_xz,
             left: left_witness,
             right: right_witness,
-            online: *builder.online_openings(),
         };
 
         let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(

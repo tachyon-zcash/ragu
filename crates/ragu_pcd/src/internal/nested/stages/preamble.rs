@@ -28,18 +28,18 @@ use crate::{
     profile::{Profile, ProfiledCycle},
 };
 
-/// Number of curve points in this stage in profile `P`: the native
-/// preamble's commitment, those of the two native points stages committed
-/// before $w$, the step's own online polynomials' (see [`online`]) and its
-/// application stage's, then for each child every native rx commitment, its
-/// $a$, $b$, `registry_xy` and $P$, and its exported online commitments.
+/// Number of curve points in this stage in profile `P`: those of the two
+/// native points stages committed before $w$, the step's own online
+/// polynomials' (see [`online`]) and its application stage's, then for each
+/// child every native rx commitment, its $a$, $b$, `registry_xy` and $P$,
+/// and its exported online commitments.
 pub fn num_points<P: Profile>() -> usize {
-    3 + NUM_ONLINE_POLYNOMIALS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_POLYNOMIALS)
+    2 + NUM_ONLINE_POLYNOMIALS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_POLYNOMIALS)
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
 ///
-/// The initial fields (application through compute_v) are the primary
+/// The initial fields (hashes_1 through compute_v) are the primary
 /// introduction of child circuit commitments into the nested transcript.
 /// The remaining `stashed_*` fields are copies of values the child's nested
 /// unified instance exports, placed here so that loading can enforce them
@@ -52,8 +52,6 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     // The `_10_p` accumulation order is `RxIndex::all`'s, which the `Index`
     // impl on `ChildOutput` reads the fields in; the field order itself is
     // not load-bearing.
-    /// Commitment from the child's application circuit.
-    pub application: C,
     /// Commitment from the child's first hashes circuit.
     pub hashes_1: C,
     /// Commitment from the child's second hashes circuit.
@@ -108,9 +106,6 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     /// The child's exported polynomial-query commitments, which this step
     /// opens as its left or right slots.
     pub stashed_online_commitments: [C; NUM_ONLINE_POLYNOMIALS],
-    /// Stashed commitment of the child's application stage, which this
-    /// step folds with the child's application trace.
-    pub stashed_application_stage: C,
 
     /// The scalars of the child's nested unified instance: its nested
     /// accumulator value and batch evaluation, and the lifts of its $x$, $y$
@@ -143,7 +138,6 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
         use crate::internal::native::RxComponent;
         let instance = proof.nested_instance()?;
         Ok(Self {
-            application: proof.native_rx_commitment(RxIndex::Application),
             hashes_1: proof.native_rx_commitment(RxIndex::Hashes1),
             hashes_2: proof.native_rx_commitment(RxIndex::Hashes2),
             collapse: proof.native_rx_commitment(RxIndex::Collapse),
@@ -178,7 +172,6 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
             stashed_online_commitments: proof.online_commitments(),
-            stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -191,9 +184,11 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
 }
 
 /// Witness data for the preamble bridge stage.
+///
+/// The native preamble stage's commitment is not here: it holds the step's
+/// own output header and online openings, which the step's circuit fixes
+/// after $w$, so the `s_prime` bridge carries it.
 pub struct Witness<C: Affine, P: Profile> {
-    /// Commitment from the native preamble stage.
-    pub native_preamble: C,
     /// Commitment of the native points binding stage, fixed here before
     /// $w$ is squeezed.
     pub native_points_binding: C,
@@ -206,8 +201,9 @@ pub struct Witness<C: Affine, P: Profile> {
     /// exported points as its input polynomial commitments.
     pub online_commitments: [C; NUM_ONLINE_POLYNOMIALS],
     /// The commitment of the step's own application stage, fixed here
-    /// before $w$ is squeezed and exported for the parent, which folds the
-    /// stage against it.
+    /// before $w$ is squeezed. The step folds the stage's claims itself
+    /// and walks the commitment with its own application trace, so the
+    /// parent never reads it.
     pub application_stage: C,
     /// Witness data from the left child proof.
     pub left: ChildWitness<C, P>,
@@ -220,9 +216,6 @@ pub struct Witness<C: Affine, P: Profile> {
 pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     // Read by `RxIndex` through the `Index` impl below, in the `_10_p`
     // accumulation order; the field order itself is not load-bearing.
-    /// Point commitment from the child's application circuit.
-    #[ragu(gadget)]
-    pub application: Point<'dr, D, C>,
     /// Point commitment from the child's first hashes circuit.
     #[ragu(gadget)]
     pub hashes_1: Point<'dr, D, C>,
@@ -302,9 +295,6 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// The child's exported polynomial-query commitments.
     #[ragu(gadget)]
     pub stashed_online_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
-    /// Stashed commitment of the child's application stage.
-    #[ragu(gadget)]
-    pub stashed_application_stage: Point<'dr, D, C>,
 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
@@ -353,7 +343,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 self.stashed_points_f.clone(),
                 self.stashed_online_commitments[0].clone(),
                 self.stashed_online_commitments[1].clone(),
-                self.stashed_application_stage.clone(),
             ])
             .expect("NUM_EXPORTED commitments"),
         }
@@ -368,8 +357,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
     fn index(&self, idx: RxIndex) -> &Point<'dr, D, C> {
         use RxIndex::*;
         match idx {
-            Application => &self.application,
-            ApplicationStage => &self.stashed_application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
             Collapse => &self.collapse,
@@ -398,7 +385,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
     fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, P>>) -> Result<Self> {
         Ok(ChildOutput {
-            application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
             hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
             collapse: Point::alloc(dr, witness.as_ref().map(|w| w.collapse))?,
@@ -447,10 +433,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                     witness.as_ref().map(|w| w.stashed_online_commitments[i]),
                 )
             })?,
-            stashed_application_stage: Point::alloc(
-                dr,
-                witness.as_ref().map(|w| w.stashed_application_stage),
-            )?,
             nested: {
                 let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
                     Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))
@@ -472,9 +454,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// Point commitment from the native preamble stage.
-    #[ragu(gadget)]
-    pub native_preamble: Point<'dr, D, C>,
     /// Point commitment from the native points binding stage.
     #[ragu(gadget)]
     pub native_points_binding: Point<'dr, D, C>,
@@ -485,7 +464,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// instance's exported commitments by nested collapse.
     #[ragu(gadget)]
     pub online_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
-    /// The commitment of the step's own application stage.
+    /// The commitment of the step's own application stage, which the
+    /// `loading` circuit walks with the step's own application trace.
     #[ragu(gadget)]
     pub application_stage: Point<'dr, D, C>,
     /// Output gadget for the left child proof.
@@ -520,7 +500,6 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         Ok(Output {
-            native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
             native_points_binding: Point::alloc(
                 dr,
                 witness.as_ref().map(|w| w.native_points_binding),

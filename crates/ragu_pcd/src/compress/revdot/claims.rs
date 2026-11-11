@@ -155,9 +155,7 @@ pub(crate) struct Shape<Id, F> {
 }
 
 /// A [`Source`] over one proof's native components, by identity.
-struct NativeIds {
-    circuit_id: CircuitIndex,
-}
+struct NativeIds;
 
 impl Source for NativeIds {
     type RxComponent = native::RxComponent;
@@ -168,8 +166,9 @@ impl Source for NativeIds {
         once(component)
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        once(self.circuit_id)
+    /// A proof folds its own application claim, so its decider has none.
+    fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [native::RxComponent; 2])> {
+        empty()
     }
 }
 
@@ -185,7 +184,7 @@ impl Source for NestedIds {
         once(component)
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn applications(&self) -> impl Iterator<Item = ((), [nested::RxComponent; 2])> {
         empty()
     }
 }
@@ -290,11 +289,11 @@ fn with_masked<Id: Copy, F: Field>(
     shapes
 }
 
-/// The shapes of the native claims of a proof in profile `P` whose
-/// application circuit is `circuit_id`, in the decider's order, then the
-/// `masked` wire claims in theirs.
+/// The shapes of the native claims of a proof in profile `P`, in the
+/// decider's order, then the `masked` wire claims in theirs. A proof folds
+/// its own application claim, so none of them is an application claim and
+/// the shapes do not depend on the proof's circuit id.
 pub(crate) fn native_shapes<P: Profile, F: Field>(
-    circuit_id: CircuitIndex,
     z: F,
     masked: &[Masked<native::RxComponent, F>],
 ) -> Result<Vec<Shape<native::RxComponent, F>>> {
@@ -302,7 +301,7 @@ pub(crate) fn native_shapes<P: Profile, F: Field>(
         z,
         shapes: Vec::new(),
     };
-    native::claims::build::<P, _, _>(&NativeIds { circuit_id }, &mut shaper)?;
+    native::claims::build::<P, _, _>(&NativeIds, &mut shaper)?;
     Ok(with_masked(shaper.shapes, masked))
 }
 

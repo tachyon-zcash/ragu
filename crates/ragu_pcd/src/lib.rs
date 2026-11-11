@@ -327,9 +327,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// The proof is checked for this profile's shape and for being a proof of
     /// the bootstrap step, not for validity. No supplied proof can make
-    /// anything verify that otherwise would not, since every
-    /// [`seed`](Application::seed) enforces its children's claims, but one
-    /// that does not verify makes every proof built on it fail verification.
+    /// anything verify that otherwise would not. Every
+    /// [`seed`](Application::seed) enforces its children's claims, and
+    /// those claims hold a proof of the bootstrap step to the unit header
+    /// and padding polynomial slots, whatever its own application claim,
+    /// which no one enforces. But a supplied proof that does not verify
+    /// makes every proof built on it fail verification.
     /// Key a stored proof by everything that fixes it (see
     /// [`Application::bootstrap_proof`]) so that a changed application never
     /// loads a stale one.
@@ -340,7 +343,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// profile's shape or is not a proof of the bootstrap step.
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
         let bootstrap = step::InternalStepIndex::Bootstrap.circuit_index::<C::Profile>()?;
-        if !proof.well_formed::<HEADER_SIZE>() || proof.circuit_id() != bootstrap {
+        if !proof.well_formed() || proof.circuit_id() != bootstrap {
             return Err(Error::Initialization(
                 "the supplied proof is not a bootstrap proof of this profile's shape".into(),
             ));

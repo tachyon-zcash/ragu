@@ -119,7 +119,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             };
         }
 
-        if !pcd.proof().well_formed::<HEADER_SIZE>() {
+        if !pcd.proof().well_formed() {
             return Ok(false);
         }
 
@@ -128,16 +128,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let y = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let z = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
 
-        // The proof's circuit_id selects which wiring polynomial the verifier
-        // checks against, and every domain point carries one, so an in-domain id
-        // is always well defined. It need not name a circuit: the domain also
-        // holds registered bonding polynomials and, at unassigned points, the
-        // zero polynomial, which is itself a bonding polynomial. Letting the
-        // prover choose freely among them is safe because this check expects a
-        // circuit and so fixes k_0 = 1, which no bonding polynomial (s(X, 0) =
-        // 0) can satisfy. Rejecting out-of-domain ids keeps the selection inside
-        // that argument, rather than an evaluation of the registry interpolation
-        // at an arbitrary point.
+        // The proof's circuit_id selects which wiring polynomial the proof's
+        // own application claim was folded against, and every domain point
+        // carries one, so an in-domain id is always well defined. It need not
+        // name a circuit: the domain also holds registered bonding polynomials
+        // and, at unassigned points, the zero polynomial, which is itself a
+        // bonding polynomial. Letting the prover choose freely among them is
+        // safe because the fold treats the claim as a circuit's and so fixes
+        // k_0 = 1, which no bonding polynomial (s(X, 0) = 0) can satisfy. The
+        // proof's `hashes_1` holds its id to the registry domain in-circuit;
+        // this check keeps the id the decider reads (for that circuit's k(y)
+        // and the mesh claim's m(id, x, y)) inside the same domain.
         // (Internal circuit IDs are constants and don't need this check.)
         if !self
             .native_registry
@@ -154,7 +155,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             return Ok(false);
         };
 
-        // Compute unified k(y), unified_bridge k(y), and application k(y).
+        // Compute unified k(y) and unified_bridge k(y). The root folded its own
+        // application claim, so there is none to target here.
         // The raw claim's target stays `None`: see `SingleProofSource::rx`.
         let output_header =
             ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?.try_into()?;
@@ -240,11 +242,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // Recompute this proof's unblinded nested challenge stage from its
         // native challenges, base-case sign and `pre_beta`, and compare its
-        // coefficients. A parent holds a child's stage to the child's headers
-        // through `bind_beta`, its walk and its nested batch; the root has no
-        // parent, so the decider holds the root's stage to its headers here.
-        let nested_challenges_claim =
-            nested_challenges_match::<C, R, HEADER_SIZE>(pcd.proof(), &lifts)?;
+        // coefficients. A parent holds a child's stage to the child's own
+        // binders through `bind_beta`, its walk and its nested batch; the
+        // root has no parent, so the decider holds the root's stage here,
+        // with the base-case sign read off the root's circuit id.
+        let nested_challenges_claim = nested_challenges_match::<C, R>(pcd.proof(), &lifts)?;
 
         // Check cached commitments against their polynomials in one batch
         // per curve, including P = Com(p) and P_n = Com(p_n). The endoscaling
@@ -425,20 +427,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let (w, x, y, u) = (proof.w(), proof.x(), proof.y(), proof.u());
         let m = |w, x, y| Verifier::<B>::registry_wxy(registry, w, x, y);
 
-        // The children's challenges and circuit ids, off the preamble.
+        // The children's challenges, off the preamble. The step's own
+        // circuit id is the proof's: the root's `hashes_1` claim binds the
+        // preamble's copy to it.
         let preamble = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Preamble]);
         let child = stage_wire_indices::<_, R, Preamble<C, R, HEADER_SIZE>>(|out| {
             let mut wires = Vec::new();
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
             }
             Ok(wires)
         })?;
         let child: Vec<C::CircuitField> = child.iter().map(|&i| preamble.read(i)).collect();
-        let [left_x, left_y, left_id, right_x, right_y, right_id] =
-            child.try_into().expect("six child values");
+        let [left_x, left_y, right_x, right_y] = child.try_into().expect("four child values");
+        let id = proof.circuit_id().omega_j();
 
         // The query stage's registry values.
         let query = StageReader::<C::CircuitField, R>::new(&proof[RxIndex::Query]);
@@ -446,9 +449,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let claimed = stage_wire_indices::<_, R, Query<C, R, HEADER_SIZE>>(|out| {
             fixed = wires_of(&out.fixed_registry)?;
             let mut wires = wires_of(&out.registry_wxy)?;
+            wires.extend(wires_of(&out.registry_xy_at_circuit_id)?);
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
                 wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
             }
             Ok(wires)
@@ -466,11 +469,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let query_claim = claimed
             == [
                 m(w, x, y),
+                m(id, x, y),
                 m(w, left_x, left_y),
-                m(left_id, x, y),
                 m(w, left_x, y),
                 m(w, right_x, right_y),
-                m(right_id, x, y),
                 m(w, right_x, y),
             ];
 
@@ -634,23 +636,23 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 }
 
 /// Whether the proof's nested challenge stage equals the stage recomputed,
-/// with zero blinding, from `lifts` and the proof's headers.
+/// with zero blinding, from `lifts` and the proof's circuit id.
 ///
 /// `lifts` holds the native challenges' lifts followed by the lift of
-/// `pre_beta`, and the headers fix the base-case sign. `verify_uncompressed`
+/// `pre_beta`, and the circuit id fixes the base-case sign (see
+/// [`nested_challenges::Witness::new`]). `verify_uncompressed`
 /// checks this for the root; a parent enforces it for each child through
 /// `bind_beta`, its walk and its nested batch.
-pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
+pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank>(
     proof: &Proof<C, R>,
     lifts: &[C::ScalarField; nested_challenges::NUM + 1],
 ) -> Result<bool> {
     let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
     let expected = nested_challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
         C::ScalarField::ZERO,
-        &nested_challenges::Witness::new::<_, HEADER_SIZE>(
+        &nested_challenges::Witness::new(
             challenge_lifts.try_into().expect("NUM challenge lifts"),
-            proof.left_header(),
-            proof.right_header(),
+            nested_challenges::is_bootstrap::<C::Profile>(proof.circuit_id())?,
             beta_lift[0],
         ),
     )?;
@@ -723,8 +725,11 @@ mod native {
             .into_iter()
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-            core::iter::once(self.proof.circuit_id())
+        /// A proof folds its own application claim into its accumulator,
+        /// so the decider has none to check: the claim is covered by the
+        /// root's `collapse` and `compute_v` claims and its batch.
+        fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
+            core::iter::empty()
         }
     }
 }
@@ -748,7 +753,7 @@ mod nested {
             core::iter::once(&self.proof[component])
         }
 
-        fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
+        fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
             core::iter::empty()
         }
     }

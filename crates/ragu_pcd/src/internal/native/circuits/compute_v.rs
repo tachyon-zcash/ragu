@@ -17,12 +17,12 @@
 //!   (first query receives highest $\alpha$ power)
 //!
 //! ### Online openings
-//! The step's online openings $(x_i, y_i)$ are `query` stage wires. The
+//! The step's online openings $(x_i, y_i)$ are `preamble` stage wires. The
 //! circuit folds them into $f(u)$ as any other opening, which is what proves
-//! each slot's polynomial takes the value $y_i$ at $x_i$, and exports the
-//! pairs in its instance so that the parent can hold the application
-//! circuit's instance to the openings this step verified (see
-//! [`online`]).
+//! each slot's polynomial takes the value $y_i$ at $x_i$. The same wires
+//! enter the step's own application claim in [`collapse`], so the instance
+//! the step circuit satisfied is held to the openings this circuit verifies
+//! (see [`online`]).
 //!
 //! ### $v$ computation
 //! - Extract endoscalar from [$\beta$] and compute effective beta via lift
@@ -37,14 +37,7 @@
 //! - [`query`] (unenforced) - provides registry and polynomial evaluations
 //! - [`eval`] (unenforced) - provides evaluation component polynomials
 //!
-//! ## Instance
-//!
-//! The [`unified::Output`] followed by the online openings and the zero
-//! suffix ([`Output`]): $k(Y) = \mathrm{Horner}(\mathit{unified}, x_0, y_0,
-//! \ldots, 0, 1)$, which the parent's preamble recomputes as
-//! [`compute_v_bridge_ky`](native_preamble::ProofInputs::compute_v_bridge_ky),
-//! the way `hashes_1` exports the child headers.
-//!
+//! [`collapse`]: super::collapse
 //! [`preamble`]: super::super::stages::preamble
 //! [`query`]: super::super::stages::query
 //! [`eval`]: super::super::stages::eval
@@ -66,12 +59,11 @@ use ragu_circuits::{
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget, Kind},
+    gadgets::Bound,
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Endoscalar, EndoscalarChallenge, GadgetExt, WithSuffix, allocator::Standard,
-    io::Write, vec::FixedVec,
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt, allocator::Standard, vec::FixedVec,
 };
 
 use super::super::{
@@ -94,19 +86,6 @@ use crate::{
     },
     profile::{Profile, ProfiledCycle},
 };
-
-/// Public output of the compute-v circuit: the unified instance and the
-/// step's online openings, which the parent holds the application circuit's
-/// instance to.
-#[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
-    /// The unified instance shared across internal circuits.
-    #[ragu(gadget)]
-    pub unified: unified::Output<'dr, D, C>,
-    /// The online openings, in slot order, as the `query` stage holds them.
-    #[ragu(gadget)]
-    pub online: online::QueriesOutput<'dr, D>,
-}
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
 ///
@@ -153,7 +132,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
 
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C, R, HEADER_SIZE>;
-    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C>>];
+    type Output = unified::InternalOutputKind<C>;
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -245,7 +224,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let alpha = unified_output.alpha.read(dr, allocator)?;
                 let u = unified_output.u.read(dr, allocator)?;
                 let denominators =
-                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble, &query)?;
+                    Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble)?;
                 let mut horner = Horner::new(&alpha);
                 for (pu, v, denominator) in poly_queries(
                     eval,
@@ -275,16 +254,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             unified_output.v.provide(computed_v);
         }
 
-        // The online openings join the instance, read straight off the
-        // query stage, for the parent to hold the application circuit's
-        // instance to.
-        let (unified, aux) = unified_output.finish_no_suffix(dr, allocator)?;
-        let output = Output {
-            unified,
-            online: query.online,
-        };
-        let zero = Element::zero(dr);
-        Ok(WithAux::new(WithSuffix::new(output, zero), aux))
+        let (output, aux) = unified_output.finish(dr, allocator)?;
+        Ok(WithAux::new(output, aux))
     }
 }
 
@@ -293,15 +264,16 @@ struct ChildDenominators<'dr, D: Driver<'dr>> {
     u: Element<'dr, D>,
     y: Element<'dr, D>,
     x: Element<'dr, D>,
-    circuit_id: Element<'dr, D>,
 }
 
-/// Denominators for current step challenge points.
+/// Denominators for current step points: its challenges and its own
+/// circuit id.
 struct ChallengeDenominators<'dr, D: Driver<'dr>> {
     w: Element<'dr, D>,
     x: Element<'dr, D>,
     y: Element<'dr, D>,
     xz: Element<'dr, D>,
+    circuit_id: Element<'dr, D>,
 }
 
 /// Denominator component of all quotient polynomial evaluations.
@@ -311,8 +283,8 @@ struct ChallengeDenominators<'dr, D: Driver<'dr>> {
 /// in the [`poly_queries`] iterator.
 ///
 /// The denominators are organized by source:
-/// - `left`/`right`: Child proof evaluation points ($u$, $y$, $x$, circuit\_id)
-/// - `challenges`: Current step challenge points ($w$, $x$, $y$, $xz$)
+/// - `left`/`right`: Child proof evaluation points ($u$, $y$, $x$)
+/// - `challenges`: Current step points ($w$, $x$, $y$, $xz$, circuit\_id)
 /// - `internal`: Internal circuit $\omega^j$ evaluation points
 /// - `online`: The online openings' points, one per slot
 struct Denominators<'dr, D: Driver<'dr>, P: Profile> {
@@ -332,7 +304,6 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         preamble: &native_preamble::Output<'dr, D, C, HEADER_SIZE>,
-        query: &native_query::Output<'dr, D, P>,
     ) -> Result<Self> {
         let xz = x.mul(dr, z)?;
 
@@ -341,25 +312,24 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
         let left_u = inverter.add(dr, &preamble.left.unified.u)?;
         let left_y = inverter.add(dr, &preamble.left.unified.y)?;
         let left_x = inverter.add(dr, &preamble.left.unified.x)?;
-        let left_circuit_id = inverter.add(dr, &preamble.left.circuit_id)?;
         let right_u = inverter.add(dr, &preamble.right.unified.u)?;
         let right_y = inverter.add(dr, &preamble.right.unified.y)?;
         let right_x = inverter.add(dr, &preamble.right.unified.x)?;
-        let right_circuit_id = inverter.add(dr, &preamble.right.circuit_id)?;
         let challenges_w = inverter.add(dr, w)?;
         let challenges_x = inverter.add(dr, x)?;
         let challenges_y = inverter.add(dr, y)?;
         let challenges_xz = inverter.add(dr, &xz)?;
+        let challenges_circuit_id = inverter.add(dr, &preamble.own.circuit_id)?;
 
         let circuit_indices = InternalCircuitValues::<_, P>::try_from_fn(|id| {
             inverter.add_circuit(dr, id.circuit_index::<C::Profile>())
         })?;
-        // The online points are witness wires of the query stage, so each
-        // is its own denominator even when it equals a challenge: the
+        // The online points are witness wires of the preamble stage, so
+        // each is its own denominator even when it equals a challenge: the
         // circuit cannot know which, and that is what lets a step open a
         // slot anywhere.
         let online = FixedVec::<usize, online::QueriesLen>::try_from_fn(|i| {
-            inverter.add(dr, &query.online[i].x)
+            inverter.add(dr, &preamble.own.online[i].x)
         })?;
 
         let inverted = inverter.invert(dr)?;
@@ -369,19 +339,18 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
                 u: inverted[left_u].clone(),
                 y: inverted[left_y].clone(),
                 x: inverted[left_x].clone(),
-                circuit_id: inverted[left_circuit_id].clone(),
             },
             right: ChildDenominators {
                 u: inverted[right_u].clone(),
                 y: inverted[right_y].clone(),
                 x: inverted[right_x].clone(),
-                circuit_id: inverted[right_circuit_id].clone(),
             },
             challenges: ChallengeDenominators {
                 w: inverted[challenges_w].clone(),
                 x: inverted[challenges_x].clone(),
                 y: inverted[challenges_y].clone(),
                 xz: inverted[challenges_xz].clone(),
+                circuit_id: inverted[challenges_circuit_id].clone(),
             },
             internal: InternalCircuitValues::<_, P>::from_fn(|id| {
                 inverted[*circuit_indices.get(id)].clone()
@@ -401,6 +370,10 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
 struct EvaluationSource<'a, 'dr, D: Driver<'dr>, P: Profile> {
     left: &'a ChildEvaluations<'dr, D, P>,
     right: &'a ChildEvaluations<'dr, D, P>,
+    /// The step's own application claim: the registry evaluation at its
+    /// circuit's omega^j, then its rx and its application stage's rx at
+    /// $xz$.
+    application: (&'a Element<'dr, D>, [&'a Element<'dr, D>; 2]),
 }
 
 impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D, P> {
@@ -419,12 +392,8 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Source for EvaluationSource<'a, 'dr, D
         [left, right].into_iter()
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = Self::AppCircuitId> {
-        [
-            &self.left.current_registry_xy_at_child_circuit_id,
-            &self.right.current_registry_xy_at_child_circuit_id,
-        ]
-        .into_iter()
+    fn applications(&self) -> impl Iterator<Item = (Self::AppCircuitId, [Self::Rx; 2])> {
+        core::iter::once(self.application)
     }
 }
 
@@ -574,6 +543,10 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     let source = EvaluationSource {
         left: &query.left,
         right: &query.right,
+        application: (
+            &query.registry_xy_at_circuit_id,
+            [&query.application_at_xz, &query.application_stage_at_xz],
+        ),
     };
     let mut processor = EvaluationProcessor::new(dr, z, txz, &query.fixed_registry);
     claims::build::<Pf, _, _>(&source, &mut processor)?;
@@ -598,11 +571,11 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
 /// 1. **Child proof $p(u) = v$ checks** - Verify child proof evaluations
 /// 2. **Registry polynomial transitions** -
 ///    $m(W, x, y) \to m(w, x, Y) \to m(w, X, y) \to s(W, x, y)$
-/// 3. **Application circuit registry evaluations** -
-///    $m(\text{circuit\_id}, x, y)$
+/// 3. **Application circuit registry evaluation** -
+///    $m(\text{circuit\_id}, x, y)$ at the step's own circuit id
 /// 4. **$a(xz),\, b(x)$ polynomial queries** — $a$ at $xz$, $b$ at $x$,
 ///    including verifier-computed values for each child and the current
-///    accumulator
+///    accumulator, then the step's own application rx at $xz$
 /// 5. **Stage/circuit `rx` evaluations** — each $r\_i$ queried at $xz$ for each
 ///    child. The same $r\_i(xz)$ evaluations feed into both the $A(xz)$
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
@@ -671,15 +644,10 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
         ),
         StaticFQuery::RegistryWyAtX => (&eval.registry_wy, &query.registry_wxy, &d.challenges.x),
         StaticFQuery::RegistryXyAtW => (&eval.registry_xy, &query.registry_wxy, &d.challenges.w),
-        StaticFQuery::RegistryXyAtLeftCircuitId => (
+        StaticFQuery::RegistryXyAtCircuitId => (
             &eval.registry_xy,
-            &query.left.current_registry_xy_at_child_circuit_id,
-            &d.left.circuit_id,
-        ),
-        StaticFQuery::RegistryXyAtRightCircuitId => (
-            &eval.registry_xy,
-            &query.right.current_registry_xy_at_child_circuit_id,
-            &d.right.circuit_id,
+            &query.registry_xy_at_circuit_id,
+            &d.challenges.circuit_id,
         ),
         StaticFQuery::LeftAbAAtXz => (
             &eval.left.a_poly,
@@ -699,6 +667,16 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
         ),
         StaticFQuery::CurrentAAtXz => (&eval.a_poly, computed_ax, &d.challenges.xz),
         StaticFQuery::CurrentBAtX => (&eval.b_poly, computed_bx, &d.challenges.x),
+        StaticFQuery::CurrentApplicationAtXz => (
+            &eval.application,
+            &query.application_at_xz,
+            &d.challenges.xz,
+        ),
+        StaticFQuery::CurrentApplicationStageAtXz => (
+            &eval.application_stage,
+            &query.application_stage_at_xz,
+            &d.challenges.xz,
+        ),
     })
     // Stage and circuit rx evaluations at xz for each child proof.
     // The same r_i(xz) values feed into both A(xz) (undilated) and
@@ -714,6 +692,6 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
     }))
     // The online openings, in slot order.
     .chain((0..online::NUM_ONLINE_QUERIES).map(move |i| {
-        (&eval.online[i], &query.online[i].y, &d.online[i])
+        (&eval.online[i], &preamble.own.online[i].y, &d.online[i])
     }))
 }

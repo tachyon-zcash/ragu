@@ -52,7 +52,7 @@ pub(crate) mod support {
             },
             nested::{
                 self,
-                stages::{eval as nested_eval, preamble},
+                stages::{eval as nested_eval, preamble, s_prime},
             },
         },
         step::{Encoded, Index, Oracles, Step},
@@ -681,6 +681,7 @@ pub(crate) mod support {
         NativePreamble,
         NativeEval,
         BridgePreamble,
+        BridgeSPrime,
         BridgeEval,
         NestedChallenges,
     }
@@ -704,6 +705,9 @@ pub(crate) mod support {
             }
             Cache::BridgePreamble => {
                 proof.bridge_preamble_commitment = nested_commit(app, &proof.bridge_preamble_rx);
+            }
+            Cache::BridgeSPrime => {
+                proof.bridge_s_prime_commitment = nested_commit(app, &proof.bridge_s_prime_rx);
             }
             Cache::BridgeEval => {
                 proof.bridge_eval_commitment = nested_commit(app, &proof.bridge_eval_rx);
@@ -789,29 +793,23 @@ pub(crate) mod support {
         pub(crate) fn repair_bridge(self, app: &App, proof: &mut Proof<C, R>) -> Result<()> {
             match self {
                 Self::EvalLeftP | Self::EvalRightP => repair_bridge_eval_slot(app, proof),
-                Self::PreambleLeftV | Self::PreambleLeftU => {
-                    repair_bridge_preamble_slot(app, proof)
-                }
+                Self::PreambleLeftV | Self::PreambleLeftU => repair_bridge_s_prime_slot(app, proof),
             }
         }
     }
 
-    /// Copies the native preamble commitment into the `preamble` bridge
+    /// Copies the native preamble commitment into the `s_prime` bridge
     /// stage's `native_preamble` slot and recommits the bridge, the preamble
     /// counterpart of [`repair_bridge_eval_slot`]. What remains inconsistent
-    /// is the transcript: `w` was squeezed over the old bridge commitment.
-    pub(crate) fn repair_bridge_preamble_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
+    /// is the transcript: `y` was squeezed over the old bridge commitment.
+    pub(crate) fn repair_bridge_s_prime_slot(app: &App, proof: &mut Proof<C, R>) -> Result<()> {
         let [x, y] = coordinates(proof.native_rx_commitment(native::RxIndex::Preamble));
         let wires =
-            stage_wire_indices::<Fq, R, preamble::Stage<EqAffine, R, crate::profile::Standard>>(
+            stage_wire_indices::<Fq, R, s_prime::Stage<EqAffine, R, crate::profile::Standard>>(
                 |out| wires_of(&out.native_preamble),
             )?;
-        set_wires(
-            Arc::make_mut(&mut proof.bridge_preamble_rx),
-            &wires,
-            &[x, y],
-        );
-        recommit(app, proof, Cache::BridgePreamble);
+        set_wires(Arc::make_mut(&mut proof.bridge_s_prime_rx), &wires, &[x, y]);
+        recommit(app, proof, Cache::BridgeSPrime);
         Ok(())
     }
 
@@ -1427,7 +1425,7 @@ mod commitments {
         field::Field,
     };
 
-    use super::support::{self, C, HEADER_SIZE, R};
+    use super::support::{self, C, R};
     use crate::{Pcd, Proof, header::Header, internal::nested, profile::ProfiledCycle};
 
     fn check_coefficients<H: Header<ragu_core::pasta::Fp>>(
@@ -1516,10 +1514,11 @@ mod commitments {
         //    beta's lift.
         let lifts = parent.challenges().lifts::<C>()?;
         let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
-        let challenges = nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
+        let challenges = nested::stages::challenges::Witness::new(
             challenge_lifts.try_into().unwrap(),
-            parent.left_header(),
-            parent.right_header(),
+            nested::stages::challenges::is_bootstrap::<crate::profile::Standard>(
+                parent.circuit_id(),
+            )?,
             beta_lift[0],
         );
         assert_eq!(challenges.base_case_sign, sign);

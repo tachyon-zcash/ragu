@@ -21,8 +21,8 @@ use udon::field::Field;
 
 use crate::{
     Application, ApplicationBuilder, Pcd,
+    fuse::NativeApplication,
     header::{Header, Suffix},
-    internal::native::RxIndex,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
 
@@ -296,34 +296,45 @@ fn check_through_recursion(
     }
 }
 
-/// Adds `delta` to the `a` wire of `gate` in the given application
-/// polynomial and recommits it, as a prover bypassing the API would.
-fn edit<H: Header<Fp>>(
+/// Which of a step's own application polynomials a prover edits.
+#[derive(Clone, Copy)]
+enum Edited {
+    Trace,
+    Stage,
+}
+
+/// Seeds `step` as a prover who, after the step's circuit ran, adds `delta`
+/// to the `a` wire of `gate` in one of its own application polynomials and
+/// recommits it, bypassing the API. The step's own fold and batch then run
+/// over the edited polynomial.
+fn edit<S: Step<Pasta, Left = (), Right = ()>>(
     app: &App,
-    pcd: Pcd<Pasta, R, H>,
-    component: RxIndex,
+    rng: &mut StdRng,
+    step: S,
+    witness: S::Witness<'_>,
+    edited: Edited,
     gate: usize,
     delta: Fp,
-) -> Pcd<Pasta, R, H> {
-    let (mut proof, data) = pcd.into_parts();
+) -> Pcd<Pasta, R, S::Output> {
     let edit = staging::stage_rx::<_, R>(Fp::ZERO, gate, 1, &[delta]).unwrap();
-    let (rx, commitment) = match component {
-        RxIndex::Application => (
-            &mut proof.native_application_rx,
-            &mut proof.native_application_commitment,
-        ),
-        RxIndex::ApplicationStage => (
-            &mut proof.native_application_stage_rx,
-            &mut proof.native_application_stage_commitment,
-        ),
-        other => panic!("not an application polynomial: {other:?}"),
-    };
-    rx.add_assign(&edit);
-    *commitment = crate::proof::Cached(ReferenceBackend::sparse_commit_to_affine(
-        rx,
-        Pasta::host_generators(app.params),
-    ));
-    proof.carry::<H>(data)
+    app.fuse_editing_application(
+        rng,
+        step,
+        witness,
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+        |application: &mut NativeApplication<Pasta, R>| {
+            let (rx, commitment) = match edited {
+                Edited::Trace => (&mut application.rx, &mut application.commitment),
+                Edited::Stage => (&mut application.stage.rx, &mut application.stage.commitment),
+            };
+            rx.add_assign(&edit);
+            *commitment =
+                ReferenceBackend::sparse_commit_to_affine(rx, Pasta::host_generators(app.params));
+        },
+    )
+    .unwrap()
+    .0
 }
 
 #[test]
@@ -368,14 +379,25 @@ fn steps_verify_with_a_large_odd_stage() {
     check_through_recursion(&app, carried, &honest, &mut rng, true);
 }
 
-/// An honest proof's stage polynomial holds exactly the step's staged
+/// An honest step's stage polynomial holds exactly the step's staged
 /// values in the stage's block and nothing else.
 #[test]
 fn the_stage_holds_exactly_the_staged_values() {
     let app = app_with_stage::<5>();
     let mut rng = StdRng::seed_from_u64(73003);
-    let honest = honest(&app, &mut rng);
-    let stage = &honest.proof()[RxIndex::ApplicationStage];
+    let mut stage = None;
+    app.fuse_editing_application(
+        &mut rng,
+        Square(true),
+        Fp::from(3),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+        |application: &mut NativeApplication<Pasta, R>| {
+            stage = Some(application.stage.rx.clone());
+        },
+    )
+    .unwrap();
+    let stage = stage.expect("the step ran");
     // The SYSTEM gate carries the prover's blinding; read it back from where
     // an otherwise empty stage places it.
     let probe = staging::stage_rx::<_, R>(Fp::ONE, 1, app.stage_size, &[]).unwrap();
@@ -389,9 +411,11 @@ fn the_stage_holds_exactly_the_staged_values() {
     );
 }
 
-/// Every proof's stage is held to its block and its step's own polynomial
-/// out of it, and its commitment is the one the step's own transcript
-/// absorbed before $\zeta$, so a proof cannot be restaged afterwards.
+/// Every step's stage is held to its block and its own polynomial out of
+/// it, and its commitment is the one the step's own transcript absorbed
+/// before $\zeta$, so a step cannot restage afterwards. The step folds
+/// these claims itself, so a violation surfaces in its own accumulator and
+/// in every ancestor's.
 #[test]
 fn the_stage_commitment_binds_exactly_the_staged_values() {
     let app = app();
@@ -405,8 +429,10 @@ fn the_stage_commitment_binds_exactly_the_staged_values() {
     // stage commitment the step's transcript absorbed.
     let moved = edit(
         &app,
-        honest.clone(),
-        RxIndex::ApplicationStage,
+        &mut rng,
+        Square(true),
+        Fp::from(3),
+        Edited::Stage,
         inside,
         delta,
     );
@@ -416,26 +442,35 @@ fn the_stage_commitment_binds_exactly_the_staged_values() {
     // mask rejects the step's own values inside it.
     let spilled = edit(
         &app,
-        honest.clone(),
-        RxIndex::ApplicationStage,
+        &mut rng,
+        Square(true),
+        Fp::from(3),
+        Edited::Stage,
         outside,
         delta,
     );
     check_through_recursion(&app, spilled, &honest, &mut rng, false);
-    let overlapped = edit(&app, honest.clone(), RxIndex::Application, inside, delta);
+    let overlapped = edit(
+        &app,
+        &mut rng,
+        Square(true),
+        Fp::from(3),
+        Edited::Trace,
+        inside,
+        delta,
+    );
     check_through_recursion(&app, overlapped, &honest, &mut rng, false);
 
     // A step that stages nothing has no wire that reads the block, but its
     // stage commitment is still the one its transcript absorbed: a prover
-    // who swaps in another stage after $\zeta$ is rejected, so the parent
-    // always folds the stage the step's challenge was drawn over.
-    let (unit, ()) = app.seed(&mut rng, Unit, ()).unwrap();
-    for (component, gate) in [
-        (RxIndex::ApplicationStage, inside),
-        (RxIndex::ApplicationStage, outside),
-        (RxIndex::Application, inside),
+    // who swaps in another stage after $\zeta$ is rejected, so the step
+    // always folds the stage its challenge was drawn over.
+    for (edited, gate) in [
+        (Edited::Stage, inside),
+        (Edited::Stage, outside),
+        (Edited::Trace, inside),
     ] {
-        let edited = edit(&app, unit.clone(), component, gate, delta);
+        let edited = edit(&app, &mut rng, Unit, (), edited, gate, delta);
         check(&app, &edited, &mut rng, false);
     }
 }

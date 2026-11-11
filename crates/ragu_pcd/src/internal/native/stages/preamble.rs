@@ -1,11 +1,49 @@
 //! Preamble stage for native fuse operations.
 //!
-//! Verifies child proof headers and computes the Ky term.
+//! Witnesses what each child proof exposes to the step that consumes it
+//! (its output header, its circuit id and its unified instance), and the
+//! step's own output header, circuit id and online openings, from which the
+//! step's own application $k(y)$ is computed.
+//!
+//! ## Commitment after $w$
+//!
+//! The stage is committed after the step's circuit ran, in the fuse's
+//! `s_prime` phase, because the output header and the openings are what the
+//! circuit fixes at $\zeta = w$ (see [`online`]). The `s_prime` bridge
+//! carries the commitment, so the stage is fixed before $y$ is squeezed.
+//!
+//! The step's own values need nothing earlier: the application claim that
+//! holds them is folded at $y$.
+//!
+//! The children's values are different. Two checks are sound only if a
+//! child's value is fixed before $w$: the registry transition at $w$ reads
+//! the child's $x$ and $y$, and a step circuit's check at $\zeta$ can read
+//! an input header's fields. These wires are committed after $w$, but they
+//! are not free after $w$:
+//!
+//! - The commitments of each child's circuit traces and stages are in the
+//!   nested `preamble` bridge, which $w$ absorbs.
+//! - A committed trace fixes its instance: $k(Y)$ is a function of the
+//!   trace. The child's unified instance, output header and circuit id are
+//!   the instance of its `hashes_1` trace, and its unified instance is the
+//!   instance of its other circuits' traces.
+//! - This step folds those claims at $y$, with each $k(y)$ computed from
+//!   the wires here, and $y$ is squeezed after this stage is committed. A
+//!   wire that differs from the value the committed trace fixes makes
+//!   $k(Y)$ a different polynomial, and the fold fails except with
+//!   probability at most its degree over the field size.
+//!
+//! So each child's value here is a function of commitments that $w$
+//! absorbed, provided the child's claims are enforced. In the base case
+//! they are not, but then the step is pinned to the bootstrap step (see
+//! [`Output::enforce_base_case_is_bootstrap`]), whose proof attests
+//! nothing: no consumer relies on its children's registry polynomials or
+//! on a check at $\zeta$ in it.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use ragu_circuits::{horner::Horner, polynomials::Rank, staging};
+use ragu_circuits::{horner::Horner, polynomials::Rank, registry::CircuitIndex, staging};
 use ragu_core::{
     Cycle, Error, Result,
     drivers::{Driver, DriverValue},
@@ -13,7 +51,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt,
+    Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
@@ -37,24 +75,43 @@ pub struct ChildWitness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     pub proof: &'a Proof<C, R>,
 }
 
+/// The step's own application data: its encoded output header, its circuit
+/// id and its online openings.
+pub struct OwnWitness<F, const HEADER_SIZE: usize> {
+    /// The step's output header, as its application circuit encodes it.
+    pub output_header: FixedVec<F, ConstLen<HEADER_SIZE>>,
+    /// The step's application circuit.
+    pub circuit_id: CircuitIndex,
+    /// The step's online openings, one per slot (see [`online`]).
+    pub online: online::Queries<F>,
+}
+
 /// Witness for the native preamble stage.
 ///
-/// Contains references to the left and right proofs, plus output headers
-/// computed outside the circuit.
+/// Contains references to the left and right proofs, their output headers
+/// computed outside the circuit, and the step's own output header, circuit
+/// id and online openings.
 pub struct Witness<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> {
     /// Left child proof witness.
     pub left: ChildWitness<'a, C, R, HEADER_SIZE>,
     /// Right child proof witness.
     pub right: ChildWitness<'a, C, R, HEADER_SIZE>,
+    /// The step's own application data.
+    pub own: OwnWitness<C::CircuitField, HEADER_SIZE>,
 }
 
 impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_SIZE> {
-    /// Create a witness from child proof references and pre-computed output headers.
+    /// Create a witness from child proof references, the children's
+    /// pre-computed output headers and the step's own output header,
+    /// circuit id and online openings.
     pub fn new(
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
         left_output_header: &[C::CircuitField],
         right_output_header: &[C::CircuitField],
+        output_header: &[C::CircuitField],
+        circuit_id: CircuitIndex,
+        online: online::Queries<C::CircuitField>,
     ) -> Result<Self> {
         Ok(Witness {
             left: ChildWitness {
@@ -65,40 +122,51 @@ impl<'a, C: Cycle, R: Rank, const HEADER_SIZE: usize> Witness<'a, C, R, HEADER_S
                 output_header: FixedVec::try_from(right_output_header.to_vec())?,
                 proof: right,
             },
+            own: OwnWitness {
+                output_header: FixedVec::try_from(output_header.to_vec())?,
+                circuit_id,
+                online,
+            },
         })
     }
 }
 
-/// Headers claimed by a child proof for its own left and right children.
-#[derive(Gadget, Consistent)]
-pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
-    /// Left child header (grandchild from current perspective).
-    #[ragu(gadget)]
-    pub left: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// Right child header (grandchild from current perspective).
-    #[ragu(gadget)]
-    pub right: HeaderVec<'dr, D, HEADER_SIZE>,
-}
-
-/// Processed inputs from a single child proof in the preamble stage.
+/// What a proof exposes to the step that consumes it: its output header,
+/// its circuit id and its unified instance.
+///
+/// The preamble holds one per child. A verifier of a proof with no parent
+/// allocates one for that proof, from its own output header and circuit id.
 #[derive(Gadget, Consistent)]
 pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
 {
-    /// Headers this child proof claimed for its own children.
-    #[ragu(gadget)]
-    pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
     /// Output header of this child proof.
     #[ragu(gadget)]
     pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
-    /// Six opening claims, in [L0, L1, R0, R1, O0, O1] order.
-    /// The parent uses these same values in the application and `compute_v`
-    /// k(y) targets, binding the application's queries to the proved openings.
-    #[ragu(gadget)]
-    pub online: online::QueriesOutput<'dr, D>,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
+}
+
+/// The step's own output header, circuit id and online openings: the
+/// output header and circuit id are the application slots the step's
+/// `hashes_1` exports for its parent, and all three enter the step's own
+/// application claim.
+#[derive(Gadget, Consistent)]
+pub struct OwnInputs<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
+    /// The step's own output header.
+    #[ragu(gadget)]
+    pub output_header: HeaderVec<'dr, D, HEADER_SIZE>,
+    /// The step's own application circuit id, as its domain point.
+    #[ragu(gadget)]
+    pub circuit_id: Element<'dr, D>,
+    /// The step's online openings, in slot order: the point each slot's
+    /// polynomial is opened at and the claimed evaluation. `collapse` folds
+    /// the application claim over them and `compute_v` folds them into the
+    /// batch, which is what holds the application's queries to the proved
+    /// openings.
+    #[ragu(gadget)]
+    pub online: online::QueriesOutput<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
@@ -109,7 +177,8 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     ///
     /// Returns `(unified_ky, unified_bridge_ky)` where:
     /// - `unified_ky` = k(y) for `(unified, 0)`
-    /// - `unified_bridge_ky` = k(y) for `(unified, children.left, children.right, 0)`
+    /// - `unified_bridge_ky` = k(y) for `(unified, output_header, circuit_id, 0)`,
+    ///   the instance this proof's `hashes_1` exported
     ///
     /// The Horner evaluation order and trailing zero here define the numerical
     /// values that [`ky_values`](super::super::claims::ky_values) must produce
@@ -129,42 +198,12 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 ky.finish_ky(dr)?
             }),
             ({
-                self.children.left.write(dr, &mut ky)?;
-                self.children.right.write(dr, &mut ky)?;
+                self.output_header.write(dr, &mut ky)?;
+                self.circuit_id.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
                 ky.finish_ky(dr)?
             }),
         ))
-    }
-
-    /// Compute k(y) for the application circuit instance: k(y) for
-    /// `(zeta, online, children.left, children.right, output_header)`, where
-    /// the child's `zeta` is its `w` and `online` its openings, both as the
-    /// unified instance and the `compute_v` bridge hold them, so that the
-    /// instance the child's step circuit satisfied is held to the openings
-    /// its batch proved by construction (see
-    /// [`Adapter`](crate::step::internal::adapter::Adapter)).
-    pub fn application_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
-        let mut ky = Horner::new(y);
-        self.unified.w.write(dr, &mut ky)?;
-        self.online.write(dr, &mut ky)?;
-        self.unified.bridge_hash_commitment.write(dr, &mut ky)?;
-        self.children.left.write(dr, &mut ky)?;
-        self.children.right.write(dr, &mut ky)?;
-        self.output_header.write(dr, &mut ky)?;
-        ky.finish_ky(dr)
-    }
-
-    /// Compute k(y) for the child's `compute_v` circuit: k(y) for
-    /// `(unified, online, 0)`, the unified instance followed by the online
-    /// openings the circuit exported (see
-    /// [`compute_v::Output`](crate::internal::native::circuits::compute_v::Output)).
-    pub fn compute_v_bridge_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
-        let mut ky = Horner::new(y);
-        self.unified.write(dr, &mut ky)?;
-        self.online.write(dr, &mut ky)?;
-        Element::zero(dr).write(dr, &mut ky)?;
-        ky.finish_ky(dr)
     }
 
     /// The statement circuit's $k(y)$ for this child, when profile `P`'s
@@ -211,9 +250,13 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             .map(Some)
     }
 
-    /// Returns true when the current step declared a [`Dummy`] input for
-    /// this child — which only the internal [`Bootstrap`] step can, so this is
-    /// exactly the base case. See [`Bootstrap`] for why that holds.
+    /// Returns true when this child's output header carries the [`Dummy`]
+    /// suffix. The header is a wire the prover witnesses, and the step's
+    /// own circuit, which declares its input suffixes, is not enforced in
+    /// the base case. So this predicate alone does not confine the base
+    /// case to the internal [`Bootstrap`] step:
+    /// [`enforce_base_case_is_bootstrap`](Output::enforce_base_case_is_bootstrap)
+    /// does.
     ///
     /// [`Dummy`]: crate::header::Dummy
     /// [`Bootstrap`]: crate::step::internal::bootstrap
@@ -258,16 +301,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
 
         let allocator = &mut ();
         Ok(ProofInputs {
-            children: ChildHeaders {
-                left: alloc_header(dr, allocator, proof.as_ref().map(|p| p.left_header()))?,
-                right: alloc_header(dr, allocator, proof.as_ref().map(|p| p.right_header()))?,
-            },
             output_header: alloc_header(dr, allocator, output_header.as_ref().map(|h| &h[..]))?,
-            online: online::alloc_queries(
-                dr,
-                allocator,
-                proof.as_ref().map(|p| p.online_openings()),
-            )?,
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -278,14 +312,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 
     /// Allocate ProofInputs from the parts a proof's instance carries: the
-    /// child headers, the encoded output header, the online openings, the
-    /// circuit id as its domain point, and the unified instance's values.
+    /// encoded output header, the circuit id as its domain point, and the
+    /// unified instance's values.
     pub fn alloc_from_parts(
         dr: &mut D,
-        left_header: DriverValue<D, &[D::F]>,
-        right_header: DriverValue<D, &[D::F]>,
         output_header: DriverValue<D, &[D::F]>,
-        online: DriverValue<D, &online::Queries<D::F>>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
     ) -> Result<Self> {
@@ -307,12 +338,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         }
 
         Ok(ProofInputs {
-            children: ChildHeaders {
-                left: alloc_header(dr, left_header)?,
-                right: alloc_header(dr, right_header)?,
-            },
             output_header: alloc_header(dr, output_header)?,
-            online: online::alloc_queries(dr, &mut (), online)?,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
         })
@@ -351,6 +377,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
     #[ragu(gadget)]
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
+    #[ragu(gadget)]
+    pub own: OwnInputs<'dr, D, HEADER_SIZE>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
@@ -368,6 +396,85 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usiz
         let left_is_dummy = self.left.is_dummy_input(dr, allocator)?;
         let right_is_dummy = self.right.is_dummy_input(dr, allocator)?;
         left_is_dummy.and(dr, &right_is_dummy)
+    }
+
+    /// Compute k(y) for the step's own application circuit instance: k(y)
+    /// for `(zeta, online, bridge_hash, left.output_header,
+    /// right.output_header, own.output_header)`, the instance the step's
+    /// circuit satisfied (see [`Adapter`]).
+    ///
+    /// `zeta` is the step's $w$ and `bridge_hash` the commitment of its
+    /// bridge-hash stage, both from the unified instance. The openings are
+    /// the ones `compute_v` folds into the batch, so the instance the
+    /// circuit satisfied is held to the openings the batch proves by
+    /// construction. The step's inputs are its children's output headers,
+    /// read from the same wires their `unified_bridge_ky` values bind to
+    /// the children's exports.
+    ///
+    /// [`Adapter`]: crate::step::internal::adapter::Adapter
+    pub fn application_ky(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+        zeta: &Element<'dr, D>,
+        bridge_hash: &Point<'dr, D, C::NestedCurve>,
+    ) -> Result<Element<'dr, D>> {
+        let mut ky = Horner::new(y);
+        zeta.write(dr, &mut ky)?;
+        self.own.online.write(dr, &mut ky)?;
+        bridge_hash.write(dr, &mut ky)?;
+        self.left.output_header.write(dr, &mut ky)?;
+        self.right.output_header.write(dr, &mut ky)?;
+        self.own.output_header.write(dr, &mut ky)?;
+        ky.finish_ky(dr)
+    }
+
+    /// Enforces that a step taking the base case is the bootstrap step with
+    /// the unit output header and padding output slots: when `is_base_case`
+    /// holds, the own circuit id must be [`Bootstrap`]'s, the own output
+    /// header the unit header's encoding, and each output slot opened at
+    /// `zeta`, the step's $w$, to the value one.
+    ///
+    /// The base case leaves the step's folded claim unconstrained, and that
+    /// claim includes the step's own application claim. Without this, a
+    /// step could witness [`Dummy`] inputs and export any output header,
+    /// circuit id and online polynomials. The constraint lives in the
+    /// calling circuit, whose own claim the parent (or the decider)
+    /// enforces, so it holds whatever the step's folded claim is.
+    ///
+    /// The slot pin repeats, outside the free claim, what the bootstrap
+    /// step's circuit enforces inside it (see
+    /// [`pin_output_slots`](crate::step::internal::pin_output_slots)). The
+    /// output commitments are absorbed before $w$, and `compute_v`, whose
+    /// claim is enforced like this circuit's, proves the openings over
+    /// these same wires. So each output polynomial takes the value one at
+    /// a point chosen after it, and is the constant one except with
+    /// probability at most its degree over the field size.
+    ///
+    /// [`Bootstrap`]: crate::step::internal::bootstrap
+    /// [`Dummy`]: crate::header::Dummy
+    pub fn enforce_base_case_is_bootstrap<P: Profile>(
+        &self,
+        dr: &mut D,
+        allocator: &mut impl Allocator<'dr, D>,
+        is_base_case: &Boolean<'dr, D>,
+        zeta: &Element<'dr, D>,
+    ) -> Result<()> {
+        let bootstrap = InternalStepIndex::Bootstrap.circuit_index::<P>()?;
+        let bootstrap = Element::constant(dr, bootstrap.omega_j());
+        is_base_case.conditional_enforce_equal(dr, allocator, &self.own.circuit_id, &bootstrap)?;
+        let unit = ky::output_header::<C, (), HEADER_SIZE>(())?;
+        for (wire, value) in self.own.output_header.iter().zip(unit) {
+            let value = Element::constant(dr, value);
+            is_base_case.conditional_enforce_equal(dr, allocator, wire, &value)?;
+        }
+        let one = Element::one();
+        for index in 0..online::NUM_ONLINE_POLYNOMIALS {
+            let opening = &self.own.online[online::Slot::output(index).offset()];
+            is_base_case.conditional_enforce_equal(dr, allocator, &opening.x, zeta)?;
+            is_base_case.conditional_enforce_equal(dr, allocator, &opening.y, &one)?;
+        }
+        Ok(())
     }
 }
 
@@ -387,9 +494,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (3 headers * HEADER_SIZE + the online openings + 1
-        // circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 2 * online::NUM_ONLINE_QUERIES + 1 + unified::NUM_WIRES)
+        // 2 proofs * (output header + 1 circuit_id + unified instance
+        // wires), then the own output header, circuit_id and (x, y) per
+        // online slot
+        2 * (HEADER_SIZE + 1 + unified::NUM_WIRES)
+            + HEADER_SIZE
+            + 1
+            + 2 * online::NUM_ONLINE_QUERIES
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -412,7 +523,23 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             witness.as_ref().map(|w| &w.right.output_header),
         )?;
 
-        Ok(Output { left, right })
+        let own = OwnInputs {
+            output_header: FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    witness.as_ref().map(|w| w.own.output_header[i]),
+                )
+            })?,
+            circuit_id: Element::alloc(
+                dr,
+                &mut (),
+                witness.as_ref().map(|w| w.own.circuit_id.omega_j()),
+            )?,
+            online: online::alloc_queries(dr, &mut (), witness.as_ref().map(|w| &w.own.online))?,
+        };
+
+        Ok(Output { left, right, own })
     }
 }
 

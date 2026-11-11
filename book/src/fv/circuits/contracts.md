@@ -228,9 +228,10 @@ The parent step is essential: `pre_beta` is sampled after the native
 commitment without its beta term. The parent's `bind_beta` completes that
 term using the child's exported `pre_beta` and compares the result with the
 child's walked challenge-stage commitment. At the terminal proof, the
-verifier reconstructs the challenge-stage polynomial and compares its
-coefficients, checks cached commitments against the retained polynomials,
-and replays the transcript. A proof must cover this terminal path as well
+verifier reconstructs the challenge-stage polynomial, with the base-case
+sign read off the proof's circuit id, and compares its coefficients,
+checks cached commitments against the retained polynomials, and replays
+the transcript. A proof must cover this terminal path as well
 as the inductive parent path.
 
 Closing this contract requires all of the following:
