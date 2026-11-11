@@ -51,12 +51,14 @@ const MAGIC: &[u8; 8] = b"RAGUPCD\0";
 const ENVELOPE_VERSION: u16 = 3;
 const PROOF_SCHEMA_VERSION: u16 = 2;
 const COMPRESSED_SCHEMA_VERSION: u16 = 2;
+const PCD_SCHEMA_VERSION: u16 = 2;
 const PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Copy)]
 pub(crate) enum PayloadKind {
     Proof = 1,
     Compressed = 2,
+    Pcd = 4,
 }
 
 pub(crate) fn write_envelope(
@@ -69,6 +71,7 @@ pub(crate) fn write_envelope(
     let schema = match kind {
         PayloadKind::Proof => PROOF_SCHEMA_VERSION,
         PayloadKind::Compressed => COMPRESSED_SCHEMA_VERSION,
+        PayloadKind::Pcd => PCD_SCHEMA_VERSION,
     };
     for word in [ENVELOPE_VERSION, kind as u16, schema, PROTOCOL_VERSION] {
         bytes.extend_from_slice(&word.to_le_bytes());
@@ -76,6 +79,12 @@ pub(crate) fn write_envelope(
     bytes.extend_from_slice(&rank.to_le_bytes());
     bytes.extend_from_slice(&(header_size as u64).to_le_bytes());
 }
+
+mod pcd;
+pub use pcd::WireHeader;
+
+#[cfg(feature = "serde")]
+mod serde;
 
 pub(crate) fn open(
     bytes: &[u8],
