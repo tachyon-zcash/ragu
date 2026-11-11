@@ -360,7 +360,6 @@ fn native_batch_opens_through_the_ipa() {
         c: targets.c,
         unified: targets.unified,
         unified_bridge: targets.unified_bridge + Fp::ONE,
-        application: targets.application,
         statement: targets.statement,
         binding: targets.binding,
     };

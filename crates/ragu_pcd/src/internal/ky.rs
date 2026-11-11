@@ -57,10 +57,6 @@ pub struct NativeKy<F> {
     /// The `hashes_1` circuit's $k(y)$, over the unified instance and the
     /// proof's own output header and circuit id.
     pub unified_bridge: F,
-    /// The application circuit's $k(y)$, or `None` to omit the application
-    /// claim: a proof folds its own application claim, so a verifier of the
-    /// proof itself has none to check, and only the fuse does.
-    pub application: Option<F>,
     /// The statement circuit's $k(y)$, for a profile whose native extension
     /// has one; `None` for a profile without one.
     pub statement: Option<F>,
@@ -76,8 +72,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
         self.c.into_iter()
     }
 
+    /// A proof folds its own application claim, so a verifier of the proof
+    /// itself has no application target: only the fuse has one.
     fn application_ky(&self) -> impl Iterator<Item = F> {
-        self.application.into_iter()
+        core::iter::empty()
     }
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = F> {
@@ -268,7 +266,6 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
-            application: None,
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
         })
@@ -343,7 +340,6 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             c: None,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
-            application: None,
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
         })

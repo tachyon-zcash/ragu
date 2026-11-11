@@ -75,7 +75,6 @@ fn check_targets<H: Header<Fp>>(
         // compression carries it as the first target of its opening proof.
         assert_eq!(expected.c, None, "{label}");
         assert_eq!(native.c, Some(pcd.proof().native_c()), "{label}");
-        assert_eq!(native.application, expected.application, "{label}");
         assert_eq!(native.unified_bridge, expected.unified_bridge, "{label}");
         assert_eq!(native.unified, expected.unified, "{label}");
         assert_eq!(nested.c, expected_nested.c, "{label}");
