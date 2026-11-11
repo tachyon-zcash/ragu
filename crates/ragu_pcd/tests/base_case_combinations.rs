@@ -36,7 +36,7 @@ use crate::{
         Side, native,
         nested::{self, stages::challenges},
     },
-    step::{Encoded, Index, Oracles, Step},
+    step::{Encoded, Index, InternalStepIndex, Oracles, Step},
 };
 
 /// Preserve ordinary unit headers through successive fuses.
@@ -797,4 +797,107 @@ proptest! {
     ) {
         support::with_app(|app| check_guards(app, &inputs, native_delta, nested_delta)).unwrap();
     }
+}
+
+/// A prover who witnesses `Dummy` input headers its application circuit did
+/// not produce takes the base case, which leaves the step's folded claim, its
+/// own application claim among them, unconstrained. The base-case pin in
+/// `collapse` must then reject the proof unless it is what a bootstrap proof
+/// is: the bootstrap step's circuit id with the unit output header.
+///
+/// The parent is the case that matters. At the root, the decider reads the
+/// base-case sign of the challenge stage off the circuit id, which a forged
+/// proof with its own id contradicts; a parent takes the child's stage from
+/// the child's own binders, so without the pin it accepts the forgery.
+#[test]
+fn forged_base_case_must_be_a_bootstrap_proof() {
+    let bootstrap = InternalStepIndex::Bootstrap
+        .circuit_index::<<C as crate::profile::ProfiledCycle>::Profile>()
+        .expect("the bootstrap step is registered in every profile");
+
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(943);
+        let unit = app.bootstrap_pcd();
+        let (honest, ()) = app
+            .fuse(
+                &mut rng,
+                Seed::new(),
+                Fp::from(7),
+                unit.clone(),
+                unit.clone(),
+            )
+            .expect("honest seed");
+        assert!(
+            app.verify_uncompressed(&honest, StdRng::seed_from_u64(1))
+                .unwrap(),
+            "the honest control verifies"
+        );
+
+        // A seed step's output header is a value, not the unit header, so
+        // neither its own circuit id nor the bootstrap step's lets it take
+        // the base case.
+        for (case, circuit_id) in [
+            ("own circuit id", None),
+            ("bootstrap circuit id", Some(bootstrap)),
+        ] {
+            let (forged, ()) = app
+                .fuse_forging_dummy_inputs(
+                    &mut rng,
+                    Seed::new(),
+                    Fp::from(7),
+                    unit.clone(),
+                    unit.clone(),
+                    circuit_id,
+                )
+                .expect("the forging prover assembles a proof");
+            assert!(
+                !app.verify_uncompressed(&forged, StdRng::seed_from_u64(2))
+                    .unwrap(),
+                "{case}: a forged base case must not verify"
+            );
+            assert!(
+                !verifies_compressed(app, &forged, &mut rng),
+                "{case}: a forged base case must not verify compressed"
+            );
+            let (parent, ()) = app
+                .fuse(&mut rng, Merge::new(), Fp::from(8), forged, honest.clone())
+                .expect("fuse assembles a parent regardless of satisfiability");
+            assert!(
+                !app.verify_uncompressed(&parent, StdRng::seed_from_u64(3))
+                    .unwrap(),
+                "{case}: the parent of a forged base case must not verify"
+            );
+        }
+    });
+
+    // What the pin admits is a bootstrap proof, which any prover can mint
+    // and which attests nothing: a unit step forging `Dummy` inputs and the
+    // bootstrap circuit id verifies as the unit `Pcd` a bootstrap proof is.
+    let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+        .register(UnitStep)
+        .expect("register unit step")
+        .finalize(crate::pasta::baked())
+        .expect("build unit application");
+    let mut rng = StdRng::seed_from_u64(944);
+    let unit = app.bootstrap_pcd();
+    let (minted, ()) = app
+        .fuse_forging_dummy_inputs(&mut rng, UnitStep, (), unit.clone(), unit, Some(bootstrap))
+        .expect("the forging prover assembles a proof");
+    assert!(
+        app.verify_uncompressed(&minted, StdRng::seed_from_u64(4))
+            .unwrap(),
+        "a forged base case that is a bootstrap proof verifies, as any bootstrap proof does"
+    );
+    assert!(verifies_compressed(&app, &minted, &mut rng));
+}
+
+/// Whether `pcd` compresses and its compressed proof verifies.
+fn verifies_compressed<H: Header<Fp>>(
+    app: &crate::Application<'_, C, R, HEADER_SIZE>,
+    pcd: &crate::Pcd<C, R, H>,
+    rng: &mut StdRng,
+) -> bool {
+    app.compress(pcd, rng)
+        .and_then(|compressed| app.verify_compressed(&compressed))
+        .unwrap_or(false)
 }

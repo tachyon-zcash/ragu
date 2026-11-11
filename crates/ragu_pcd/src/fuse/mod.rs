@@ -104,6 +104,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         })
     }
 
+    /// [`fuse`](Self::fuse) as a prover that witnesses its own application
+    /// data in place of the step's: `forge` sets the input header suffixes
+    /// to the [`Dummy`](crate::header::Dummy) suffix, which takes the base
+    /// case, and, if given, the circuit id. The step's application trace is
+    /// left as the step computed it, so its claim no longer matches the
+    /// data the preamble witnesses; the base case leaves the folded claim
+    /// free, so only the base-case pin in `collapse` can reject the proof.
+    #[cfg(test)]
+    pub(crate) fn fuse_forging_dummy_inputs<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        circuit_id: Option<ragu_circuits::registry::CircuitIndex>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |builder, application| {
+            builder.forge_dummy_inputs();
+            if let Some(circuit_id) = circuit_id {
+                builder.forge_circuit_id(circuit_id);
+                application.circuit_id = circuit_id;
+            }
+        })
+    }
+
     /// [`fuse`](Self::fuse), with `edit` applied to the step's application
     /// data after its circuit ran and before anything commits to it. Only
     /// tests edit anything: `fuse` passes an edit that does nothing.
