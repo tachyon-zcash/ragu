@@ -284,6 +284,25 @@ impl<C: ProfiledCycle> CompressedProof<C> {
         self.commitments
     }
 
+    /// Restore the mock's recursive representation; the application validates it.
+    pub(crate) fn with_polynomials<R: Rank>(
+        &self,
+        polynomials: [Vec<C::CircuitField>; HEADER_POLYNOMIALS],
+    ) -> Proof<C, R> {
+        Proof {
+            step_index: self.step_index,
+            header_hash: self.header_hash,
+            witness_hash: self.witness_hash,
+            binding: self.binding,
+            rerand_tag: self.rerand_tag,
+            commitments: self.commitments,
+            polynomials,
+            header_size: self.header_size,
+            setup_hash: self.setup_hash,
+            _rank: PhantomData,
+        }
+    }
+
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> CompressedPcd<C, H> {
         CompressedPcd { proof: self, data }
     }

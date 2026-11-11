@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Mock `Application::decompress` checks a compressed statement and supplied online
+  polynomial witnesses before restoring a proof for fusion and recompression.
+  It models same-application reuse, not the real aggregator profile circuits.
+
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
