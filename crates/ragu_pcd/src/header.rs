@@ -19,8 +19,10 @@ use udon::field::Field;
 /// * `2` is reserved for the [`Dummy`] header, the input type of the
 ///   internal [`Bootstrap`] step. It is the only suffix that triggers the base
 ///   case; no application [`Step`] can declare it as an input, and the one
-///   internal circuit whose input suffix is a witness constrains it away, which
-///   is what confines the base case to genuine bootstrapping.
+///   internal circuit whose input suffix is a witness constrains it away. A
+///   step's circuit is not enforced in the base case, so the `collapse`
+///   circuit also holds a step that takes the base case to be the bootstrap
+///   step, which is what confines the base case to genuine bootstrapping.
 ///
 /// [`Bootstrap`]: crate::step::internal::bootstrap::Bootstrap
 /// [`Step`]: crate::step::Step
@@ -195,10 +197,11 @@ impl<F: Field> Header<F> for () {
 ///
 /// It encodes no data and exists only for its suffix: a step declaring it for
 /// both inputs takes the base case, and only the internal
-/// [`Bootstrap`](crate::step::internal::bootstrap) step does. Nothing else can
-/// — application headers cannot encode to a reserved suffix, and
-/// [`finalize`](crate::ApplicationBuilder::finalize) rejects any other internal
-/// step that tries.
+/// [`Bootstrap`](crate::step::internal::bootstrap) step does. No other step
+/// can declare it: application headers cannot encode to a reserved suffix,
+/// and [`finalize`](crate::ApplicationBuilder::finalize) rejects any other
+/// internal step that tries. A prover that witnesses the suffix without
+/// declaring it is held to the bootstrap step by the `collapse` circuit.
 pub(crate) struct Dummy;
 
 impl<F: Field> Header<F> for Dummy {

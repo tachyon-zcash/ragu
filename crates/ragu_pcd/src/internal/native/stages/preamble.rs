@@ -5,12 +5,40 @@
 //! step's own output header, circuit id and online openings, from which the
 //! step's own application $k(y)$ is computed.
 //!
+//! ## Commitment after $w$
+//!
 //! The stage is committed after the step's circuit ran, in the fuse's
 //! `s_prime` phase, because the output header and the openings are what the
-//! circuit fixes at $\zeta = w$ (see [`online`]). Nothing here must be fixed
-//! earlier: every value is held to a claim folded at $y$, the children's to
-//! their exported instances and the step's own to its application claim,
-//! and the `s_prime` bridge carries the commitment before $y$ is squeezed.
+//! circuit fixes at $\zeta = w$ (see [`online`]). The `s_prime` bridge
+//! carries the commitment, so the stage is fixed before $y$ is squeezed.
+//!
+//! The step's own values need nothing earlier: the application claim that
+//! holds them is folded at $y$.
+//!
+//! The children's values are different. Two checks are sound only if a
+//! child's value is fixed before $w$: the registry transition at $w$ reads
+//! the child's $x$ and $y$, and a step circuit's check at $\zeta$ can read
+//! an input header's fields. These wires are committed after $w$, but they
+//! are not free after $w$:
+//!
+//! - The commitments of each child's circuit traces and stages are in the
+//!   nested `preamble` bridge, which $w$ absorbs.
+//! - A committed trace fixes its instance: $k(Y)$ is a function of the
+//!   trace. The child's unified instance, output header and circuit id are
+//!   the instance of its `hashes_1` trace, and its unified instance is the
+//!   instance of its other circuits' traces.
+//! - This step folds those claims at $y$, with each $k(y)$ computed from
+//!   the wires here, and $y$ is squeezed after this stage is committed. A
+//!   wire that differs from the value the committed trace fixes makes
+//!   $k(Y)$ a different polynomial, and the fold fails except with
+//!   probability at most its degree over the field size.
+//!
+//! So each child's value here is a function of commitments that $w$
+//! absorbed, provided the child's claims are enforced. In the base case
+//! they are not, but then the step is pinned to the bootstrap step (see
+//! [`Output::enforce_base_case_is_bootstrap`]), whose proof attests
+//! nothing: no consumer relies on its children's registry polynomials or
+//! on a check at $\zeta$ in it.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -222,9 +250,13 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             .map(Some)
     }
 
-    /// Returns true when the current step declared a [`Dummy`] input for
-    /// this child — which only the internal [`Bootstrap`] step can, so this is
-    /// exactly the base case. See [`Bootstrap`] for why that holds.
+    /// Returns true when this child's output header carries the [`Dummy`]
+    /// suffix. The header is a wire the prover witnesses, and the step's
+    /// own circuit, which declares its input suffixes, is not enforced in
+    /// the base case. So this predicate alone does not confine the base
+    /// case to the internal [`Bootstrap`] step:
+    /// [`enforce_base_case_is_bootstrap`](Output::enforce_base_case_is_bootstrap)
+    /// does.
     ///
     /// [`Dummy`]: crate::header::Dummy
     /// [`Bootstrap`]: crate::step::internal::bootstrap

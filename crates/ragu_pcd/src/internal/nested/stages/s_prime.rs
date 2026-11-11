@@ -8,8 +8,11 @@
 //! holds the claim's output header and online openings, are fixed before
 //! the claim's challenges. Neither need be fixed before $w$: the claim's
 //! registry restriction is the circuit's own, $m(\omega^{id}, X, y)$, which
-//! does not involve $w$, and the preamble's values are what the step's
-//! circuit fixes at $\zeta = w$.
+//! does not involve $w$, and the preamble's own values are what the step's
+//! circuit fixes at $\zeta = w$. The preamble's copies of the children's
+//! values are fixed before $w$ all the same, through the children's
+//! committed traces and the fold at $y$ (see
+//! [`preamble`](crate::internal::native::stages::preamble)).
 
 use core::marker::PhantomData;
 

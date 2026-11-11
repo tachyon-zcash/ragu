@@ -24,7 +24,8 @@
 //! from them are not fixed coefficients or roots: a root computed in the
 //! circuit from $\zeta$ and the openings is no safer than one witnessed
 //! with $\zeta$ in hand. Input header fields, staged values and constants
-//! are fixed before $\zeta$; in-circuit hash outputs and values from a
+//! are fixed before $\zeta$ (the input headers through the children's
+//! committed proofs, which $\zeta$ absorbs); in-circuit hash outputs and values from a
 //! small set each need their own argument. Any other wire the circuit
 //! witnesses, the output header's fields included, is the prover's choice
 //! given $\zeta$.
