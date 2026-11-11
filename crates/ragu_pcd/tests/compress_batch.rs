@@ -363,7 +363,6 @@ fn native_batch_opens_through_the_ipa() {
         compute_v_bridge: targets.compute_v_bridge,
         bind_endoscalar: targets.bind_endoscalar,
         online_helper: targets.online_helper,
-        application: targets.application,
         statement: targets.statement,
         binding: targets.binding,
     };

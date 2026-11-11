@@ -801,7 +801,6 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
     )?;
     let targets = ky::NativeKy {
         c: Some(Fp::from(2)),
-        application: Some(Fp::from(3)),
         unified: Fp::from(5),
         unified_bridge: Fp::from(7),
         compute_v_bridge: Fp::from(11),

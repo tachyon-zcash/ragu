@@ -168,7 +168,6 @@ fn claim_targets_match_positional_ky_values() {
         compute_v_bridge: Fp::from(13),
         bind_endoscalar: Fp::from(17),
         online_helper: None,
-        application: None,
         statement: None,
         binding: None,
     };

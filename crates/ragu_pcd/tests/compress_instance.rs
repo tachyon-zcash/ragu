@@ -76,7 +76,6 @@ fn targets_match_the_decider() {
         .unwrap();
     let expected = ky::native_ky::<Pasta, TestR, (), HEADER_SIZE>(&pcd, y).unwrap();
     assert_eq!(native.c, Some(pcd.proof().native_c()));
-    assert_eq!(native.application, expected.application);
     assert_eq!(native.unified_bridge, expected.unified_bridge);
     assert_eq!(native.unified, expected.unified);
     assert_eq!(nested.c, pcd.proof().nested_c());
