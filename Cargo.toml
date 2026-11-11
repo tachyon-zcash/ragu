@@ -85,6 +85,18 @@ resolver = "2"
 [profile.dist]
 inherits = "release"
 
+# `just test`: release settings, but incremental and with more codegen units,
+# and `ragu_pcd`, whose lib test target dominates rebuilds, at opt-level 1. A
+# one-line edit in `ragu_pcd` then rebuilds in about a minute rather than five,
+# and the tests run about as fast as under `--release`.
+[profile.fast-test]
+inherits = "release"
+incremental = true
+codegen-units = 256
+
+[profile.fast-test.package.ragu_pcd]
+opt-level = 1
+
 [workspace.package]
 version = "0.0.0"
 authors = ["Sean Bowe <ewillbefull@gmail.com>"]
