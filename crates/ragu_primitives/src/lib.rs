@@ -23,6 +23,7 @@ pub mod comparison;
 pub mod consistent;
 mod element;
 mod endoscalar;
+mod fixed_base;
 mod foreign;
 mod invertible;
 pub mod io;
@@ -41,6 +42,7 @@ pub use endoscalar::{
     ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Endoscalar, EndoscalarChallenge,
     EndoscalarRangeError, HoistedEndoscalar, Uendo, extract_endoscalar, lift_endoscalar,
 };
+pub use fixed_base::FixedBaseTable;
 pub use invertible::{Invertible, Nonzero, NonzeroBank};
 use io::{Buffer, Write};
 pub use point::Point;
