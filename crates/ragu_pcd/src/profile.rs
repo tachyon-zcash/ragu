@@ -138,6 +138,19 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
 
+    /// The number of online polynomials over the scalar field that each
+    /// step of the profile commits, at most
+    /// [`NUM_ONLINE_FQ_POLYS`](crate::header::NUM_ONLINE_FQ_POLYS).
+    ///
+    /// A step commits such a polynomial natively, before its challenge
+    /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
+    /// opening into the step's own nested batch. The step does not export
+    /// the polynomial, so a parent never opens it. Each polynomial adds
+    /// one point to the native walk.
+    ///
+    /// The default is zero, which leaves the proof's shape as it is.
+    const ONLINE_FQ_POLYS: usize = 0;
+
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
     /// over the nested batch takes a step per so many points, so more per
@@ -324,7 +337,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [consistent](Extension::is_consistent); if the nested extension names
     /// a statement circuit, which only the native side carries; or if an
     /// extension's binding names a stage the other extension does not have;
-    /// or if the product of the two endoscaling counts is at most four.
+    /// if the product of the two endoscaling counts is at most four; or if
+    /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
+    /// [`NUM_ONLINE_FQ_POLYS`](crate::header::NUM_ONLINE_FQ_POLYS).
     fn check() -> Result<()> {
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
@@ -338,6 +353,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
+        }
+        if Self::ONLINE_FQ_POLYS > crate::header::NUM_ONLINE_FQ_POLYS {
+            return Err(Error::Initialization(
+                "the profile commits more online Fq polynomials than a step can open".into(),
+            ));
         }
         for (name, profile) in [
             (Standard::NAME, TypeId::of::<Standard>()),
@@ -895,7 +915,12 @@ pub struct Shape {
     pub nested_steps: usize,
     /// The nested rx polynomials.
     pub nested_rx: usize,
-    /// The host-curve points the native walk folds: the nested batch.
+    /// The step's own online polynomials over the scalar field (see
+    /// [`Profile::ONLINE_FQ_POLYS`]).
+    pub online_fq: usize,
+    /// The nested-curve points the native walk folds: the nested batch,
+    /// with the commitments of the step's own online polynomials over the
+    /// scalar field.
     pub native_points: usize,
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
@@ -913,14 +938,15 @@ impl Shape {
         Self::solve(
             P::NATIVE_EXTENSION,
             P::NESTED_EXTENSION,
+            P::ONLINE_FQ_POLYS,
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
         )
     }
 
-    /// Solves the walk sizes for the given extensions at the given
-    /// endoscalings per native and nested step, iterating the native step
-    /// count to its fixed point.
+    /// Solves the walk sizes for the given extensions and online Fq
+    /// polynomials at the given endoscalings per native and nested step,
+    /// iterating the native step count to its fixed point.
     ///
     /// # Panics
     ///
@@ -929,6 +955,7 @@ impl Shape {
     pub const fn solve(
         native_extension: usize,
         nested_extension: usize,
+        online_fq: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
@@ -939,6 +966,7 @@ impl Shape {
                 native_steps,
                 native_extension,
                 nested_extension,
+                online_fq,
                 native_endoscalings,
                 nested_endoscalings,
             );
@@ -957,6 +985,7 @@ impl Shape {
         native_steps: usize,
         native_extension: usize,
         nested_extension: usize,
+        online_fq: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
@@ -964,13 +993,14 @@ impl Shape {
         let nested_points = nested::num_endoscaling_points(native_rx);
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
-        let native_points = nested::pcs::num_batched_points(nested_rx);
+        let native_points = nested::pcs::num_batched_points(nested_rx) + online_fq;
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
             native_rx,
             nested_points,
             nested_steps,
             nested_rx,
+            online_fq,
             native_points,
             native_steps,
         }
@@ -2361,7 +2391,7 @@ mod tests {
 
     #[test]
     fn shape_follows_the_declared_extension() {
-        assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 4, 4));
+        assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 0, 4, 4));
         assert_ne!(Shape::of::<Wider>(), Shape::of::<Standard>());
         assert_eq!(
             native::RxIndex::num::<Wider>(),
@@ -2383,11 +2413,47 @@ mod tests {
                 nested_points: 117,
                 nested_steps: 29,
                 nested_rx: 43,
+                online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
             }
         );
         assert_eq!(shape.polynomials(), 99);
+    }
+
+    #[test]
+    fn an_online_fq_polynomial_is_a_native_walk_point() {
+        // The point joins the nested batch's commitments in the native
+        // walk. The walk of the standard layout is full, so the point can
+        // also add a native step, and then the batch grows.
+        let base = Shape::solve(0, 0, 0, 4, 4);
+        let with_fq = Shape::solve(0, 0, 1, 4, 4);
+        assert_eq!(with_fq.online_fq, 1);
+        assert_eq!(
+            with_fq.native_points,
+            nested::pcs::num_batched_points(with_fq.nested_rx) + 1
+        );
+        assert!(with_fq.native_points > base.native_points);
+    }
+
+    #[test]
+    fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        struct TooMany;
+        impl Profile for TooMany {
+            const NAME: &'static str = "too-many";
+            const NATIVE_EXTENSION: usize = 0;
+            const NESTED_EXTENSION: usize = 0;
+            const ONLINE_FQ_POLYS: usize = crate::header::NUM_ONLINE_FQ_POLYS + 1;
+
+            type Context<'params, Base, R, B>
+                = ()
+            where
+                Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                R: Rank,
+                B: SelectableBackend;
+        }
+        assert!(TooMany::check().is_err());
     }
 
     #[test]
@@ -2412,11 +2478,12 @@ mod tests {
         for (native_extension, nested_extension) in
             [(0, 0), (1, 0), (0, 1), (10, 10), (134, 116), (300, 300)]
         {
-            let shape = Shape::solve(native_extension, nested_extension, 4, 4);
+            let shape = Shape::solve(native_extension, nested_extension, 0, 4, 4);
             let again = Shape::with_native_steps(
                 shape.native_steps,
                 native_extension,
                 nested_extension,
+                0,
                 4,
                 4,
             );
@@ -2432,8 +2499,8 @@ mod tests {
         // Each extra rx polynomial is two points in the other walk (one per
         // child), so a step there per two, and a quarter of a step back: an
         // extension costs about twice its own count in polynomials overall.
-        let base = Shape::solve(0, 0, 4, 4);
-        let wider = Shape::solve(100, 0, 4, 4);
+        let base = Shape::solve(0, 0, 0, 4, 4);
+        let wider = Shape::solve(100, 0, 0, 4, 4);
         assert!(wider.nested_steps > base.nested_steps);
         assert!(wider.native_steps > base.native_steps);
         let extra = wider.polynomials() - base.polynomials();

@@ -289,6 +289,7 @@ mod tests {
                 nested_points: 117,
                 nested_steps: 29,
                 nested_rx: 43,
+                online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
             }
