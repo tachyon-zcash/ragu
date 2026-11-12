@@ -50,7 +50,8 @@ internal circuits.
 - C1: each proof carries $2$ public polynomial commitment slots associated with its output header
   - `Eq` is alias for `HostCurve` type and $\E_q$ in math
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
-  - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: `Step::polynomials` is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot a header treats as padding is pinned by every step that outputs the header, which opens it at $\zeta$ and holds the value to one; an unconstrained slot is a hint, as $\cm_g, \cm_h$ are [below](#changes)
+  - a header lists the kinds of polynomial its proofs carry, one unit type per slot or `Padding`, as `Header::OnlinePolyCommit`; a step reads, prepares and opens a polynomial by its kind, so a slot the header leaves to padding cannot be addressed at all
+  - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: what `Step::prepare` returns is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot the step does not open is padding: Ragu opens it at $\zeta$ and holds the value to one after the step's circuit; a slot opened and left unconstrained is a hint, as $\cm_g, \cm_h$ are [below](#changes)
   - a compressed proof's statement carries the header's fields and not these commitments: under a profile that decompresses statements, the decompressed proof keeps the fields and carries padding in both slots, so a header that can pass through decompression must not rely on its slots
 - C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. A private polynomial has no commitment slot and no oracle
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
@@ -328,7 +329,7 @@ So a prover has to use the canonical encoding to produce a `Stamp.anchor` that a
 Give the application circuit a stage committed before $\zeta$.
 The diagrams label this stage `AppStage`; the application trace synthesized by `Step::witness` is labeled `Application`.
 
-- stage the roots (or coefficients) of the private polynomial: the step returns them from `Step::staged`, and Ragu commits them in the application stage
+- stage the roots (or coefficients) of the private polynomial: the step stages them in `Step::prepare`, and Ragu commits them in the application stage
 - commit the stage trace and append to the nested `Preamble` stage
 - absorb bridge preamble stage commitment into transcript
 - draw challenge $\zeta=w$ effectively committing to our private polynomial.
