@@ -145,7 +145,7 @@ mod tests {
         use ragu_testing::registry::TestRegistryBuilder;
 
         use crate::{
-            header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
+            header::{Header, NUM_ONLINE_POLYNOMIALS, Padding, Suffix},
             step::Slot,
         };
 
@@ -155,6 +155,7 @@ mod tests {
         struct Single;
         impl Header<Fp> for Single {
             const SUFFIX: Suffix = Suffix::new(0);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = Fp;
             type Output = Kind![Fp; Element<'_, _>];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -169,6 +170,7 @@ mod tests {
         struct Pair;
         impl Header<Fp> for Pair {
             const SUFFIX: Suffix = Suffix::new(1);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = (Fp, Fp);
             type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(

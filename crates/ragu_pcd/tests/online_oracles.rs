@@ -57,7 +57,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
-    header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
+    header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
 };
 use ragu_primitives::{
@@ -89,8 +89,16 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 /// polynomial $\prod_i (X - t_i)$ in slot 0. Slot 1 is padding.
 struct TgSet;
 
+/// The set polynomial: its roots are the set's members. A [`TgSet`] keeps
+/// it in the first slot and an [`Anchor`] in the last.
+#[derive(Clone, Copy, Debug)]
+struct TachygramSet;
+
+impl OnlinePoly for TachygramSet {}
+
 impl Header<Fp> for TgSet {
     const SUFFIX: Suffix = Suffix::new(10);
+    type OnlinePolyCommit = (TachygramSet, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -110,6 +118,7 @@ struct Anchor;
 
 impl Header<Fp> for Anchor {
     const SUFFIX: Suffix = Suffix::new(11);
+    type OnlinePolyCommit = (Padding, TachygramSet);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -126,8 +135,21 @@ impl Header<Fp> for Anchor {
 /// $2X + a_1$, for its data $(a_0, a_1)$ (see section 7).
 struct Pair;
 
+/// The line $X + a_0$ a [`Pair`] keeps in its first slot.
+#[derive(Clone, Copy, Debug)]
+struct SlopeOne;
+
+impl OnlinePoly for SlopeOne {}
+
+/// The line $2X + a_1$ a [`Pair`] keeps in its second slot.
+#[derive(Clone, Copy, Debug)]
+struct SlopeTwo;
+
+impl OnlinePoly for SlopeTwo {}
+
 impl Header<Fp> for Pair {
     const SUFFIX: Suffix = Suffix::new(12);
+    type OnlinePolyCommit = (SlopeOne, SlopeTwo);
     type Data = [Fp; 2];
     type Output = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<2>>];
 

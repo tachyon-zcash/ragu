@@ -228,7 +228,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        header::{Header, Suffix},
+        header::{Header, OnlinePoly, Padding, Suffix},
         step::{Encoded, Index, Oracles, Slot, Step},
     };
 
@@ -237,8 +237,15 @@ mod tests {
 
     struct TestHeader;
 
+    /// The polynomial a [`TestHeader`] keeps in its first slot.
+    #[derive(Clone, Copy, Debug)]
+    struct TestPoly;
+
+    impl OnlinePoly for TestPoly {}
+
     impl Header<Fp> for TestHeader {
         const SUFFIX: Suffix = Suffix::new(50);
+        type OnlinePolyCommit = (TestPoly, Padding);
         type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 

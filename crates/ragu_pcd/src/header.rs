@@ -69,6 +69,105 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 /// statement extension's contract.
 pub const NUM_ONLINE_POLYNOMIALS: usize = 2;
 
+/// A kind of online polynomial, identified by a unit type.
+///
+/// A header lists the kinds its proofs carry in [`Header::OnlinePolyCommit`],
+/// and a step reads an input's polynomial, prepares its output's and opens
+/// either by its kind. The same kind is the same type in every header that
+/// carries it; where a header keeps it is stated once, in the header's list.
+///
+/// # Examples
+///
+/// ```
+/// use ragu_pcd::header::OnlinePoly;
+///
+/// /// The polynomial whose roots are a tachygram set.
+/// #[derive(Clone, Copy, Debug)]
+/// pub struct TachygramSet;
+///
+/// impl OnlinePoly for TachygramSet {}
+/// ```
+pub trait OnlinePoly: Copy + Send + Sync + 'static {}
+
+/// A slot a header leaves unused.
+///
+/// Listed in [`Header::OnlinePolyCommit`] in the slot's place. The header's
+/// proofs hold the constant one there, and no step can name the slot,
+/// because `Padding` is not an [`OnlinePoly`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Padding;
+
+/// An entry of a header's [`OnlinePolyCommit`] list: a kind of polynomial,
+/// or [`Padding`].
+pub trait OnlinePolySlot: Copy + Send + Sync + 'static {}
+
+impl<P: OnlinePoly> OnlinePolySlot for P {}
+
+impl OnlinePolySlot for Padding {}
+
+/// The online polynomials a header's proofs carry, one entry per slot.
+///
+/// Implemented for tuples of [`NUM_ONLINE_POLYNOMIALS`] [`OnlinePolySlot`]s
+/// in slot order, as [`Header::OnlinePolyCommit`]: `(TachygramSet, ActionSet)`
+/// fills both slots, `(Padding, TachygramSet)` keeps a set polynomial in
+/// the last slot alone, the one whose commitment the bridge hash digests,
+/// and `(Padding, Padding)` carries nothing of the header's own. A slot
+/// that does not exist cannot be listed, and a kind the list does not hold
+/// cannot be named: [`Has`] finds a kind's slot at compile time.
+///
+/// # Examples
+///
+/// ```compile_fail
+/// use ragu_pcd::header::{Has, OnlinePoly, Padding};
+///
+/// #[derive(Clone, Copy, Debug)]
+/// struct TachygramSet;
+/// impl OnlinePoly for TachygramSet {}
+///
+/// fn slot<L: Has<P, I>, P, I>(_: P) -> usize {
+///     L::INDEX
+/// }
+///
+/// assert_eq!(slot::<(Padding, TachygramSet), _, _>(TachygramSet), 1);
+/// slot::<(Padding, TachygramSet), _, _>(Padding); // error: expected `TachygramSet`, found `Padding`
+/// ```
+pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {}
+
+impl<A: OnlinePolySlot, B: OnlinePolySlot> OnlinePolyCommit for (A, B) {}
+
+impl<A: OnlinePolySlot, B: OnlinePolySlot> sealed::Sealed for (A, B) {}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// A list that keeps the kind `P` in the slot marked by `I`.
+///
+/// `(A, B)` keeps `A` at index zero and `B` at index one. `I` is [`Slot0`]
+/// or [`Slot1`]; the compiler infers it from `P`, so a call names only the
+/// kind: `input.polynomial(TachygramSet)`. A list keeping `P` in both slots
+/// cannot name it, and [`Padding`] is never found.
+pub trait Has<P, I>: OnlinePolyCommit {
+    /// The index of the slot, below [`NUM_ONLINE_POLYNOMIALS`].
+    const INDEX: usize;
+}
+
+/// The marker of the first slot, for [`Has`].
+#[derive(Clone, Copy, Debug)]
+pub struct Slot0;
+
+/// The marker of the second slot, for [`Has`].
+#[derive(Clone, Copy, Debug)]
+pub struct Slot1;
+
+impl<A: OnlinePoly, B: OnlinePolySlot> Has<A, Slot0> for (A, B) {
+    const INDEX: usize = 0;
+}
+
+impl<A: OnlinePolySlot, B: OnlinePoly> Has<B, Slot1> for (A, B) {
+    const INDEX: usize = 1;
+}
+
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
 /// application suffixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
@@ -133,10 +232,10 @@ impl Suffix {
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
 ///
-/// This trait defines the field encoding of the application data. The
-/// associated online polynomials and their commitments are stored in
-/// [`Proof`](crate::Proof), separately from [`Data`](Self::Data) and
-/// [`Output`](Self::Output).
+/// This trait defines the field encoding of the application data and
+/// names the online polynomials the header's proofs carry. The polynomials
+/// and their commitments are stored in [`Proof`](crate::Proof), separately
+/// from [`Data`](Self::Data) and [`Output`](Self::Output).
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
@@ -145,6 +244,12 @@ pub trait Header<F: Field>: Send + Sync + Any {
     /// headers. Application headers must use [`Suffix::new`]; only `()` may
     /// use a reserved internal suffix.
     const SUFFIX: Suffix;
+
+    /// The online polynomials this header's proofs carry, one
+    /// [`OnlinePolySlot`] per slot in slot order: `(TachygramSet, ActionSet)`,
+    /// `(Padding, TachygramSet)`, or `(Padding, Padding)` for a header whose
+    /// proofs carry only padding. See [`OnlinePolyCommit`].
+    type OnlinePolyCommit: OnlinePolyCommit;
 
     /// The witness input needed to encode a header.
     type Data: Send + Clone;
@@ -179,6 +284,7 @@ pub trait Header<F: Field>: Send + Sync + Any {
 impl<F: Field> Header<F> for () {
     const SUFFIX: Suffix = Suffix::internal(1);
 
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
 
@@ -204,6 +310,7 @@ pub(crate) struct Dummy;
 impl<F: Field> Header<F> for Dummy {
     const SUFFIX: Suffix = Suffix::internal(2);
 
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
 
@@ -219,6 +326,26 @@ impl<F: Field> Header<F> for Dummy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Copy, Debug)]
+    struct First;
+    impl OnlinePoly for First {}
+
+    #[derive(Clone, Copy, Debug)]
+    struct Second;
+    impl OnlinePoly for Second {}
+
+    fn index_of<L: Has<P, I>, P, I>(_: P) -> usize {
+        L::INDEX
+    }
+
+    #[test]
+    fn a_kind_is_found_at_its_slot() {
+        assert_eq!(index_of::<(First, Second), _, _>(First), 0);
+        assert_eq!(index_of::<(First, Second), _, _>(Second), 1);
+        assert_eq!(index_of::<(Padding, Second), _, _>(Second), 1);
+        assert_eq!(index_of::<(First, Padding), _, _>(First), 0);
+    }
 
     #[test]
     fn test_suffix_map() {

@@ -103,7 +103,7 @@ use crate::{
         instance::{Child, Instance, NestedChild},
         revdot::{Reduction, fold::Fold},
     },
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     internal::online,
     ipa::{
         IpaCycle, IpaProof,
@@ -146,6 +146,7 @@ struct Value;
 
 impl Header<Fp> for Value {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 

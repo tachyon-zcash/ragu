@@ -22,7 +22,7 @@ use udon::{
 
 use crate::{
     Application, ApplicationBuilder,
-    header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
+    header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
     internal::nested::stages::bridge_hash,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
@@ -33,8 +33,16 @@ type App = Application<'static, Pasta, R, HEADER_SIZE>;
 
 /// A header carrying a digest: the two coordinates of a nested-curve point.
 struct Digest;
+
+/// The polynomial a [`Digest`] is of, kept in the last slot.
+#[derive(Clone, Copy, Debug)]
+struct Hashed;
+
+impl OnlinePoly for Hashed {}
+
 impl Header<Fp> for Digest {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Hashed);
     type Data = [Fp; 2];
     type Output = Kind![Fp; FixedVec<Element<'_, _>, ragu_primitives::vec::ConstLen<2>>];
 

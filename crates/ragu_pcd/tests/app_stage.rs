@@ -21,7 +21,7 @@ use udon::field::Field;
 
 use crate::{
     Application, ApplicationBuilder, Pcd,
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     internal::native::RxIndex,
     step::{Encoded, HeaderInput, Index, Oracles, Step},
 };
@@ -74,6 +74,7 @@ impl Step<Pasta> for Unit {
 struct Number;
 impl Header<Fp> for Number {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 

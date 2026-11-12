@@ -7,7 +7,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_pcd::{
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{
@@ -23,6 +23,7 @@ pub struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -41,6 +42,7 @@ pub struct InternalNode;
 
 impl<F: Field> Header<F> for InternalNode {
     const SUFFIX: Suffix = Suffix::new(1);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 

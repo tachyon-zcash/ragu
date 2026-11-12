@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{
@@ -28,6 +28,7 @@ struct HSuffixAOther;
 
 impl<F: Field> Header<F> for HSuffixA {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -41,6 +42,7 @@ impl<F: Field> Header<F> for HSuffixA {
 
 impl<F: Field> Header<F> for HSuffixB {
     const SUFFIX: Suffix = Suffix::new(1);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -54,6 +56,7 @@ impl<F: Field> Header<F> for HSuffixB {
 
 impl<F: Field> Header<F> for HSuffixAOther {
     const SUFFIX: Suffix = Suffix::new(0); // duplicate suffix
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -201,6 +204,7 @@ struct CopiedUnitSuffix;
 
 impl Header<Fp> for CopiedUnitSuffix {
     const SUFFIX: Suffix = <() as Header<Fp>>::SUFFIX;
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
