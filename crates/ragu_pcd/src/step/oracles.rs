@@ -286,6 +286,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
 
 /// One polynomial of a step's [`Oracles`]: an input or output proof's
 /// slot, to be opened once.
+#[must_use = "an oracle does nothing until it is opened"]
 pub struct Oracle<'o, 'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
     oracles: &'o mut Oracles<'a, 'dr, D, C, S>,
     slot: usize,

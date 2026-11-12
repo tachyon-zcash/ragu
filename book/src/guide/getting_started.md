@@ -64,7 +64,7 @@ types:
 ```rust
 use udon::field::Field;
 use ragu_core::{Result, drivers::{Driver, DriverValue}, gadgets::{Bound, Kind}, maybe::Maybe};
-use ragu_pcd::header::{Header, Suffix};
+use ragu_pcd::header::{Header, Padding, Suffix};
 use ragu_primitives::allocator::{Allocator, Standard};
 use ragu_primitives::Element;
 use ragu_primitives::poseidon::Sponge;
@@ -74,6 +74,7 @@ struct LeafNode;
 
 impl<F: Field> Header<F> for LeafNode {
     const SUFFIX: Suffix = Suffix::new(0);  // Unique ID
+    type OnlinePolyCommit = (Padding, Padding); // No online polynomials
     type Data = F;                  // Field element
     type Output = Kind![F; Element<'_, _>];  // Circuit representation
 
@@ -91,6 +92,7 @@ struct InternalNode;
 
 impl<F: Field> Header<F> for InternalNode {
     const SUFFIX: Suffix = Suffix::new(1);  // Different ID
+    type OnlinePolyCommit = (Padding, Padding); // No online polynomials
     type Data = F;
     type Output = Kind![F; Element<'_, _>];
 
@@ -106,6 +108,8 @@ impl<F: Field> Header<F> for InternalNode {
 
 **Key Points:**
 - `SUFFIX`: Unique identifier for each header type
+- `OnlinePolyCommit`: The online polynomial kinds the header carries; use
+  `(Padding, Padding)` when it carries none
 - `Data`: The Rust type for this header's data (field elements)
 - `Output`: The circuit representation (Element gadget)
 - `encode`: How to convert `Data` into circuit form. The `allocator`
@@ -137,7 +141,7 @@ impl<'params, C: Cycle> Step<C> for CreateLeaf<'params, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,  // Only padding polynomials
+        _: &mut Oracles<'_, 'dr, D, C, Self>,  // Only padding polynomials
         witness: DriverValue<D, Self::Witness<'source>>,
         _: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         _: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
@@ -210,7 +214,7 @@ impl<'params, C: Cycle> Step<C> for CombineNodes<'params, C> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

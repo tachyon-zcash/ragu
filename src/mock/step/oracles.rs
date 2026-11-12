@@ -144,6 +144,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
 }
 
 /// Mirrors `ragu_pcd::step::Oracle`.
+#[must_use = "an oracle does nothing until it is opened"]
 pub struct Oracle<'o, 'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
     oracles: &'o mut Oracles<'a, 'dr, D, C, S>,
     slot: usize,
