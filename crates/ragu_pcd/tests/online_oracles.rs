@@ -87,16 +87,16 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 
 /// A set of tachygrams $\{t_i\}$: the set's size as the data, and the set
 /// polynomial $\prod_i (X - t_i)$ in slot 0. Slot 1 is padding.
-struct TgSet;
+struct TgSetHeader;
 
-/// The set polynomial: its roots are the set's members. A [`TgSet`] keeps
-/// it in the first slot and an [`Anchor`] in the last.
+/// The set polynomial: its roots are the set's members. A [`TgSetHeader`] keeps
+/// it in the first slot and an [`AnchorHeader`] in the last.
 #[derive(Clone, Copy, Debug)]
 struct TachygramSet;
 
 impl OnlinePoly for TachygramSet {}
 
-impl Header<Fp> for TgSet {
+impl Header<Fp> for TgSetHeader {
     const SUFFIX: Suffix = Suffix::new(10);
     type OnlinePolyCommit = (TachygramSet, Padding);
     type Data = Fp;
@@ -114,9 +114,9 @@ impl Header<Fp> for TgSet {
 /// A chain of anchors: the latest anchor as the data, and the set
 /// polynomial the anchor covers in slot 1, the slot whose digest a step can
 /// read (see section 6). Slot 0 is padding.
-struct Anchor;
+struct AnchorHeader;
 
-impl Header<Fp> for Anchor {
+impl Header<Fp> for AnchorHeader {
     const SUFFIX: Suffix = Suffix::new(11);
     type OnlinePolyCommit = (Padding, TachygramSet);
     type Data = Fp;
@@ -133,21 +133,21 @@ impl Header<Fp> for Anchor {
 
 /// A header for proofs whose slots hold the polynomials $X + a_0$ and
 /// $2X + a_1$, for its data $(a_0, a_1)$ (see section 7).
-struct Pair;
+struct PairHeader;
 
-/// The line $X + a_0$ a [`Pair`] keeps in its first slot.
+/// The line $X + a_0$ a [`PairHeader`] keeps in its first slot.
 #[derive(Clone, Copy, Debug)]
 struct SlopeOne;
 
 impl OnlinePoly for SlopeOne {}
 
-/// The line $2X + a_1$ a [`Pair`] keeps in its second slot.
+/// The line $2X + a_1$ a [`PairHeader`] keeps in its second slot.
 #[derive(Clone, Copy, Debug)]
 struct SlopeTwo;
 
 impl OnlinePoly for SlopeTwo {}
 
-impl Header<Fp> for Pair {
+impl Header<Fp> for PairHeader {
     const SUFFIX: Suffix = Suffix::new(12);
     type OnlinePolyCommit = (SlopeOne, SlopeTwo);
     type Data = [Fp; 2];
@@ -171,17 +171,12 @@ fn padding() -> Vec<Fp> {
 fn vanishing(roots: &[Fp]) -> Vec<Fp> {
     roots
         .iter()
-        .fold(vec![Fp::ONE], |poly, root| times_linear(&poly, *root))
+        .fold(vec![Fp::ONE], |poly, root| times(&poly, &linear(*root)))
 }
 
-/// The coefficients of `poly * (X - root)`.
-fn times_linear(poly: &[Fp], root: Fp) -> Vec<Fp> {
-    let mut out = vec![Fp::ZERO; poly.len() + 1];
-    for (i, coeff) in poly.iter().enumerate() {
-        out[i + 1] += *coeff;
-        out[i] -= *coeff * root;
-    }
-    out
+/// The coefficients of $X - r$.
+fn linear(root: Fp) -> [Fp; 2] {
+    [-root, Fp::ONE]
 }
 
 /// The coefficients of `a * b`.
@@ -211,7 +206,7 @@ fn times(a: &[Fp], b: &[Fp]) -> Vec<Fp> {
 /// The number of tachygrams [`SeedSet`] takes.
 const SEED_SIZE: usize = 3;
 
-/// Seeds a [`TgSet`] from `SEED_SIZE` secret tachygrams.
+/// Seeds a [`TgSetHeader`] from `SEED_SIZE` secret tachygrams.
 struct SeedSet;
 
 impl Step<C> for SeedSet {
@@ -223,14 +218,14 @@ impl Step<C> for SeedSet {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = TgSet;
+    type Output = TgSetHeader;
 
     fn prepare<'source>(
         &self,
         tachygrams: &Vec<Fp>,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Prepared<Fp, TgSet>> {
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
         Ok(Prepared::new()
             .poly(TachygramSet, vanishing(tachygrams))
             .stage(tachygrams.clone()))
@@ -247,7 +242,7 @@ impl Step<C> for SeedSet {
         (
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
@@ -281,7 +276,7 @@ impl Step<C> for SeedSet {
 // (X - t), with t secret, so the relation mixes a public polynomial (the
 // left slot) with a private one (X - t, from a staged root).
 
-/// Inserts one secret tachygram into a [`TgSet`].
+/// Inserts one secret tachygram into a [`TgSetHeader`].
 struct InsertTachygram;
 
 impl Step<C> for InsertTachygram {
@@ -289,22 +284,22 @@ impl Step<C> for InsertTachygram {
     const NUM_STAGED: usize = 1;
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
-    type Output = TgSet;
+    type Output = TgSetHeader;
 
     /// The left input's polynomial arrives as coefficients, by slot: the
     /// output's is computed from it.
     fn prepare<'source>(
         &self,
         tachygram: &Fp,
-        left: HeaderInput<'_, Fp, TgSet>,
+        left: HeaderInput<'_, Fp, TgSetHeader>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Prepared<Fp, TgSet>> {
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
         Ok(Prepared::new()
             .poly(
                 TachygramSet,
-                times_linear(left.polynomial(TachygramSet), *tachygram),
+                times(left.polynomial(TachygramSet), &linear(*tachygram)),
             )
             .stage([*tachygram]))
     }
@@ -318,15 +313,15 @@ impl Step<C> for InsertTachygram {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
+        let left: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
 
         // O0(zeta) = L0(zeta) * (zeta - t), with t staged, never witnessed
@@ -350,23 +345,23 @@ impl Step<C> for InsertTachygram {
 // T1. Every polynomial in the relation is public: the left and right
 // inputs' and the output's, so nothing is staged.
 
-/// Merges two [`TgSet`]s: the output polynomial is the inputs' product.
+/// Merges two [`TgSetHeader`]s: the output polynomial is the inputs' product.
 struct MergeSets;
 
 impl Step<C> for MergeSets {
     const INDEX: Index = Index::new(2);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = TgSet;
-    type Right = TgSet;
-    type Output = TgSet;
+    type Left = TgSetHeader;
+    type Right = TgSetHeader;
+    type Output = TgSetHeader;
 
     fn prepare<'source>(
         &self,
         _: &(),
-        left: HeaderInput<'_, Fp, TgSet>,
-        right: HeaderInput<'_, Fp, TgSet>,
-    ) -> Result<Prepared<Fp, TgSet>> {
+        left: HeaderInput<'_, Fp, TgSetHeader>,
+        right: HeaderInput<'_, Fp, TgSetHeader>,
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
         Ok(Prepared::new().poly(
             TachygramSet,
             times(
@@ -385,16 +380,16 @@ impl Step<C> for MergeSets {
         right: DriverValue<D, Fp>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
-            Encoded<'dr, D, TgSet, HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
-        let right: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, right)?;
+        let left: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, left)?;
+        let right: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, right)?;
 
         // O0(zeta) = L0(zeta) * R0(zeta).
         let zeta = oracles.zeta().clone();
@@ -417,7 +412,7 @@ impl Step<C> for MergeSets {
 // apply: the claim "the committed polynomial vanishes at this element" is
 // meaningful for any element the prover picks.
 
-/// Proves a witnessed element is in the left [`TgSet`]: the set polynomial
+/// Proves a witnessed element is in the left [`TgSetHeader`]: the set polynomial
 /// vanishes there.
 struct ProveMember;
 
@@ -425,7 +420,7 @@ impl Step<C> for ProveMember {
     const INDEX: Index = Index::new(3);
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
     type Output = ();
 
@@ -438,7 +433,7 @@ impl Step<C> for ProveMember {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
         ),
@@ -457,7 +452,7 @@ impl Step<C> for ProveMember {
     }
 }
 
-/// Proves a witnessed element is not in the left [`TgSet`]: the set
+/// Proves a witnessed element is not in the left [`TgSetHeader`]: the set
 /// polynomial does not vanish there.
 struct ProveNonMember;
 
@@ -465,7 +460,7 @@ impl Step<C> for ProveNonMember {
     const INDEX: Index = Index::new(4);
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
     type Output = ();
 
@@ -478,7 +473,7 @@ impl Step<C> for ProveNonMember {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
         ),
@@ -565,7 +560,7 @@ impl Step<C> for UnitSeed {
 // Only the step's own slot 1 has a digest. To hash an input's polynomial,
 // the step copies it into its output's slot 1 and proves the copy at zeta.
 
-/// Starts an [`Anchor`] chain at anchor zero, covering no set.
+/// Starts an [`AnchorHeader`] chain at anchor zero, covering no set.
 struct GenesisAnchor;
 
 impl Step<C> for GenesisAnchor {
@@ -574,7 +569,7 @@ impl Step<C> for GenesisAnchor {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = Anchor;
+    type Output = AnchorHeader;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
@@ -587,7 +582,7 @@ impl Step<C> for GenesisAnchor {
         (
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, Anchor, HS>,
+            Encoded<'dr, D, AnchorHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
@@ -606,7 +601,7 @@ impl Step<C> for GenesisAnchor {
     }
 }
 
-/// Advances an [`Anchor`] chain over a block's [`TgSet`]: the output's
+/// Advances an [`AnchorHeader`] chain over a block's [`TgSetHeader`]: the output's
 /// slot 1 is the block's set polynomial, and the new anchor is
 /// `Poseidon(previous anchor, H(set commitment))`.
 struct AdvanceAnchor {
@@ -617,17 +612,17 @@ impl Step<C> for AdvanceAnchor {
     const INDEX: Index = Index::new(7);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = TgSet;
-    type Right = Anchor;
-    type Output = Anchor;
+    type Left = TgSetHeader;
+    type Right = AnchorHeader;
+    type Output = AnchorHeader;
 
     /// Slot 1 copies the block's set polynomial, the left input's slot 0.
     fn prepare<'source>(
         &self,
         _: &(),
-        block: HeaderInput<'_, Fp, TgSet>,
-        _: HeaderInput<'_, Fp, Anchor>,
-    ) -> Result<Prepared<Fp, Anchor>> {
+        block: HeaderInput<'_, Fp, TgSetHeader>,
+        _: HeaderInput<'_, Fp, AnchorHeader>,
+    ) -> Result<Prepared<Fp, AnchorHeader>> {
         Ok(Prepared::new().poly(TachygramSet, block.polynomial(TachygramSet)))
     }
 
@@ -640,16 +635,16 @@ impl Step<C> for AdvanceAnchor {
         previous: DriverValue<D, Fp>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
-            Encoded<'dr, D, Anchor, HS>,
-            Encoded<'dr, D, Anchor, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
+            Encoded<'dr, D, AnchorHeader, HS>,
+            Encoded<'dr, D, AnchorHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let block: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, block)?;
-        let previous: Encoded<'dr, D, Anchor, HS> = Encoded::new(dr, allocator, previous)?;
+        let block: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, block)?;
+        let previous: Encoded<'dr, D, AnchorHeader, HS> = Encoded::new(dr, allocator, previous)?;
 
         // The copy: O1(zeta) = L0(zeta), so O1 is the block's set polynomial.
         let zeta = oracles.zeta().clone();
@@ -696,18 +691,18 @@ fn next_anchor(app: &App, previous: Fp, set: <Pasta as Cycle>::HostCurve) -> Res
 // C4. One step opens all six slots: the left and right inputs' and the
 // output's, both polynomials each, every one at its own point.
 
-/// The polynomials associated with a [`Pair`] header with data `a`.
+/// The polynomials associated with a [`PairHeader`] with data `a`.
 fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_POLYNOMIALS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
 
 /// [`pair_polys`], prepared by kind.
-fn pair_prepared(a: [Fp; 2]) -> Prepared<Fp, Pair> {
+fn pair_prepared(a: [Fp; 2]) -> Prepared<Fp, PairHeader> {
     let [first, second] = pair_polys(a);
     Prepared::new().poly(SlopeOne, first).poly(SlopeTwo, second)
 }
 
-/// Seeds a [`Pair`] from staged data, checking both output slots at zeta.
+/// Seeds a [`PairHeader`] from staged data, checking both output slots at zeta.
 struct PairSeed;
 
 impl Step<C> for PairSeed {
@@ -717,14 +712,14 @@ impl Step<C> for PairSeed {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = Pair;
+    type Output = PairHeader;
 
     fn prepare<'source>(
         &self,
         a: &[Fp; 2],
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Prepared<Fp, Pair>> {
+    ) -> Result<Prepared<Fp, PairHeader>> {
         Ok(pair_prepared(*a).stage(*a))
     }
 
@@ -739,7 +734,7 @@ impl Step<C> for PairSeed {
         (
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, Pair, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
         ),
         DriverValue<D, [Fp; 2]>,
         DriverValue<D, ()>,
@@ -772,7 +767,7 @@ fn point(i: usize) -> Fp {
     Fp::from(101 + i as u64)
 }
 
-/// Fuses two [`Pair`]s into their sum, opening each of the six slots at
+/// Fuses two [`PairHeader`]s into their sum, opening each of the six slots at
 /// its own point and checking every value against the headers' data, so
 /// that exchanging any two slots would break a check.
 struct PairFuse;
@@ -781,16 +776,16 @@ impl Step<C> for PairFuse {
     const INDEX: Index = Index::new(9);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = Pair;
-    type Right = Pair;
-    type Output = Pair;
+    type Left = PairHeader;
+    type Right = PairHeader;
+    type Output = PairHeader;
 
     fn prepare<'source>(
         &self,
         _: &(),
-        left: HeaderInput<'_, Fp, Pair>,
-        right: HeaderInput<'_, Fp, Pair>,
-    ) -> Result<Prepared<Fp, Pair>> {
+        left: HeaderInput<'_, Fp, PairHeader>,
+        right: HeaderInput<'_, Fp, PairHeader>,
+    ) -> Result<Prepared<Fp, PairHeader>> {
         Ok(pair_prepared([
             left.data[0] + right.data[0],
             left.data[1] + right.data[1],
@@ -806,16 +801,16 @@ impl Step<C> for PairFuse {
         right: DriverValue<D, [Fp; 2]>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Pair, HS>,
-            Encoded<'dr, D, Pair, HS>,
-            Encoded<'dr, D, Pair, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
         ),
         DriverValue<D, [Fp; 2]>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, Pair, HS> = Encoded::new(dr, allocator, left)?;
-        let right: Encoded<'dr, D, Pair, HS> = Encoded::new(dr, allocator, right)?;
+        let left: Encoded<'dr, D, PairHeader, HS> = Encoded::new(dr, allocator, left)?;
+        let right: Encoded<'dr, D, PairHeader, HS> = Encoded::new(dr, allocator, right)?;
         let sum: Vec<_> = (0..2)
             .map(|k| left.as_gadget()[k].add(dr, &right.as_gadget()[k]))
             .collect();
@@ -940,7 +935,7 @@ fn sets_prove_and_verify() -> Result<()> {
     assert_eq!(*a.data(), Fp::from(SEED_SIZE as u64));
 
     let (a, ()) = app.fuse(&mut rng, InsertTachygram, Fp::from(10), a, unit(&app)?)?;
-    let set_a = times_linear(&set_a, Fp::from(10));
+    let set_a = times(&set_a, &linear(Fp::from(10)));
     check(&app, &a, [set_a.clone(), padding()], 2);
     assert_eq!(*a.data(), Fp::from(SEED_SIZE as u64 + 1));
 
@@ -1026,7 +1021,7 @@ fn every_slot_proves_and_verifies() -> Result<()> {
         let rejected = |corruption: Corruption<C>, what: &str, rng: &mut StdRng| {
             let (mut proof, data) = ab.clone().into_parts();
             proof.corrupt(corruption);
-            let pcd = proof.carry::<Pair>(data);
+            let pcd = proof.carry::<PairHeader>(data);
             assert!(
                 !app.verify_differential(&pcd, rng).unwrap(),
                 "{what} must be rejected"
@@ -1107,16 +1102,16 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
     const NUM_STAGED: usize = 1;
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
-    type Output = TgSet;
+    type Output = TgSetHeader;
 
     fn prepare<'source>(
         &self,
         tachygram: &Fp,
-        left: HeaderInput<'_, Fp, TgSet>,
+        left: HeaderInput<'_, Fp, TgSetHeader>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Prepared<Fp, TgSet>> {
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
         let set = match FAULT {
             ZERO => vec![Fp::ZERO; 4],
             _ => left.polynomial(TachygramSet).to_vec(),
@@ -1133,16 +1128,16 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let _ = witness;
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
+        let left: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         if FAULT != UNOPENED {
             // [`InsertTachygram`]'s check. For `UNOPENED` the set was
@@ -1202,7 +1197,7 @@ impl Step<C> for UnitAt2 {
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn a_misstated_polynomial_cannot_prove() -> Result<()> {
-    fn attempt<const FAULT: u8>() -> (App, Result<Pcd<C, R, TgSet>>) {
+    fn attempt<const FAULT: u8>() -> (App, Result<Pcd<C, R, TgSetHeader>>) {
         let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
             .register(SeedSet)
             .and_then(|b| b.register(Faulty::<FAULT>))

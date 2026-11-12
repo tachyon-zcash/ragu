@@ -153,7 +153,7 @@ fn prepare<'source>(
     _: HeaderInput<'_, Fp, ()>,
 ) -> Result<Prepared<Fp, TgSet>> {
     // The output's set: the left input's set times (X - root).
-    let set = times_linear(left.polynomial(TachygramSet), *root);
+    let set = times(left.polynomial(TachygramSet), &linear(*root));
     Ok(Prepared::new().poly(TachygramSet, set).stage([*root]))
 }
 ```

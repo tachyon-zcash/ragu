@@ -22,7 +22,7 @@ use crate::header::{Has, Header, NUM_ONLINE_POLYNOMIALS};
 ///
 /// ```rust,ignore
 /// Prepared::new()
-///     .poly(TachygramSet, times_linear(left.polynomial(TachygramSet), t))
+///     .poly(TachygramSet, times(left.polynomial(TachygramSet), &linear(t)))
 ///     .stage([t])
 /// ```
 pub struct Prepared<F, O> {
