@@ -432,7 +432,7 @@ mod tests {
 
         // zeta, the openings, the bridge hash, then the three padded headers
         assert_eq!(output.len(), InstanceLen::<HEADER_SIZE>::len());
-        let values: alloc::vec::Vec<Fp> = output.iter().map(|e| *e.value().take()).collect();
+        let values: Vec<Fp> = output.iter().map(|e| *e.value().take()).collect();
         assert_eq!(values[0], Fp::from(7u64));
         let headers = 1 + 2 * online::NUM_ONLINE_QUERIES + 2;
         assert_eq!(values[headers], Fp::from(10u64));

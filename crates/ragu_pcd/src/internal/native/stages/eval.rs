@@ -23,6 +23,7 @@
 //! commitment without its $\beta$ term, and goes to the unified instance
 //! rather than to this stage.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -85,9 +86,9 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
         let generators = C::nested_generators(params);
         // The stage's values the binders cover: the lifts, then the
         // base-case sign.
-        let mut scalars: alloc::vec::Vec<C::ScalarField> = challenges.lifts.to_vec();
+        let mut scalars: Vec<C::ScalarField> = challenges.lifts.to_vec();
         scalars.push(challenges.base_case_sign);
-        let bases: alloc::vec::Vec<P> = (0..scalars.len())
+        let bases: Vec<P> = (0..scalars.len())
             .map(|i| generators.g()[generator_index::<C, R>(i)])
             .collect();
         let projective = B::msm_batch(core::array::from_fn::<_, NUM_BINDERS, _>(|k| {

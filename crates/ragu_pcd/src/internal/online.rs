@@ -31,7 +31,7 @@
 //! the openings and `compute_v` folds them into the batch and exports them
 //! in its bridge instance for the parent.
 
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
@@ -65,9 +65,9 @@ pub(crate) type PolynomialsLen = ConstLen<NUM_ONLINE_POLYNOMIALS>;
 /// stripped: how a step's first phase reads a proof's online polynomials.
 pub(crate) fn coefficients<F: Field, R: Rank>(
     polys: &[sparse::Polynomial<F, R>; NUM_ONLINE_POLYNOMIALS],
-) -> [alloc::vec::Vec<F>; NUM_ONLINE_POLYNOMIALS] {
+) -> [Vec<F>; NUM_ONLINE_POLYNOMIALS] {
     core::array::from_fn(|i| {
-        let mut coeffs: alloc::vec::Vec<F> = polys[i].iter_coeffs().collect();
+        let mut coeffs: Vec<F> = polys[i].iter_coeffs().collect();
         while coeffs.last() == Some(&F::ZERO) {
             coeffs.pop();
         }
