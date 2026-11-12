@@ -623,6 +623,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        if !<H::OnlinePolyCommit as header::OnlinePolyCommit>::has_unique_kinds() {
+            return Err(Error::Initialization(
+                "a Header cannot keep the same online polynomial kind in two slots".into(),
+            ));
+        }
+
         if H::SUFFIX.get() < header::NUM_INTERNAL_SUFFIXES as u64
             && TypeId::of::<H>() != TypeId::of::<()>()
         {

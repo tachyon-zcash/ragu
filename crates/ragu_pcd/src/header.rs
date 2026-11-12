@@ -1,7 +1,7 @@
 //! Headers are succinct representations of data used to represent the current
 //! state of a computation.
 
-use core::any::Any;
+use core::any::{Any, TypeId};
 
 use ragu_core::{
     Result,
@@ -101,11 +101,24 @@ pub struct Padding;
 
 /// An entry of a header's [`OnlinePolyCommit`] list: a kind of polynomial,
 /// or [`Padding`].
-pub trait OnlinePolySlot: Copy + Send + Sync + 'static {}
+///
+/// This trait is sealed: implement [`OnlinePoly`] for an application's
+/// polynomial kind, or use [`Padding`] for an unused slot.
+pub trait OnlinePolySlot: slot_sealed::Sealed + Copy + Send + Sync + 'static {}
 
 impl<P: OnlinePoly> OnlinePolySlot for P {}
 
 impl OnlinePolySlot for Padding {}
+
+mod slot_sealed {
+    use super::{OnlinePoly, Padding};
+
+    pub trait Sealed {}
+
+    impl<P: OnlinePoly> Sealed for P {}
+
+    impl Sealed for Padding {}
+}
 
 /// The online polynomials a header's proofs carry, one entry per slot.
 ///
@@ -133,9 +146,33 @@ impl OnlinePolySlot for Padding {}
 /// assert_eq!(slot::<(Padding, TachygramSet), _, _>(TachygramSet), 1);
 /// slot::<(Padding, TachygramSet), _, _>(Padding); // error: expected `TachygramSet`, found `Padding`
 /// ```
-pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {}
+///
+/// `Has` is sealed too: an application cannot forge a lookup for a kind the
+/// list does not hold.
+///
+/// ```compile_fail
+/// use ragu_pcd::header::{Has, OnlinePoly, Padding};
+///
+/// #[derive(Clone, Copy)]
+/// struct TachygramSet;
+/// impl OnlinePoly for TachygramSet {}
+///
+/// struct ForgedSlot;
+/// impl Has<TachygramSet, ForgedSlot> for (Padding, Padding) {
+///     const INDEX: usize = 0;
+/// }
+/// ```
+pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {
+    /// Whether every non-padding kind occurs at most once.
+    #[doc(hidden)]
+    fn has_unique_kinds() -> bool;
+}
 
-impl<A: OnlinePolySlot, B: OnlinePolySlot> OnlinePolyCommit for (A, B) {}
+impl<A: OnlinePolySlot, B: OnlinePolySlot> OnlinePolyCommit for (A, B) {
+    fn has_unique_kinds() -> bool {
+        TypeId::of::<A>() != TypeId::of::<B>() || TypeId::of::<A>() == TypeId::of::<Padding>()
+    }
+}
 
 impl<A: OnlinePolySlot, B: OnlinePolySlot> sealed::Sealed for (A, B) {}
 
@@ -145,22 +182,33 @@ mod sealed {
 
 /// A list that keeps the kind `P` in the slot marked by `I`.
 ///
-/// `(A, B)` keeps `A` at index zero and `B` at index one. `I` is [`Slot0`]
-/// or [`Slot1`]; the compiler infers it from `P`, so a call names only the
-/// kind: `input.polynomial(TachygramSet)`. A list keeping `P` in both slots
-/// cannot name it, and [`Padding`] is never found.
-pub trait Has<P, I>: OnlinePolyCommit {
+/// `(A, B)` keeps `A` at index zero and `B` at index one. `I` is a slot
+/// marker the compiler infers from `P`, so a call names only the kind:
+/// `input.polynomial(TachygramSet)`. Application registration rejects a list
+/// keeping the same non-padding kind in both slots, and [`Padding`] is never
+/// found. The sealed trait prevents callers from inventing a lookup.
+pub trait Has<P, I>: has_sealed::Sealed<P, I> + OnlinePolyCommit {
     /// The index of the slot, below [`NUM_ONLINE_POLYNOMIALS`].
     const INDEX: usize;
 }
 
-/// The marker of the first slot, for [`Has`].
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct Slot0;
 
-/// The marker of the second slot, for [`Has`].
 #[derive(Clone, Copy, Debug)]
+#[doc(hidden)]
 pub struct Slot1;
+
+mod has_sealed {
+    use super::{OnlinePoly, OnlinePolySlot, Slot0, Slot1};
+
+    pub trait Sealed<P, I> {}
+
+    impl<A: OnlinePoly, B: OnlinePolySlot> Sealed<A, Slot0> for (A, B) {}
+
+    impl<A: OnlinePolySlot, B: OnlinePoly> Sealed<B, Slot1> for (A, B) {}
+}
 
 impl<A: OnlinePoly, B: OnlinePolySlot> Has<A, Slot0> for (A, B) {
     const INDEX: usize = 0;
@@ -348,6 +396,13 @@ mod tests {
         assert_eq!(slot::<(First, Second), _, _>(Second), 1);
         assert_eq!(slot::<(Padding, Second), _, _>(Second), 1);
         assert_eq!(slot::<(First, Padding), _, _>(First), 0);
+    }
+
+    #[test]
+    fn a_non_padding_kind_may_occupy_only_one_slot() {
+        assert!(<(First, Second) as OnlinePolyCommit>::has_unique_kinds());
+        assert!(<(Padding, Padding) as OnlinePolyCommit>::has_unique_kinds());
+        assert!(!<(First, First) as OnlinePolyCommit>::has_unique_kinds());
     }
 
     #[test]

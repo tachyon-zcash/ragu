@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Padding, Suffix},
+    header::{Header, OnlinePoly, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{
@@ -265,6 +265,43 @@ fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {
 #[test]
 fn register_rejects_copied_unit_suffix_without_unit_header() {
     rejects_reserved_suffix::<CopiedUnitSuffix, CopiedUnitSuffix, CopiedUnitSuffix>();
+}
+
+#[derive(Clone, Copy)]
+struct RepeatedPoly;
+
+impl OnlinePoly for RepeatedPoly {}
+
+struct DuplicatePolyHeader;
+
+impl Header<Fp> for DuplicatePolyHeader {
+    const SUFFIX: Suffix = Suffix::new(2);
+    type OnlinePolyCommit = (RepeatedPoly, RepeatedPoly);
+    type Data = ();
+    type Output = ();
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        _: &mut D,
+        _: &mut A,
+        _: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn register_rejects_a_kind_in_two_polynomial_slots() {
+    let result = ApplicationBuilder::<Pasta, ProductionRank, 4>::new().register(HeaderStep::<
+        (),
+        (),
+        DuplicatePolyHeader,
+    >(PhantomData));
+    assert!(matches!(
+        result,
+        Err(Error::Initialization(message))
+            if message.to_string()
+                == "a Header cannot keep the same online polynomial kind in two slots"
+    ));
 }
 
 #[test]

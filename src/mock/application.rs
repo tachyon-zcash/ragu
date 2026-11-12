@@ -24,7 +24,7 @@ use udon::{
 };
 
 use super::{
-    header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, Suffix},
+    header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, OnlinePolyCommit, Suffix},
     proof::{self, CompressedPcd, CompressedProof, Pcd, Proof},
     step::{Encoded, Index, NUM_INTERNAL_STEPS, Oracles, Step},
 };
@@ -220,6 +220,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     fn prevent_duplicate_suffix<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        if !H::OnlinePolyCommit::has_unique_kinds() {
+            return Err(Error::Initialization(
+                "a Header cannot keep the same online polynomial kind in two slots".into(),
+            ));
+        }
+
         let suffix = H::SUFFIX;
         let type_id = TypeId::of::<H>();
         if H::SUFFIX.get() < NUM_INTERNAL_SUFFIXES as u64 && type_id != TypeId::of::<()>() {
