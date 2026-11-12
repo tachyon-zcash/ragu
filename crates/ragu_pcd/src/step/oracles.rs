@@ -34,7 +34,7 @@
 //! given $\zeta$.
 //!
 //! The slots are the proofs' polynomials in order `[L0, L1, R0, R1, O0,
-//! O1]`. Every slot holds whatever polynomial the step that produced the
+//! O1]`, the order of the step's instance; a step never sees it. Every slot holds whatever polynomial the step that produced the
 //! header committed, the constant one where that step used fewer; what a
 //! slot means is the application's convention for the header, which the
 //! producing steps' circuits constrain, as they do the header's fields.
@@ -63,7 +63,7 @@ use super::Step;
 use crate::{
     Header,
     header::{Has, slot},
-    internal::online::{self, NUM_ONLINE_POLYNOMIALS, Queries, QueriesOutput, QueryOutput, Slot},
+    internal::online::{self, NUM_ONLINE_POLYNOMIALS, Queries, QueriesOutput, QueryOutput},
 };
 
 /// Evaluates a step's online polynomials: `evaluate(slot, x)` is the value
@@ -161,62 +161,73 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         &self.staged
     }
 
-    /// The oracle for the left input proof's polynomial of `kind`.
+    /// Returns the oracle for the left input proof's polynomial of `kind`.
     pub fn left<P, I>(&mut self, kind: P) -> Oracle<'_, 'a, 'dr, D, C, S>
     where
         <S::Left as Header<C::CircuitField>>::OnlinePolyCommit: Has<P, I>,
     {
-        Oracle {
-            slot: Slot::left(slot::<
-                <S::Left as Header<C::CircuitField>>::OnlinePolyCommit,
-                P,
-                I,
-            >(kind)),
-            oracles: self,
-        }
+        self.left_at(slot::<
+            <S::Left as Header<C::CircuitField>>::OnlinePolyCommit,
+            P,
+            I,
+        >(kind))
     }
 
-    /// The oracle for the right input proof's polynomial of `kind`.
+    /// Returns the oracle for the right input proof's polynomial of `kind`.
     pub fn right<P, I>(&mut self, kind: P) -> Oracle<'_, 'a, 'dr, D, C, S>
     where
         <S::Right as Header<C::CircuitField>>::OnlinePolyCommit: Has<P, I>,
     {
-        Oracle {
-            slot: Slot::right(slot::<
-                <S::Right as Header<C::CircuitField>>::OnlinePolyCommit,
-                P,
-                I,
-            >(kind)),
-            oracles: self,
-        }
+        self.right_at(slot::<
+            <S::Right as Header<C::CircuitField>>::OnlinePolyCommit,
+            P,
+            I,
+        >(kind))
     }
 
-    /// The oracle for the step's own output proof's polynomial of `kind`,
-    /// as [`prepare`](super::Step::prepare) prepared it.
+    /// Returns the oracle for the step's own output proof's polynomial of
+    /// `kind`, as [`prepare`](super::Step::prepare) prepared it.
     pub fn output<P, I>(&mut self, kind: P) -> Oracle<'_, 'a, 'dr, D, C, S>
     where
         <S::Output as Header<C::CircuitField>>::OnlinePolyCommit: Has<P, I>,
     {
+        self.output_at(slot::<
+            <S::Output as Header<C::CircuitField>>::OnlinePolyCommit,
+            P,
+            I,
+        >(kind))
+    }
+
+    /// Returns the oracle for the left input proof's `index`-th polynomial,
+    /// whatever the header lists. Ragu's own steps, one circuit for every
+    /// header, copy or pin every slot through these.
+    pub(crate) fn left_at(&mut self, index: usize) -> Oracle<'_, 'a, 'dr, D, C, S> {
         Oracle {
-            slot: Slot::output(slot::<
-                <S::Output as Header<C::CircuitField>>::OnlinePolyCommit,
-                P,
-                I,
-            >(kind)),
+            slot: offset(0, index),
             oracles: self,
         }
     }
 
-    /// Opens `slot` at `x`, whatever the headers list: see
-    /// [`Oracle::open`]. Ragu's own steps copy or pin every slot through
-    /// this.
-    pub(crate) fn query(
-        &mut self,
-        dr: &mut D,
-        slot: Slot,
-        x: &Element<'dr, D>,
-    ) -> Result<Element<'dr, D>> {
-        let i = slot.offset();
+    /// Returns the oracle for the right input proof's `index`-th polynomial;
+    /// see [`left_at`](Self::left_at).
+    pub(crate) fn right_at(&mut self, index: usize) -> Oracle<'_, 'a, 'dr, D, C, S> {
+        Oracle {
+            slot: offset(1, index),
+            oracles: self,
+        }
+    }
+
+    /// Returns the oracle for the output proof's `index`-th polynomial; see
+    /// [`left_at`](Self::left_at).
+    pub(crate) fn output_at(&mut self, index: usize) -> Oracle<'_, 'a, 'dr, D, C, S> {
+        Oracle {
+            slot: offset(2, index),
+            oracles: self,
+        }
+    }
+
+    /// Opens the slot at `i` at `x`.
+    fn open_at(&mut self, dr: &mut D, i: usize, x: &Element<'dr, D>) -> Result<Element<'dr, D>> {
         if self.queries[i].is_some() {
             return Err(Error::Initialization(
                 "an online slot may be opened once per step".into(),
@@ -251,16 +262,15 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         dr: &mut D,
     ) -> Result<(Element<'dr, D>, QueriesOutput<'dr, D>, [Element<'dr, D>; 2])> {
         let zeta = self.zeta.clone();
-        for i in 0..NUM_ONLINE_POLYNOMIALS {
-            let slot = Slot::output(i);
-            if self.queries[slot.offset()].is_none() {
-                let value = self.query(dr, slot, &zeta)?;
+        for index in 0..NUM_ONLINE_POLYNOMIALS {
+            if self.queries[offset(2, index)].is_none() {
+                let value = self.output_at(index).open(dr, &zeta)?;
                 value.enforce_equal(dr, &Element::one())?;
             }
         }
-        for slot in Slot::all() {
-            if self.queries[slot.offset()].is_none() {
-                self.query(dr, slot, &zeta)?;
+        for i in 0..online::NUM_ONLINE_QUERIES {
+            if self.queries[i].is_none() {
+                self.open_at(dr, i, &zeta)?;
             }
         }
         let queries = FixedVec::try_from(
@@ -277,7 +287,17 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
 /// slot, to be opened once.
 pub struct Oracle<'o, 'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
     oracles: &'o mut Oracles<'a, 'dr, D, C, S>,
-    slot: Slot,
+    slot: usize,
+}
+
+/// Returns the slot of the `index`-th polynomial of proof `proof` (left,
+/// right, output) among the step's six, in the instance's order.
+const fn offset(proof: usize, index: usize) -> usize {
+    assert!(
+        index < NUM_ONLINE_POLYNOMIALS,
+        "a proof carries at most NUM_ONLINE_POLYNOMIALS online polynomials"
+    );
+    proof * NUM_ONLINE_POLYNOMIALS + index
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracle<'_, '_, 'dr, D, C, S> {
@@ -297,7 +317,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracle<'_, '_, 'dr, D, C, S> {
     /// one is refused. Allocating the opened value propagates the driver's
     /// error.
     pub fn open(self, dr: &mut D, x: &Element<'dr, D>) -> Result<Element<'dr, D>> {
-        self.oracles.query(dr, self.slot, x)
+        self.oracles.open_at(dr, self.slot, x)
     }
 }
 

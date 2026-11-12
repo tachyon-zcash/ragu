@@ -233,7 +233,6 @@ mod tests {
     use super::*;
     use crate::{
         header::{Header, OnlinePoly, Padding, Suffix},
-        internal::online::Slot,
         step::{Encoded, Index, Oracles, Step},
     };
 
@@ -347,7 +346,7 @@ mod tests {
             // What `TestStep` leaves to the adapter, done by hand.
             let zeta = oracles.zeta().clone();
             for i in 0..online::NUM_ONLINE_POLYNOMIALS {
-                let value = oracles.query(dr, Slot::output(i), &zeta)?;
+                let value = oracles.output_at(i).open(dr, &zeta)?;
                 value.enforce_equal(dr, &Element::one())?;
             }
             Ok((
@@ -505,7 +504,7 @@ mod tests {
         );
         assert!(oracles.output(TestPoly).open(dr, &x).is_err());
         let zeta = oracles.zeta().clone();
-        assert!(oracles.query(dr, Slot::output(1), &zeta).is_ok());
+        assert!(oracles.output_at(1).open(dr, &zeta).is_ok());
         let (zeta, queries, _) = oracles.finish(dr).unwrap();
         assert_eq!(*zeta.value().take(), Fp::from(3u64));
         assert_eq!(*queries[0].x.value().take(), Fp::from(3u64));

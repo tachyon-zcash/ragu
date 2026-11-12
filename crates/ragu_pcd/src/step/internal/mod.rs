@@ -8,7 +8,7 @@ use ragu_core::{Cycle, Result, drivers::Driver};
 use ragu_primitives::{Element, GadgetExt};
 
 use super::{Oracles, Step};
-use crate::{header::NUM_ONLINE_POLYNOMIALS, internal::online::Slot};
+use crate::header::NUM_ONLINE_POLYNOMIALS;
 
 /// Opens each output slot at $\zeta$ and holds it to one: the padding an
 /// internal step's output proof carries, which a prover cannot replace
@@ -21,7 +21,7 @@ pub(crate) fn pin_output_slots<'dr, D: Driver<'dr>, C: Cycle, S: Step<C>>(
 ) -> Result<()> {
     let zeta = oracles.zeta().clone();
     for i in 0..NUM_ONLINE_POLYNOMIALS {
-        let value = oracles.query(dr, Slot::output(i), &zeta)?;
+        let value = oracles.output_at(i).open(dr, &zeta)?;
         value.enforce_equal(dr, &Element::one())?;
     }
     Ok(())

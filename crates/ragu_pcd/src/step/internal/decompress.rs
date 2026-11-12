@@ -144,10 +144,7 @@ mod tests {
         use ragu_primitives::{Element, GadgetExt, allocator::Allocator};
         use ragu_testing::registry::TestRegistryBuilder;
 
-        use crate::{
-            header::{Header, NUM_ONLINE_POLYNOMIALS, Padding, Suffix},
-            internal::online::Slot,
-        };
+        use crate::header::{Header, NUM_ONLINE_POLYNOMIALS, Padding, Suffix};
 
         const HEADER_SIZE: usize = 4;
         type R = polynomials::TestRank;
@@ -233,7 +230,7 @@ mod tests {
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
                 let zeta = oracles.zeta().clone();
                 for i in 0..NUM_ONLINE_POLYNOMIALS {
-                    let value = oracles.query(dr, Slot::output(i), &zeta)?;
+                    let value = oracles.output_at(i).open(dr, &zeta)?;
                     value.enforce_equal(dr, &Element::one())?;
                 }
                 Ok(((left, right, output), witness, D::unit()))
