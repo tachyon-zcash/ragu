@@ -108,9 +108,15 @@ fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
 
 pub const HEADER_POLYNOMIALS: usize = 2;
 
+pub use ragu_pcd::header::{
+    Has, NUM_ONLINE_POLYNOMIALS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding,
+};
+
 /// Mirrors `ragu_pcd::Header`.
 pub trait Header<F: Field>: Send + Sync + 'static {
     const SUFFIX: Suffix;
+    /// Mirrors `ragu_pcd::Header::OnlinePolyCommit`.
+    type OnlinePolyCommit: OnlinePolyCommit;
     type Data: Send + Clone;
     type Output: Write<F>;
 
@@ -127,6 +133,7 @@ pub trait Header<F: Field>: Send + Sync + 'static {
 /// this ordinary header, while the private dummy suffix alone marks the base
 /// case.
 impl<F: Field> Header<F> for () {
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
 

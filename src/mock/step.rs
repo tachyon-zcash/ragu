@@ -1,6 +1,7 @@
 //! Mock PCD step — mirrors `ragu_pcd::Step`.
 
 use alloc::{vec, vec::Vec};
+use core::marker::PhantomData;
 
 use ragu_core::{
     Cycle, Error, Result,
@@ -10,10 +11,66 @@ use ragu_core::{
 use ragu_primitives::allocator::Allocator;
 use udon::field::Field;
 
-use super::header::{HEADER_POLYNOMIALS, Header};
+use super::header::{HEADER_POLYNOMIALS, Has, Header};
 
 pub mod oracles;
-pub use oracles::{Oracles, Position, Slot};
+pub use oracles::{Oracle, Oracles};
+
+/// Mirrors `ragu_pcd::step::Prepared`.
+pub struct Prepared<F, O> {
+    polynomials: [Vec<F>; HEADER_POLYNOMIALS],
+    staged: Vec<F>,
+    _marker: PhantomData<fn() -> O>,
+}
+
+impl<F: Field, O: Header<F>> Default for Prepared<F, O> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F: Field, O: Header<F>> Prepared<F, O> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            polynomials: core::array::from_fn(|_| vec![F::ONE]),
+            staged: Vec::new(),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Mirrors `ragu_pcd::step::Prepared::poly`.
+    #[must_use]
+    pub fn poly<P, I>(mut self, _kind: P, coefficients: impl Into<Vec<F>>) -> Self
+    where
+        O::OnlinePolyCommit: Has<P, I>,
+    {
+        self.polynomials[<O::OnlinePolyCommit as Has<P, I>>::INDEX] = coefficients.into();
+        self
+    }
+
+    /// Mirrors `ragu_pcd::step::Prepared::stage`.
+    #[must_use]
+    pub fn stage(mut self, values: impl Into<Vec<F>>) -> Self {
+        self.staged.extend(values.into());
+        self
+    }
+
+    pub fn polynomial<P, I>(&self, _kind: P) -> &[F]
+    where
+        O::OnlinePolyCommit: Has<P, I>,
+    {
+        &self.polynomials[<O::OnlinePolyCommit as Has<P, I>>::INDEX]
+    }
+
+    pub fn polynomials(&self) -> &[Vec<F>; HEADER_POLYNOMIALS] {
+        &self.polynomials
+    }
+
+    pub fn staged(&self) -> &[F] {
+        &self.staged
+    }
+}
 
 pub struct Encoded<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>(
     Bound<'dr, D, H::Output>,
@@ -135,9 +192,24 @@ impl Index {
     }
 }
 
+/// Mirrors `ragu_pcd::step::HeaderInput`.
 pub struct HeaderInput<'a, F: Field, H: Header<F>> {
     pub data: &'a H::Data,
-    pub polynomials: &'a [Vec<F>; HEADER_POLYNOMIALS],
+    polynomials: &'a [Vec<F>; HEADER_POLYNOMIALS],
+}
+
+impl<'a, F: Field, H: Header<F>> HeaderInput<'a, F, H> {
+    pub(crate) fn new(data: &'a H::Data, polynomials: &'a [Vec<F>; HEADER_POLYNOMIALS]) -> Self {
+        Self { data, polynomials }
+    }
+
+    /// Mirrors `ragu_pcd::step::HeaderInput::polynomial`.
+    pub fn polynomial<P, I>(&self, _kind: P) -> &'a [F]
+    where
+        H::OnlinePolyCommit: Has<P, I>,
+    {
+        &self.polynomials[<H::OnlinePolyCommit as Has<P, I>>::INDEX]
+    }
 }
 
 /// Mirrors `ragu_pcd::Step`.
@@ -151,30 +223,21 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
 
     const NUM_STAGED: usize = 0;
 
-    fn staged<'source>(
+    /// Mirrors `ragu_pcd::Step::prepare`.
+    fn prepare<'source>(
         &self,
         witness: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Self::Left>,
         right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<Vec<C::CircuitField>> {
+    ) -> Result<Prepared<C::CircuitField, Self::Output>> {
         let _ = (witness, left, right);
-        Ok(Vec::new())
-    }
-
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-        left: HeaderInput<'_, C::CircuitField, Self::Left>,
-        right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<[Vec<C::CircuitField>; HEADER_POLYNOMIALS]> {
-        let _ = (witness, left, right);
-        Ok(core::array::from_fn(|_| vec![C::CircuitField::ONE]))
+        Ok(Prepared::new())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,
