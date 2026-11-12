@@ -42,17 +42,18 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 ///
 /// What a slot holds is the application's convention for that header, as
 /// the meaning of its fields is: a step whose output needs fewer
-/// polynomials puts the constant one in the rest, and a step that relies on
-/// a slot's content relies on the circuits of the steps that produce the
-/// header, which are registered. Ragu proves only that every opening is of
-/// the polynomial the producing step committed; no header type can change
-/// how many a proof carries or which its slots are.
+/// polynomials leaves the rest alone, and a step that relies on a slot's
+/// content relies on the circuits of the steps that produce the header,
+/// which are registered. Ragu proves only that every opening is of the
+/// polynomial the producing step committed; no header type can change how
+/// many a proof carries or which its slots are.
 ///
-/// Ragu does not hold a slot to the constant one, or to anything else: a
-/// slot whose opening the producing step's circuit leaves unconstrained
-/// holds a polynomial of the prover's choosing. A header whose convention
-/// makes a slot padding needs every step that outputs it to open that slot
-/// at its challenge and hold the value to one.
+/// An output slot a step opens is held only by the constraints its
+/// circuit places on the opening: one opened without a constraint holds a
+/// polynomial of the prover's choosing. An output slot a step does not
+/// open is padding, which Ragu holds to the constant one after the step's
+/// circuit; a header whose convention makes a slot padding needs nothing
+/// from the steps that output it.
 ///
 /// The polynomial commitments are unblinded and deterministic for their
 /// coefficients; opening points and values are public. Values intended to

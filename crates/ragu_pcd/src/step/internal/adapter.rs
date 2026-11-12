@@ -34,6 +34,9 @@ impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
 /// `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, left, right, output]`: the step's
 /// challenge, its online openings in slot order, the bridge hash of its own
 /// last online commitment and its three padded headers (see [`online`]).
+/// After the step's circuit, every output slot the step left unopened is
+/// opened at $\zeta$ and held to one, and every input slot it left
+/// unopened is opened at $\zeta$ (see [`Oracles::finish`]).
 ///
 /// The application stage occupies the first gates after the SYSTEM gate of
 /// every step circuit, reserved by [`reserve_stage`]: the step's own trace is
@@ -306,6 +309,43 @@ mod tests {
         }
     }
 
+    /// [`TestStep`] pinning its output slots by hand, after its own work.
+    struct PinningTwin;
+
+    impl Step<Pasta> for PinningTwin {
+        const INDEX: Index = Index::new(0);
+        type Witness<'source> = ();
+        type Aux<'source> = ();
+        type Left = TestHeader;
+        type Right = TestHeader;
+        type Output = TestHeader;
+
+        fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
+            &self,
+            dr: &mut D,
+            oracles: &mut Oracles<'_, 'dr, D>,
+            witness: DriverValue<D, ()>,
+            left: DriverValue<D, Fp>,
+            right: DriverValue<D, Fp>,
+        ) -> Result<(
+            (
+                Encoded<'dr, D, Self::Left, HS>,
+                Encoded<'dr, D, Self::Right, HS>,
+                Encoded<'dr, D, Self::Output, HS>,
+            ),
+            DriverValue<D, Fp>,
+            DriverValue<D, ()>,
+        )> {
+            let out = TestStep.witness::<D, HS>(dr, oracles, witness, left, right)?;
+            let zeta = oracles.zeta().clone();
+            for i in 0..online::NUM_ONLINE_POLYNOMIALS {
+                let value = oracles.query(dr, Slot::output(i), &zeta)?;
+                value.enforce_equal(dr, &Element::one())?;
+            }
+            Ok(out)
+        }
+    }
+
     /// An online witness over distinct small polynomials, so that a slot's
     /// value tells which polynomial it was opened on.
     fn online(zeta: u64) -> OnlineWitness<Fp, TestR> {
@@ -317,6 +357,29 @@ mod tests {
             }),
             bridge_hash: [Fp::ZERO; 2],
         }
+    }
+
+    /// The adapter holds every output slot a step leaves unopened to one,
+    /// exactly as the step pinning them by hand after its own checks would:
+    /// the two circuits are wiring-identical.
+    #[test]
+    fn unopened_output_slots_are_pinned() {
+        use ragu_testing::registry::TestRegistryBuilder;
+
+        let mut builder: TestRegistryBuilder<'_, _, TestR> = TestRegistryBuilder::new();
+        let plain = builder
+            .register_circuit(Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(
+                TestStep,
+            ))
+            .unwrap();
+        let pinned = builder
+            .register_circuit(Adapter::<Pasta, PinningTwin, TestR, HEADER_SIZE>::new(
+                PinningTwin,
+            ))
+            .unwrap();
+        let registry = builder.finalize().unwrap();
+        let (x, y) = (Fp::from(5u64), Fp::from(17u64));
+        assert_eq!(registry.xy(plain, x, y), registry.xy(pinned, x, y));
     }
 
     #[test]
@@ -393,7 +456,9 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
 
         // The step opened slot 0 at the left value, 10, where X + 0 is 10;
-        // every other slot was opened at zeta = 7, where X + i is 7 + i.
+        // every other slot was opened at zeta = 7, where X + i is 7 + i
+        // (the output slots are held to one, which the emulator does not
+        // check; `unopened_output_slots_are_pinned` pins the wiring).
         assert_eq!(queries[0].x, Fp::from(10u64));
         assert_eq!(queries[0].y, Fp::from(10u64));
         for (i, query) in queries.iter().enumerate().skip(1) {

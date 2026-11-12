@@ -236,10 +236,10 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// What this returns is prover data, not a constraint. An output
     /// polynomial is held to what was prepared only by the constraints
     /// [`witness`](Self::witness) places on its opening: a slot the circuit
-    /// does not open, or opens without constraining the value, holds
-    /// whatever the prover committed. A step whose output header treats a
-    /// slot as padding therefore opens it at $\zeta$ and holds the value to
-    /// one, and every step producing that header does the same.
+    /// opens without constraining the value holds whatever the prover
+    /// committed. A slot the circuit does not open is held to the constant
+    /// one by Ragu, so a polynomial prepared and never opened fails to
+    /// prove.
     ///
     /// Stage every value a check at $\zeta$ reads that is neither a slot's
     /// opening nor an input's header field, such as the roots a step merges

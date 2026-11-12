@@ -12,8 +12,10 @@
 //! any wire, and receives a wire holding the polynomial's value there; the
 //! opening $f_i(x_i) = y_i$ is not checked in the circuit but by Ragu's
 //! polynomial commitment scheme, which folds it into the step's own batch
-//! and whose verified openings the parent holds the step's instance to. A
-//! slot the step does not query is opened at $\zeta$ to its value there.
+//! and whose verified openings the parent holds the step's instance to. An
+//! input slot the step does not query is opened at $\zeta$ to its value
+//! there; an output slot it does not query is opened at $\zeta$ and held
+//! to one, as padding (see below).
 //!
 //! [`Oracles`] also holds the step's [staged](super::Step::prepare) values,
 //! committed before $\zeta$ in the proof's application stage. A check at
@@ -36,16 +38,13 @@
 //! producing steps' circuits constrain, as they do the header's fields.
 //!
 //! An output slot is constrained only through its openings. The step's
-//! [`prepare`](super::Step::prepare) phase is prover data, so a
-//! slot the circuit does not open, or opens without constraining the
-//! value, holds whatever polynomial the prover committed. To pin a padding
-//! slot, open it at $\zeta$ and hold the value to one:
-//!
-//! ```rust,ignore
-//! let zeta = oracles.zeta().clone();
-//! let value = oracles.query(dr, Slot::output(1), &zeta)?;
-//! value.enforce_equal(dr, &Element::one())?;
-//! ```
+//! [`prepare`](super::Step::prepare) phase is prover data, so a slot the
+//! circuit opens without constraining the value holds whatever polynomial
+//! the prover committed. An output slot the step does not open is padding:
+//! after the step's circuit, Ragu opens it at $\zeta$ and holds the value
+//! to one, so a step pins nothing by hand, and a polynomial prepared but
+//! never opened cannot prove. A step that leaves an output slot to the
+//! steps that consume it, as a hint, opens it once and ignores the value.
 
 use core::marker::PhantomData;
 
@@ -55,7 +54,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, vec::FixedVec};
 use udon::field::Field;
 
 use crate::internal::online::{self, Queries, QueriesOutput, QueryOutput};
@@ -190,15 +189,27 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         Ok(y)
     }
 
-    /// Opens every slot the step did not query at $\zeta$, and returns
-    /// $\zeta$ with the six openings, in slot order, and the bridge hash's
+    /// Opens every slot the step did not query at $\zeta$: first each
+    /// output slot, held to one, the padding a slot a step leaves unopened
+    /// carries, then each input slot, to its value there. Returns $\zeta$
+    /// with the six openings, in slot order, and the bridge hash's
     /// coordinates, for the instance.
+    ///
+    /// The output slots come first so that the circuit is the one a step
+    /// pinning its padding by hand, after its own checks, would have.
     #[allow(clippy::type_complexity)]
     pub(crate) fn finish(
         mut self,
         dr: &mut D,
     ) -> Result<(Element<'dr, D>, QueriesOutput<'dr, D>, [Element<'dr, D>; 2])> {
         let zeta = self.zeta.clone();
+        for i in 0..NUM_ONLINE_POLYNOMIALS {
+            let slot = Slot::output(i);
+            if self.queries[slot.offset()].is_none() {
+                let value = self.query(dr, slot, &zeta)?;
+                value.enforce_equal(dr, &Element::one())?;
+            }
+        }
         for slot in Slot::all() {
             if self.queries[slot.offset()].is_none() {
                 self.query(dr, slot, &zeta)?;

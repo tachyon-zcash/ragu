@@ -81,9 +81,9 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 // associated with its output header. What each slot holds is the application's
 // convention for that header, which the steps that produce the header
 // constrain, as they do its fields. An unused slot holds the constant one
-// (the padding): a step that outputs the header opens such a slot at zeta
-// and holds it to one, so that no prover can put a polynomial of its own
-// choosing there.
+// (the padding): Ragu opens every output slot a step leaves unopened at
+// zeta and holds it to one, so that no prover can put a polynomial of its
+// own choosing there, and a step pins nothing by hand.
 
 /// A set of tachygrams $\{t_i\}$: the set's size as the data, and the set
 /// polynomial $\prod_i (X - t_i)$ in slot 0. Slot 1 is padding.
@@ -165,18 +165,6 @@ impl Header<Fp> for Pair {
 /// The padding polynomial: the constant one.
 fn padding() -> Vec<Fp> {
     vec![Fp::ONE]
-}
-
-/// Opens `slot` at zeta and holds it to one: how a step pins a padding slot
-/// of its output header.
-fn pin_padding<'dr, D: Driver<'dr, F = Fp>>(
-    dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
-    slot: Slot,
-) -> Result<()> {
-    let zeta = oracles.zeta().clone();
-    let value = oracles.query(dr, slot, &zeta)?;
-    value.enforce_equal(dr, &Element::one())
 }
 
 /// The coefficients of $\prod_i (X - t_i)$, ascending in degree.
@@ -273,7 +261,6 @@ impl Step<C> for SeedSet {
         }
         let set = oracles.query(dr, Slot::output(0), &zeta)?;
         set.enforce_equal(dr, &product)?;
-        pin_padding(dr, oracles, Slot::output(1))?;
 
         let size = Element::constant(dr, Fp::from(SEED_SIZE as u64));
         Ok((
@@ -351,7 +338,6 @@ impl Step<C> for InsertTachygram {
         let factor = zeta.sub(dr, &tachygram);
         let expected = input.mul(dr, &factor)?;
         output.enforce_equal(dr, &expected)?;
-        pin_padding(dr, oracles, Slot::output(1))?;
 
         let size = left.as_gadget().add(dr, &Element::one());
         let data = size.value().map(|v| *v);
@@ -417,7 +403,6 @@ impl Step<C> for MergeSets {
         let output = oracles.query(dr, Slot::output(0), &zeta)?;
         let expected = l.mul(dr, &r)?;
         output.enforce_equal(dr, &expected)?;
-        pin_padding(dr, oracles, Slot::output(1))?;
 
         let size = left.as_gadget().add(dr, right.as_gadget());
         let data = size.value().map(|v| *v);
@@ -467,7 +452,7 @@ impl Step<C> for ProveMember {
         oracles
             .query(dr, Slot::left(0), &member)?
             .enforce_zero(dr)?;
-        unit_output(dr, oracles, left, right)
+        unit_output(left, right)
     }
 }
 
@@ -506,16 +491,14 @@ impl Step<C> for ProveNonMember {
         oracles
             .query(dr, Slot::left(0), &element)?
             .enforce_nonzero(dr)?;
-        unit_output(dr, oracles, left, right)
+        unit_output(left, right)
     }
 }
 
 /// Finishes a step whose output is the unit header: both of its slots are
-/// padding.
+/// padding, which Ragu pins.
 #[allow(clippy::type_complexity)]
 fn unit_output<'dr, D: Driver<'dr, F = Fp>, L: Header<Fp>, Rh: Header<Fp>, const HS: usize>(
-    dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
     left: Encoded<'dr, D, L, HS>,
     right: Encoded<'dr, D, Rh, HS>,
 ) -> Result<(
@@ -527,8 +510,6 @@ fn unit_output<'dr, D: Driver<'dr, F = Fp>, L: Header<Fp>, Rh: Header<Fp>, const
     DriverValue<D, ()>,
     DriverValue<D, ()>,
 )> {
-    pin_padding(dr, oracles, Slot::output(0))?;
-    pin_padding(dr, oracles, Slot::output(1))?;
     Ok((
         (left, right, Encoded::from_gadget(())),
         D::unit(),
@@ -550,7 +531,7 @@ impl Step<C> for UnitSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -563,12 +544,8 @@ impl Step<C> for UnitSeed {
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )> {
-        unit_output(
-            dr,
-            oracles,
-            Encoded::from_gadget(()),
-            Encoded::from_gadget(()),
-        )
+        let _ = dr;
+        unit_output(Encoded::from_gadget(()), Encoded::from_gadget(()))
     }
 }
 
@@ -600,7 +577,7 @@ impl Step<C> for GenesisAnchor {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -613,8 +590,7 @@ impl Step<C> for GenesisAnchor {
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
-        pin_padding(dr, oracles, Slot::output(0))?;
-        pin_padding(dr, oracles, Slot::output(1))?;
+        // Both output slots are padding, pinned by Ragu.
         let anchor = Element::zero(dr);
         Ok((
             (
@@ -678,7 +654,6 @@ impl Step<C> for AdvanceAnchor {
         let set = oracles.query(dr, Slot::left(0), &zeta)?;
         let copy = oracles.query(dr, Slot::output(1), &zeta)?;
         copy.enforce_equal(dr, &set)?;
-        pin_padding(dr, oracles, Slot::output(0))?;
 
         // anchor' = Poseidon(anchor, H(O1)).
         let [x, y] = oracles.bridge_hash().clone();
@@ -1093,13 +1068,15 @@ fn a_false_membership_claim_cannot_prove() -> Result<()> {
     Ok(())
 }
 
-/// [`InsertTachygram`] with a first phase that misbehaves: it returns the
-/// zero polynomial (`ZERO`), or the input polynomial unchanged while the
-/// circuit claims the insertion (`STALE`).
+/// [`InsertTachygram`] that misbehaves: it prepares the zero polynomial
+/// (`ZERO`), the input polynomial unchanged while the circuit claims the
+/// insertion (`STALE`), or the right polynomial that its circuit then
+/// never opens (`UNOPENED`).
 struct Faulty<const FAULT: u8>;
 
 const ZERO: u8 = 1;
 const STALE: u8 = 2;
+const UNOPENED: u8 = 3;
 
 impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
     const INDEX: Index = Index::new(1);
@@ -1139,6 +1116,16 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
+        if FAULT == UNOPENED {
+            // The set was prepared but is never opened here, so Ragu holds
+            // its slot to one, which the committed set is not.
+            let allocator = &mut Standard::new();
+            let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
+            let right = Encoded::new(dr, allocator, right)?;
+            let size = left.as_gadget().add(dr, &Element::one());
+            let data = size.value().map(|v| *v);
+            return Ok(((left, right, Encoded::from_gadget(size)), data, D::unit()));
+        }
         InsertTachygram.witness::<D, HS>(dr, oracles, witness, left, right)
     }
 }
@@ -1174,10 +1161,11 @@ impl Step<C> for UnitAt2 {
     }
 }
 
-/// A step whose first phase returns a zero polynomial cannot prove. One
+/// A step whose first phase prepares a zero polynomial cannot prove. One
 /// whose committed polynomial is not the one its circuit claims yields a
 /// proof the verifier rejects: the oracle answers for the committed
-/// polynomial, so the circuit's relation fails.
+/// polynomial, so the circuit's relation fails. So does one whose circuit
+/// never opens the polynomial it prepared: Ragu holds that slot to one.
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn a_misstated_polynomial_cannot_prove() -> Result<()> {
@@ -1206,6 +1194,12 @@ fn a_misstated_polynomial_cannot_prove() -> Result<()> {
         &app,
         stale.expect("a stale polynomial must reach the verifier"),
         "stale polynomial",
+    );
+    let (app, unopened) = attempt::<UNOPENED>();
+    rejected(
+        &app,
+        unopened.expect("an unopened polynomial must reach the verifier"),
+        "unopened polynomial",
     );
     Ok(())
 }

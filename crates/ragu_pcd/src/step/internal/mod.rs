@@ -12,7 +12,9 @@ use crate::header::NUM_ONLINE_POLYNOMIALS;
 
 /// Opens each output slot at $\zeta$ and holds it to one: the padding an
 /// internal step's output proof carries, which a prover cannot replace
-/// with a polynomial of its choosing.
+/// with a polynomial of its choosing. The adapter pins every output slot
+/// a step leaves unopened the same way; the internal steps pin by hand so
+/// that their wiring does not depend on where the adapter does it.
 pub(crate) fn pin_output_slots<'dr, D: Driver<'dr>>(
     dr: &mut D,
     oracles: &mut Oracles<'_, 'dr, D>,
