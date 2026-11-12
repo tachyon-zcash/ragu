@@ -431,7 +431,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
-        let staged = self.begin_application_proof(
+        let prepared = self.begin_application_proof(
             rng,
             &step,
             &witness,
@@ -456,7 +456,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (&left, left_data),
             (&right, right_data),
             *w.value().take(),
-            staged,
+            prepared,
             &mut builder,
         )?;
         let native_registry = self.native_registry.at(*w.value().take());

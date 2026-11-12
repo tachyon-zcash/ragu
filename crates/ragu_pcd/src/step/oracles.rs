@@ -5,8 +5,8 @@
 //! and from its own output proof, associated with the three headers. Their
 //! commitments are stored in [`Proof`](crate::Proof) and fixed before the
 //! step's challenge $\zeta$ is squeezed: the children's in their proofs,
-//! the step's own by its
-//! [`polynomials`](super::Step::polynomials) phase. In the step's
+//! the step's own by its [`prepare`](super::Step::prepare) phase. In the
+//! step's
 //! [`witness`](super::Step::witness) phase, [`Oracles`] stands for those six
 //! commitments. The step may [`query`](Oracles::query) each slot once, at
 //! any wire, and receives a wire holding the polynomial's value there; the
@@ -15,7 +15,7 @@
 //! and whose verified openings the parent holds the step's instance to. A
 //! slot the step does not query is opened at $\zeta$ to its value there.
 //!
-//! [`Oracles`] also holds the step's [staged](super::Step::staged) values,
+//! [`Oracles`] also holds the step's [staged](super::Step::prepare) values,
 //! committed before $\zeta$ in the proof's application stage. A check at
 //! $\zeta$ is sound when it evaluates a residual polynomial whose
 //! coefficients were fixed before $\zeta$, whose degree is bounded, and
@@ -36,7 +36,7 @@
 //! producing steps' circuits constrain, as they do the header's fields.
 //!
 //! An output slot is constrained only through its openings. The step's
-//! [`polynomials`](super::Step::polynomials) phase is prover data, so a
+//! [`prepare`](super::Step::prepare) phase is prover data, so a
 //! slot the circuit does not open, or opens without constraining the
 //! value, holds whatever polynomial the prover committed. To pin a padding
 //! slot, open it at $\zeta$ and hold the value to one:
@@ -67,12 +67,11 @@ pub(crate) trait Evaluate<F>: Sync {
     fn evaluate(&self, slot: usize, x: F) -> F;
 }
 
-/// What the fuse hands the adapter for a step's online slots: $\zeta$, the
-/// slots' polynomials and the step's staged values, as prover data.
+/// What the fuse hands the adapter for a step's online slots: $\zeta$ and
+/// the slots' polynomials, as prover data.
 pub(crate) struct OnlineWitness<F, R: Rank> {
     pub(crate) zeta: F,
     pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_QUERIES],
-    pub(crate) staged: alloc::vec::Vec<F>,
     /// The bridge-hash stage's commitment coordinates. They bind `O1` but
     /// need not be its canonical digest or be fixed before $\zeta$.
     pub(crate) bridge_hash: [F; 2],
@@ -144,7 +143,7 @@ impl<'a, 'dr, D: Driver<'dr>> Oracles<'a, 'dr, D> {
         &self.bridge_hash
     }
 
-    /// The step's [staged](super::Step::staged) values, in order: wires
+    /// The step's [staged](super::Step::prepare) values, in order: wires
     /// bound to the application stage, which the proof committed before
     /// $\zeta$ was drawn.
     pub fn staged(&self) -> &[Element<'dr, D>] {

@@ -15,7 +15,7 @@ use ragu_primitives::{
 };
 
 use super::super::{
-    Step,
+    Prepared, Step,
     oracles::{self, OnlineWitness, Oracles},
 };
 use crate::{Header, internal::online};
@@ -122,6 +122,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         <S::Left as Header<C::CircuitField>>::Data,
         <S::Right as Header<C::CircuitField>>::Data,
         S::Witness<'source>,
+        Prepared<C::CircuitField, S::Output>,
         OnlineWitness<C::CircuitField, R>,
     );
     type Output = Kind![C::CircuitField; FixedVec<Element<'_, _>, InstanceLen<HEADER_SIZE>>];
@@ -152,7 +153,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
         Self: 'dr,
     {
         let stage_wires = reserve_stage(dr, self.stage_size)?;
-        let (left, right, witness, online) = witness.cast();
+        let (left, right, witness, prepared, online) = witness.cast();
 
         // The step's staged values, each bound to its stage wire by one
         // equality: the committed stage supplies the stage wires, so a value
@@ -164,8 +165,8 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
             let value = Element::alloc(
                 dr,
                 &mut (),
-                online.as_ref().map(|w| {
-                    w.staged
+                prepared.as_ref().map(|p| {
+                    p.staged()
                         .get(i)
                         .copied()
                         .expect("the fuse checks the staged values' count")
@@ -314,7 +315,6 @@ mod tests {
                 // Slot i holds X + i.
                 sparse::Polynomial::from_coeffs(alloc::vec![Fp::from(slot as u64), Fp::ONE])
             }),
-            staged: alloc::vec::Vec::new(),
             bridge_hash: [Fp::ZERO; 2],
         }
     }
@@ -337,7 +337,15 @@ mod tests {
         let dr = &mut dr;
 
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), (), online(7)));
+        let witness = Always::maybe_just(|| {
+            (
+                Fp::from(10u64),
+                Fp::from(20u64),
+                (),
+                Prepared::<Fp, TestHeader>::new(),
+                online(7),
+            )
+        });
 
         let output = adapter
             .witness(dr, witness)
@@ -360,7 +368,15 @@ mod tests {
         let dr = &mut dr;
 
         let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
-        let witness = Always::maybe_just(|| (Fp::from(10u64), Fp::from(20u64), (), online(7)));
+        let witness = Always::maybe_just(|| {
+            (
+                Fp::from(10u64),
+                Fp::from(20u64),
+                (),
+                Prepared::<Fp, TestHeader>::new(),
+                online(7),
+            )
+        });
 
         let aux = adapter
             .witness(dr, witness)

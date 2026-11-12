@@ -24,7 +24,7 @@ use crate::{
     Application, ApplicationBuilder,
     header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
     internal::nested::stages::bridge_hash,
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
 type R = ProductionRank;
@@ -66,19 +66,13 @@ impl Step<Pasta> for HashOut {
     type Right = ();
     type Output = Digest;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         c: &Fp,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(core::array::from_fn(|i| {
-            if i == NUM_ONLINE_POLYNOMIALS - 1 {
-                vec![*c, Fp::ONE]
-            } else {
-                vec![Fp::ONE]
-            }
-        }))
+    ) -> Result<Prepared<Fp, Digest>> {
+        Ok(Prepared::new().poly(Hashed, vec![*c, Fp::ONE]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(

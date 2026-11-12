@@ -26,7 +26,6 @@
 //! [`Dummy`]: crate::header::Dummy
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 
-use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_core::{
@@ -36,7 +35,7 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt, allocator::Standard};
 
-use super::super::{Encoded, HeaderInput, Index, Oracles, Slot, Step};
+use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Slot, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 use crate::{Header, header::NUM_ONLINE_POLYNOMIALS};
 
@@ -62,17 +61,18 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     type Right = ();
     type Output = H;
 
-    /// The output carries copies of the left input's polynomials. A copy
-    /// here is prover data, not a constraint: the parent sees only the
-    /// output slots, so [`witness`](Step::witness) proves each output
-    /// polynomial equals the left one at $\zeta$.
-    fn polynomials<'source>(
+    /// The output carries copies of the left input's polynomials, every
+    /// slot's, whatever the header names. A copy here is prover data, not
+    /// a constraint: the parent sees only the output slots, so
+    /// [`witness`](Step::witness) proves each output polynomial equals the
+    /// left one at $\zeta$.
+    fn prepare<'source>(
         &self,
         _: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, H>,
         _: HeaderInput<'_, C::CircuitField, ()>,
-    ) -> Result<[Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(left.polynomials.clone())
+    ) -> Result<Prepared<C::CircuitField, H>> {
+        Ok(Prepared::from_polynomials(left.polynomials().clone()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(

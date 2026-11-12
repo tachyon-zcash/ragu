@@ -23,7 +23,7 @@ use crate::{
     Application, ApplicationBuilder, Pcd,
     header::{Header, Padding, Suffix},
     internal::native::RxIndex,
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
 type R = ProductionRank;
@@ -100,17 +100,17 @@ impl Step<Pasta> for Square {
     type Right = ();
     type Output = Number;
 
-    fn staged<'source>(
+    fn prepare<'source>(
         &self,
         x: &Fp,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(if self.0 {
+    ) -> Result<Prepared<Fp, Number>> {
+        Ok(Prepared::new().stage(if self.0 {
             vec![*x, x.square()]
         } else {
             vec![*x]
-        })
+        }))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -192,13 +192,13 @@ impl<const N: usize> Step<Pasta> for Zeros<N> {
     type Right = ();
     type Output = ();
 
-    fn staged<'source>(
+    fn prepare<'source>(
         &self,
         values: &[Fp; N],
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(values.to_vec())
+    ) -> Result<Prepared<Fp, ()>> {
+        Ok(Prepared::new().stage(*values))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(

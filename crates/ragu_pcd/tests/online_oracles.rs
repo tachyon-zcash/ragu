@@ -9,8 +9,8 @@
 //! | Section | Use case | API shown |
 //! |---|---|---|
 //! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header`], [`NUM_ONLINE_POLYNOMIALS`], padding |
-//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::polynomials`], [`Step::NUM_STAGED`], [`Step::staged`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
-//! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput`] |
+//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
+//! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput::polynomial`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
 //! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
@@ -58,7 +58,7 @@ use ragu_core::{
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
     header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Slot, Step},
 };
 use ragu_primitives::{
     Element, GadgetExt,
@@ -212,11 +212,13 @@ fn times(a: &[Fp], b: &[Fp]) -> Vec<Fp> {
 // T2 and T3. A step commits a polynomial built from secret roots, and checks
 // it at zeta against those roots. A step proves in two phases:
 //
-// 1. Before zeta is drawn: `polynomials` returns the output proof's
-//    polynomials (coefficients, not wires), and `staged` returns the values
-//    the checks at zeta will read but no header carries. Ragu commits both.
+// 1. Before zeta is drawn: `prepare` returns the output proof's
+//    polynomials (coefficients, not wires), by name, and the values the
+//    checks at zeta will read but no header carries, staged. Ragu commits
+//    both.
 // 2. After zeta is drawn: `witness` builds the circuit. `Oracles` gives it
-//    zeta, the six slots and the staged values.
+//    zeta, the six slots and the staged values, and what `prepare` returned
+//    comes back as prover data.
 
 /// The number of tachygrams [`SeedSet`] takes.
 const SEED_SIZE: usize = 3;
@@ -235,22 +237,15 @@ impl Step<C> for SeedSet {
     type Right = ();
     type Output = TgSet;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         tachygrams: &Vec<Fp>,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([vanishing(tachygrams), padding()])
-    }
-
-    fn staged<'source>(
-        &self,
-        tachygrams: &Vec<Fp>,
-        _: HeaderInput<'_, Fp, ()>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(tachygrams.clone())
+    ) -> Result<Prepared<Fp, TgSet>> {
+        Ok(Prepared::new()
+            .poly(TachygramSet, vanishing(tachygrams))
+            .stage(tachygrams.clone()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -311,24 +306,20 @@ impl Step<C> for InsertTachygram {
     type Right = ();
     type Output = TgSet;
 
-    /// The left input's polynomials arrive as coefficients: the output's
-    /// is computed from them.
-    fn polynomials<'source>(
+    /// The left input's polynomial arrives as coefficients, by slot: the
+    /// output's is computed from it.
+    fn prepare<'source>(
         &self,
         tachygram: &Fp,
         left: HeaderInput<'_, Fp, TgSet>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([times_linear(&left.polynomials[0], *tachygram), padding()])
-    }
-
-    fn staged<'source>(
-        &self,
-        tachygram: &Fp,
-        _: HeaderInput<'_, Fp, TgSet>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(vec![*tachygram])
+    ) -> Result<Prepared<Fp, TgSet>> {
+        Ok(Prepared::new()
+            .poly(
+                TachygramSet,
+                times_linear(left.polynomial(TachygramSet), *tachygram),
+            )
+            .stage([*tachygram]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -384,16 +375,19 @@ impl Step<C> for MergeSets {
     type Right = TgSet;
     type Output = TgSet;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         _: &(),
         left: HeaderInput<'_, Fp, TgSet>,
         right: HeaderInput<'_, Fp, TgSet>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([
-            times(&left.polynomials[0], &right.polynomials[0]),
-            padding(),
-        ])
+    ) -> Result<Prepared<Fp, TgSet>> {
+        Ok(Prepared::new().poly(
+            TachygramSet,
+            times(
+                left.polynomial(TachygramSet),
+                right.polynomial(TachygramSet),
+            ),
+        ))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -650,13 +644,13 @@ impl Step<C> for AdvanceAnchor {
     type Output = Anchor;
 
     /// Slot 1 copies the block's set polynomial, the left input's slot 0.
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         _: &(),
         block: HeaderInput<'_, Fp, TgSet>,
         _: HeaderInput<'_, Fp, Anchor>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([padding(), block.polynomials[0].clone()])
+    ) -> Result<Prepared<Fp, Anchor>> {
+        Ok(Prepared::new().poly(TachygramSet, block.polynomial(TachygramSet)))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -730,6 +724,12 @@ fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_POLYNOMIALS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
 
+/// [`pair_polys`], prepared by name.
+fn pair_prepared(a: [Fp; 2]) -> Prepared<Fp, Pair> {
+    let [first, second] = pair_polys(a);
+    Prepared::new().poly(SlopeOne, first).poly(SlopeTwo, second)
+}
+
 /// Seeds a [`Pair`] from staged data, checking both output slots at zeta.
 struct PairSeed;
 
@@ -742,22 +742,13 @@ impl Step<C> for PairSeed {
     type Right = ();
     type Output = Pair;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         a: &[Fp; 2],
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(pair_polys(*a))
-    }
-
-    fn staged<'source>(
-        &self,
-        a: &[Fp; 2],
-        _: HeaderInput<'_, Fp, ()>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(a.to_vec())
+    ) -> Result<Prepared<Fp, Pair>> {
+        Ok(pair_prepared(*a).stage(*a))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
@@ -817,13 +808,13 @@ impl Step<C> for PairFuse {
     type Right = Pair;
     type Output = Pair;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         _: &(),
         left: HeaderInput<'_, Fp, Pair>,
         right: HeaderInput<'_, Fp, Pair>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(pair_polys([
+    ) -> Result<Prepared<Fp, Pair>> {
+        Ok(pair_prepared([
             left.data[0] + right.data[0],
             left.data[1] + right.data[1],
         ]))
@@ -1119,26 +1110,17 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
     type Right = ();
     type Output = TgSet;
 
-    fn polynomials<'source>(
-        &self,
-        _: &Fp,
-        left: HeaderInput<'_, Fp, TgSet>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        let first = match FAULT {
-            ZERO => vec![Fp::ZERO; 4],
-            _ => left.polynomials[0].clone(),
-        };
-        Ok([first, padding()])
-    }
-
-    fn staged<'source>(
+    fn prepare<'source>(
         &self,
         tachygram: &Fp,
         left: HeaderInput<'_, Fp, TgSet>,
-        right: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        InsertTachygram.staged(tachygram, left, right)
+        _: HeaderInput<'_, Fp, ()>,
+    ) -> Result<Prepared<Fp, TgSet>> {
+        let set = match FAULT {
+            ZERO => vec![Fp::ZERO; 4],
+            _ => left.polynomial(TachygramSet).to_vec(),
+        };
+        Ok(Prepared::new().poly(TachygramSet, set).stage([*tachygram]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(

@@ -33,7 +33,7 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 ///
 /// This is a parameter of the protocol, not of a header type: every proof
 /// stores exactly this many polynomials, every step commits this many for
-/// its output through [`Step::polynomials`](crate::step::Step::polynomials)
+/// its output through [`Step::prepare`](crate::step::Step::prepare)
 /// and may open its own or either child's through
 /// [`Oracles`](crate::step::Oracles). A step's six online slots are the
 /// polynomials in left, right, output order; they are opened
@@ -57,7 +57,8 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 /// The polynomial commitments are unblinded and deterministic for their
 /// coefficients; opening points and values are public. Values intended to
 /// stay out of the public instance belong in
-/// [`Step::staged`](crate::step::Step::staged), whose stage commitment is
+/// the application stage, staged by
+/// [`Step::prepare`](crate::step::Step::prepare), whose commitment is
 /// blinded; public openings can still reveal those values.
 ///
 /// A compressed proof's statement carries only the header's fields, so a
@@ -166,6 +167,11 @@ impl<A: OnlinePoly, B: OnlinePolySlot> Has<A, Slot0> for (A, B) {
 
 impl<A: OnlinePolySlot, B: OnlinePoly> Has<B, Slot1> for (A, B) {
     const INDEX: usize = 1;
+}
+
+/// Returns the index of the slot `L` keeps `kind` in.
+pub(crate) fn slot<L: Has<P, I>, P, I>(_kind: P) -> usize {
+    L::INDEX
 }
 
 /// Internal representation of a [`Suffix`] distinguishing internal vs.
@@ -335,16 +341,12 @@ mod tests {
     struct Second;
     impl OnlinePoly for Second {}
 
-    fn index_of<L: Has<P, I>, P, I>(_: P) -> usize {
-        L::INDEX
-    }
-
     #[test]
     fn a_kind_is_found_at_its_slot() {
-        assert_eq!(index_of::<(First, Second), _, _>(First), 0);
-        assert_eq!(index_of::<(First, Second), _, _>(Second), 1);
-        assert_eq!(index_of::<(Padding, Second), _, _>(Second), 1);
-        assert_eq!(index_of::<(First, Padding), _, _>(First), 0);
+        assert_eq!(slot::<(First, Second), _, _>(First), 0);
+        assert_eq!(slot::<(First, Second), _, _>(Second), 1);
+        assert_eq!(slot::<(Padding, Second), _, _>(Second), 1);
+        assert_eq!(slot::<(First, Padding), _, _>(First), 0);
     }
 
     #[test]

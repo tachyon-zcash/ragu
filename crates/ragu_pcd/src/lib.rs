@@ -834,7 +834,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     /// The commitment of an online polynomial with coefficients `coeffs`, in
-    /// ascending degree. When [`Step::polynomials`] returns these coefficients,
+    /// ascending degree. When [`Step::prepare`] prepares these coefficients,
     /// Ragu stores this unblinded commitment in the output proof's slot.
     /// An application that recomputes a commitment outside the circuit, for
     /// instance to recompute a [`bridge_hash`](Self::bridge_hash), calls this.
