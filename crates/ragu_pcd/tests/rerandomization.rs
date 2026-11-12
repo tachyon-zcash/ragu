@@ -64,7 +64,7 @@ impl Step<Pasta> for StepWithData {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -97,7 +97,7 @@ impl<C: Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -129,7 +129,7 @@ impl<C: Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

@@ -8,13 +8,13 @@
 //!
 //! | Section | Use case | API shown |
 //! |---|---|---|
-//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header`], [`NUM_ONLINE_POLYNOMIALS`], padding |
-//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
+//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header::OnlinePolyCommit`], [`OnlinePoly`], [`Padding`], [`NUM_ONLINE_POLYNOMIALS`] |
+//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`], [`Oracles::zeta`], [`Oracles::output`], [`Oracle::open`](ragu_pcd::step::Oracle::open), [`Oracles::staged`] |
 //! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput::polynomial`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
-//! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
+//! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::left`] at a wire |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
-//! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Slot::left`], [`Slot::right`], [`Slot::output`] |
+//! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Oracles::left`], [`Oracles::right`], [`Oracles::output`] |
 //! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
 //!
 //! ## The rule for checks at $\zeta$
@@ -58,7 +58,7 @@ use ragu_core::{
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
     header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Slot, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{
     Element, GadgetExt,
@@ -201,7 +201,7 @@ fn times(a: &[Fp], b: &[Fp]) -> Vec<Fp> {
 // it at zeta against those roots. A step proves in two phases:
 //
 // 1. Before zeta is drawn: `prepare` returns the output proof's
-//    polynomials (coefficients, not wires), by name, and the values the
+//    polynomials (coefficients, not wires), by kind, and the values the
 //    checks at zeta will read but no header carries, staged. Ragu commits
 //    both.
 // 2. After zeta is drawn: `witness` builds the circuit. `Oracles` gives it
@@ -239,7 +239,7 @@ impl Step<C> for SeedSet {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Vec<Fp>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -259,7 +259,7 @@ impl Step<C> for SeedSet {
             let factor = zeta.sub(dr, &tachygram);
             product = product.mul(dr, &factor)?;
         }
-        let set = oracles.query(dr, Slot::output(0), &zeta)?;
+        let set = oracles.output(TachygramSet).open(dr, &zeta)?;
         set.enforce_equal(dr, &product)?;
 
         let size = Element::constant(dr, Fp::from(SEED_SIZE as u64));
@@ -312,7 +312,7 @@ impl Step<C> for InsertTachygram {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
@@ -333,8 +333,8 @@ impl Step<C> for InsertTachygram {
         // here: see the rule at the top of this file.
         let tachygram = oracles.staged()[0].clone();
         let zeta = oracles.zeta().clone();
-        let input = oracles.query(dr, Slot::left(0), &zeta)?;
-        let output = oracles.query(dr, Slot::output(0), &zeta)?;
+        let input = oracles.left(TachygramSet).open(dr, &zeta)?;
+        let output = oracles.output(TachygramSet).open(dr, &zeta)?;
         let factor = zeta.sub(dr, &tachygram);
         let expected = input.mul(dr, &factor)?;
         output.enforce_equal(dr, &expected)?;
@@ -379,7 +379,7 @@ impl Step<C> for MergeSets {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,
@@ -398,9 +398,9 @@ impl Step<C> for MergeSets {
 
         // O0(zeta) = L0(zeta) * R0(zeta).
         let zeta = oracles.zeta().clone();
-        let l = oracles.query(dr, Slot::left(0), &zeta)?;
-        let r = oracles.query(dr, Slot::right(0), &zeta)?;
-        let output = oracles.query(dr, Slot::output(0), &zeta)?;
+        let l = oracles.left(TachygramSet).open(dr, &zeta)?;
+        let r = oracles.right(TachygramSet).open(dr, &zeta)?;
+        let output = oracles.output(TachygramSet).open(dr, &zeta)?;
         let expected = l.mul(dr, &r)?;
         output.enforce_equal(dr, &expected)?;
 
@@ -432,7 +432,7 @@ impl Step<C> for ProveMember {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         member: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
@@ -450,7 +450,8 @@ impl Step<C> for ProveMember {
         let right = Encoded::new(dr, allocator, right)?;
         let member = Element::alloc(dr, allocator, member)?;
         oracles
-            .query(dr, Slot::left(0), &member)?
+            .left(TachygramSet)
+            .open(dr, &member)?
             .enforce_zero(dr)?;
         unit_output(left, right)
     }
@@ -471,7 +472,7 @@ impl Step<C> for ProveNonMember {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         element: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
@@ -489,7 +490,8 @@ impl Step<C> for ProveNonMember {
         let right = Encoded::new(dr, allocator, right)?;
         let element = Element::alloc(dr, allocator, element)?;
         oracles
-            .query(dr, Slot::left(0), &element)?
+            .left(TachygramSet)
+            .open(dr, &element)?
             .enforce_nonzero(dr)?;
         unit_output(left, right)
     }
@@ -531,7 +533,7 @@ impl Step<C> for UnitSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -577,7 +579,7 @@ impl Step<C> for GenesisAnchor {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -632,7 +634,7 @@ impl Step<C> for AdvanceAnchor {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         block: DriverValue<D, Fp>,
         previous: DriverValue<D, Fp>,
@@ -651,8 +653,8 @@ impl Step<C> for AdvanceAnchor {
 
         // The copy: O1(zeta) = L0(zeta), so O1 is the block's set polynomial.
         let zeta = oracles.zeta().clone();
-        let set = oracles.query(dr, Slot::left(0), &zeta)?;
-        let copy = oracles.query(dr, Slot::output(1), &zeta)?;
+        let set = oracles.left(TachygramSet).open(dr, &zeta)?;
+        let copy = oracles.output(TachygramSet).open(dr, &zeta)?;
         copy.enforce_equal(dr, &set)?;
 
         // anchor' = Poseidon(anchor, H(O1)).
@@ -699,7 +701,7 @@ fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_POLYNOMIALS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
 
-/// [`pair_polys`], prepared by name.
+/// [`pair_polys`], prepared by kind.
 fn pair_prepared(a: [Fp; 2]) -> Prepared<Fp, Pair> {
     let [first, second] = pair_polys(a);
     Prepared::new().poly(SlopeOne, first).poly(SlopeTwo, second)
@@ -729,7 +731,7 @@ impl Step<C> for PairSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, [Fp; 2]>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -745,10 +747,10 @@ impl Step<C> for PairSeed {
         let a = oracles.staged().to_vec();
         let zeta = oracles.zeta().clone();
         let two = Element::constant(dr, Fp::from(2));
-        let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
+        let o0 = oracles.output(SlopeOne).open(dr, &zeta)?;
         let expected = zeta.add(dr, &a[0]);
         o0.enforce_equal(dr, &expected)?;
-        let o1 = oracles.query(dr, Slot::output(1), &zeta)?;
+        let o1 = oracles.output(SlopeTwo).open(dr, &zeta)?;
         let expected = zeta.mul(dr, &two)?.add(dr, &a[1]);
         o1.enforce_equal(dr, &expected)?;
         let data = D::just(|| [*a[0].value().take(), *a[1].value().take()]);
@@ -798,7 +800,7 @@ impl Step<C> for PairFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, [Fp; 2]>,
         right: DriverValue<D, [Fp; 2]>,
@@ -817,22 +819,44 @@ impl Step<C> for PairFuse {
         let sum: Vec<_> = (0..2)
             .map(|k| left.as_gadget()[k].add(dr, &right.as_gadget()[k]))
             .collect();
-        let slots = [
-            (Slot::left(0), left.as_gadget()[0].clone()),
-            (Slot::left(1), left.as_gadget()[1].clone()),
-            (Slot::right(0), right.as_gadget()[0].clone()),
-            (Slot::right(1), right.as_gadget()[1].clone()),
-            (Slot::output(0), sum[0].clone()),
-            (Slot::output(1), sum[1].clone()),
+        // The six slots in order: the left, right and output proofs'
+        // polynomials, each with the header field its constant term is.
+        let fields = [
+            left.as_gadget()[0].clone(),
+            left.as_gadget()[1].clone(),
+            right.as_gadget()[0].clone(),
+            right.as_gadget()[1].clone(),
+            sum[0].clone(),
+            sum[1].clone(),
         ];
-        for (i, (slot, a)) in slots.into_iter().enumerate() {
-            // The points are constants, fixed before zeta.
+        // Six opens, one per slot, each at its own constant point fixed
+        // before zeta; the slope says which polynomial the slot holds.
+        let one = Element::constant(dr, Fp::ONE);
+        let two = Element::constant(dr, Fp::from(2));
+        let check = |dr: &mut D, y: Element<'dr, D>, i: usize, slope: &Element<'dr, D>| {
             let x = Element::constant(dr, point(i));
-            let slope = Element::constant(dr, Fp::from(1 + slot.index() as u64));
-            let y = oracles.query(dr, slot, &x)?;
-            let expected = x.mul(dr, &slope)?.add(dr, &a);
-            y.enforce_equal(dr, &expected)?;
-        }
+            let expected = x.mul(dr, slope)?.add(dr, &fields[i]);
+            y.enforce_equal(dr, &expected)
+        };
+        let at = |dr: &mut D, i: usize| Element::constant(dr, point(i));
+        let x = at(dr, 0);
+        let y = oracles.left(SlopeOne).open(dr, &x)?;
+        check(dr, y, 0, &one)?;
+        let x = at(dr, 1);
+        let y = oracles.left(SlopeTwo).open(dr, &x)?;
+        check(dr, y, 1, &two)?;
+        let x = at(dr, 2);
+        let y = oracles.right(SlopeOne).open(dr, &x)?;
+        check(dr, y, 2, &one)?;
+        let x = at(dr, 3);
+        let y = oracles.right(SlopeTwo).open(dr, &x)?;
+        check(dr, y, 3, &two)?;
+        let x = at(dr, 4);
+        let y = oracles.output(SlopeOne).open(dr, &x)?;
+        check(dr, y, 4, &one)?;
+        let x = at(dr, 5);
+        let y = oracles.output(SlopeTwo).open(dr, &x)?;
+        check(dr, y, 5, &two)?;
         let data = D::just(|| [*sum[0].value().take(), *sum[1].value().take()]);
         let output = FixedVec::try_from(sum)?;
         Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
@@ -1103,7 +1127,7 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
@@ -1116,17 +1140,25 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
-        if FAULT == UNOPENED {
-            // The set was prepared but is never opened here, so Ragu holds
-            // its slot to one, which the committed set is not.
-            let allocator = &mut Standard::new();
-            let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
-            let right = Encoded::new(dr, allocator, right)?;
-            let size = left.as_gadget().add(dr, &Element::one());
-            let data = size.value().map(|v| *v);
-            return Ok(((left, right, Encoded::from_gadget(size)), data, D::unit()));
+        let _ = witness;
+        let allocator = &mut Standard::new();
+        let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        if FAULT != UNOPENED {
+            // [`InsertTachygram`]'s check. For `UNOPENED` the set was
+            // prepared but is never opened here, so Ragu holds its slot to
+            // one, which the committed set is not.
+            let tachygram = oracles.staged()[0].clone();
+            let zeta = oracles.zeta().clone();
+            let input = oracles.left(TachygramSet).open(dr, &zeta)?;
+            let output = oracles.output(TachygramSet).open(dr, &zeta)?;
+            let factor = zeta.sub(dr, &tachygram);
+            let expected = input.mul(dr, &factor)?;
+            output.enforce_equal(dr, &expected)?;
         }
-        InsertTachygram.witness::<D, HS>(dr, oracles, witness, left, right)
+        let size = left.as_gadget().add(dr, &Element::one());
+        let data = size.value().map(|v| *v);
+        Ok(((left, right, Encoded::from_gadget(size)), data, D::unit()))
     }
 }
 
@@ -1144,7 +1176,7 @@ impl Step<C> for UnitAt2 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, ()>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -1157,7 +1189,8 @@ impl Step<C> for UnitAt2 {
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )> {
-        UnitSeed.witness::<D, HS>(dr, oracles, witness, left, right)
+        let _ = (dr, oracles, witness, left, right);
+        unit_output(Encoded::from_gadget(()), Encoded::from_gadget(()))
     }
 }
 

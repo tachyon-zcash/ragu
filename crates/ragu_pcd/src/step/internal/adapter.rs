@@ -233,7 +233,8 @@ mod tests {
     use super::*;
     use crate::{
         header::{Header, OnlinePoly, Padding, Suffix},
-        step::{Encoded, Index, Oracles, Slot, Step},
+        internal::online::Slot,
+        step::{Encoded, Index, Oracles, Step},
     };
 
     type TestR = TestRank;
@@ -275,7 +276,7 @@ mod tests {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
             dr: &mut D,
-            oracles: &mut Oracles<'_, 'dr, D>,
+            oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -299,7 +300,7 @@ mod tests {
 
             // Open the first left slot at the left header's value, leaving
             // the other slots to be opened at zeta.
-            oracles.query(dr, Slot::left(0), &left_elem)?;
+            oracles.left(TestPoly).open(dr, &left_elem)?;
 
             let left_enc = Encoded::from_gadget(left_elem);
             let right_enc = Encoded::from_gadget(right_elem);
@@ -323,7 +324,7 @@ mod tests {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
             &self,
             dr: &mut D,
-            oracles: &mut Oracles<'_, 'dr, D>,
+            oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
             witness: DriverValue<D, ()>,
             left: DriverValue<D, Fp>,
             right: DriverValue<D, Fp>,
@@ -336,13 +337,28 @@ mod tests {
             DriverValue<D, Fp>,
             DriverValue<D, ()>,
         )> {
-            let out = TestStep.witness::<D, HS>(dr, oracles, witness, left, right)?;
+            let _ = witness;
+            let allocator = &mut Standard::new();
+            let left_elem = Element::alloc(dr, allocator, left)?;
+            let right_elem = Element::alloc(dr, allocator, right)?;
+            let output_elem = left_elem.add(dr, &right_elem);
+            let output_val = output_elem.value().map(|v| *v);
+            oracles.left(TestPoly).open(dr, &left_elem)?;
+            // What `TestStep` leaves to the adapter, done by hand.
             let zeta = oracles.zeta().clone();
             for i in 0..online::NUM_ONLINE_POLYNOMIALS {
                 let value = oracles.query(dr, Slot::output(i), &zeta)?;
                 value.enforce_equal(dr, &Element::one())?;
             }
-            Ok(out)
+            Ok((
+                (
+                    Encoded::from_gadget(left_elem),
+                    Encoded::from_gadget(right_elem),
+                    Encoded::from_gadget(output_elem),
+                ),
+                output_val,
+                D::unit(),
+            ))
         }
     }
 
@@ -472,22 +488,28 @@ mod tests {
         let mut dr = Emulator::execute();
         let dr = &mut dr;
         let witness = online(3);
-        let mut oracles = Oracles::alloc(dr, Always::maybe_just(|| &witness), Vec::new()).unwrap();
+        let mut oracles =
+            Oracles::<_, Pasta, TestStep>::alloc(dr, Always::maybe_just(|| &witness), Vec::new())
+                .unwrap();
         let x = Element::alloc(dr, &mut (), Always::maybe_just(|| Fp::from(5u64))).unwrap();
+        // The named polynomial through its oracle, once; the unnamed slot
+        // through the crate's untyped query, as Ragu's own steps do.
         assert_eq!(
             *oracles
-                .query(dr, Slot::output(1), &x)
+                .output(TestPoly)
+                .open(dr, &x)
                 .unwrap()
                 .value()
                 .take(),
-            Fp::from(5 + 5u64)
+            Fp::from(5 + 4u64)
         );
-        assert!(oracles.query(dr, Slot::output(1), &x).is_err());
+        assert!(oracles.output(TestPoly).open(dr, &x).is_err());
         let zeta = oracles.zeta().clone();
-        assert!(oracles.query(dr, Slot::output(0), &zeta).is_ok());
+        assert!(oracles.query(dr, Slot::output(1), &zeta).is_ok());
         let (zeta, queries, _) = oracles.finish(dr).unwrap();
         assert_eq!(*zeta.value().take(), Fp::from(3u64));
         assert_eq!(*queries[0].x.value().take(), Fp::from(3u64));
-        assert_eq!(*queries[5].x.value().take(), Fp::from(5u64));
+        assert_eq!(*queries[4].x.value().take(), Fp::from(5u64));
+        assert_eq!(*queries[5].x.value().take(), Fp::from(3u64));
     }
 }

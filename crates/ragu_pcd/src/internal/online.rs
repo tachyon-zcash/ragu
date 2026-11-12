@@ -110,16 +110,6 @@ impl Slot {
         Self::new(Position::Output, index)
     }
 
-    /// The input or output proof this slot belongs to.
-    pub const fn position(self) -> Position {
-        self.position
-    }
-
-    /// The slot's index among its proof's online polynomials.
-    pub const fn index(self) -> usize {
-        self.index
-    }
-
     /// The slot's index among the step's slots, three proofs'
     /// [`NUM_ONLINE_POLYNOMIALS`] each, in slot order.
     pub const fn offset(self) -> usize {
@@ -254,8 +244,7 @@ mod tests {
         assert_eq!(Slot::left(1).offset(), 1);
         assert_eq!(Slot::right(0).offset(), NUM_ONLINE_POLYNOMIALS);
         assert_eq!(Slot::output(0).offset(), 2 * NUM_ONLINE_POLYNOMIALS);
-        assert_eq!(Slot::output(0).position(), Position::Output);
-        assert_eq!(Slot::output(1).index(), 1);
+        assert_eq!(Slot::output(1).offset(), 2 * NUM_ONLINE_POLYNOMIALS + 1);
     }
 
     #[test]

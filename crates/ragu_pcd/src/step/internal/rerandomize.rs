@@ -35,9 +35,9 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt, allocator::Standard};
 
-use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Slot, Step};
+use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
-use crate::{Header, header::NUM_ONLINE_POLYNOMIALS};
+use crate::{Header, header::NUM_ONLINE_POLYNOMIALS, internal::online::Slot};
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -78,7 +78,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -217,7 +217,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
-                oracles: &mut Oracles<'_, 'dr, D>,
+                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
                 _: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,

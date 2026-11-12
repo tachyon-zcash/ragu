@@ -99,7 +99,7 @@ pub(crate) mod support {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
             &self,
             dr: &mut D,
-            _: &mut Oracles<'_, 'dr, D>,
+            _: &mut Oracles<'_, 'dr, D, C, Self>,
             witness: DriverValue<D, Fp>,
             left: DriverValue<D, L::Data>,
             right: DriverValue<D, H::Data>,

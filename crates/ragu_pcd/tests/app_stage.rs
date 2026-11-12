@@ -46,7 +46,7 @@ impl Step<Pasta> for Unit {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         _: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -116,7 +116,7 @@ impl Step<Pasta> for Square {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, Fp>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -161,7 +161,7 @@ impl Step<Pasta> for Carry {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,
@@ -204,7 +204,7 @@ impl<const N: usize> Step<Pasta> for Zeros<N> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, [Fp; N]>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,

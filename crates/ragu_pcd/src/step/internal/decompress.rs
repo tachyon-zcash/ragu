@@ -98,7 +98,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -146,7 +146,7 @@ mod tests {
 
         use crate::{
             header::{Header, NUM_ONLINE_POLYNOMIALS, Padding, Suffix},
-            step::Slot,
+            internal::online::Slot,
         };
 
         const HEADER_SIZE: usize = 4;
@@ -213,7 +213,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
-                oracles: &mut Oracles<'_, 'dr, D>,
+                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
                 witness: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,

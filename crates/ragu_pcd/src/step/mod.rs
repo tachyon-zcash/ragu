@@ -8,7 +8,7 @@ mod prepared;
 use alloc::vec::Vec;
 
 pub use encoder::Encoded;
-pub use oracles::{Oracles, Position, Slot};
+pub use oracles::{Oracle, Oracles};
 pub use prepared::Prepared;
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
@@ -267,7 +267,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

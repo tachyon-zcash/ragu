@@ -1045,7 +1045,7 @@ pub(crate) mod testing {
         >(
             &self,
             dr: &mut D,
-            _: &mut Oracles<'_, 'dr, D>,
+            _: &mut Oracles<'_, 'dr, D, C, Self>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, ()>,
             right: DriverValue<D, ()>,

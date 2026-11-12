@@ -24,7 +24,7 @@ use crate::{
     Application, ApplicationBuilder,
     header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
     internal::nested::stages::bridge_hash,
-    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Slot, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
 type R = ProductionRank;
@@ -78,7 +78,7 @@ impl Step<Pasta> for HashOut {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, Fp>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -94,7 +94,7 @@ impl Step<Pasta> for HashOut {
         // The hashed slot is a hint: opened once so that Ragu does not pin
         // it to one, its value left to the steps that consume it.
         let zeta = oracles.zeta().clone();
-        let _ = oracles.query(dr, Slot::output(NUM_ONLINE_POLYNOMIALS - 1), &zeta)?;
+        let _ = oracles.output(Hashed).open(dr, &zeta)?;
         let [x, y] = oracles.bridge_hash().clone();
         let data = D::just(|| [*x.value().take(), *y.value().take()]);
         let digest = FixedVec::try_from(vec![x, y])?;
