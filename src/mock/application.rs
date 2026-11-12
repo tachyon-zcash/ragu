@@ -497,6 +497,44 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         Ok(pcd.proof.compressed().carry(pcd.data.clone()))
     }
 
+    /// Restores a verified compressed mock proof for further recursive steps.
+    ///
+    /// This mock-only API stays in the same application and rank and
+    /// preserves the proof's online commitments. Compression discards their
+    /// coefficients, so the caller must supply them; each polynomial is bounded
+    /// by the rank and checked against its original commitment before reuse.
+    /// This models the workflow, not the aggregator profile's verifier circuits.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid compressed statement, a different setup or rank, or
+    /// empty, oversized, or incorrectly committed polynomial witnesses.
+    pub fn decompress<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        rng: &mut RNG,
+        pcd: &CompressedPcd<C, H>,
+        polynomials: [Vec<C::CircuitField>; HEADER_POLYNOMIALS],
+    ) -> Result<Pcd<C, R, H>>
+    where
+        C: IpaCycle,
+    {
+        if !self.verify_compressed(pcd)? {
+            return Err(Error::InvalidWitness(
+                "cannot decompress an invalid compressed proof".into(),
+            ));
+        }
+        let restored = pcd
+            .proof
+            .with_polynomials::<R>(polynomials)
+            .carry(pcd.data.clone());
+        if !self.check_uncompressed(&restored, &mut *rng)? {
+            return Err(Error::InvalidWitness(
+                "decompression polynomials do not match the compressed proof".into(),
+            ));
+        }
+        self.rerandomize(restored, rng)
+    }
+
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
