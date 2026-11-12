@@ -1,7 +1,7 @@
 //! The online polynomial oracles a step queries while its circuit is
 //! synthesized.
 //!
-//! A step opens [`NUM_ONLINE_POLYNOMIALS`] polynomials from each child's proof
+//! A step opens [`NUM_ONLINE_FP_POLYS`] polynomials from each child's proof
 //! and from its own output proof, associated with the three headers. Their
 //! commitments are stored in [`Proof`](crate::Proof) and fixed before the
 //! step's challenge $\zeta$ is squeezed: the children's in their proofs,
@@ -67,7 +67,7 @@ use super::Step;
 use crate::{
     Header,
     header::{Has, slot},
-    internal::online::{self, NUM_ONLINE_POLYNOMIALS, Queries, QueriesOutput, QueryOutput},
+    internal::online::{self, NUM_ONLINE_FP_POLYS, Queries, QueriesOutput, QueryOutput},
 };
 
 /// Evaluates a step's online polynomials: `evaluate(slot, x)` is the value
@@ -80,7 +80,7 @@ pub(crate) trait Evaluate<F>: Sync {
 /// the slots' polynomials, as prover data.
 pub(crate) struct OnlineWitness<F, R: Rank> {
     pub(crate) zeta: F,
-    pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_QUERIES],
+    pub(crate) polys: [sparse::Polynomial<F, R>; online::NUM_ONLINE_FP_QUERIES],
     /// The bridge-hash stage's commitment coordinates. They bind `O1` but
     /// need not be its canonical digest or be fixed before $\zeta$.
     pub(crate) bridge_hash: [F; 2],
@@ -105,7 +105,7 @@ pub struct Oracles<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
     bridge_hash: [Element<'dr, D>; 2],
     staged: Vec<Element<'dr, D>>,
     evaluator: DriverValue<D, &'a dyn Evaluate<D::F>>,
-    queries: [Option<QueryOutput<'dr, D>>; online::NUM_ONLINE_QUERIES],
+    queries: [Option<QueryOutput<'dr, D>>; online::NUM_ONLINE_FP_QUERIES],
     _marker: PhantomData<(&'dr (), fn() -> (C, S))>,
 }
 
@@ -278,7 +278,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         dr: &mut D,
     ) -> Result<(Element<'dr, D>, QueriesOutput<'dr, D>, [Element<'dr, D>; 2])> {
         let zeta = self.zeta.clone();
-        for index in 0..NUM_ONLINE_POLYNOMIALS {
+        for index in 0..NUM_ONLINE_FP_POLYS {
             if self.queries[offset(2, index)].is_none() {
                 let value = self.output_at(index).open(dr, &zeta)?;
                 D::try_just(|| {
@@ -294,7 +294,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
                 value.enforce_equal(dr, &Element::one())?;
             }
         }
-        for i in 0..online::NUM_ONLINE_QUERIES {
+        for i in 0..online::NUM_ONLINE_FP_QUERIES {
             if self.queries[i].is_none() {
                 self.open_at(dr, i, &zeta)?;
             }
@@ -321,10 +321,10 @@ pub struct Oracle<'o, 'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
 /// right, output) among the step's six, in the instance's order.
 const fn offset(proof: usize, index: usize) -> usize {
     assert!(
-        index < NUM_ONLINE_POLYNOMIALS,
-        "a proof carries at most NUM_ONLINE_POLYNOMIALS online polynomials"
+        index < NUM_ONLINE_FP_POLYS,
+        "a proof carries at most NUM_ONLINE_FP_POLYS online polynomials"
     );
-    proof * NUM_ONLINE_POLYNOMIALS + index
+    proof * NUM_ONLINE_FP_POLYS + index
 }
 
 impl<'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracle<'_, '_, 'dr, D, C, S> {

@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 
 use udon::field::Field;
 
-use crate::header::{Has, Header, NUM_ONLINE_POLYNOMIALS};
+use crate::header::{Has, Header, NUM_ONLINE_FP_POLYS};
 
 /// A step's output before its challenge $\zeta$ is drawn.
 ///
@@ -26,7 +26,7 @@ use crate::header::{Has, Header, NUM_ONLINE_POLYNOMIALS};
 ///     .stage([t])
 /// ```
 pub struct Prepared<F, O> {
-    polynomials: [Vec<F>; NUM_ONLINE_POLYNOMIALS],
+    polynomials: [Vec<F>; NUM_ONLINE_FP_POLYS],
     staged: Vec<F>,
     _marker: PhantomData<fn() -> O>,
 }
@@ -52,7 +52,7 @@ impl<F: Field, O: Header<F>> Prepared<F, O> {
     /// Creates a `Prepared` holding every slot's polynomial, as an internal
     /// step that copies a proof's polynomials prepares them, whatever the
     /// header lists.
-    pub(crate) fn from_polynomials(polynomials: [Vec<F>; NUM_ONLINE_POLYNOMIALS]) -> Self {
+    pub(crate) fn from_polynomials(polynomials: [Vec<F>; NUM_ONLINE_FP_POLYS]) -> Self {
         Prepared {
             polynomials,
             staged: Vec::new(),
@@ -102,7 +102,7 @@ impl<F: Field, O: Header<F>> Prepared<F, O> {
     /// through [`polynomial`](Self::polynomial). This is public only for
     /// the mock in the `ragu` crate.
     #[doc(hidden)]
-    pub fn polynomials(&self) -> &[Vec<F>; NUM_ONLINE_POLYNOMIALS] {
+    pub fn polynomials(&self) -> &[Vec<F>; NUM_ONLINE_FP_POLYS] {
         &self.polynomials
     }
 
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(prepared.polynomial(Last), &[Fp::from(3), Fp::ONE]);
         assert_eq!(prepared.polynomials()[0], vec![Fp::ONE]);
         assert_eq!(
-            prepared.polynomials()[NUM_ONLINE_POLYNOMIALS - 1],
+            prepared.polynomials()[NUM_ONLINE_FP_POLYS - 1],
             vec![Fp::from(3), Fp::ONE]
         );
         assert!(prepared.staged().is_empty());

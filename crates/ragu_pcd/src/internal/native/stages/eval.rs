@@ -208,7 +208,7 @@ pub struct CurrentStepWitness<F> {
     /// (see [`online`]): the children's exported polynomials, committed in
     /// their proofs and stashed in this step's nested `preamble` stage, then
     /// the step's own, committed in that same stage.
-    pub online: [F; online::NUM_ONLINE_QUERIES],
+    pub online: [F; online::NUM_ONLINE_FP_QUERIES],
 }
 
 /// Witness for the eval stage.
@@ -248,7 +248,7 @@ impl<C: ProfiledCycle> Witness<C> {
                 a_poly: C::CircuitField::ZERO,
                 b_poly: C::CircuitField::ZERO,
                 registry_xy: C::CircuitField::ZERO,
-                online: [C::CircuitField::ZERO; online::NUM_ONLINE_QUERIES],
+                online: [C::CircuitField::ZERO; online::NUM_ONLINE_FP_QUERIES],
             },
             partials,
         }
@@ -359,7 +359,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
         // + the online slots + (x, y) per binding partial
         2 * (RxIndex::num::<C::Profile>() + 4)
             + 6
-            + online::NUM_ONLINE_QUERIES
+            + online::NUM_ONLINE_FP_QUERIES
             + 2 * (NUM_BINDERS - 1)
     }
 

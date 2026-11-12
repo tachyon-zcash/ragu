@@ -26,7 +26,7 @@ pub struct InstanceLen<const HEADER_SIZE: usize>;
 
 impl<const HEADER_SIZE: usize> Len for InstanceLen<HEADER_SIZE> {
     fn len() -> usize {
-        1 + 2 * online::NUM_ONLINE_QUERIES + 2 + 3 * HEADER_SIZE
+        1 + 2 * online::NUM_ONLINE_FP_QUERIES + 2 + 3 * HEADER_SIZE
     }
 }
 
@@ -345,7 +345,7 @@ mod tests {
             oracles.left(TestPoly).open(dr, &left_elem)?;
             // What `TestStep` leaves to the adapter, done by hand.
             let zeta = oracles.zeta().clone();
-            for i in 0..online::NUM_ONLINE_POLYNOMIALS {
+            for i in 0..online::NUM_ONLINE_FP_POLYS {
                 let value = oracles.output_at(i).open(dr, &zeta)?;
                 value.enforce_equal(dr, &Element::one())?;
             }
@@ -378,8 +378,8 @@ mod tests {
     /// step that opens no output slot must have prepared.
     fn padded(zeta: u64) -> OnlineWitness<Fp, TestR> {
         let mut witness = online(zeta);
-        for index in 0..online::NUM_ONLINE_POLYNOMIALS {
-            witness.polys[2 * online::NUM_ONLINE_POLYNOMIALS + index] =
+        for index in 0..online::NUM_ONLINE_FP_POLYS {
+            witness.polys[2 * online::NUM_ONLINE_FP_POLYS + index] =
                 sparse::Polynomial::from_coeffs(alloc::vec![Fp::ONE]);
         }
         witness
@@ -412,11 +412,11 @@ mod tests {
     fn instance_len_counts_zeta_openings_and_headers() {
         assert_eq!(
             InstanceLen::<1>::len(),
-            1 + 2 * online::NUM_ONLINE_QUERIES + 2 + 3
+            1 + 2 * online::NUM_ONLINE_FP_QUERIES + 2 + 3
         );
         assert_eq!(
             InstanceLen::<4>::len(),
-            1 + 2 * online::NUM_ONLINE_QUERIES + 2 + 12
+            1 + 2 * online::NUM_ONLINE_FP_QUERIES + 2 + 12
         );
     }
 
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(output.len(), InstanceLen::<HEADER_SIZE>::len());
         let values: Vec<Fp> = output.iter().map(|e| *e.value().take()).collect();
         assert_eq!(values[0], Fp::from(7u64));
-        let headers = 1 + 2 * online::NUM_ONLINE_QUERIES + 2;
+        let headers = 1 + 2 * online::NUM_ONLINE_FP_QUERIES + 2;
         assert_eq!(values[headers], Fp::from(10u64));
         assert_eq!(values[headers + HEADER_SIZE], Fp::from(20u64));
         assert_eq!(values[headers + 2 * HEADER_SIZE], Fp::from(30u64));
@@ -484,7 +484,7 @@ mod tests {
         // The step opened slot 0 at the left value, 10, where X + 0 is 10;
         // every other slot was opened at zeta = 7, where an input slot's
         // X + i is 7 + i and an output slot holds the constant one.
-        let outputs = 2 * online::NUM_ONLINE_POLYNOMIALS;
+        let outputs = 2 * online::NUM_ONLINE_FP_POLYS;
         assert_eq!(queries[0].x, Fp::from(10u64));
         assert_eq!(queries[0].y, Fp::from(10u64));
         for (i, query) in queries.iter().enumerate().skip(1) {

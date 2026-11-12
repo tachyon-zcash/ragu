@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
-- Online polynomial oracles: every proof stores `NUM_ONLINE_POLYNOMIALS`
+- Online polynomial oracles: every proof stores `NUM_ONLINE_FP_POLYS`
   polynomials, a parameter of the protocol rather than of the header type; a
   header lists the kinds of polynomial its proofs carry, unit types
   implementing `OnlinePoly` or `Padding`, as `Header::OnlinePolyCommit`; a

@@ -14,7 +14,7 @@ use rand::CryptoRng;
 use super::_10_p::{NativeInputs, NativeWalk};
 use crate::{
     Application,
-    header::NUM_ONLINE_POLYNOMIALS,
+    header::NUM_ONLINE_FP_POLYS,
     internal::{native, native::total_circuit_counts, nested},
     profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
@@ -294,7 +294,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let witness = |instance| nested::circuits::common::Witness {
             instance,
             endoscalar: nested_endoscalar,
-            bridge_hash: builder.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1],
+            bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
             points: nested_points,
             preamble: nested_preamble_witness,
             s_prime: nested_s_prime_witness,

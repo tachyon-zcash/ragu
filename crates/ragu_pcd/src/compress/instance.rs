@@ -31,7 +31,7 @@ use super::revdot::{
 };
 use crate::{
     Proof, SelectableBackend,
-    header::NUM_ONLINE_POLYNOMIALS,
+    header::NUM_ONLINE_FP_POLYS,
     internal::{
         ky::{self, NativeKy, NestedKy},
         native::{self, stages as native_stages, unified as native_unified},
@@ -81,7 +81,7 @@ pub(crate) struct Instance<C: Cycle> {
     pub native_p: C::HostCurve,
     /// The commitments of the step's own online polynomials, which its
     /// nested instance exports.
-    pub online_commitments: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
+    pub online_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.

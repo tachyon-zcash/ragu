@@ -92,7 +92,7 @@ use udon::{
 };
 
 use crate::{
-    header::{Header, NUM_ONLINE_POLYNOMIALS},
+    header::{Header, NUM_ONLINE_FP_POLYS},
     internal::{
         endoscalar::EndoscalarStage,
         native::{
@@ -143,7 +143,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// The proof's polynomials associated with its output header, one
     /// coefficient vector in ascending degree per slot, as the step that
     /// produced this proof committed them.
-    pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS] {
+    pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_FP_POLYS] {
         online::coefficients(self.proof.online_polynomials())
     }
 
@@ -151,7 +151,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// what a parent opens as its left or right slots, and what
     /// [`Application::commit`](crate::Application::commit) computes from
     /// the coefficients.
-    pub fn commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub fn commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         self.proof.online_commitments()
     }
 }
@@ -250,7 +250,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// This step's output polynomials exposed through the polynomial-query API,
     /// padded with the constant one (see `internal::online`). Committed before
     /// `w`; the parent opens them as its left or right slots.
-    pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
+    pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS],
     /// Six opening claims, in [L0, L1, R0, R1, O0, O1] order.
     /// The parent uses these same values in the application and `compute_v`
     /// k(y) targets, binding the application's queries to the proved openings.
@@ -371,7 +371,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Nested collapse binds their exported instance values to the points
     /// in this step's prechallenge Preamble. The parent uses those same
     /// exported points as its input polynomial commitments.
-    online_commitments: [Cached<C::HostCurve>; NUM_ONLINE_POLYNOMIALS],
+    online_commitments: [Cached<C::HostCurve>; NUM_ONLINE_FP_POLYS],
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -642,13 +642,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// API, in slot order, padded with the constant one.
     pub(crate) fn online_polynomials(
         &self,
-    ) -> &[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS] {
+    ) -> &[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS] {
         &self.online_polynomials
     }
 
     /// The commitments of [`online_polynomials`](Self::online_polynomials),
     /// which this proof's nested instance exports.
-    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         self.online_commitments
             .clone()
             .map(|commitment| commitment.0)
@@ -1466,7 +1466,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             // The six online slots: every one is this proof's own padding,
             // as the children of the bootstrap fuse that opens them hold it.
             for _ in 0..3 {
-                for i in 0..NUM_ONLINE_POLYNOMIALS {
+                for i in 0..NUM_ONLINE_FP_POLYS {
                     push(online_commitments[i], &online[i]);
                 }
             }
@@ -1547,7 +1547,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
 
-            let o1 = builder.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
+            let o1 = builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1];
             let rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)
                 .expect("trivial bridge-hash rx");
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);

@@ -49,7 +49,7 @@ use crate::{
 /// step's two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`,
 /// then the step's online slots (see [`online`](super::online)).
 pub const fn num_endoscaling_points(native_rx: usize) -> usize {
-    1 + 2 * (native_rx + 4) + 6 + super::online::NUM_ONLINE_QUERIES
+    1 + 2 * (native_rx + 4) + 6 + super::online::NUM_ONLINE_FP_QUERIES
 }
 
 /// Number of curve points accumulated during `compute_p` for nested field

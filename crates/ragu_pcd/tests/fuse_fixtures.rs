@@ -927,7 +927,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let mut online = [online::Query {
         x: C::CircuitField::ZERO,
         y: C::CircuitField::ZERO,
-    }; online::NUM_ONLINE_QUERIES];
+    }; online::NUM_ONLINE_FP_QUERIES];
     for query in &mut online {
         *query = online::Query {
             x: cursor.field()?,

@@ -24,8 +24,8 @@ use ragu_core::{Cycle, Result, pasta::Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_POLYNOMIALS,
-        NUM_ONLINE_QUERIES, NativeCommitment, NativeRx, NestedCommitment, NestedRx, RxComponent,
+        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_FP_POLYS,
+        NUM_ONLINE_FP_QUERIES, NativeCommitment, NativeRx, NestedCommitment, NestedRx, RxComponent,
         Side,
     },
 };
@@ -523,14 +523,14 @@ impl FuzzCorruption {
             ),
             FuzzCorruption::OnlineCoeff { index, coeff, .. } => (
                 15,
-                (index as usize % NUM_ONLINE_POLYNOMIALS) << 16 | coeff_index(coeff, false),
+                (index as usize % NUM_ONLINE_FP_POLYS) << 16 | coeff_index(coeff, false),
             ),
             FuzzCorruption::NegateOnlineCommitment { index } => {
-                (16, index as usize % NUM_ONLINE_POLYNOMIALS)
+                (16, index as usize % NUM_ONLINE_FP_POLYS)
             }
             FuzzCorruption::OnlineQuery { slot, value, .. } => (
                 17,
-                (usize::from(value) << 16) | (slot as usize % NUM_ONLINE_QUERIES),
+                (usize::from(value) << 16) | (slot as usize % NUM_ONLINE_FP_QUERIES),
             ),
         }
     }
@@ -612,15 +612,15 @@ impl FuzzCorruption {
                 coeff,
                 delta,
             } => Corruption::OnlineCoeff {
-                index: index as usize % NUM_ONLINE_POLYNOMIALS,
+                index: index as usize % NUM_ONLINE_FP_POLYS,
                 coeff: coeff_index(coeff, false),
                 delta: nonzero(delta),
             },
             FuzzCorruption::NegateOnlineCommitment { index } => {
-                Corruption::NegateOnlineCommitment(index as usize % NUM_ONLINE_POLYNOMIALS)
+                Corruption::NegateOnlineCommitment(index as usize % NUM_ONLINE_FP_POLYS)
             }
             FuzzCorruption::OnlineQuery { slot, value, delta } => Corruption::OnlineQuery {
-                slot: slot as usize % NUM_ONLINE_QUERIES,
+                slot: slot as usize % NUM_ONLINE_FP_QUERIES,
                 value,
                 delta: nonzero(delta),
             },

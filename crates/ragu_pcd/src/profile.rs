@@ -571,7 +571,7 @@ pub struct Extension {
     /// decompressed statement can carry must treat its slots as padding, or
     /// the statement must also expose the compressed proof's online
     /// commitments for the decompression step to hold its output slots to
-    /// (see [`NUM_ONLINE_POLYNOMIALS`](crate::header::NUM_ONLINE_POLYNOMIALS)).
+    /// (see [`NUM_ONLINE_FP_POLYS`](crate::header::NUM_ONLINE_FP_POLYS)).
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is

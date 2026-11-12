@@ -103,7 +103,7 @@ use crate::{
     Application, Proof,
     profile::{Profile, ProfiledCycle},
 };
-pub use crate::{header::NUM_ONLINE_POLYNOMIALS, internal::online::NUM_ONLINE_QUERIES};
+pub use crate::{header::NUM_ONLINE_FP_POLYS, internal::online::NUM_ONLINE_FP_QUERIES};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the
@@ -635,7 +635,7 @@ pub enum Corruption<C: Cycle> {
     /// Add `delta` to one coefficient of one of the step's own online
     /// polynomials, leaving its cached commitment stale.
     OnlineCoeff {
-        /// Which of the step's [`NUM_ONLINE_POLYNOMIALS`] polynomials; out of
+        /// Which of the step's [`NUM_ONLINE_FP_POLYS`] polynomials; out of
         /// range is a no-op.
         index: usize,
         /// The coefficient's index; out of range is a no-op.
