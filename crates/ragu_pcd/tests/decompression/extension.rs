@@ -630,11 +630,137 @@ fn decompressed_proofs_recurse() {
     let (ab, ()) = app.fuse(&mut rng, Join, (), a, b).unwrap();
     assert_eq!(*ab.data(), Fp::from(83));
     assert!(app.verify_uncompressed(&ab, &mut rng).unwrap());
+    // Active and inactive children must work in either position.
+    let (cab, ()) = app.fuse(&mut rng, Join, (), c.clone(), ab.clone()).unwrap();
+    assert!(app.verify_uncompressed(&cab, &mut rng).unwrap());
+    let cab_compressed = app.compress(&cab, &mut rng).unwrap();
+    assert!(app.verify_compressed(&cab_compressed).unwrap());
     let (abc, ()) = app.fuse(&mut rng, Join, (), ab, c).unwrap();
     assert_eq!(*abc.data(), Fp::from(126));
     assert!(app.verify_uncompressed(&abc, &mut rng).unwrap());
     let compressed = app.compress(&abc, &mut rng).unwrap();
     assert!(app.verify_compressed(&compressed).unwrap());
+}
+
+/// An ordinary merge carries no chunk witness. A malicious prover that uses
+/// that empty witness for the actual decompression step must fail both at the
+/// root and after further recursion; the application ID controls activation.
+#[test]
+fn inactive_extension_cannot_bypass_decompression() {
+    use udon::field::Field;
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(0x06e_2026);
+    let wallet = wallet();
+    let (leaf, ()) = wallet.seed(&mut rng, Leaf, Fp::from(17)).unwrap();
+    let compressed = wallet.compress(&leaf, &mut rng).unwrap();
+    let context = Decompression::new(wallet, &mut rng).unwrap();
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(Leaf)
+        .unwrap()
+        .register(Join)
+        .unwrap()
+        .finalize_with(pasta, context)
+        .unwrap();
+    let valid = app.decompress(&mut rng, &compressed).unwrap();
+    let (ordinary, ()) = app.seed(&mut rng, Leaf, Fp::from(9)).unwrap();
+    for poly in ordinary
+        .proof()
+        .native_extension_circuit_rxs
+        .iter()
+        .chain(&ordinary.proof().native_extension_stage_rxs)
+    {
+        let stored: Vec<_> = poly.iter_stored_coeffs().collect();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0, 2 * AggregatorRank::n() - 1);
+        assert_ne!(*stored[0].1, Fp::ZERO);
+    }
+    for poly in ordinary
+        .proof()
+        .nested_extension_circuit_rxs
+        .iter()
+        .chain(&ordinary.proof().nested_extension_stage_rxs)
+    {
+        let stored: Vec<_> = poly.iter_stored_coeffs().collect();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0, 2 * AggregatorRank::n() - 1);
+        assert_ne!(*stored[0].1, Fq::ZERO);
+    }
+    assert!(app.verify_uncompressed(&ordinary, &mut rng).unwrap());
+    let compact = app.compress(&ordinary, &mut rng).unwrap();
+    assert!(app.verify_compressed(&compact).unwrap());
+
+    // Flip either child sign while keeping it in the allowed +/-1 range.
+    // Root verification must derive its meaning, not merely check that range.
+    {
+        use ragu_backend::{Backend, ReferenceBackend};
+        use ragu_circuits::polynomials::sparse;
+
+        use crate::internal::{native, nested};
+        type C = Profiled<Pasta, P>;
+        let instance =
+            crate::compress::instance::Instance::of::<_, HEADER_SIZE>(ordinary.proof()).unwrap();
+        let mut transcript = crate::ipa::CycleTranscript::<C>::new(pasta, crate::RAGU_TAG).unwrap();
+        let challenges = instance.challenges(&mut transcript).unwrap().unwrap();
+        let lifts = challenges.lifts::<C>().unwrap();
+        for i in 0..2 {
+            let index = native::stages::eval::generator_index::<C, AggregatorRank>(
+                nested::stages::challenges::EXTENSION_INDEX + i,
+            );
+            let mut coefficients = alloc::vec![Fq::ZERO; index + 1];
+            coefficients[index] = Fq::from(2); // bootstrap child: -1 -> +1
+            let delta = sparse::Polynomial::<_, AggregatorRank>::from_coeffs(coefficients);
+            let mut wrong = ordinary.proof().clone();
+            wrong.nested_challenges_rx.add_assign(&delta);
+            assert!(
+                !crate::verify::nested_challenges_match::<C, AggregatorRank, HEADER_SIZE>(
+                    &wrong, &lifts
+                )
+                .unwrap()
+            );
+            let mut wrong_instance = instance.clone();
+            let slot = crate::compress::revdot::nested_position::<P>(nested::RxComponent::Rx(
+                nested::RxIndex::ChallengeStage,
+            ));
+            let commitment = ReferenceBackend::sparse_commit_to_affine(
+                &wrong.nested_challenges_rx,
+                C::nested_generators(pasta),
+            );
+            wrong_instance.nested[slot] = commitment;
+            assert!(
+                !wrong_instance
+                    .stages_match::<AggregatorRank, ReferenceBackend, HEADER_SIZE>(
+                        &challenges,
+                        C::nested_generators(pasta)
+                    )
+                    .unwrap()
+            );
+        }
+    }
+
+    // Deliberately invoke the private prover seam without a wallet proof.
+    let (invalid, ()) = app
+        .fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            Fp::from(17),
+            app.bootstrap_pcd(),
+            app.bootstrap_pcd(),
+            None,
+        )
+        .unwrap();
+    assert!(!app.verify_uncompressed(&invalid, &mut rng).unwrap());
+    let compact = app.compress(&invalid, &mut rng).unwrap();
+    assert!(!app.verify_compressed(&compact).unwrap());
+    let (parent, ()) = app
+        .fuse(&mut rng, Join, (), invalid, valid.clone())
+        .unwrap();
+    assert!(!app.verify_uncompressed(&parent, &mut rng).unwrap());
+    let compact = app.compress(&parent, &mut rng).unwrap();
+    assert!(!app.verify_compressed(&compact).unwrap());
+    let (grandparent, ()) = app.fuse(&mut rng, Join, (), ordinary, parent).unwrap();
+    assert!(!app.verify_uncompressed(&grandparent, &mut rng).unwrap());
+    let compact = app.compress(&grandparent, &mut rng).unwrap();
+    assert!(!app.verify_compressed(&compact).unwrap());
 }
 
 /// A decompression whose circuit-field side was prepared from one

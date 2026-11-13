@@ -69,11 +69,19 @@ fn profiles_derive_distinct_tags() {
     assert_eq!(standard.native(), native(b"ragu_pcd native registry"));
     assert_eq!(
         aggregator.native(),
+        native(b"ragu_pcd native registry (aggregator-optional-decompression-v1)")
+    );
+    assert_ne!(
+        aggregator.native(),
         native(b"ragu_pcd native registry (aggregator)")
     );
     let nested = |label: &[u8]| Tag::<Fq>::from_beacon(&beacon, &manifest_digest, label).value();
     assert_eq!(standard.nested(), nested(b"ragu_pcd nested registry"));
     assert_eq!(
+        aggregator.nested(),
+        nested(b"ragu_pcd nested registry (aggregator-optional-decompression-v1)")
+    );
+    assert_ne!(
         aggregator.nested(),
         nested(b"ragu_pcd nested registry (aggregator)")
     );

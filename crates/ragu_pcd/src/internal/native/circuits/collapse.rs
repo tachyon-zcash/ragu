@@ -245,6 +245,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             left_binding,
             right_binding,
         );
+        let ky = if C::Profile::OPTIONAL_DECOMPRESSION {
+            let active = [
+                preamble.left.extension_enabled::<C::Profile>(dr)?,
+                preamble.right.extension_enabled::<C::Profile>(dr)?,
+            ];
+            ky.with_extension(dr, active)?
+        } else {
+            ky
+        };
         let mut ky = ky_values::<C::Profile, _>(&ky);
 
         // Verify each group's layer 1 reduction. For each group, fold the

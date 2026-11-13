@@ -59,7 +59,8 @@ pub type PartialsLen = ConstLen<{ NUM_BINDERS - 1 }>;
 /// The running sums of the nested challenge binding: partial $k$ is the sum
 /// of the first $2(k+1)$ terms of the nested challenge stage's commitment,
 /// $\sum_{i < 2(k+1)} \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$.
-/// The binding is the sum of all challenge terms and the base-case sign's: the
+/// The binding also includes the base-case sign and any child activation
+/// signs: the
 /// stage's commitment without its $\beta$ term, which the last binding
 /// circuit pins to the unified instance.
 #[derive(Clone)]
@@ -70,7 +71,8 @@ pub struct BindingPartials<P> {
 
 impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
     /// Computes the partial sums and binding from the nested challenge
-    /// witness's lifts and base-case sign. The beta field is not used:
+    /// witness's lifts, base-case sign and optional child activation signs.
+    /// The beta field is not used:
     /// its term is added by the parent's binding circuit.
     pub fn compute<C: Cycle<NestedCurve = P, ScalarField = P::Scalar> + ProfiledCycle, R: Rank, B>(
         params: &C::Params,
@@ -87,9 +89,16 @@ impl<P: udon::curve::EndomorphismAffine> BindingPartials<P> {
         // base-case sign.
         let mut scalars: alloc::vec::Vec<C::ScalarField> = challenges.lifts.to_vec();
         scalars.push(challenges.base_case_sign);
-        let bases: alloc::vec::Vec<P> = (0..scalars.len())
+        let mut bases: alloc::vec::Vec<P> = (0..scalars.len())
             .map(|i| generators.g()[generator_index::<C, R>(i)])
             .collect();
+        if C::Profile::OPTIONAL_DECOMPRESSION {
+            scalars.extend(challenges.extension_signs);
+            bases.extend((0..2).map(|i| {
+                generators.g()
+                    [generator_index::<C, R>(nested::stages::challenges::EXTENSION_INDEX + i)]
+            }));
+        }
         let projective = B::msm_batch(core::array::from_fn::<_, NUM_BINDERS, _>(|k| {
             // The last sum includes the sign term.
             let n = if k + 1 == NUM_BINDERS {
