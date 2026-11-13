@@ -158,6 +158,12 @@ fn prepare<'source>(
 }
 ```
 
+Steps name a polynomial by its kind, so the order of the list usually does
+not matter to them. The exception is the bridge hash: `Oracles::bridge_hash`
+digests the commitment in the last slot only. A header whose steps read
+the bridge hash keeps the hashed kind last, as in
+`(Padding, TachygramSet)`.
+
 These polynomial commitments are unblinded and deterministic for the
 prepared coefficients. Their opening points and values are public. Stage
 witness values that should stay out of the public instance; the stage
@@ -237,11 +243,11 @@ their coefficients in the circuit. Each proof has two polynomial slots,
 reached by kind through `oracles.left(kind)`, `oracles.right(kind)` and
 `oracles.output(kind)`, where the kind is one the `OnlinePolyCommit` list
 of the header at that position holds, so a kind that header does not carry
-does not compile and a slot it leaves to padding cannot be opened. What a polynomial means is your convention for that header, as
-the meaning of its fields is: the circuits of the steps that produce the
-header constrain it, and Ragu proves that every opening is of the committed
-polynomial. The `Oracles` argument of `witness` lets the circuit open each
-polynomial once:
+does not compile and a slot it leaves to padding cannot be opened. What a
+polynomial means is your convention for that header, as the meaning of its
+fields is: the circuits of the steps that produce the header constrain it,
+and Ragu proves that every opening is of the committed polynomial. The
+`Oracles` argument of `witness` lets the circuit open each polynomial once:
 
 ```rust
 // A random point squeezed after every slot's polynomial and the staged
@@ -261,6 +267,12 @@ o0.enforce_equal(dr, &expected)?;
 
 A step can instead spend a polynomial's one opening at another wire, such
 as a witnessed element, when that is the relation it needs to prove.
+
+The type is `Oracles<'_, 'dr, D, C, Self>` in every step, also in a step
+that opens nothing. `left`, `right` and `output` look up the kind in the
+`OnlinePolyCommit` list of `Self::Left`, `Self::Right` or `Self::Output`.
+Those types are found through `Self`, and the field of the headers comes
+from `C`. A step that does not use its oracles ignores the argument.
 
 A check at `zeta` is sound when it evaluates a residual polynomial whose
 coefficients were fixed before `zeta`, whose degree is bounded, and which is
@@ -296,8 +308,9 @@ without a constraint holds whatever the prover committed, whatever
 `prepare` returned. An output slot the circuit does not open is padding:
 after `witness` returns, Ragu opens it at `zeta` and holds the value to
 one. A slot the header leaves to padding cannot be opened, so it is always
-padding and a step never pins it by hand; a polynomial the header lists
-but the circuit never opens fails to prove.
+padding and a step never pins it by hand. If `prepare` sets a polynomial
+that the circuit never opens, `fuse` fails with `Error::InvalidWitness`,
+and the verifier rejects a proof that a modified prover makes.
 
 A step may leave an output slot's content unconstrained on purpose, as a
 hint for the steps that consume it: it opens the slot once and ignores the

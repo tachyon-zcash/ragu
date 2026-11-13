@@ -374,6 +374,17 @@ mod tests {
         }
     }
 
+    /// [`online`] with the constant one in the output slots: the padding a
+    /// step that opens no output slot must have prepared.
+    fn padded(zeta: u64) -> OnlineWitness<Fp, TestR> {
+        let mut witness = online(zeta);
+        for index in 0..online::NUM_ONLINE_POLYNOMIALS {
+            witness.polys[2 * online::NUM_ONLINE_POLYNOMIALS + index] =
+                sparse::Polynomial::from_coeffs(alloc::vec![Fp::ONE]);
+        }
+        witness
+    }
+
     /// The adapter holds every output slot a step leaves unopened to one,
     /// exactly as the step pinning them by hand after its own checks would:
     /// the two circuits are wiring-identical.
@@ -421,7 +432,7 @@ mod tests {
                 Fp::from(20u64),
                 (),
                 Prepared::<Fp, TestHeader>::new(),
-                online(7),
+                padded(7),
             )
         });
 
@@ -452,7 +463,7 @@ mod tests {
                 Fp::from(20u64),
                 (),
                 Prepared::<Fp, TestHeader>::new(),
-                online(7),
+                padded(7),
             )
         });
 
@@ -471,15 +482,47 @@ mod tests {
         assert_eq!(output_data, Fp::from(30u64));
 
         // The step opened slot 0 at the left value, 10, where X + 0 is 10;
-        // every other slot was opened at zeta = 7, where X + i is 7 + i
-        // (the output slots are held to one, which the emulator does not
-        // check; `unopened_output_slots_are_pinned` pins the wiring).
+        // every other slot was opened at zeta = 7, where an input slot's
+        // X + i is 7 + i and an output slot holds the constant one.
+        let outputs = 2 * online::NUM_ONLINE_POLYNOMIALS;
         assert_eq!(queries[0].x, Fp::from(10u64));
         assert_eq!(queries[0].y, Fp::from(10u64));
         for (i, query) in queries.iter().enumerate().skip(1) {
             assert_eq!(query.x, Fp::from(7u64));
-            assert_eq!(query.y, Fp::from(7 + i as u64));
+            let y = if i < outputs {
+                Fp::from(7 + i as u64)
+            } else {
+                Fp::ONE
+            };
+            assert_eq!(query.y, y);
         }
+    }
+
+    /// A step that prepares a polynomial for an output slot and does not
+    /// open it stops the honest prover: the slot's value at zeta is not
+    /// one, so the proof would not verify.
+    #[test]
+    fn an_unopened_output_slot_must_hold_one() {
+        let mut dr = Emulator::execute();
+        let dr = &mut dr;
+
+        let adapter = Adapter::<Pasta, TestStep, TestR, HEADER_SIZE>::new(TestStep);
+        let witness = Always::maybe_just(|| {
+            (
+                Fp::from(10u64),
+                Fp::from(20u64),
+                (),
+                Prepared::<Fp, TestHeader>::new(),
+                // X + 4 and X + 5 in the output slots, which `TestStep`
+                // leaves unopened.
+                online(7),
+            )
+        });
+
+        assert!(matches!(
+            adapter.witness(dr, witness).map(|_| ()),
+            Err(Error::InvalidWitness(_))
+        ));
     }
 
     #[test]

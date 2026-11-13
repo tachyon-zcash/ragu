@@ -6,18 +6,17 @@
 //! commitments are stored in [`Proof`](crate::Proof) and fixed before the
 //! step's challenge $\zeta$ is squeezed: the children's in their proofs,
 //! the step's own by its [`prepare`](super::Step::prepare) phase. In the
-//! step's
-//! [`witness`](super::Step::witness) phase, [`Oracles`] stands for those six
-//! commitments. The step may open each of its headers' polynomials once,
-//! by name, through [`left`](Oracles::left), [`right`](Oracles::right) and
-//! [`output`](Oracles::output), at any wire, and receives a wire holding
-//! the polynomial's value there; the
-//! opening $f_i(x_i) = y_i$ is not checked in the circuit but by Ragu's
-//! polynomial commitment scheme, which folds it into the step's own batch
-//! and whose verified openings the parent holds the step's instance to. An
-//! input slot the step does not query is opened at $\zeta$ to its value
-//! there; an output slot it does not query is opened at $\zeta$ and held
-//! to one, as padding (see below).
+//! step's [`witness`](super::Step::witness) phase, [`Oracles`] stands for
+//! those six commitments. The step may open each of its headers'
+//! polynomials once, by kind, through [`left`](Oracles::left),
+//! [`right`](Oracles::right) and [`output`](Oracles::output), at any wire,
+//! and receives a wire holding the polynomial's value there; the opening
+//! $f_i(x_i) = y_i$ is not checked in the circuit but by Ragu's polynomial
+//! commitment scheme, which folds it into the step's own batch and whose
+//! verified openings the parent holds the step's instance to. An input slot
+//! the step does not query is opened at $\zeta$ to its value there; an
+//! output slot it does not query is opened at $\zeta$ and held to one, as
+//! padding (see below).
 //!
 //! [`Oracles`] also holds the step's [staged](super::Step::prepare) values,
 //! committed before $\zeta$ in the proof's application stage. A check at
@@ -33,19 +32,23 @@
 //! witnesses, the output header's fields included, is the prover's choice
 //! given $\zeta$.
 //!
-//! The slots are the proofs' polynomials in order `[L0, L1, R0, R1, O0,
-//! O1]`, the order of the step's instance; a step never sees it. Every slot holds whatever polynomial the step that produced the
-//! header committed, the constant one where that step used fewer; what a
-//! slot means is the application's convention for the header, which the
-//! producing steps' circuits constrain, as they do the header's fields.
+//! The slots are the proofs' polynomials in the order
+//! `[L0, L1, R0, R1, O0, O1]`, the order of the step's instance; a step
+//! never sees it. Every slot holds whatever polynomial the step that
+//! produced the header committed, the constant one where that step used
+//! fewer; what a slot means is the application's convention for the
+//! header, which the producing steps' circuits constrain, as they do the
+//! header's fields.
 //!
 //! An output slot is constrained only through its openings. The step's
 //! [`prepare`](super::Step::prepare) phase is prover data, so a slot the
 //! circuit opens without constraining the value holds whatever polynomial
 //! the prover committed. An output slot the step does not open is padding:
 //! after the step's circuit, Ragu opens it at $\zeta$ and holds the value
-//! to one, so a step pins nothing by hand, and a polynomial prepared but
-//! never opened cannot prove. A step that leaves an output slot to the
+//! to one, so a step pins nothing by hand. If the step prepared a
+//! polynomial other than one for that slot, the opening is not one, except
+//! with negligible probability: the honest prover stops with [`Error::InvalidWitness`], and the verifier rejects a proof
+//! that a modified prover makes. A step that leaves an output slot to the
 //! steps that consume it, as a hint, opens it once and ignores the value.
 
 use alloc::vec::Vec;
@@ -145,6 +148,11 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     /// binds this value to the stage it folds. A step that hashes its
     /// output polynomial's commitment into a header field, for instance
     /// into an anchor, reads it here.
+    ///
+    /// The digest covers the last slot of the output header only, whatever
+    /// kind that slot holds. A header whose steps read it keeps the hashed
+    /// kind last in its [`OnlinePolyCommit`](Header::OnlinePolyCommit), as
+    /// `(Padding, TachygramSet)` does.
     ///
     /// This digest binds `O1` but is neither unique to it nor fixed before
     /// $\zeta$. [`Application::bridge_hash`](crate::Application::bridge_hash)
@@ -257,6 +265,13 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     ///
     /// The output slots come first so that the circuit is the one a step
     /// pinning its padding by hand, after its own checks, would have.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] on a driver that carries a witness
+    /// if an output slot the step did not open has a value other than one
+    /// at $\zeta$: the step prepared a polynomial for it, and the proof
+    /// would not verify.
     #[allow(clippy::type_complexity)]
     pub(crate) fn finish(
         mut self,
@@ -266,6 +281,16 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         for index in 0..NUM_ONLINE_POLYNOMIALS {
             if self.queries[offset(2, index)].is_none() {
                 let value = self.output_at(index).open(dr, &zeta)?;
+                D::try_just(|| {
+                    if *value.value().take() == D::F::ONE {
+                        Ok(())
+                    } else {
+                        Err(Error::InvalidWitness(
+                            "the step prepared a polynomial for an output slot it does not open"
+                                .into(),
+                        ))
+                    }
+                })?;
                 value.enforce_equal(dr, &Element::one())?;
             }
         }

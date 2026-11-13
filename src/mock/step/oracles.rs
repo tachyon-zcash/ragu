@@ -83,12 +83,23 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     }
 
     /// Mirrors `ragu_pcd`: every output slot the step left unopened is
-    /// opened at zeta and held to one, the padding it carries.
+    /// opened at zeta and held to one, the padding it carries. A slot whose
+    /// value is not one fails with `Error::InvalidWitness`.
     pub(crate) fn finish(&mut self, dr: &mut D) -> Result<()> {
         let zeta = self.zeta.clone();
         for index in 0..HEADER_POLYNOMIALS {
             if !self.queries[slot(2, index)] {
                 let value = self.output_at(index).open(dr, &zeta)?;
+                D::try_just(|| {
+                    if *value.value().take() == D::F::ONE {
+                        Ok(())
+                    } else {
+                        Err(Error::InvalidWitness(
+                            "the step prepared a polynomial for an output slot it does not open"
+                                .into(),
+                        ))
+                    }
+                })?;
                 value.enforce_equal(dr, &Element::one())?;
             }
         }

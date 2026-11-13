@@ -1142,7 +1142,7 @@ impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
         if FAULT != UNOPENED {
             // [`InsertTachygram`]'s check. For `UNOPENED` the set was
             // prepared but is never opened here, so Ragu holds its slot to
-            // one, which the committed set is not.
+            // one, which the prepared set is not.
             let tachygram = oracles.staged()[0].clone();
             let zeta = oracles.zeta().clone();
             let input = oracles.left(TachygramSet).open(dr, &zeta)?;
@@ -1189,11 +1189,11 @@ impl Step<C> for UnitAt2 {
     }
 }
 
-/// A step whose first phase prepares a zero polynomial cannot prove. One
-/// whose committed polynomial is not the one its circuit claims yields a
-/// proof the verifier rejects: the oracle answers for the committed
-/// polynomial, so the circuit's relation fails. So does one whose circuit
-/// never opens the polynomial it prepared: Ragu holds that slot to one.
+/// A step whose first phase prepares a zero polynomial cannot prove, and
+/// neither can one whose circuit never opens the polynomial it prepared:
+/// Ragu holds that slot to one. One whose committed polynomial is not the
+/// one its circuit claims yields a proof the verifier rejects: the oracle
+/// answers for the committed polynomial, so the circuit's relation fails.
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn a_misstated_polynomial_cannot_prove() -> Result<()> {
@@ -1223,11 +1223,10 @@ fn a_misstated_polynomial_cannot_prove() -> Result<()> {
         stale.expect("a stale polynomial must reach the verifier"),
         "stale polynomial",
     );
-    let (app, unopened) = attempt::<UNOPENED>();
-    rejected(
-        &app,
-        unopened.expect("an unopened polynomial must reach the verifier"),
-        "unopened polynomial",
+    assert!(
+        matches!(attempt::<UNOPENED>().1, Err(Error::InvalidWitness(source))
+        if source.to_string()
+            == "the step prepared a polynomial for an output slot it does not open")
     );
     Ok(())
 }

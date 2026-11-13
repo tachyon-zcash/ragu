@@ -238,8 +238,10 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// [`witness`](Self::witness) places on its opening: a slot the circuit
     /// opens without constraining the value holds whatever the prover
     /// committed. A slot the circuit does not open is held to the constant
-    /// one by Ragu, so a polynomial prepared and never opened fails to
-    /// prove.
+    /// one by Ragu. If this prepares a polynomial other than one for a slot
+    /// the circuit does not open, [`fuse`](crate::Application::fuse) fails
+    /// with [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness), and
+    /// the verifier rejects a proof that a modified prover makes.
     ///
     /// Stage every value a check at $\zeta$ reads that is neither a slot's
     /// opening nor an input's header field, such as the roots a step merges

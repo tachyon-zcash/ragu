@@ -1107,3 +1107,115 @@ fn prepare_runs_before_witness_and_its_error_stops_the_fuse() -> Result<()> {
     }
     Ok(())
 }
+
+/// [`Seed`] that prepares its output's polynomial but never opens it.
+struct UnopenedSeed;
+impl Step<Pasta> for UnopenedSeed {
+    const INDEX: Index = Index::new(0);
+    type Witness<'s> = Fp;
+    type Aux<'s> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ValueHeader;
+    fn prepare<'s>(
+        &self,
+        root: &Fp,
+        _: HeaderInput<'_, Fp, ()>,
+        _: HeaderInput<'_, Fp, ()>,
+    ) -> Result<Prepared<Fp, ValueHeader>> {
+        Ok(Prepared::new().poly(Value, vec![-*root, Fp::ONE]))
+    }
+    fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        root: DriverValue<D, Fp>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Witnessed<'dr, 's, Self, D, N>
+    where
+        Self: 'dr,
+    {
+        let data = root.clone();
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::new(dr, &mut (), root)?,
+            ),
+            data,
+            D::unit(),
+        ))
+    }
+}
+
+#[test]
+fn a_prepared_polynomial_left_unopened_fails_the_fuse() -> Result<()> {
+    let app = test_builder()
+        .register(UnopenedSeed)?
+        .finalize(test_params())?;
+    let mut rng = StdRng::seed_from_u64(0);
+    let expected = "the step prepared a polynomial for an output slot it does not open";
+    assert!(matches!(
+        app.seed(&mut rng, UnopenedSeed, Fp::from(5u64)),
+        Err(Error::InvalidWitness(message)) if message.to_string() == expected
+    ));
+    Ok(())
+}
+
+/// A header that keeps [`Value`] in both slots.
+struct ValueTwiceHeader;
+impl Header<Fp> for ValueTwiceHeader {
+    type OnlinePolyCommit = (Value, Value);
+    type Data = ();
+    type Output = ();
+    const SUFFIX: Suffix = Suffix::new(0);
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        _: &mut D,
+        _: &mut A,
+        _: DriverValue<D, ()>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
+    }
+}
+
+/// A seed that outputs a [`ValueTwiceHeader`].
+struct ValueTwiceSeed;
+impl Step<Pasta> for ValueTwiceSeed {
+    const INDEX: Index = Index::new(0);
+    type Witness<'s> = ();
+    type Aux<'s> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ValueTwiceHeader;
+    fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        _: &mut D,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Witnessed<'dr, 's, Self, D, N>
+    where
+        Self: 'dr,
+    {
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+            ),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
+#[test]
+fn a_kind_in_two_slots_rejects_registration() {
+    let expected = "a Header cannot keep the same online polynomial kind in two slots";
+    assert!(matches!(
+        test_builder().register(ValueTwiceSeed),
+        Err(Error::Initialization(message)) if message.to_string() == expected
+    ));
+}
