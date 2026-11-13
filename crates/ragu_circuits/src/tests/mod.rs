@@ -3,6 +3,8 @@
 mod error_swallowing;
 mod identity;
 mod known_routine_soundness;
+mod memo;
+mod memo_proptest;
 mod segment_order;
 
 use ragu_core::{
@@ -399,4 +401,169 @@ fn test_routine_consistency() {
 
     trace.assemble::<TestRank>(&plan, Fp::ZERO).unwrap();
     consistency_checks(&*obj);
+}
+
+/// Squares its input twice: two gates whose constraints reference the input
+/// wire (through [`Element::mul`]).
+#[derive(Clone)]
+pub(crate) struct DoubleSquare;
+
+impl Routine<Fp> for DoubleSquare {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        input.square(dr)?.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// Squares, delegates to a nested [`DoubleSquare`], then squares again.
+#[derive(Clone)]
+pub(crate) struct NestedDoubleSquare;
+
+impl Routine<Fp> for NestedDoubleSquare {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let a = input.square(dr)?;
+        let b = dr.routine(DoubleSquare, a)?;
+        b.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// Squares its input once; a routine with a fingerprint distinct from the
+/// two above.
+#[derive(Clone)]
+pub(crate) struct SingleSquare;
+
+impl Routine<Fp> for SingleSquare {
+    type Input = Kind![Fp; Element<'_, _>];
+    type Output = Kind![Fp; Element<'_, _>];
+    type Aux<'dr> = ();
+
+    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        input: Bound<'dr, D, Self::Input>,
+        _aux: DriverValue<D, Self::Aux<'dr>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        input.square(dr)
+    }
+
+    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        _dr: &mut D,
+        _input: &Bound<'dr, D, Self::Input>,
+    ) -> Result<Prediction<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'dr>>>> {
+        Ok(Prediction::Unknown(D::unit()))
+    }
+}
+
+/// How a [`RoutineCircuit`] places its routine calls.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RoutineLayout {
+    /// `w ↦ DoubleSquare(w)`.
+    Single,
+    /// `w ↦ DoubleSquare(w^(2^n))`: the same routine, `n` gates later.
+    Shifted(usize),
+    /// `w ↦ SingleSquare(NestedDoubleSquare(w))`: a nested call followed by
+    /// another routine.
+    Nested,
+    /// Allocates `u` and `v`, then `DoubleSquare(u)`.
+    FeedFirst,
+    /// Allocates `u` and `v`, then `DoubleSquare(v)`: the layout of
+    /// [`FeedFirst`](Self::FeedFirst) with a different input wire.
+    FeedSecond,
+    /// `w ↦ DoubleSquare(DoubleSquare(w))`: the same routine twice at the
+    /// top level of one circuit.
+    Repeated,
+}
+
+/// A circuit built from the routines above according to a [`RoutineLayout`].
+pub(crate) struct RoutineCircuit(pub(crate) RoutineLayout);
+
+impl Circuit<Fp> for RoutineCircuit {
+    type Instance<'instance> = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+    type Witness<'witness> = Fp;
+    type Aux<'witness> = ();
+
+    fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'instance>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, &mut Standard::new(), instance)
+    }
+
+    fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'witness>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>> {
+        let allocator = &mut Standard::new();
+        let output = match self.0 {
+            RoutineLayout::Single => {
+                let w = Element::alloc(dr, allocator, witness)?;
+                dr.routine(DoubleSquare, w)?
+            }
+            RoutineLayout::Shifted(gates) => {
+                let mut w = Element::alloc(dr, allocator, witness)?;
+                for _ in 0..gates {
+                    w = w.square(dr)?;
+                }
+                dr.routine(DoubleSquare, w)?
+            }
+            RoutineLayout::Nested => {
+                let w = Element::alloc(dr, allocator, witness)?;
+                let a = dr.routine(NestedDoubleSquare, w)?;
+                dr.routine(SingleSquare, a)?
+            }
+            RoutineLayout::Repeated => {
+                let w = Element::alloc(dr, allocator, witness)?;
+                let a = dr.routine(DoubleSquare, w)?;
+                dr.routine(DoubleSquare, a)?
+            }
+            RoutineLayout::FeedFirst | RoutineLayout::FeedSecond => {
+                let copy = witness.as_ref().map(|w| *w);
+                let u = Element::alloc(dr, allocator, witness)?;
+                let v = Element::alloc(dr, allocator, copy)?;
+                let input = match self.0 {
+                    RoutineLayout::FeedFirst => u,
+                    _ => v,
+                };
+                dr.routine(DoubleSquare, input)?
+            }
+        };
+        Ok(WithAux::new(output, D::unit()))
+    }
 }
