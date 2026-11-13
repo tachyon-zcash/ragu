@@ -208,8 +208,8 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     }
 
     /// Returns the oracle for the left input proof's `index`-th polynomial,
-    /// whatever the header lists. Ragu's own steps, one circuit for every
-    /// header, copy or pin every slot through these.
+    /// whatever the header lists. The rerandomization step, one circuit for
+    /// every header, copies every slot through these.
     pub(crate) fn left_at(&mut self, index: usize) -> Oracle<'_, 'a, 'dr, D, C, S> {
         Oracle {
             slot: offset(0, index),

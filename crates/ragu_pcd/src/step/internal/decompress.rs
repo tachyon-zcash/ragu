@@ -15,9 +15,9 @@
 //!
 //! The step's circuit constrains nothing about the header data it outputs;
 //! the binding is the claims'. The statement carries no polynomials, so the
-//! resulting proof carries padding: the circuit opens each output slot
-//! at $\zeta$ and holds it to the constant one, so a prover cannot put a
-//! polynomial of its choosing there, and a proof whose slots carry
+//! resulting proof carries padding: the step opens no output slot, so the
+//! adapter opens each at $\zeta$ and holds it to the constant one, and a
+//! prover cannot put a polynomial of its choosing there, and a proof whose slots carry
 //! meaningful polynomials does not survive decompression. The native
 //! extension's statement circuit exposes the output header the extension
 //! verified as its public output, and its claim's $k(y)$, computed by the
@@ -98,7 +98,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -118,7 +118,6 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` (see `Encoded::new_uniform`).
         let output = Encoded::new_uniform(dr, allocator, witness.clone())?;
-        super::pin_output_slots(dr, oracles)?;
         Ok(((left, right, output), witness, D::unit()))
     }
 }

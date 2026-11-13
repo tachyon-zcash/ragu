@@ -14,9 +14,9 @@
 //! rerandomization. An ordinary step consuming
 //! the resulting `Pcd<()>` still verifies its child claim.
 //!
-//! The bootstrap proof's polynomial slots carry padding: the circuit opens each
-//! output slot at $\zeta$ and holds it to the constant one, as the
-//! decompression step does, so a bootstrap proof installed through
+//! The bootstrap proof's polynomial slots carry padding: the step opens no
+//! output slot, so the adapter opens each at $\zeta$ and holds it to the
+//! constant one, as for the decompression step, so a bootstrap proof installed through
 //! [`with_bootstrap`] cannot hand every seed's unit inputs polynomials of a
 //! prover's choosing.
 //!
@@ -57,7 +57,7 @@ impl<C: Cycle> Step<C> for Bootstrap {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -74,7 +74,6 @@ impl<C: Cycle> Step<C> for Bootstrap {
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
         let output = Encoded::from_gadget(());
-        super::pin_output_slots(dr, oracles)?;
 
         Ok(((left, right, output), D::unit(), D::unit()))
     }
