@@ -38,6 +38,19 @@ use crate::{
     profile::{Binding, Profile, ProfiledCycle},
 };
 
+/// The activation value determined by a proof's bound application circuit ID.
+pub fn extension_enabled<F: Field, P: Profile>(circuit_id: CircuitIndex) -> Result<F> {
+    Ok(
+        if !P::OPTIONAL_DECOMPRESSION
+            || circuit_id == crate::step::InternalStepIndex::Decompress.circuit_index::<P>()?
+        {
+            F::ONE
+        } else {
+            F::ZERO
+        },
+    )
+}
+
 /// The targets of one proof's native revdot claims at one $y$.
 ///
 /// The circuit claims' targets are $k(y)$ values: each circuit's $k(Y)$ has
@@ -65,6 +78,8 @@ pub struct NativeKy<F> {
     /// The binding circuit's $k(y)$, for a profile whose native extension
     /// has one; `None` for a profile without one.
     pub binding: Option<F>,
+    /// One for an active extension, zero for an inactive optional extension.
+    pub extension: F,
 }
 
 impl<F: Field> native::claims::KySource for NativeKy<F> {
@@ -88,6 +103,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
 
     fn ones(&self) -> impl Iterator<Item = F> + Clone {
         once(F::ONE)
+    }
+
+    fn extension_ones(&self) -> impl Iterator<Item = F> + Clone {
+        once(self.extension)
     }
 
     fn statement_ky(&self) -> impl Iterator<Item = F> + Clone {
@@ -114,6 +133,8 @@ pub struct NestedKy<F> {
     /// The binding circuit's $k(y)$, for a profile whose nested extension
     /// has one; `None` for a profile without one.
     pub binding: Option<F>,
+    /// One for an active extension, zero for an inactive optional extension.
+    pub extension: F,
 }
 
 impl<F: Field> nested::claims::KySource for NestedKy<F> {
@@ -125,6 +146,10 @@ impl<F: Field> nested::claims::KySource for NestedKy<F> {
 
     fn ones(&self) -> impl Iterator<Item = F> + Clone {
         once(F::ONE)
+    }
+
+    fn extension_ones(&self) -> impl Iterator<Item = F> + Clone {
+        once(self.extension)
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
@@ -263,13 +288,18 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, bound.as_ref().map(|b| b.as_slice()))?;
+        let extension = *proof_inputs
+            .extension_enabled::<C::Profile>(dr)?
+            .value()
+            .take();
         Ok(NativeKy {
             c: None,
+            extension,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
-            binding: binding.map(|ky| *ky.value().take()),
+            binding: binding.map(|ky| *ky.value().take() * extension),
         })
     })
 }
@@ -343,13 +373,18 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
         let binding = binding_ky_alloc(dr, &y, count, parts.as_ref().map(|p| p.nested_bound))?;
+        let extension = *proof_inputs
+            .extension_enabled::<C::Profile>(dr)?
+            .value()
+            .take();
         Ok(NativeKy {
             c: None,
+            extension,
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
-            binding: binding.map(|ky| *ky.value().take()),
+            binding: binding.map(|ky| *ky.value().take() * extension),
         })
     })
 }

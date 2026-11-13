@@ -58,14 +58,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         for (lift, challenge) in lifts.iter_mut().zip(bound_challenges) {
             *lift = nested::challenge::<C>(*challenge)?;
         }
-        // The binding partials use only the ten lifts and the sign. Beta
-        // is filled after `pre_beta` is squeezed, before this witness is committed.
-        let nested_challenges = nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
+        // The binding partials omit beta, filled after `pre_beta` is
+        // squeezed and before the challenge witness is committed.
+        let mut nested_challenges = nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
             lifts,
             builder.left_header(),
             builder.right_header(),
             C::ScalarField::ZERO,
         );
+        nested_challenges.set_extension_signs::<C::Profile, C::CircuitField>([
+            left.circuit_id().omega_j(),
+            right.circuit_id().omega_j(),
+        ])?;
         let partials = native::stages::eval::BindingPartials::compute::<C, R, B>(
             self.params,
             &nested_challenges,

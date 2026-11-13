@@ -2,8 +2,8 @@
 //! output header is a compressed proof's statement.
 //!
 //! A profile whose native extension verifies a compressed proof carries
-//! those circuits in every proof, so every fuse runs them over some
-//! compressed proof. This step is the one whose own output header is the
+//! those circuits' slots in every proof. Optional profiles activate their
+//! claims for this step and use zero targets for other steps. Its output is the
 //! decompressed proof's: it declares the unit header for both inputs, so
 //! it is proved against the bootstrap proof as a seed is, and takes the
 //! header data of the proof it decompresses as its witness, encoding it
@@ -18,7 +18,8 @@
 //! the output header the extension verified as its public output, and its
 //! claim's $k(y)$, computed by the verifier of this proof from this proof's
 //! circuit id and output header ([`statement_ky`]), is that header's when
-//! the circuit id is this step's and the unit header's for any other step.
+//! the circuit id is this step's. Other steps use zero for an optional
+//! extension or the unit header's target for an always-active extension.
 //! A proof of this step whose output header is not the decompressed
 //! statement's therefore has a false claim, as a proof with relabelled
 //! application headers does.
