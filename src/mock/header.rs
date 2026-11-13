@@ -106,7 +106,8 @@ fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
     let _ = Suffix::new(usize::MAX);
 }
 
-pub const HEADER_POLYNOMIALS: usize = 2;
+/// Mirrors `ragu_pcd::header::NUM_ONLINE_POLYNOMIALS`.
+pub const HEADER_POLYNOMIALS: usize = NUM_ONLINE_POLYNOMIALS;
 
 pub use ragu_pcd::header::{
     Has, NUM_ONLINE_POLYNOMIALS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding,
