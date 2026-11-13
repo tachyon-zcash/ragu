@@ -60,7 +60,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, Point, vec::FixedVec};
 use udon::field::Field;
 
 use super::Step;
@@ -143,7 +143,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         &self.zeta
     }
 
-    /// The bridge-hash stage's commitment, as its two coordinates. The
+    /// The bridge-hash stage's commitment, as a point. The
     /// stage holds the step's own last online commitment, and the parent
     /// binds this value to the stage it folds. A step that hashes its
     /// output polynomial's commitment into a header field, for instance
@@ -159,8 +159,12 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     /// recomputes the honest prover's unblinded encoding. Applications that
     /// use it in anchors must recompute advancement natively and compare
     /// against canonical-chain anchors.
-    pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
-        &self.bridge_hash
+    pub fn bridge_hash(&self) -> Point<'dr, D, C::NestedCurve>
+    where
+        C: Cycle<CircuitField = D::F>,
+    {
+        let [x, y] = self.bridge_hash.clone();
+        Point::new_unchecked(x, y)
     }
 
     /// The step's [staged](super::Step::prepare) values, in order: wires

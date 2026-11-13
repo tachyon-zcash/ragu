@@ -51,7 +51,7 @@ use ragu_core::{
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
-    Boolean, Element, Nonzero, NonzeroBank, Point,
+    Boolean, Element, NonzeroBank, Point,
     allocator::Allocator,
     boolean::decompose,
     consistent::Consistent,
@@ -911,10 +911,7 @@ fn walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     let x = x.divide(dr, &c2)?;
     let y = y.divide(dr, &c3)?;
 
-    Ok(Point::new_unchecked(
-        Nonzero::new_unchecked(x),
-        Nonzero::new_unchecked(y),
-    ))
+    Ok(Point::new_unchecked(x, y))
 }
 
 /// The lift's initial accumulator

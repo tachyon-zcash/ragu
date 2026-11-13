@@ -6,7 +6,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt as _};
+use ragu_primitives::{Element, GadgetExt as _, Point};
 use udon::field::Field;
 
 pub use super::super::header::HEADER_POLYNOMIALS;
@@ -48,8 +48,13 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         &self.zeta
     }
 
-    pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
-        &self.bridge_hash
+    /// The bridge-hash stage's commitment.
+    pub fn bridge_hash(&self) -> Point<'dr, D, C::NestedCurve>
+    where
+        C: Cycle<CircuitField = D::F>,
+    {
+        let [x, y] = self.bridge_hash.clone();
+        Point::new_unchecked(x, y)
     }
 
     pub fn staged(&self) -> &[Element<'dr, D>] {

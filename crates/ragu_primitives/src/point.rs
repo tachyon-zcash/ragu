@@ -46,12 +46,12 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     ///
     /// # Preconditions
     ///
-    /// The caller must enforce or derive the curve equation before using the
-    /// result as an ordinary [`Point`].
-    pub(crate) fn new_unchecked(x: Nonzero<'dr, D>, y: Nonzero<'dr, D>) -> Self {
+    /// The caller must enforce or derive the curve equation for every accepted
+    /// assignment; witness coordinates must lie on the curve.
+    pub fn new_unchecked(x: Element<'dr, D>, y: Element<'dr, D>) -> Self {
         Point {
-            x,
-            y,
+            x: Nonzero::new_unchecked(x),
+            y: Nonzero::new_unchecked(y),
             _marker: PhantomData,
         }
     }
@@ -92,10 +92,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
                 .sub(y2.wire())
         })?;
 
-        Ok(Point::new_unchecked(
-            Nonzero::new_unchecked(x),
-            Nonzero::new_unchecked(y),
-        ))
+        Ok(Point::new_unchecked(x, y))
     }
 
     /// Embeds a constant point.
@@ -108,10 +105,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
             let x = Element::constant(dr, coordinates.0);
             let y = Element::constant(dr, coordinates.1);
 
-            Ok(Point::new_unchecked(
-                Nonzero::new_unchecked(x),
-                Nonzero::new_unchecked(y),
-            ))
+            Ok(Point::new_unchecked(x, y))
         } else {
             Err(Error::InvalidWitness(
                 "point at infinity cannot be witnessed".into(),
@@ -136,7 +130,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     /// endomorphism of `self`.
     pub fn endo(&self, dr: &mut D) -> Self {
         let endo_x = self.x.scale(dr, Coeff::Arbitrary(C::Base::ZETA));
-        Point::new_unchecked(Nonzero::new_unchecked(endo_x), self.y.clone())
+        Point::new_unchecked(endo_x, self.y.clone().into_inner())
     }
 
     /// Negates this point.
@@ -162,10 +156,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     pub fn conditional_endo(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         let endo_x = self.x.scale(dr, Coeff::Arbitrary(D::F::ZETA));
         let x = condition.conditional_select(dr, &self.x, &endo_x)?;
-        Ok(Point::new_unchecked(
-            Nonzero::new_unchecked(x),
-            self.y.clone(),
-        ))
+        Ok(Point::new_unchecked(x, self.y.clone().into_inner()))
     }
 
     /// Applies the negation map iff the provided condition is true.
@@ -177,10 +168,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
     pub fn conditional_negate(&self, dr: &mut D, condition: &Boolean<'dr, D>) -> Result<Self> {
         let neg_y = self.y.negate(dr);
         let y = condition.conditional_select(dr, &self.y, &neg_y)?;
-        Ok(Point::new_unchecked(
-            self.x.clone(),
-            Nonzero::new_unchecked(y),
-        ))
+        Ok(Point::new_unchecked(self.x.clone().into_inner(), y))
     }
 
     /// Doubles this point. Ragu does not support curves with points of order
@@ -212,10 +200,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
         let x_sub_x3 = self.x.sub(dr, &x3);
         let y3 = delta.mul(dr, &x_sub_x3)?.sub(dr, &self.y);
 
-        Ok(Point::new_unchecked(
-            Nonzero::new_unchecked(x3),
-            Nonzero::new_unchecked(y3),
-        ))
+        Ok(Point::new_unchecked(x3, y3))
     }
 
     /// Computes `self + other` via incomplete affine addition.
@@ -252,10 +237,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
         let tmp = self.x.sub(dr, &x3);
         let y3 = delta.mul(dr, &tmp)?.sub(dr, &self.y);
 
-        Ok(Point::new_unchecked(
-            Nonzero::new_unchecked(x3),
-            Nonzero::new_unchecked(y3),
-        ))
+        Ok(Point::new_unchecked(x3, y3))
     }
 
     /// Computes $\[2\] Q + P$ using the standard $(Q + P) + Q$
@@ -304,10 +286,7 @@ impl<'dr, D: Driver<'dr, F = C::Base>, C: Affine> Point<'dr, D, C> {
         let tmp = self.x.sub(dr, &x_s);
         let y_s = lambda_2.mul(dr, &tmp)?.sub(dr, &self.y);
 
-        Ok(Point::new_unchecked(
-            Nonzero::new_unchecked(x_s),
-            Nonzero::new_unchecked(y_s),
-        ))
+        Ok(Point::new_unchecked(x_s, y_s))
     }
 }
 
@@ -324,6 +303,7 @@ mod tests {
     use udon::curve::{Affine, EndomorphismProjective, Projective};
 
     use super::*;
+    use crate::GadgetExt;
 
     type F = ragu_core::pasta::Fp;
     type C = ragu_core::pasta::EpAffine;
@@ -341,6 +321,35 @@ mod tests {
 
         alloc(C::generator())?;
         assert!(alloc(C::identity()).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_point_new_unchecked() -> Result<()> {
+        let point: C = C::generator().to_projective().double().into();
+        let (x, y) = point.coordinates().unwrap();
+        Simulator::simulate((x, y), |dr, witness| {
+            let (x, y) = witness.cast();
+            let x = Element::alloc(dr, &mut (), x)?;
+            let y = Element::alloc(dr, &mut (), y)?;
+            dr.reset();
+
+            let p = Point::<_, C>::new_unchecked(x, y);
+            assert_eq!((dr.num_gates(), dr.num_constraints()), (0, 0));
+            assert_eq!(p.value().take(), point);
+
+            let mut written = vec![];
+            p.write(dr, &mut written)?;
+            let written: Vec<F> = written.iter().map(|e| *e.value().take()).collect();
+            assert_eq!(written, [*p.x.value().take(), *p.y.value().take()]);
+
+            dr.reset();
+            p.enforce_consistent(dr)?;
+            assert_eq!(dr.num_gates(), 3);
+
+            Ok(())
+        })?;
 
         Ok(())
     }

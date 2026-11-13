@@ -13,7 +13,7 @@ use ragu_core::{
     maybe::Maybe,
     pasta::{EpAffine, Fp, Fq, Pasta},
 };
-use ragu_primitives::{Element, allocator::Allocator, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, allocator::Allocator, vec::FixedVec};
 use rand::{SeedableRng, rngs::StdRng};
 use udon::{
     curve::{Affine, Projective},
@@ -99,9 +99,10 @@ impl Step<Pasta> for HashOut {
         // consume it.
         let zeta = oracles.zeta().clone();
         let _ = oracles.output(Hashed).open(dr, &zeta)?;
-        let [x, y] = oracles.bridge_hash().clone();
-        let data = D::just(|| [*x.value().take(), *y.value().take()]);
-        let digest = FixedVec::try_from(vec![x, y])?;
+        let mut digest = vec![];
+        oracles.bridge_hash().write(dr, &mut digest)?;
+        let data = D::just(|| [*digest[0].value().take(), *digest[1].value().take()]);
+        let digest = FixedVec::try_from(digest)?;
         Ok((
             (
                 Encoded::from_gadget(()),

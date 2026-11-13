@@ -761,7 +761,9 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
         let y = oracles.output(Value).open(dr, &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
-        let stamp = oracles.bridge_hash()[0].clone();
+        let mut coordinates = vec![];
+        oracles.bridge_hash().write(dr, &mut coordinates)?;
+        let stamp = coordinates[0].clone();
         let data = stamp.value().map(|v| *v);
         Ok((
             (
@@ -934,6 +936,12 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
     Ok(())
 }
 
+/// Coordinates of a nested-curve point.
+fn bridge_hash_coordinates() -> [Fp; 2] {
+    let (x, y) = EpAffine::generator().coordinates().unwrap();
+    [x, y]
+}
+
 #[test]
 fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
     let mut dr = Simulator::<Fp>::new();
@@ -941,7 +949,7 @@ fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
     let mut oracles = Oracles::<_, Pasta, Merge>::alloc(
         &mut dr,
         Fp::from(3),
-        [Fp::ONE; 2],
+        bridge_hash_coordinates(),
         Vec::new(),
         [&polynomials; 3],
     )?;
@@ -985,7 +993,7 @@ fn slot_query_limit_is_enforced_without_witness_values() -> Result<()> {
     let mut oracles = Oracles::<_, Pasta, Merge>::alloc(
         &mut dr,
         Fp::from(3),
-        [Fp::ONE; 2],
+        bridge_hash_coordinates(),
         Vec::new(),
         [&polynomials; 3],
     )?;
@@ -1059,7 +1067,9 @@ impl Step<Pasta> for HookOrder {
         let y = oracles.output(Value).open(dr, &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
-        let stamp = oracles.bridge_hash()[0].clone();
+        let mut coordinates = vec![];
+        oracles.bridge_hash().write(dr, &mut coordinates)?;
+        let stamp = coordinates[0].clone();
         let data = stamp.value().map(|v| *v);
         Ok((
             (
