@@ -19,11 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step prepares its output proof's through `Step::prepare` before its
   challenge is drawn, by kind, the constant one where it prepares nothing,
   and `Step::witness` opens its input or output proofs' polynomials by kind
-  through
-  `step::Oracles::{left, right, output}` at the challenge or at any wire,
-  while `Oracles::staged` supplies the constraint-bound staged values. A slot
-  a header leaves to padding cannot be opened, and an output slot a step leaves unopened is held
-  to the constant one after its circuit. Ragu
+  through `step::Oracles::{left, right, output}` at the challenge or at any
+  wire, while `Oracles::staged` supplies the constraint-bound staged values.
+  A slot a header leaves to padding cannot be opened, and an output slot a
+  step leaves unopened is held to the constant one after its circuit. Ragu
   proves the openings in the step's own batch. What a slot means is the
   application's convention for the header, constrained by the producing
   steps' circuits. `Pcd::polynomials` reads a proof's polynomials back.
@@ -35,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changelog.
 - Bridge hash: `Oracles::bridge_hash` gives a step the digest of its own last
   online commitment, and `Application::bridge_hash` computes it outside the
-  circuit, for hash chains over polynomial commitments.
+  circuit, for hash chains over polynomial commitments. A header whose steps
+  read it keeps the hashed kind last in its `OnlinePolyCommit`.
 
 ### Changed
 

@@ -91,8 +91,12 @@ impl Step<Pasta> for HashOut {
         DriverValue<D, [Fp; 2]>,
         DriverValue<D, ()>,
     )> {
-        // The hashed slot is a hint: opened once so that Ragu does not pin
-        // it to one, its value left to the steps that consume it.
+        // The hashed slot is a hint. The opening is still recorded and
+        // proved against the commitment; it only stops Ragu from holding
+        // the slot to one. This step does not constrain the value: the
+        // test checks only the bridge hash, and a real application would
+        // constrain the polynomial in this step or in the steps that
+        // consume it.
         let zeta = oracles.zeta().clone();
         let _ = oracles.output(Hashed).open(dr, &zeta)?;
         let [x, y] = oracles.bridge_hash().clone();

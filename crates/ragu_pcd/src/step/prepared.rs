@@ -97,6 +97,11 @@ impl<F: Field, O: Header<F>> Prepared<F, O> {
 
     /// Returns every slot's coefficients, in slot order: what Ragu commits,
     /// the constant one in every slot the header leaves to padding.
+    ///
+    /// Not part of the public API: a step reads a polynomial by its kind,
+    /// through [`polynomial`](Self::polynomial). This is public only for
+    /// the mock in the `ragu` crate.
+    #[doc(hidden)]
     pub fn polynomials(&self) -> &[Vec<F>; NUM_ONLINE_POLYNOMIALS] {
         &self.polynomials
     }

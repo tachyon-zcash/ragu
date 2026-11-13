@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error<'a> {
@@ -79,8 +81,6 @@ pub(crate) fn write_envelope(
     bytes.extend_from_slice(&rank.to_le_bytes());
     bytes.extend_from_slice(&(header_size as u64).to_le_bytes());
 }
-
-use alloc::vec::Vec;
 
 mod pcd;
 pub use pcd::WireHeader;
