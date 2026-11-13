@@ -367,6 +367,7 @@ fn native_batch_opens_through_the_ipa() {
         bind_endoscalar: targets.bind_endoscalar,
         statement: targets.statement,
         binding: targets.binding,
+        extension: targets.extension,
     };
     let (mut verifier, wrong_openings) = native_verifier(&app, proof, y, z, &wrong, &reduction);
     let (at_zero, honest) = (
@@ -400,6 +401,7 @@ fn nested_batch_opens_through_the_ipa() {
         unified: ky::nested_ky(proof, y).unwrap(),
         compute_v: None,
         binding: None,
+        extension: 1u64.into(),
     };
     let generators = Pasta::nested_generators(crate::pasta::baked());
     let commitment = |component| match component {

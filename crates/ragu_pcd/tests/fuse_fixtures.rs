@@ -55,9 +55,9 @@
 //! Every scenario runs once per profile, the wallet's [`Standard`] over
 //! the fixtures in `standard/` and the [`Aggregator`] over those in
 //! `aggregator/`: the aggregator's proofs carry the decompression
-//! circuits' polynomials, at the aggregator rank, run over the canonical
-//! compressed proof of the wallet application it holds as its context,
-//! itself compressed under a fixed seed.
+//! circuits' slots at the aggregator rank, using blinded empty traces for
+//! these ordinary steps. Decompression-specific activation and recursion
+//! checks live in tests/decompression/extension.rs.
 //!
 //! [`Standard`]: crate::profile::Standard
 //! [`Aggregator`]: crate::profile::Aggregator

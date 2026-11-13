@@ -285,6 +285,11 @@ pub trait KySource {
     /// bound is required for `repeat_n`.
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One activation value per proof for extension circuits.
+    fn extension_ones(&self) -> impl Iterator<Item = Self::Ky> + Clone {
+        self.ones()
+    }
+
     /// The nested unified instance's $k(y)$, one per proof, for the
     /// instance circuit checks.
     ///
@@ -337,7 +342,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(source.compute_v_ky())
         .chain({
             let extension = P::nested_extension();
-            let ones: Vec<S::Ky> = source.ones().collect();
+            let ones: Vec<S::Ky> = source.extension_ones().collect();
             let binding: Vec<S::Ky> = source.binding_ky().collect();
             assert!(
                 extension.binding.is_none() || binding.len() == ones.len(),
@@ -368,11 +373,26 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_compute_v: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
     pub right_binding: Option<Element<'dr, D>>,
+    pub extension: [Element<'dr, D>; 2],
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
+    /// Set the already-bound activation values and scale binding targets.
+    pub fn with_extension(mut self, dr: &mut D, active: [Element<'dr, D>; 2]) -> Result<Self> {
+        self.left_binding = self
+            .left_binding
+            .map(|v| v.mul(dr, &active[0]))
+            .transpose()?;
+        self.right_binding = self
+            .right_binding
+            .map(|v| v.mul(dr, &active[1]))
+            .transpose()?;
+        self.extension = active;
+        Ok(self)
+    }
+
     /// Create a [`TwoProofKySource`] from the children's raw `c` values,
     /// unified $k(y)$ values and `compute_v` and binding circuits' $k(y)$
     /// values, `None` for a profile without one: `compute_v`'s is then
@@ -398,6 +418,7 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_compute_v,
             left_binding,
             right_binding,
+            extension: [Element::one(), Element::one()],
             one: Element::one(),
             zero: Element::zero(dr),
         }
@@ -409,6 +430,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn raw_c(&self) -> impl Iterator<Item = Element<'dr, D>> {
         once(self.left_raw_c.clone()).chain(once(self.right_raw_c.clone()))
+    }
+
+    fn extension_ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.extension.clone().into_iter()
     }
 
     fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

@@ -9,7 +9,6 @@ use crate::{
     header::Header,
     internal::{ky, nested},
     ipa::{CycleTranscript, IpaCycle, Params},
-
     profile::ProfiledCycle,
 };
 
@@ -173,7 +172,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &params,
                 &mut self.verifier_workspace.borrow_mut(),
                 &mut Lifted(transcript.host()),
-
             ))
         };
         if !native {
@@ -218,7 +216,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &params,
                 &mut self.verifier_workspace.borrow_mut(),
                 &mut Lifted(transcript.nested()),
-
             ))
         };
         Ok(nested)
