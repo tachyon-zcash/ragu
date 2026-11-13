@@ -29,11 +29,13 @@ all-features = true
 
 [features]
 alloc = []
+# Udon's AArch64 field assembly; portable Rust is used on other targets and in Miri.
+asm = ["udon/aarch64-asm"]
 # Embeds the Pasta generators derived at build time; see `pasta`.
 baked = ["alloc", "dep:bento", "dep:lazy_static"]
 # Additional, separately loaded generators for Aggregator extensions above R<13>.
 baked-aggregator = ["baked"]
-default = ["alloc"]
+default = ["alloc", "asm"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
 # `serde::{Serialize, Deserialize}` for `Proof` and `CompressedProof`, as their wire bytes.
@@ -91,6 +93,11 @@ ragu_testing = { path = "../ragu_testing", version = "0.0.0" }
 proptest = { workspace = true }
 # Parallel test cases also exercise the prover without its multicore feature.
 rayon = { workspace = true }
+
+[[bench]]
+name = "workflow"
+harness = false
+required-features = ["std", "test-utils", "baked-aggregator", "unstable-aggregator"]
 
 [[bench]]
 name = "gungraun"

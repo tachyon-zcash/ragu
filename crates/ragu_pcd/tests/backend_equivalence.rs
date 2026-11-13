@@ -236,6 +236,7 @@ impl Apps {
     fn build(dummy_circuits: usize) -> Self {
         let pasta = ragu_pcd::pasta::baked_aggregator();
         let reference = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<ReferenceBackend>()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
@@ -1640,6 +1641,30 @@ mod independent_polynomials {
             AcceleratedBackend::sparse_commit_batch(empty, generators),
             []
         );
+
+        // Cross batch boundaries with mixed dense, sparse and zero inputs;
+        // compare against independent commitments in the original order.
+        for length in [0, 1, 7, 8, 9, 15, 16, 17] {
+            let many: Vec<_> = (0..length)
+                .map(|i| polys[i % polys.len()].clone())
+                .collect();
+            let expected: Vec<_> = many
+                .iter()
+                .map(|poly| ReferenceBackend::sparse_commit_to_affine(poly, generators))
+                .collect();
+            assert_eq!(
+                ReferenceBackend::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+            assert_eq!(
+                AcceleratedBackend::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+            assert_eq!(
+                AcceleratedProver::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+        }
 
         let inputs = [
             (&polys[2], C::Scalar::from(7)),

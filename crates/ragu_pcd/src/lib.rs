@@ -32,6 +32,12 @@
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
 //! the envelope layout, version rules and input size limits, including the
 //! limits callers must apply to Serde backends before they allocate buffers.
+//!
+//! The default `asm` feature enables Udon's AArch64 field arithmetic. Other
+//! targets and Miri use the portable Rust kernels. To select portable arithmetic
+//! on AArch64, disable default features and retain `alloc`; `multicore` is an
+//! independent, opt-in feature. Cargo unifies dependency features, so portable
+//! builds must ensure no other dependency enables Udon's `aarch64-asm` feature.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -86,19 +92,23 @@ mod decompress_statement_tests;
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;
 
-use alloc::{collections::BTreeMap, vec::Vec};
-use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use core::{
+    any::TypeId,
+    cell::{OnceCell, RefCell},
+    marker::PhantomData,
+};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle, Standard};
 pub use proof::{Pcd, Proof};
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder, Tag},
 };
-use ragu_core::{Cycle, Error, Result};
+use ragu_core::{Cycle, Error, FixedGenerators, MsmWorkspace, PreparedMsm, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -227,12 +237,15 @@ impl<C: ProfiledCycle> RegistryTags<C> {
 }
 
 /// Builder for an [`Application`] for proof-carrying data.
+///
+/// Independent work uses [`AcceleratedBackend`] by default. Select another
+/// backend explicitly with [`Self::with_backend`].
 pub struct ApplicationBuilder<
     'params,
     C: Cycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
@@ -510,7 +523,18 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             output_headers: self.output_headers,
             bootstrap: self.bootstrap,
             seeded_trivial: OnceCell::new(),
+            native_ipa_generators:
+                <<B as SelectableBackend>::Verifier as ragu_backend::Backend>::prepare_msm(
+                    &C::host_generators(params).g()[..R::num_coeffs()],
+                )
+                .map(Arc::new),
+            nested_ipa_generators:
+                <<B as SelectableBackend>::Verifier as ragu_backend::Backend>::prepare_msm(
+                    &C::nested_generators(params).g()[..R::num_coeffs()],
+                )
+                .map(Arc::new),
             context,
+            verifier_workspace: RefCell::new(MsmWorkspace::default()),
             _marker: PhantomData,
         };
 
@@ -608,7 +632,7 @@ pub struct Application<
     C: ProfiledCycle,
     R: Rank,
     const HEADER_SIZE: usize,
-    B: SelectableBackend = ReferenceBackend,
+    B: SelectableBackend = AcceleratedBackend,
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
@@ -632,6 +656,11 @@ pub struct Application<
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
     seeded_trivial: OnceCell<Proof<C, R>>,
+    /// Fixed IPA bases prepared once during application startup.
+    native_ipa_generators: Option<Arc<PreparedMsm<C::HostCurve>>>,
+    nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
+    /// Scratch for public IPA checks, retained for this application's lifetime.
+    verifier_workspace: RefCell<MsmWorkspace>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 

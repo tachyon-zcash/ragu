@@ -89,7 +89,7 @@ pub fn create_proof<B: SelectableBackend, C: Affine>(
 
     // Initialize the vector `G'` from the URS. We'll be progressively collapsing
     // this vector into smaller and smaller vectors until it is of length 1.
-    let mut g_prime = params.g.clone();
+    let mut g_prime = params.g.to_vec();
 
     // Collect `(L_j, R_j)` for the returned proof; halo2 leaves them in the
     // byte-stream transcript.

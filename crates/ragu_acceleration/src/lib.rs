@@ -12,7 +12,8 @@
 //! scratch, and execution budget; the reference backend runs them separately.
 //! Independent polynomial work also uses Udon's scoped scheduler rather than
 //! the reference backend's serial loop.
-//! Single MSMs and FFTs retain the defaults, which also use Udon.
+//! Fixed Pasta generators can retain cached endomorphism coordinates across
+//! verifier MSMs. Other single MSMs and FFTs retain the defaults, which use Udon.
 //! Overrides of the kernels that `ragu_pcd`'s verifier consults belong in
 //! [`verifier`], which carries a stricter review and testing bar than
 //! prover-only overrides. An override arrives with its differential test
@@ -29,7 +30,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use ragu_backend::Backend;
-use udon::curve::Affine;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{CircuitIndex, Registry, RegistryAt},
+};
+use ragu_core::{MsmWorkspace, PreparedMsm};
+use udon::{curve::Affine, field::Field};
 
 pub mod verifier;
 
@@ -66,6 +72,26 @@ macro_rules! impl_accelerated_backends {
 }
 
 impl_accelerated_backends! {
+    fn registry_wxy_over_domain<F: Field, R: Rank>(registry: &Registry<'_, F, R>, x: F, y: F) -> alloc::vec::Vec<F> {
+        verifier::registry_wxy_over_domain(registry, x, y)
+    }
+
+    fn registry_circuits_xy<F: Field, R: Rank>(registry: &Registry<'_, F, R>, circuits: &[CircuitIndex], x: F, y: F) -> alloc::vec::Vec<F> {
+        verifier::registry_circuits_xy(registry, circuits, x, y)
+    }
+
+    fn registry_at_x<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, x: F) -> sparse::Polynomial<F, R> {
+        verifier::registry_at_x(registry, x)
+    }
+
+    fn registry_at_y<F: Field, R: Rank>(registry: &RegistryAt<'_, F, R>, y: F) -> sparse::Polynomial<F, R> {
+        verifier::registry_at_y(registry, y)
+    }
+
+    fn registry_wxy<F: Field, R: Rank>(registry: &Registry<'_, F, R>, w: F, x: F, y: F) -> F {
+        verifier::registry_wxy(registry, w, x, y)
+    }
+
     #[cfg(feature = "multicore")]
     fn map<I: IntoIterator, T: Send>(
         inputs: I,
@@ -83,6 +109,14 @@ impl_accelerated_backends! {
         });
         jobs.into_iter()
             .map(|(_, output)| output.expect("each output is initialized"))
+    }
+
+    fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {
+        verifier::prepare_msm(bases)
+    }
+
+    fn msm_prepared<C: Affine>(coeffs: alloc::vec::Vec<C::Scalar>, bases: &PreparedMsm<C>, workspace: &mut MsmWorkspace) -> C::Projective {
+        verifier::msm_prepared(coeffs, bases, workspace)
     }
 
     fn msm_batch<

@@ -235,6 +235,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 "the profile's prover did not fill its native extension".into(),
             ));
         }
+        if let Some(commitments) = C::Profile::native_extension_commitments::<C::Base, R, B>(
+            &self.context,
+            source,
+            &rxs.circuits,
+        ) {
+            assert_eq!(commitments.len(), rxs.circuits.len());
+            builder.set_native_extension_circuit_commitments(commitments);
+        }
         builder.set_native_extension_circuit_rxs(rxs.circuits);
         builder.set_native_extension_stage_rxs(rxs.stages);
 
@@ -347,6 +355,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),
             ));
+        }
+        if let Some(commitments) = C::Profile::nested_extension_commitments::<C::Base, R, B>(
+            &self.context,
+            source,
+            &rxs.circuits,
+        ) {
+            assert_eq!(commitments.len(), rxs.circuits.len());
+            builder.set_nested_extension_circuit_commitments(commitments);
         }
         builder.set_nested_extension_circuit_rxs(rxs.circuits);
         builder.set_nested_extension_stage_rxs(rxs.stages);

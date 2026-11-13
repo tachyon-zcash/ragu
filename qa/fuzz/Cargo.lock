@@ -401,6 +401,7 @@ name = "ragu_acceleration"
 version = "0.0.0"
 dependencies = [
  "ragu_backend",
+ "ragu_circuits",
  "ragu_core",
  "zakura-udon",
 ]
@@ -856,10 +857,12 @@ dependencies = [
 
 [[package]]
 name = "zakura-udon"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23e592f34daf47ed96906c7785842ffc9b558c139bc23ea54d7f6e5ecc03e50d"
+checksum = "6d5b59abb65f3ef3d696caf9aa490c4b2e70caa4f9f048b99b8fd191670a2bf9"
 dependencies = [
+ "cc",
+ "cpufeatures",
  "zakura-bento",
 ]
 

@@ -15,7 +15,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::FixedGenerators;
+use ragu_core::{FixedGenerators, MsmWorkspace, PreparedMsm};
 use udon::{curve::Affine, fft::Domain, field::Field};
 
 /// A statically dispatched implementation of Ragu's computational operations.
@@ -28,9 +28,8 @@ use udon::{curve::Affine, fft::Domain, field::Field};
 /// Implementing this low-level trait does not make a downstream type selectable
 /// by `ragu_pcd`; application execution is restricted to Ragu-owned backends.
 ///
-/// Backends are currently selected by type and cannot carry per-application
-/// state. If implementations need device handles or caches, Ragu can store the
-/// selected backend as a value while retaining static dispatch.
+/// Backends are selected by type and carry no per-application state.
+/// Reusable inputs, such as prepared generator bases, are owned by callers.
 pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     /// Evaluates a sparse polynomial at `point`.
     ///
@@ -102,6 +101,35 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         }))
     }
 
+    /// Commits to a slice of sparse polynomials in input order.
+    ///
+    /// Groups of eight use [`Self::sparse_commit_batch`], sharing the batch
+    /// planner's execution budget and scratch. The small tail uses individual
+    /// commitments. All projective results are normalized together, so only
+    /// one batch inversion is needed for the whole slice.
+    ///
+    /// # Correctness
+    ///
+    /// Each output must match [`Self::sparse_commit_to_affine`] for the
+    /// corresponding polynomial, including identity commitments.
+    fn sparse_commit_many_to_affine<C: Affine, R: Rank, G: FixedGenerators<C>>(
+        polys: &[sparse::Polynomial<C::Scalar, R>],
+        generators: &G,
+    ) -> Vec<C> {
+        let mut projective = Vec::with_capacity(polys.len());
+        let (batches, tail) = polys.as_chunks::<8>();
+        for batch in batches {
+            projective.extend(Self::sparse_commit_batch(batch.each_ref(), generators));
+        }
+        projective.extend(
+            tail.iter()
+                .map(|poly| Self::sparse_commit(poly, generators)),
+        );
+        let mut affine = alloc::vec![C::identity(); projective.len()];
+        C::batch_to_affine(&projective, &mut affine);
+        affine
+    }
+
     /// Commits to a sparse polynomial and normalizes the result to affine.
     ///
     /// # Correctness
@@ -159,6 +187,27 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         evals: Vec<F>,
     ) -> sparse::Polynomial<F, R> {
         registry.interpolate_xy_with(evals, Self::ifft)
+    }
+
+    /// Evaluates selected circuit restrictions at one shared X/Y pair.
+    ///
+    /// Results retain `circuits` order, including duplicates. The default
+    /// uses [`Self::registry_wxy`] so its overrides remain effective.
+    ///
+    /// # Correctness
+    ///
+    /// Each output must equal `registry_wxy(registry, circuit.omega_j(), x, y)`,
+    /// including tags, masking, padded positions and out-of-domain indices.
+    fn registry_circuits_xy<F: Field, R: Rank>(
+        registry: &Registry<'_, F, R>,
+        circuits: &[CircuitIndex],
+        x: F,
+        y: F,
+    ) -> Vec<F> {
+        circuits
+            .iter()
+            .map(|circuit| Self::registry_wxy(registry, circuit.omega_j(), x, y))
+            .collect()
     }
 
     /// Computes the circuit restriction $s_i(X, y)$ selected by `circuit`.
@@ -239,6 +288,26 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         ragu_core::msm(coeffs.into_iter().copied(), bases.into_iter().copied())
     }
 
+    /// Optionally prepares fixed bases for repeated MSMs.
+    ///
+    /// Returning `None` retains the ordinary [`Self::msm`] path. Prepared
+    /// bases must describe exactly the original points in the original order.
+    fn prepare_msm<C: Affine>(_bases: &[C]) -> Option<PreparedMsm<C>> {
+        None
+    }
+
+    /// Multiplies fresh scalars by previously prepared bases.
+    ///
+    /// The default retains [`Self::msm`] overrides. Each result must equal
+    /// `Self::msm(&coeffs, bases.bases())`, including length validation.
+    fn msm_prepared<C: Affine>(
+        coeffs: Vec<C::Scalar>,
+        bases: &PreparedMsm<C>,
+        _workspace: &mut MsmWorkspace,
+    ) -> C::Projective {
+        Self::msm(&coeffs, bases.bases())
+    }
+
     /// Computes independent MSMs, returning results in input order.
     ///
     /// The default calls [`Self::msm`] for each input, retaining MSM overrides.
@@ -306,7 +375,10 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     }
 }
 
-/// The backend used by default throughout Ragu.
+/// The reference backend, with serial scheduling of independent operations.
+///
+/// Applications may select this explicitly to compare accelerated kernels
+/// against their reference implementations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReferenceBackend;
 
