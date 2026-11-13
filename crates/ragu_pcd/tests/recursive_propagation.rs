@@ -43,7 +43,7 @@ pub(crate) mod support {
     pub(crate) const HEADER_SIZE: usize = 4;
     use crate::{
         Application, ApplicationBuilder, Pcd, Proof,
-        header::{Header, Suffix},
+        header::{Header, Padding, Suffix},
         internal::{
             Side,
             native::{
@@ -66,6 +66,7 @@ pub(crate) mod support {
 
     impl Header<Fp> for Value {
         const SUFFIX: Suffix = Suffix::new(0);
+        type OnlinePolyCommit = (Padding, Padding);
         type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 
@@ -98,7 +99,7 @@ pub(crate) mod support {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
             &self,
             dr: &mut D,
-            _: &mut Oracles<'_, 'dr, D>,
+            _: &mut Oracles<'_, 'dr, D, C, Self>,
             witness: DriverValue<D, Fp>,
             left: DriverValue<D, L::Data>,
             right: DriverValue<D, H::Data>,

@@ -15,9 +15,9 @@
 //!
 //! The step's circuit constrains nothing about the header data it outputs;
 //! the binding is the claims'. The statement carries no polynomials, so the
-//! resulting proof carries padding: the circuit opens each output slot
-//! at $\zeta$ and holds it to the constant one, so a prover cannot put a
-//! polynomial of its choosing there, and a proof whose slots carry
+//! resulting proof carries padding: the step opens no output slot, so the
+//! adapter opens each at $\zeta$ and holds it to the constant one, and a
+//! prover cannot put a polynomial of its choosing there, and a proof whose slots carry
 //! meaningful polynomials does not survive decompression. The native
 //! extension's statement circuit exposes the output header the extension
 //! verified as its public output, and its claim's $k(y)$, computed by the
@@ -98,7 +98,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -118,7 +118,6 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` (see `Encoded::new_uniform`).
         let output = Encoded::new_uniform(dr, allocator, witness.clone())?;
-        super::pin_output_slots(dr, oracles)?;
         Ok(((left, right, output), witness, D::unit()))
     }
 }
@@ -144,10 +143,7 @@ mod tests {
         use ragu_primitives::{Element, GadgetExt, allocator::Allocator};
         use ragu_testing::registry::TestRegistryBuilder;
 
-        use crate::{
-            header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
-            step::Slot,
-        };
+        use crate::header::{Header, NUM_ONLINE_POLYNOMIALS, Padding, Suffix};
 
         const HEADER_SIZE: usize = 4;
         type R = polynomials::TestRank;
@@ -155,6 +151,7 @@ mod tests {
         struct Single;
         impl Header<Fp> for Single {
             const SUFFIX: Suffix = Suffix::new(0);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = Fp;
             type Output = Kind![Fp; Element<'_, _>];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -169,6 +166,7 @@ mod tests {
         struct Pair;
         impl Header<Fp> for Pair {
             const SUFFIX: Suffix = Suffix::new(1);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = (Fp, Fp);
             type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -211,7 +209,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
-                oracles: &mut Oracles<'_, 'dr, D>,
+                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
                 witness: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -231,7 +229,7 @@ mod tests {
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
                 let zeta = oracles.zeta().clone();
                 for i in 0..NUM_ONLINE_POLYNOMIALS {
-                    let value = oracles.query(dr, Slot::output(i), &zeta)?;
+                    let value = oracles.output_at(i).open(dr, &zeta)?;
                     value.enforce_equal(dr, &Element::one())?;
                 }
                 Ok(((left, right, output), witness, D::unit()))

@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error<'a> {
@@ -65,7 +67,7 @@ pub(crate) fn write_envelope(
     kind: PayloadKind,
     rank: u32,
     header_size: usize,
-    bytes: &mut alloc::vec::Vec<u8>,
+    bytes: &mut Vec<u8>,
 ) {
     bytes.extend_from_slice(MAGIC);
     let schema = match kind {
@@ -93,7 +95,7 @@ pub(crate) fn open(
 ) -> Result<(Reader<'_>, u32, usize), Error<'_>> {
     let mut reader = Reader::new(bytes);
     let envelope = reader.take(ENVELOPE_SIZE)?;
-    let mut known = alloc::vec::Vec::with_capacity(ENVELOPE_SIZE);
+    let mut known = Vec::with_capacity(ENVELOPE_SIZE);
     write_envelope(kind, 0, 0, &mut known);
     for (start, end, reason) in [
         (0, 8, "invalid proof magic"),

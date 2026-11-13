@@ -8,7 +8,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{
@@ -23,6 +23,7 @@ struct HeaderA;
 
 impl<F: Field> Header<F> for HeaderA {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -39,6 +40,7 @@ struct HeaderWithData;
 
 impl Header<Fp> for HeaderWithData {
     const SUFFIX: Suffix = Suffix::new(2);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
     fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -62,7 +64,7 @@ impl Step<Pasta> for StepWithData {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -95,7 +97,7 @@ impl<C: Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -127,7 +129,7 @@ impl<C: Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

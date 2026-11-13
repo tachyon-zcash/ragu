@@ -10,7 +10,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     ApplicationBuilder,
-    header::{Header, Suffix},
+    header::{Header, OnlinePoly, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
 use ragu_primitives::{
@@ -28,6 +28,7 @@ struct HSuffixAOther;
 
 impl<F: Field> Header<F> for HSuffixA {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -41,6 +42,7 @@ impl<F: Field> Header<F> for HSuffixA {
 
 impl<F: Field> Header<F> for HSuffixB {
     const SUFFIX: Suffix = Suffix::new(1);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -54,6 +56,7 @@ impl<F: Field> Header<F> for HSuffixB {
 
 impl<F: Field> Header<F> for HSuffixAOther {
     const SUFFIX: Suffix = Suffix::new(0); // duplicate suffix
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
     fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
@@ -77,7 +80,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step0 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -111,7 +114,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -145,7 +148,7 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -201,6 +204,7 @@ struct CopiedUnitSuffix;
 
 impl Header<Fp> for CopiedUnitSuffix {
     const SUFFIX: Suffix = <() as Header<Fp>>::SUFFIX;
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -226,7 +230,7 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, L::Data>,
         right: DriverValue<D, R::Data>,
@@ -261,6 +265,43 @@ fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {
 #[test]
 fn register_rejects_copied_unit_suffix_without_unit_header() {
     rejects_reserved_suffix::<CopiedUnitSuffix, CopiedUnitSuffix, CopiedUnitSuffix>();
+}
+
+#[derive(Clone, Copy)]
+struct RepeatedPoly;
+
+impl OnlinePoly for RepeatedPoly {}
+
+struct DuplicatePolyHeader;
+
+impl Header<Fp> for DuplicatePolyHeader {
+    const SUFFIX: Suffix = Suffix::new(2);
+    type OnlinePolyCommit = (RepeatedPoly, RepeatedPoly);
+    type Data = ();
+    type Output = ();
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        _: &mut D,
+        _: &mut A,
+        _: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
+    }
+}
+
+#[test]
+fn register_rejects_a_kind_in_two_polynomial_slots() {
+    let result = ApplicationBuilder::<Pasta, ProductionRank, 4>::new().register(HeaderStep::<
+        (),
+        (),
+        DuplicatePolyHeader,
+    >(PhantomData));
+    assert!(matches!(
+        result,
+        Err(Error::Initialization(message))
+            if message.to_string()
+                == "a Header cannot keep the same online polynomial kind in two slots"
+    ));
 }
 
 #[test]

@@ -22,9 +22,9 @@ use udon::{
 
 use crate::{
     Application, ApplicationBuilder,
-    header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
+    header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
     internal::nested::stages::bridge_hash,
-    step::{Encoded, HeaderInput, Index, Oracles, Step},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
 type R = ProductionRank;
@@ -33,8 +33,16 @@ type App = Application<'static, Pasta, R, HEADER_SIZE>;
 
 /// A header carrying a digest: the two coordinates of a nested-curve point.
 struct Digest;
+
+/// The polynomial a [`Digest`] is of, kept in the last slot.
+#[derive(Clone, Copy, Debug)]
+struct Hashed;
+
+impl OnlinePoly for Hashed {}
+
 impl Header<Fp> for Digest {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Hashed);
     type Data = [Fp; 2];
     type Output = Kind![Fp; FixedVec<Element<'_, _>, ragu_primitives::vec::ConstLen<2>>];
 
@@ -58,25 +66,19 @@ impl Step<Pasta> for HashOut {
     type Right = ();
     type Output = Digest;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         c: &Fp,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(core::array::from_fn(|i| {
-            if i == NUM_ONLINE_POLYNOMIALS - 1 {
-                vec![*c, Fp::ONE]
-            } else {
-                vec![Fp::ONE]
-            }
-        }))
+    ) -> Result<Prepared<Fp, Digest>> {
+        Ok(Prepared::new().poly(Hashed, vec![*c, Fp::ONE]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
-        _: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, Fp>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -89,6 +91,14 @@ impl Step<Pasta> for HashOut {
         DriverValue<D, [Fp; 2]>,
         DriverValue<D, ()>,
     )> {
+        // The hashed slot is a hint. The opening is still recorded and
+        // proved against the commitment; it only stops Ragu from holding
+        // the slot to one. This step does not constrain the value: the
+        // test checks only the bridge hash, and a real application would
+        // constrain the polynomial in this step or in the steps that
+        // consume it.
+        let zeta = oracles.zeta().clone();
+        let _ = oracles.output(Hashed).open(dr, &zeta)?;
         let [x, y] = oracles.bridge_hash().clone();
         let data = D::just(|| [*x.value().take(), *y.value().take()]);
         let digest = FixedVec::try_from(vec![x, y])?;

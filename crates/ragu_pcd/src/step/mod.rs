@@ -3,11 +3,13 @@
 mod encoder;
 pub(crate) mod internal;
 pub mod oracles;
+mod prepared;
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
 pub use encoder::Encoded;
-pub use oracles::{Oracles, Position, Slot};
+pub use oracles::{Oracle, Oracles};
+pub use prepared::Prepared;
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Cycle, Result,
@@ -15,7 +17,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::header::{Header, NUM_ONLINE_POLYNOMIALS};
+use super::header::{Has, Header, NUM_ONLINE_POLYNOMIALS};
 use crate::{internal::native::InternalCircuitIndex, profile::Profile};
 
 #[derive(Copy, Clone)]
@@ -145,32 +147,53 @@ impl Index {
     }
 }
 
-/// An input header's data with its proof's associated polynomials: what a
-/// step's [`polynomials`](Step::polynomials) phase reads of each input.
+/// An input header's data with its proof's online polynomials.
+///
+/// What a step's [`prepare`](Step::prepare) phase reads of each input.
 pub struct HeaderInput<'a, F: Field, H: Header<F>> {
     /// The header's data, as the step's [`witness`](Step::witness) phase
     /// also receives it.
     pub data: &'a H::Data,
-    /// The coefficients of the input proof's [`NUM_ONLINE_POLYNOMIALS`]
-    /// polynomials, in ascending degree with trailing zeros stripped, as
-    /// the step that produced the input committed them.
-    pub polynomials: &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS],
+    polynomials: &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS],
+}
+
+impl<'a, F: Field, H: Header<F>> HeaderInput<'a, F, H> {
+    pub(crate) fn new(
+        data: &'a H::Data,
+        polynomials: &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS],
+    ) -> Self {
+        HeaderInput { data, polynomials }
+    }
+
+    /// Returns the coefficients of the input proof's polynomial of `kind`,
+    /// in ascending degree with trailing zeros stripped, as the step that
+    /// produced the input committed them.
+    pub fn polynomial<P, I>(&self, kind: P) -> &'a [F]
+    where
+        H::OnlinePolyCommit: Has<P, I>,
+    {
+        &self.polynomials[crate::header::slot::<H::OnlinePolyCommit, P, I>(kind)]
+    }
+
+    /// Every slot's coefficients, in slot order.
+    pub(crate) fn polynomials(&self) -> &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS] {
+        self.polynomials
+    }
 }
 
 /// Represents a node in the computational graph (or the proof-carrying data
 /// tree) that represents the merging of two pieces of proof-carrying data.
 ///
 /// A step proves in two phases. Before its challenge is drawn,
-/// [`polynomials`](Self::polynomials) supplies the output proof's
+/// [`prepare`](Self::prepare) supplies the output proof's online
 /// polynomials, from the witness and the inputs' data and polynomials,
-/// and [`staged`](Self::staged) supplies the step's staged values, the
-/// secret values its checks at $\zeta$ read that no header field contains.
-/// Ragu commits both before drawing the challenge. After
-/// the challenge $\zeta$ is drawn, [`witness`](Self::witness) synthesizes
-/// the circuit, with [`Oracles`] standing for the three proofs'
-/// polynomials and the staged values: the step may open each polynomial
-/// once, at $\zeta$ or at any wire, and relate the values in its
-/// constraints. Ragu proves the openings; see [`oracles`].
+/// and the step's staged values, the secret values its checks at $\zeta$
+/// read that no header field contains. Ragu commits both before drawing
+/// the challenge. After the challenge $\zeta$ is drawn,
+/// [`witness`](Self::witness) synthesizes the circuit, with [`Oracles`]
+/// standing for the three proofs' polynomials and the staged values: the step may open
+/// each polynomial once, at $\zeta$ or at any wire, and relate the values
+/// in its constraints. Ragu proves the openings; see [`oracles`].
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
@@ -195,70 +218,47 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// used to pipeline witness input to later steps.
     type Aux<'source>: Send;
 
-    /// How many values [`staged`](Self::staged) returns. The application
+    /// How many values [`prepare`](Self::prepare) stages. The application
     /// stage has one size, the largest any registered step declares, and
     /// every step circuit reserves `ceil(n / 2)` gates for it; a step that
     /// declares fewer leaves the rest of the stage unused.
     const NUM_STAGED: usize = 0;
 
-    /// The step's staged values, computed before the step's challenge is
-    /// drawn and committed in the proof's application stage:
-    /// [`NUM_STAGED`](Self::NUM_STAGED) field elements, which
-    /// [`witness`](Self::witness) receives as wires through
-    /// [`Oracles::staged`], each bound to the committed value.
+    /// Prepares the step's output before its challenge is drawn: the output
+    /// proof's online polynomials, by kind, and the staged values, computed
+    /// from the witness and the inputs' data and polynomials. Ragu commits the
+    /// polynomials, unblinded, and stores them in [`Proof`](crate::Proof),
+    /// where the parent reads them as its input's; it commits the staged
+    /// values, blinded, in the proof's application stage. The default
+    /// prepares nothing: the constant one in every slot and no staged
+    /// value.
+    ///
+    /// What this returns is prover data, not a constraint. An output
+    /// polynomial is held to what was prepared only by the constraints
+    /// [`witness`](Self::witness) places on its opening: a slot the circuit
+    /// opens without constraining the value holds whatever the prover
+    /// committed. A slot the circuit does not open is held to the constant
+    /// one by Ragu. If this prepares a polynomial other than one for a slot
+    /// the circuit does not open, [`fuse`](crate::Application::fuse) fails
+    /// with [`Error::InvalidWitness`](ragu_core::Error::InvalidWitness), and
+    /// the verifier rejects a proof that a modified prover makes.
     ///
     /// Stage every value a check at $\zeta$ reads that is neither a slot's
     /// opening nor an input's header field, such as the roots a step merges
     /// into an accumulator polynomial: a value the circuit witnesses after
     /// $\zeta$ is drawn is the prover's choice given $\zeta$, and a check
     /// $O(\zeta) = L(\zeta) \cdot (\zeta - t)$ with such a $t$ holds for
-    /// $t = \zeta - O(\zeta) / L(\zeta)$ whatever the polynomials are. The
-    /// default stages nothing.
-    fn staged<'source>(
+    /// $t = \zeta - O(\zeta) / L(\zeta)$ whatever the polynomials are.
+    /// Exactly [`NUM_STAGED`](Self::NUM_STAGED) values must be staged.
+    /// Public openings can still reveal a staged value.
+    fn prepare<'source>(
         &self,
         witness: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, Self::Left>,
         right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<Vec<C::CircuitField>> {
+    ) -> Result<Prepared<C::CircuitField, Self::Output>> {
         let _ = (witness, left, right);
-        Ok(Vec::new())
-    }
-
-    /// The output proof's online polynomials, associated with its header.
-    /// Returns one coefficient vector, ascending in degree, for each of the
-    /// proof's [`NUM_ONLINE_POLYNOMIALS`] slots before the challenge is drawn.
-    /// Ragu commits them and stores the polynomials and commitments in
-    /// [`Proof`](crate::Proof). The parent opens them as its left or right
-    /// slots, and this step's [`witness`](Self::witness) may open them as
-    /// its output slots. The default puts the constant one in every slot;
-    /// a step that uses fewer polynomials returns it for the unused slots.
-    ///
-    /// What this returns is prover data, not a constraint. An output slot
-    /// is held to a polynomial only by the constraints
-    /// [`witness`](Self::witness) places on its openings: a slot the
-    /// circuit does not open, or opens without constraining the value,
-    /// holds whatever the prover committed, whatever this function
-    /// returns. A step whose output header treats a slot as padding
-    /// therefore opens it at $\zeta$ and holds the value to one, and every
-    /// step producing that header does the same; a slot left unconstrained
-    /// is a hint to the steps that consume it, which must constrain it
-    /// themselves.
-    ///
-    /// The commitments are unblinded and deterministic for these coefficients;
-    /// opening points and values are public. Witness values that should stay
-    /// out of the public instance belong in [`staged`](Self::staged), whose
-    /// stage commitment is blinded. Public openings can still reveal them.
-    ///
-    /// A polynomial may have at most as many coefficients as the
-    /// application's rank holds, and must not be zero.
-    fn polynomials<'source>(
-        &self,
-        witness: &Self::Witness<'source>,
-        left: HeaderInput<'_, C::CircuitField, Self::Left>,
-        right: HeaderInput<'_, C::CircuitField, Self::Right>,
-    ) -> Result<[Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS]> {
-        let _ = (witness, left, right);
-        Ok(core::array::from_fn(|_| vec![C::CircuitField::ONE]))
+        Ok(Prepared::new())
     }
 
     /// Emits the constraints that check the validity of this merging step,
@@ -269,7 +269,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<C::CircuitField>>::Data>,
         right: DriverValue<D, <Self::Right as Header<C::CircuitField>>::Data>,

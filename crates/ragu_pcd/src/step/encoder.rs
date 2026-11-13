@@ -192,7 +192,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::header::{Header, Suffix};
+    use crate::header::{Header, Padding, Suffix};
 
     const HEADER_SIZE: usize = 4;
 
@@ -200,6 +200,7 @@ mod tests {
 
     impl Header<Fp> for SingleHeader {
         const SUFFIX: Suffix = Suffix::new(100);
+        type OnlinePolyCommit = (Padding, Padding);
         type Data = Fp;
         type Output = Kind![Fp; Element<'_, _>];
 
@@ -216,6 +217,7 @@ mod tests {
 
     impl Header<Fp> for PairHeader {
         const SUFFIX: Suffix = Suffix::new(101);
+        type OnlinePolyCommit = (Padding, Padding);
         type Data = (Fp, Fp);
         type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
 
@@ -239,6 +241,7 @@ mod tests {
 
     impl Header<Fp> for TrivialSuffixHeader {
         const SUFFIX: Suffix = Suffix::internal(2);
+        type OnlinePolyCommit = (Padding, Padding);
         type Data = ();
         type Output = ();
 

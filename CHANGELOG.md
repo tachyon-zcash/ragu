@@ -18,21 +18,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Pcd::{data, proof, into_parts}` accessors.
 - Online polynomial oracles: every proof stores `NUM_ONLINE_POLYNOMIALS`
   polynomials, a parameter of the protocol rather than of the header type; a
-  step supplies its output proof's through `Step::polynomials` before its
-  challenge is drawn, the constant one by default, and `Step::witness` opens
-  its input or output proofs' polynomials through `step::Oracles` at the
-  challenge or at any wire. Ragu proves the openings in the step's own batch. What a slot
-  means is the application's convention for the header, constrained by the
-  producing steps' circuits. `Pcd::polynomials` reads a proof's
-  polynomials back.
-- Staged values: `Step::NUM_STAGED` and `Step::staged` supply the values a
-  step's checks at the challenge read but no header field contains. Ragu
-  commits them in an application stage before the challenge; `Oracles::staged` hands
-  them to `Step::witness`. A check at the challenge must read only values
-  fixed before it. See the `ragu_pcd` changelog.
+  header lists the kinds of polynomial its proofs carry, unit types
+  implementing `OnlinePoly` or `Padding`, as `Header::OnlinePolyCommit`; a
+  step prepares its output proof's through `Step::prepare` before its
+  challenge is drawn, by kind, the constant one where it prepares nothing,
+  and `Step::witness` opens its input or output proofs' polynomials by kind
+  through `step::Oracles::{left, right, output}` at the challenge or at any
+  wire, while `Oracles::staged` supplies the constraint-bound staged values.
+  A slot a header leaves to padding cannot be opened, and an output slot a
+  step leaves unopened is held to the constant one after its circuit. Ragu
+  proves the openings in the step's own batch. What a slot means is the
+  application's convention for the header, constrained by the producing
+  steps' circuits. `Pcd::polynomials` reads a proof's polynomials back.
+- Staged values: `Step::NUM_STAGED` and the values `Step::prepare` stages
+  supply the values a step's checks at the challenge read but no header
+  field contains. Ragu commits them in an application stage before the
+  challenge; `Oracles::staged` hands them to `Step::witness`. A check at
+  the challenge must read only values fixed before it. See the `ragu_pcd`
+  changelog.
 - Bridge hash: `Oracles::bridge_hash` gives a step the digest of its own last
   online commitment, and `Application::bridge_hash` computes it outside the
-  circuit, for hash chains over polynomial commitments.
+  circuit, for hash chains over polynomial commitments. A header whose steps
+  read it keeps the hashed kind last in its `OnlinePolyCommit`.
 
 ### Changed
 

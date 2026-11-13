@@ -8,13 +8,13 @@
 //!
 //! | Section | Use case | API shown |
 //! |---|---|---|
-//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header`], [`NUM_ONLINE_POLYNOMIALS`], padding |
-//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::polynomials`], [`Step::NUM_STAGED`], [`Step::staged`], [`Oracles::zeta`], [`Oracles::query`], [`Oracles::staged`] |
-//! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput`] |
+//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header::OnlinePolyCommit`], [`OnlinePoly`], [`Padding`], [`NUM_ONLINE_POLYNOMIALS`] |
+//! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`], [`Oracles::zeta`], [`Oracles::output`], [`Oracle::open`](ragu_pcd::step::Oracle::open), [`Oracles::staged`] |
+//! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput::polynomial`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
-//! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::query`] |
+//! | [5. Membership](#5-membership) | T4: evaluation at a witnessed point | [`Oracles::left`] at a wire |
 //! | [6. Anchor chain](#6-anchor-chain) | T5: hashing a commitment | [`Oracles::bridge_hash`], [`Application::bridge_hash`], [`Application::commit`], [`Pcd::commitments`] |
-//! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Slot::left`], [`Slot::right`], [`Slot::output`] |
+//! | [7. Every slot](#7-every-slot) | C4: all six slots at once | [`Oracles::left`], [`Oracles::right`], [`Oracles::output`] |
 //! | [8. The application](#8-the-application) | | [`ApplicationBuilder`], `seed`, `fuse`, `rerandomize`, verify, compress, [`CompressedPcd::online_commitments`](ragu_pcd::CompressedPcd::online_commitments), the wire format |
 //!
 //! ## The rule for checks at $\zeta$
@@ -57,8 +57,8 @@ use ragu_core::{
 };
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
-    header::{Header, NUM_ONLINE_POLYNOMIALS, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{
     Element, GadgetExt,
@@ -81,16 +81,24 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 // associated with its output header. What each slot holds is the application's
 // convention for that header, which the steps that produce the header
 // constrain, as they do its fields. An unused slot holds the constant one
-// (the padding): a step that outputs the header opens such a slot at zeta
-// and holds it to one, so that no prover can put a polynomial of its own
-// choosing there.
+// (the padding): Ragu opens every output slot a step leaves unopened at
+// zeta and holds it to one, so that no prover can put a polynomial of its
+// own choosing there, and a step pins nothing by hand.
 
 /// A set of tachygrams $\{t_i\}$: the set's size as the data, and the set
 /// polynomial $\prod_i (X - t_i)$ in slot 0. Slot 1 is padding.
-struct TgSet;
+struct TgSetHeader;
 
-impl Header<Fp> for TgSet {
+/// The set polynomial: its roots are the set's members. A [`TgSetHeader`] keeps
+/// it in the first slot and an [`AnchorHeader`] in the last.
+#[derive(Clone, Copy, Debug)]
+struct TachygramSet;
+
+impl OnlinePoly for TachygramSet {}
+
+impl Header<Fp> for TgSetHeader {
     const SUFFIX: Suffix = Suffix::new(10);
+    type OnlinePolyCommit = (TachygramSet, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -106,10 +114,11 @@ impl Header<Fp> for TgSet {
 /// A chain of anchors: the latest anchor as the data, and the set
 /// polynomial the anchor covers in slot 1, the slot whose digest a step can
 /// read (see section 6). Slot 0 is padding.
-struct Anchor;
+struct AnchorHeader;
 
-impl Header<Fp> for Anchor {
+impl Header<Fp> for AnchorHeader {
     const SUFFIX: Suffix = Suffix::new(11);
+    type OnlinePolyCommit = (Padding, TachygramSet);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -124,10 +133,23 @@ impl Header<Fp> for Anchor {
 
 /// A header for proofs whose slots hold the polynomials $X + a_0$ and
 /// $2X + a_1$, for its data $(a_0, a_1)$ (see section 7).
-struct Pair;
+struct PairHeader;
 
-impl Header<Fp> for Pair {
+/// The line $X + a_0$ a [`PairHeader`] keeps in its first slot.
+#[derive(Clone, Copy, Debug)]
+struct SlopeOne;
+
+impl OnlinePoly for SlopeOne {}
+
+/// The line $2X + a_1$ a [`PairHeader`] keeps in its second slot.
+#[derive(Clone, Copy, Debug)]
+struct SlopeTwo;
+
+impl OnlinePoly for SlopeTwo {}
+
+impl Header<Fp> for PairHeader {
     const SUFFIX: Suffix = Suffix::new(12);
+    type OnlinePolyCommit = (SlopeOne, SlopeTwo);
     type Data = [Fp; 2];
     type Output = Kind![Fp; FixedVec<Element<'_, _>, ConstLen<2>>];
 
@@ -145,33 +167,16 @@ fn padding() -> Vec<Fp> {
     vec![Fp::ONE]
 }
 
-/// Opens `slot` at zeta and holds it to one: how a step pins a padding slot
-/// of its output header.
-fn pin_padding<'dr, D: Driver<'dr, F = Fp>>(
-    dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
-    slot: Slot,
-) -> Result<()> {
-    let zeta = oracles.zeta().clone();
-    let value = oracles.query(dr, slot, &zeta)?;
-    value.enforce_equal(dr, &Element::one())
-}
-
 /// The coefficients of $\prod_i (X - t_i)$, ascending in degree.
 fn vanishing(roots: &[Fp]) -> Vec<Fp> {
     roots
         .iter()
-        .fold(vec![Fp::ONE], |poly, root| times_linear(&poly, *root))
+        .fold(vec![Fp::ONE], |poly, root| times(&poly, &linear(*root)))
 }
 
-/// The coefficients of `poly * (X - root)`.
-fn times_linear(poly: &[Fp], root: Fp) -> Vec<Fp> {
-    let mut out = vec![Fp::ZERO; poly.len() + 1];
-    for (i, coeff) in poly.iter().enumerate() {
-        out[i + 1] += *coeff;
-        out[i] -= *coeff * root;
-    }
-    out
+/// The coefficients of $X - r$.
+fn linear(root: Fp) -> [Fp; 2] {
+    [-root, Fp::ONE]
 }
 
 /// The coefficients of `a * b`.
@@ -190,16 +195,18 @@ fn times(a: &[Fp], b: &[Fp]) -> Vec<Fp> {
 // T2 and T3. A step commits a polynomial built from secret roots, and checks
 // it at zeta against those roots. A step proves in two phases:
 //
-// 1. Before zeta is drawn: `polynomials` returns the output proof's
-//    polynomials (coefficients, not wires), and `staged` returns the values
-//    the checks at zeta will read but no header carries. Ragu commits both.
+// 1. Before zeta is drawn: `prepare` returns the output proof's
+//    polynomials (coefficients, not wires), by kind, and the values the
+//    checks at zeta will read but no header carries, staged. Ragu commits
+//    both.
 // 2. After zeta is drawn: `witness` builds the circuit. `Oracles` gives it
-//    zeta, the six slots and the staged values.
+//    zeta, the six slots and the staged values, and what `prepare` returned
+//    comes back as prover data.
 
 /// The number of tachygrams [`SeedSet`] takes.
 const SEED_SIZE: usize = 3;
 
-/// Seeds a [`TgSet`] from `SEED_SIZE` secret tachygrams.
+/// Seeds a [`TgSetHeader`] from `SEED_SIZE` secret tachygrams.
 struct SeedSet;
 
 impl Step<C> for SeedSet {
@@ -211,30 +218,23 @@ impl Step<C> for SeedSet {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = TgSet;
+    type Output = TgSetHeader;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         tachygrams: &Vec<Fp>,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([vanishing(tachygrams), padding()])
-    }
-
-    fn staged<'source>(
-        &self,
-        tachygrams: &Vec<Fp>,
-        _: HeaderInput<'_, Fp, ()>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(tachygrams.clone())
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
+        Ok(Prepared::new()
+            .poly(TachygramSet, vanishing(tachygrams))
+            .stage(tachygrams.clone()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Vec<Fp>>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -242,7 +242,7 @@ impl Step<C> for SeedSet {
         (
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
@@ -254,9 +254,8 @@ impl Step<C> for SeedSet {
             let factor = zeta.sub(dr, &tachygram);
             product = product.mul(dr, &factor)?;
         }
-        let set = oracles.query(dr, Slot::output(0), &zeta)?;
+        let set = oracles.output(TachygramSet).open(dr, &zeta)?;
         set.enforce_equal(dr, &product)?;
-        pin_padding(dr, oracles, Slot::output(1))?;
 
         let size = Element::constant(dr, Fp::from(SEED_SIZE as u64));
         Ok((
@@ -277,7 +276,7 @@ impl Step<C> for SeedSet {
 // (X - t), with t secret, so the relation mixes a public polynomial (the
 // left slot) with a private one (X - t, from a staged root).
 
-/// Inserts one secret tachygram into a [`TgSet`].
+/// Inserts one secret tachygram into a [`TgSetHeader`].
 struct InsertTachygram;
 
 impl Step<C> for InsertTachygram {
@@ -285,60 +284,55 @@ impl Step<C> for InsertTachygram {
     const NUM_STAGED: usize = 1;
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
-    type Output = TgSet;
+    type Output = TgSetHeader;
 
-    /// The left input's polynomials arrive as coefficients: the output's
-    /// is computed from them.
-    fn polynomials<'source>(
+    /// The left input's polynomial arrives as coefficients, by slot: the
+    /// output's is computed from it.
+    fn prepare<'source>(
         &self,
         tachygram: &Fp,
-        left: HeaderInput<'_, Fp, TgSet>,
+        left: HeaderInput<'_, Fp, TgSetHeader>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([times_linear(&left.polynomials[0], *tachygram), padding()])
-    }
-
-    fn staged<'source>(
-        &self,
-        tachygram: &Fp,
-        _: HeaderInput<'_, Fp, TgSet>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(vec![*tachygram])
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
+        Ok(Prepared::new()
+            .poly(
+                TachygramSet,
+                times(left.polynomial(TachygramSet), &linear(*tachygram)),
+            )
+            .stage([*tachygram]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
+        let left: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
 
         // O0(zeta) = L0(zeta) * (zeta - t), with t staged, never witnessed
         // here: see the rule at the top of this file.
         let tachygram = oracles.staged()[0].clone();
         let zeta = oracles.zeta().clone();
-        let input = oracles.query(dr, Slot::left(0), &zeta)?;
-        let output = oracles.query(dr, Slot::output(0), &zeta)?;
+        let input = oracles.left(TachygramSet).open(dr, &zeta)?;
+        let output = oracles.output(TachygramSet).open(dr, &zeta)?;
         let factor = zeta.sub(dr, &tachygram);
         let expected = input.mul(dr, &factor)?;
         output.enforce_equal(dr, &expected)?;
-        pin_padding(dr, oracles, Slot::output(1))?;
 
         let size = left.as_gadget().add(dr, &Element::one());
         let data = size.value().map(|v| *v);
@@ -351,57 +345,59 @@ impl Step<C> for InsertTachygram {
 // T1. Every polynomial in the relation is public: the left and right
 // inputs' and the output's, so nothing is staged.
 
-/// Merges two [`TgSet`]s: the output polynomial is the inputs' product.
+/// Merges two [`TgSetHeader`]s: the output polynomial is the inputs' product.
 struct MergeSets;
 
 impl Step<C> for MergeSets {
     const INDEX: Index = Index::new(2);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = TgSet;
-    type Right = TgSet;
-    type Output = TgSet;
+    type Left = TgSetHeader;
+    type Right = TgSetHeader;
+    type Output = TgSetHeader;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         _: &(),
-        left: HeaderInput<'_, Fp, TgSet>,
-        right: HeaderInput<'_, Fp, TgSet>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([
-            times(&left.polynomials[0], &right.polynomials[0]),
-            padding(),
-        ])
+        left: HeaderInput<'_, Fp, TgSetHeader>,
+        right: HeaderInput<'_, Fp, TgSetHeader>,
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
+        Ok(Prepared::new().poly(
+            TachygramSet,
+            times(
+                left.polynomial(TachygramSet),
+                right.polynomial(TachygramSet),
+            ),
+        ))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
-            Encoded<'dr, D, TgSet, HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, left)?;
-        let right: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, right)?;
+        let left: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, left)?;
+        let right: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, right)?;
 
         // O0(zeta) = L0(zeta) * R0(zeta).
         let zeta = oracles.zeta().clone();
-        let l = oracles.query(dr, Slot::left(0), &zeta)?;
-        let r = oracles.query(dr, Slot::right(0), &zeta)?;
-        let output = oracles.query(dr, Slot::output(0), &zeta)?;
+        let l = oracles.left(TachygramSet).open(dr, &zeta)?;
+        let r = oracles.right(TachygramSet).open(dr, &zeta)?;
+        let output = oracles.output(TachygramSet).open(dr, &zeta)?;
         let expected = l.mul(dr, &r)?;
         output.enforce_equal(dr, &expected)?;
-        pin_padding(dr, oracles, Slot::output(1))?;
 
         let size = left.as_gadget().add(dr, right.as_gadget());
         let data = size.value().map(|v| *v);
@@ -416,7 +412,7 @@ impl Step<C> for MergeSets {
 // apply: the claim "the committed polynomial vanishes at this element" is
 // meaningful for any element the prover picks.
 
-/// Proves a witnessed element is in the left [`TgSet`]: the set polynomial
+/// Proves a witnessed element is in the left [`TgSetHeader`]: the set polynomial
 /// vanishes there.
 struct ProveMember;
 
@@ -424,20 +420,20 @@ impl Step<C> for ProveMember {
     const INDEX: Index = Index::new(3);
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
     type Output = ();
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         member: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
         ),
@@ -449,13 +445,14 @@ impl Step<C> for ProveMember {
         let right = Encoded::new(dr, allocator, right)?;
         let member = Element::alloc(dr, allocator, member)?;
         oracles
-            .query(dr, Slot::left(0), &member)?
+            .left(TachygramSet)
+            .open(dr, &member)?
             .enforce_zero(dr)?;
-        unit_output(dr, oracles, left, right)
+        unit_output(left, right)
     }
 }
 
-/// Proves a witnessed element is not in the left [`TgSet`]: the set
+/// Proves a witnessed element is not in the left [`TgSetHeader`]: the set
 /// polynomial does not vanish there.
 struct ProveNonMember;
 
@@ -463,20 +460,20 @@ impl Step<C> for ProveNonMember {
     const INDEX: Index = Index::new(4);
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
     type Output = ();
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         element: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
         ),
@@ -488,18 +485,17 @@ impl Step<C> for ProveNonMember {
         let right = Encoded::new(dr, allocator, right)?;
         let element = Element::alloc(dr, allocator, element)?;
         oracles
-            .query(dr, Slot::left(0), &element)?
+            .left(TachygramSet)
+            .open(dr, &element)?
             .enforce_nonzero(dr)?;
-        unit_output(dr, oracles, left, right)
+        unit_output(left, right)
     }
 }
 
 /// Finishes a step whose output is the unit header: both of its slots are
-/// padding.
+/// padding, which Ragu pins.
 #[allow(clippy::type_complexity)]
 fn unit_output<'dr, D: Driver<'dr, F = Fp>, L: Header<Fp>, Rh: Header<Fp>, const HS: usize>(
-    dr: &mut D,
-    oracles: &mut Oracles<'_, 'dr, D>,
     left: Encoded<'dr, D, L, HS>,
     right: Encoded<'dr, D, Rh, HS>,
 ) -> Result<(
@@ -511,8 +507,6 @@ fn unit_output<'dr, D: Driver<'dr, F = Fp>, L: Header<Fp>, Rh: Header<Fp>, const
     DriverValue<D, ()>,
     DriverValue<D, ()>,
 )> {
-    pin_padding(dr, oracles, Slot::output(0))?;
-    pin_padding(dr, oracles, Slot::output(1))?;
     Ok((
         (left, right, Encoded::from_gadget(())),
         D::unit(),
@@ -534,7 +528,7 @@ impl Step<C> for UnitSeed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -547,12 +541,8 @@ impl Step<C> for UnitSeed {
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )> {
-        unit_output(
-            dr,
-            oracles,
-            Encoded::from_gadget(()),
-            Encoded::from_gadget(()),
-        )
+        let _ = dr;
+        unit_output(Encoded::from_gadget(()), Encoded::from_gadget(()))
     }
 }
 
@@ -570,7 +560,7 @@ impl Step<C> for UnitSeed {
 // Only the step's own slot 1 has a digest. To hash an input's polynomial,
 // the step copies it into its output's slot 1 and proves the copy at zeta.
 
-/// Starts an [`Anchor`] chain at anchor zero, covering no set.
+/// Starts an [`AnchorHeader`] chain at anchor zero, covering no set.
 struct GenesisAnchor;
 
 impl Step<C> for GenesisAnchor {
@@ -579,12 +569,12 @@ impl Step<C> for GenesisAnchor {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = Anchor;
+    type Output = AnchorHeader;
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -592,13 +582,12 @@ impl Step<C> for GenesisAnchor {
         (
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, Anchor, HS>,
+            Encoded<'dr, D, AnchorHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
-        pin_padding(dr, oracles, Slot::output(0))?;
-        pin_padding(dr, oracles, Slot::output(1))?;
+        // Both output slots are padding, pinned by Ragu.
         let anchor = Element::zero(dr);
         Ok((
             (
@@ -612,7 +601,7 @@ impl Step<C> for GenesisAnchor {
     }
 }
 
-/// Advances an [`Anchor`] chain over a block's [`TgSet`]: the output's
+/// Advances an [`AnchorHeader`] chain over a block's [`TgSetHeader`]: the output's
 /// slot 1 is the block's set polynomial, and the new anchor is
 /// `Poseidon(previous anchor, H(set commitment))`.
 struct AdvanceAnchor {
@@ -623,46 +612,45 @@ impl Step<C> for AdvanceAnchor {
     const INDEX: Index = Index::new(7);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = TgSet;
-    type Right = Anchor;
-    type Output = Anchor;
+    type Left = TgSetHeader;
+    type Right = AnchorHeader;
+    type Output = AnchorHeader;
 
     /// Slot 1 copies the block's set polynomial, the left input's slot 0.
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         _: &(),
-        block: HeaderInput<'_, Fp, TgSet>,
-        _: HeaderInput<'_, Fp, Anchor>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok([padding(), block.polynomials[0].clone()])
+        block: HeaderInput<'_, Fp, TgSetHeader>,
+        _: HeaderInput<'_, Fp, AnchorHeader>,
+    ) -> Result<Prepared<Fp, AnchorHeader>> {
+        Ok(Prepared::new().poly(TachygramSet, block.polynomial(TachygramSet)))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         block: DriverValue<D, Fp>,
         previous: DriverValue<D, Fp>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
-            Encoded<'dr, D, Anchor, HS>,
-            Encoded<'dr, D, Anchor, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
+            Encoded<'dr, D, AnchorHeader, HS>,
+            Encoded<'dr, D, AnchorHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let block: Encoded<'dr, D, TgSet, HS> = Encoded::new(dr, allocator, block)?;
-        let previous: Encoded<'dr, D, Anchor, HS> = Encoded::new(dr, allocator, previous)?;
+        let block: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, block)?;
+        let previous: Encoded<'dr, D, AnchorHeader, HS> = Encoded::new(dr, allocator, previous)?;
 
         // The copy: O1(zeta) = L0(zeta), so O1 is the block's set polynomial.
         let zeta = oracles.zeta().clone();
-        let set = oracles.query(dr, Slot::left(0), &zeta)?;
-        let copy = oracles.query(dr, Slot::output(1), &zeta)?;
+        let set = oracles.left(TachygramSet).open(dr, &zeta)?;
+        let copy = oracles.output(TachygramSet).open(dr, &zeta)?;
         copy.enforce_equal(dr, &set)?;
-        pin_padding(dr, oracles, Slot::output(0))?;
 
         // anchor' = Poseidon(anchor, H(O1)).
         let [x, y] = oracles.bridge_hash().clone();
@@ -703,12 +691,18 @@ fn next_anchor(app: &App, previous: Fp, set: <Pasta as Cycle>::HostCurve) -> Res
 // C4. One step opens all six slots: the left and right inputs' and the
 // output's, both polynomials each, every one at its own point.
 
-/// The polynomials associated with a [`Pair`] header with data `a`.
+/// The polynomials associated with a [`PairHeader`] with data `a`.
 fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_POLYNOMIALS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
 
-/// Seeds a [`Pair`] from staged data, checking both output slots at zeta.
+/// [`pair_polys`], prepared by kind.
+fn pair_prepared(a: [Fp; 2]) -> Prepared<Fp, PairHeader> {
+    let [first, second] = pair_polys(a);
+    Prepared::new().poly(SlopeOne, first).poly(SlopeTwo, second)
+}
+
+/// Seeds a [`PairHeader`] from staged data, checking both output slots at zeta.
 struct PairSeed;
 
 impl Step<C> for PairSeed {
@@ -718,30 +712,21 @@ impl Step<C> for PairSeed {
     type Aux<'source> = ();
     type Left = ();
     type Right = ();
-    type Output = Pair;
+    type Output = PairHeader;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         a: &[Fp; 2],
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(pair_polys(*a))
-    }
-
-    fn staged<'source>(
-        &self,
-        a: &[Fp; 2],
-        _: HeaderInput<'_, Fp, ()>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(a.to_vec())
+    ) -> Result<Prepared<Fp, PairHeader>> {
+        Ok(pair_prepared(*a).stage(*a))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, [Fp; 2]>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -749,7 +734,7 @@ impl Step<C> for PairSeed {
         (
             Encoded<'dr, D, (), HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, Pair, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
         ),
         DriverValue<D, [Fp; 2]>,
         DriverValue<D, ()>,
@@ -757,10 +742,10 @@ impl Step<C> for PairSeed {
         let a = oracles.staged().to_vec();
         let zeta = oracles.zeta().clone();
         let two = Element::constant(dr, Fp::from(2));
-        let o0 = oracles.query(dr, Slot::output(0), &zeta)?;
+        let o0 = oracles.output(SlopeOne).open(dr, &zeta)?;
         let expected = zeta.add(dr, &a[0]);
         o0.enforce_equal(dr, &expected)?;
-        let o1 = oracles.query(dr, Slot::output(1), &zeta)?;
+        let o1 = oracles.output(SlopeTwo).open(dr, &zeta)?;
         let expected = zeta.mul(dr, &two)?.add(dr, &a[1]);
         o1.enforce_equal(dr, &expected)?;
         let data = D::just(|| [*a[0].value().take(), *a[1].value().take()]);
@@ -782,7 +767,7 @@ fn point(i: usize) -> Fp {
     Fp::from(101 + i as u64)
 }
 
-/// Fuses two [`Pair`]s into their sum, opening each of the six slots at
+/// Fuses two [`PairHeader`]s into their sum, opening each of the six slots at
 /// its own point and checking every value against the headers' data, so
 /// that exchanging any two slots would break a check.
 struct PairFuse;
@@ -791,17 +776,17 @@ impl Step<C> for PairFuse {
     const INDEX: Index = Index::new(9);
     type Witness<'source> = ();
     type Aux<'source> = ();
-    type Left = Pair;
-    type Right = Pair;
-    type Output = Pair;
+    type Left = PairHeader;
+    type Right = PairHeader;
+    type Output = PairHeader;
 
-    fn polynomials<'source>(
+    fn prepare<'source>(
         &self,
         _: &(),
-        left: HeaderInput<'_, Fp, Pair>,
-        right: HeaderInput<'_, Fp, Pair>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(pair_polys([
+        left: HeaderInput<'_, Fp, PairHeader>,
+        right: HeaderInput<'_, Fp, PairHeader>,
+    ) -> Result<Prepared<Fp, PairHeader>> {
+        Ok(pair_prepared([
             left.data[0] + right.data[0],
             left.data[1] + right.data[1],
         ]))
@@ -810,41 +795,63 @@ impl Step<C> for PairFuse {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, [Fp; 2]>,
         right: DriverValue<D, [Fp; 2]>,
     ) -> Result<(
         (
-            Encoded<'dr, D, Pair, HS>,
-            Encoded<'dr, D, Pair, HS>,
-            Encoded<'dr, D, Pair, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
+            Encoded<'dr, D, PairHeader, HS>,
         ),
         DriverValue<D, [Fp; 2]>,
         DriverValue<D, ()>,
     )> {
         let allocator = &mut Standard::new();
-        let left: Encoded<'dr, D, Pair, HS> = Encoded::new(dr, allocator, left)?;
-        let right: Encoded<'dr, D, Pair, HS> = Encoded::new(dr, allocator, right)?;
+        let left: Encoded<'dr, D, PairHeader, HS> = Encoded::new(dr, allocator, left)?;
+        let right: Encoded<'dr, D, PairHeader, HS> = Encoded::new(dr, allocator, right)?;
         let sum: Vec<_> = (0..2)
             .map(|k| left.as_gadget()[k].add(dr, &right.as_gadget()[k]))
             .collect();
-        let slots = [
-            (Slot::left(0), left.as_gadget()[0].clone()),
-            (Slot::left(1), left.as_gadget()[1].clone()),
-            (Slot::right(0), right.as_gadget()[0].clone()),
-            (Slot::right(1), right.as_gadget()[1].clone()),
-            (Slot::output(0), sum[0].clone()),
-            (Slot::output(1), sum[1].clone()),
+        // The six slots in order: the left, right and output proofs'
+        // polynomials, each with the header field its constant term is.
+        let fields = [
+            left.as_gadget()[0].clone(),
+            left.as_gadget()[1].clone(),
+            right.as_gadget()[0].clone(),
+            right.as_gadget()[1].clone(),
+            sum[0].clone(),
+            sum[1].clone(),
         ];
-        for (i, (slot, a)) in slots.into_iter().enumerate() {
-            // The points are constants, fixed before zeta.
+        // Six opens, one per slot, each at its own constant point fixed
+        // before zeta; the slope says which polynomial the slot holds.
+        let one = Element::constant(dr, Fp::ONE);
+        let two = Element::constant(dr, Fp::from(2));
+        let check = |dr: &mut D, y: Element<'dr, D>, i: usize, slope: &Element<'dr, D>| {
             let x = Element::constant(dr, point(i));
-            let slope = Element::constant(dr, Fp::from(1 + slot.index() as u64));
-            let y = oracles.query(dr, slot, &x)?;
-            let expected = x.mul(dr, &slope)?.add(dr, &a);
-            y.enforce_equal(dr, &expected)?;
-        }
+            let expected = x.mul(dr, slope)?.add(dr, &fields[i]);
+            y.enforce_equal(dr, &expected)
+        };
+        let at = |dr: &mut D, i: usize| Element::constant(dr, point(i));
+        let x = at(dr, 0);
+        let y = oracles.left(SlopeOne).open(dr, &x)?;
+        check(dr, y, 0, &one)?;
+        let x = at(dr, 1);
+        let y = oracles.left(SlopeTwo).open(dr, &x)?;
+        check(dr, y, 1, &two)?;
+        let x = at(dr, 2);
+        let y = oracles.right(SlopeOne).open(dr, &x)?;
+        check(dr, y, 2, &one)?;
+        let x = at(dr, 3);
+        let y = oracles.right(SlopeTwo).open(dr, &x)?;
+        check(dr, y, 3, &two)?;
+        let x = at(dr, 4);
+        let y = oracles.output(SlopeOne).open(dr, &x)?;
+        check(dr, y, 4, &one)?;
+        let x = at(dr, 5);
+        let y = oracles.output(SlopeTwo).open(dr, &x)?;
+        check(dr, y, 5, &two)?;
         let data = D::just(|| [*sum[0].value().take(), *sum[1].value().take()]);
         let output = FixedVec::try_from(sum)?;
         Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
@@ -928,7 +935,7 @@ fn sets_prove_and_verify() -> Result<()> {
     assert_eq!(*a.data(), Fp::from(SEED_SIZE as u64));
 
     let (a, ()) = app.fuse(&mut rng, InsertTachygram, Fp::from(10), a, unit(&app)?)?;
-    let set_a = times_linear(&set_a, Fp::from(10));
+    let set_a = times(&set_a, &linear(Fp::from(10)));
     check(&app, &a, [set_a.clone(), padding()], 2);
     assert_eq!(*a.data(), Fp::from(SEED_SIZE as u64 + 1));
 
@@ -1014,7 +1021,7 @@ fn every_slot_proves_and_verifies() -> Result<()> {
         let rejected = |corruption: Corruption<C>, what: &str, rng: &mut StdRng| {
             let (mut proof, data) = ab.clone().into_parts();
             proof.corrupt(corruption);
-            let pcd = proof.carry::<Pair>(data);
+            let pcd = proof.carry::<PairHeader>(data);
             assert!(
                 !app.verify_differential(&pcd, rng).unwrap(),
                 "{what} must be rejected"
@@ -1080,62 +1087,73 @@ fn a_false_membership_claim_cannot_prove() -> Result<()> {
     Ok(())
 }
 
-/// [`InsertTachygram`] with a first phase that misbehaves: it returns the
-/// zero polynomial (`ZERO`), or the input polynomial unchanged while the
-/// circuit claims the insertion (`STALE`).
+/// [`InsertTachygram`] that misbehaves: it prepares the zero polynomial
+/// (`ZERO`), the input polynomial unchanged while the circuit claims the
+/// insertion (`STALE`), or the right polynomial that its circuit then
+/// never opens (`UNOPENED`).
 struct Faulty<const FAULT: u8>;
 
 const ZERO: u8 = 1;
 const STALE: u8 = 2;
+const UNOPENED: u8 = 3;
 
 impl<const FAULT: u8> Step<C> for Faulty<FAULT> {
     const INDEX: Index = Index::new(1);
     const NUM_STAGED: usize = 1;
     type Witness<'source> = Fp;
     type Aux<'source> = ();
-    type Left = TgSet;
+    type Left = TgSetHeader;
     type Right = ();
-    type Output = TgSet;
+    type Output = TgSetHeader;
 
-    fn polynomials<'source>(
-        &self,
-        _: &Fp,
-        left: HeaderInput<'_, Fp, TgSet>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; NUM_ONLINE_POLYNOMIALS]> {
-        let first = match FAULT {
-            ZERO => vec![Fp::ZERO; 4],
-            _ => left.polynomials[0].clone(),
-        };
-        Ok([first, padding()])
-    }
-
-    fn staged<'source>(
+    fn prepare<'source>(
         &self,
         tachygram: &Fp,
-        left: HeaderInput<'_, Fp, TgSet>,
-        right: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        InsertTachygram.staged(tachygram, left, right)
+        left: HeaderInput<'_, Fp, TgSetHeader>,
+        _: HeaderInput<'_, Fp, ()>,
+    ) -> Result<Prepared<Fp, TgSetHeader>> {
+        let set = match FAULT {
+            ZERO => vec![Fp::ZERO; 4],
+            _ => left.polynomial(TachygramSet).to_vec(),
+        };
+        Ok(Prepared::new().poly(TachygramSet, set).stage([*tachygram]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, ()>,
     ) -> Result<(
         (
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
             Encoded<'dr, D, (), HS>,
-            Encoded<'dr, D, TgSet, HS>,
+            Encoded<'dr, D, TgSetHeader, HS>,
         ),
         DriverValue<D, Fp>,
         DriverValue<D, ()>,
     )> {
-        InsertTachygram.witness::<D, HS>(dr, oracles, witness, left, right)
+        let _ = witness;
+        let allocator = &mut Standard::new();
+        let left: Encoded<'dr, D, TgSetHeader, HS> = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        if FAULT != UNOPENED {
+            // [`InsertTachygram`]'s check. For `UNOPENED` the set was
+            // prepared but is never opened here, so Ragu holds its slot to
+            // one, which the prepared set is not.
+            let tachygram = oracles.staged()[0].clone();
+            let zeta = oracles.zeta().clone();
+            let input = oracles.left(TachygramSet).open(dr, &zeta)?;
+            let output = oracles.output(TachygramSet).open(dr, &zeta)?;
+            let factor = zeta.sub(dr, &tachygram);
+            let expected = input.mul(dr, &factor)?;
+            output.enforce_equal(dr, &expected)?;
+        }
+        let size = left.as_gadget().add(dr, &Element::one());
+        let data = size.value().map(|v| *v);
+        Ok(((left, right, Encoded::from_gadget(size)), data, D::unit()))
     }
 }
 
@@ -1153,7 +1171,7 @@ impl Step<C> for UnitAt2 {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, ()>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -1166,18 +1184,20 @@ impl Step<C> for UnitAt2 {
         DriverValue<D, ()>,
         DriverValue<D, ()>,
     )> {
-        UnitSeed.witness::<D, HS>(dr, oracles, witness, left, right)
+        let _ = (dr, oracles, witness, left, right);
+        unit_output(Encoded::from_gadget(()), Encoded::from_gadget(()))
     }
 }
 
-/// A step whose first phase returns a zero polynomial cannot prove. One
-/// whose committed polynomial is not the one its circuit claims yields a
-/// proof the verifier rejects: the oracle answers for the committed
-/// polynomial, so the circuit's relation fails.
+/// A step whose first phase prepares a zero polynomial cannot prove, and
+/// neither can one whose circuit never opens the polynomial it prepared:
+/// Ragu holds that slot to one. One whose committed polynomial is not the
+/// one its circuit claims yields a proof the verifier rejects: the oracle
+/// answers for the committed polynomial, so the circuit's relation fails.
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn a_misstated_polynomial_cannot_prove() -> Result<()> {
-    fn attempt<const FAULT: u8>() -> (App, Result<Pcd<C, R, TgSet>>) {
+    fn attempt<const FAULT: u8>() -> (App, Result<Pcd<C, R, TgSetHeader>>) {
         let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
             .register(SeedSet)
             .and_then(|b| b.register(Faulty::<FAULT>))
@@ -1202,6 +1222,11 @@ fn a_misstated_polynomial_cannot_prove() -> Result<()> {
         &app,
         stale.expect("a stale polynomial must reach the verifier"),
         "stale polynomial",
+    );
+    assert!(
+        matches!(attempt::<UNOPENED>().1, Err(Error::InvalidWitness(source))
+        if source.to_string()
+            == "the step prepared a polynomial for an output slot it does not open")
     );
     Ok(())
 }

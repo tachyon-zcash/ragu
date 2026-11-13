@@ -24,7 +24,7 @@ use udon::{
 };
 
 use super::{
-    header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, Suffix},
+    header::{HEADER_POLYNOMIALS, Header, NUM_INTERNAL_SUFFIXES, OnlinePolyCommit, Suffix},
     proof::{self, CompressedPcd, CompressedProof, Pcd, Proof},
     step::{Encoded, Index, NUM_INTERNAL_STEPS, Oracles, Step},
 };
@@ -146,6 +146,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "the application stage does not fit the rank's gates".into(),
             ));
         }
+        Self::require_unique_kinds::<S::Output>()?;
+        Self::require_unique_kinds::<S::Left>()?;
+        Self::require_unique_kinds::<S::Right>()?;
         self.prevent_duplicate_suffix::<S::Output>()?;
         self.prevent_duplicate_suffix::<S::Left>()?;
         self.prevent_duplicate_suffix::<S::Right>()?;
@@ -217,6 +220,18 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             native_registry,
             context,
         })
+    }
+
+    /// Mirrors `ragu_pcd::ApplicationBuilder`'s check that a header keeps
+    /// each kind in one slot.
+    fn require_unique_kinds<H: Header<C::CircuitField>>() -> Result<()> {
+        if H::OnlinePolyCommit::has_unique_kinds() {
+            Ok(())
+        } else {
+            Err(Error::Initialization(
+                "a Header cannot keep the same online polynomial kind in two slots".into(),
+            ))
+        }
     }
 
     fn prevent_duplicate_suffix<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
@@ -317,7 +332,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "child proof or carried header is not accepted by this application".into(),
             ));
         }
-        let mut polynomials = step.polynomials(&witness, left.input(), right.input())?;
+        let prepared = step.prepare(&witness, left.input(), right.input())?;
+        let mut polynomials = prepared.polynomials().clone();
         let mut commitments = [C::HostCurve::identity(); HEADER_POLYNOMIALS];
         for (coefficients, commitment) in polynomials.iter_mut().zip(&mut commitments) {
             if coefficients.len() > R::num_coeffs() {
@@ -340,7 +356,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 ));
             }
         }
-        let staged = step.staged(&witness, left.input(), right.input())?;
+        let staged = prepared.staged().to_vec();
         if staged.len() != S::NUM_STAGED {
             return Err(Error::InvalidWitness(
                 "a step must stage exactly NUM_STAGED values".into(),
@@ -372,7 +388,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             .coordinates()
             .ok_or_else(|| Error::InvalidWitness("bridge hash is the identity".into()))?;
         let mut dr = Simulator::<C::CircuitField>::new();
-        let mut oracles = Oracles::alloc(
+        let mut oracles = Oracles::<_, C, S>::alloc(
             &mut dr,
             zeta,
             [x, y],
@@ -391,6 +407,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 Simulator::<C::CircuitField>::just(|| left.data),
                 Simulator::<C::CircuitField>::just(|| right.data),
             )?;
+        oracles.finish(&mut dr)?;
         if proof::compute_header_hash(&mut dr, &left_header)? != left.proof.header_hash
             || proof::compute_header_hash(&mut dr, &right_header)? != right.proof.header_hash
         {

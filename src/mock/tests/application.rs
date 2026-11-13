@@ -16,8 +16,8 @@ use udon::{
 };
 
 use super::super::{
-    header::{Header, Suffix},
-    step::{Encoded, HeaderInput, Index, Oracles, Slot, Step},
+    header::{Header, OnlinePoly, Padding, Suffix},
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
 type ApplicationBuilder = crate::ApplicationBuilder<'static, Pasta, TestRank, 4>;
@@ -136,6 +136,7 @@ struct TestHeaderData {
 }
 
 impl Header<Fp> for TestHeader {
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = TestHeaderData;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -164,7 +165,7 @@ impl Step<Pasta> for SeedStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         _right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -193,7 +194,7 @@ impl Step<Pasta> for MergeStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -290,6 +291,7 @@ fn rerandomize_preserves_validity() {
 struct ConflictingHeader;
 
 impl Header<Fp> for ConflictingHeader {
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = TestHeaderData;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -319,12 +321,20 @@ impl Step<Pasta> for DuplicateIndexStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
     ) -> Witnessed<'dr, 'source, Self, D, HEADER_SIZE> {
-        SeedStep.witness::<D, HEADER_SIZE>(dr, oracles, D::just(|| 0), left, right)
+        let _ = (oracles, left, right);
+        // `SeedStep`'s circuit over the value zero.
+        let output_data = D::just(|| TestHeaderData { value: 0 });
+        let output = Encoded::new(dr, &mut (), output_data.clone())?;
+        Ok((
+            (Encoded::from_gadget(()), Encoded::from_gadget(()), output),
+            output_data,
+            D::unit(),
+        ))
     }
 }
 
@@ -344,7 +354,7 @@ impl Step<Pasta> for SuffixCollisionStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         _right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -416,12 +426,20 @@ fn internal_step_index_rejects_registration() {
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
             &self,
             dr: &mut D,
-            oracles: &mut Oracles<'_, 'dr, D>,
+            oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
             _witness: DriverValue<D, Self::Witness<'source>>,
             left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
             right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
         ) -> Witnessed<'dr, 'source, Self, D, HEADER_SIZE> {
-            SeedStep.witness::<D, HEADER_SIZE>(dr, oracles, D::just(|| 0), left, right)
+            let _ = (oracles, left, right);
+            // `SeedStep`'s circuit over the value zero.
+            let output_data = D::just(|| TestHeaderData { value: 0 });
+            let output = Encoded::new(dr, &mut (), output_data.clone())?;
+            Ok((
+                (Encoded::from_gadget(()), Encoded::from_gadget(()), output),
+                output_data,
+                D::unit(),
+            ))
         }
     }
 
@@ -441,6 +459,7 @@ struct PointHeaderData {
 }
 
 impl Header<Fp> for PointHeader {
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = PointHeaderData;
     type Output = Kind![Fp; ragu_primitives::Point<'_, _, EpAffine>];
 
@@ -470,7 +489,7 @@ impl Step<Pasta> for PointSeedStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         _right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -502,7 +521,7 @@ impl Step<Pasta> for PointConsumeStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         _right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
@@ -717,26 +736,20 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
     type Left = ();
     type Right = ();
     type Output = ValueHeader;
-    fn staged<'s>(
+    fn prepare<'s>(
         &self,
         root: &Fp,
         _: HeaderInput<'_, Fp, ()>,
         _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        Ok(vec![*root; STAGED])
-    }
-    fn polynomials<'s>(
-        &self,
-        root: &Fp,
-        _: HeaderInput<'_, Fp, ()>,
-        _: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; 2]> {
-        Ok([vec![Fp::ONE], vec![-*root, Fp::ONE, Fp::ZERO]])
+    ) -> Result<Prepared<Fp, ValueHeader>> {
+        Ok(Prepared::new()
+            .poly(Value, vec![-*root, Fp::ONE, Fp::ZERO])
+            .stage(vec![*root; STAGED]))
     }
     fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         _: DriverValue<D, Fp>,
         _: DriverValue<D, ()>,
         _: DriverValue<D, ()>,
@@ -745,7 +758,7 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
         Self: 'dr,
     {
         let zeta = oracles.zeta().clone();
-        let y = oracles.query(dr, Slot::output(1), &zeta)?;
+        let y = oracles.output(Value).open(dr, &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
         let stamp = oracles.bridge_hash()[0].clone();
@@ -762,8 +775,15 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
     }
 }
 
+/// The polynomial a [`ValueHeader`] keeps in its last slot.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Value;
+
+impl OnlinePoly for Value {}
+
 pub(super) struct ValueHeader;
 impl Header<Fp> for ValueHeader {
+    type OnlinePolyCommit = (Padding, Value);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
     const SUFFIX: Suffix = Suffix::new(0);
@@ -795,21 +815,13 @@ impl Step<Pasta> for Merge {
     type Left = ValueHeader;
     type Right = ValueHeader;
     type Output = ValueHeader;
-    fn staged<'s>(
-        &self,
-        _: &Option<Fp>,
-        left: HeaderInput<'_, Fp, ValueHeader>,
-        _: HeaderInput<'_, Fp, ValueHeader>,
-    ) -> Result<Vec<Fp>> {
-        Ok(vec![*left.data])
-    }
-    fn polynomials<'s>(
+    fn prepare<'s>(
         &self,
         _: &Option<Fp>,
         left: HeaderInput<'_, Fp, ValueHeader>,
         right: HeaderInput<'_, Fp, ValueHeader>,
-    ) -> Result<[Vec<Fp>; 2]> {
-        let (l, r) = (&left.polynomials[1], &right.polynomials[1]);
+    ) -> Result<Prepared<Fp, ValueHeader>> {
+        let (l, r) = (left.polynomial(Value), right.polynomial(Value));
         let mut product = vec![Fp::ZERO; l.len() + r.len() - 1];
         for (i, a) in l.iter().enumerate() {
             for (j, b) in r.iter().enumerate() {
@@ -819,12 +831,12 @@ impl Step<Pasta> for Merge {
         if self.0 {
             product[0] += Fp::ONE;
         }
-        Ok([vec![Fp::ONE], product])
+        Ok(Prepared::new().poly(Value, product).stage([*left.data]))
     }
     fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Option<Fp>>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,
@@ -833,9 +845,9 @@ impl Step<Pasta> for Merge {
         Self: 'dr,
     {
         let zeta = oracles.zeta().clone();
-        let l = oracles.query(dr, Slot::left(1), &zeta)?;
-        let r = oracles.query(dr, Slot::right(1), &zeta)?;
-        let o = oracles.query(dr, Slot::output(1), &zeta)?;
+        let l = oracles.left(Value).open(dr, &zeta)?;
+        let r = oracles.right(Value).open(dr, &zeta)?;
+        let o = oracles.output(Value).open(dr, &zeta)?;
         l.mul(dr, &r)?.enforce_equal(dr, &o)?;
         // A separate witness can supply the returned input gadget while the
         // carried data feeds the staged output. The framework must bind both.
@@ -926,7 +938,7 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
 fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
     let mut dr = Simulator::<Fp>::new();
     let polynomials = core::array::from_fn(|_| vec![Fp::ONE, Fp::ONE]);
-    let mut oracles = Oracles::alloc(
+    let mut oracles = Oracles::<_, Pasta, Merge>::alloc(
         &mut dr,
         Fp::from(3),
         [Fp::ONE; 2],
@@ -937,37 +949,32 @@ fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
     let equal_zeta = Element::constant(&mut dr, Fp::from(3));
     let other = Element::constant(&mut dr, Fp::from(4));
     let third = Element::constant(&mut dr, Fp::from(5));
-    let expected = "an online slot may be queried once per step";
+    let expected = "an online slot may be opened once per step";
+    // The named polynomial, through its oracle, once.
     assert_eq!(
-        *oracles
-            .query(&mut dr, Slot::output(0), &zeta)?
-            .value()
-            .take(),
+        *oracles.output(Value).open(&mut dr, &zeta)?.value().take(),
         Fp::from(4)
     );
-    assert!(
-        matches!(oracles.query(&mut dr, Slot::output(0), &equal_zeta),
-        Err(Error::Initialization(message)) if message.to_string() == expected)
-    );
-    assert!(matches!(oracles.query(&mut dr, Slot::output(0), &other),
+    assert!(matches!(oracles.output(Value).open(&mut dr, &equal_zeta),
         Err(Error::Initialization(message)) if message.to_string() == expected));
-    assert!(matches!(oracles.query(&mut dr, Slot::output(0), &third),
+    assert!(matches!(oracles.output(Value).open(&mut dr, &other),
         Err(Error::Initialization(message)) if message.to_string() == expected));
+    assert!(matches!(oracles.output(Value).open(&mut dr, &third),
+        Err(Error::Initialization(message)) if message.to_string() == expected));
+    // The unnamed slot, through the crate's untyped query.
     assert_eq!(
-        *oracles
-            .query(&mut dr, Slot::output(1), &other)?
-            .value()
-            .take(),
+        *oracles.output_at(0).open(&mut dr, &other)?.value().take(),
         Fp::from(5)
     );
-    assert!(matches!(oracles.query(&mut dr, Slot::output(1), &third),
+    assert!(matches!(oracles.output_at(0).open(&mut dr, &third),
         Err(Error::Initialization(message)) if message.to_string() == expected));
-    assert!(matches!(oracles.query(&mut dr, Slot::output(1), &zeta),
+    assert!(matches!(oracles.output_at(0).open(&mut dr, &zeta),
         Err(Error::Initialization(message)) if message.to_string() == expected));
-    // Query budgets belong to slots, not points or headers.
-    for slot in [Slot::left(0), Slot::left(1), Slot::right(0), Slot::right(1)] {
-        assert!(oracles.query(&mut dr, slot, &zeta).is_ok());
-    }
+    // Opening budgets belong to slots, not points or headers.
+    assert!(oracles.left(Value).open(&mut dr, &zeta).is_ok());
+    assert!(oracles.right(Value).open(&mut dr, &zeta).is_ok());
+    assert!(oracles.left_at(0).open(&mut dr, &zeta).is_ok());
+    assert!(oracles.right_at(0).open(&mut dr, &zeta).is_ok());
     Ok(())
 }
 
@@ -975,7 +982,7 @@ fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
 fn slot_query_limit_is_enforced_without_witness_values() -> Result<()> {
     let mut dr = core::marker::PhantomData::<Fp>;
     let polynomials = core::array::from_fn(|_| vec![Fp::ONE]);
-    let mut oracles = Oracles::alloc(
+    let mut oracles = Oracles::<_, Pasta, Merge>::alloc(
         &mut dr,
         Fp::from(3),
         [Fp::ONE; 2],
@@ -983,11 +990,11 @@ fn slot_query_limit_is_enforced_without_witness_values() -> Result<()> {
         [&polynomials; 3],
     )?;
     let zeta = oracles.zeta().clone();
-    oracles.query(&mut dr, Slot::left(0), &zeta)?;
+    oracles.left(Value).open(&mut dr, &zeta)?;
     assert!(matches!(
-        oracles.query(&mut dr, Slot::left(0), &zeta),
+        oracles.left(Value).open(&mut dr, &zeta),
         Err(Error::Initialization(message))
-            if message.to_string() == "an online slot may be queried once per step"
+            if message.to_string() == "an online slot may be opened once per step"
     ));
     Ok(())
 }
@@ -1001,7 +1008,7 @@ fn step_index_constructor_accepts_the_full_usize_range() {
 
 struct HookOrder {
     calls: alloc::sync::Arc<core::sync::atomic::AtomicUsize>,
-    fail_polynomials: bool,
+    fail_prepare: bool,
 }
 
 impl Step<Pasta> for HookOrder {
@@ -1013,41 +1020,27 @@ impl Step<Pasta> for HookOrder {
     type Right = ();
     type Output = ValueHeader;
 
-    fn polynomials<'s>(
+    fn prepare<'s>(
         &self,
         root: &Fp,
         left: HeaderInput<'_, Fp, ()>,
         right: HeaderInput<'_, Fp, ()>,
-    ) -> Result<[Vec<Fp>; 2]> {
+    ) -> Result<Prepared<Fp, ValueHeader>> {
         assert_eq!(
             self.calls
                 .fetch_add(1, core::sync::atomic::Ordering::SeqCst),
             0
         );
-        if self.fail_polynomials {
-            return Err(Error::InvalidWitness("polynomials failed".into()));
+        if self.fail_prepare {
+            return Err(Error::InvalidWitness("prepare failed".into()));
         }
-        Seed::<0>.polynomials(root, left, right)
-    }
-
-    fn staged<'s>(
-        &self,
-        root: &Fp,
-        left: HeaderInput<'_, Fp, ()>,
-        right: HeaderInput<'_, Fp, ()>,
-    ) -> Result<Vec<Fp>> {
-        assert_eq!(
-            self.calls
-                .fetch_add(1, core::sync::atomic::Ordering::SeqCst),
-            1
-        );
-        Seed::<0>.staged(root, left, right)
+        Seed::<0>.prepare(root, left, right)
     }
 
     fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -1055,35 +1048,55 @@ impl Step<Pasta> for HookOrder {
     where
         Self: 'dr,
     {
-        assert_eq!(self.calls.load(core::sync::atomic::Ordering::SeqCst), 2);
-        Seed::<0>.witness(dr, oracles, witness, left, right)
+        assert_eq!(
+            self.calls
+                .fetch_add(1, core::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let _ = (witness, left, right);
+        // `Seed`'s circuit.
+        let zeta = oracles.zeta().clone();
+        let y = oracles.output(Value).open(dr, &zeta)?;
+        let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
+        y.enforce_equal(dr, &expected)?;
+        let stamp = oracles.bridge_hash()[0].clone();
+        let data = stamp.value().map(|v| *v);
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(stamp),
+            ),
+            data,
+            D::unit(),
+        ))
     }
 }
 
 #[test]
-fn polynomials_run_before_staging_and_errors_stop_staging() -> Result<()> {
+fn prepare_runs_before_witness_and_its_error_stops_the_fuse() -> Result<()> {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     let mut rng = StdRng::seed_from_u64(2);
-    for fail_polynomials in [false, true] {
+    for fail_prepare in [false, true] {
         let calls = alloc::sync::Arc::new(AtomicUsize::new(0));
         let app = test_builder()
             .register(HookOrder {
                 calls: calls.clone(),
-                fail_polynomials,
+                fail_prepare,
             })?
             .finalize(test_params())?;
         let result = app.seed(
             &mut rng,
             HookOrder {
                 calls: calls.clone(),
-                fail_polynomials,
+                fail_prepare,
             },
             Fp::from(5),
         );
-        if fail_polynomials {
+        if fail_prepare {
             assert!(
-                matches!(result, Err(Error::InvalidWitness(message)) if message.to_string() == "polynomials failed")
+                matches!(result, Err(Error::InvalidWitness(message)) if message.to_string() == "prepare failed")
             );
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         } else {
@@ -1093,4 +1106,116 @@ fn polynomials_run_before_staging_and_errors_stop_staging() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// [`Seed`] that prepares its output's polynomial but never opens it.
+struct UnopenedSeed;
+impl Step<Pasta> for UnopenedSeed {
+    const INDEX: Index = Index::new(0);
+    type Witness<'s> = Fp;
+    type Aux<'s> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ValueHeader;
+    fn prepare<'s>(
+        &self,
+        root: &Fp,
+        _: HeaderInput<'_, Fp, ()>,
+        _: HeaderInput<'_, Fp, ()>,
+    ) -> Result<Prepared<Fp, ValueHeader>> {
+        Ok(Prepared::new().poly(Value, vec![-*root, Fp::ONE]))
+    }
+    fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        root: DriverValue<D, Fp>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Witnessed<'dr, 's, Self, D, N>
+    where
+        Self: 'dr,
+    {
+        let data = root.clone();
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::new(dr, &mut (), root)?,
+            ),
+            data,
+            D::unit(),
+        ))
+    }
+}
+
+#[test]
+fn a_prepared_polynomial_left_unopened_fails_the_fuse() -> Result<()> {
+    let app = test_builder()
+        .register(UnopenedSeed)?
+        .finalize(test_params())?;
+    let mut rng = StdRng::seed_from_u64(0);
+    let expected = "the step prepared a polynomial for an output slot it does not open";
+    assert!(matches!(
+        app.seed(&mut rng, UnopenedSeed, Fp::from(5u64)),
+        Err(Error::InvalidWitness(message)) if message.to_string() == expected
+    ));
+    Ok(())
+}
+
+/// A header that keeps [`Value`] in both slots.
+struct ValueTwiceHeader;
+impl Header<Fp> for ValueTwiceHeader {
+    type OnlinePolyCommit = (Value, Value);
+    type Data = ();
+    type Output = ();
+    const SUFFIX: Suffix = Suffix::new(0);
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        _: &mut D,
+        _: &mut A,
+        _: DriverValue<D, ()>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
+    }
+}
+
+/// A seed that outputs a [`ValueTwiceHeader`].
+struct ValueTwiceSeed;
+impl Step<Pasta> for ValueTwiceSeed {
+    const INDEX: Index = Index::new(0);
+    type Witness<'s> = ();
+    type Aux<'s> = ();
+    type Left = ();
+    type Right = ();
+    type Output = ValueTwiceHeader;
+    fn witness<'dr, 's: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
+        &self,
+        _: &mut D,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+        _: DriverValue<D, ()>,
+    ) -> Witnessed<'dr, 's, Self, D, N>
+    where
+        Self: 'dr,
+    {
+        Ok((
+            (
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+                Encoded::from_gadget(()),
+            ),
+            D::unit(),
+            D::unit(),
+        ))
+    }
+}
+
+#[test]
+fn a_kind_in_two_slots_rejects_registration() {
+    let expected = "a Header cannot keep the same online polynomial kind in two slots";
+    assert!(matches!(
+        test_builder().register(ValueTwiceSeed),
+        Err(Error::Initialization(message)) if message.to_string() == expected
+    ));
 }

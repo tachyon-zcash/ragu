@@ -64,10 +64,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     pub(crate) fn input(&self) -> HeaderInput<'_, C::CircuitField, H> {
-        HeaderInput {
-            data: &self.data,
-            polynomials: &self.proof.polynomials,
-        }
+        HeaderInput::new(&self.data, &self.proof.polynomials)
     }
 
     #[must_use]

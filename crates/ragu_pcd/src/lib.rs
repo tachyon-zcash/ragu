@@ -409,6 +409,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
         S::INDEX.assert_index(self.num_application_steps)?;
 
+        Self::require_unique_kinds::<S::Output>()?;
+        Self::require_unique_kinds::<S::Left>()?;
+        Self::require_unique_kinds::<S::Right>()?;
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
@@ -620,6 +623,19 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             )?;
 
         Ok(self)
+    }
+
+    /// Rejects a header whose
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) keeps the same kind
+    /// in two slots: no step could name that kind.
+    fn require_unique_kinds<H: Header<C::CircuitField>>() -> Result<()> {
+        if <H::OnlinePolyCommit as header::OnlinePolyCommit>::has_unique_kinds() {
+            Ok(())
+        } else {
+            Err(Error::Initialization(
+                "a Header cannot keep the same online polynomial kind in two slots".into(),
+            ))
+        }
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
@@ -834,7 +850,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     /// The commitment of an online polynomial with coefficients `coeffs`, in
-    /// ascending degree. When [`Step::polynomials`] returns these coefficients,
+    /// ascending degree. When [`Step::prepare`] prepares these coefficients,
     /// Ragu stores this unblinded commitment in the output proof's slot.
     /// An application that recomputes a commitment outside the circuit, for
     /// instance to recompute a [`bridge_hash`](Self::bridge_hash), calls this.

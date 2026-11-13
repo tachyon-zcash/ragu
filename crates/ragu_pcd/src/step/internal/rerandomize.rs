@@ -26,7 +26,6 @@
 //! [`Dummy`]: crate::header::Dummy
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 
-use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_core::{
@@ -36,7 +35,7 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt, allocator::Standard};
 
-use super::super::{Encoded, HeaderInput, Index, Oracles, Slot, Step};
+use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 use crate::{Header, header::NUM_ONLINE_POLYNOMIALS};
 
@@ -62,23 +61,24 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     type Right = ();
     type Output = H;
 
-    /// The output carries copies of the left input's polynomials. A copy
-    /// here is prover data, not a constraint: the parent sees only the
-    /// output slots, so [`witness`](Step::witness) proves each output
-    /// polynomial equals the left one at $\zeta$.
-    fn polynomials<'source>(
+    /// The output carries copies of the left input's polynomials, every
+    /// slot's, whatever the header names. A copy here is prover data, not
+    /// a constraint: the parent sees only the output slots, so
+    /// [`witness`](Step::witness) proves each output polynomial equals the
+    /// left one at $\zeta$.
+    fn prepare<'source>(
         &self,
         _: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, H>,
         _: HeaderInput<'_, C::CircuitField, ()>,
-    ) -> Result<[Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS]> {
-        Ok(left.polynomials.clone())
+    ) -> Result<Prepared<C::CircuitField, H>> {
+        Ok(Prepared::from_polynomials(left.polynomials().clone()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        oracles: &mut Oracles<'_, 'dr, D>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -106,8 +106,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // unit header's, go unqueried.
         let zeta = oracles.zeta().clone();
         for i in 0..NUM_ONLINE_POLYNOMIALS {
-            let left = oracles.query(dr, Slot::left(i), &zeta)?;
-            let output = oracles.query(dr, Slot::output(i), &zeta)?;
+            let left = oracles.left_at(i).open(dr, &zeta)?;
+            let output = oracles.output_at(i).open(dr, &zeta)?;
             output.enforce_equal(dr, &left)?;
         }
 
@@ -147,7 +147,7 @@ mod tests {
         use ragu_primitives::{Element, allocator::Allocator};
         use ragu_testing::registry::TestRegistryBuilder;
 
-        use crate::header::{Header, Suffix};
+        use crate::header::{Header, Padding, Suffix};
 
         const HEADER_SIZE: usize = 4;
         type R = polynomials::TestRank;
@@ -155,6 +155,7 @@ mod tests {
         struct Single;
         impl Header<Fp> for Single {
             const SUFFIX: Suffix = Suffix::new(0);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = Fp;
             type Output = Kind![Fp; Element<'_, _>];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -169,6 +170,7 @@ mod tests {
         struct Pair;
         impl Header<Fp> for Pair {
             const SUFFIX: Suffix = Suffix::new(1);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = (Fp, Fp);
             type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -215,7 +217,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
-                oracles: &mut Oracles<'_, 'dr, D>,
+                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
                 _: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -234,8 +236,8 @@ mod tests {
                 let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let zeta = oracles.zeta().clone();
                 for i in 0..NUM_ONLINE_POLYNOMIALS {
-                    let left = oracles.query(dr, Slot::left(i), &zeta)?;
-                    let output = oracles.query(dr, Slot::output(i), &zeta)?;
+                    let left = oracles.left_at(i).open(dr, &zeta)?;
+                    let output = oracles.output_at(i).open(dr, &zeta)?;
                     output.enforce_equal(dr, &left)?;
                 }
                 Ok((

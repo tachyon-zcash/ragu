@@ -28,7 +28,7 @@ use super::{CompressedPcd, CompressedProof};
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
     compress::revdot::{native_position, nested_position},
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     internal::{native, nested},
     proof::recursive_propagation_tests::support::{self, Cache},
     step::{Encoded, Index, Oracles, Step},
@@ -44,6 +44,7 @@ struct Value;
 
 impl Header<Fp> for Value {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -70,7 +71,7 @@ impl Step<Pasta> for Seed {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D>,
+        _: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -351,6 +352,7 @@ fn propagates_header_encoding_errors() {
 
     impl<const LEGACY_ERROR: bool> Header<Fp> for FailingHeader<LEGACY_ERROR> {
         const SUFFIX: Suffix = Suffix::new(1);
+        type OnlinePolyCommit = (Padding, Padding);
         type Data = ();
         type Output = ();
 

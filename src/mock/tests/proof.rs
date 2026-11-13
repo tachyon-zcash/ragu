@@ -13,7 +13,7 @@ use udon::curve::AffineAdapter;
 use super::{
     super::{
         CompressedProof,
-        header::{Header, Suffix},
+        header::{Header, Padding, Suffix},
         step::{Encoded, Index, Oracles, Step},
     },
     application::{
@@ -30,6 +30,7 @@ type Proof = crate::Proof<Pasta, TestRank>;
 struct ValueHeader;
 
 impl Header<Fp> for ValueHeader {
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = u64;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -59,7 +60,7 @@ impl Step<Pasta> for ValueSeedStep {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _oracles: &mut Oracles<'_, 'dr, D>,
+        _oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         _left: DriverValue<D, <Self::Left as Header<Fp>>::Data>,
         _right: DriverValue<D, <Self::Right as Header<Fp>>::Data>,
