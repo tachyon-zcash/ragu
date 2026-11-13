@@ -146,6 +146,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "the application stage does not fit the rank's gates".into(),
             ));
         }
+        Self::require_unique_kinds::<S::Output>()?;
+        Self::require_unique_kinds::<S::Left>()?;
+        Self::require_unique_kinds::<S::Right>()?;
         self.prevent_duplicate_suffix::<S::Output>()?;
         self.prevent_duplicate_suffix::<S::Left>()?;
         self.prevent_duplicate_suffix::<S::Right>()?;
@@ -219,13 +222,19 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         })
     }
 
-    fn prevent_duplicate_suffix<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
-        if !H::OnlinePolyCommit::has_unique_kinds() {
-            return Err(Error::Initialization(
+    /// Mirrors `ragu_pcd::ApplicationBuilder`'s check that a header keeps
+    /// each kind in one slot.
+    fn require_unique_kinds<H: Header<C::CircuitField>>() -> Result<()> {
+        if H::OnlinePolyCommit::has_unique_kinds() {
+            Ok(())
+        } else {
+            Err(Error::Initialization(
                 "a Header cannot keep the same online polynomial kind in two slots".into(),
-            ));
+            ))
         }
+    }
 
+    fn prevent_duplicate_suffix<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
         let suffix = H::SUFFIX;
         let type_id = TypeId::of::<H>();
         if H::SUFFIX.get() < NUM_INTERNAL_SUFFIXES as u64 && type_id != TypeId::of::<()>() {

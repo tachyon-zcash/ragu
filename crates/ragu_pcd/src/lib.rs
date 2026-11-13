@@ -409,6 +409,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
         S::INDEX.assert_index(self.num_application_steps)?;
 
+        Self::require_unique_kinds::<S::Output>()?;
+        Self::require_unique_kinds::<S::Left>()?;
+        Self::require_unique_kinds::<S::Right>()?;
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
@@ -622,13 +625,20 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         Ok(self)
     }
 
-    fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
-        if !<H::OnlinePolyCommit as header::OnlinePolyCommit>::has_unique_kinds() {
-            return Err(Error::Initialization(
+    /// Rejects a header whose
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) keeps the same kind
+    /// in two slots: no step could name that kind.
+    fn require_unique_kinds<H: Header<C::CircuitField>>() -> Result<()> {
+        if <H::OnlinePolyCommit as header::OnlinePolyCommit>::has_unique_kinds() {
+            Ok(())
+        } else {
+            Err(Error::Initialization(
                 "a Header cannot keep the same online polynomial kind in two slots".into(),
-            ));
+            ))
         }
+    }
 
+    fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
         if H::SUFFIX.get() < header::NUM_INTERNAL_SUFFIXES as u64
             && TypeId::of::<H>() != TypeId::of::<()>()
         {
