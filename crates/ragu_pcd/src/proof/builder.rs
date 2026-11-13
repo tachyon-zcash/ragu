@@ -258,6 +258,12 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
     online_openings: Option<online::Queries<C::CircuitField>>,
 
+    // The step's own online Fq polynomials, with their commitments cached.
+    // The proof does not carry them: only this step's nested batch opens
+    // them.
+    online_fq_polynomials: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    online_fq_commitments: OnceCell<Vec<C::NestedCurve>>,
+
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_preamble_commitment: Option<C::NestedCurve>,
@@ -410,6 +416,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: None,
             native_points_walk_rx: None,
             online_polynomials: None,
+            online_fq_polynomials: None,
+            online_fq_commitments: OnceCell::new(),
             online_commitments: OnceCell::new(),
             online_openings: None,
             bridge_preamble_rx: None,
@@ -618,6 +626,28 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             let host_gen = C::host_generators(self.params);
             let polys = self.online_polynomials();
             core::array::from_fn(|i| B::sparse_commit_to_affine(&polys[i], host_gen))
+        })
+    }
+    setter!(
+        set_online_fq_polynomials,
+        online_fq_polynomials,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+    slice_getter!(
+        online_fq_polynomials,
+        online_fq_polynomials,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+
+    /// Lazily computes and caches the commitments of the step's own online
+    /// Fq polynomials. They are unblinded.
+    pub(crate) fn online_fq_commitments(&self) -> &[C::NestedCurve] {
+        self.online_fq_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.online_fq_polynomials()
+                .iter()
+                .map(|poly| B::sparse_commit_to_affine(poly, nested_gen))
+                .collect()
         })
     }
     setter!(

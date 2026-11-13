@@ -15,6 +15,12 @@
 //!   children's claim evaluations, in [`build`] order, exactly as the
 //!   prover folded the polynomials.
 //!
+//! ### Online Fq openings
+//! - Reads each opening $(x_q, y_q)$ of the step's own online Fq
+//!   polynomials from the `query` stage, which $f_n$ folds below.
+//! - Enforces $x_q = \zeta_q$, the challenge stage's lift of $w$
+//!   (see [`online_fq`]).
+//!
 //! ### $f_n(u_n)$ computation
 //! - Batch-inverts the denominators $(u_n - x_i)^{-1}$ of every opening.
 //! - Walks the openings in [`Batch::queries`] order, accumulating
@@ -39,6 +45,7 @@
 //! [`Batch::evaluated`]: crate::internal::nested::pcs::Batch::evaluated
 //! [`build`]: claims::build
 //! [`eval` stage]: crate::internal::nested::stages::eval
+//! [`online_fq`]: crate::internal::online_fq
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -71,6 +78,8 @@ use crate::{
             stages::{self, challenges, eval as nested_eval, preamble as nested_preamble, query},
             unified,
         },
+        online::QueryOutput,
+        online_fq::FqPolysLen,
     },
     profile::Profile,
 };
@@ -116,6 +125,15 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let query = &stages.query.nested;
         let eval = &stages.eval.nested;
 
+        // The step's own online Fq openings, which f_n folds below. Each
+        // opens at zeta_q, the challenge stage's lift of w.
+        for opening in query.online_fq.iter() {
+            opening.x.enforce_equal(dr, lift(challenges::W))?;
+            // TODO(decompression): `opening.y` is the IPA polynomial s(X) at
+            // zeta_q. Check it against the closed form of s(X), from the IPA
+            // challenges that the native side checks.
+        }
+
         // t(x_n z_n), the vanishing polynomial at x_n z_n.
         let x = lift(challenges::X).enforce_invertible(dr)?;
         let z = lift(challenges::Z).enforce_invertible(dr)?;
@@ -150,6 +168,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 lift(challenges::Y),
                 z.element(),
                 &stages.preamble,
+                &query.online_fq,
             )?;
             let mut horner = Horner::new(lift(challenges::ALPHA));
             for (pu, v, denominator) in poly_queries(
@@ -209,6 +228,8 @@ struct Denominators<'dr, D: Driver<'dr>, P: Profile> {
     /// One per nested internal circuit, at its $\omega^j$, in
     /// [`InternalCircuitIndex::all`] order.
     internal: FixedVec<Element<'dr, D>, InternalLen<P>>,
+    /// One per online Fq opening, at its point $x_q$.
+    online_fq: FixedVec<Element<'dr, D>, FqPolysLen<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
@@ -220,6 +241,7 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
         preamble: &nested_preamble::Output<'dr, D, C, P>,
+        online_fq: &FixedVec<QueryOutput<'dr, D>, FqPolysLen<P>>,
     ) -> Result<Self>
     where
         D::F: Field,
@@ -248,6 +270,10 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
             .into_iter()
             .map(|id| inverter.add_circuit(dr, id.circuit_index::<P>()))
             .collect::<Result<Vec<_>>>()?;
+        let online_fq = online_fq
+            .iter()
+            .map(|opening| inverter.add(dr, &opening.x))
+            .collect::<Result<Vec<_>>>()?;
 
         let inverted = inverter.invert(dr)?;
         let at = |i: usize| inverted[i].clone();
@@ -270,6 +296,7 @@ impl<'dr, D: Driver<'dr>, P: Profile> Denominators<'dr, D, P> {
                 xz: at(challenges.3),
             },
             internal: FixedVec::try_from_fn(|i| Ok(at(internal[i])))?,
+            online_fq: FixedVec::try_from_fn(|i| Ok(at(online_fq[i])))?,
         })
     }
 }
@@ -380,7 +407,8 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>>
 /// The openings $f_n$ covers, as $(p(u_n), v, (u_n - x_i)^{-1})$ triples in
 /// [`Batch::queries`](crate::internal::nested::pcs::Batch::queries) order:
 /// the static prefix, each child's rx polynomials at $x_n z_n$, then the
-/// current `registry_xy` at each internal circuit's $\omega^j$.
+/// current `registry_xy` at each internal circuit's $\omega^j$, then each
+/// online Fq polynomial at its point.
 #[rustfmt::skip]
 fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     eval: &'a nested_eval::EvaluationsOutput<'dr, D, P>,
@@ -450,5 +478,9 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     // The current registry_xy at each internal circuit's omega^j.
     .chain((0..InternalCircuitIndex::num::<P>()).map(move |j| {
         (&eval.registry_xy, &query.fixed_registry[j], &d.internal[j])
+    }))
+    // The step's own online Fq polynomials, each at its point x_q.
+    .chain((0..eval.online_fq.len()).map(move |i| {
+        (&eval.online_fq[i], &query.online_fq[i].y, &d.online_fq[i])
     }))
 }

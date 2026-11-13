@@ -103,7 +103,7 @@ use crate::{
             self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
             PointsWitness,
         },
-        online,
+        online, online_fq,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -936,8 +936,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 
     /// Commits the native points binding and children stages over the
-    /// children's nested commitments, before $w$ is squeezed; the preamble
-    /// bridge carries their commitments.
+    /// children's nested commitments and the step's own online Fq
+    /// commitments, before $w$ is squeezed; the preamble bridge carries
+    /// their commitments.
     pub(crate) fn commit_native_points_children<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
@@ -945,9 +946,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
+        // TODO(decompression): the profile's prover supplies these
+        // polynomials. Until then each slot holds the placeholder.
+        builder.set_online_fq_polynomials(
+            (0..C::Profile::ONLINE_FQ_POLYS)
+                .map(|_| online_fq::placeholder())
+                .collect(),
+        );
         let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
+            builder.online_fq_commitments(),
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
             C::NestedCurve,
@@ -1277,6 +1286,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Every placeholder is the commitment of a polynomial this proof
         // holds, so that p_n is their beta-fold and P_n its commitment, as
         // a parent's batch requires of a child.
+        builder.set_online_fq_polynomials(
+            (0..C::Profile::ONLINE_FQ_POLYS)
+                .map(|_| online_fq::placeholder())
+                .collect(),
+        );
         let (nested_p_poly, nested_p_commitment) = {
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
@@ -1305,6 +1319,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             push(nested_commitment, &ones_nested); // a
             push(nested_commitment, &ones_nested); // b
             push(registry_xy_commitment, registry_xy); // registry_xy
+            for (poly, &commitment) in builder
+                .online_fq_polynomials()
+                .iter()
+                .zip(builder.online_fq_commitments())
+            {
+                push(commitment, poly); // the step's own online Fq polynomial
+            }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let inputs = Inputs::from_walk(&points);
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)

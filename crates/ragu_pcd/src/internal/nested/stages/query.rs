@@ -3,7 +3,10 @@
 //! Alongside the two host-curve commitments it bridges, this stage carries
 //! the nested query values: the claimed evaluations, at the nested $x_n z_n$,
 //! $x_n$ and $w_n$, that the nested [`compute_v`] circuit folds into the
-//! nested quotient polynomial's evaluation. They ride here because this
+//! nested quotient polynomial's evaluation. It also carries the opening
+//! $(x_q, y_q)$ of each of the step's own online Fq polynomials, which
+//! `compute_v` claims and folds (see
+//! [`online_fq`](crate::internal::online_fq)). They ride here because this
 //! bridge stage's commitment is absorbed before $\alpha$ is squeezed.
 //!
 //! [`compute_v`]: crate::internal::nested::circuits::compute_v
@@ -26,9 +29,13 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
     Proof,
-    internal::nested::{
-        self, RxComponent, RxIndex,
-        pcs::{InternalLen, OwnRxLen},
+    internal::{
+        nested::{
+            self, RxComponent, RxIndex,
+            pcs::{InternalLen, OwnRxLen},
+        },
+        online::{self, QueryOutput},
+        online_fq::FqPolysLen,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -96,6 +103,8 @@ pub struct Evaluations<F, P: Profile> {
     pub left: ChildEvaluationsWitness<F, P>,
     /// Right child proof evaluations.
     pub right: ChildEvaluationsWitness<F, P>,
+    /// The opening of each of the step's own online Fq polynomials.
+    pub online_fq: FixedVec<online::Query<F>, FqPolysLen<P>>,
 }
 
 impl<F: Field, P: Profile> Evaluations<F, P> {
@@ -113,6 +122,10 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
             registry_wxy: F::ZERO,
             left: child(),
             right: child(),
+            online_fq: FixedVec::from_fn(|_| online::Query {
+                x: F::ZERO,
+                y: F::ZERO,
+            }),
         }
     }
 }
@@ -177,6 +190,9 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
     pub left: ChildEvaluations<'dr, D, P>,
     #[ragu(gadget)]
     pub right: ChildEvaluations<'dr, D, P>,
+    /// The opening of each of the step's own online Fq polynomials.
+    #[ragu(gadget)]
+    pub online_fq: FixedVec<QueryOutput<'dr, D>, FqPolysLen<P>>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -206,7 +222,12 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
 
     fn values() -> usize {
         // (x, y) per point + fixed registry + registry_wxy + 2 children
-        NUM * 2 + InternalLen::<P>::len() + 1 + 2 * (OwnRxLen::<P>::len() + 4)
+        // + (x, y) per online Fq opening
+        NUM * 2
+            + InternalLen::<P>::len()
+            + 1
+            + 2 * (OwnRxLen::<P>::len() + 4)
+            + 2 * P::ONLINE_FQ_POLYS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -235,6 +256,20 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
             )?,
             left: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.left))?,
             right: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.right))?,
+            online_fq: FixedVec::try_from_fn(|i| {
+                Ok(QueryOutput {
+                    x: Element::alloc(
+                        dr,
+                        allocator,
+                        witness.as_ref().map(|w| w.nested.online_fq[i].x),
+                    )?,
+                    y: Element::alloc(
+                        dr,
+                        allocator,
+                        witness.as_ref().map(|w| w.nested.online_fq[i].y),
+                    )?,
+                })
+            })?,
         };
 
         Ok(Output {

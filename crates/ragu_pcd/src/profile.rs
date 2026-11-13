@@ -1481,9 +1481,9 @@ pub(crate) mod testing {
     }
 
     /// One [`Trivial`] circuit and no stage on each side, with the hooks
-    /// that register and prove it: the profile whose extension proves, at
-    /// a rank above the production one, where the fuse has room for its
-    /// two polynomials.
+    /// that register and prove it, and one online Fq polynomial per step:
+    /// the profile whose extension proves, at a rank above the production
+    /// one, where the fuse has room for its two polynomials.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Proving;
 
@@ -1491,6 +1491,7 @@ pub(crate) mod testing {
         const NAME: &'static str = "proving";
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 1;
+        const ONLINE_FQ_POLYS: usize = 1;
 
         type Context<'params, Base, R, B>
             = ()
@@ -2511,9 +2512,9 @@ mod tests {
     }
 
     /// An extension proves: an application in the [`Proving`] profile,
-    /// one trivial circuit on each side, seeds, fuses, verifies and
-    /// compresses at the rank above the production one, where the fuse
-    /// has room for the two polynomials.
+    /// one trivial circuit on each side and one online Fq polynomial per
+    /// step, seeds, fuses, verifies and compresses at the rank above the
+    /// production one, where the fuse has room for the two polynomials.
     #[test]
     fn an_extension_proves_verifies_and_compresses() -> Result<()> {
         use rand::{SeedableRng, rngs::StdRng};
@@ -2523,6 +2524,9 @@ mod tests {
 
         const HEADER_SIZE: usize = 4;
         assert_ne!(Shape::of::<Proving>(), Shape::of::<Standard>());
+        // Each step also commits an online Fq polynomial, which the nested
+        // `compute_v` opens and folds in the step's own nested batch.
+        assert_eq!(Shape::of::<Proving>().online_fq, 1);
 
         let app = ApplicationBuilder::<Profiled<Pasta, Proving>, R<14>, HEADER_SIZE>::new()
             .register(UnitStep)?

@@ -291,6 +291,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_xy: builder.nested_registry_xy_poly(),
             a: builder.nested_a_poly(),
             b: builder.nested_b_poly(),
+            online_fq: builder.online_fq_polynomials(),
         }
     }
 

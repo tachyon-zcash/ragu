@@ -96,7 +96,9 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
 /// The number of nested-curve points the batch folds into $P_n$ for a nested
 /// batch of `nested_rx` rx polynomials: $f_n$, then for each child its own
 /// rx commitments, $a$, $b$, `registry_xy` and $p$, then the current step's
-/// two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`.
+/// two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`. The step's
+/// own online Fq commitments follow these; [`Shape`](crate::profile::Shape)
+/// adds them.
 pub const fn num_batched_points(nested_rx: usize) -> usize {
     1 + 2 * (nested_rx + 4) + 6
 }
@@ -170,6 +172,9 @@ pub struct Batch<'a, C: Cycle, R: Rank> {
     pub a: &'a sparse::Polynomial<C::ScalarField, R>,
     /// Current accumulator $b$.
     pub b: &'a sparse::Polynomial<C::ScalarField, R>,
+    /// The step's own online Fq polynomials (see
+    /// [`online_fq`](crate::internal::online_fq)).
+    pub online_fq: &'a [sparse::Polynomial<C::ScalarField, R>],
 }
 
 impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
@@ -177,7 +182,8 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
     /// `(polynomial, point)` pairs, in the order that fixes each one's weight
     /// in $\alpha_n$: the static prefix, then each child's own rx polynomials
     /// at $x_n z_n$, then the current `registry_xy` at each nested internal
-    /// circuit's $\omega^j$.
+    /// circuit's $\omega^j$, then each of the step's own online Fq
+    /// polynomials at the point the nested `compute_v` opens it at.
     pub fn queries(
         &self,
         ch: Challenges<C::ScalarField>,
@@ -221,13 +227,17 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                     .into_iter()
                     .map(move |id| (self.registry_xy, omega_j(id))),
             )
+            // TODO(decompression): the nested `compute_v` opens each online
+            // Fq polynomial at zeta_q, the lift of w. If it opens at another
+            // point, that point goes here and in the `query` stage.
+            .chain(self.online_fq.iter().map(move |poly| (poly, ch.w)))
     }
 
     /// The polynomials the batch evaluates at $u_n$ and folds into $p_n$
     /// after $f_n$, in that order: for each child its rx polynomials,
     /// $a$, $b$, `registry_xy` and $p$; then the current step's
     /// `registry_wx0`, `registry_wx1`, `registry_wy`, $a$, $b$ and
-    /// `registry_xy`.
+    /// `registry_xy`; then the step's own online Fq polynomials.
     ///
     /// The nested `eval` bridge stage writes its values in this order, and
     /// [`Batch::commitments`] lists the matching commitments.
@@ -255,14 +265,17 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                 self.b,
                 self.registry_xy,
             ])
+            .chain(self.online_fq)
     }
 
     /// The commitments of [`Batch::evaluated`], in the same order, given the
-    /// current step's commitments the batch does not hold itself.
-    pub fn commitments(
-        &self,
+    /// current step's commitments the batch does not hold itself, with
+    /// `online_fq` the commitments of the step's own online Fq polynomials.
+    pub fn commitments<'b>(
+        &'b self,
         current: CurrentCommitments<C::NestedCurve>,
-    ) -> impl Iterator<Item = C::NestedCurve> + '_ {
+        online_fq: &'b [C::NestedCurve],
+    ) -> impl Iterator<Item = C::NestedCurve> + 'b {
         [self.left, self.right]
             .into_iter()
             .flat_map(|proof| child_commitments(proof))
@@ -274,6 +287,7 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                 current.b,
                 current.registry_xy,
             ])
+            .chain(online_fq.iter().copied())
     }
 }
 
