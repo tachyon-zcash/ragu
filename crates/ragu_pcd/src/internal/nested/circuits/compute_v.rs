@@ -15,6 +15,12 @@
 //!   children's claim evaluations, in [`build`] order, exactly as the
 //!   prover folded the polynomials.
 //!
+//! ### Online Fq openings
+//! - Reads the value $y_q$ of each of the step's own online Fq polynomials
+//!   from the `query` stage, and folds it into $f_n$ below at $\zeta_q$,
+//!   the challenge stage's lift of $w$ (see [`online_fq`]). No stage holds
+//!   the point, so the prover cannot choose it.
+//!
 //! ### $f_n(u_n)$ computation
 //! - Batch-inverts the denominators $(u_n - x_i)^{-1}$ of every opening.
 //! - Walks the openings in [`Batch::queries`] order, accumulating
@@ -39,6 +45,7 @@
 //! [`Batch::evaluated`]: crate::internal::nested::pcs::Batch::evaluated
 //! [`build`]: claims::build
 //! [`eval` stage]: crate::internal::nested::stages::eval
+//! [`online_fq`]: crate::internal::online_fq
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -115,6 +122,12 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let lift = |i: usize| &stages.challenges.pairs[i].lift;
         let query = &stages.query.nested;
         let eval = &stages.eval.nested;
+
+        // The step's own online Fq openings, which f_n folds below at
+        // zeta_q, the challenge stage's lift of w.
+        // TODO(decompression): each `query.online_fq` value is the IPA
+        // polynomial s(X) at zeta_q. Check it against the closed form of
+        // s(X), from the IPA challenges that the native side checks.
 
         // t(x_n z_n), the vanishing polynomial at x_n z_n.
         let x = lift(challenges::X).enforce_invertible(dr)?;
@@ -380,7 +393,8 @@ impl<'a, 'dr, D: Driver<'dr>, P: Profile> Processor<P, &'a Element<'dr, D>>
 /// The openings $f_n$ covers, as $(p(u_n), v, (u_n - x_i)^{-1})$ triples in
 /// [`Batch::queries`](crate::internal::nested::pcs::Batch::queries) order:
 /// the static prefix, each child's rx polynomials at $x_n z_n$, then the
-/// current `registry_xy` at each internal circuit's $\omega^j$.
+/// current `registry_xy` at each internal circuit's $\omega^j$, then each
+/// online Fq polynomial at its point.
 #[rustfmt::skip]
 fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     eval: &'a nested_eval::EvaluationsOutput<'dr, D, P>,
@@ -450,5 +464,9 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     // The current registry_xy at each internal circuit's omega^j.
     .chain((0..InternalCircuitIndex::num::<P>()).map(move |j| {
         (&eval.registry_xy, &query.fixed_registry[j], &d.internal[j])
+    }))
+    // The step's own online Fq polynomials at zeta_q, the lift of w.
+    .chain((0..eval.online_fq.len()).map(move |i| {
+        (&eval.online_fq[i], &query.online_fq[i], &d.challenges.w)
     }))
 }

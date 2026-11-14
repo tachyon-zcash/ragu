@@ -8,7 +8,7 @@
 //!
 //! | Section | Use case | API shown |
 //! |---|---|---|
-//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header::OnlinePolyCommit`], [`OnlinePoly`], [`Padding`], [`NUM_ONLINE_POLYNOMIALS`] |
+//! | [1. Headers](#1-headers) | C1: two polynomial slots per proof | [`Header::OnlinePolyCommit`], [`OnlinePoly`], [`Padding`], [`NUM_ONLINE_FP_POLYS`] |
 //! | [2. Seed a set](#2-seed-a-set) | T2, T3: private roots, challenge | [`Step::prepare`], [`Prepared`], [`Step::NUM_STAGED`], [`Oracles::zeta`], [`Oracles::output`], [`Oracle::open`](ragu_pcd::step::Oracle::open), [`Oracles::staged`] |
 //! | [3. Insert into a set](#3-insert-into-a-set) | T2: public and private polynomials | a left input's polynomial, [`HeaderInput::polynomial`] |
 //! | [4. Merge two sets](#4-merge-two-sets) | T1: public polynomials only | left, right and output slots |
@@ -57,7 +57,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
-    header::{Header, NUM_ONLINE_POLYNOMIALS, OnlinePoly, Padding, Suffix},
+    header::{Header, NUM_ONLINE_FP_POLYS, OnlinePoly, Padding, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{
@@ -77,7 +77,7 @@ type App = Application<'static, C, R, HEADER_SIZE>;
 
 // # 1. Headers
 //
-// C1. Every proof carries `NUM_ONLINE_POLYNOMIALS` (two) polynomial commitments
+// C1. Every proof carries `NUM_ONLINE_FP_POLYS` (two) polynomial commitments
 // associated with its output header. What each slot holds is the application's
 // convention for that header, which the steps that produce the header
 // constrain, as they do its fields. An unused slot holds the constant one
@@ -692,7 +692,7 @@ fn next_anchor(app: &App, previous: Fp, set: <Pasta as Cycle>::HostCurve) -> Res
 // output's, both polynomials each, every one at its own point.
 
 /// The polynomials associated with a [`PairHeader`] with data `a`.
-fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_POLYNOMIALS] {
+fn pair_polys(a: [Fp; 2]) -> [Vec<Fp>; NUM_ONLINE_FP_POLYS] {
     [vec![a[0], Fp::ONE], vec![a[1], Fp::from(2)]]
 }
 
@@ -899,7 +899,7 @@ fn unit(app: &App) -> Result<Pcd<C, R, ()>> {
 fn check<H: Header<Fp>>(
     app: &App,
     pcd: &Pcd<C, R, H>,
-    expected: [Vec<Fp>; NUM_ONLINE_POLYNOMIALS],
+    expected: [Vec<Fp>; NUM_ONLINE_FP_POLYS],
     seed: u64,
 ) {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -1040,7 +1040,7 @@ fn every_slot_proves_and_verifies() -> Result<()> {
                 );
             }
         }
-        for index in 0..NUM_ONLINE_POLYNOMIALS {
+        for index in 0..NUM_ONLINE_FP_POLYS {
             rejected(
                 Corruption::OnlineCoeff {
                     index,

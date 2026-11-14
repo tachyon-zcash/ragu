@@ -389,7 +389,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     fn values() -> usize {
         // 2 proofs * (3 headers * HEADER_SIZE + the online openings + 1
         // circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 2 * online::NUM_ONLINE_QUERIES + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE + 2 * online::NUM_ONLINE_FP_QUERIES + 1 + unified::NUM_WIRES)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

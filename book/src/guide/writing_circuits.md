@@ -112,7 +112,7 @@ This is where the circuit logic is implemented. The function:
 
 ### 4. The `prepare` Function
 
-Every proof stores `NUM_ONLINE_POLYNOMIALS` (two) online polynomials and their
+Every proof stores `NUM_ONLINE_FP_POLYS` (two) online polynomials and their
 commitments, associated with its output header. The header's field encoding
 is separate; the polynomial count is a parameter of the protocol, not of
 the header type. A header lists the polynomials its proofs carry as
@@ -334,7 +334,7 @@ implementation specifies a `SUFFIX` (unique identifier), a `Data` type
 representation), an `encode` function that converts `Data` into
 `Output` by allocating circuit elements, and an `OnlinePolyCommit` list
 of the online polynomials its proofs carry, `(Padding, Padding)` for
-none. The accompanying proof stores `NUM_ONLINE_POLYNOMIALS` online
+none. The accompanying proof stores `NUM_ONLINE_FP_POLYS` online
 polynomials and their commitments, exposed by `Pcd::polynomials()` and
 `Pcd::commitments()` (see [Polynomial Oracles](#polynomial-oracles)).
 

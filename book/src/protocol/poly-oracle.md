@@ -75,6 +75,9 @@ internal circuits.
   - public instance $k(Y)$ of the app circuit changes from `[L/R/O header fields]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O header fields]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
   - the special hash only commits the step's own `O1` slot, so if the app circuit wants to compute
   $\anchor' = H(\anchor \| e \| \acc^\tg)$ then $\acc^\tg$ must occupy the output polynomial slot `O1`
+- C5: a profile may give each step one online $\F_q$ polynomial $f_q$, committed as an $\E_p$ point, for Ragu's nested internal circuits to open (see [v5](#v5))
+  - it is private to the step: committed before $w$ and opened once, at $\zeta_q = \mathsf{lift}(w)$, by the step's own nested `compute_v`; no header carries it, and C3's rule applies with $\zeta_q$ in place of $\zeta$
+  - application circuits cannot open it; it exists for the `Aggregator` profile's decompression, and until that lands the slot holds a placeholder polynomial
 
 ## Changes to Tachyon Proof Tree {#changes}
 
@@ -435,3 +438,87 @@ After:
 ```
 
 `Application` is the native trace synthesized by `Step::witness` and folded in the parent, as in [v3](#v3); only its opening claims are folded here.
+
+### V5: an online $\F_q$ polynomial for the nested `compute_v` {#v5}
+
+- Goal: let a nested circuit open an online polynomial over its own field $\F_q$, as the application circuit opens its $\F_p$ slots
+- Solution: mirror [v1](#v1) and [v4](#v4) across the cycle: commit $f_q$ natively before $w$, and open it in the nested `Query` and `Eval` stages, where the nested `compute_v` both claims and folds the opening
+
+The client is the aggregator's decompression.
+Verifying an $\E_p$ IPA in circuit leaves a point $G' = \langle \v{s}, \v{G} \rangle$, where $s(X) = \prod_{i=0}^{k-1} (1 + u_{k-1-i} X^{2^i})$ is known from the existing IPA round challenges $u_0, \ldots, u_{k-1}$, listed in transcript order.
+Instead of computing that MSM, the prover commits $s(X)$ as $f_q$, and a nested circuit checks $s(\zeta_q)$ against the closed form in $O(\log n)$ multiplications.
+$G'$ has coordinates in $\F_p$, so it is committed on the native side; $s$ is over $\F_q$, so it is evaluated on the nested side.
+
+V5 adds no IPA challenges and makes no change to the IPA transcript.
+Its random point $\zeta_q$ tests whether the polynomial committed by $G'$ is the expected $s(X)$: V5 proves $f_q(\zeta_q) = y_q$, and decompression must bind $\cm_{f_q} = G'$ and check $y_q = s(\zeta_q)$.
+The last check still uses the original IPA round challenges to compute the expected value; a valid opening of $G'$ alone does not establish that it is the correct folded generator.
+
+Swapping the fields swaps every role of the $\F_p$ slots:
+
+| | $\F_p$ slots (v1, v4) | $\F_q$ slot (v5) |
+|---|---|---|
+| commitment | $\E_q$ point, in the nested `Preamble` | $\E_p$ point, in the native `PointsChildren` |
+| deadline | $w$ | $w$ |
+| challenge | $\zeta = w$ | $\zeta_q = \mathsf{lift}(w)$, already in the nested challenge stage |
+| claimant | application circuit | nested `compute_v` |
+| opening folded by | native `Query`, `Eval`, `compute_v` | nested `Query`, `Eval`, `compute_v` |
+| commitment folded by | nested walk into $P$ | native walk into $P_n$ |
+| slots per step | 6, `[L0, L1, R0, R1, O0, O1]` | 1, the step's own |
+
+The difference that matters is the claimant.
+In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through a public instance: the application's $k(y)$, matched against `compute_v`'s export in the parent.
+Here the claimant is `compute_v` itself, which reads $y_q$ from the `Query` stage it folds and takes the point $\zeta_q$ from its challenge stage.
+The pair never leaves the step's stages, so no instance changes, no $k(y)$ is added, and `MultiStageCircuit` needs no oracle input.
+The commitment needs no copy either: the native walk folds $\cm_{f_q}$ into $P_n$, the point the nested batch's opening is checked against, which is how the two sides already agree on every point the step commits.
+And since no header carries $f_q$, there is no header-carry check.
+
+```
+     NATIVE                      NESTED
+
+  PointsChildren             Preamble (+ native_points_children)
+  (+ cm_fq)                        │
+       │                           │
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  x  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+                             Query (+ y_q)
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  u  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+                             Eval (+ f_q(u_n))
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  pre_β  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+  PointsWalk                 Challenges (zeta_q = lift(w))
+  (cm_fq into P_n)           compute_v: folds (zeta_q, y_q)
+```
+
+A profile sets the count with `Profile::ONLINE_FQ_POLYS`, zero by default and at most `NUM_ONLINE_FQ_POLYS = 1`, so the standard profile does not change.
+The `Aggregator` profile turns it on when decompression lands; until then only the `Proving` test profile does, with a fixed placeholder polynomial and a `compute_v` that ignores $y_q$.
+
+#### Details and soundness notes {#v5-soundness}
+
+- **Placement.**
+  $\cm_{f_q}$ goes in `PointsChildren` because the native walk reads its inputs from the stage they were committed in; `PointsChildren`'s commitment is absorbed before $w$.
+  It is committed unblinded, so that it can equal a point such as $G'$ that a circuit computes from public data.
+- **The point.**
+  No stage holds the opening point: `compute_v` folds $y_q$ at $\zeta_q$, which it takes from the challenge stage.
+  A prover that opens $f_q$ at another point builds a quotient that does not match that fold, so the batch fails.
+  If decompression opens at another point, both the prover and `compute_v` must derive it, or a stage must hold it and `compute_v` must constrain it.
+- **The value.**
+  A claimant must read $y_q$ from the `Query` stage rather than witness its own, since only the stage's $y_q$ is folded.
+  Any nested internal circuit that loads the `Query` and challenge stages, as `collapse` and `compute_v` do, could be the claimant: the step's nested circuits share its stage commitments.
+  Only a circuit that cannot load them, such as an application circuit, would need v4's binding through its instance.
+- **$\zeta_q$ is not uniform over $\F_q$.**
+  It is the lift of a $k$-bit endoscalar, so a nonzero residual of degree $d$ vanishes at it with probability at most $d/2^k$, not $d/q$.
+  Every nested challenge is such a lift, so this matches the nested batch's own error.
+- **C3's rule.**
+  Fixed before $\zeta_q$ are $\cm_{f_q}$, the circuit's constants, and whatever the native pre-$w$ stages hold.
+  The values a check at $\zeta_q$ reads, such as decompression's IPA challenges $u_i$, must be witnessed natively before $w$, where the native half of decompression checks them.
+  How they reach `compute_v` bound to that stage is decompression's to add, with the challenge stage's binding as the precedent.
+  The IPA round challenges retain the compression transcript's existing conversion: their canonical integer is preserved across the fields within the common 254-bit range for Pasta.
+  This differs from the 143-bit endoscalar lift used for $\zeta_q$; applying that lift to the IPA challenges would change $s(X)$.
+  If the nested circuit already holds the correctly bound $\F_q$ challenges, no further conversion is needed.
+- **A hint until decompression.**
+  Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; until a check constrains $y_q$, a prover may commit any polynomial.
+  The zero polynomial's commitment is the identity, which the walk cannot take, so the placeholder must not be zero.
+- **A native consumer of $\cm_{f_q}$.**
+  Decompression's native half uses $\cm_{f_q}$ as $G'$, but only the walk's circuits load `PointsChildren`.
+  It would read the point from the native unified instance, which `bind_endoscalar` already exports the walk's points into; decompression adds that export with its consumer.
+- **Not a header slot.**
+  Letting the parent reopen $f_q$ as an `L` or `R` slot would cost two more native walk points per step, two more stash equalities, and the children's $\F_q$ polynomials in every proof, for a use the aggregator does not have.

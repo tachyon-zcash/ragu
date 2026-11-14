@@ -267,8 +267,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        header::NUM_ONLINE_POLYNOMIALS,
-        internal::online::NUM_ONLINE_QUERIES,
+        header::NUM_ONLINE_FP_POLYS,
+        internal::online::NUM_ONLINE_FP_QUERIES,
         profile::{Shape, Standard},
     };
 
@@ -289,6 +289,7 @@ mod tests {
                 nested_points: 117,
                 nested_steps: 29,
                 nested_rx: 43,
+                online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
             }
@@ -303,11 +304,11 @@ mod tests {
         // online openings; the bridge alpha and nine challenges; one
         // circuit index. The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
-            let polynomials = Shape::of::<Standard>().polynomials() + NUM_ONLINE_POLYNOMIALS;
+            let polynomials = Shape::of::<Standard>().polynomials() + NUM_ONLINE_FP_POLYS;
             polynomials * R::num_coeffs() * 32
                 + (polynomials + 1) * 32
                 + 2 * H * 32
-                + 2 * NUM_ONLINE_QUERIES * 32
+                + 2 * NUM_ONLINE_FP_QUERIES * 32
                 + 10 * 32
                 + 4
         }
@@ -331,7 +332,7 @@ mod tests {
         // circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (102 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (102 + 27 + 2 * NUM_ONLINE_FP_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

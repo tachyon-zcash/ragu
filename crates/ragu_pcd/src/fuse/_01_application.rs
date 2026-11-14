@@ -86,9 +86,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 ))
             })
             .collect::<Result<_>>()?;
-        builder.set_online_polynomials(own.try_into().unwrap_or_else(|_| {
-            unreachable!("the step returned NUM_ONLINE_POLYNOMIALS polynomials")
-        }));
+        builder.set_online_polynomials(
+            own.try_into().unwrap_or_else(|_| {
+                unreachable!("the step returned NUM_ONLINE_FP_POLYS polynomials")
+            }),
+        );
 
         let staged = prepared.staged();
         if staged.len() != S::NUM_STAGED {

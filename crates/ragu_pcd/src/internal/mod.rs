@@ -31,6 +31,7 @@ pub mod ky;
 pub mod native;
 pub mod nested;
 pub mod online;
+pub mod online_fq;
 pub mod transcript;
 
 /// Identifies which of the two child proofs a component came from.

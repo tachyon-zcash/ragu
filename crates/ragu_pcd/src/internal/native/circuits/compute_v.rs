@@ -713,7 +713,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
         (&eval.registry_xy, query.fixed_registry.get(id), d.internal.get(id))
     }))
     // The online openings, in slot order.
-    .chain((0..online::NUM_ONLINE_QUERIES).map(move |i| {
+    .chain((0..online::NUM_ONLINE_FP_QUERIES).map(move |i| {
         (&eval.online[i], &query.online[i].y, &d.online[i])
     }))
 }

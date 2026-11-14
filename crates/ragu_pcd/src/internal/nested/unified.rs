@@ -45,19 +45,19 @@ use ragu_primitives::{
 };
 use udon::curve::EndomorphismAffine as Affine;
 
-use crate::internal::{native::unified::Slot, online::NUM_ONLINE_POLYNOMIALS};
+use crate::internal::{native::unified::Slot, online::NUM_ONLINE_FP_POLYS};
 
 /// The host-curve commitments the instance exports, in [`Write`] order:
 /// the fourteen stage commitments, the step's own online commitments and
 /// its application stage's.
-pub const NUM_EXPORTED: usize = 15 + NUM_ONLINE_POLYNOMIALS;
+pub const NUM_EXPORTED: usize = 15 + NUM_ONLINE_FP_POLYS;
 
 // The exported lists (the proof's, the builder's, the compressed instance's,
 // nested collapse's held commitments and a child's stashed copies) spell
 // out the online commitments slot by slot, as `[0]` and `[1]`. A change to
 // the slot count must rewrite them, in the walk's order.
 const _: () = assert!(
-    NUM_ONLINE_POLYNOMIALS == 2,
+    NUM_ONLINE_FP_POLYS == 2,
     "the exported commitment lists spell out two online slots"
 );
 

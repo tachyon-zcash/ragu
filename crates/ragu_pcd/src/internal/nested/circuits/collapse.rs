@@ -75,7 +75,7 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use super::common;
 use crate::{
-    header::NUM_ONLINE_POLYNOMIALS,
+    header::NUM_ONLINE_FP_POLYS,
     internal::{
         fold_revdot, ky,
         nested::{
@@ -176,7 +176,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // the one the preamble holds and w absorbed.
         stages.bridge_hash.o1.enforce_equal(
             dr,
-            &stages.preamble.online_commitments[NUM_ONLINE_POLYNOMIALS - 1],
+            &stages.preamble.online_commitments[NUM_ONLINE_FP_POLYS - 1],
         )?;
 
         let exported = unified.exported.receive(dr, allocator)?;

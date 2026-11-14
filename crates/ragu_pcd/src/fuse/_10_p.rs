@@ -103,7 +103,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_xy: builder.nested_registry_xy_commitment(),
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
-            .chain(batch.commitments(current))
+            .chain(batch.commitments(current, builder.online_fq_commitments()))
             .collect();
         assert_eq!(
             points.len(),

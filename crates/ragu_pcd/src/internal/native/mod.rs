@@ -33,9 +33,9 @@ use crate::{
     step,
 };
 
-/// The nested-curve points the native endoscaling walks into $P_n$: the
-/// nested batch's commitments, in [`nested::pcs::Batch::evaluated`] order
-/// after $f_n$'s.
+/// The nested-curve points the native endoscaling walks into $P_n$ in the
+/// standard profile: the nested batch's commitments, in
+/// [`nested::pcs::Batch::evaluated`] order after $f_n$'s.
 pub const NUM_ENDOSCALING_POINTS: usize = nested::pcs::NUM_BATCHED_POINTS;
 
 /// Length type for the nested-curve points the native endoscaling walks into

@@ -14,6 +14,8 @@
 //! nested-curve commitment enters the native points stage committed before
 //! $u$ (see `_08_f`).
 
+use alloc::vec::Vec;
+
 use ragu_circuits::{polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
@@ -23,7 +25,7 @@ use udon::{fft::bit_reverse, field::Field};
 use super::_04_inner_error::{NestedRegistryWy, RegistryWy};
 use crate::{
     Application, Proof,
-    internal::{native, nested},
+    internal::{native, nested, online_fq},
     multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -182,11 +184,29 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ),
         );
 
+        // The value of each online Fq polynomial at its opening point.
+        let online_fq_point = online_fq::point(w);
+        let online_fq = FixedVec::try_from(
+            builder
+                .online_fq_polynomials()
+                .iter()
+                .map(|poly| {
+                    let value = B::sparse_eval(poly, online_fq_point);
+                    // Test hook: this runs on the thread that calls `fuse`,
+                    // outside its parallel jobs, as the hook's thread-local
+                    // requires.
+                    #[cfg(test)]
+                    let value = crate::online_fq_tests::query_value(value);
+                    value
+                })
+                .collect::<Vec<_>>(),
+        )?;
         let nested_query = nested::stages::query::Evaluations {
             fixed_registry,
             registry_wxy,
             left: left_witness?,
             right: right_witness?,
+            online_fq,
         };
 
         builder.set_nested_registry_xy_poly(registry_xy_poly);

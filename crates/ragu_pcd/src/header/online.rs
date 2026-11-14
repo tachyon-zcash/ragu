@@ -3,7 +3,8 @@
 
 use core::any::TypeId;
 
-/// The number of online polynomial slots stored in each [`Proof`](crate::Proof).
+/// The number of online polynomial slots over the circuit field stored in
+/// each [`Proof`](crate::Proof).
 /// Their commitments are associated with the output header and exposed by
 /// [`Pcd::commitments`](crate::Pcd::commitments); the [`Header`] trait
 /// defines the field encoding separately.
@@ -48,7 +49,18 @@ use core::any::TypeId;
 /// statement extension's contract.
 ///
 /// [`Header`]: super::Header
-pub const NUM_ONLINE_POLYNOMIALS: usize = 2;
+pub const NUM_ONLINE_FP_POLYS: usize = 2;
+
+/// The maximum number of online polynomials over the scalar field that a
+/// step commits.
+///
+/// Such a polynomial belongs to the step that commits it. The step commits
+/// it before its challenge is drawn, and the step's nested batch opens it.
+/// The step does not export it, so a parent never opens it. Only a profile
+/// that asks for the slot has it; see
+/// [`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS),
+/// whose slots hold a placeholder until decompression lands.
+pub const NUM_ONLINE_FQ_POLYS: usize = 1;
 
 /// A kind of online polynomial, identified by a unit type.
 ///
@@ -107,7 +119,7 @@ mod slot_sealed {
 
 /// The online polynomials a header's proofs carry, one entry per slot.
 ///
-/// Implemented for tuples of [`NUM_ONLINE_POLYNOMIALS`] [`OnlinePolySlot`]s,
+/// Implemented for tuples of [`NUM_ONLINE_FP_POLYS`] [`OnlinePolySlot`]s,
 /// as [`Header::OnlinePolyCommit`].
 ///
 /// # Reading a list
@@ -186,9 +198,9 @@ pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {
 }
 
 // The tuple impls below and the `Has` impls give one entry per slot. They
-// must change together with `NUM_ONLINE_POLYNOMIALS`.
+// must change together with `NUM_ONLINE_FP_POLYS`.
 const _: () = assert!(
-    NUM_ONLINE_POLYNOMIALS == 2,
+    NUM_ONLINE_FP_POLYS == 2,
     "OnlinePolyCommit and Has are implemented for pairs only"
 );
 
@@ -212,7 +224,7 @@ mod sealed {
 /// keeping the same non-padding kind in both slots, and [`Padding`] is never
 /// found. The sealed trait prevents callers from inventing a lookup.
 pub trait Has<P, I>: has_sealed::Sealed<P, I> + OnlinePolyCommit {
-    /// The index of the slot, below [`NUM_ONLINE_POLYNOMIALS`].
+    /// The index of the slot, below [`NUM_ONLINE_FP_POLYS`].
     const INDEX: usize;
 }
 

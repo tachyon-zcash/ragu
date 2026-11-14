@@ -14,7 +14,7 @@
 //! | stage | holds | fixed before | carried by |
 //! |---|---|---|---|
 //! | [`BindingStage`] | the children's bridge and challenge-stage commitments, $A_n$, $B_n$, `registry_xy`, $P_n$ and nested extension stages | $w$ | `preamble` bridge |
-//! | [`ChildrenStage`] | the rest of the children's nested commitments | $w$ | `preamble` bridge |
+//! | [`ChildrenStage`] | the rest of the children's nested commitments, and the step's own online Fq commitments | $w$ | `preamble` bridge |
 //! | [`RegistryWxStage`] | $m_n(w_n, x_{i,n}, Y)$ | $y$ | `s_prime` bridge |
 //! | [`AbStage`] | $m_n(w_n, X, y_n)$, $A_n$, $B_n$ | $x$ | `ab` bridge |
 //! | [`FStage`] | $m_n(W, x_n, y_n)$, $F_n$ | $u$ | `f` bridge |
@@ -67,7 +67,8 @@ use crate::{
     internal::{
         Side,
         endoscalar::{InputsLen, PointsWitness},
-        nested,
+        nested::{self, pcs::NUM_CURRENT_POINTS},
+        online_fq::FqPolysLen,
     },
     profile::Profile,
 };
@@ -78,7 +79,7 @@ pub type NumInputs<P> = InputsLen<NumPoints<P>>;
 /// The number of points a child contributes to the walk in profile `P`:
 /// every nested rx commitment, then $a_n$, $b_n$, `registry_xy` and $P_n$.
 pub fn num_child_points<P: Profile>() -> usize {
-    nested::RxIndex::num::<P>() + 4
+    nested::pcs::num_child_points(nested::RxIndex::num::<P>())
 }
 
 /// Length type for a child's bridge commitments, in transcript order.
@@ -106,9 +107,6 @@ impl<P: Profile> Len for ChildrenLen<P> {
         num_children_points::<P>()
     }
 }
-
-/// The number of the current step's points at the walk's tail.
-const NUM_CURRENT_POINTS: usize = 6;
 
 /// The position of a child's $P_n$ among its points: the last, as
 /// [`nested::pcs::child_commitments`] orders them.
@@ -151,13 +149,16 @@ pub enum InputSource {
     AbB,
     /// The `registry_xy` point of [`FStage`].
     RegistryXy,
+    /// The step's own online Fq commitment, by index, in [`ChildrenStage`].
+    OnlineFq(usize),
 }
 
 /// The source of the walk's `i`-th input (the initial $F_n$ aside), in the
 /// order [`nested::pcs::Batch::commitments`] fixes: for each child its
 /// nested rx commitments in [`nested::RxIndex::all`] order, then its $a_n$,
 /// $b_n$, `registry_xy` and $P_n$; then the current step's two
-/// `registry_wx`, `registry_wy`, $A_n$, $B_n$ and `registry_xy`.
+/// `registry_wx`, `registry_wy`, $A_n$, $B_n$ and `registry_xy`; then the
+/// step's own online Fq commitments (see [`online_fq`](crate::internal::online_fq)).
 ///
 /// # Panics
 ///
@@ -210,13 +211,21 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
         };
         return InputSource::Children(base + offset);
     }
+    // The current step's points, in the order of
+    // `nested::pcs::CurrentCommitments::into_array`.
+    const CURRENT: [InputSource; NUM_CURRENT_POINTS] = [
+        InputSource::RegistryWx(0),
+        InputSource::RegistryWx(1),
+        InputSource::RegistryWy,
+        InputSource::AbA,
+        InputSource::AbB,
+        InputSource::RegistryXy,
+    ];
     match i - 2 * num_child_points {
-        0 => InputSource::RegistryWx(0),
-        1 => InputSource::RegistryWx(1),
-        2 => InputSource::RegistryWy,
-        3 => InputSource::AbA,
-        4 => InputSource::AbB,
-        5 => InputSource::RegistryXy,
+        j if j < NUM_CURRENT_POINTS => CURRENT[j],
+        j if j - NUM_CURRENT_POINTS < P::ONLINE_FQ_POLYS => {
+            InputSource::OnlineFq(j - NUM_CURRENT_POINTS)
+        }
         _ => panic!("input {i} is past the walk"),
     }
 }
@@ -247,6 +256,8 @@ pub struct BindingWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct ChildrenWitness<C: Affine, P: Profile> {
     pub points: FixedVec<C, ChildrenLen<P>>,
+    /// The step's own online Fq commitments.
+    pub online_fq: FixedVec<C, FqPolysLen<P>>,
 }
 
 /// Witness of [`RegistryWxStage`].
@@ -302,14 +313,17 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 
 /// Splits the two children's points, each in the order
 /// [`nested::pcs::child_commitments`] fixes, into the binding and children
-/// stages' witnesses.
+/// stages' witnesses. The children stage also holds `online_fq`, the
+/// step's own online Fq commitments.
 ///
 /// # Panics
 ///
-/// Panics if either child has other than [`num_child_points`] points.
+/// Panics if either child has other than [`num_child_points`] points, or
+/// if `online_fq` has other than [`Profile::ONLINE_FQ_POLYS`] points.
 pub fn children_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
+    online_fq: &[C],
 ) -> (BindingWitness<C, P>, ChildrenWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
@@ -343,6 +357,7 @@ pub fn children_witnesses<C: Affine, P: Profile>(
         },
         ChildrenWitness {
             points: FixedVec::new(points).expect("num_children_points points"),
+            online_fq: FixedVec::new(online_fq.to_vec()).expect("ONLINE_FQ_POLYS points"),
         },
     )
 }
@@ -367,16 +382,12 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     pub fn from_walk(points: &[C]) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
-        assert_eq!(
-            NumPoints::<P>::len(),
-            1 + 2 * num_child_points + NUM_CURRENT_POINTS,
-            "the walk's layout does not match the nested batch"
-        );
+        let current = &points[1 + 2 * num_child_points..];
         let (binding, children) = children_witnesses::<C, P>(
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
+            &current[NUM_CURRENT_POINTS..],
         );
-        let current = &points[1 + 2 * num_child_points..];
         Self {
             binding,
             children,
@@ -417,6 +428,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::AbA => self.ab.a,
             InputSource::AbB => self.ab.b,
             InputSource::RegistryXy => self.f.registry_xy,
+            InputSource::OnlineFq(j) => self.children.online_fq[j],
         }
     }
 
@@ -482,6 +494,9 @@ pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 pub struct Children<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
+    /// The step's own online Fq commitments.
+    #[ragu(gadget)]
+    pub online_fq: FixedVec<Point<'dr, D, C>, FqPolysLen<P>>,
 }
 
 /// Output gadget of [`RegistryWxStage`].
@@ -567,6 +582,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::AbA => &self.ab.a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
+            InputSource::OnlineFq(j) => &self.children.online_fq[j],
         }
     }
 }
@@ -639,7 +655,8 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     }
 }
 
-/// The rest of the children's nested commitments, committed before $w$.
+/// The rest of the children's nested commitments and the step's own online
+/// Fq commitments, committed before $w$.
 #[derive(Default)]
 pub struct ChildrenStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
@@ -649,7 +666,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for ChildrenStag
     type OutputKind = Kind![C::Base; Children<'_, _, C, P>];
 
     fn values() -> usize {
-        2 * num_children_points::<P>()
+        2 * (num_children_points::<P>() + P::ONLINE_FQ_POLYS)
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -663,6 +680,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for ChildrenStag
         Ok(Children {
             points: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.points[i]))
+            })?,
+            online_fq: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_fq[i]))
             })?,
         })
     }

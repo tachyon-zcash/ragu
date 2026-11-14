@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
-- Online polynomial oracles: every proof stores `NUM_ONLINE_POLYNOMIALS`
+- Online polynomial oracles: every proof stores `NUM_ONLINE_FP_POLYS`
   polynomials, a parameter of the protocol rather than of the header type; a
   header lists the kinds of polynomial its proofs carry, unit types
   implementing `OnlinePoly` or `Padding`, as `Header::OnlinePolyCommit`; a
@@ -40,8 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   online commitment, and `Application::bridge_hash` computes it outside the
   circuit, for hash chains over polynomial commitments. A header whose steps
   read it keeps the hashed kind last in its `OnlinePolyCommit`.
+- Online Fq polynomials: a profile that sets `Profile::ONLINE_FQ_POLYS`, at
+  most `NUM_ONLINE_FQ_POLYS`, gives each step its own online polynomial over
+  the scalar field. The step commits it before its challenge, and the nested
+  `compute_v` circuit opens it at the lift of that challenge and folds the
+  opening in the step's own nested batch. The step does not export it.
+  Until decompression lands, the slot holds a fixed placeholder polynomial,
+  no circuit constrains the opened value, and no built-in profile sets the
+  count; the standard profile does not change.
 
 ### Changed
+
+- `NUM_ONLINE_POLYNOMIALS` and `NUM_ONLINE_QUERIES` are renamed to
+  `NUM_ONLINE_FP_POLYS` and `NUM_ONLINE_FP_QUERIES`. `Shape` gains
+  `online_fq`, and `Shape::solve` takes the count of online Fq polynomials.
 
 - `Step::witness` takes the step's `Oracles` after the driver, and the
   application circuit's instance is prefixed by the challenge and the six
