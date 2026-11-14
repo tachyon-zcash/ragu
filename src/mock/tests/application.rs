@@ -761,7 +761,7 @@ impl<const I: usize, const STAGED: usize> Step<Pasta> for Seed<I, STAGED> {
         let y = oracles.output(Value).open(dr, &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
-        let stamp = oracles.bridge_hash()[0].clone();
+        let stamp = oracles.bridge_hash().x().clone();
         let data = stamp.value().map(|v| *v);
         Ok((
             (
@@ -1059,7 +1059,7 @@ impl Step<Pasta> for HookOrder {
         let y = oracles.output(Value).open(dr, &zeta)?;
         let expected = oracles.zeta().sub(dr, &oracles.staged()[0]);
         y.enforce_equal(dr, &expected)?;
-        let stamp = oracles.bridge_hash()[0].clone();
+        let stamp = oracles.bridge_hash().x().clone();
         let data = stamp.value().map(|v| *v);
         Ok((
             (

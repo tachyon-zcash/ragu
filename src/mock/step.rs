@@ -14,7 +14,7 @@ use udon::field::Field;
 use super::header::{HEADER_POLYNOMIALS, Has, Header};
 
 pub mod oracles;
-pub use oracles::{Oracle, Oracles};
+pub use oracles::{BridgeHash, Oracle, Oracles};
 
 /// Mirrors `ragu_pcd::step::Prepared`.
 pub struct Prepared<F, O> {

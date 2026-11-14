@@ -6,6 +6,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
+pub use ragu_pcd::step::BridgeHash;
 use ragu_primitives::{Element, GadgetExt as _};
 use udon::field::Field;
 
@@ -18,7 +19,7 @@ use super::{
 /// Mirrors `ragu_pcd::step::Oracles`.
 pub struct Oracles<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
     zeta: Element<'dr, D>,
-    bridge_hash: [Element<'dr, D>; 2],
+    bridge_hash: BridgeHash<'dr, D>,
     staged: Vec<Element<'dr, D>>,
     slots: DriverValue<D, [&'a [Vec<D::F>; HEADER_POLYNOMIALS]; 3]>,
     queries: [bool; 3 * HEADER_POLYNOMIALS],
@@ -36,7 +37,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         let mut alloc = |value| Element::alloc(dr, &mut (), D::just(|| value));
         Ok(Self {
             zeta: alloc(zeta)?,
-            bridge_hash: [alloc(bridge_hash[0])?, alloc(bridge_hash[1])?],
+            bridge_hash: BridgeHash::new(alloc(bridge_hash[0])?, alloc(bridge_hash[1])?),
             staged: staged.into_iter().map(alloc).collect::<Result<_>>()?,
             slots: D::just(|| slots),
             queries: [false; 3 * HEADER_POLYNOMIALS],
@@ -48,7 +49,8 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         &self.zeta
     }
 
-    pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
+    /// Mirrors `ragu_pcd::step::Oracles::bridge_hash`.
+    pub fn bridge_hash(&self) -> &BridgeHash<'dr, D> {
         &self.bridge_hash
     }
 
