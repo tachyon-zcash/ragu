@@ -77,6 +77,23 @@ fn registry_tags_check_manifest_and_bind_the_mock_setup() -> Result<()> {
     Ok(())
 }
 
+/// The setup binds the registered steps, as the real registries' tags do:
+/// an application with the same steps accepts another's proofs, and one with
+/// different steps rejects them.
+#[test]
+fn different_steps_are_different_setups() -> Result<()> {
+    let app = test_builder().register(SeedStep)?.finalize(test_params())?;
+    let same = test_builder().register(SeedStep)?.finalize(test_params())?;
+    let other = test_builder()
+        .register(PointSeedStep)?
+        .finalize(test_params())?;
+    let mut rng = StdRng::seed_from_u64(5);
+    let bootstrap = app.bootstrap_proof().clone().carry::<()>(());
+    assert!(same.verify_uncompressed(&bootstrap, &mut rng)?);
+    assert!(!other.verify_uncompressed(&bootstrap, &mut rng)?);
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ContextProfile;
 
