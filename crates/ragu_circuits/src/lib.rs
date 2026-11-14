@@ -120,6 +120,13 @@ pub(crate) trait DriverScope<S> {
 /// such as type parameters, constants, and iterator lengths. Values carried
 /// through [`DriverValue`] may determine witness generation and auxiliary data,
 /// but not which constraints are emitted.
+///
+/// The same constraints must be emitted on every walk of the circuit,
+/// whichever driver performs it. Metrics, traces, the evaluations of the
+/// wiring polynomial and the registry's
+/// [tag](registry::Tag#trusted-circuit-code) each come from a separate walk,
+/// and describe one constraint system only if the walks agree. Nothing
+/// enforces this; it is part of what circuit code is trusted for.
 pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// The type of data that is needed to construct the expected output of this
     /// circuit.
@@ -214,6 +221,18 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     fn sy(&self, y: F, floor_plan: &[floor_planner::ConstraintSegment])
     -> sparse::Polynomial<F, R>;
 
+    /// Writes down $s(X, Y)$ itself as its nonzero monomials, for the
+    /// [`Registry`] to hash into its tag.
+    ///
+    /// Unlike `sxy`/`sx`/`sy`, a masking polynomial writes down its complete
+    /// polynomial here, shared $S\_{\text{global}}$ term included.
+    ///
+    /// [`Registry`]: registry::Registry
+    fn monomials(
+        &self,
+        floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> wiring::monomials::Monomials<F>;
+
     /// Returns per-segment constraint records in DFS emission order.
     ///
     /// These records serve as input to [`floor_planner::floor_plan`] for
@@ -292,6 +311,13 @@ where
             floor_plan: &[floor_planner::ConstraintSegment],
         ) -> sparse::Polynomial<F, R> {
             wiring::sy::eval(&self.circuit, y, floor_plan)
+                .expect("should succeed if metrics succeeded")
+        }
+        fn monomials(
+            &self,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> wiring::monomials::Monomials<F> {
+            wiring::monomials::eval::<_, _, R>(&self.circuit, floor_plan)
                 .expect("should succeed if metrics succeeded")
         }
         fn segment_records(&self) -> &[SegmentRecord] {

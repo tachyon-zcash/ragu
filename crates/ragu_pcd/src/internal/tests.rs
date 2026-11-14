@@ -894,7 +894,24 @@ fn supplied_tags_reach_both_registries() -> Result<()> {
     Ok(())
 }
 
-/// Verifies the native registry uses the fixed tag enabled by the testing feature.
+/// Both tags are derived from the registered circuits: the same application
+/// derives the same tags, and one more application step changes the native
+/// registry's tag.
+#[test]
+fn tags_are_derived_from_the_registries() -> Result<()> {
+    let application = |steps| {
+        ApplicationBuilder::<Pasta, R, 4>::new()
+            .register_dummy_circuits(steps)?
+            .finalize(crate::pasta::baked())
+    };
+    let (first, again, larger) = (application(1)?, application(1)?, application(2)?);
+    assert_eq!(first.native_registry.tag(), again.native_registry.tag());
+    assert_eq!(first.nested_registry.tag(), again.nested_registry.tag());
+    assert_ne!(first.native_registry.tag(), larger.native_registry.tag());
+    Ok(())
+}
+
+/// Pins the native registry's derived tag, and with it the native circuits.
 #[test]
 fn test_native_registry_tag() {
     let pasta = crate::pasta::baked();
@@ -906,7 +923,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x247e382a1523800d0fc7bccd9b0e1e57eecd7a9758c4b7537f4ed76f5f54fe43"
+        "0x0c3a1bc6234a87117c95c2df1047d70343b36c3f57863eec9ba89066af61edc0"
     ));
 
     assert_eq!(
@@ -916,7 +933,7 @@ fn test_native_registry_tag() {
     );
 }
 
-/// Verifies the nested registry uses the fixed tag enabled by the testing feature.
+/// Pins the nested registry's derived tag, and with it the nested circuits.
 #[test]
 fn test_nested_registry_tag() {
     let pasta = crate::pasta::baked();
@@ -928,7 +945,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x009ad8ef87fe4e7dc6e51df8807db0f783f39978e29787ab3e00a28c15d2bdbd"
+        "0x1fd75b60fe0dd59838c4f77e1412f7b6b79055a11045b8b360c395f6f741e1a1"
     ));
 
     assert_eq!(
@@ -936,6 +953,64 @@ fn test_nested_registry_tag() {
         expected,
         "Nested registry tag changed unexpectedly!"
     );
+}
+
+/// Asserts that what a registry's tag hashed is what the registry evaluates.
+///
+/// The tag hashes the monomial driver's walk of each circuit, and the
+/// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
+/// point drawn afresh on every run, the hashed monomials with the tag term
+/// equal `sxy` at every domain point, and `sx` and `sy` at the domain point
+/// of every registered circuit.
+fn assert_hashed_monomials_are_evaluated<F: Field, Rk: Rank>(
+    registry: &ragu_circuits::registry::Registry<'_, F, Rk>,
+    name: &str,
+) {
+    use ragu_circuits::registry::CircuitIndex;
+    use rand::Rng;
+    use udon::fft::bit_reverse;
+
+    let x = F::random(|bytes| rand::rng().fill_bytes(bytes));
+    let y = F::random(|bytes| rand::rng().fill_bytes(bytes));
+    let hashed = registry.hashed_wxy_over_domain(x, y);
+
+    assert_eq!(
+        hashed,
+        registry.wxy_over_domain(x, y),
+        "{name} registry, sxy"
+    );
+    for i in 0..registry.num_circuits() {
+        let w = CircuitIndex::new(i).omega_j::<F>();
+        let hashed = hashed[bit_reverse(i, registry.log2_domain())];
+        assert_eq!(
+            hashed,
+            registry.wx(w, x).eval(y),
+            "{name} registry, sx, circuit {i}"
+        );
+        assert_eq!(
+            hashed,
+            registry.wy(w, y).eval(x),
+            "{name} registry, sy, circuit {i}"
+        );
+    }
+}
+
+/// The registries' tags hash the polynomials the registries evaluate: for
+/// every circuit the application registers, native and nested, the monomial
+/// driver's walk agrees with the walks of all three wiring drivers. A circuit
+/// that emitted different constraints on different walks would fail here.
+#[test]
+fn registry_tags_hash_the_evaluated_polynomials() {
+    let pasta = crate::pasta::baked();
+
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+        .register_dummy_circuits(NUM_APP_STEPS)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+
+    assert_hashed_monomials_are_evaluated(&app.native_registry, "native");
+    assert_hashed_monomials_are_evaluated(&app.nested_registry, "nested");
 }
 
 /// Helper test to print current registry tags in copy-pasteable format.
