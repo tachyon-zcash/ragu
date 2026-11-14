@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `final_stage_mask` lay out and mask a stage whose size is fixed when the
   registry is built rather than in the type, with the rank's bounds checked.
 - Added iteration over the stored coefficients of sparse polynomials.
-- Added `Tag::from_beacon` and `RegistryBuilder::with_tag` for caller-supplied
-  tags chosen after the circuits are fixed, which replace the derived tag.
+- Added `RegistryBuilder::with_tag` under `test-utils`, a test seam that
+  installs a tag in place of the derived one.
 
 ### Changed
 

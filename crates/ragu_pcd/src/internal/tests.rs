@@ -881,19 +881,6 @@ fn test_non_step_slots_reject_application_instances() {
     );
 }
 
-#[test]
-fn supplied_tags_reach_both_registries() -> Result<()> {
-    let tags = RegistryTags::<Pasta>::from_beacon(&[0x42; 32], &[0x24; 20]);
-    let native = tags.native.value();
-    let nested = tags.nested.value();
-    let app = ApplicationBuilder::<Pasta, R, 4>::new()
-        .with_registry_tags(tags, &[0x24; 20])?
-        .finalize(crate::pasta::baked())?;
-    assert_eq!(app.native_registry.tag(), native);
-    assert_eq!(app.nested_registry.tag(), nested);
-    Ok(())
-}
-
 /// Both tags are derived from the registered circuits: the same application
 /// derives the same tags, and one more application step changes the native
 /// registry's tag.
@@ -1443,34 +1430,21 @@ fn test_extension_overflowing_the_fuse_is_rejected() {
 fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
-    const MANIFEST: &[u8] = &[0x94; 32];
     let params = crate::pasta::baked();
-    let tags = || RegistryTags::from_beacon(&[0x42; 32], MANIFEST);
-    let standard = ApplicationBuilder::<Pasta, R, 96>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 96>::new().finalize(params);
     assert!(standard.is_ok(), "96 fields must fit: {:?}", standard.err());
-    let oversized = ApplicationBuilder::<Pasta, R, 97>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 97>::new().finalize(params);
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2048 })
     ));
 
     type Extended = Profiled<Pasta, Decompressing>;
-    let tags = || RegistryTags::<Extended>::from_beacon(&[0x42; 32], MANIFEST);
-    let extended = ApplicationBuilder::<Extended, R, 94>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize_with(params, Default::default());
+    let extended =
+        ApplicationBuilder::<Extended, R, 94>::new().finalize_with(params, Default::default());
     assert!(extended.is_ok(), "94 fields must fit: {:?}", extended.err());
-    let oversized = ApplicationBuilder::<Extended, R, 95>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize_with(params, Default::default());
+    let oversized =
+        ApplicationBuilder::<Extended, R, 95>::new().finalize_with(params, Default::default());
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2048 })

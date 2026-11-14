@@ -6,13 +6,13 @@ use core::{any::TypeId, marker::PhantomData};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{
     Cycle, Error, FixedGenerators as _, Result, drivers::Driver as _, maybe::Maybe as _,
 };
 use ragu_pcd::{
-    RegistryTags, SelectableBackend,
+    SelectableBackend,
     ipa::IpaCycle,
     profile::{Profile, ProfiledCycle},
 };
@@ -107,21 +107,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
     }
 
-    pub fn with_registry_tags(
-        mut self,
-        tags: RegistryTags<C>,
-        expected_manifest_digest: &[u8],
-    ) -> Result<Self> {
-        let native = Tag::new(tags.native());
-        let nested = Tag::new(tags.nested());
-        // Reuse the real API's check of the opaque manifest association.
-        let _ = ragu_pcd::ApplicationBuilder::<'params, C, R, HEADER_SIZE, B>::new()
-            .with_registry_tags(tags, expected_manifest_digest)?;
-        self.native_registry = self.native_registry.with_tag(native);
-        self.nested_registry = self.nested_registry.with_tag(nested);
-        Ok(self)
-    }
-
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
         let header = Encoded::<_, (), HEADER_SIZE>::from_gadget(());
         if proof.step_index != Index::internal(1).get()
@@ -204,10 +189,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "invalid header size, rank, or insufficient generators".into(),
             ));
         }
-        // Registries are placeholders: the mock does not compile step circuits.
-        // Finalizing them derives their tags as the real registries do, from
-        // the circuits they hold, which here are none; the setup hash binds the
-        // registered steps instead.
+        // Registries are placeholders: the mock compiles neither the step
+        // circuits nor the profile's internal circuits. Finalizing them derives
+        // their tags as the real registries do, from the circuits they hold,
+        // which here are none; the setup hash binds the registered steps and
+        // the profile's name instead. The name stands in for the internal
+        // circuits, so mock profiles are separate setups even while the real
+        // standard and aggregator profiles register the same circuits.
         let native_registry = self.native_registry.finalize()?;
         let nested_registry = self.nested_registry.finalize()?;
         let polynomials = core::array::from_fn(|_| vec![C::CircuitField::ONE]);

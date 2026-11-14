@@ -17,7 +17,7 @@ use ragu_core::{
 use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
-    ApplicationBuilder, Proof, RegistryTags,
+    ApplicationBuilder, Proof,
     fuzzing::corrupt::{
         Binding, Corruption, NativeCommitment, NativeRx, NestedCommitment, NestedRx, RxComponent,
     },
@@ -28,7 +28,6 @@ use crate::{
 };
 
 const HEADER_SIZE: usize = 4;
-const MANIFEST: &[u8] = &[0x27; 32];
 type C<P> = Profiled<Pasta, P>;
 type Rk = R<14>;
 
@@ -100,7 +99,6 @@ where
     let bits = [true, false, true, true];
     let app = ApplicationBuilder::<C<P>, Rk, HEADER_SIZE>::new()
         .register(UnitStep)?
-        .with_registry_tags(RegistryTags::from_beacon(&[0x42; 32], MANIFEST), MANIFEST)?
         .finalize_with(
             params,
             CrossingContext {

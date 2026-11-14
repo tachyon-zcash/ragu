@@ -71,7 +71,6 @@ _test_skip := (
   "--skip bootstrap_exempts_child_claims_with_consistent_commitments " +
   "--skip rerandomization_flow " +
   "--skip multiple_rerandomizations_all_verify " +
-  "--skip beacon_tags_support_recursive_proofs " +
   "--skip both_profiles_prove_in_one_binary"
 )
 
