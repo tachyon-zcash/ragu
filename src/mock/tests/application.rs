@@ -936,20 +936,15 @@ fn polynomial_flow_and_header_binding() -> Result<()> {
     Ok(())
 }
 
-/// Coordinates of a nested-curve point.
-fn bridge_hash_coordinates() -> [Fp; 2] {
-    let (x, y) = EpAffine::generator().coordinates().unwrap();
-    [x, y]
-}
-
 #[test]
 fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
     let mut dr = Simulator::<Fp>::new();
     let polynomials = core::array::from_fn(|_| vec![Fp::ONE, Fp::ONE]);
+    let (x, y) = EpAffine::generator().coordinates().unwrap();
     let mut oracles = Oracles::<_, Pasta, Merge>::alloc(
         &mut dr,
         Fp::from(3),
-        bridge_hash_coordinates(),
+        [x, y],
         Vec::new(),
         [&polynomials; 3],
     )?;
@@ -990,10 +985,11 @@ fn slot_queries_refuse_a_second_query_at_any_point() -> Result<()> {
 fn slot_query_limit_is_enforced_without_witness_values() -> Result<()> {
     let mut dr = core::marker::PhantomData::<Fp>;
     let polynomials = core::array::from_fn(|_| vec![Fp::ONE]);
+    let (x, y) = EpAffine::generator().coordinates().unwrap();
     let mut oracles = Oracles::<_, Pasta, Merge>::alloc(
         &mut dr,
         Fp::from(3),
-        bridge_hash_coordinates(),
+        [x, y],
         Vec::new(),
         [&polynomials; 3],
     )?;
