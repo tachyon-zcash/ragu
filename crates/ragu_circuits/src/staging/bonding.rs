@@ -34,6 +34,7 @@ use crate::{
     floor_planner::ConstraintSegment,
     into_wiring_object,
     polynomials::{Rank, sparse},
+    wiring::monomials::Monomials,
 };
 
 impl<F, R, S> MultiStage<F, R, S>
@@ -262,6 +263,12 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         correction.d.push(F::ONE);
         poly.sub_assign(&correction.build());
         poly
+    }
+
+    fn monomials(&self, floor_plan: &[ConstraintSegment]) -> Monomials<F> {
+        let mut monomials = self.0.monomials(floor_plan);
+        monomials.strip_one();
+        monomials
     }
 
     fn segment_records(&self) -> &[SegmentRecord] {

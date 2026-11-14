@@ -4,6 +4,7 @@ use udon::{field::Field, polynomial::geometric_sum};
 use crate::{
     WiringObject,
     polynomials::{Rank, sparse},
+    wiring::monomials::Monomials,
 };
 
 /// Evaluates the global stage mask polynomial $S\_{\text{global}}(X, Y)$ at
@@ -225,6 +226,15 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         _floor_plan: &[crate::floor_planner::ConstraintSegment],
     ) -> sparse::Polynomial<F, R> {
         self.notch_project(y)
+    }
+
+    /// Writes down the complete mask, $S\_{\text{global}} - \text{notch}$.
+    /// The mask is diagonal, each term being $c_k (XY)^k$, so its restriction
+    /// to $X = 1$ lists the coefficients $c_k$.
+    fn monomials(&self, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> Monomials<F> {
+        let mut restriction = global_project::<F, R>(F::ONE);
+        restriction += &self.notch_project(F::ONE);
+        Monomials::diagonal(restriction.iter_coeffs())
     }
 
     fn segment_records(&self) -> &[crate::SegmentRecord] {
@@ -630,6 +640,13 @@ mod tests {
                 let mut reconstructed = super::global_project::<Fp, R>(x);
                 reconstructed += &stage_mask.notch_project(x);
                 prop_assert_eq!(reconstructed.eval(y), sxy);
+
+                // The monomials read off the restriction to X = 1 are the ones
+                // the generic path writes down.
+                prop_assert_eq!(
+                    WiringObject::<Fp, R>::monomials(&stage_mask, &[]),
+                    stripped.monomials(&plan)
+                );
 
                 Ok(())
             };

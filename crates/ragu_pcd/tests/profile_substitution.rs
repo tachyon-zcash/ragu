@@ -4,22 +4,20 @@
 //! complete when either proof representation changes.
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::{
-    polynomials::{ProductionRank, R, Rank},
-    registry::Tag,
-};
+use ragu_circuits::polynomials::{ProductionRank, R, Rank};
 use ragu_core::{
     Cycle, Error, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
-    pasta::{Fp, Pasta},
+    pasta::{Fp, Fq, Pasta},
 };
 use ragu_primitives::{Element, GadgetExt, allocator::Standard as Allocator};
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 use super::{Proof, recursive_propagation_tests::support::Value};
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd, RegistryTags,
+    Application, ApplicationBuilder, CompressedProof, Pcd,
     compress::instance::Instance,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
@@ -27,8 +25,6 @@ use crate::{
 };
 
 const HEADER_SIZE: usize = 4;
-const SENDER_MANIFEST: &[u8] = &[0x24; 32];
-const RECEIVER_MANIFEST: &[u8] = &[0x25; 32];
 type C<P> = Profiled<Pasta, P>;
 type App<P, R> = Application<'static, C<P>, R, HEADER_SIZE>;
 type TestPcd<P> = Pcd<C<P>, ProductionRank, Value>;
@@ -344,23 +340,30 @@ impl Profile for Permissive {
         B: crate::SelectableBackend;
 }
 
+/// Builds the application, installing the given tags instead of the derived
+/// ones where supplied. The seam stands in for another setup: the derivation
+/// gives these circuits their own tags.
 fn application<P: Profile, Rk: Rank>(
-    tags: RegistryTags<C<P>>,
-    manifest: &[u8],
+    tags: (Option<Fp>, Option<Fq>),
     expected: Option<Fp>,
 ) -> Result<App<P, Rk>>
 where
     P::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
 {
-    ApplicationBuilder::<C<P>, Rk, HEADER_SIZE>::new()
+    let mut builder = ApplicationBuilder::<C<P>, Rk, HEADER_SIZE>::new()
         .register(Seed { expected })?
-        .register(Sum)?
-        .with_registry_tags(tags, manifest)?
-        .finalize(if Rk::RANK <= 13 {
-            crate::pasta::baked()
-        } else {
-            crate::pasta::baked_aggregator()
-        })
+        .register(Sum)?;
+    if let Some(native) = tags.0 {
+        builder = builder.with_native_tag(native);
+    }
+    if let Some(nested) = tags.1 {
+        builder = builder.with_nested_tag(nested);
+    }
+    builder.finalize(if Rk::RANK <= 13 {
+        crate::pasta::baked()
+    } else {
+        crate::pasta::baked_aggregator()
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -390,20 +393,25 @@ fn check_both_verifiers<P: Profile, Rk: Rank>(
     Ok(())
 }
 
+/// Submits the sender's payload to receivers of profile `T`: first one with
+/// the tags its registries derive, which accepts the payload exactly when
+/// `share_registries` says the two profiles register the same circuits; then
+/// ones whose tags differ from the sender's in either registry or both,
+/// standing in for another setup, which must reject it however it is reused.
 fn check_same_shape<S: Profile, T: Profile>(
     sender_constraint: Option<Fp>,
     receiver_constraint: Option<Fp>,
     foreign_value: Fp,
     local_value: Fp,
+    share_registries: bool,
 ) -> Result<()>
 where
     S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
     T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
-    let sender_tags = RegistryTags::<C<S>>::from_beacon(&[0x42; 32], SENDER_MANIFEST);
-    let (native_tag, nested_tag) = (sender_tags.native(), sender_tags.nested());
-    let sender = application::<S, ProductionRank>(sender_tags, SENDER_MANIFEST, sender_constraint)?;
+    let sender = application::<S, ProductionRank>((None, None), sender_constraint)?;
+    let (native_tag, nested_tag) = (sender.native_registry.tag(), sender.nested_registry.tag());
     let mut rng = StdRng::seed_from_u64(0x908_1501);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -416,30 +424,45 @@ where
     let compressed_source = sender.compress(&source, &mut rng)?;
     assert!(sender.verify_compressed(&compressed_source)?);
 
+    // Tags are derived from the registered circuits, so a receiver with its
+    // own derived tags holds the sender's registries exactly when the two
+    // profiles register the same circuits, and only then accepts the payload.
+    let derived = application::<T, ProductionRank>((None, None), receiver_constraint)?;
+    assert_eq!(
+        derived.native_registry.tag() == native_tag && derived.nested_registry.tag() == nested_tag,
+        share_registries,
+        "the profiles' registries"
+    );
+    let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
+        .carry::<Value>(foreign_value);
+    check_both_verifiers(&derived, &foreign, share_registries, &mut rng)?;
+    let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
+        .carry::<Value>(foreign_value);
+    assert_eq!(derived.verify_compressed(&compressed)?, share_registries);
+
     for changed in [
         DifferentTags::Both,
         DifferentTags::Native,
         DifferentTags::Nested,
     ] {
-        let mut tags = RegistryTags::<C<T>>::from_beacon(&[0x42; 32], RECEIVER_MANIFEST);
-        // Test-only mixed pairs isolate either tag while the profile types,
-        // manifests and proof payloads still differ. Production cannot make
-        // these pairs through the public RegistryTags API.
-        match changed {
-            DifferentTags::Both => {}
-            DifferentTags::Native => tags.nested = Tag::new(nested_tag),
-            DifferentTags::Nested => tags.native = Tag::new(native_tag),
-        }
+        // A receiving setup whose tags differ from the sender's in the given
+        // registries and agree in the others, whatever the derivation gives
+        // the receiver's own circuits: the test seam isolates either tag while
+        // the profile types and proof payloads still differ.
+        let tags = match changed {
+            DifferentTags::Both => (Some(native_tag + Fp::ONE), Some(nested_tag + Fq::ONE)),
+            DifferentTags::Native => (Some(native_tag + Fp::ONE), Some(nested_tag)),
+            DifferentTags::Nested => (Some(native_tag), Some(nested_tag + Fq::ONE)),
+        };
+        let receiver = application::<T, ProductionRank>(tags, receiver_constraint)?;
         assert_eq!(
-            tags.native() == native_tag,
+            receiver.native_registry.tag() == native_tag,
             matches!(changed, DifferentTags::Nested)
         );
         assert_eq!(
-            tags.nested() == nested_tag,
+            receiver.nested_registry.tag() == nested_tag,
             matches!(changed, DifferentTags::Native)
         );
-        let receiver =
-            application::<T, ProductionRank>(tags, RECEIVER_MANIFEST, receiver_constraint)?;
         let (local, ()) = receiver.seed(
             &mut rng,
             Seed {
@@ -492,23 +515,31 @@ where
     Ok(())
 }
 
+/// The aggregator declares no extension yet, so it registers the standard
+/// profile's circuits and derives its tags: a standard payload verifies under
+/// it. Under any other tags, as once the aggregator's decompression circuits
+/// land, the payload is rejected.
 #[test]
-fn standard_cannot_substitute_for_aggregator() -> Result<()> {
+fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Result<()> {
     check_same_shape::<Standard, Aggregator>(
         Some(Fp::from(7)),
         Some(Fp::from(7)),
         Fp::from(7),
         Fp::from(7),
+        true,
     )
 }
 
+/// The converse of
+/// [`aggregator_accepts_standard_payloads_only_with_the_same_registries`].
 #[test]
-fn aggregator_cannot_substitute_for_standard() -> Result<()> {
+fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Result<()> {
     check_same_shape::<Aggregator, Standard>(
         Some(Fp::from(7)),
         Some(Fp::from(7)),
         Fp::from(7),
         Fp::from(7),
+        true,
     )
 }
 
@@ -517,12 +548,24 @@ fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
     // A Standard leaf must be 7. The foreign profile accepts 9 instead,
     // so rejection here also protects an independently false statement.
     assert_ne!(Fp::from(9), Fp::from(7));
-    check_same_shape::<Permissive, Standard>(None, Some(Fp::from(7)), Fp::from(9), Fp::from(7))
+    check_same_shape::<Permissive, Standard>(
+        None,
+        Some(Fp::from(7)),
+        Fp::from(9),
+        Fp::from(7),
+        false,
+    )
 }
 
 #[test]
 fn standard_cannot_substitute_for_a_weaker_profile() -> Result<()> {
-    check_same_shape::<Standard, Permissive>(Some(Fp::from(7)), None, Fp::from(7), Fp::from(9))
+    check_same_shape::<Standard, Permissive>(
+        Some(Fp::from(7)),
+        None,
+        Fp::from(7),
+        Fp::from(9),
+        false,
+    )
 }
 
 fn check_different_shapes<S: Profile, T: Profile>() -> Result<()>
@@ -531,16 +574,8 @@ where
     T::Context<'static, Pasta, R<14>, ReferenceBackend>: Default,
 {
     assert_ne!(Shape::of::<S>(), Shape::of::<T>());
-    let sender = application::<S, R<14>>(
-        RegistryTags::from_beacon(&[0x42; 32], SENDER_MANIFEST),
-        SENDER_MANIFEST,
-        Some(Fp::from(7)),
-    )?;
-    let receiver = application::<T, R<14>>(
-        RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-        RECEIVER_MANIFEST,
-        Some(Fp::from(7)),
-    )?;
+    let sender = application::<S, R<14>>((None, None), Some(Fp::from(7)))?;
+    let receiver = application::<T, R<14>>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_1502);
     let (source, ()) = sender.seed(
         &mut rng,

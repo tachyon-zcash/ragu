@@ -31,9 +31,8 @@
 //! suffix included, so the suffix is what selects which of this application's
 //! header types a decompressed statement is taken as. The application must
 //! register, at each suffix a decompressed header can carry, a header type
-//! with the inner application's encoding and meaning; nothing checks that
-//! agreement, which the setup description a profile's tags cover must
-//! record.
+//! with the inner application's encoding and meaning. Nothing checks that
+//! agreement; it is part of the verifier's trusted setup.
 //!
 //! A decompressed proof's header fields still describe the polynomials the
 //! statement left behind while the proof's slots hold padding, and a step that
