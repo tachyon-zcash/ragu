@@ -14,44 +14,51 @@ const MAGIC: &[u8; 8] = b"RAGUPCD\0";
 const ENVELOPE_VERSION: u16 = 3;
 /// Each proof representation has its own payload kind and schema version.
 #[derive(Clone, Copy)]
-pub(crate) enum PayloadKind {
+pub enum PayloadKind {
+    /// An uncompressed [`Proof`].
     Proof,
+    /// A [`CompressedProof`].
     Compressed,
 }
 
-/// The representation and dimensions declared by a proof's envelope.
-pub struct Envelope {
-    /// Whether the envelope declares a compressed proof.
-    pub compressed: bool,
-
-    /// The declared rank, one IPA round per bit for a compressed proof.
-    pub rank: u32,
-
-    /// The declared number of field elements in each child header.
-    pub header_size: usize,
-}
-
-impl Envelope {
-    /// Reads the envelope at the start of `bytes` without reading the payload.
-    ///
-    /// Checks the magic, envelope/schema/protocol versions, known payload kind,
-    /// and bounded dimensions. Bytes after the envelope are ignored; the payload
-    /// need not be present. This does not establish compatibility with a receiving
-    /// proof type or application, or proof validity.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
-        let (compressed, (_, dims)) = match open(bytes, PayloadKind::Compressed, None) {
-            Ok(opened) => (true, opened),
-            Err(_) => (false, open(bytes, PayloadKind::Proof, None)?),
-        };
-        Ok(Self {
-            compressed,
-            rank: dims.rank,
-            header_size: dims.header_size,
-        })
-    }
-}
-
 impl PayloadKind {
+    /// Reads the payload kind from the envelope at the start of `bytes`.
+    ///
+    /// Checks the magic, envelope version and payload kind. Later envelope fields
+    /// and the payload need not be present. This does not establish proof validity.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error<'_>> {
+        let mut reader = Reader::new(bytes);
+        for (expected, reason) in [
+            (MAGIC.as_slice(), "invalid proof magic"),
+            (
+                ENVELOPE_VERSION.to_le_bytes().as_slice(),
+                "unsupported proof envelope version",
+            ),
+        ] {
+            let offset = reader.offset();
+            let bytes = reader.take(expected.len())?;
+            if bytes != expected {
+                return Err(Error::Invalid {
+                    offset,
+                    bytes,
+                    reason,
+                });
+            }
+        }
+
+        let offset = reader.offset();
+        let bytes = reader.take(size_of::<u16>())?;
+        let tag = u16::from_le_bytes(bytes.try_into().expect("2-byte payload kind"));
+        [Self::Proof, Self::Compressed]
+            .into_iter()
+            .find(|kind| kind.tag() == tag)
+            .ok_or(Error::Invalid {
+                offset,
+                bytes,
+                reason: "unknown proof payload kind",
+            })
+    }
+
     fn tag(self) -> u16 {
         match self {
             Self::Proof => 1,
@@ -305,17 +312,26 @@ mod tests {
     };
 
     #[test]
-    fn envelope_inspection() {
+    fn payload_kind_inspection() {
         let dims = Dimensions::of::<TestRank, 4>();
         for (kind, compressed) in [(PayloadKind::Proof, false), (PayloadKind::Compressed, true)] {
             let mut bytes = Vec::new();
             write_envelope(kind, dims, &mut bytes);
-            let envelope = Envelope::from_bytes(&bytes[..ENVELOPE_SIZE]).unwrap();
-            assert_eq!(envelope.compressed, compressed);
-            assert_eq!(envelope.rank, dims.rank);
-            assert_eq!(envelope.header_size, dims.header_size);
+            bytes.truncate(MAGIC.len() + 2 * size_of::<u16>());
+            let kind = PayloadKind::from_bytes(&bytes).unwrap();
+            assert_eq!(matches!(kind, PayloadKind::Compressed), compressed);
         }
-        assert!(Envelope::from_bytes(&[0xff; ENVELOPE_SIZE]).is_err());
+        assert!(matches!(
+            PayloadKind::from_bytes(&[]),
+            Err(Error::Truncated { .. })
+        ));
+        assert!(matches!(
+            PayloadKind::from_bytes(&[0xff; ENVELOPE_SIZE]),
+            Err(Error::Invalid {
+                reason: "invalid proof magic",
+                ..
+            })
+        ));
     }
 
     // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
