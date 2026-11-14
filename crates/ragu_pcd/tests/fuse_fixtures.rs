@@ -105,13 +105,14 @@ use crate::{
         instance::{Child, Instance, NestedChild},
         revdot::{Reduction, fold::Fold},
     },
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
+    internal::online,
     ipa::{
         IpaCycle, IpaProof,
         fingerprint::{self, Event},
     },
     profile::{Aggregator, Decompression, Profile, Profiled, ProfiledCycle},
-    step::{Encoded, Index, Step, internal::bootstrap::Bootstrap},
+    step::{Encoded, Index, Oracles, Step, internal::bootstrap::Bootstrap},
 };
 
 const HEADER_SIZE: usize = 4;
@@ -175,6 +176,7 @@ struct Value;
 
 impl Header<Fp> for Value {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -210,6 +212,7 @@ where
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const N: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D, Cy, Self>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, L::Data>,
         right: DriverValue<D, H::Data>,
@@ -527,6 +530,7 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         left_header,
         right_header,
         native_application_rx,
+        native_application_stage_rx,
         native_preamble_rx,
         native_inner_error_rx,
         native_outer_error_rx,
@@ -552,7 +556,10 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         native_points_ab_rx,
         native_points_f_rx,
         native_points_walk_rx,
+        online_polynomials,
+        online_openings,
         bridge_preamble_rx,
+        bridge_hash_rx,
         bridge_s_prime_rx,
         bridge_inner_error_rx,
         bridge_outer_error_rx,
@@ -595,6 +602,7 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         u,
         pre_beta,
         native_application_commitment: _,
+        native_application_stage_commitment: _,
         native_preamble_commitment: _,
         native_inner_error_commitment: _,
         native_outer_error_commitment: _,
@@ -620,7 +628,9 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         native_points_ab_commitment: _,
         native_points_f_commitment: _,
         native_points_walk_commitment: _,
+        online_commitments: _,
         bridge_preamble_commitment: _,
+        bridge_hash_commitment: _,
         bridge_s_prime_commitment: _,
         bridge_inner_error_commitment: _,
         bridge_outer_error_commitment: _,
@@ -636,6 +646,7 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     lines.field("bridge_alpha", bridge_alpha);
 
     lines.poly("native_application_rx", native_application_rx);
+    lines.poly("native_application_stage_rx", native_application_stage_rx);
     lines.poly("native_preamble_rx", native_preamble_rx);
     lines.poly("native_inner_error_rx", native_inner_error_rx);
     lines.poly("native_outer_error_rx", native_outer_error_rx);
@@ -661,8 +672,17 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     lines.poly("native_points_ab_rx", native_points_ab_rx);
     lines.poly("native_points_f_rx", native_points_f_rx);
     lines.poly("native_points_walk_rx", native_points_walk_rx);
+    lines.polys("online_polynomials", online_polynomials);
+    lines.fields(
+        "online_openings",
+        &online_openings
+            .iter()
+            .flat_map(|query| [query.x, query.y])
+            .collect::<Vec<_>>(),
+    );
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
+    lines.poly("bridge_hash_rx", bridge_hash_rx);
     lines.poly("bridge_s_prime_rx", bridge_s_prime_rx);
     lines.poly("bridge_inner_error_rx", bridge_inner_error_rx);
     lines.poly("bridge_outer_error_rx", bridge_outer_error_rx);
@@ -818,9 +838,11 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         circuit_id,
         left_header,
         right_header,
+        online,
         native: native_commitments,
         native_registry_xy,
         native_p,
+        online_commitments,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -842,9 +864,14 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.u32(usize::from(*circuit_id));
     out.fields(left_header);
     out.fields(right_header);
+    for query in online {
+        out.field(&query.x);
+        out.field(&query.y);
+    }
     out.points(native_commitments);
     out.point(native_registry_xy);
     out.point(native_p);
+    out.points(online_commitments);
     out.points(nested_commitments);
     out.point(nested_registry_xy);
     out.point(nested_p);
@@ -927,9 +954,20 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let circuit_id = CircuitIndex::new(cursor.u32()?);
     let left_header = cursor.fields()?;
     let right_header = cursor.fields()?;
+    let mut online = [online::Query {
+        x: C::CircuitField::ZERO,
+        y: C::CircuitField::ZERO,
+    }; online::NUM_ONLINE_QUERIES];
+    for query in &mut online {
+        *query = online::Query {
+            x: cursor.field()?,
+            y: cursor.field()?,
+        };
+    }
     let native_commitments = cursor.points()?;
     let native_registry_xy = cursor.point()?;
     let native_p = cursor.point()?;
+    let online_commitments = cursor.points()?.try_into().ok()?;
     let nested_commitments = cursor.points()?;
     let nested_registry_xy = cursor.point()?;
     let nested_p = cursor.point()?;
@@ -964,9 +1002,11 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         circuit_id,
         left_header,
         right_header,
+        online,
         native: native_commitments,
         native_registry_xy,
         native_p,
+        online_commitments,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,

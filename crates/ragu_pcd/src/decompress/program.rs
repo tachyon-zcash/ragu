@@ -213,8 +213,8 @@ pub(crate) enum Chunk {
         pairs: Vec<(ChallengeRef, usize)>,
     },
     /// The claims' base targets into work slots: on the circuit-field side
-    /// the application's, the unified bridge's and the unified one's; on
-    /// the scalar-field side the unified one's alone.
+    /// the application's, the unified bridge's, the unified one's and the
+    /// compute-v bridge's; on the scalar-field side the unified one's alone.
     Targets {
         out: Vec<usize>,
     },
@@ -368,8 +368,9 @@ pub(crate) struct Regions {
     /// scales by such a challenge holds its bits' lift to this slot. Empty
     /// on the circuit-field side, which takes no challenge from bits.
     pub bits_lifts: Vec<usize>,
-    /// The claims' base targets: application, unified bridge, unified on
-    /// the circuit-field side; unified alone on the scalar-field side.
+    /// The claims' base targets: application, unified bridge, unified and
+    /// compute-v bridge on the circuit-field side; unified alone on the
+    /// scalar-field side.
     pub targets: Vec<usize>,
     /// The registry restriction at $(r, y)$ of each claim that names a
     /// circuit, by claim index, prover-supplied: the claims naming one
@@ -545,10 +546,10 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
             })
             .sum(),
         // The one-off chunks, at the larger of the two sides' measures.
-        Chunk::Targets { .. } => 130,
-        Chunk::RevdotWeights { .. } => 1370,
-        Chunk::Bindings { .. } => 1035,
-        Chunk::RevdotPublic { .. } => 345,
+        Chunk::Targets { .. } => 210,
+        Chunk::RevdotWeights { .. } => 1440,
+        Chunk::Bindings { .. } => 1080,
+        Chunk::RevdotPublic { .. } => 355,
         Chunk::BatchIpa { .. } => 115,
         Chunk::Digits { scalars } => DIGITS * scalars.len(),
         Chunk::Sums { sums } => sums
@@ -992,8 +993,8 @@ impl native::claims::Processor<Standard, usize, CircuitIndex> for Planner {
         self.raw(a, b);
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: usize) {
-        self.circuit(circuit_id, once(rx));
+    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rxs: impl Iterator<Item = usize>) {
+        self.circuit(circuit_id, rxs);
     }
 
     fn internal_circuit_claim(
@@ -1944,6 +1945,9 @@ fn native_schedule_with<
         {
             t.absorb(ElementSrc::Instance(p));
         }
+        for p in instance.online.positions() {
+            t.absorb(ElementSrc::Instance(p));
+        }
         // The host commitments.
         t.foreign();
         for i in native_scalars::C..=native_scalars::B_AT_U {
@@ -2095,7 +2099,7 @@ fn native_schedule_with<
         &mut b,
         Body {
             scalar_claims: &claims,
-            targets: 3,
+            targets: 4,
             bindings,
             extra_digits: Vec::new(),
             point_claims: &nested_plans,

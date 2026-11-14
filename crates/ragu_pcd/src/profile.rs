@@ -66,7 +66,8 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
-#[cfg(feature = "baked")]
+// Without `baked` the module docs are its only use.
+#[cfg_attr(not(feature = "baked"), allow(unused_imports))]
 use ragu_core::pasta::Pasta;
 use ragu_core::{
     Cycle, Error, Result,
@@ -207,8 +208,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The circuits and stages the profile adds on the native side.
     ///
     /// The challenge binders load a native extension's stages, and at the
-    /// wallet rank their largest variant sits fifteen gates under the
-    /// gate budget with the standard header: an extension stage costing more
+    /// wallet rank their largest variant fills the
+    /// gate budget with the census header: an extension stage costing more
     /// needs a smaller header or a cheaper binder. The internal census tests
     /// pin that count.
     fn native_extension() -> Extension {
@@ -708,6 +709,16 @@ pub struct Extension {
     /// the output header of the proof it verified, so that its claim's
     /// $k(y)$ binds the proof's own output header to it. `None` for any
     /// other extension, and always on the nested side.
+    ///
+    /// The statement binds the header's fields only. A profile that declares
+    /// one registers the decompression step, whose output proof carries the
+    /// verified header with the constant one in both online slots, and a
+    /// step consuming that proof cannot tell it from one a registered step
+    /// produced. Before declaring a statement, either every header a
+    /// decompressed statement can carry must treat its slots as padding, or
+    /// the statement must also expose the compressed proof's online
+    /// commitments for the decompression step to hold its output slots to
+    /// (see [`NUM_ONLINE_POLYNOMIALS`](crate::header::NUM_ONLINE_POLYNOMIALS)).
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is
@@ -1263,7 +1274,7 @@ pub(crate) mod testing {
     use super::*;
     use crate::{
         internal::ky,
-        step::{Encoded, Index, Step},
+        step::{Encoded, Index, Oracles, Step},
     };
 
     /// A step with unit headers and no witness.
@@ -1285,6 +1296,7 @@ pub(crate) mod testing {
         >(
             &self,
             dr: &mut D,
+            _: &mut Oracles<'_, 'dr, D, C, Self>,
             _: DriverValue<D, ()>,
             left: DriverValue<D, ()>,
             right: DriverValue<D, ()>,
@@ -2382,7 +2394,7 @@ mod tests {
     fn declared_extensions_check() {
         Standard::check().unwrap();
         Aggregator::<4>::check().unwrap();
-        Aggregator::<103>::check().unwrap();
+        Aggregator::<96>::check().unwrap();
         assert!(Aggregator::<4>::native_extension().is_consistent());
         assert!(Aggregator::<4>::nested_extension().is_consistent());
         Wider::check().unwrap();
@@ -2760,15 +2772,15 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 45,
-                nested_points: 105,
-                nested_steps: 26,
-                nested_rx: 39,
-                native_points: 93,
-                native_steps: 23,
+                native_rx: 48,
+                nested_points: 117,
+                nested_steps: 29,
+                nested_rx: 43,
+                native_points: 101,
+                native_steps: 25,
             }
         );
-        assert_eq!(shape.polynomials(), 92);
+        assert_eq!(shape.polynomials(), 99);
     }
 
     /// The aggregator's shape follows its pinned circuits, and grows with
@@ -2781,11 +2793,11 @@ mod tests {
         assert_eq!(nested_stages, 27, "a stage per run, then four");
         assert_eq!(
             shape,
-            Shape::solve(31 + 2 + 6, 18 + 1 + nested_stages, per_step, per_step)
+            Shape::solve(32 + 2 + 6, 19 + 1 + nested_stages, per_step, per_step)
         );
         assert_eq!(
-            Shape::of::<Aggregator<103>>(),
-            Shape::solve(34 + 2 + 6, 18 + 1 + nested_stages, per_step, per_step)
+            Shape::of::<Aggregator<96>>(),
+            Shape::solve(35 + 2 + 6, 19 + 1 + nested_stages, per_step, per_step)
         );
         // The knob: at the wallet rank's four per step the walks are
         // far longer.
@@ -2808,7 +2820,7 @@ mod tests {
             params,
         );
         assert!(matches!(at_wallet_rank, Err(Error::Initialization(_))));
-        let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 103>(
+        let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 96>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params,

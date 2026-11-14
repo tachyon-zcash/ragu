@@ -166,8 +166,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>
         self.push(Kind::Raw, Ok(a), Some(b));
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Point<'dr, D, C>) {
-        self.circuit(circuit_id, once(rx));
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = Point<'dr, D, C>>,
+    ) {
+        self.circuit(circuit_id, rxs);
     }
 
     fn internal_circuit_claim(

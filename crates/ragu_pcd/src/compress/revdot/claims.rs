@@ -232,8 +232,8 @@ impl<P: Profile, Id, F: Field> native::claims::Processor<P, Id, CircuitIndex> fo
         self.push(Kind::Raw, vec![(F::ONE, a)], vec![(F::ONE, b)]);
     }
 
-    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rx: Id) {
-        self.circuit(circuit_id, once(rx));
+    fn circuit_claim(&mut self, circuit_id: CircuitIndex, rxs: impl Iterator<Item = Id>) {
+        self.circuit(circuit_id, rxs);
     }
 
     fn internal_circuit_claim(

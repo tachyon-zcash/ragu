@@ -27,10 +27,10 @@ use crate::{
 };
 
 /// The native commitments a proof in profile `P` lists, then its native
-/// registry restriction's and $p$'s: the host-curve points the
+/// registry restriction's, $p$'s and online polynomials': the host-curve points the
 /// scalar-field side's instance holds.
 pub(crate) fn native_points_of<P: Profile>() -> usize {
-    2 + native::RxIndex::num::<P>() + 2
+    2 + native::RxIndex::num::<P>() + 2 + crate::header::NUM_ONLINE_POLYNOMIALS
 }
 
 /// The scalar field's values a proof's instance carries, which the

@@ -82,6 +82,7 @@ pub(crate) struct Instance<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub circuit_id: Element<'dr, D>,
     pub left_header: Vec<Element<'dr, D>>,
     pub right_header: Vec<Element<'dr, D>>,
+    pub online: Vec<Element<'dr, D>>,
 
     /// The nested commitments, in
     /// [`nested_components`](crate::compress::revdot::nested_components)
@@ -113,6 +114,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Instance<'dr, D, C> {
     ) -> Result<()> {
         self.circuit_id.absorb(dr, transcript)?;
         for element in self.left_header.iter().chain(&self.right_header) {
+            element.absorb(dr, transcript)?;
+        }
+        for element in &self.online {
             element.absorb(dr, transcript)?;
         }
         runs.absorb(dr, transcript)?; // the host commitments

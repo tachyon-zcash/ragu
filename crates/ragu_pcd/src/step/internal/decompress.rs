@@ -13,15 +13,19 @@
 //! [`Encoded::new_uniform`] holds its witnessed output suffix away from
 //! [`Dummy`].
 //!
-//! The step's circuit constrains nothing about the header it outputs; the
-//! binding is the claims'. The native extension's statement circuit exposes
-//! the output header the extension verified as its public output, and its
-//! claim's $k(y)$, computed by the verifier of this proof from this proof's
-//! circuit id and output header ([`statement_ky`]), is that header's when
-//! the circuit id is this step's and the unit header's for any other step.
-//! A proof of this step whose output header is not the decompressed
-//! statement's therefore has a false claim, as a proof with relabelled
-//! application headers does.
+//! The step's circuit constrains nothing about the header data it outputs;
+//! the binding is the claims'. The statement carries no polynomials, so the
+//! resulting proof carries padding: the step opens no output slot, so the
+//! adapter opens each at $\zeta$ and holds it to the constant one, and a
+//! prover cannot put a polynomial of its choosing there, and a proof whose slots carry
+//! meaningful polynomials does not survive decompression. The native
+//! extension's statement circuit exposes the output header the extension
+//! verified as its public output, and its claim's $k(y)$, computed by the
+//! verifier of this proof from this proof's circuit id and output header
+//! ([`statement_ky`]), is that header's when the circuit id is this step's
+//! and the unit header's for any other step. A proof of this step whose
+//! output header is not the decompressed statement's therefore has a false
+//! claim, as a proof with relabelled application headers does.
 //!
 //! The statement circuit exposes the compressed proof's padded output header,
 //! suffix included, so the suffix is what selects which of this application's
@@ -32,6 +36,18 @@
 //! suffix the wallet's steps output ([`Profile::check_context`]), so that
 //! the two read the statement alike, field order and padding included.
 //! The setup description a profile's tags cover records those types.
+//!
+//! A decompressed proof's header fields still describe the polynomials the
+//! statement left behind while the proof's slots hold padding, and a step that
+//! consumes it cannot tell it from one a registered step produced. The
+//! header types registered at those suffixes must therefore treat their
+//! associated proof slots as padding: no step may open such a slot expecting the
+//! polynomial its fields describe, since a non-membership check against the
+//! constant one holds at every point and a product $O = L \cdot R$ computes
+//! with $L = 1$. Binding the output slots to the polynomials the statement
+//! stood for, by having the statement extension expose the compressed
+//! proof's own online commitments and this circuit hold its output slots to
+//! them, would change the extension's contract and is not done here.
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its
@@ -56,7 +72,7 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Oracles, Step};
 use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
 
@@ -86,6 +102,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -127,10 +144,10 @@ mod tests {
             maybe::Maybe,
             pasta::{Fp, Pasta},
         };
-        use ragu_primitives::{Element, allocator::Allocator};
+        use ragu_primitives::{Element, GadgetExt, allocator::Allocator};
         use ragu_testing::registry::TestRegistryBuilder;
 
-        use crate::header::{Header, Suffix};
+        use crate::header::{Header, NUM_ONLINE_POLYNOMIALS, Padding, Suffix};
 
         const HEADER_SIZE: usize = 4;
         type R = polynomials::TestRank;
@@ -138,6 +155,7 @@ mod tests {
         struct Single;
         impl Header<Fp> for Single {
             const SUFFIX: Suffix = Suffix::new(0);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = Fp;
             type Output = Kind![Fp; Element<'_, _>];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -152,6 +170,7 @@ mod tests {
         struct Pair;
         impl Header<Fp> for Pair {
             const SUFFIX: Suffix = Suffix::new(1);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = (Fp, Fp);
             type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -194,6 +213,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
+                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
                 witness: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -211,6 +231,11 @@ mod tests {
                 let right = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let output =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
+                let zeta = oracles.zeta().clone();
+                for i in 0..NUM_ONLINE_POLYNOMIALS {
+                    let value = oracles.output_at(i).open(dr, &zeta)?;
+                    value.enforce_equal(dr, &Element::one())?;
+                }
                 Ok(((left, right, output), witness, D::unit()))
             }
         }

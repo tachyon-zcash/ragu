@@ -17,7 +17,7 @@ use udon::{curve::Affine, field::Field};
 use crate::{
     Application, ApplicationBuilder,
     compress::revdot::{native_position, nested_position},
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     internal::{native, nested},
     ipa::IpaCycle,
     profile::{
@@ -138,6 +138,7 @@ struct FailingHeader;
 
 impl<F: Field> Header<F> for FailingHeader {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
 

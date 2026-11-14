@@ -38,6 +38,11 @@ extern crate std;
 #[cfg(feature = "mock")]
 extern crate alloc;
 
+#[cfg(all(feature = "mock", test))]
+extern crate self as ragu;
+#[cfg(all(feature = "mock", test))]
+use ragu_core::gadgets;
+
 #[cfg(feature = "mock")]
 mod mock;
 #[cfg(feature = "mock")]

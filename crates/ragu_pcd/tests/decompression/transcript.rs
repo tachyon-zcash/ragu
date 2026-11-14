@@ -59,6 +59,10 @@ fn instance(
         circuit_id: alloc(dr, instance.circuit_id.omega_j())?,
         left_header: alloc_all(dr, instance.left_header.iter().copied())?,
         right_header: alloc_all(dr, instance.right_header.iter().copied())?,
+        online: alloc_all(
+            dr,
+            instance.online.iter().flat_map(|query| [query.x, query.y]),
+        )?,
         nested: points(dr, instance.nested.iter().copied())?,
         nested_registry_xy: point(dr, instance.nested_registry_xy)?,
         nested_p: point(dr, instance.nested_p)?,

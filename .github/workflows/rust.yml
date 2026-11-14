@@ -152,6 +152,10 @@ jobs:
       # runs here, including the rejection sweeps and controls.
       - name: Run exhaustive corruption coverage
         run: cargo test --release -p ragu_pcd --locked --all-features --test corruption -- --include-ignored
+      # The online oracle suite proves at the production rank, so it is
+      # ignored in the platform matrix and runs here.
+      - name: Run the online oracle suite
+        run: cargo test --release -p ragu_pcd --locked --all-features --test online_oracles -- --include-ignored
       # Replay the saved recursion failures on PRs as well as in heavy-tests.
       # One fresh case follows the committed seeds in each property. Backend
       # equivalence runs its properties in backend.yml.

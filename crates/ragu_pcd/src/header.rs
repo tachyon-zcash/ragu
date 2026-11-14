@@ -11,6 +11,15 @@ use ragu_core::{
 use ragu_primitives::{allocator::Allocator, io::Write};
 use udon::field::Field;
 
+mod online;
+
+pub(crate) use self::online::slot;
+pub use self::online::{
+    Has, NUM_ONLINE_POLYNOMIALS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding,
+};
+#[doc(hidden)]
+pub use self::online::{Slot0, Slot1};
+
 /// The number of suffixes used internally by Ragu.
 ///
 /// * `0` is reserved for all circuits that have a fixed ID, used internally for
@@ -90,6 +99,11 @@ impl Suffix {
 /// inputs to recursive proofs in order to represent the current state of the
 /// computation.
 ///
+/// This trait defines the field encoding of the application data and
+/// names the online polynomials the header's proofs carry. The polynomials
+/// and their commitments are stored in [`Proof`](crate::Proof), separately
+/// from [`Data`](Self::Data) and [`Output`](Self::Output).
+///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
 pub trait Header<F: Field>: Send + Sync + Any {
@@ -97,6 +111,12 @@ pub trait Header<F: Field>: Send + Sync + Any {
     /// headers. Application headers must use [`Suffix::new`]; only `()` may
     /// use a reserved internal suffix.
     const SUFFIX: Suffix;
+
+    /// The online polynomials this header's proofs carry, one
+    /// [`OnlinePolySlot`] per slot in slot order: `(TachygramSet, ActionSet)`,
+    /// `(Padding, TachygramSet)`, or `(Padding, Padding)` for a header whose
+    /// proofs carry only padding. See [`OnlinePolyCommit`].
+    type OnlinePolyCommit: OnlinePolyCommit;
 
     /// The witness input needed to encode a header.
     type Data: Send + Clone;
@@ -131,6 +151,7 @@ pub trait Header<F: Field>: Send + Sync + Any {
 impl<F: Field> Header<F> for () {
     const SUFFIX: Suffix = Suffix::internal(1);
 
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
 
@@ -156,6 +177,7 @@ pub(crate) struct Dummy;
 impl<F: Field> Header<F> for Dummy {
     const SUFFIX: Suffix = Suffix::internal(2);
 
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = ();
     type Output = ();
 

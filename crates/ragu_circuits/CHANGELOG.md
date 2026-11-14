@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Rank` support for `R<14>` and `R<15>`, and the `AggregatorRank`
   alias for `R<15>`, for extension circuits that exceed the wallet rank's
   capacity. `WalletRank` remains `R<13>`.
+- Added runtime-sized stages: `staging::stage_gates`, `stage_rx`, `stage_mask`
+  and `final_stage_mask` lay out and mask a stage whose size is fixed when the
+  registry is built rather than in the type, with the rank's bounds checked.
 - Added iteration over the stored coefficients of sparse polynomials.
 - Added `Stage::gate_ranges`, the gates of a stage and of every stage before
   it, for a registry to check a circuit's declared stages against.

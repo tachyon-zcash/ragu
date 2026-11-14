@@ -48,12 +48,14 @@ fn accepts_the_honest_proof() {
 fn rejects_tampering() {
     let setup = Setup::new();
     let honest = witness(&setup);
-    let tamperings: [fn(&mut CompressedProof<Pasta>); 5] = [
+    let tamperings: [fn(&mut CompressedProof<Pasta>); 7] = [
         |proof| proof.native.reduction.openings[0] += Fp::ONE,
         |proof| proof.native.opening.c += Fp::ONE,
         |proof| proof.nested.reduction.fold.inner_epsilon += Fq::ONE,
         |proof| proof.nested.batch.evaluations[3] += Fq::ONE,
         |proof| proof.instance.c += Fp::ONE,
+        |proof| proof.instance.online[0].x += Fp::ONE,
+        |proof| proof.instance.online[0].y += Fp::ONE,
     ];
     for tamper in tamperings {
         let mut tampered = Witness {

@@ -1,4 +1,5 @@
 //! The production compressed-proof transport path and hostile byte boundaries.
+use ragu_pcd::header::NUM_ONLINE_POLYNOMIALS;
 use ragu_testing::pcd::nontrivial::LeafNode;
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -41,8 +42,9 @@ fn compressed_transport_roundtrip_and_rejection() {
             "envelope offset {offset}"
         );
     }
-    // First native point: circuit id and the two fixed four-element headers precede it.
-    let point = ENVELOPE + 4 + 2 * 4 * 32;
+    // First native point: the circuit id, the two fixed four-element headers
+    // and the online openings precede it.
+    let point = ENVELOPE + 4 + 2 * 4 * 32 + 2 * 3 * NUM_ONLINE_POLYNOMIALS * 32;
     for value in [0, 0xff] {
         let mut bad = bytes.clone();
         bad[point..point + 32].fill(value);

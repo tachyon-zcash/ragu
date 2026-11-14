@@ -72,7 +72,8 @@ scope; there is no finding quota.
 
 Deliver the review before fixing or publishing unless already authorized.
 For requested fixes, reread current contents, preserve unrelated edits, and
-run relevant regression checks; Rust/build fixes also require `just ci_local`.
+run relevant regression checks; Rust/build fixes also require `just lint` and
+`just test`.
 Report deferred findings and validation limits.
 
 Before requested PR publication, refresh findings if the head changed. Use

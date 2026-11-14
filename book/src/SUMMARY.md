@@ -50,6 +50,7 @@
     - [Compression](protocol/recursion/compression.md)
     - [Decompression](protocol/recursion/decompression.md)
   - [Analysis](protocol/analysis.md) <!-- todo -->
+  - [Poly Oracle](protocol/poly-oracle.md) <!-- todo -->
   - [Local (Sean's Corner!)]()
     - [Arithmetization](protocol/local/arithmetization.md)
     - [Wiring and Instance Polynomials](protocol/local/wiring.md)

@@ -14,6 +14,13 @@
 //! rerandomization. An ordinary step consuming
 //! the resulting `Pcd<()>` still verifies its child claim.
 //!
+//! The bootstrap proof's polynomial slots carry padding: the step opens no
+//! output slot, so the adapter opens each at $\zeta$ and holds it to the
+//! constant one, as for the decompression step, so a bootstrap proof installed through
+//! [`with_bootstrap`] cannot hand every seed's unit inputs polynomials of a
+//! prover's choosing.
+//!
+//! [`with_bootstrap`]: crate::ApplicationBuilder::with_bootstrap
 //! [`dummy_pcd`]: crate::Application::dummy_pcd
 //! [`finalize`]: crate::ApplicationBuilder::finalize
 //! [`seed`]: crate::Application::seed
@@ -25,7 +32,7 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Step};
+use super::super::{Encoded, Index, Oracles, Step};
 pub(crate) use crate::step::InternalStepIndex::Bootstrap as INTERNAL_ID;
 use crate::{Header, header::Dummy};
 
@@ -50,6 +57,7 @@ impl<C: Cycle> Step<C> for Bootstrap {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        _: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,

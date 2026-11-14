@@ -25,10 +25,21 @@ mock = [
   "dep:blake2b_simd",
   "dep:udon",
   "dep:ragu_core",
+  "dep:ragu_primitives",
+  "dep:ragu_circuits",
+  "dep:ragu_pcd",
+  "ragu_pcd/baked",
+  "dep:ragu_backend",
   "dep:rand",
 ]
+# Exposes `Application::verify_uncompressed` and `verify_differential`, as
+# `ragu_pcd` does. Production verification goes through `verify_compressed`.
+test-utils = []
 # Kept for compatibility: the mock has no parallel stage of its own.
 multicore = []
+# `serde::{Serialize, Deserialize}` for the mock `Proof` and `Pcd`, as their
+# wire bytes. Only meaningful with `mock`.
+serde = ["dep:serde"]
 std = []
 
 [lib]
@@ -41,8 +52,16 @@ bench = false
 [dependencies]
 blake2b_simd = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
+serde = { version = "1", default-features = false, features = ["alloc"], optional = true }
 udon = { workspace = true, optional = true }
 ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_pcd = { path = "crates/ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
+ragu_backend = { path = "crates/ragu_backend", version = "0.0.0", default-features = false, optional = true }
+
+[dev-dependencies]
+serde_json = "1"
 
 [workspace]
 members = [
@@ -65,6 +84,18 @@ resolver = "2"
 # The profile that 'cargo dist' will build with
 [profile.dist]
 inherits = "release"
+
+# `just test`: release settings, but incremental and with more codegen units,
+# and `ragu_pcd`, whose lib test target dominates rebuilds, at opt-level 1. A
+# one-line edit in `ragu_pcd` then rebuilds in about a minute rather than five,
+# and the tests run about as fast as under `--release`.
+[profile.fast-test]
+inherits = "release"
+incremental = true
+codegen-units = 256
+
+[profile.fast-test.package.ragu_pcd]
+opt-level = 1
 
 [workspace.package]
 version = "0.0.0"

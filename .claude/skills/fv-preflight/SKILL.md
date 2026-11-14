@@ -267,8 +267,9 @@ typos
 ```
 
 Add `cargo clippy -p lean_extraction --all-targets -- -D warnings` and the nightly `rustfmt`
-check when the exporter changed (`just lint` bundles clippy, fmt, typos, and the book build),
-and `mdbook build ./book` when a page under `book/src/fv/` changed. `lake build --wfail` is
+check when the exporter changed (`just lint` bundles clippy, fmt, rustdoc, the FV source
+checks, and the book build), and `mdbook build ./book` when a page under `book/src/fv/`
+changed. `lake build --wfail` is
 the default-target build — the one CI runs — not a single-module build, which elaborates less
 than the coverage in §1 demands. Then one pass over the full diff with the coverage,
 trust-surface, computability, vacuity, and claims questions above, reporting per file what was

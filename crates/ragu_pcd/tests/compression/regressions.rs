@@ -25,7 +25,7 @@ use super::{
 use crate::{
     Pcd, Proof, RAGU_TAG,
     compress::runs::run_bases,
-    header::{Header, Suffix},
+    header::{Header, Padding, Suffix},
     internal::{ky, native, nested},
     ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
     proof::recursive_propagation_tests::support::{
@@ -159,6 +159,7 @@ struct RejectHeader;
 
 impl Header<Fp> for RejectHeader {
     const SUFFIX: Suffix = Suffix::new(0);
+    type OnlinePolyCommit = (Padding, Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 

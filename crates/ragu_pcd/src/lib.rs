@@ -86,7 +86,7 @@ mod decompress_statement_tests;
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
@@ -97,6 +97,7 @@ use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
     registry::{Registry, RegistryBuilder, Tag},
+    staging,
 };
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
@@ -226,6 +227,19 @@ impl<C: ProfiledCycle> RegistryTags<C> {
     }
 }
 
+/// A step circuit's registration, held until every step's
+/// [`NUM_STAGED`](Step::NUM_STAGED) is known, so that every step circuit
+/// reserves the same application stage.
+type ApplicationRegistration<'params, C, R> = Box<
+    dyn FnOnce(
+            RegistryBuilder<'params, <C as Cycle>::CircuitField, R>,
+            usize,
+        ) -> Result<RegistryBuilder<'params, <C as Cycle>::CircuitField, R>>
+        + Send
+        + Sync
+        + 'params,
+>;
+
 /// Builder for an [`Application`] for proof-carrying data.
 pub struct ApplicationBuilder<
     'params,
@@ -237,6 +251,12 @@ pub struct ApplicationBuilder<
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
     num_application_steps: usize,
+    /// The step circuits, registered by [`finalize`](Self::finalize) once
+    /// the stage size is known.
+    application_circuits: Vec<ApplicationRegistration<'params, C, R>>,
+    /// The application stage's size: the largest registered
+    /// [`NUM_STAGED`](Step::NUM_STAGED).
+    stage_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
     /// which finalization installs instead of building one.
@@ -265,6 +285,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
+            application_circuits: Vec::new(),
+            stage_size: 0,
             header_map: BTreeMap::new(),
             bootstrap: None,
             output_headers: BTreeMap::new(),
@@ -348,6 +370,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
             num_application_steps: self.num_application_steps,
+            application_circuits: self.application_circuits,
+            stage_size: self.stage_size,
             header_map: self.header_map,
             bootstrap: self.bootstrap,
             output_headers: self.output_headers,
@@ -359,11 +383,26 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
     /// index that has not been inserted yet.
     ///
+    /// The step's [`NUM_STAGED`](Step::NUM_STAGED) sizes the proof's
+    /// application stage: every proof carries one stage of the largest
+    /// registered size, so the step circuits are constructed by
+    /// [`Self::finalize`] once every step is known.
+    ///
+    /// # Cost
+    ///
+    /// Every step circuit, including the internal steps, reserves
+    /// `ceil(n / 2)` gates for the stage, where `n` is the application's
+    /// largest `NUM_STAGED`, and a step adds one equality constraint per
+    /// value it stages. An application whose steps stage nothing reserves
+    /// nothing.
+    ///
     /// # Errors
     ///
     /// Returns an error if the step's index is not the next sequential index,
-    /// if a non-unit header uses a reserved internal suffix, or if any of the
-    /// step's header suffixes conflict with an already-registered header type.
+    /// if a non-unit header uses a reserved internal suffix, if any of the
+    /// step's header suffixes conflict with an already-registered header type,
+    /// or if the stage does not fit the rank's gates. Circuit construction
+    /// errors are returned by [`Self::finalize`].
     pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
         const {
             assert!(
@@ -378,6 +417,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
         S::INDEX.assert_index(self.num_application_steps)?;
 
+        Self::require_unique_kinds::<S::Output>()?;
+        Self::require_unique_kinds::<S::Left>()?;
+        Self::require_unique_kinds::<S::Right>()?;
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
@@ -386,9 +428,23 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             TypeId::of::<S::Output>(),
         );
 
-        self.native_registry =
-            self.native_registry
-                .register_circuit(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+        let stage_size = self.stage_size.max(S::NUM_STAGED);
+        // Leave room after the SYSTEM gate and the stage.
+        if 1usize
+            .checked_add(staging::stage_gates(stage_size))
+            .is_none_or(|end| end >= R::n())
+        {
+            return Err(Error::Initialization(
+                "the application stage does not fit the rank's gates".into(),
+            ));
+        }
+        self.stage_size = stage_size;
+        self.application_circuits
+            .push(Box::new(move |registry, stage_size| {
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::with_stage(
+                    step, stage_size,
+                )?)
+            }));
         self.num_application_steps += 1;
 
         Ok(self)
@@ -403,7 +459,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     #[cfg(test)]
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
-            self.native_registry = self.native_registry.register_circuit(())?;
+            self.application_circuits
+                .push(Box::new(|registry, _| registry.register_circuit(())));
             self.num_application_steps += 1;
         }
         Ok(self)
@@ -455,17 +512,22 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         C::Profile::check_context(&context, params, &self.header_map)?;
 
         // Build the native registry:
-        // 1. Application circuits (already registered)
+        // 1. Application circuits (with the final stage size)
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
             internal::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
 
-        // First, register internal circuits and masks
+        for register in core::mem::take(&mut self.application_circuits) {
+            self.native_registry = register(self.native_registry, self.stage_size)?;
+        }
+
+        // Then, register internal circuits and masks.
         self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,
             params,
             log2_circuits,
+            self.stage_size,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -474,10 +536,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // which rejects them.
         self = self.register_internal_step(step::internal::rerandomize::Rerandomize::<()>::new())?;
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, _, R, HEADER_SIZE>::new(
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE>::with_stage(
                     step::internal::bootstrap::Bootstrap::new(),
-                ))?;
+                    self.stage_size,
+                )?,
+            )?;
         // The decompression step, for a profile whose extension verifies a
         // compressed proof: the one step whose output header is that
         // proof's statement (see `step::internal::decompress`).
@@ -508,6 +572,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
+            stage_size: self.stage_size,
             bootstrap: self.bootstrap,
             seeded_trivial: OnceCell::new(),
             context,
@@ -570,10 +635,24 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
 
         self.native_registry =
-            self.native_registry
-                .register_internal_step(Adapter::<C, S, R, HEADER_SIZE>::new(step))?;
+            self.native_registry.register_internal_step(
+                Adapter::<C, S, R, HEADER_SIZE>::with_stage(step, self.stage_size)?,
+            )?;
 
         Ok(self)
+    }
+
+    /// Rejects a header whose
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) keeps the same kind
+    /// in two slots: no step could name that kind.
+    fn require_unique_kinds<H: Header<C::CircuitField>>() -> Result<()> {
+        if <H::OnlinePolyCommit as header::OnlinePolyCommit>::has_unique_kinds() {
+            Ok(())
+        } else {
+            Err(Error::Initialization(
+                "a Header cannot keep the same online polynomial kind in two slots".into(),
+            ))
+        }
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
@@ -617,6 +696,8 @@ pub struct Application<
     /// The header type each registered step outputs, by suffix.
     #[cfg(feature = "unstable-aggregator")]
     output_headers: BTreeMap<header::Suffix, TypeId>,
+    /// The application stage's size, in values.
+    stage_size: usize,
     /// The profile's prover context: what its prover holds across proofs
     /// (see [`Profile::Context`]).
     context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
@@ -769,6 +850,55 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             seeded_trivial,
         )
         .map(|(pcd, ())| pcd)
+    }
+
+    /// Computes $H^{bridge}(P)$ from the unblinded stage polynomial the
+    /// honest prover constructs for `point`. When `point` is the step's own last
+    /// online commitment, this is the honest prover's value of
+    /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash). An application
+    /// that hashes a polynomial commitment, for instance into an anchor it
+    /// also recomputes outside the circuit, calls this.
+    ///
+    /// It is the commitment of the stage holding `point`'s coordinates
+    /// alone, so it depends on the rank and the nested generators; binding
+    /// rests on the commitment's.
+    ///
+    /// An accepted bridge digest binds the point but need not use this
+    /// canonical unblinded encoding or be fixed before the step's challenge.
+    /// Anchor applications must compare natively recomputed advancement
+    /// against canonical-chain anchors.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `point` is the identity, which the stage cannot hold.
+    pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
+        internal::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
+            point,
+            C::nested_generators(self.params),
+        )
+    }
+
+    /// The commitment of an online polynomial with coefficients `coeffs`, in
+    /// ascending degree. When [`Step::prepare`] prepares these coefficients,
+    /// Ragu stores this unblinded commitment in the output proof's slot.
+    /// An application that recomputes a commitment outside the circuit, for
+    /// instance to recompute a [`bridge_hash`](Self::bridge_hash), calls this.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the polynomial has more coefficients than the rank holds.
+    pub fn commit(&self, coeffs: &[C::CircuitField]) -> Result<C::HostCurve> {
+        if coeffs.len() > R::num_coeffs() {
+            return Err(Error::InvalidWitness(
+                "a polynomial has more coefficients than the rank holds".into(),
+            ));
+        }
+        let poly =
+            ragu_circuits::polynomials::sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec());
+        Ok(B::sparse_commit_to_affine(
+            &poly,
+            C::host_generators(self.params),
+        ))
     }
 
     /// Returns a reference to the native [`Registry`].

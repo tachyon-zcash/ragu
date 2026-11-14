@@ -52,6 +52,10 @@ type P = Aggregator<HEADER_SIZE>;
 /// binding circuits after the chunks.
 #[test]
 fn pinned_layout_is_the_schedules() {
+    std::println!(
+        "native counts at census header: {:?}",
+        native_counts::<Pasta, WalletRank, AggregatorRank, 96>().unwrap()
+    );
     assert_eq!(
         P::native_circuits(HEADER_SIZE),
         native_counts::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap(),
@@ -63,8 +67,8 @@ fn pinned_layout_is_the_schedules() {
         "the nested pins"
     );
     assert_eq!(
-        Aggregator::<103>::native_circuits(103),
-        native_counts::<Pasta, WalletRank, AggregatorRank, 103>().unwrap(),
+        Aggregator::<96>::native_circuits(96),
+        native_counts::<Pasta, WalletRank, AggregatorRank, 96>().unwrap(),
         "the native pins for the internal tests' header size"
     );
     assert_eq!(
@@ -76,12 +80,12 @@ fn pinned_layout_is_the_schedules() {
         nested::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap()
     );
     assert_eq!(
-        Aggregator::<103>::native_extension(),
-        native::<Pasta, WalletRank, AggregatorRank, 103>().unwrap()
+        Aggregator::<96>::native_extension(),
+        native::<Pasta, WalletRank, AggregatorRank, 96>().unwrap()
     );
     assert_eq!(
-        Aggregator::<103>::nested_extension(),
-        nested::<Pasta, WalletRank, AggregatorRank, 103>().unwrap()
+        Aggregator::<96>::nested_extension(),
+        nested::<Pasta, WalletRank, AggregatorRank, 96>().unwrap()
     );
 
     let native = P::native_extension();
@@ -264,6 +268,7 @@ struct Value;
 
 impl Header<Fp> for Value {
     const SUFFIX: Suffix = Suffix::new(7);
+    type OnlinePolyCommit = (crate::header::Padding, crate::header::Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -281,6 +286,7 @@ struct Other;
 
 impl Header<Fp> for Other {
     const SUFFIX: Suffix = Suffix::new(7);
+    type OnlinePolyCommit = (crate::header::Padding, crate::header::Padding);
     type Data = Fp;
     type Output = Kind![Fp; Element<'_, _>];
 
@@ -307,6 +313,7 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for OtherLeaf {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
         &self,
         dr: &mut D,
+        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -341,6 +348,7 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for Leaf {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
         &self,
         dr: &mut D,
+        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Fp>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -703,6 +711,7 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for Join {
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
         &self,
         dr: &mut D,
+        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, ()>,
         left: DriverValue<D, Fp>,
         right: DriverValue<D, Fp>,

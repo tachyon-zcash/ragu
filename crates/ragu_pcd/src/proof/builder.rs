@@ -18,7 +18,11 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result};
 
 use super::{Cached, Proof};
-use crate::{internal::nested, profile::ProfiledCycle};
+use crate::{
+    header::NUM_ONLINE_POLYNOMIALS,
+    internal::{nested, online},
+    profile::ProfiledCycle,
+};
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
 /// field, panicking on double-set.
@@ -222,6 +226,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Native rx polynomials
     native_application_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_application_stage_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_inner_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -248,9 +253,16 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_points_f_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_walk_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
+    // The step's own online polynomials, with their commitments cached.
+    online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]>,
+    online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_POLYNOMIALS]>,
+    online_openings: Option<online::Queries<C::CircuitField>>,
+
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_preamble_commitment: Option<C::NestedCurve>,
+    bridge_hash_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_hash_commitment: Option<C::NestedCurve>,
     bridge_s_prime_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
     bridge_s_prime_commitment: Option<C::NestedCurve>,
     bridge_inner_error_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -328,6 +340,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
 
     // Native commitment caches (lazily computed from polynomials)
     native_application_commitment: OnceCell<C::HostCurve>,
+    native_application_stage_commitment: OnceCell<C::HostCurve>,
     native_preamble_commitment: OnceCell<C::HostCurve>,
     native_inner_error_commitment: OnceCell<C::HostCurve>,
     native_outer_error_commitment: OnceCell<C::HostCurve>,
@@ -370,6 +383,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             left_header: None,
             right_header: None,
             native_application_rx: None,
+            native_application_stage_rx: None,
             native_preamble_rx: None,
             native_inner_error_rx: None,
             native_outer_error_rx: None,
@@ -395,8 +409,13 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_rx: None,
             native_points_f_rx: None,
             native_points_walk_rx: None,
+            online_polynomials: None,
+            online_commitments: OnceCell::new(),
+            online_openings: None,
             bridge_preamble_rx: None,
             bridge_preamble_commitment: None,
+            bridge_hash_rx: None,
+            bridge_hash_commitment: None,
             bridge_s_prime_rx: None,
             bridge_s_prime_commitment: None,
             bridge_inner_error_rx: None,
@@ -445,6 +464,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             u: None,
             pre_beta: None,
             native_application_commitment: OnceCell::new(),
+            native_application_stage_commitment: OnceCell::new(),
             native_preamble_commitment: OnceCell::new(),
             native_inner_error_commitment: OnceCell::new(),
             native_outer_error_commitment: OnceCell::new(),
@@ -487,6 +507,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     slice_getter!(right_header, right_header, C::CircuitField);
 
     native_setter!(set_native_application_rx, native_application_rx);
+    native_setter!(set_native_application_stage_rx, native_application_stage_rx);
     native_setter!(set_native_preamble_rx, native_preamble_rx);
     native_setter!(set_native_inner_error_rx, native_inner_error_rx);
     native_setter!(set_native_outer_error_rx, native_outer_error_rx);
@@ -568,6 +589,37 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         native_endoscaling_step_rxs,
         Vec<sparse::Polynomial<C::CircuitField, R>>
     );
+    setter!(
+        set_online_polynomials,
+        online_polynomials,
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
+    );
+    ref_getter!(
+        online_polynomials,
+        online_polynomials,
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
+    );
+
+    setter!(
+        set_online_openings,
+        online_openings,
+        online::Queries<C::CircuitField>
+    );
+    ref_getter!(
+        online_openings,
+        online_openings,
+        online::Queries<C::CircuitField>
+    );
+
+    /// Lazily computes and caches the commitments of the step's own online
+    /// polynomials.
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+        *self.online_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            let polys = self.online_polynomials();
+            core::array::from_fn(|i| B::sparse_commit_to_affine(&polys[i], host_gen))
+        })
+    }
     setter!(
         set_native_extension_circuit_rxs,
         native_extension_circuit_rxs,
@@ -668,6 +720,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     );
     lazy_commitment!(
         native,
+        native_application_stage_commitment,
+        native_application_stage_commitment,
+        native_application_stage_rx
+    );
+    lazy_commitment!(
+        native,
         native_preamble_commitment,
         native_preamble_commitment,
         native_preamble_rx
@@ -736,6 +794,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         bridge_preamble_commitment,
         bridge_preamble_rx,
         bridge_preamble_commitment
+    );
+    bridge_pair!(
+        set_bridge_hash_rx,
+        bridge_hash_commitment,
+        bridge_hash_rx,
+        bridge_hash_commitment
     );
     bridge_pair!(
         set_bridge_s_prime_rx,
@@ -1044,6 +1108,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
         self.native_application_commitment();
+        self.native_application_stage_commitment();
         self.native_preamble_commitment();
         self.native_inner_error_commitment();
         self.native_outer_error_commitment();
@@ -1066,6 +1131,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_points_ab_commitment();
         self.native_points_f_commitment();
         self.native_points_walk_commitment();
+        self.online_commitments();
 
         // Force lazy evaluation of the cached bridge commitment.
         self.bridge_ab_commitment()?;
@@ -1110,6 +1176,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             right_header: take!(right_header),
 
             native_application_rx: take!(native_application_rx),
+            native_application_stage_rx: take!(native_application_stage_rx),
             native_preamble_rx: take!(native_preamble_rx),
             native_inner_error_rx: take!(native_inner_error_rx),
             native_outer_error_rx: take!(native_outer_error_rx),
@@ -1135,9 +1202,13 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_rx: take!(native_points_ab_rx),
             native_points_f_rx: take!(native_points_f_rx),
             native_points_walk_rx: take!(native_points_walk_rx),
+            online_polynomials: take!(online_polynomials),
+            online_openings: take!(online_openings),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
+            bridge_hash_rx: take!(bridge_hash_rx),
+            bridge_hash_commitment: take!(bridge_hash_commitment),
             bridge_s_prime_rx: take!(bridge_s_prime_rx),
             bridge_s_prime_commitment: take!(bridge_s_prime_commitment),
             bridge_inner_error_rx: take!(bridge_inner_error_rx),
@@ -1210,6 +1281,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             pre_beta: take!(pre_beta),
 
             native_application_commitment: cached!(native_application_commitment),
+            native_application_stage_commitment: cached!(native_application_stage_commitment),
             native_preamble_commitment: cached!(native_preamble_commitment),
             native_inner_error_commitment: cached!(native_inner_error_commitment),
             native_outer_error_commitment: cached!(native_outer_error_commitment),
@@ -1259,6 +1331,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_ab_commitment: cached!(native_points_ab_commitment),
             native_points_f_commitment: cached!(native_points_f_commitment),
             native_points_walk_commitment: cached!(native_points_walk_commitment),
+            online_commitments: self
+                .online_commitments
+                .take()
+                .expect("online_commitments not set")
+                .map(Cached),
         })
     }
 }

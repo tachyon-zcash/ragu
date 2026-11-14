@@ -581,6 +581,7 @@ pub(crate) struct NativeTargets<'dr, D: Driver<'dr>> {
     pub c: Element<'dr, D>,
     pub application: Element<'dr, D>,
     pub unified_bridge: Element<'dr, D>,
+    pub compute_v_bridge: Element<'dr, D>,
     pub unified: Element<'dr, D>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
@@ -599,6 +600,10 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky> {
         once(self.unified_bridge.clone())
+    }
+
+    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        once(self.compute_v_bridge.clone())
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
@@ -902,6 +907,10 @@ where
         circuit_id: element(dr, instance.circuit_id.omega_j())?,
         left_header: elements(dr, instance.left_header.iter().copied())?,
         right_header: elements(dr, instance.right_header.iter().copied())?,
+        online: elements(
+            dr,
+            instance.online.iter().flat_map(|query| [query.x, query.y]),
+        )?,
         nested: nested_points,
         nested_registry_xy: point(dr, instance.nested_registry_xy)?,
         nested_p: point(dr, instance.nested_p)?,
@@ -960,12 +969,14 @@ where
         D::just(|| instance.left_header.as_slice()),
         D::just(|| instance.right_header.as_slice()),
         D::just(|| witness.header.as_slice()),
+        D::just(|| &instance.online),
         D::just(|| instance.circuit_id.omega_j()),
         D::just(|| &unified),
     )?;
     {
         use nested::RxIndex::*;
         let out = &proof_inputs.unified;
+        bridge_at(BridgeHash).enforce_equal(dr, &out.bridge_hash_commitment)?;
         bridge_at(BridgePreamble).enforce_equal(dr, &out.bridge_preamble_commitment)?;
         bridge_at(BridgeSPrime).enforce_equal(dr, &out.bridge_s_prime_commitment)?;
         bridge_at(BridgeInnerError).enforce_equal(dr, &out.bridge_inner_error_commitment)?;
@@ -1051,6 +1062,15 @@ where
         &runs,
     )?;
 
+    for (value, query_value) in allocated.online.iter().zip(
+        proof_inputs
+            .online
+            .iter()
+            .flat_map(|query| [&query.x, &query.y]),
+    ) {
+        value.enforce_equal(dr, query_value)?;
+    }
+
     // The host curve's field checks.
     {
         let side = &witness.native;
@@ -1061,6 +1081,7 @@ where
             c: allocated.c.clone(),
             application,
             unified_bridge,
+            compute_v_bridge: proof_inputs.compute_v_bridge_ky(dr, y)?,
             unified: unified_target,
             one: Element::one(),
             zero: Element::zero(dr),
@@ -1340,6 +1361,16 @@ where
             native_points[native_position::<Standard>(Rx(index))] =
                 Some(output.exported[9 + i].clone());
         }
+    }
+    native_points
+        [native_position::<Standard>(native::RxComponent::Rx(native::RxIndex::ApplicationStage))] =
+        Some(output.exported[16].clone());
+    for (commitment, exported) in instance
+        .online_commitments
+        .iter()
+        .zip(&output.exported[14..16])
+    {
+        point(dr, *commitment)?.enforce_equal(dr, exported)?;
     }
     let mut commitments = Vec::with_capacity(native_points.len());
     for (position, allocated) in native_points.into_iter().enumerate() {

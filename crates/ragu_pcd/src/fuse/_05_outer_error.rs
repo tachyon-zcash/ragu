@@ -117,11 +117,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     application: preamble.left.application_ky(dr, &y)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
+                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y)?,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
                     application: preamble.right.application_ky(dr, &y)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
+                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y)?,
                 };
 
                 let mu = Element::alloc(dr, allocator, mu)?;
@@ -177,11 +179,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         application: *left_ky.application.value().take(),
                         unified: *left_ky.unified.value().take(),
                         unified_bridge: *left_ky.unified_bridge.value().take(),
+                        compute_v_bridge: *left_ky.compute_v_bridge.value().take(),
                     },
                     right: ChildKyValues {
                         application: *right_ky.application.value().take(),
                         unified: *right_ky.unified.value().take(),
                         unified_bridge: *right_ky.unified_bridge.value().take(),
+                        compute_v_bridge: *right_ky.compute_v_bridge.value().take(),
                     },
                 };
 

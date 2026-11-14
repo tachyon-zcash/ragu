@@ -563,6 +563,16 @@ fn rejects_tampered_stages() {
     assert!(rejected(&sides.native), "a tampered instance fails a chunk");
     sides.native.instance.elements[c] -= Fp::ONE;
 
+    // The online openings are shared by transcript replay and the targets.
+    for position in sides.native.schedule.layout.instance.online.positions() {
+        sides.native.instance.elements[position] += Fp::ONE;
+        assert!(
+            rejected(&sides.native),
+            "a tampered online opening fails a chunk"
+        );
+        sides.native.instance.elements[position] -= Fp::ONE;
+    }
+
     // The work stage: a squeezed challenge fails its transcript chunk.
     let w = sides.native.schedule.regions.squeezed[0];
     sides.native.work.elements[w] += Fp::ONE;

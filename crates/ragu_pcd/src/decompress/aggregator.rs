@@ -98,13 +98,13 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     pub const fn native_circuits(header_size: usize) -> Counts {
         match header_size {
             4 => Counts {
-                circuits: 31,
+                circuits: 32,
                 transcript: 4,
                 digits: 1,
             },
             #[cfg(test)]
-            103 => Counts {
-                circuits: 34,
+            96 => Counts {
+                circuits: 35,
                 transcript: 7,
                 digits: 1,
             },
@@ -116,7 +116,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// header size: none run transcript chunks, and the digits chunks come
     /// last.
     pub const NESTED_CIRCUITS: Counts = Counts {
-        circuits: 18,
+        circuits: 19,
         transcript: 0,
         digits: 1,
     };

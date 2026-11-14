@@ -325,7 +325,7 @@ pub fn multipack<'dr, D: Driver<'dr>>(
 /// constraints are unsatisfiable. Over the Pasta fields a uniformly random
 /// element falls outside this range with negligible probability (about
 /// $2^{-129}$).
-pub(crate) fn decompose<'dr, D: Driver<'dr>>(
+pub fn decompose<'dr, D: Driver<'dr>>(
     dr: &mut D,
     allocator: &mut impl Allocator<'dr, D>,
     elem: &Element<'dr, D>,

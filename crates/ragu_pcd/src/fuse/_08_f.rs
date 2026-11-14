@@ -38,6 +38,7 @@ use crate::{
         native,
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery},
         nested::{self, pcs},
+        online,
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -236,6 +237,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_registry_xy_poly().iter_coeffs(),
                 omega_j(id),
             ));
+        }
+
+        // The online openings, in slot order, each at its own point.
+        let polys = online::polys(left, right, builder.online_polynomials());
+        for (poly, query) in polys.into_iter().zip(builder.online_openings()) {
+            iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
         let poly = alpha_batched_quotients::<_, R>(iters, alpha);

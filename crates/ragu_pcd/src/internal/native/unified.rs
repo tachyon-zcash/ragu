@@ -40,7 +40,7 @@ pub type InternalOutputKind<C: Cycle> = Kind![C::CircuitField; WithSuffix<'_, _,
 /// The number of wires in an [`Output`] gadget.
 ///
 /// Used for allocation sizing and verified by tests.
-pub const NUM_WIRES: usize = 37;
+pub const NUM_WIRES: usize = 39;
 
 /// Maps a field type to its `Output` gadget type.
 macro_rules! unified_output_type {
@@ -274,6 +274,9 @@ macro_rules! define_unified_instance {
 define_unified_instance! {
     /// Bridge commitment from the preamble proof component.
     bridge_preamble_commitment: Point,
+    /// Bridge-hash commitment, bound to the `O1` in the preamble. It is not
+    /// absorbed and need not be canonical or fixed before $w$.
+    bridge_hash_commitment: Point,
     /// Fiat-Shamir challenge $w$.
     w: Element,
     /// Bridge commitment from the s_prime proof component.
@@ -474,6 +477,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
         }
         Ok(Output {
             bridge_preamble_commitment: point!(bridge_preamble_commitment),
+            bridge_hash_commitment: point!(bridge_hash_commitment),
             w: element!(w),
             bridge_s_prime_commitment: point!(bridge_s_prime_commitment),
             y: element!(y),
@@ -514,6 +518,8 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
     ) -> Result<Self> {
         let bridge_preamble_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_preamble_commitment()))?;
+        let bridge_hash_commitment =
+            Point::alloc(dr, proof.as_ref().map(|p| p.bridge_hash_commitment()))?;
         let w = Element::alloc(dr, allocator, proof.as_ref().map(|p| p.w()))?;
         let bridge_s_prime_commitment =
             Point::alloc(dr, proof.as_ref().map(|p| p.bridge_s_prime_commitment()))?;
@@ -558,6 +564,7 @@ impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> Output<'dr, D, C> {
 
         Ok(Output {
             bridge_preamble_commitment,
+            bridge_hash_commitment,
             w,
             bridge_s_prime_commitment,
             y,
@@ -640,6 +647,7 @@ mod tests {
     fn coverage_assert_complete_passes_when_all_set() {
         let cov = Coverage {
             bridge_preamble_commitment: true,
+            bridge_hash_commitment: true,
             w: true,
             bridge_s_prime_commitment: true,
             y: true,

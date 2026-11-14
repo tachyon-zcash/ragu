@@ -13,10 +13,51 @@ use crate::{
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
 const ENVELOPE_VERSION: u16 = 3;
 /// Each proof representation has its own payload kind and schema version.
-#[derive(Clone, Copy)]
-pub(crate) enum PayloadKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PayloadKind {
+    /// An uncompressed [`Proof`].
     Proof,
+    /// A [`CompressedProof`].
     Compressed,
+}
+
+/// Reads the payload kind from the envelope at the start of `bytes`.
+///
+/// Checks the magic and envelope version. Later envelope fields and the payload
+/// need not be present. This does not establish proof validity.
+pub fn read_payload_kind(bytes: &[u8]) -> Result<PayloadKind, Error<'_>> {
+    let mut reader = Reader::new(bytes);
+    let offset = reader.offset();
+    let bytes = reader.take(MAGIC.len())?;
+    if bytes != MAGIC {
+        return Err(Error::Invalid {
+            offset,
+            bytes,
+            reason: "invalid proof magic",
+        });
+    }
+
+    let offset = reader.offset();
+    let bytes = reader.take(size_of::<u16>())?;
+    if bytes != ENVELOPE_VERSION.to_le_bytes() {
+        return Err(Error::Invalid {
+            offset,
+            bytes,
+            reason: "unsupported proof envelope version",
+        });
+    }
+
+    let offset = reader.offset();
+    let bytes = reader.take(size_of::<u16>())?;
+    let tag = u16::from_le_bytes(bytes.try_into().expect("2-byte payload kind"));
+    [PayloadKind::Proof, PayloadKind::Compressed]
+        .into_iter()
+        .find(|kind| kind.tag() == tag)
+        .ok_or(Error::Invalid {
+            offset,
+            bytes,
+            reason: "unknown proof payload kind",
+        })
 }
 
 impl PayloadKind {
@@ -34,8 +75,8 @@ impl PayloadKind {
         }
     }
 }
-const PROOF_SCHEMA_VERSION: u16 = 1;
-const COMPRESSED_SCHEMA_VERSION: u16 = 1;
+const PROOF_SCHEMA_VERSION: u16 = 2;
+const COMPRESSED_SCHEMA_VERSION: u16 = 2;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 // Held at 1 until the first release: nothing is deployed, so a change to
 // the semantics before then, such as the lifted challenges and the run
@@ -270,38 +311,92 @@ mod tests {
     use udon::field::Field;
 
     use super::*;
-    use crate::profile::{Shape, Standard};
+    use crate::{
+        header::NUM_ONLINE_POLYNOMIALS,
+        internal::online::NUM_ONLINE_QUERIES,
+        profile::{Shape, Standard},
+    };
 
-    // Schema v1 is the standard profile's shape under `ragu-pcd-v1`. A
+    #[test]
+    fn payload_kind_inspection() {
+        let dims = Dimensions::of::<TestRank, 4>();
+        let prefix_len = MAGIC.len() + 2 * size_of::<u16>();
+        for kind in [PayloadKind::Proof, PayloadKind::Compressed] {
+            let mut bytes = Vec::new();
+            write_envelope(kind, dims, &mut bytes);
+            bytes.truncate(prefix_len);
+            let parsed = read_payload_kind(&bytes).unwrap();
+            assert_eq!(parsed, kind);
+        }
+        assert_eq!(
+            read_payload_kind(&[]),
+            Err(Error::Truncated {
+                offset: 0,
+                requested: MAGIC.len(),
+                bytes: &[],
+            })
+        );
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&ENVELOPE_VERSION.to_le_bytes());
+        let offset = bytes.len();
+        bytes.extend_from_slice(&u16::MAX.to_le_bytes());
+        assert_eq!(
+            read_payload_kind(&bytes),
+            Err(Error::Invalid {
+                offset,
+                bytes: &bytes[offset..],
+                reason: "unknown proof payload kind",
+            })
+        );
+        let bytes = [0xff; ENVELOPE_SIZE];
+        assert_eq!(
+            read_payload_kind(&bytes),
+            Err(Error::Invalid {
+                offset: 0,
+                bytes: &bytes[..MAGIC.len()],
+                reason: "invalid proof magic",
+            })
+        );
+    }
+
+    // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
+    // the online polynomials (see `internal::online`) in the batch and the
+    // application stage beside the application trace. A
     // change to either moves the layout or the verifier semantics and needs
     // a new schema or protocol version, not a silent re-pin.
     #[test]
-    fn schema_v1_pins_protocol_and_shape() {
+    fn schema_v2_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
         assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 45,
-                nested_points: 105,
-                nested_steps: 26,
-                nested_rx: 39,
-                native_points: 93,
-                native_steps: 23,
+                native_rx: 48,
+                nested_points: 117,
+                nested_steps: 29,
+                nested_rx: 43,
+                native_points: 101,
+                native_steps: 25,
             }
         );
     }
 
     #[test]
     fn encoded_length_is_a_function_of_profile_rank_and_header_size() {
-        // Every polynomial of the shape, with `2^rank` coefficients each; a
-        // commitment per polynomial plus the nested challenges partial; two
-        // headers; the bridge alpha and nine challenges; one circuit index.
-        // The envelope adds 28 bytes.
+        // Every polynomial of the shape and the step's own online
+        // polynomials, with `2^rank` coefficients each; a commitment per
+        // polynomial plus the nested challenges partial; two headers; the
+        // online openings; the bridge alpha and nine challenges; one
+        // circuit index. The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
-            let polynomials = Shape::of::<Standard>().polynomials();
-            polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 2 * H * 32 + 10 * 32 + 4
+            let polynomials = Shape::of::<Standard>().polynomials() + NUM_ONLINE_POLYNOMIALS;
+            polynomials * R::num_coeffs() * 32
+                + (polynomials + 1) * 32
+                + 2 * H * 32
+                + 2 * NUM_ONLINE_QUERIES * 32
+                + 10 * 32
+                + 4
         }
         assert_eq!(
             <Proof<Pasta, WalletRank> as Decode>::encoded_len(Dimensions::of::<WalletRank, 4>()),
@@ -315,11 +410,12 @@ mod tests {
             Proof::<Pasta, WalletRank>::encoded_len::<4>(),
             28 + payload::<WalletRank, 4>()
         );
-        // 93 instance points; 27 instance scalars; per side 6+2R points,
-        // 21 scalars; plus the circuit index and common envelope.
+        // 102 instance points; 27 instance scalars and the online openings'
+        // two scalars each; per side 6+2R points, 21 scalars; plus the
+        // circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<WalletRank, 4>(),
-            28 + 4 + (93 + 27 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (102 + 27 + 2 * NUM_ONLINE_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

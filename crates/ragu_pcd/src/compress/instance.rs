@@ -31,12 +31,14 @@ use super::revdot::{
 };
 use crate::{
     Proof, SelectableBackend,
+    header::NUM_ONLINE_POLYNOMIALS,
     internal::{
         ky::{self, NativeKy, NestedKy},
         native::{self, stages as native_stages, unified as native_unified},
         nested::{
             self, challenge as nested_challenge, stages as nested_stages, unified as nested_unified,
         },
+        online,
     },
     ipa::{CycleTranscript, IpaTranscript},
     profile::ProfiledCycle,
@@ -69,11 +71,17 @@ pub(crate) struct Instance<C: Cycle> {
     pub circuit_id: CircuitIndex,
     pub left_header: Vec<C::CircuitField>,
     pub right_header: Vec<C::CircuitField>,
+    /// The online openings the proof's `compute_v` exported, which its
+    /// application circuit's instance is held to.
+    pub online: online::Queries<C::CircuitField>,
 
     /// The native commitments in [`native_components`] order.
     pub native: Vec<C::HostCurve>,
     pub native_registry_xy: C::HostCurve,
     pub native_p: C::HostCurve,
+    /// The commitments of the step's own online polynomials, which its
+    /// nested instance exports.
+    pub online_commitments: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.
@@ -189,11 +197,13 @@ impl<C: ProfiledCycle> Instance<C> {
             circuit_id: proof.circuit_id(),
             left_header: proof.left_header().to_vec(),
             right_header: proof.right_header().to_vec(),
+            online: *proof.online_openings(),
             native: native_components::<C::Profile>()
                 .map(|component| proof.native_commitment(component))
                 .collect(),
             native_registry_xy: proof.native_registry_xy_commitment(),
             native_p: proof.native_p_commitment(),
+            online_commitments: proof.online_commitments(),
             nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -249,9 +259,10 @@ impl<C: ProfiledCycle> Instance<C> {
         self.nested_commitment(nested::RxComponent::Rx(index))
     }
 
-    /// Absorbs the instance into `transcript`: the circuit id and the
-    /// headers, then every commitment and scalar of each curve, so that
-    /// every challenge squeezed afterwards depends on all of it.
+    /// Absorbs the instance into `transcript`: the circuit id, the headers
+    /// and the online openings, then every commitment and scalar of each
+    /// curve, so that every challenge squeezed afterwards depends on all of
+    /// it.
     pub(crate) fn absorb<B: SelectableBackend>(
         &self,
         transcript: &mut CycleTranscript<'_, C, B>,
@@ -261,10 +272,15 @@ impl<C: ProfiledCycle> Instance<C> {
         for &element in self.left_header.iter().chain(&self.right_header) {
             host.write_scalar(element)?;
         }
+        for query in &self.online {
+            host.write_scalar(query.x)?;
+            host.write_scalar(query.y)?;
+        }
         for &point in self
             .native
             .iter()
             .chain([&self.native_registry_xy, &self.native_p])
+            .chain(&self.online_commitments)
         {
             host.write_point(point)?;
         }
@@ -370,6 +386,7 @@ impl<C: ProfiledCycle> Instance<C> {
         use nested::RxIndex::*;
         native_unified::Instance {
             bridge_preamble_commitment: self.bridge(BridgePreamble),
+            bridge_hash_commitment: self.bridge(BridgeHash),
             w: challenges.w,
             bridge_s_prime_commitment: self.bridge(BridgeSPrime),
             y: challenges.y,
@@ -425,6 +442,9 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),
+                self.online_commitments[0],
+                self.online_commitments[1],
+                self.native_commitment(Rx(ApplicationStage)),
             ],
             coverage: Default::default(),
         })
@@ -450,6 +470,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     left_header: &self.left_header,
                     right_header: &self.right_header,
                     output_header,
+                    online: &self.online,
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,

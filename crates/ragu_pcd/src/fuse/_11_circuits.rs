@@ -14,6 +14,7 @@ use rand::CryptoRng;
 use super::_10_p::{NativeInputs, NativeWalk};
 use crate::{
     Application,
+    header::NUM_ONLINE_POLYNOMIALS,
     internal::{native, native::total_circuit_counts, nested},
     profile::{Profile, ProfiledCycle, Source},
     proof::ProofBuilder,
@@ -50,6 +51,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     ) -> Result<()> {
         let unified = native::unified::Instance {
             bridge_preamble_commitment: builder.bridge_preamble_commitment(),
+            bridge_hash_commitment: builder.bridge_hash_commitment(),
             w: builder.w(),
             bridge_s_prime_commitment: builder.bridge_s_prime_commitment(),
             y: builder.y(),
@@ -286,12 +288,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 builder.native_points_registry_wx_commitment(),
                 builder.native_points_ab_commitment(),
                 builder.native_points_f_commitment(),
+                builder.online_commitments()[0],
+                builder.online_commitments()[1],
+                builder.native_application_stage_commitment(),
             ],
             coverage: Default::default(),
         };
         let witness = |instance| nested::circuits::common::Witness {
             instance,
             endoscalar: nested_endoscalar,
+            bridge_hash: builder.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1],
             points: nested_points,
             preamble: nested_preamble_witness,
             s_prime: nested_s_prime_witness,

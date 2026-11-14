@@ -164,6 +164,7 @@ pub(crate) struct NativeExtra<C: Cycle> {
     pub left_header: Vec<C::CircuitField>,
     pub right_header: Vec<C::CircuitField>,
     pub output_header: Vec<C::CircuitField>,
+    pub online: crate::internal::online::Queries<C::CircuitField>,
     pub omega_j: C::CircuitField,
 }
 
@@ -249,6 +250,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             instance.a_at_u,
             instance.b_at_u,
         ];
+        elements.extend(instance.online.iter().flat_map(|query| [query.x, query.y]));
         elements.extend_from_slice(&instance.left_header);
         elements.extend_from_slice(&instance.right_header);
         elements.extend_from_slice(output_header);
@@ -302,6 +304,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             left_header: instance.left_header.clone(),
             right_header: instance.right_header.clone(),
             output_header: witness.header.clone(),
+            online: instance.online,
             omega_j: instance.circuit_id.omega_j(),
         })
     }
@@ -318,6 +321,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             witness.as_ref().map(|w| w.extra.left_header.as_slice()),
             witness.as_ref().map(|w| w.extra.right_header.as_slice()),
             witness.as_ref().map(|w| w.extra.output_header.as_slice()),
+            witness.as_ref().map(|w| &w.extra.online),
             witness.as_ref().map(|w| w.extra.omega_j),
             witness.as_ref().map(|w| &w.extra.unified),
         )?;
@@ -336,6 +340,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         {
             use nested::RxIndex::*;
             for (ours, theirs) in [
+                (bridge(BridgeHash), &unified.bridge_hash_commitment),
                 (bridge(BridgePreamble), &unified.bridge_preamble_commitment),
                 (bridge(BridgeSPrime), &unified.bridge_s_prime_commitment),
                 (
@@ -402,8 +407,16 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         }
         let y = ctx.lift(regions.lifts[squeezed::Y]);
         let (unified, bridge) = inputs.unified_ky_values(dr, &y)?;
+        for (position, value) in layout
+            .online
+            .positions()
+            .zip(inputs.online.iter().flat_map(|query| [&query.x, &query.y]))
+        {
+            elements[position].enforce_equal(dr, value)?;
+        }
         let application = inputs.application_ky(dr, &y)?;
-        Ok(alloc::vec![application, bridge, unified])
+        let compute_v_bridge = inputs.compute_v_bridge_ky(dr, &y)?;
+        Ok(alloc::vec![application, bridge, unified, compute_v_bridge])
     }
 
     fn ky_targets<'dr, D: Driver<'dr, F = Self::F>>(
@@ -417,6 +430,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             application: ctx.work(regions.targets[0]),
             unified_bridge: ctx.work(regions.targets[1]),
             unified: ctx.work(regions.targets[2]),
+            compute_v_bridge: ctx.work(regions.targets[3]),
             one: Element::one(),
             zero: Element::zero(dr),
         };
@@ -486,6 +500,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     ) -> Values<Self::F, Self::P> {
         let mut points = instance.native.clone();
         points.extend([instance.native_registry_xy, instance.native_p]);
+        points.extend(instance.online_commitments);
         let (l, r) = (instance.nested_left, instance.nested_right);
         let elements = alloc::vec![
             instance.bridge_alpha,
@@ -561,7 +576,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
             .v
             .enforce_equal(dr, &elements[layout.scalars.at(nested_scalars::V)])?;
         let listed = native_components::<Standard>().count();
-        let exported = {
+        let exported: [usize; nested_unified::NUM_EXPORTED] = {
             use native::{RxComponent::*, RxIndex::*};
             [
                 native_position::<Standard>(Rx(Preamble)),
@@ -578,6 +593,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
                 native_position::<Standard>(Rx(PointsRegistryWx)),
                 native_position::<Standard>(Rx(PointsAb)),
                 native_position::<Standard>(Rx(PointsF)),
+                listed + 2,
+                listed + 3,
+                native_position::<Standard>(Rx(ApplicationStage)),
             ]
         };
         for (position, theirs) in exported.iter().zip(output.exported.iter()) {

@@ -142,6 +142,7 @@ where
                 let loaded = [
                     own,
                     RxIndex::EndoscalarStage,
+                    RxIndex::BridgeHash,
                     RxIndex::PointsStage,
                     RxIndex::BridgePreamble,
                     RxIndex::BridgeSPrime,
@@ -217,6 +218,9 @@ where
             }
             BridgePreamble => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgePreamble)))?;
+            }
+            BridgeHash => {
+                processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeHash)))?;
             }
             BridgeSPrime => {
                 processor.bonding_claim(id, source.rx(Rx(RxIndex::BridgeSPrime)))?;

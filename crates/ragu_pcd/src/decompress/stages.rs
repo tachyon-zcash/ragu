@@ -346,6 +346,8 @@ pub(crate) struct InstanceLayout {
     /// Elements: this field's instance values, in [`native_scalars`] or
     /// [`nested_scalars`] order.
     pub scalars: Span,
+    /// Elements, circuit-field side: the online openings as (x, y) pairs.
+    pub online: Span,
     /// Elements, circuit-field side: the children's headers and the
     /// statement, the compressed proof's output header.
     pub left_header: Span,
@@ -396,6 +398,7 @@ impl Layout {
         let instance = InstanceLayout {
             commitments: points.next(NESTED_POINTS),
             scalars: elements.next(NATIVE_SCALARS),
+            online: elements.next(2 * crate::internal::online::NUM_ONLINE_QUERIES),
             left_header: elements.next(HEADER_SIZE),
             right_header: elements.next(HEADER_SIZE),
             output_header: elements.next(HEADER_SIZE),

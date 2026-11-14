@@ -43,6 +43,7 @@ use crate::{
             stages::points::{Inputs, WalkWitness},
         },
         nested::{PointsWitness, pcs},
+        online,
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -227,6 +228,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_registry_xy_poly(),
                 builder.native_registry_xy_commitment(),
             );
+
+            // The online slots, in slot order, whose commitments the nested
+            // `loading` circuit walks off the preamble bridge stage.
+            let polys = online::polys(left, right, builder.online_polynomials());
+            let commitments = online::commitments(left, right, builder.online_commitments());
+            for (poly, commitment) in polys.into_iter().zip(commitments) {
+                acc.acc(poly, commitment);
+            }
         }
 
         // Build the PointsStage input vector ([f.commitment, commitments..])

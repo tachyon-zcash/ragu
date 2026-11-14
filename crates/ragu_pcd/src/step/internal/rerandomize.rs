@@ -7,6 +7,11 @@
 //! a witness wire rather than a constant. The right header is the unit header
 //! carried by the cached proof.
 //!
+//! The output proof's polynomials are copies of the left input proof's, which
+//! the circuit holds equal at $\zeta$ slot by slot: the parent sees only
+//! the output slots, so a copy alone would let a rerandomizing prover swap
+//! the polynomial.
+//!
 //! That witnessed suffix is the one input suffix outside the bootstrap step
 //! that a prover chooses, and so the one place a prover could try to
 //! present the [`Dummy`] suffix and take the base case: the decompression
@@ -28,11 +33,11 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::allocator::Standard;
+use ragu_primitives::{GadgetExt, allocator::Standard};
 
-use super::super::{Encoded, Index, Step};
-use crate::Header;
+use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
+use crate::{Header, header::NUM_ONLINE_POLYNOMIALS};
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -56,9 +61,24 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     type Right = ();
     type Output = H;
 
+    /// The output carries copies of the left input's polynomials, every
+    /// slot's, whatever the header names. A copy here is prover data, not
+    /// a constraint: the parent sees only the output slots, so
+    /// [`witness`](Step::witness) proves each output polynomial equals the
+    /// left one at $\zeta$.
+    fn prepare<'source>(
+        &self,
+        _: &Self::Witness<'source>,
+        left: HeaderInput<'_, C::CircuitField, H>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+    ) -> Result<Prepared<C::CircuitField, H>> {
+        Ok(Prepared::from_polynomials(left.polynomials().clone()))
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         _: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, H::Data>,
         right: DriverValue<D, ()>,
@@ -80,6 +100,16 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // seeded proof.
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
         let right_encoded = Encoded::new(dr, allocator, right)?;
+
+        // The output polynomials are the left input's: open both slots of
+        // each at zeta and hold them equal. The right input's slots, the
+        // unit header's, go unqueried.
+        let zeta = oracles.zeta().clone();
+        for i in 0..NUM_ONLINE_POLYNOMIALS {
+            let left = oracles.left_at(i).open(dr, &zeta)?;
+            let output = oracles.output_at(i).open(dr, &zeta)?;
+            output.enforce_equal(dr, &left)?;
+        }
 
         // TODO(ebfull): It's possible that the witness for this step needs to
         // be populated with some random data, for actual re-randomization
@@ -117,7 +147,7 @@ mod tests {
         use ragu_primitives::{Element, allocator::Allocator};
         use ragu_testing::registry::TestRegistryBuilder;
 
-        use crate::header::{Header, Suffix};
+        use crate::header::{Header, Padding, Suffix};
 
         const HEADER_SIZE: usize = 4;
         type R = polynomials::TestRank;
@@ -125,6 +155,7 @@ mod tests {
         struct Single;
         impl Header<Fp> for Single {
             const SUFFIX: Suffix = Suffix::new(0);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = Fp;
             type Output = Kind![Fp; Element<'_, _>];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -139,6 +170,7 @@ mod tests {
         struct Pair;
         impl Header<Fp> for Pair {
             const SUFFIX: Suffix = Suffix::new(1);
+            type OnlinePolyCommit = (Padding, Padding);
             type Data = (Fp, Fp);
             type Output = Kind![Fp; (Element<'_, _>, Element<'_, _>)];
             fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
@@ -185,6 +217,7 @@ mod tests {
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
+                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
                 _: DriverValue<D, ()>,
                 left: DriverValue<D, ()>,
                 right: DriverValue<D, ()>,
@@ -201,6 +234,12 @@ mod tests {
                 let left_encoded =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, left.clone())?;
                 let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
+                let zeta = oracles.zeta().clone();
+                for i in 0..NUM_ONLINE_POLYNOMIALS {
+                    let left = oracles.left_at(i).open(dr, &zeta)?;
+                    let output = oracles.output_at(i).open(dr, &zeta)?;
+                    output.enforce_equal(dr, &left)?;
+                }
                 Ok((
                     (left_encoded.clone(), right_encoded, left_encoded),
                     left,
