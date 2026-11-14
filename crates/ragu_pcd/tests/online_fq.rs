@@ -3,9 +3,10 @@
 //! Mutations happen before the Query/Eval stages are committed, so the
 //! transcript, circuit witnesses and parent proofs follow the changed data.
 //! The wrong-point case also changes the quotient's opening point and uses
-//! the polynomial's correct value there: only the point-binding constraint
-//! should reject it. The other cases keep the polynomial and quotient
-//! construction honest while claiming a false Query or Eval value.
+//! the polynomial's correct value there: only `compute_v`'s fold at
+//! $\zeta_q$, which no stage can move, should reject it. The other cases
+//! keep the polynomial and quotient construction honest while claiming a
+//! false Query or Eval value.
 
 use core::cell::Cell;
 
@@ -54,7 +55,8 @@ fn with_mutation<T>(mutation: Mutation, f: impl FnOnce() -> T) -> T {
     f()
 }
 
-/// Changes both the Query point and the point used to construct its quotient.
+/// Changes the point the prover opens at: the Query value and the quotient
+/// both use it.
 pub(crate) fn query_point<F: Field>(point: F) -> F {
     if MUTATION.get() == Mutation::Point {
         point + F::ONE

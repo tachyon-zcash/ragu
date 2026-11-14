@@ -467,7 +467,7 @@ Swapping the fields swaps every role of the $\F_p$ slots:
 
 The difference that matters is the claimant.
 In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through a public instance: the application's $k(y)$, matched against `compute_v`'s export in the parent.
-Here the claimant is `compute_v` itself, which reads $(x_q, y_q)$ from the `Query` stage it folds.
+Here the claimant is `compute_v` itself, which reads $y_q$ from the `Query` stage it folds and takes the point $\zeta_q$ from its challenge stage.
 The pair never leaves the step's stages, so no instance changes, no $k(y)$ is added, and `MultiStageCircuit` needs no oracle input.
 The commitment needs no copy either: the native walk folds $\cm_{f_q}$ into $P_n$, the point the nested batch's opening is checked against, which is how the two sides already agree on every point the step commits.
 And since no header carries $f_q$, there is no header-carry check.
@@ -480,12 +480,12 @@ And since no header carries $f_q$, there is no header-carry check.
        │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  x  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-                             Query (+ x_q, y_q)
+                             Query (+ y_q)
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  u  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
                              Eval (+ f_q(u_n))
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  pre_β  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
   PointsWalk                 Challenges (zeta_q = lift(w))
-  (cm_fq into P_n)           compute_v: x_q = zeta_q, folds (x_q, y_q)
+  (cm_fq into P_n)           compute_v: folds (zeta_q, y_q)
 ```
 
 A profile sets the count with `Profile::ONLINE_FQ_POLYS`, zero by default and at most `NUM_ONLINE_FQ_POLYS = 1`, so the standard profile does not change.
@@ -497,8 +497,9 @@ The `Aggregator` profile turns it on when decompression lands; until then only t
   $\cm_{f_q}$ goes in `PointsChildren` because the native walk reads its inputs from the stage they were committed in; `PointsChildren`'s commitment is absorbed before $w$.
   It is committed unblinded, so that it can equal a point such as $G'$ that a circuit computes from public data.
 - **The point.**
-  The prover writes $x_q$ into the `Query` stage after it sees $w$, so `compute_v` must enforce $x_q = \zeta_q$.
-  Without it, the batch would fold an opening at a point the prover chose, and a check of $y_q$ at $\zeta_q$ would read a value at another point.
+  No stage holds the opening point: `compute_v` folds $y_q$ at $\zeta_q$, which it takes from the challenge stage.
+  A prover that opens $f_q$ at another point builds a quotient that does not match that fold, so the batch fails.
+  If decompression opens at another point, both the prover and `compute_v` must derive it, or a stage must hold it and `compute_v` must constrain it.
 - **The value.**
   A claimant must read $y_q$ from the `Query` stage rather than witness its own, since only the stage's $y_q$ is folded.
   Any nested internal circuit that loads the `Query` and challenge stages, as `collapse` and `compute_v` do, could be the claimant: the step's nested circuits share its stage commitments.

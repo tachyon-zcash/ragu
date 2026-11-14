@@ -194,9 +194,7 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
         let omega_j = |id: InternalCircuitIndex| -> C::ScalarField {
             id.circuit_index::<C::Profile>().omega_j()
         };
-        let online_fq_point = ch.w;
-        #[cfg(test)]
-        let online_fq_point = crate::online_fq_tests::query_point(online_fq_point);
+        let online_fq_point = crate::internal::online_fq::point(ch.w);
 
         STATIC_F_QUERIES
             .iter()
@@ -230,9 +228,8 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                     .into_iter()
                     .map(move |id| (self.registry_xy, omega_j(id))),
             )
-            // TODO(decompression): the nested `compute_v` opens each online
-            // Fq polynomial at zeta_q, the lift of w. If it opens at another
-            // point, that point goes here and in the `query` stage.
+            // The step's own online Fq polynomials, at the point the
+            // `query` stage's values are taken at.
             .chain(
                 self.online_fq
                     .iter()

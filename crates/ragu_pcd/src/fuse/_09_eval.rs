@@ -137,6 +137,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     .iter()
                     .map(|poly| {
                         let value = B::sparse_eval(poly, u_nested);
+                        // Test hook: this runs on the thread that calls
+                        // `fuse`, outside its parallel jobs, as the hook's
+                        // thread-local requires.
                         #[cfg(test)]
                         let value = crate::online_fq_tests::eval_value(value);
                         value

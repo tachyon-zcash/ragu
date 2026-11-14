@@ -25,7 +25,7 @@ use udon::{fft::bit_reverse, field::Field};
 use super::_04_inner_error::{NestedRegistryWy, RegistryWy};
 use crate::{
     Application, Proof,
-    internal::{native, nested, online},
+    internal::{native, nested, online_fq},
     multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -184,25 +184,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ),
         );
 
-        // The nested `compute_v` opens each online Fq polynomial at
-        // zeta_q, the lift of w.
-        // TODO(decompression): if it opens at another point, the prover
-        // computes that point here.
-        let online_fq_point = w;
-        #[cfg(test)]
-        let online_fq_point = crate::online_fq_tests::query_point(online_fq_point);
+        // The value of each online Fq polynomial at its opening point.
+        let online_fq_point = online_fq::point(w);
         let online_fq = FixedVec::try_from(
             builder
                 .online_fq_polynomials()
                 .iter()
-                .map(|poly| online::Query {
-                    x: online_fq_point,
-                    y: {
-                        let value = B::sparse_eval(poly, online_fq_point);
-                        #[cfg(test)]
-                        let value = crate::online_fq_tests::query_value(value);
-                        value
-                    },
+                .map(|poly| {
+                    let value = B::sparse_eval(poly, online_fq_point);
+                    // Test hook: this runs on the thread that calls `fuse`,
+                    // outside its parallel jobs, as the hook's thread-local
+                    // requires.
+                    #[cfg(test)]
+                    let value = crate::online_fq_tests::query_value(value);
+                    value
                 })
                 .collect::<Vec<_>>(),
         )?;
