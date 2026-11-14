@@ -90,6 +90,27 @@ impl<'dr, D: Driver<'dr>> Nonzero<'dr, D> {
         Ok(Self::new_unchecked(self.element.divide(dr, divisor)?))
     }
 
+    /// Divides as [`divide`](Self::divide), given advice for the inverse of
+    /// the divisor's value; see [`Element::divide_with_advice`].
+    ///
+    /// # Soundness
+    ///
+    /// As [`divide`](Self::divide).
+    ///
+    /// # Errors
+    ///
+    /// As [`divide`](Self::divide).
+    pub fn divide_with_advice(
+        &self,
+        dr: &mut D,
+        divisor: &Self,
+        inverse: DriverValue<D, Option<D::F>>,
+    ) -> Result<Self> {
+        Ok(Self::new_unchecked(
+            self.element.divide_with_advice(dr, divisor, inverse)?,
+        ))
+    }
+
     /// Monomorphization-time guard that `D::F` has odd characteristic, which
     /// is what makes [`double`](Self::double) preserve nonzeroness: $2x = 0$
     /// has no nonzero solution iff $\mathrm{char}(F) \neq 2$.

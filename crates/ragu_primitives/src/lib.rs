@@ -39,7 +39,8 @@ pub use boolean::{Boolean, decompose, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::{
     ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Endoscalar, EndoscalarChallenge,
-    EndoscalarRangeError, HoistedEndoscalar, Uendo, extract_endoscalar, lift_endoscalar,
+    EndoscalarRangeError, GroupScaleAdvisor, HoistedEndoscalar, Uendo, extract_endoscalar,
+    group_scale_advice, lift_endoscalar,
 };
 pub use invertible::{Invertible, Nonzero, NonzeroBank};
 use io::{Buffer, Write};
