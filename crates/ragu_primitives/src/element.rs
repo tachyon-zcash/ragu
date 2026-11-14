@@ -402,13 +402,40 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
     /// Returns a witness-generation error if the quotient assignment cannot
     /// be computed from witness input.
     pub fn divide(&self, dr: &mut D, divisor: &Nonzero<'dr, D>) -> Result<Self> {
+        self.divide_with_advice(dr, divisor, D::just(|| None))
+    }
+
+    /// Divides as [`divide`](Self::divide), given advice for the inverse of
+    /// the divisor's value.
+    ///
+    /// The advice only spares witness generation a field inversion, for a
+    /// caller that computed many inverses together. It is used when it is
+    /// the divisor's inverse and ignored otherwise, so the quotient assigned
+    /// is the one `divide` assigns whatever the advice holds, and the gate
+    /// and constraints do not depend on it.
+    ///
+    /// # Soundness
+    ///
+    /// As [`divide`](Self::divide).
+    ///
+    /// # Errors
+    ///
+    /// As [`divide`](Self::divide).
+    pub fn divide_with_advice(
+        &self,
+        dr: &mut D,
+        divisor: &Nonzero<'dr, D>,
+        inverse: DriverValue<D, Option<D::F>>,
+    ) -> Result<Self> {
         let quotient_value = D::try_just(|| {
-            Ok(*self.value().take()
-                * divisor
-                    .value()
-                    .take()
+            let divisor = *divisor.value().take();
+            let inverse = match inverse.snag() {
+                Some(inverse) if *inverse * divisor == D::F::ONE => *inverse,
+                _ => divisor
                     .invert()
-                    .ok_or_else(|| Error::InvalidWitness("division by zero".into()))?)
+                    .ok_or_else(|| Error::InvalidWitness("division by zero".into()))?,
+            };
+            Ok(*self.value().take() * inverse)
         })?;
 
         let (quotient, denominator, numerator) = dr.mul(|| {

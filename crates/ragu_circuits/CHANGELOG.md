@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `wiring::matrix::Matrix`, a wiring polynomial as an explicit sparse
+  matrix, with `Registry::wiring_matrices` and `Registry::wiring_key` for a
+  caller that evaluates many circuits' polynomials together.
+- Added registry restrictions in parts, for a caller that already holds some
+  circuits' restrictions: `RegistryAt::y_parts` and `x_parts`, and
+  `Registry::circuit_y_parts`, `own_y`, `mask_global_y`, `tag_y` and
+  `wxy_over_domain_from`.
+- Added `sparse::Polynomial::blocks`, the stored runs of coefficients.
 - Added `Rank` support for `R<14>` for extension circuits that exceed the
   production rank's capacity. `ProductionRank` remains `R<13>`.
 - Added runtime-sized stages: `staging::stage_gates`, `stage_rx`, `stage_mask`
@@ -21,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A coefficient vector is split into a sparse polynomial's runs by copying each
+  run whole. The runs are unchanged.
 - Temporarily replaced evaluation-based registry tags with caller-supplied tags.
 
 - Renamed `registry::Key` to `registry::Tag` and `Registry::digest()` to

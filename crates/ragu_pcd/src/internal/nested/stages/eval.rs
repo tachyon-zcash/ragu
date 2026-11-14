@@ -85,6 +85,23 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
             p_poly: B::sparse_eval(proof.nested_p_poly(), u),
         }
     }
+
+    /// A child's evaluations from the values at $u_n$ of its polynomials,
+    /// in the order [`from_proof`](Self::from_proof) evaluates them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values` ends early.
+    pub fn from_values(values: &mut impl Iterator<Item = F>) -> Self {
+        let mut next = || values.next().expect("one value per polynomial");
+        ChildEvaluationsWitness {
+            rx: FixedVec::from_fn(|_| next()),
+            a_poly: next(),
+            b_poly: next(),
+            registry_xy_poly: next(),
+            p_poly: next(),
+        }
+    }
 }
 
 /// The current step's nested polynomial evaluations at $u_n$.

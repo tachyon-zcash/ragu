@@ -73,7 +73,7 @@ mod access;
 
 use alloc::{sync::Arc, vec, vec::Vec};
 
-pub(crate) use builder::ProofBuilder;
+pub(crate) use builder::{ProofBuilder, commit_all, commit_all_beside};
 use ragu_backend::Backend;
 use ragu_circuits::{
     CircuitExt,
@@ -118,8 +118,12 @@ struct Cached<T>(T);
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
+///
+/// The proof is shared between the clones of a `Pcd`: cloning one copies
+/// its data and none of the proof's polynomials, and a step that takes a
+/// clone as a child reads the proof where it is.
 pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+    proof: Arc<Proof<C, R>>,
     data: H::Data,
 }
 
@@ -135,8 +139,16 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     /// Consumes the proof-carrying data and returns the proof and data
-    /// separately.
+    /// separately. The proof is copied if a clone of this `Pcd` still holds
+    /// it.
     pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+        let proof = Arc::try_unwrap(self.proof).unwrap_or_else(|shared| (*shared).clone());
+        (proof, self.data)
+    }
+
+    /// [`into_parts`](Self::into_parts) for a caller that only reads the
+    /// proof: it stays shared with whatever clones hold it.
+    pub(crate) fn into_shared_parts(self) -> (Arc<Proof<C, R>>, H::Data) {
         (self.proof, self.data)
     }
 
@@ -159,7 +171,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
     fn clone(&self) -> Self {
         Pcd {
-            proof: self.proof.clone(),
+            proof: Arc::clone(&self.proof),
             data: self.data.clone(),
         }
     }
@@ -532,7 +544,10 @@ where
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
+        Pcd {
+            proof: Arc::new(self),
+            data,
+        }
     }
 
     // TODO: Route this witness-value computation through the selected backend
@@ -870,6 +885,52 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
+/// Assembles each step's trace as assembling them one at a time, in step
+/// order, does: each step's blinding is drawn from `rng` in that order, and
+/// the first failure in that order is the one reported. The assemblies
+/// themselves read no randomness and go through
+/// [`Backend::map`].
+fn assemble_steps<B: ragu_backend::Backend, F: Field, R: Rank, RNG: rand::CryptoRng>(
+    registry: &ragu_circuits::registry::Registry<'_, F, R>,
+    traces: Vec<Result<ragu_circuits::Trace<F>>>,
+    circuit: impl Fn(usize) -> ragu_circuits::registry::CircuitIndex + Sync,
+    rng: &mut RNG,
+) -> Result<Vec<sparse::Polynomial<F, R>>> {
+    // The steps before the first whose tracing failed are the ones a pass
+    // in order assembles, and so draws for.
+    let mut failure = None;
+    let mut traced = Vec::with_capacity(traces.len());
+    for trace in traces {
+        match trace {
+            Ok(trace) => traced.push(trace),
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        }
+    }
+    let alphas: Vec<F> = traced
+        .iter()
+        .map(|_| F::random(|bytes| rng.fill_bytes(bytes)))
+        .collect();
+    let step_rxs = B::map(
+        traced.iter().zip(alphas).enumerate(),
+        |(step, (trace, alpha))| registry.assemble_with_alpha(trace, circuit(step), alpha),
+    )
+    .collect::<Result<Vec<_>>>()?;
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(step_rxs),
+    }
+}
+
+/// The part of an endoscaling that reads neither the random number generator
+/// nor the proof builder: the walk's witness and each step's trace.
+pub(crate) struct EndoscalingWalk<F: Field, W> {
+    witness: W,
+    traces: Vec<Result<ragu_circuits::Trace<F>>>,
+}
+
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     crate::Application<'_, C, R, HEADER_SIZE, B>
 {
@@ -893,46 +954,212 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         points_alpha: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
+        let walk = Self::endoscaling_walk(beta_endo, points);
+        self.finish_endoscaling(
+            rng,
+            beta_endo,
+            walk,
+            endoscalar_alpha,
+            points_alpha,
+            builder,
+        )
+    }
+
+    /// The part of [`compute_endoscaling`](Self::compute_endoscaling) that
+    /// reads neither the random number generator nor the builder: the walk
+    /// over `points` under `beta_endo` and each step's trace, the traces
+    /// computed together through [`Backend::map`].
+    pub(crate) fn endoscaling_walk(
+        beta_endo: Uendo,
+        points: &[C::HostCurve],
+    ) -> EndoscalingWalk<C::ScalarField, PointsWitness<C::HostCurve, C::Profile>> {
         assert_eq!(points.len(), NumPoints::<C::Profile>::len());
 
-        let witness = PointsWitness::<C::HostCurve, C::Profile>::new(beta_endo, points);
+        let (witness, accumulators) = crate::timing::span("endo.nested.witness", || {
+            PointsWitness::<C::HostCurve, C::Profile>::with_accumulators::<B>(beta_endo, points)
+        });
+        let advisor = ragu_primitives::GroupScaleAdvisor::new(beta_endo);
+        let traces = B::map(0..NumSteps::<C::Profile>::len(), |step| {
+            Self::endoscaling_step_trace(beta_endo, &advisor, &witness, &accumulators, step)
+        })
+        .collect();
+        EndoscalingWalk { witness, traces }
+    }
 
+    /// The trace of step `step` of the walk `witness` records, with the
+    /// inversion advice for the step's own scalings: `accumulators[idx]` is
+    /// the accumulator entering input `idx`.
+    fn endoscaling_step_trace(
+        beta_endo: Uendo,
+        advisor: &ragu_primitives::GroupScaleAdvisor<C::ScalarField>,
+        witness: &PointsWitness<C::HostCurve, C::Profile>,
+        accumulators: &[C::HostCurve],
+        step: usize,
+    ) -> Result<ragu_circuits::Trace<C::ScalarField>> {
+        let advice = crate::timing::span("endo.nested.advice", || {
+            crate::internal::endoscalar::step_advice(
+                advisor,
+                accumulators,
+                nested::Endoscalings::<C::Profile>::len(),
+                step,
+            )
+        });
+        crate::timing::span("endo.nested.trace", || {
+            let step_circuit = EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step);
+            MultiStage::new(step_circuit)
+                .trace(EndoscalingStepWitness {
+                    endoscalar: beta_endo,
+                    points: witness,
+                    advice: &advice,
+                })
+                .map(|trace| trace.into_output())
+        })
+    }
+
+    /// Completes [`compute_endoscaling`](Self::compute_endoscaling) from its
+    /// walk: commits the stages and assembles each step's trace in step
+    /// order, which draws its blinding in that order.
+    pub(crate) fn finish_endoscaling<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        beta_endo: Uendo,
+        walk: EndoscalingWalk<C::ScalarField, PointsWitness<C::HostCurve, C::Profile>>,
+        endoscalar_alpha: C::ScalarField,
+        points_alpha: C::ScalarField,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
+        let EndoscalingWalk { witness, traces } = walk;
+
+        let p_commitment = Self::set_endoscaling_stages(
+            beta_endo,
+            &witness,
+            endoscalar_alpha,
+            points_alpha,
+            builder,
+        )?;
+
+        let step_rxs = assemble_steps::<B, _, R, _>(
+            &self.nested_registry,
+            traces,
+            |step| {
+                nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>()
+            },
+            rng,
+        )?;
+        builder.set_nested_endoscaling_step_rxs(step_rxs);
+
+        Ok((p_commitment, witness))
+    }
+
+    /// Sets the nested endoscalar and points stages of a walk on `builder`
+    /// and returns the walk's result, the accumulated commitment.
+    pub(crate) fn set_endoscaling_stages(
+        beta_endo: Uendo,
+        witness: &PointsWitness<C::HostCurve, C::Profile>,
+        endoscalar_alpha: C::ScalarField,
+        points_alpha: C::ScalarField,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<C::HostCurve> {
         let endoscalar_rx =
             <EndoscalarStage as StageExt<C::ScalarField, R>>::rx(endoscalar_alpha, beta_endo)?;
         let points_rx = <PointsStage<C::HostCurve, C::Profile> as StageExt<C::ScalarField, R>>::rx(
             points_alpha,
-            &witness,
+            witness,
         )?;
-
-        let num_steps = NumSteps::<C::Profile>::len();
-        let mut step_rxs = Vec::with_capacity(num_steps);
-        for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step);
-            let staged = MultiStage::new(step_circuit);
-            let step_trace = staged
-                .trace(EndoscalingStepWitness {
-                    endoscalar: beta_endo,
-                    points: &witness,
-                })?
-                .into_output();
-            let step_rx = self.nested_registry.assemble(
-                &step_trace,
-                nested::InternalCircuitIndex::EndoscalingStep(step as u32)
-                    .circuit_index::<C::Profile>(),
-                rng,
-            )?;
-            step_rxs.push(step_rx);
-        }
-
-        builder.set_nested_endoscaling_step_rxs(step_rxs);
         builder.set_nested_endoscalar_rx(endoscalar_rx);
         builder.set_nested_points_rx(points_rx);
 
-        let p_commitment = *witness
+        Ok(*witness
             .interstitials
             .last()
-            .expect("every walk has at least one interstitial");
-        Ok((p_commitment, witness))
+            .expect("every walk has at least one interstitial"))
+    }
+
+    /// The walk of [`endoscaling_walk`](Self::endoscaling_walk) and each
+    /// step's rx polynomial, assembled with the blinding drawn for it,
+    /// `alphas[step]`: what [`finish_endoscaling`](Self::finish_endoscaling)
+    /// assembles, for a caller that drew the blindings ahead in the same
+    /// order.
+    ///
+    /// The walk is taken a step at a time
+    /// ([`StepWalk`](crate::internal::endoscalar::StepWalk)) on the calling
+    /// thread, and each step is traced and assembled behind it as soon as it
+    /// is walked. `ready` is called with each step as soon as it is
+    /// assembled, from the thread that assembled it: the steps are ready one
+    /// by one, in no particular order, from the walk's first moments on.
+    /// `ready` is also called with `None` between the parts of a step's
+    /// work, for a caller that has something to look in on meanwhile. The
+    /// first failure in step order is the one reported.
+    pub(crate) fn endoscaling_steps(
+        registry: &ragu_circuits::registry::Registry<'_, C::ScalarField, R>,
+        beta_endo: Uendo,
+        points: &[C::HostCurve],
+        alphas: &[C::ScalarField],
+        ready: impl Fn(Option<(usize, &Arc<sparse::Polynomial<C::ScalarField, R>>)>) + Sync,
+    ) -> Result<(
+        PointsWitness<C::HostCurve, C::Profile>,
+        Vec<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    )> {
+        assert_eq!(
+            alphas.len(),
+            NumSteps::<C::Profile>::len(),
+            "one blinding per step"
+        );
+
+        let walk = crate::internal::endoscalar::StepWalk::<
+            C::HostCurve,
+            NumPoints<C::Profile>,
+            nested::Endoscalings<C::Profile>,
+        >::new(beta_endo, points);
+        let advisor = ragu_primitives::GroupScaleAdvisor::new(beta_endo);
+        let mut step_rxs: Vec<Option<Result<Arc<sparse::Polynomial<C::ScalarField, R>>>>> =
+            (0..walk.steps()).map(|_| None).collect();
+        let mut interstitials = Vec::with_capacity(walk.steps());
+        crate::multicore::scope(|background| {
+            let (walk, advisor, ready) = (&walk, &advisor, &ready);
+            let mut entering = walk.initial();
+            for (step, slot) in step_rxs.iter_mut().enumerate() {
+                let walked =
+                    crate::timing::span("endo.nested.witness", || walk.walk_step(step, entering));
+                let leaving = walked.last().copied().unwrap_or(entering);
+                // The step is traced and assembled behind the walk, from
+                // what the walk has just found.
+                background.spawn(move || {
+                    let rx = || {
+                        ready(None);
+                        let witness = walk.step_points(step, entering, &walked);
+                        let accumulators = walk.step_entering(step, entering, &walked);
+                        let trace = Self::endoscaling_step_trace(
+                            beta_endo,
+                            advisor,
+                            &witness,
+                            &accumulators,
+                            step,
+                        )?;
+                        ready(None);
+                        let rx = Arc::new(
+                            registry.assemble_with_alpha(
+                                &trace,
+                                nested::InternalCircuitIndex::EndoscalingStep(step as u32)
+                                    .circuit_index::<C::Profile>(),
+                                alphas[step],
+                            )?,
+                        );
+                        ready(Some((step, &rx)));
+                        Ok(rx)
+                    };
+                    *slot = Some(rx());
+                });
+                interstitials.push(leaving);
+                entering = leaving;
+            }
+        });
+        let step_rxs = step_rxs
+            .into_iter()
+            .map(|rx| rx.expect("every step was traced"))
+            .collect::<Result<Vec<_>>>()?;
+        Ok((walk.finish(interstitials), step_rxs))
     }
 
     /// Commits the native points binding and children stages over the
@@ -1089,45 +1316,214 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         C::NestedCurve,
         native_points::WalkWitness<C::NestedCurve, C::Profile>,
     )> {
-        use native_points::{WalkStage, WalkWitness};
+        let walk = Self::native_endoscaling_walk(beta_endo, inputs);
+        self.finish_native_endoscaling(rng, walk, builder)
+    }
 
-        let walk = WalkWitness::new(
-            beta_endo,
-            crate::internal::endoscalar::PointsWitness::<
-                C::NestedCurve,
-                native::NumPoints<C::Profile>,
-                native::Endoscalings<C::Profile>,
-            >::new(beta_endo, &inputs.walk()),
-        );
+    /// The part of
+    /// [`compute_native_endoscaling`](Self::compute_native_endoscaling) that
+    /// reads neither the random number generator nor the builder, as
+    /// [`endoscaling_walk`](Self::endoscaling_walk) on the nested side.
+    pub(crate) fn native_endoscaling_walk(
+        beta_endo: Uendo,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
+    ) -> EndoscalingWalk<C::CircuitField, native_points::WalkWitness<C::NestedCurve, C::Profile>>
+    {
+        let (witness, accumulators) = Self::native_walk_witness(beta_endo, inputs);
+        let advisor = ragu_primitives::GroupScaleAdvisor::new(beta_endo);
+        let traces = B::map(0..native::NumSteps::<C::Profile>::len(), |step| {
+            Self::native_endoscaling_step_trace(&advisor, inputs, &witness, &accumulators, step)
+        })
+        .collect();
+        EndoscalingWalk { witness, traces }
+    }
 
-        let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &walk,
-        )?;
+    /// The native walk's witness, and the accumulator entering each of its
+    /// inputs.
+    fn native_walk_witness(
+        beta_endo: Uendo,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
+    ) -> (
+        native_points::WalkWitness<C::NestedCurve, C::Profile>,
+        Vec<C::NestedCurve>,
+    ) {
+        crate::timing::span("endo.native.witness", || {
+            let (walked, accumulators) =
+                crate::internal::endoscalar::PointsWitness::<
+                    C::NestedCurve,
+                    native::NumPoints<C::Profile>,
+                    native::Endoscalings<C::Profile>,
+                >::with_accumulators::<B>(beta_endo, &inputs.walk());
+            (
+                native_points::WalkWitness::new(beta_endo, walked),
+                accumulators,
+            )
+        })
+    }
 
-        let mut step_rxs = Vec::with_capacity(native::NumSteps::<C::Profile>::len());
-        for step in 0..native::NumSteps::<C::Profile>::len() {
-            let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
+    /// The trace of step `step` of the native walk, with the inversion
+    /// advice for the step's own scalings, as
+    /// [`endoscaling_step_trace`](Self::endoscaling_step_trace) on the
+    /// nested side.
+    fn native_endoscaling_step_trace(
+        advisor: &ragu_primitives::GroupScaleAdvisor<C::CircuitField>,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
+        witness: &native_points::WalkWitness<C::NestedCurve, C::Profile>,
+        accumulators: &[C::NestedCurve],
+        step: usize,
+    ) -> Result<ragu_circuits::Trace<C::CircuitField>> {
+        let advice = crate::timing::span("endo.native.advice", || {
+            crate::internal::endoscalar::step_advice(
+                advisor,
+                accumulators,
+                native::Endoscalings::<C::Profile>::len(),
+                step,
+            )
+        });
+        crate::timing::span("endo.native.trace", || {
+            native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
                 .trace(native::circuits::endoscaling_step::Witness {
                     inputs,
-                    walk: &walk,
-                })?
-                .into_output();
-            step_rxs.push(
-                self.native_registry.assemble(
-                    &trace,
-                    native::InternalCircuitIndex::EndoscalingStep(step as u32)
-                        .circuit_index::<C::Profile>(),
-                    &mut *rng,
-                )?,
-            );
-        }
+                    walk: witness,
+                    advice: &advice,
+                })
+                .map(|trace| trace.into_output())
+        })
+    }
 
-        builder.set_native_points_walk_rx(walk_rx);
+    /// Completes
+    /// [`compute_native_endoscaling`](Self::compute_native_endoscaling) from
+    /// its walk, as [`finish_endoscaling`](Self::finish_endoscaling) on the
+    /// nested side.
+    pub(crate) fn finish_native_endoscaling<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        walk: EndoscalingWalk<
+            C::CircuitField,
+            native_points::WalkWitness<C::NestedCurve, C::Profile>,
+        >,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<(
+        C::NestedCurve,
+        native_points::WalkWitness<C::NestedCurve, C::Profile>,
+    )> {
+        let EndoscalingWalk {
+            witness: walk,
+            traces,
+        } = walk;
+
+        let p_commitment = Self::set_native_walk_stage(
+            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            &walk,
+            builder,
+        )?;
+
+        let step_rxs = assemble_steps::<B, _, R, _>(
+            &self.native_registry,
+            traces,
+            |step| {
+                native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>()
+            },
+            rng,
+        )?;
         builder.set_native_endoscaling_step_rxs(step_rxs);
 
-        let p_commitment = walk.p();
         Ok((p_commitment, walk))
+    }
+
+    /// Sets the native walk stage on `builder` and returns the walk's
+    /// result, the accumulated commitment.
+    pub(crate) fn set_native_walk_stage(
+        walk_alpha: C::CircuitField,
+        walk: &native_points::WalkWitness<C::NestedCurve, C::Profile>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<C::NestedCurve> {
+        use native_points::WalkStage;
+
+        let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
+            walk_alpha, walk,
+        )?;
+        builder.set_native_points_walk_rx(walk_rx);
+
+        Ok(walk.p())
+    }
+
+    /// The walk of [`native_endoscaling_walk`](Self::native_endoscaling_walk)
+    /// and each step's rx polynomial, assembled with the blinding drawn for
+    /// it and handed to `ready` as soon as it is, as
+    /// [`endoscaling_steps`](Self::endoscaling_steps) on the nested side.
+    pub(crate) fn native_endoscaling_steps(
+        registry: &ragu_circuits::registry::Registry<'_, C::CircuitField, R>,
+        beta_endo: Uendo,
+        inputs: &Inputs<C::NestedCurve, C::Profile>,
+        alphas: &[C::CircuitField],
+        ready: impl Fn(Option<(usize, &Arc<sparse::Polynomial<C::CircuitField, R>>)>) + Sync,
+    ) -> Result<(
+        native_points::WalkWitness<C::NestedCurve, C::Profile>,
+        Vec<Arc<sparse::Polynomial<C::CircuitField, R>>>,
+    )> {
+        assert_eq!(
+            alphas.len(),
+            native::NumSteps::<C::Profile>::len(),
+            "one blinding per step"
+        );
+
+        let walk = crate::internal::endoscalar::StepWalk::<
+            C::NestedCurve,
+            native::NumPoints<C::Profile>,
+            native::Endoscalings<C::Profile>,
+        >::new(beta_endo, &inputs.walk());
+        let advisor = ragu_primitives::GroupScaleAdvisor::new(beta_endo);
+        let mut step_rxs: Vec<Option<Result<Arc<sparse::Polynomial<C::CircuitField, R>>>>> =
+            (0..walk.steps()).map(|_| None).collect();
+        let mut interstitials = Vec::with_capacity(walk.steps());
+        crate::multicore::scope(|background| {
+            let (walk, advisor, ready) = (&walk, &advisor, &ready);
+            let mut entering = walk.initial();
+            for (step, slot) in step_rxs.iter_mut().enumerate() {
+                let walked =
+                    crate::timing::span("endo.native.witness", || walk.walk_step(step, entering));
+                let leaving = walked.last().copied().unwrap_or(entering);
+                background.spawn(move || {
+                    let rx = || {
+                        ready(None);
+                        let witness = native_points::WalkWitness::new(
+                            beta_endo,
+                            walk.step_points(step, entering, &walked),
+                        );
+                        let accumulators = walk.step_entering(step, entering, &walked);
+                        let trace = Self::native_endoscaling_step_trace(
+                            advisor,
+                            inputs,
+                            &witness,
+                            &accumulators,
+                            step,
+                        )?;
+                        ready(None);
+                        let rx = Arc::new(
+                            registry.assemble_with_alpha(
+                                &trace,
+                                native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                                    .circuit_index::<C::Profile>(),
+                                alphas[step],
+                            )?,
+                        );
+                        ready(Some((step, &rx)));
+                        Ok(rx)
+                    };
+                    *slot = Some(rx());
+                });
+                interstitials.push(leaving);
+                entering = leaving;
+            }
+        });
+        let step_rxs = step_rxs
+            .into_iter()
+            .map(|rx| rx.expect("every step was traced"))
+            .collect::<Result<Vec<_>>>()?;
+        let witness = native_points::WalkWitness::new(beta_endo, walk.finish(interstitials));
+        Ok((witness, step_rxs))
     }
 
     /// A synthesized dummy that stands in for the absent predecessors when

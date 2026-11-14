@@ -15,6 +15,7 @@ mod _09_eval;
 mod _10_p;
 mod _11_circuits;
 pub(crate) mod claims;
+mod device;
 // PCS and folding properties use private fuse internals. The proof-binding
 // properties live under `proof` for direct access to cached fields.
 #[cfg(test)]
@@ -36,7 +37,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use crate::{
-    Application, Pcd, RAGU_TAG,
+    Application, Pcd, Proof, RAGU_TAG,
     internal::{nested, transcript::Transcript},
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -93,69 +94,176 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
+        crate::timing::start();
 
-        // The step's first phase: the headers, circuit id and own online
-        // polynomials the preamble bridge commits.
-        let (left, left_data) = left.into_parts();
-        let (right, right_data) = right.into_parts();
-        let prepared = self.begin_application_proof(
-            rng,
-            &step,
-            &witness,
-            (&left, &left_data),
-            (&right, &right_data),
-            &mut builder,
-        )?;
+        // The children are read and never changed, so one whose caller
+        // kept a clone is read where it is, not copied.
+        let (left, left_data) = left.into_shared_parts();
+        let (right, right_data) = right.into_shared_parts();
+        let (left, right): (&Proof<C, R>, &Proof<C, R>) = (&left, &right);
+        let native_source = NativeFuseProofSource { left, right };
+        let nested_source = NestedFuseProofSource { left, right };
 
-        let mut dr = Emulator::execute();
-        let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
+        // Where the backend has them, the stages below keep polynomials on
+        // devices rather than on the host. The children's revdot claims read
+        // only the children, so they are recorded beside the stages before
+        // `s_prime`, which use no device, and the polynomials they read are
+        // stored on the devices behind the stages up to `s_prime`: nothing
+        // reads the children there before `inner_error`.
+        let mut devices = device::Devices::<C, R>::open::<B>();
+        // Where `s_prime` restricts the registries: the children's x
+        // challenges, and their nested counterparts if they have them. A
+        // challenge without one is reported there.
+        let native_xs = [left.x(), right.x()];
+        let nested_xs = nested::challenge::<C>(native_xs[0])
+            .ok()
+            .zip(nested::challenge::<C>(native_xs[1]).ok())
+            .map(|(x0, x1)| [x0, x1]);
+        let (native_whole, nested_whole) = (&self.native_registry, &self.nested_registry);
+        let first_stages = crate::multicore::scope(|background| -> Result<_> {
+            let before_s_prime = crate::multicore::overlap(
+                || {
+                    let [native_upload, nested_upload] = crate::timing::span("dev.record", || {
+                        devices.record(
+                            &native_source,
+                            &nested_source,
+                            (native_whole, native_xs),
+                            (nested_whole, nested_xs),
+                        )
+                    });
+                    // The storing outlasts the recording: it is waited for
+                    // where the first stages end.
+                    background.spawn(move || {
+                        crate::timing::span("dev.upload", || {
+                            crate::multicore::par_join!(
+                                || {
+                                    if let Some(upload) = native_upload {
+                                        upload()
+                                    }
+                                },
+                                || {
+                                    if let Some(upload) = nested_upload {
+                                        upload()
+                                    }
+                                },
+                            )
+                        });
+                    });
+                },
+                || -> Result<_> {
+                    // The step's first phase: the headers, circuit id and own
+                    // online polynomials the preamble bridge commits.
+                    let prepared = self.begin_application_proof(
+                        rng,
+                        &step,
+                        &witness,
+                        (left, &left_data),
+                        (right, &right_data),
+                        &mut builder,
+                    )?;
+                    crate::timing::mark("application");
 
-        let (preamble_witness, nested_preamble) =
-            self.compute_preamble(rng, &left, &right, &mut builder)?;
-        let bridge_preamble_commitment =
-            Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
-        bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
-        let w = transcript.challenge(&mut dr)?;
+                    let mut dr = Emulator::execute();
+                    let mut transcript =
+                        Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        // The step's second phase: its circuit, with zeta = w and every
-        // slot's polynomial at hand, whose openings the batch below proves.
-        let (application_data, application_aux) = self.compute_application_proof(
-            rng,
-            step,
-            witness,
-            (&left, left_data),
-            (&right, right_data),
-            *w.value().take(),
-            prepared,
-            &mut builder,
-        )?;
-        let native_registry = self.native_registry.at(*w.value().take());
-        let nested_registry = self
-            .nested_registry
-            .at(nested::challenge::<C>(*w.value().take())?);
+                    let (preamble_witness, nested_preamble) =
+                        self.compute_preamble(rng, left, right, &mut builder)?;
+                    let bridge_preamble_commitment =
+                        Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
+                    bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
+                    let w = transcript.challenge(&mut dr)?;
+                    crate::timing::mark("preamble");
 
-        let (native_s_prime, nested_s_prime) = self.compute_s_prime(
-            rng,
-            &native_registry,
-            &nested_registry,
-            &left,
-            &right,
-            &mut builder,
-        )?;
-        let bridge_s_prime_commitment =
-            Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
-        bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
-        let y = transcript.challenge(&mut dr)?;
-        let z = transcript.challenge(&mut dr)?;
+                    // The step's second phase: its circuit, with zeta = w and
+                    // every slot's polynomial at hand, whose openings the batch
+                    // below proves.
+                    let (application_data, application_aux) = self.compute_application_proof(
+                        rng,
+                        step,
+                        witness,
+                        (left, left_data),
+                        (right, right_data),
+                        *w.value().take(),
+                        prepared,
+                        &mut builder,
+                    )?;
+                    let native_registry = self.native_registry.at(*w.value().take());
+                    let nested_registry = self
+                        .nested_registry
+                        .at(nested::challenge::<C>(*w.value().take())?);
+                    crate::timing::mark("application");
+                    Ok((
+                        dr,
+                        transcript,
+                        preamble_witness,
+                        nested_preamble,
+                        w,
+                        application_data,
+                        application_aux,
+                        native_registry,
+                        nested_registry,
+                    ))
+                },
+            );
+            let (
+                mut dr,
+                mut transcript,
+                preamble_witness,
+                nested_preamble,
+                w,
+                application_data,
+                application_aux,
+                native_registry,
+                nested_registry,
+            ) = before_s_prime?;
 
-        let native_source = NativeFuseProofSource {
-            left: &left,
-            right: &right,
-        };
-        let nested_source = NestedFuseProofSource {
-            left: &left,
-            right: &right,
-        };
+            let (native_s_prime, nested_s_prime) = self.compute_s_prime(
+                rng,
+                &native_registry,
+                &nested_registry,
+                left,
+                right,
+                &mut devices,
+                &mut builder,
+            )?;
+            let bridge_s_prime_commitment =
+                Point::constant(&mut dr, builder.bridge_s_prime_commitment())?;
+            bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
+            let y = transcript.challenge(&mut dr)?;
+            let z = transcript.challenge(&mut dr)?;
+            crate::timing::mark("s_prime");
+            Ok((
+                dr,
+                transcript,
+                preamble_witness,
+                nested_preamble,
+                w,
+                application_data,
+                application_aux,
+                native_registry,
+                nested_registry,
+                native_s_prime,
+                nested_s_prime,
+                y,
+                z,
+            ))
+        });
+        let (
+            mut dr,
+            mut transcript,
+            preamble_witness,
+            nested_preamble,
+            w,
+            application_data,
+            application_aux,
+            native_registry,
+            nested_registry,
+            native_s_prime,
+            nested_s_prime,
+            y,
+            z,
+        ) = first_stages?;
 
         let (
             native_inner_error_witness,
@@ -172,6 +280,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &z,
             &native_source,
             &nested_source,
+            &mut devices,
             &mut builder,
         )?;
         let bridge_inner_error_commitment =
@@ -190,6 +299,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .collect_fixed()?;
 
         let mu = transcript.challenge(&mut dr)?;
+        crate::timing::mark("inner_error");
 
         let (
             native_outer_error_witness,
@@ -198,6 +308,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_outer_error_witness,
             nested_a,
             nested_b,
+            native_device,
+            nested_device,
         ) = self.outer_error_terms(
             rng,
             &preamble_witness,
@@ -216,6 +328,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Point::constant(&mut dr, builder.bridge_outer_error_commitment())?;
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
+        crate::timing::mark("outer_error");
 
         self.compute_ab(
             rng,
@@ -223,6 +336,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_b,
             nested_a,
             nested_b,
+            native_device,
+            nested_device,
+            &mut devices,
             &nested_registry_wy,
             &native_source,
             &mu_prime,
@@ -231,6 +347,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_ab_commitment = Point::constant(&mut dr, builder.bridge_ab_commitment()?)?;
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
+        crate::timing::mark("ab");
 
         let (query_witness, nested_query) = self.compute_query(
             rng,
@@ -240,13 +357,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &z,
             &registry_wy,
             &nested_registry_wy,
-            &left,
-            &right,
+            left,
+            right,
+            &mut devices,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
         bridge_query_commitment.write(&mut dr, &mut transcript)?;
         let alpha = transcript.challenge(&mut dr)?;
+        crate::timing::mark("query");
 
         let (native_f, nested_f) = self.compute_f(
             rng,
@@ -260,24 +379,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_s_prime,
             &nested_registry_wy,
             &mut builder,
-            &left,
-            &right,
+            left,
+            right,
+            &mut devices,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
+        crate::timing::mark("f");
 
         let bound_challenges =
             [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
             &bound_challenges,
-            &left,
-            &right,
+            left,
+            right,
             &native_s_prime,
             &registry_wy,
             &nested_s_prime,
             &nested_registry_wy,
             &builder,
+            &mut devices,
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
 
@@ -319,84 +441,96 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
         )?;
 
-        let (points, native_points, native_walk) = self.compute_p(
-            rng,
-            &pre_beta,
-            &left,
-            &right,
-            &native_s_prime,
-            &registry_wy,
-            &native_f,
-            &nested_s_prime,
-            &nested_registry_wy,
-            &nested_f,
-            &mut builder,
-        )?;
+        crate::timing::mark("eval");
+        // The walks' step polynomials are committed to behind the stages
+        // from here to the builder's last polynomial, each from when it is
+        // assembled: nothing in those stages reads the commitments, and they
+        // are the step's longest wait on the device. Every one is there
+        // when the scope ends.
+        let step_commitments = _10_p::StepCommitments::new();
+        let step_polys = crate::multicore::scope(|background| -> Result<_> {
+            let (points, native_points, native_walk, step_polys) = self.compute_p(
+                rng,
+                &pre_beta,
+                left,
+                right,
+                &native_s_prime,
+                &registry_wy,
+                &native_f,
+                &nested_s_prime,
+                &nested_registry_wy,
+                &nested_f,
+                &mut builder,
+                &mut devices,
+                background,
+                &step_commitments,
+            )?;
 
-        // Set challenges on builder.
-        builder.set_w(*w.value().take());
-        builder.set_y(*y.value().take());
-        builder.set_z(*z.value().take());
-        builder.set_mu(*mu.value().take());
-        builder.set_mu_prime(*mu_prime.value().take());
-        builder.set_x(*x.value().take());
-        builder.set_alpha(*alpha.value().take());
-        builder.set_u(*u.value().take());
-        builder.set_pre_beta(*pre_beta.element().value().take());
+            crate::timing::mark("p");
+            // Set challenges on builder.
+            builder.set_w(*w.value().take());
+            builder.set_y(*y.value().take());
+            builder.set_z(*z.value().take());
+            builder.set_mu(*mu.value().take());
+            builder.set_mu_prime(*mu_prime.value().take());
+            builder.set_x(*x.value().take());
+            builder.set_alpha(*alpha.value().take());
+            builder.set_u(*u.value().take());
+            builder.set_pre_beta(*pre_beta.element().value().take());
 
-        self.compute_native_internal_circuits(
-            rng,
-            &preamble_witness,
-            &native_outer_error_witness,
-            &native_inner_error_witness,
-            &query_witness,
-            &eval_witness,
-            &native_points,
-            &native_walk,
-            &mut builder,
-        )?;
+            let nested_s_prime_witness = nested::stages::s_prime::Witness {
+                registry_wx0: native_s_prime.registry_wx0_commitment,
+                registry_wx1: native_s_prime.registry_wx1_commitment,
+                native_points_registry_wx: builder.native_points_registry_wx_commitment(),
+            };
+            let nested_ab_witness = nested::stages::ab::Witness {
+                a: builder.native_a_commitment(),
+                b: builder.native_b_commitment(),
+                native_points_ab: builder.native_points_ab_commitment(),
+            };
+            let nested_query_witness = nested::stages::query::Witness {
+                native_query: builder.native_query_commitment(),
+                registry_xy: builder.native_registry_xy_commitment(),
+                nested: nested_query,
+            };
+            let nested_f_witness = nested::stages::f::Witness {
+                native_f: native_f.commitment,
+                native_points_f: builder.native_points_f_commitment(),
+            };
+            let nested_eval_witness = nested::stages::eval::Witness {
+                native_eval: builder.native_eval_commitment(),
+                nested: nested_eval,
+            };
 
-        let nested_s_prime_witness = nested::stages::s_prime::Witness {
-            registry_wx0: native_s_prime.registry_wx0_commitment,
-            registry_wx1: native_s_prime.registry_wx1_commitment,
-            native_points_registry_wx: builder.native_points_registry_wx_commitment(),
-        };
-        let nested_ab_witness = nested::stages::ab::Witness {
-            a: builder.native_a_commitment(),
-            b: builder.native_b_commitment(),
-            native_points_ab: builder.native_points_ab_commitment(),
-        };
-        let nested_query_witness = nested::stages::query::Witness {
-            native_query: builder.native_query_commitment(),
-            registry_xy: builder.native_registry_xy_commitment(),
-            nested: nested_query,
-        };
-        let nested_f_witness = nested::stages::f::Witness {
-            native_f: native_f.commitment,
-            native_points_f: builder.native_points_f_commitment(),
-        };
-        let nested_eval_witness = nested::stages::eval::Witness {
-            native_eval: builder.native_eval_commitment(),
-            nested: nested_eval,
-        };
+            self.compute_internal_circuits(
+                rng,
+                &preamble_witness,
+                &native_outer_error_witness,
+                &native_inner_error_witness,
+                &query_witness,
+                &eval_witness,
+                &native_points,
+                &native_walk,
+                pre_beta.extract_native(),
+                &points,
+                &nested_preamble,
+                &nested_s_prime_witness,
+                &nested_inner_error_witness,
+                &nested_outer_error_witness,
+                &nested_ab_witness,
+                &nested_query_witness,
+                &nested_f_witness,
+                &nested_eval_witness,
+                &nested_challenges,
+                &mut builder,
+            )?;
+            Ok(step_polys)
+        })?;
+        step_commitments.finish(step_polys, self.params, &mut builder);
 
-        self.compute_nested_internal_circuits(
-            rng,
-            pre_beta.extract_native(),
-            &points,
-            &nested_preamble,
-            &nested_s_prime_witness,
-            &nested_inner_error_witness,
-            &nested_outer_error_witness,
-            &nested_ab_witness,
-            &nested_query_witness,
-            &nested_f_witness,
-            &nested_eval_witness,
-            &nested_challenges,
-            &mut builder,
-        )?;
-
+        crate::timing::mark("circuits");
         let proof = builder.build()?;
+        crate::timing::mark("build");
 
         Ok((proof.carry(application_data), application_aux))
     }

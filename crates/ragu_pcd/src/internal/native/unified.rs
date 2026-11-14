@@ -155,6 +155,31 @@ macro_rules! define_unified_instance {
             pub fn assert_complete(self) {
                 self.coverage.assert_complete();
             }
+
+            /// A copy of the instance's values with no coverage, for a
+            /// circuit traced apart from the others: what the circuit covers
+            /// comes back through [`absorb`](Self::absorb).
+            pub fn fork(&self) -> Self {
+                Self {
+                    $( $field: self.$field, )+
+                    coverage: Coverage::default(),
+                }
+            }
+
+            /// Adds the coverage of a [`fork`](Self::fork) a circuit was
+            /// traced with, as that circuit adds it to the instance it is
+            /// handed.
+            ///
+            /// # Panics
+            ///
+            /// Panics if the fork covers a slot that is already covered.
+            pub fn absorb(&mut self, fork: Self) {
+                $(
+                    if fork.coverage.$field {
+                        Coverage::cover(&mut self.coverage.$field, stringify!($field));
+                    }
+                )+
+            }
         }
 
         /// Builder for constructing an [`Output`] gadget with flexible allocation.

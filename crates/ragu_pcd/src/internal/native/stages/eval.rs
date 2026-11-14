@@ -168,6 +168,25 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
             p_poly: B::sparse_eval(proof.native_p_poly(), u),
         }
     }
+
+    /// Create child evaluations witness from the values at $u$ of a proof's
+    /// polynomials, in the order [`from_proof`](Self::from_proof) evaluates
+    /// them: the rx polynomials in [`RxIndex::all`] order, then $a$, $b$,
+    /// `registry_xy` and $p$.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values` ends early.
+    pub fn from_values(values: &mut impl Iterator<Item = F>) -> Self {
+        let mut next = || values.next().expect("one value per polynomial");
+        ChildEvaluationsWitness {
+            rx: RxValues::<_, P>::from_fn(|_| next()),
+            a_poly: next(),
+            b_poly: next(),
+            registry_xy_poly: next(),
+            p_poly: next(),
+        }
+    }
 }
 
 /// Pre-computed polynomial evaluations at $u$ for the current step.

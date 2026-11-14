@@ -543,6 +543,33 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         dr: &mut D,
         p: &Point<'dr, D, C>,
     ) -> Result<Point<'dr, D, C>> {
+        self.group_scale_with_advice(dr, p, D::just(|| &[][..]))
+    }
+
+    /// Scales as [`group_scale`](Self::group_scale), given advice for the
+    /// inverses its witness generation needs: what [`group_scale_advice`]
+    /// returns for this endoscalar's value and `p`'s coordinates, or any
+    /// prefix of it. The walk and its divisors are those of
+    /// [`HoistedEndoscalar::group_scale`], so the advice is the same.
+    ///
+    /// The advice only spares witness generation its field inversions. Each
+    /// entry is used where it is the inverse required and ignored otherwise,
+    /// so the assignment, the gates and the constraints are those of
+    /// `group_scale` whatever the advice holds.
+    ///
+    /// # Soundness
+    ///
+    /// As [`group_scale`](Self::group_scale).
+    ///
+    /// # Errors
+    ///
+    /// As [`group_scale`](Self::group_scale).
+    pub fn group_scale_with_advice<C: Affine<Base = D::F>>(
+        &self,
+        dr: &mut D,
+        p: &Point<'dr, D, C>,
+        advice: DriverValue<D, &[D::F]>,
+    ) -> Result<Point<'dr, D, C>> {
         let zeta = D::F::ZETA;
         let one = Element::one();
         let two = D::F::from(2);
@@ -564,7 +591,7 @@ impl<'dr, D: Driver<'dr>> Endoscalar<'dr, D> {
         // h = (r + (4/9)(ζ-1) u) ((ζ-1) u + (ζ²-1) v) and j = (u + v - 1) h,
         // x_D = r + h + ((ζ-1)/3) j + (4ζ/3) u and
         // y_D = (1 - 2s) (r - (2ζ/3) j).
-        let point = walk(dr, p, (s0, e0), |dr, r| {
+        let point = walk(dr, p, (s0, e0), advice, |dr, r| {
             let s = bits.next().unwrap().element();
             let u = bits.next().unwrap().element();
             let v = bits.next().unwrap().element();
@@ -743,6 +770,32 @@ impl<'dr, D: Driver<'dr>> HoistedEndoscalar<'dr, D> {
         dr: &mut D,
         p: &Point<'dr, D, C>,
     ) -> Result<Point<'dr, D, C>> {
+        self.group_scale_with_advice(dr, p, D::just(|| &[][..]))
+    }
+
+    /// Scales as [`group_scale`](Self::group_scale), given advice for the
+    /// inverses its witness generation needs: what [`group_scale_advice`]
+    /// returns for this endoscalar's value and `p`'s coordinates, or any
+    /// prefix of it.
+    ///
+    /// The advice only spares witness generation its field inversions, about
+    /// three per digit. Each entry is used where it is the inverse required
+    /// and ignored otherwise, so the assignment, the gates and the
+    /// constraints are those of `group_scale` whatever the advice holds.
+    ///
+    /// # Soundness
+    ///
+    /// As [`group_scale`](Self::group_scale).
+    ///
+    /// # Errors
+    ///
+    /// As [`group_scale`](Self::group_scale).
+    pub fn group_scale_with_advice<C: Affine<Base = D::F>>(
+        &self,
+        dr: &mut D,
+        p: &Point<'dr, D, C>,
+        advice: DriverValue<D, &[D::F]>,
+    ) -> Result<Point<'dr, D, C>> {
         let zeta = D::F::ZETA;
         let zeta2 = zeta.square();
         let one = Element::one();
@@ -768,7 +821,7 @@ impl<'dr, D: Driver<'dr>> HoistedEndoscalar<'dr, D> {
         // of D are r times a linear form plus a linear form:
         // x_D = r (1 + (ζ-1) e₁ + (ζ²-1) e₂ + (1-ζ) p) + xq0 p,
         // y_D = r ((1 - 2s) + (c₁-1)(p - 2q)) + yq0 (p - 2q).
-        let point = walk(dr, p, (s0, e0), |dr, r| {
+        let point = walk(dr, p, (s0, e0), advice, |dr, r| {
             let s = bits.next().unwrap().element();
             let e1 = bits.next().unwrap().element();
             let e2 = bits.next().unwrap().element();
@@ -833,6 +886,165 @@ impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for HoistedEndoscalar<'dr, D> {
     }
 }
 
+/// Computes the inverses [`HoistedEndoscalar::group_scale`] needs to scale
+/// points by one endoscalar, for
+/// [`HoistedEndoscalar::group_scale_with_advice`].
+///
+/// The walk's divisions depend on one another, so witness generation alone
+/// performs one inversion for each: three per digit. Its divisors are
+/// differences of $x$-coordinates of the walk's points, though, and those
+/// points can be computed without dividing. [`advice`](Self::advice) runs
+/// the walk in Jacobian coordinates and inverts every divisor's numerator
+/// together.
+pub struct GroupScaleAdvisor<F> {
+    /// What the two initial bits scale $A_0$'s coordinates by.
+    initial: (F, F),
+    /// For each digit, the linear forms of the digit point's coordinates:
+    /// $x_D = r \cdot l_x + c_x$ and $y_D = r \cdot l_y + c_y$.
+    digits: Vec<[F; 4]>,
+    three_halves: F,
+}
+
+impl<F: Field> GroupScaleAdvisor<F> {
+    /// Prepares advice for scalings by `endoscalar`.
+    pub fn new(endoscalar: Uendo) -> Self {
+        let bit = |i: usize| endoscalar.bit(i);
+        let scaled = |bit: bool, by: F| if bit { by } else { F::ZERO };
+
+        // The constants of `HoistedEndoscalar::group_scale` and `walk`.
+        let zeta = F::ZETA;
+        let zeta2 = zeta.square();
+        let third = F::from(3)
+            .invert()
+            .expect("3 is invertible in a field of large characteristic");
+        let zm1 = zeta - F::ONE;
+        let z2m1 = zeta2 - F::ONE;
+        let one_minus_zeta = F::ONE - zeta;
+        let xq0 = -(zeta2 * third.double().double());
+        let c1 = F::ONE + zeta.double();
+        let yq0 = -(c1 * third.square().double().double().double());
+        let c1m1 = c1 - F::ONE;
+
+        let digits = (0..ENDOSCALAR_DIGITS)
+            .map(|digit| {
+                let (s, e1, e2) = (bit(2 + 3 * digit), bit(3 + 3 * digit), bit(4 + 3 * digit));
+                let (p, q) = (e1 && e2, e1 && e2 && s);
+                let p_minus_2q = scaled(p, F::ONE) - scaled(q, F::from(2));
+                [
+                    F::ONE + scaled(e1, zm1) + scaled(e2, z2m1) + scaled(p, one_minus_zeta),
+                    scaled(p, xq0),
+                    F::ONE - scaled(s, F::from(2)) + c1m1 * p_minus_2q,
+                    yq0 * p_minus_2q,
+                ]
+            })
+            .collect();
+
+        Self {
+            initial: (
+                F::ONE + scaled(bit(1), zm1),
+                F::ONE - scaled(bit(0), F::from(2)),
+            ),
+            digits,
+            three_halves: F::from(3) * F::TWO_INVERSE,
+        }
+    }
+
+    /// The inverse of each divisor of the walk that scales the point with
+    /// coordinates `p`, in the order the walk divides.
+    ///
+    /// Returns no advice if the walk meets an exceptional case, where witness
+    /// generation fails by itself.
+    pub fn advice(&self, (px, py): (F, F)) -> Vec<F> {
+        // c = x / y, and the inverses of c² and c³ the walk ends with.
+        let Some(inverse) = (px * py).invert() else {
+            return Vec::new();
+        };
+        let py_inverse = px * inverse;
+        let c = px * py_inverse;
+        let c_inverse = py.square() * inverse;
+        let c2_inverse = c_inverse.square();
+        let r = c.square() * px;
+
+        // A₀, as the walk forms it.
+        let t = r * self.three_halves;
+        let x2 = t.square() - r.double();
+        let y2 = t * (r - x2) - r;
+        let (mut x, mut y, mut z) = (x2 * self.initial.0, y2 * self.initial.1, F::ONE);
+
+        // Each divisor is a numerator over the square of a z-coordinate:
+        // the numerators are inverted together, and the squares kept.
+        let mut numerators = Vec::with_capacity(3 * ENDOSCALAR_DIGITS);
+        let mut squares = Vec::with_capacity(3 * ENDOSCALAR_DIGITS);
+        for [lx, cx, ly, cy] in &self.digits {
+            let (xd, yd) = (r * *lx + *cx, r * *ly + *cy);
+
+            // A + D, with D affine: x_D - x_A is h / z². This also moves A
+            // to the sum's z-coordinate, as (v, yh).
+            let zz = z.square();
+            let h = xd * zz - x;
+            let slope = yd * zz * z - y;
+            let hh = h.square();
+            let hhh = h * hh;
+            let v = x * hh;
+            let yh = y * hhh;
+            let x1 = slope.square() - hhh - v.double();
+            let y1 = slope * (v - x1) - yh;
+            let zz1 = zz * hh;
+
+            // (A + D) + A, both at one z-coordinate: x_{A+D} - x_A is
+            // (x1 - v) / zz1. This moves A again, to (w, a).
+            let dx = v - x1;
+            let dy = yh - y1;
+            let dd = dx.square();
+            let w = v * dd;
+            let w1 = x1 * dd;
+            let a = yh * (w - w1);
+            let x2 = dy.square() - w - w1;
+            let y2 = dy * (w - x2) - a;
+            let zz2 = zz1 * dd;
+
+            // ((A + D) + A) + A, likewise: x_{(A+D)+A} - x_A is
+            // (x2 - w) / zz2.
+            let ex = w - x2;
+            let ey = a - y2;
+            let ee = ex.square();
+            let u = w * ee;
+            let u2 = x2 * ee;
+            let x3 = ey.square() - u - u2;
+            let y3 = ey * (u - x3) - a * (u - u2);
+
+            if h.is_zero() || dx.is_zero() || ex.is_zero() {
+                return Vec::new();
+            }
+            numerators.extend([h, -dx, -ex]);
+            squares.extend([zz, zz1, zz2]);
+            (x, y, z) = (x3, y3, z * h * dx * ex);
+        }
+
+        let mut scratch = alloc::vec![F::ZERO; numerators.len()];
+        F::batch_invert(&mut numerators, &mut scratch);
+
+        let mut advice = Vec::with_capacity(numerators.len() + 3);
+        advice.push(py_inverse);
+        advice.extend(
+            numerators
+                .iter()
+                .zip(&squares)
+                .map(|(numerator, square)| *numerator * *square),
+        );
+        advice.push(c2_inverse);
+        advice.push(c2_inverse * c_inverse);
+        advice
+    }
+}
+
+/// The advice of a [`GroupScaleAdvisor`] for one scaling: the inverses
+/// [`HoistedEndoscalar::group_scale`] needs to scale the point with
+/// coordinates `p` by `endoscalar`.
+pub fn group_scale_advice<F: Field>(endoscalar: Uendo, p: (F, F)) -> Vec<F> {
+    GroupScaleAdvisor::new(endoscalar).advice(p)
+}
+
 /// The radix-3 walk shared by [`Endoscalar::group_scale`] and
 /// [`HoistedEndoscalar::group_scale`]: normalizes `p` to $(r, r)$, forms the
 /// initial point from the two initial bits, then for each digit adds the
@@ -841,12 +1053,25 @@ impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for HoistedEndoscalar<'dr, D> {
 /// point's coordinates on the normalized curve.
 ///
 /// Costs $3 + 4 + 7 n + 3$ gates plus what `select` emits.
+///
+/// `advice` holds inverses for the walk's divisors in the order it divides,
+/// as [`group_scale_advice`] computes them, or fewer; see
+/// [`Element::divide_with_advice`].
 fn walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     p: &Point<'dr, D, C>,
     (s0, e0): (Element<'dr, D>, Element<'dr, D>),
+    advice: DriverValue<D, &[D::F]>,
     mut select: impl FnMut(&mut D, &Element<'dr, D>) -> Result<(Element<'dr, D>, Element<'dr, D>)>,
 ) -> Result<Point<'dr, D, C>> {
+    // The advice for the next division, in the order of `group_scale_advice`.
+    let mut divisions = 0;
+    let mut inverse = || {
+        let index = divisions;
+        divisions += 1;
+        advice.as_ref().map(|advice| advice.get(index).copied())
+    };
+
     // Soundness: every `fold` below guards a division whose denominator the
     // magnitude argument in `Endoscalar::group_scale` keeps nonzero, so the
     // bank is created in unchecked mode and the folds emit nothing.
@@ -864,7 +1089,7 @@ fn walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     let three_halves = D::F::from(3) * D::F::TWO_INVERSE;
 
     // Normalize: c = x / y and r = c² x move p to (r, r) on y² = x³ + c⁶ b.
-    let c = p.x.divide(dr, &p.y)?;
+    let c = p.x.divide_with_advice(dr, &p.y, inverse())?;
     let c2 = c.square(dr)?;
     let r = c2.mul(dr, &p.x)?.into_inner();
 
@@ -889,15 +1114,15 @@ fn walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
         let neg_2y = y.scale(dr, Coeff::NegativeArbitrary(two));
         let diff = xd.sub(dr, &x);
         let den = bank.fold(dr, diff)?;
-        let t1 = yd.sub(dr, &y).divide(dr, &den)?;
+        let t1 = yd.sub(dr, &y).divide_with_advice(dr, &den, inverse())?;
         let x1 = t1.square(dr)?.sub(dr, &x).sub(dr, &xd);
         let diff = x1.sub(dr, &x);
         let den = bank.fold(dr, diff)?;
-        let t2 = neg_2y.divide(dr, &den)?.sub(dr, &t1);
+        let t2 = neg_2y.divide_with_advice(dr, &den, inverse())?.sub(dr, &t1);
         let x2 = t2.square(dr)?.sub(dr, &x1).sub(dr, &x);
         let diff = x2.sub(dr, &x);
         let den = bank.fold(dr, diff)?;
-        let t3 = neg_2y.divide(dr, &den)?.sub(dr, &t2);
+        let t3 = neg_2y.divide_with_advice(dr, &den, inverse())?.sub(dr, &t2);
         let x3 = t3.square(dr)?.sub(dr, &x2).sub(dr, &x);
         let x_minus_x3 = x.sub(dr, &x3);
         let y3 = t3.mul(dr, &x_minus_x3)?.sub(dr, &y);
@@ -908,8 +1133,8 @@ fn walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     // Move the result back: x = X / c², y = Y / c³. The result is a nonzero
     // multiple of p, so its coordinates are nonzero.
     let c3 = c2.mul(dr, &c)?;
-    let x = x.divide(dr, &c2)?;
-    let y = y.divide(dr, &c3)?;
+    let x = x.divide_with_advice(dr, &c2, inverse())?;
+    let y = y.divide_with_advice(dr, &c3, inverse())?;
 
     Ok(Point::new_unchecked(
         Nonzero::new_unchecked(x),
@@ -1052,6 +1277,8 @@ pub fn extract_endoscalar<F: Field>(value: F) -> Result<Uendo> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{vec, vec::Vec};
+
     use ragu_core::{
         Result,
         drivers::emulator::Wireless,
@@ -1426,6 +1653,146 @@ mod tests {
 
             Ok(())
         })?;
+
+        Ok(())
+    }
+
+    /// The divisors of the walk for the scaling of `p`, in the order it
+    /// divides, and the scaled point: the walk of
+    /// [`HoistedEndoscalar::group_scale`] in affine coordinates, with one
+    /// inversion for each division.
+    fn walk_divisors(value: Uendo, (px, py): (Fp, Fp)) -> (Vec<Fp>, (Fp, Fp)) {
+        let bit = |i: usize| if value.bit(i) { Fp::ONE } else { Fp::ZERO };
+        let zeta = Fp::ZETA;
+        let third = Fp::from(3).invert().unwrap();
+        let (zm1, z2m1) = (zeta - Fp::ONE, zeta.square() - Fp::ONE);
+        let xq0 = -(zeta.square() * third.double().double());
+        let c1 = Fp::ONE + zeta.double();
+        let yq0 = -(c1 * third.square().double().double().double());
+        let two = Fp::from(2);
+
+        let mut divisors = vec![py];
+        let c = px * py.invert().unwrap();
+        let r = c.square() * px;
+        let t = r * Fp::from(3) * Fp::TWO_INVERSE;
+        let x2 = t.square() - r.double();
+        let y2 = t * (r - x2) - r;
+        let mut x = x2 * (Fp::ONE + zm1 * bit(1));
+        let mut y = y2 * (Fp::ONE - two * bit(0));
+        for digit in 0..super::ENDOSCALAR_DIGITS {
+            let (s, e1, e2) = (bit(2 + 3 * digit), bit(3 + 3 * digit), bit(4 + 3 * digit));
+            let (p, q) = (e1 * e2, e1 * e2 * s);
+            let xd = r * (Fp::ONE + zm1 * e1 + z2m1 * e2 + (Fp::ONE - zeta) * p) + xq0 * p;
+            let yd = r * (Fp::ONE - two * s + (c1 - Fp::ONE) * (p - two * q)) + yq0 * (p - two * q);
+
+            let d1 = xd - x;
+            let t1 = (yd - y) * d1.invert().unwrap();
+            let x1 = t1.square() - x - xd;
+            let d2 = x1 - x;
+            let t2 = -y.double() * d2.invert().unwrap() - t1;
+            let x2 = t2.square() - x1 - x;
+            let d3 = x2 - x;
+            let t3 = -y.double() * d3.invert().unwrap() - t2;
+            let x3 = t3.square() - x2 - x;
+            divisors.extend([d1, d2, d3]);
+            (x, y) = (x3, t3 * (x - x3) - y);
+        }
+        let (c2, c3) = (c.square(), c.square() * c);
+        divisors.extend([c2, c3]);
+        (
+            divisors,
+            (x * c2.invert().unwrap(), y * c3.invert().unwrap()),
+        )
+    }
+
+    /// The advice is the inverse of every divisor of the walk, in the order
+    /// the walk divides.
+    #[test]
+    fn test_group_scale_advice_inverts_the_divisors() {
+        for multiple in [1u64, 2, 7, 0xdead_beef] {
+            let p: EpAffine = (EpAffine::generator().to_projective()
+                * <EpAffine as udon::curve::Affine>::Scalar::from(multiple))
+            .into();
+            let coordinates = p.coordinates().unwrap();
+            for _ in 0..8 {
+                let value = random_endoscalar();
+                let (divisors, scaled) = walk_divisors(value, coordinates);
+                // The transcription above is the walk: it scales as the
+                // reference does.
+                let expected = EndoscalarTest { value }.scale(&p);
+                assert_eq!(Some(scaled), expected.coordinates());
+
+                let advice = super::group_scale_advice(value, coordinates);
+                assert_eq!(advice.len(), 1 + 3 * super::ENDOSCALAR_DIGITS + 2);
+                assert_eq!(advice.len(), divisors.len());
+                for (inverse, divisor) in advice.iter().zip(&divisors) {
+                    assert_eq!(*inverse * *divisor, Fp::ONE);
+                }
+            }
+        }
+    }
+
+    /// The plain endoscalar's scaling takes the same advice, with the same
+    /// point and gates as without.
+    #[test]
+    fn test_plain_group_scale_with_advice() -> Result<()> {
+        let p = EpAffine::generator();
+        let r = random_endoscalar();
+        let expected = EndoscalarTest { value: r }.scale(&p);
+        let right = super::group_scale_advice(r, p.coordinates().unwrap());
+        let wrong = vec![Fp::from(5); right.len()];
+
+        let mut gates = Vec::new();
+        for advice in [right, wrong, Vec::new()] {
+            Simulator::simulate((p, r, advice), |dr, witness| {
+                let (p, r, advice) = witness.cast();
+                let p = Point::alloc(dr, p.clone())?;
+                let r = Endoscalar::alloc(dr, r.clone())?;
+
+                dr.reset();
+                let scaled = r.group_scale_with_advice(
+                    dr,
+                    &p,
+                    advice.as_ref().map(|advice| advice.as_slice()),
+                )?;
+                assert_eq!(scaled.value().take(), expected);
+                gates.push(dr.num_gates());
+                Ok(())
+            })?;
+        }
+        assert!(gates.iter().all(|count| *count == gates[0]));
+
+        Ok(())
+    }
+
+    /// Advice changes neither the scaled point nor the gates, whether it is
+    /// right, wrong or short.
+    #[test]
+    fn test_group_scale_with_advice() -> Result<()> {
+        let p = EpAffine::generator();
+        let r = random_endoscalar();
+        let expected = EndoscalarTest { value: r }.scale(&p);
+        let right = super::group_scale_advice(r, p.coordinates().unwrap());
+        let wrong = vec![Fp::from(5); right.len()];
+        let short = right[..40].to_vec();
+
+        for advice in [right, wrong, short, Vec::new()] {
+            Simulator::simulate((p, r, advice), |dr, witness| {
+                let (p, r, advice) = witness.cast();
+                let p = Point::alloc(dr, p.clone())?;
+                let r = HoistedEndoscalar::alloc(dr, r.clone())?;
+
+                dr.reset();
+                let scaled = r.group_scale_with_advice(
+                    dr,
+                    &p,
+                    advice.as_ref().map(|advice| advice.as_slice()),
+                )?;
+                assert_eq!(scaled.value().take(), expected);
+                assert_eq!(dr.num_gates(), 3 + 4 + 9 * super::ENDOSCALAR_DIGITS + 3);
+                Ok(())
+            })?;
+        }
 
         Ok(())
     }

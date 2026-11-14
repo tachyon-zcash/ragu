@@ -8,7 +8,7 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::fmt::Debug;
 
 use ragu_circuits::{
@@ -17,6 +17,135 @@ use ragu_circuits::{
 };
 use ragu_core::FixedGenerators;
 use udon::{curve::Affine, fft::Domain, field::Field};
+
+/// Commitments a backend has begun computing behind its caller, as
+/// [`Backend::sparse_commit_many_start`] returns them.
+///
+/// Dropping one gives the commitments up.
+pub trait StartedCommitments<T>: Send {
+    /// Whether [`finish`](Self::finish) would return without waiting.
+    fn ready(&mut self) -> bool;
+
+    /// Waits for the commitments and returns them in the order of the
+    /// polynomials, or returns `None` if the backend could not complete
+    /// them; the caller then commits through
+    /// [`Backend::sparse_commit_many`].
+    fn finish(self: Box<Self>) -> Option<Vec<T>>;
+}
+
+/// Work a [`PolyDevice`] has left for its caller to run: see
+/// [`PolyDevice::upload_later`].
+pub type Later<'a> = Box<dyn FnOnce() + Send + 'a>;
+
+/// A polynomial held by a [`PolyDevice`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Slot(pub u32);
+
+/// Whole-polynomial arithmetic on a device that keeps the polynomials.
+///
+/// A prover that combines many polynomials and needs only a few scalars and
+/// a few combined polynomials back can hold the operands here instead of
+/// computing every intermediate on the host. Each method names the host
+/// computation it stands for, on polynomials as dense coefficient vectors of
+/// length [`Rank::num_coeffs`].
+///
+/// # Correctness
+///
+/// Every result must be exactly the field elements of that host computation.
+///
+/// # Panics
+///
+/// A device that fails after [`Backend::poly_device`] returned it has no
+/// host fallback, and its methods panic.
+pub trait PolyDevice<F: Field, R: Rank>: Send {
+    /// The device as a value of its own type, by which the backend that
+    /// opened it recognises it in [`Backend::device_commit`].
+    fn as_any_mut(&mut self) -> &mut dyn core::any::Any;
+
+    /// Stores each polynomial in a new slot.
+    fn upload(&mut self, polys: &[&sparse::Polynomial<F, R>]) -> Vec<Slot>;
+
+    /// [`upload`](Self::upload) for polynomials the caller does not need at
+    /// once: a device may take them in apart from the work it is asked for
+    /// meanwhile, which then does not wait for them. Every method sees them
+    /// stored from the first that reads one of them on.
+    fn upload_apart(&mut self, polys: &[&sparse::Polynomial<F, R>]) -> Vec<Slot> {
+        self.upload(polys)
+    }
+
+    /// Gives each polynomial a new slot now, and returns with the slots the
+    /// work that stores the polynomials, if the device leaves that to its
+    /// caller: to be run once, when and where the caller likes, also on
+    /// another thread while this device is used for other things. Every
+    /// method sees the polynomials stored from the first that reads one of
+    /// them on, and waits for the work to have run if it has not yet.
+    ///
+    /// The default stores them before it returns, and leaves no work.
+    ///
+    /// # Panics
+    ///
+    /// A method that reads one of the slots panics if the work was dropped
+    /// without being run.
+    fn upload_later<'a>(
+        &mut self,
+        polys: &[&'a sparse::Polynomial<F, R>],
+    ) -> (Vec<Slot>, Option<Later<'a>>) {
+        (self.upload_apart(polys), None)
+    }
+
+    /// A new slot whose coefficient of degree $k$ is $z^k$.
+    fn powers(&mut self, z: F) -> Slot;
+
+    /// For each job, a new slot holding the sum of `scalar * polynomial`
+    /// over its terms.
+    fn lincomb(&mut self, jobs: &[Vec<(F, Slot)>]) -> Vec<Slot>;
+
+    /// For each `(a, s)`, a new slot whose coefficient of degree $k$ is
+    /// `a[k] * powers[k] + s[k] + t[k]`: with `powers` from
+    /// [`powers`](Self::powers), the dilation of `a` as
+    /// [`sparse::Polynomial::dilate`] computes it, plus `s` and `t`.
+    fn dilate_add(&mut self, jobs: &[(Slot, Slot)], powers: Slot, t: Slot) -> Vec<Slot>;
+
+    /// [`sparse::Polynomial::revdot`] of each pair.
+    fn revdot(&mut self, pairs: &[(Slot, Slot)]) -> Vec<F>;
+
+    /// The sum over $k$ of `a[k] * b[k]` for each pair. With `b` from
+    /// [`powers`](Self::powers) of a point, this is `a` evaluated there,
+    /// as [`sparse::Polynomial::eval`] computes it.
+    fn dot(&mut self, pairs: &[(Slot, Slot)]) -> Vec<F>;
+
+    /// A new slot holding the sum over the jobs `(point, terms)` of the
+    /// quotient of the job's combination, the sum of `scalar * polynomial`
+    /// over its terms, by $X - \text{point}$, with the remainder dropped:
+    /// the quotient's coefficient of degree $k$ is the sum over $j > k$ of
+    /// the combination's coefficient of degree $j$ times
+    /// $\text{point}^{j - k - 1}$.
+    fn quotients(&mut self, jobs: &[(F, Vec<(F, Slot)>)]) -> Slot;
+
+    /// Reads polynomials back.
+    fn download(&mut self, slots: &[Slot]) -> Vec<sparse::Polynomial<F, R>>;
+
+    /// Evaluates the wiring matrices of `registry` at `y`: for the circuit
+    /// at each position of [`Registry::wiring_matrices`] that has a matrix,
+    /// a new slot holding $s_i(X, y)$. Returns `None` if the device does
+    /// not hold wiring matrices, as the default does not; the caller then
+    /// restricts every circuit on the host.
+    ///
+    /// A device may return before the slots are filled, as long as every
+    /// later method sees them filled: a caller with other work can ask for
+    /// the evaluation ahead of the moment it needs it.
+    fn wiring_y(&mut self, registry: &Registry<'_, F, R>, y: F) -> Option<Vec<Option<Slot>>> {
+        let _ = (registry, y);
+        None
+    }
+
+    /// As [`wiring_y`](Self::wiring_y) for the other variable: a new slot
+    /// holding $s_i(x, Y)$ for each circuit with a matrix.
+    fn wiring_x(&mut self, registry: &Registry<'_, F, R>, x: F) -> Option<Vec<Option<Slot>>> {
+        let _ = (registry, x);
+        None
+    }
+}
 
 /// A statically dispatched implementation of Ragu's computational operations.
 ///
@@ -100,6 +229,64 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
                 poly.iter_stored_coeffs().map(|(index, _)| &bases[index]),
             )
         }))
+    }
+
+    /// Commits to any number of independent sparse polynomials, returning
+    /// results in input order.
+    ///
+    /// The default commits to each polynomial through
+    /// [`Self::sparse_commit`], retaining its overrides. Backends may
+    /// override this method to schedule the commitments together.
+    ///
+    /// # Correctness
+    ///
+    /// Each output must match [`sparse::Polynomial::commit`] exactly.
+    fn sparse_commit_many<C: Affine, R: Rank, G: FixedGenerators<C>>(
+        polys: &[&sparse::Polynomial<C::Scalar, R>],
+        generators: &G,
+    ) -> Vec<C::Projective> {
+        polys
+            .iter()
+            .map(|poly| Self::sparse_commit(poly, generators))
+            .collect()
+    }
+
+    /// Commits to the polynomials `device` holds in `slots` and reads them
+    /// back, where the backend can do both without the polynomials leaving
+    /// the device to be committed to. Returns `None` where it cannot, as the
+    /// default does; the caller then downloads the slots and commits.
+    ///
+    /// # Correctness
+    ///
+    /// The polynomials must be what [`PolyDevice::download`] returns for
+    /// `slots`, and the commitments must match
+    /// [`sparse_commit_many`](Self::sparse_commit_many) on them exactly.
+    #[allow(clippy::type_complexity)]
+    fn device_commit<C: Affine, R: Rank, G: FixedGenerators<C>>(
+        device: &mut dyn PolyDevice<C::Scalar, R>,
+        slots: &[Slot],
+        generators: &G,
+    ) -> Option<(Vec<sparse::Polynomial<C::Scalar, R>>, Vec<C::Projective>)> {
+        let _ = (device, slots, generators);
+        None
+    }
+
+    /// Begins [`sparse_commit_many`](Self::sparse_commit_many) and returns
+    /// without waiting for the commitments, where the backend computes them
+    /// somewhere other than on the calling thread. Returns `None` where it
+    /// does not, as the default does; the caller then calls
+    /// `sparse_commit_many` when it wants them.
+    ///
+    /// # Correctness
+    ///
+    /// What [`StartedCommitments::finish`] returns must match
+    /// `sparse_commit_many` on the same polynomials exactly.
+    fn sparse_commit_many_start<C: Affine, R: Rank, G: FixedGenerators<C>>(
+        polys: &[&sparse::Polynomial<C::Scalar, R>],
+        generators: &G,
+    ) -> Option<Box<dyn StartedCommitments<C::Projective>>> {
+        let _ = (polys, generators);
+        None
     }
 
     /// Commits to a sparse polynomial and normalizes the result to affine.
@@ -265,6 +452,13 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         Bases::IntoIter: Clone + Sync,
     {
         inputs.map(|(coeffs, bases)| Self::msm(coeffs, bases))
+    }
+
+    /// Opens a device that holds polynomials for the caller, if this backend
+    /// has one free for this field and rank. The default has none, and the
+    /// caller then computes on the host.
+    fn poly_device<F: Field, R: Rank>() -> Option<Box<dyn PolyDevice<F, R>>> {
+        None
     }
 
     /// Maps a finite set of independent inputs to results in input order.

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the `gpu` feature, which enables `ragu_acceleration`'s CUDA device for
+  `AcceleratedProver`.
+- Added the `stage-timing` feature and the `fuse_experiment` bench, which
+  report the wall-clock time of each stage of `Application::fuse` with a
+  fingerprint of the proof. Not part of the stable public API.
 - Added recursion profiles through `profile::{Profile, ProfiledCycle, Profiled,
   Standard, Aggregator, Shape}`. Profiles declare internal extension circuits,
   stages, statement and cross-cycle bindings, and endoscaling work.
@@ -57,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Application::fuse` keeps its polynomials on the backend's device where the
+  backend offers one, and runs the independent work inside a stage together.
+  The transcript, the random draws and the commitments keep their order: a
+  proof is the one the reference backend produces.
+- `Pcd` shares its proof with its clones, so cloning one copies no
+  polynomials, and `fuse` reads a shared child where it is. `Pcd::into_parts`
+  copies the proof only if a clone still holds it.
 - `ApplicationBuilder`, `Application`, and their proving, verification and
   compression methods now require `ProfiledCycle` rather than only `Cycle`.
   Custom cycles must select a profile; Pasta's implementation requires `baked`.

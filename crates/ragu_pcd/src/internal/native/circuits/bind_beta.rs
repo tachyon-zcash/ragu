@@ -57,6 +57,7 @@
 //! [`points::BindingStage`]: super::super::stages::points::BindingStage
 //! [`preamble`]: super::super::stages::preamble
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -124,6 +125,25 @@ pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// Witness for the preamble stage (provides the children's `pre_beta`
     /// and exported bindings).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
+    /// For the left child and then the right, the inverses the scaling by
+    /// its `pre_beta` divides by ([`scalings`] with
+    /// [`challenge_advice`](crate::internal::endoscalar::challenge_advice)).
+    /// The circuit checks each inverse it is offered and computes any that
+    /// is missing or wrong, so this may be empty.
+    pub advice: &'a [Vec<C::CircuitField>],
+}
+
+/// What the circuit scales: for the left child and then the right, its
+/// `pre_beta` and the generator scaled by that challenge's endoscalar.
+pub fn scalings<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize>(
+    params: &C::Params,
+    preamble: &native_preamble::Witness<'_, C, R, HEADER_SIZE>,
+) -> [(C::CircuitField, C::NestedCurve); 2] {
+    let generator = C::nested_generators(params).g()[generator_index::<C, R>()];
+    [
+        (preamble.left.proof.pre_beta(), generator),
+        (preamble.right.proof.pre_beta(), generator),
+    ]
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::CircuitField, R>
@@ -164,13 +184,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let preamble = preamble.unenforced(dr, witness.as_ref().map(|w| w.preamble_witness))?;
 
         let allocator = &mut Standard::new();
+        let advice = witness.as_ref().map(|w| w.advice);
         let unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         let generator = C::nested_generators(self.params).g()[generator_index::<C, R>()];
-        for (child, bound) in [
+        for (side, (child, bound)) in [
             (&preamble.left, &binding.left),
             (&preamble.right, &binding.right),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             // Same order as nested::RxIndex::BRIDGES. These are the points
             // the child's hash circuits absorbed, before its challenges, and
             // its bridge hash, which they expose.
@@ -193,7 +217,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 EndoscalarChallenge::from_element(dr, allocator, child.unified.pre_beta.clone())?;
             let bits = Endoscalar::extract(pre_beta);
             let generator = Point::constant(dr, generator)?;
-            let beta_term = bits.group_scale(dr, &generator)?;
+            let advice = advice
+                .as_ref()
+                .map(|advice| crate::internal::endoscalar::scaling_advice(advice, side));
+            let beta_term = bits.group_scale_with_advice(dr, &generator, advice)?;
             let expected = NonzeroBank::scope(dr, |dr, bank| {
                 child
                     .unified

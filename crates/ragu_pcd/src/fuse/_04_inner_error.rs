@@ -21,8 +21,12 @@ use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::claims::{
-    NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource,
+use super::{
+    claims::{
+        HollowProcessor, NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder,
+        NestedFuseProofSource,
+    },
+    device::Devices,
 };
 use crate::{
     Application,
@@ -30,8 +34,10 @@ use crate::{
         fold_revdot::{self, NumErrorTerms, Parameters},
         native, nested,
     },
+    multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
+    timing::span,
 };
 
 /// Ephemeral $m(w, X, y)$ registry restriction, used only during the fuse step.
@@ -59,6 +65,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         z: &Element<'dr, D>,
         native_source: &NativeFuseProofSource<'rx, C, R>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
+        devices: &mut Devices<'rx, C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters<C::Profile>>,
@@ -71,12 +78,171 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let (native_inner_error_witness, native_claims, registry_wy) =
-            self.compute_native_inner_error(rng, native_registry, y, z, native_source, builder)?;
-        let (nested_inner_error_terms, nested_claims, nested_registry_wy) =
-            self.compute_nested_inner_error(nested_registry, y, z, nested_source)?;
-        let nested_inner_error_witness =
-            self.compute_bridge_inner_error(rng, &registry_wy, nested_inner_error_terms, builder)?;
+        let y = *y.value().take();
+        let z = *z.value().take();
+        let (native_full, nested_full) = (&self.native_registry, &self.nested_registry);
+        // The claims take the devices with them; `_06_ab` hands them back.
+        let native_recorded = devices
+            .native_claims
+            .take()
+            .and_then(|recorder| Some((devices.native.take()?, recorder)));
+        let nested_recorded = devices
+            .nested_claims
+            .take()
+            .and_then(|recorder| Some((devices.nested.take()?, recorder)));
+
+        let (host_generators, nested_generators) = (
+            C::host_generators(self.params),
+            C::nested_generators(self.params),
+        );
+
+        // Each side assembles its children's claims, computes the layer-1
+        // error terms of their fold and restricts its registry to $y$.
+        // Neither reads the other or the builder, so they run together. The
+        // nested side works at the nested counterparts of the challenges
+        // (see [`nested::challenge`]); recursive soundness additionally
+        // requires binding the children's commitments before $y$ and $z$,
+        // binding the lifted challenges, and checking the fold in-circuit.
+        let (native, nested) = par_join!(
+            || -> Result<_> {
+                let mut claims =
+                    NativeFuseBuilder::<C::CircuitField, R, B>::deferred(native_full, y, z);
+                // With a device, the claims' polynomials are formed and
+                // multiplied there, while the host restricts the registry.
+                if let Some((device, recorder)) = native_recorded {
+                    span("ie.native.hollow", || {
+                        native::claims::build::<C::Profile, _, _>(
+                            native_source,
+                            &mut HollowProcessor {
+                                claims: &mut claims,
+                            },
+                        )
+                    })?;
+                    let (mut held, wy) = span("ie.native.device", || {
+                        recorder.finish::<B>(device, native_full, native_registry, y, z)
+                    });
+                    // The restriction is committed to while the error terms
+                    // are computed: neither reads the other.
+                    let (error_terms, commitment) = par_join!(
+                        || span("ie.native.terms", || {
+                            held.inner_error_terms::<B, native::RevdotParameters<C::Profile>>()
+                        }),
+                        || span("ie.native.commit", || {
+                            B::sparse_commit_to_affine(&wy, host_generators)
+                        }),
+                    );
+                    claims.device = Some(held);
+                    return Ok((claims, error_terms, wy, Some(commitment)));
+                }
+                span("ie.native.claims", || {
+                    native::claims::build::<C::Profile, _, _>(native_source, &mut claims)
+                })?;
+                span("ie.native.finish", || claims.finish());
+                let error_terms = span("ie.native.errors", || {
+                    fold_revdot::inner_error_terms_with_backend::<
+                        B,
+                        _,
+                        R,
+                        native::RevdotParameters<C::Profile>,
+                    >(&claims.a, &claims.b)
+                });
+                let wy = span("ie.native.registry_y", || {
+                    B::registry_at_y(native_registry, y)
+                });
+                Ok((claims, error_terms, wy, None))
+            },
+            || -> Result<_> {
+                let nested_y = nested::challenge::<C>(y)?;
+                let nested_z = nested::challenge::<C>(z)?;
+                let mut claims = NestedFuseBuilder::<C::ScalarField, R, B>::deferred(
+                    nested_full,
+                    nested_y,
+                    nested_z,
+                );
+                if let Some((device, recorder)) = nested_recorded {
+                    let (mut held, wy) = span("ie.nested.device", || {
+                        recorder.finish::<B>(
+                            device,
+                            nested_full,
+                            nested_registry,
+                            nested_y,
+                            nested_z,
+                        )
+                    });
+                    let (error_terms, commitment) = par_join!(
+                        || span("ie.nested.terms", || {
+                            held.inner_error_terms::<B, nested::RevdotParameters<C::Profile>>()
+                        }),
+                        || span("ie.nested.commit", || {
+                            B::sparse_commit_to_affine(&wy, nested_generators)
+                        }),
+                    );
+                    claims.device = Some(held);
+                    return Ok((claims, error_terms, wy, Some(commitment)));
+                }
+                span("ie.nested.claims", || {
+                    nested::claims::build::<C::Profile, _, _>(nested_source, &mut claims)
+                })?;
+                span("ie.nested.finish", || claims.finish());
+                let error_terms = span("ie.nested.errors", || {
+                    fold_revdot::inner_error_terms_with_backend::<
+                        B,
+                        _,
+                        R,
+                        nested::RevdotParameters<C::Profile>,
+                    >(&claims.a, &claims.b)
+                });
+                let wy = span("ie.nested.registry_y", || {
+                    B::registry_at_y(nested_registry, nested_y)
+                });
+                Ok((claims, error_terms, wy, None))
+            },
+        );
+        let (native_claims, native_error_terms, registry_wy_poly, commitment) = native?;
+        let (nested_claims, nested_inner_error_terms, nested_registry_wy_poly, nested_commitment) =
+            nested?;
+
+        let native_inner_error_witness =
+            native::stages::inner_error::Witness::<C, native::RevdotParameters<C::Profile>> {
+                error_terms: native_error_terms,
+            };
+        let blind = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
+        let native_rx = span("ie.rx", || {
+            native::stages::inner_error::Stage::<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<C::Profile>,
+            >::rx(blind, &native_inner_error_witness)
+        })?;
+        builder.set_native_inner_error_rx(native_rx);
+
+        // The two sides' commitments are independent, and on different
+        // curves. A side with a device has committed already.
+        let (commitment, nested_commitment) = span("ie.commit", || {
+            par_join!(
+                || commitment.unwrap_or_else(|| B::sparse_commit_to_affine(
+                    &registry_wy_poly,
+                    host_generators
+                )),
+                || nested_commitment.unwrap_or_else(|| B::sparse_commit_to_affine(
+                    &nested_registry_wy_poly,
+                    nested_generators
+                )),
+            )
+        });
+        let registry_wy = RegistryWy {
+            commitment,
+            poly: registry_wy_poly,
+        };
+        let nested_registry_wy = NestedRegistryWy {
+            commitment: nested_commitment,
+            poly: nested_registry_wy_poly,
+        };
+
+        let nested_inner_error_witness = span("ie.bridge", || {
+            self.compute_bridge_inner_error(rng, &registry_wy, nested_inner_error_terms, builder)
+        })?;
         Ok((
             native_inner_error_witness,
             native_claims,
@@ -85,118 +251,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_claims,
             nested_registry_wy,
         ))
-    }
-
-    fn compute_native_inner_error<'dr, 'rx, D, RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
-        native_registry: &RegistryAt<'_, C::CircuitField, R>,
-        y: &Element<'dr, D>,
-        z: &Element<'dr, D>,
-        native_source: &NativeFuseProofSource<'rx, C, R>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(
-        native::stages::inner_error::Witness<C, native::RevdotParameters<C::Profile>>,
-        NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
-        RegistryWy<C, R>,
-    )>
-    where
-        D: Driver<'dr, F = C::CircuitField>,
-    {
-        let y = *y.value().take();
-        let z = *z.value().take();
-
-        let mut native_claims =
-            NativeFuseBuilder::<C::CircuitField, R, B>::new(&self.native_registry, y, z);
-        native::claims::build::<C::Profile, _, _>(native_source, &mut native_claims)?;
-
-        let native_inner_error_witness =
-            native::stages::inner_error::Witness::<C, native::RevdotParameters<C::Profile>> {
-                error_terms: fold_revdot::inner_error_terms_with_backend::<
-                    B,
-                    _,
-                    R,
-                    native::RevdotParameters<C::Profile>,
-                >(&native_claims.a, &native_claims.b),
-            };
-        let native_rx = native::stages::inner_error::Stage::<
-            C,
-            R,
-            HEADER_SIZE,
-            native::RevdotParameters<C::Profile>,
-        >::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &native_inner_error_witness,
-        )?;
-
-        builder.set_native_inner_error_rx(native_rx);
-
-        let registry_wy_poly = B::registry_at_y(native_registry, y);
-        let registry_wy_commitment =
-            B::sparse_commit_to_affine(&registry_wy_poly, C::host_generators(self.params));
-        let registry_wy = RegistryWy {
-            poly: registry_wy_poly,
-            commitment: registry_wy_commitment,
-        };
-
-        Ok((native_inner_error_witness, native_claims, registry_wy))
-    }
-
-    /// Assembles the children's nested claims and computes the layer-1 error
-    /// terms of their fold, along with the $m_n(w_n, X, y_n)$ restriction.
-    ///
-    /// The nested $y$ and $z$ are derived from the native challenges for the
-    /// claims' $b$ sides and for folding the bonding claims across the two
-    /// children. This prover computation uses the children's polynomials
-    /// from the previous step; recursive soundness additionally requires
-    /// binding their commitments before $y$ and $z$, binding the lifted
-    /// challenges, and checking the fold in-circuit (see [`nested::challenge`]).
-    fn compute_nested_inner_error<'dr, 'rx, D>(
-        &self,
-        nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        native_y: &Element<'dr, D>,
-        native_z: &Element<'dr, D>,
-        nested_source: &NestedFuseProofSource<'rx, C, R>,
-    ) -> Result<(
-        FixedVec<
-            FixedVec<
-                C::ScalarField,
-                NumErrorTerms<<nested::RevdotParameters<C::Profile> as Parameters>::GroupSize>,
-            >,
-            <nested::RevdotParameters<C::Profile> as Parameters>::NumGroups,
-        >,
-        NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
-        NestedRegistryWy<C, R>,
-    )>
-    where
-        D: Driver<'dr, F = C::CircuitField>,
-    {
-        let nested_y = nested::challenge::<C>(*native_y.value().take())?;
-        let nested_z = nested::challenge::<C>(*native_z.value().take())?;
-
-        let mut nested_claims = NestedFuseBuilder::<C::ScalarField, R, B>::new(
-            &self.nested_registry,
-            nested_y,
-            nested_z,
-        );
-        nested::claims::build::<C::Profile, _, _>(nested_source, &mut nested_claims)?;
-
-        let error_terms = fold_revdot::inner_error_terms_with_backend::<
-            B,
-            _,
-            R,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.a, &nested_claims.b);
-
-        let nested_registry_wy_poly = B::registry_at_y(nested_registry, nested_y);
-        let nested_registry_wy_commitment =
-            B::sparse_commit_to_affine(&nested_registry_wy_poly, C::nested_generators(self.params));
-        let nested_registry_wy = NestedRegistryWy {
-            poly: nested_registry_wy_poly,
-            commitment: nested_registry_wy_commitment,
-        };
-
-        Ok((error_terms, nested_claims, nested_registry_wy))
     }
 
     /// Commits the nested fold's inner error terms alongside the native

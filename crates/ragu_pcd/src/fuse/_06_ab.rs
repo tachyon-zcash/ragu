@@ -51,12 +51,14 @@ use udon::curve::Affine;
 use super::{
     _04_inner_error::NestedRegistryWy,
     claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
+    device::Devices,
 };
 use crate::{
     Application,
-    internal::{fold_revdot, native, nested},
+    internal::{claims::DeviceClaims, fold_revdot, native, nested},
+    multicore::{current_num_threads, par_join},
     profile::ProfiledCycle,
-    proof::ProofBuilder,
+    proof::{ProofBuilder, commit_all},
 };
 
 type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
@@ -76,6 +78,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native_b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        native_device: Option<DeviceClaims<C::CircuitField, R>>,
+        nested_device: Option<DeviceClaims<C::ScalarField, R>>,
+        devices: &mut Devices<'_, C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         native_source: &NativeFuseProofSource<'_, C, R>,
         mu_prime: &Element<'dr, D>,
@@ -84,78 +89,26 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        self.compute_native_ab(native_a, native_b, native_source, mu_prime, builder)?;
-        self.compute_nested_ab(nested_a, nested_b, mu_prime, builder)?;
-        self.commit_native_points_ab(
-            rng,
-            nested_registry_wy.commitment,
-            builder.nested_a_commitment(),
-            builder.nested_b_commitment(),
-            builder,
-        )?;
-        Ok(())
-    }
-
-    /// Applies the second layer of the nested fold, producing the nested
-    /// accumulator polynomials.
-    ///
-    /// The nested $\mu'$ is derived from the native challenge
-    /// (see [`nested::challenge`]), which the transcript squeezes only after
-    /// the bridge carrying the layer-2 error terms is absorbed.
-    fn compute_nested_ab<'dr, D>(
-        &self,
-        a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
-        b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
-        native_mu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()>
-    where
-        D: Driver<'dr, F = C::CircuitField>,
-    {
-        let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
-
-        let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            a,
-            nested_mu_prime,
-        );
-        let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            b,
-            nested_mu_prime,
-        );
-
-        builder.set_nested_a_poly(a_poly);
-        builder.set_nested_b_poly(b_poly);
-
-        Ok(())
-    }
-
-    fn compute_native_ab<'dr, D>(
-        &self,
-        a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups<C::Profile>>,
-        b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
-        native_source: &NativeFuseProofSource<'_, C, R>,
-        mu_prime: &Element<'dr, D>,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<()>
-    where
-        D: Driver<'dr, F = C::CircuitField>,
-    {
         let mu_prime = *mu_prime.value().take();
+        // The nested $\mu'$ is derived from the native challenge (see
+        // [`nested::challenge`]), which the transcript squeezes only after
+        // the bridge carrying the layer-2 error terms is absorbed.
+        let nested_mu_prime = nested::challenge::<C>(mu_prime)?;
+        let (host_generators, nested_generators) = (
+            C::host_generators(self.params),
+            C::nested_generators(self.params),
+        );
 
+        // The native $A$'s decomposition over the children's commitments,
+        // from the host's fold of the tracked groups. With a device that
+        // fold carries only the decomposition.
         let TrackedPoly {
             poly: a_poly,
             decomp: a_decomp,
-        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
-        let a_poly = a_poly.into_owned();
-
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
-        let host_gen = C::host_generators(self.params);
-
-        // Compute a_commitment from decomposition: small MSM over known
-        // commitments, resolved directly from the child proofs rather than
-        // full polynomial-degree MSM.
-        let a_commitment_proj = {
+        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(
+            native_a, mu_prime,
+        );
+        let terms: Vec<(C::CircuitField, C::HostCurve)> = {
             // Deduplicate terms by key, summing coefficients.
             // TODO: O(n²) linear scan; switch to HashMap or sort-based dedup
             // if the number of terms grows beyond current M×N ≈ 108.
@@ -167,26 +120,101 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     entries.push((key, coeff));
                 }
             }
-
-            let mut msm: Vec<(C::CircuitField, C::HostCurve)> = Vec::with_capacity(entries.len());
-            for (key, coeff) in entries {
-                let commitment = native_source.get(key);
-                msm.push((coeff, commitment));
-            }
-
-            B::msm(msm.iter().map(|(c, _)| c), msm.iter().map(|(_, b)| b))
+            entries
+                .into_iter()
+                .map(|(key, coeff)| (coeff, native_source.get(key)))
+                .collect()
         };
 
-        let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
-        <C::HostCurve as Affine>::batch_to_affine(
-            &[a_commitment_proj, B::sparse_commit(&b_poly, host_gen)],
-            &mut commitments,
+        // Three pieces that read nothing of one another, and nothing of the
+        // builder, so they run together: $A$'s commitment, a small MSM over
+        // commitments resolved from the child proofs rather than a full
+        // polynomial-degree one; the native second layer with $B$'s
+        // commitment; and the nested second layer with both of its
+        // commitments. Each side's second layer is on the device that holds
+        // its folded groups, or on the host.
+        let (a_commitment, native, nested) = par_join!(
+            || crate::timing::span("ab.a.msm", || {
+                // The sum over the terms, formed a piece per worker and the
+                // pieces added: the same group element as one sum, sooner.
+                // The two arms beside this one wait on their devices.
+                let piece = terms.len().div_ceil(current_num_threads()).max(1);
+                B::map(terms.chunks(piece), |terms| {
+                    B::msm(
+                        terms.iter().map(|(coeff, _)| coeff),
+                        terms.iter().map(|(_, commitment)| commitment),
+                    )
+                })
+                .fold(
+                    <C::HostCurve as Affine>::identity().to_projective(),
+                    |sum, piece| sum + piece,
+                )
+            }),
+            || crate::timing::span("ab.native", || {
+                let (a_poly, b_poly, device) = match native_device {
+                    Some(held) => {
+                        let (a, b, device) =
+                            held.fold_outer::<native::RevdotParameters<C::Profile>>(mu_prime);
+                        (a, b, Some(device))
+                    }
+                    None => (
+                        a_poly.into_owned(),
+                        fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(
+                            native_b, mu_prime,
+                        ),
+                        None,
+                    ),
+                };
+                let b_commitment = B::sparse_commit(&b_poly, host_generators);
+                (a_poly, b_poly, b_commitment, device)
+            }),
+            || crate::timing::span("ab.nested", || {
+                let (a_poly, b_poly, device) = match nested_device {
+                    Some(held) => {
+                        let (a, b, device) = held
+                            .fold_outer::<nested::RevdotParameters<C::Profile>>(nested_mu_prime);
+                        (a, b, Some(device))
+                    }
+                    None => (
+                        fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
+                            nested_a,
+                            nested_mu_prime,
+                        ),
+                        fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
+                            nested_b,
+                            nested_mu_prime,
+                        ),
+                        None,
+                    ),
+                };
+                let commitments =
+                    commit_all::<B, C::NestedCurve, R, _>(&[&a_poly, &b_poly], nested_generators);
+                let commitments = [commitments[0], commitments[1]];
+                (a_poly, b_poly, commitments, device)
+            }),
         );
-        let [a_commitment, b_commitment] = commitments;
 
+        let (a_poly, b_poly, b_commitment, native_device) = native;
+        let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
+        <C::HostCurve as Affine>::batch_to_affine(&[a_commitment, b_commitment], &mut commitments);
+        let [a_commitment, b_commitment] = commitments;
         builder.set_native_a_poly(a_poly, a_commitment);
         builder.set_native_b_poly(b_poly, b_commitment);
 
+        let (nested_a_poly, nested_b_poly, nested_commitments, nested_device) = nested;
+        builder.set_nested_ab(nested_a_poly, nested_b_poly, nested_commitments);
+
+        // Each side's device comes back from its claims for the stages after.
+        devices.native = native_device;
+        devices.nested = nested_device;
+
+        self.commit_native_points_ab(
+            rng,
+            nested_registry_wy.commitment,
+            builder.nested_a_commitment(),
+            builder.nested_b_commitment(),
+            builder,
+        )?;
         Ok(())
     }
 }

@@ -511,6 +511,7 @@ fn install_walk(
             .trace(native::circuits::endoscaling_step::Witness {
                 inputs,
                 walk: &walk,
+                advice: &[],
             })?
             .into_output();
         proof.native_endoscaling_step_rxs[step] = app.native_registry.assemble(

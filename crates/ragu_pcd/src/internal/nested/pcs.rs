@@ -247,14 +247,20 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                         proof.nested_p_poly(),
                     ])
             })
-            .chain([
-                self.registry_wx0,
-                self.registry_wx1,
-                self.registry_wy,
-                self.a,
-                self.b,
-                self.registry_xy,
-            ])
+            .chain(self.current())
+    }
+
+    /// The current step's polynomials among [`Batch::evaluated`], in its
+    /// order.
+    pub fn current(&self) -> [&'a sparse::Polynomial<C::ScalarField, R>; 6] {
+        [
+            self.registry_wx0,
+            self.registry_wx1,
+            self.registry_wy,
+            self.a,
+            self.b,
+            self.registry_xy,
+        ]
     }
 
     /// The commitments of [`Batch::evaluated`], in the same order, given the

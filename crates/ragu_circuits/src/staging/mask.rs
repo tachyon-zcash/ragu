@@ -231,6 +231,19 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         &[]
     }
 
+    /// The complete mask $S\_{\text{global}} - \text{notch}$: unlike the
+    /// evaluations above, the matrix includes the term the masks share.
+    fn matrix(
+        &self,
+        _floor_plan: &[crate::floor_planner::ConstraintSegment],
+    ) -> Option<crate::wiring::matrix::Matrix<F>> {
+        // The mask is a polynomial in XY alone, so its restriction at one
+        // holds its coefficients by power of XY.
+        let mut mask = global_project::<F, R>(F::ONE);
+        mask.add_assign(&self.notch_project(F::ONE));
+        Some(crate::wiring::matrix::Matrix::diagonal(mask.iter_coeffs()))
+    }
+
     fn is_mask(&self) -> bool {
         true
     }

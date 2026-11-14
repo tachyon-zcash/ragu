@@ -98,18 +98,38 @@ impl<L: Len> Len for NumErrorTerms<L> {
     }
 }
 
-fn weights<F: Field>(r: F, m: usize) -> Vec<F> {
+/// For each interpolation node $i$ of $0, \ldots, m - 1$, the inverse of
+/// $\prod_{j \neq i} (i - j)$, with one inversion for all of them.
+fn node_denominator_inverses<F: Field>(m: usize) -> Vec<F> {
+    let mut denominators: Vec<F> = (0..m)
+        .map(|i| {
+            (0..m)
+                .filter(|&j| i != j)
+                .map(|j| F::from(i as u64) - F::from(j as u64))
+                .product()
+        })
+        .collect();
+    assert!(
+        denominators
+            .iter()
+            .all(|denominator| *denominator != F::ZERO),
+        "distinct interpolation nodes"
+    );
+    let mut scratch = vec![F::ZERO; m];
+    F::batch_invert(&mut denominators, &mut scratch);
+    denominators
+}
+
+/// The Lagrange weights at `r` over the interpolation nodes $0, \ldots, m - 1$.
+pub(crate) fn weights<F: Field>(r: F, m: usize) -> Vec<F> {
+    let inverses = node_denominator_inverses::<F>(m);
     (0..m)
         .map(|i| {
             let numerator: F = (0..m)
                 .filter(|&j| i != j)
                 .map(|j| r - F::from(j as u64))
                 .product();
-            let denominator: F = (0..m)
-                .filter(|&j| i != j)
-                .map(|j| F::from(i as u64) - F::from(j as u64))
-                .product();
-            numerator * denominator.invert().expect("distinct interpolation nodes")
+            numerator * inverses[i]
         })
         .collect()
 }
@@ -161,27 +181,25 @@ fn multiply<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     result
 }
 
-fn bases<F: Field>(m: usize) -> (Vec<Vec<F>>, Vec<F>) {
+fn bases<B: ragu_backend::Backend, F: Field>(m: usize) -> (Vec<Vec<F>>, Vec<F>) {
     let z = (0..m).fold(vec![F::ONE], |p, i| {
         multiply(&p, &[-F::from(i as u64), F::ONE])
     });
-    let basis = (0..m)
-        .map(|i| {
-            let mut p = vec![F::ONE];
-            let mut denominator = F::ONE;
-            for j in 0..m {
-                if i != j {
-                    p = multiply(&p, &[-F::from(j as u64), F::ONE]);
-                    denominator *= F::from(i as u64) - F::from(j as u64);
-                }
+    let inverses = node_denominator_inverses::<F>(m);
+    // A basis polynomial reads nothing of another.
+    let basis = B::map(0..m, |i| {
+        let mut p = vec![F::ONE];
+        for j in 0..m {
+            if i != j {
+                p = multiply(&p, &[-F::from(j as u64), F::ONE]);
             }
-            let inverse = denominator.invert().expect("distinct interpolation nodes");
-            for coefficient in &mut p {
-                *coefficient *= inverse;
-            }
-            p
-        })
-        .collect();
+        }
+        for coefficient in &mut p {
+            *coefficient *= inverses[i];
+        }
+        p
+    })
+    .collect();
     (basis, z)
 }
 
@@ -196,33 +214,92 @@ fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
 ) -> FixedVec<FixedVec<F, NumErrorTerms<Inner>>, Outer> {
     assert_eq!(a.len(), b.len());
-    assert!(a.len() <= Outer::len() * Inner::len());
+    quotients::<B, F, Outer, Inner>(a.len(), |start, len| {
+        let (a, b) = (&a[start..start + len], &b[start..start + len]);
+        // Borrow before scheduling so callers need not make their wrappers Sync.
+        let pairs = a.iter().flat_map(|a| {
+            let a = a.borrow();
+            b.iter().map(move |b| (a, b.borrow()))
+        });
+        // The backend may compute products concurrently, returning them in
+        // input order for deterministic residual accumulation.
+        B::map(pairs, |(a, b)| B::sparse_revdot(a, b)).collect()
+    })
+}
+
+/// The index pairs whose revdot products [`quotients`] consumes for `count`
+/// claims in groups of `m`: every pair within each group, group by group,
+/// each group in row-major order.
+pub(crate) fn product_pairs(count: usize, m: usize) -> impl Iterator<Item = (usize, usize)> {
+    (0..count).step_by(m).flat_map(move |start| {
+        let len = m.min(count - start);
+        (0..len).flat_map(move |i| (0..len).map(move |j| (start + i, start + j)))
+    })
+}
+
+/// Divides each group's $\operatorname{revdot}(A, B) - K$ by $Z$, one quotient
+/// per group of `Inner` consecutive claims among `count`.
+///
+/// `products(start, len)` returns the revdot products of the group of `len`
+/// claims starting at claim `start`: the product of $a_i$ and $b_j$ at index
+/// `i * len + j`.
+pub(crate) fn quotients<B: ragu_backend::Backend, F: Field, Outer: Len, Inner: Len>(
+    count: usize,
+    mut products: impl FnMut(usize, usize) -> Vec<F>,
+) -> FixedVec<FixedVec<F, NumErrorTerms<Inner>>, Outer> {
+    assert!(count <= Outer::len() * Inner::len());
     let m = Inner::len();
-    let (basis, z) = bases::<F>(m);
-    a.chunks(m)
-        .zip(b.chunks(m))
-        .map(|(a, b)| {
-            // Honest inputs use their actual diagonal targets. The recursive
-            // verifier independently uses the public k(y) targets, so false
-            // input claims cannot be hidden by this prover-side construction.
+    let (basis, z) = bases::<B, F>(m);
+    // The groups' products, asked for in claim order.
+    let groups: Vec<(usize, Vec<F>)> = (0..count)
+        .step_by(m)
+        .map(|start| {
+            let len = m.min(count - start);
+            let products = products(start, len);
+            assert_eq!(products.len(), len * len);
+            (len, products)
+        })
+        .collect();
+    // Honest inputs use their actual diagonal targets. The recursive
+    // verifier independently uses the public k(y) targets, so false
+    // input claims cannot be hidden by this prover-side construction.
+    //
+    // A group's residual is the sum over its pairs of
+    // `product * basis[i] * basis[j]`, less the sum over the diagonal of
+    // `product * basis[i]`. Row `i`'s products are combined over `basis[j]`
+    // first and the combination multiplied by `basis[i]` once: the same
+    // polynomial, with one polynomial multiplication per row instead of one
+    // per pair. A row's share of the residual reads nothing of another's,
+    // so the rows of every group go through the backend, and each group
+    // sums its own in order.
+    let rows = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(group, (len, _))| (0..*len).map(move |i| (group, i)));
+    let shares: Vec<Vec<F>> = B::map(rows, |(group, i)| {
+        let (len, products) = &groups[group];
+        let mut row = vec![F::ZERO; m];
+        for (j, product) in products[i * len..(i + 1) * len].iter().enumerate() {
+            for (sum, &c) in row.iter_mut().zip(&basis[j]) {
+                *sum += *product * c;
+            }
+        }
+        let mut share = multiply(&basis[i], &row);
+        let diagonal = products[i * len + i];
+        for (k, &c) in basis[i].iter().enumerate() {
+            share[k] -= diagonal * c;
+        }
+        share
+    })
+    .collect();
+    let mut shares = shares.into_iter();
+    groups
+        .iter()
+        .map(|(len, _)| {
             let mut residual = vec![F::ZERO; 2 * m - 1];
-            // Borrow before scheduling so callers need not make their wrappers Sync.
-            let pairs = a.iter().enumerate().flat_map(|(i, a)| {
-                let a = a.borrow();
-                b.iter()
-                    .enumerate()
-                    .map(move |(j, b)| (i, j, a, b.borrow()))
-            });
-            // The backend may compute products concurrently, returning them in
-            // input order for deterministic residual accumulation.
-            for (i, j, product) in B::map(pairs, |(i, j, a, b)| (i, j, B::sparse_revdot(a, b))) {
-                for (k, c) in multiply(&basis[i], &basis[j]).into_iter().enumerate() {
-                    residual[k] += product * c;
-                }
-                if i == j {
-                    for (k, &c) in basis[i].iter().enumerate() {
-                        residual[k] -= product * c;
-                    }
+            for share in shares.by_ref().take(*len) {
+                for (sum, c) in residual.iter_mut().zip(share) {
+                    *sum += c;
                 }
             }
             let mut quotient = vec![F::ZERO; m - 1];
@@ -246,6 +323,29 @@ fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
         .take(Outer::len())
         .collect_fixed()
         .expect("fixed group count")
+}
+
+/// The first-layer quotients of `count` claims from their revdot products,
+/// as [`quotients`] takes them.
+pub(crate) fn inner_error_terms_from_products<B: ragu_backend::Backend, F: Field, P: Parameters>(
+    count: usize,
+    products: impl FnMut(usize, usize) -> Vec<F>,
+) -> FixedVec<FixedVec<F, NumErrorTerms<P::GroupSize>>, P::NumGroups> {
+    quotients::<B, F, P::NumGroups, P::GroupSize>(count, products)
+}
+
+/// The second-layer quotient of the folded groups from their revdot
+/// products: every pair of the `P::NumGroups` groups, in row-major order.
+pub(crate) fn outer_error_terms_from_products<B: ragu_backend::Backend, F: Field, P: Parameters>(
+    products: Vec<F>,
+) -> FixedVec<F, NumErrorTerms<P::NumGroups>> {
+    let mut products = Some(products);
+    quotients::<B, F, ConstLen<1>, P::NumGroups>(P::NumGroups::len(), |_, _| {
+        products.take().expect("one outer group")
+    })
+    .into_iter()
+    .next()
+    .expect("one outer quotient")
 }
 
 /// Computes each first-layer quotient before its folding challenge.

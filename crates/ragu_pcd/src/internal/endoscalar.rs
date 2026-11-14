@@ -38,7 +38,8 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, HoistedEndoscalar, NonzeroBank, Point, Uendo,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, GroupScaleAdvisor, HoistedEndoscalar,
+    NonzeroBank, Point, Uendo,
     consistent::Consistent,
     vec::{FixedVec, Len},
 };
@@ -157,7 +158,15 @@ pub struct PointsWitness<C: Affine, N: Len, E: Len> {
 }
 
 impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
-    /// Creates a new `PointsWitness` from points and an endoscalar.
+    /// The witness of [`with_accumulators`](Self::with_accumulators) alone.
+    #[cfg(test)]
+    pub fn new(endoscalar: Uendo, points: &[C]) -> Self {
+        Self::with_accumulators::<ragu_backend::ReferenceBackend>(endoscalar, points).0
+    }
+
+    /// Creates a new `PointsWitness` from points and an endoscalar, and
+    /// returns with it the accumulator each input's scaling starts from, one
+    /// per input: the point [`walk_advice`] takes.
     ///
     /// The first point becomes `initial`, remaining points become `inputs`,
     /// and `interstitials` are computed by simulating the Horner evaluation.
@@ -165,7 +174,10 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
     /// # Panics
     ///
     /// Panics if `points.len() != N::len()`.
-    pub fn new(endoscalar: Uendo, points: &[C]) -> Self {
+    pub fn with_accumulators<B: ragu_backend::Backend>(
+        endoscalar: Uendo,
+        points: &[C],
+    ) -> (Self, vec::Vec<C>) {
         let num_points = N::len();
         assert_eq!(points.len(), num_points, "expected {num_points} points");
 
@@ -175,34 +187,263 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
 
         let endoscalar: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
 
-        // Compute interstitials using chunked Horner iteration
-        let mut interstitials = vec::Vec::with_capacity(NumStepsLen::<N, E>::len());
-        let mut acc = initial.to_projective();
+        // Horner iteration, keeping the accumulator after every input.
+        let walked = horner_walk::<B, C>(endoscalar, initial, points);
 
-        if points.is_empty() {
-            interstitials.push(acc);
+        // Batch normalize projective points to affine
+        let mut affine = vec![C::identity(); walked.len()];
+        C::batch_to_affine(&walked, &mut affine);
+
+        // A step's interstitial is the accumulator after its last input.
+        let interstitials = if points.is_empty() {
+            vec![initial]
         } else {
-            for chunk in points.chunks(E::len()) {
-                for input in chunk {
-                    acc = acc * endoscalar + input.to_projective();
-                }
-                interstitials.push(acc);
-            }
-        }
-
-        let interstitials = {
-            // Batch normalize projective points to affine
-            let mut tmp = vec![C::identity(); interstitials.len()];
-            C::batch_to_affine(&interstitials, &mut tmp);
-            FixedVec::new(tmp).expect("correct length")
+            (0..NumStepsLen::<N, E>::len())
+                .map(|step| affine[input_range(E::len(), step, points.len()).end - 1])
+                .collect()
         };
 
+        // Each scaling starts from the accumulator the input before it left.
+        affine.pop();
+        let accumulators = if points.is_empty() {
+            affine
+        } else {
+            core::iter::once(initial).chain(affine).collect()
+        };
+
+        (
+            Self {
+                initial,
+                inputs,
+                interstitials: FixedVec::new(interstitials).expect("correct length"),
+            },
+            accumulators,
+        )
+    }
+}
+
+/// A Horner walk taken one step at a time, for a caller that has work to do
+/// on each step as soon as the step is walked.
+///
+/// [`PointsWitness::with_accumulators`] walks every step before it returns
+/// any, and cuts the walk into runs it walks twice to do so in parallel.
+/// Here the caller walks the steps in order, each from the accumulator the
+/// one before it left, and what a step's circuit reads is there as soon as
+/// that step is walked: [`step_points`](Self::step_points) is the walk's
+/// witness as far as one step reads it, and
+/// [`step_entering`](Self::step_entering) the accumulators its advice is
+/// taken from. The walk itself is then one pass, which the work on the
+/// steps runs beside. Every accumulator is the group element
+/// `with_accumulators` gives it.
+pub(crate) struct StepWalk<C: Affine, N: Len, E: Len> {
+    scalar: C::Scalar,
+    initial: C,
+    inputs: vec::Vec<C>,
+    _marker: core::marker::PhantomData<(N, E)>,
+}
+
+impl<C: Affine, N: Len, E: Len> StepWalk<C, N, E> {
+    /// The walk over `points` under `endoscalar`, not yet begun.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `points.len() != N::len()`.
+    pub(crate) fn new(endoscalar: Uendo, points: &[C]) -> Self {
+        let num_points = N::len();
+        assert_eq!(points.len(), num_points, "expected {num_points} points");
         Self {
-            initial,
-            inputs,
-            interstitials,
+            scalar: ragu_primitives::lift_endoscalar(endoscalar),
+            initial: points[0],
+            inputs: points[1..].to_vec(),
+            _marker: core::marker::PhantomData,
         }
     }
+
+    /// The number of steps.
+    pub(crate) fn steps(&self) -> usize {
+        NumStepsLen::<N, E>::len()
+    }
+
+    /// The accumulator the first step starts from.
+    pub(crate) fn initial(&self) -> C {
+        self.initial
+    }
+
+    /// The inputs `step` walks.
+    fn step_inputs(&self, step: usize) -> core::ops::Range<usize> {
+        input_range(E::len(), step, self.inputs.len())
+    }
+
+    /// The accumulator after each input of `step`, which starts from
+    /// `entering`. The last is the step's interstitial, which the next step
+    /// starts from; a step with no inputs leaves `entering` as it is.
+    pub(crate) fn walk_step(&self, step: usize, entering: C) -> vec::Vec<C> {
+        let mut acc = entering.to_projective();
+        let walked: vec::Vec<C::Projective> = self.inputs[self.step_inputs(step)]
+            .iter()
+            .map(|input| {
+                acc = acc * self.scalar + input.to_projective();
+                acc
+            })
+            .collect();
+        let mut affine = vec![C::identity(); walked.len()];
+        C::batch_to_affine(&walked, &mut affine);
+        affine
+    }
+
+    /// The walk's witness as far as `step` reads it, from the accumulator
+    /// the step started from and what [`walk_step`](Self::walk_step) gave:
+    /// the initial point, every input, and the interstitials on either side
+    /// of the step. The other steps' interstitials are stood in for by
+    /// `entering`: a step's circuit loads them and does nothing with them.
+    pub(crate) fn step_points(
+        &self,
+        step: usize,
+        entering: C,
+        walked: &[C],
+    ) -> PointsWitness<C, N, E> {
+        let leaving = walked.last().copied().unwrap_or(entering);
+        PointsWitness {
+            initial: self.initial,
+            inputs: FixedVec::from_fn(|i| self.inputs[i]),
+            interstitials: FixedVec::from_fn(
+                |other| if other == step { leaving } else { entering },
+            ),
+        }
+    }
+
+    /// For every input of the walk, the accumulator its scaling starts
+    /// from, as [`PointsWitness::with_accumulators`] returns them, with
+    /// `entering` standing in at the inputs of other steps than `step`.
+    pub(crate) fn step_entering(&self, step: usize, entering: C, walked: &[C]) -> vec::Vec<C> {
+        let inputs = self.step_inputs(step);
+        let mut accumulators = vec![entering; self.inputs.len()];
+        for (idx, accumulator) in (inputs.start + 1..inputs.end).zip(walked) {
+            accumulators[idx] = *accumulator;
+        }
+        accumulators
+    }
+
+    /// The walk's whole witness, from each step's interstitial in step
+    /// order.
+    pub(crate) fn finish(self, interstitials: vec::Vec<C>) -> PointsWitness<C, N, E> {
+        PointsWitness {
+            initial: self.initial,
+            inputs: FixedVec::from_fn(|i| self.inputs[i]),
+            interstitials: FixedVec::new(interstitials).expect("one interstitial per step"),
+        }
+    }
+}
+
+/// The accumulator after each of `inputs` in Horner's rule from `initial`:
+/// each input in turn replaces the accumulator `acc` with
+/// `scalar * acc + input`.
+///
+/// The inputs are cut into one consecutive run per worker. A run's
+/// accumulators follow from the one entering it, which is found first: each
+/// run is folded from the identity, through
+/// [`Backend::map`](ragu_backend::Backend::map), and the results are chained
+/// by the power of `scalar` a run scales its entering accumulator by. The
+/// runs are then folded again, each from where it starts. Every accumulator
+/// is the group element a single pass gives it.
+fn horner_walk<B: ragu_backend::Backend, C: Affine>(
+    scalar: C::Scalar,
+    initial: C,
+    inputs: &[C],
+) -> vec::Vec<C::Projective> {
+    let workers = crate::multicore::current_num_threads().max(1);
+    let per_run = inputs.len().div_ceil(workers).max(1);
+    if inputs.len() <= per_run {
+        let mut acc = initial.to_projective();
+        return inputs
+            .iter()
+            .map(|input| {
+                acc = acc * scalar + input.to_projective();
+                acc
+            })
+            .collect();
+    }
+
+    let ends: vec::Vec<(C::Projective, C::Scalar)> = B::map(inputs.chunks(per_run), |run| {
+        let mut acc = C::identity().to_projective();
+        let mut shift = C::Scalar::ONE;
+        for input in run {
+            acc = acc * scalar + input.to_projective();
+            shift *= scalar;
+        }
+        (acc, shift)
+    })
+    .collect();
+
+    let mut starts = vec::Vec::with_capacity(ends.len());
+    let mut acc = initial.to_projective();
+    for (end, shift) in &ends {
+        starts.push(acc);
+        acc = acc * *shift + *end;
+    }
+
+    B::map(inputs.chunks(per_run).zip(starts), |(run, start)| {
+        let mut acc = start;
+        run.iter()
+            .map(|input| {
+                acc = acc * scalar + input.to_projective();
+                acc
+            })
+            .collect::<vec::Vec<_>>()
+    })
+    .flatten()
+    .collect()
+}
+
+/// The inverses the scaling of `accumulator` by `advisor`'s endoscalar
+/// divides by, for the step circuits to check and use instead of inverting
+/// each divisor. Empty where the scaling has none to offer.
+pub fn walk_advice<C: Affine>(
+    advisor: &GroupScaleAdvisor<C::Base>,
+    accumulator: &C,
+) -> vec::Vec<C::Base> {
+    accumulator
+        .coordinates()
+        .map(|coordinates| advisor.advice(coordinates))
+        .unwrap_or_default()
+}
+
+/// [`walk_advice`] for the inputs step `step` walks, at `endoscalings` per
+/// step, each from the accumulator entering it: `accumulators[idx]` is input
+/// `idx`'s. The advice is at the inputs' places among the walk's, as a step
+/// looks it up, with nothing at the places before them.
+pub(crate) fn step_advice<C: Affine>(
+    advisor: &GroupScaleAdvisor<C::Base>,
+    accumulators: &[C],
+    endoscalings: usize,
+    step: usize,
+) -> vec::Vec<vec::Vec<C::Base>> {
+    let inputs = input_range(endoscalings, step, accumulators.len());
+    let mut advice = vec![vec::Vec::new(); inputs.end];
+    for idx in inputs {
+        advice[idx] = walk_advice(advisor, &accumulators[idx]);
+    }
+    advice
+}
+
+/// The inverses the scaling of `point` by the endoscalar extracted from
+/// `challenge` divides by, for the binding circuits to check and use. Empty
+/// where there is none to offer, as for a challenge out of range.
+pub fn challenge_advice<C: Affine>(challenge: C::Base, point: &C) -> vec::Vec<C::Base> {
+    match (
+        ragu_primitives::extract_endoscalar(challenge),
+        point.coordinates(),
+    ) {
+        (Ok(endoscalar), Some(coordinates)) => {
+            ragu_primitives::group_scale_advice(endoscalar, coordinates)
+        }
+        _ => vec::Vec::new(),
+    }
+}
+
+/// The advice for input `idx` out of a walk's, empty where it has none.
+pub(crate) fn scaling_advice<F>(advice: &[vec::Vec<F>], idx: usize) -> &[F] {
+    advice.get(idx).map_or(&[], vec::Vec::as_slice)
 }
 
 /// Output gadget containing initial, inputs, and interstitials. See [`PointsWitness`].
@@ -315,6 +556,11 @@ pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len> {
     pub endoscalar: Uendo,
     /// Point witnesses (inputs and interstitials).
     pub points: &'source PointsWitness<C, N, E>,
+    /// For each input, the inverses its scaling divides by
+    /// ([`walk_advice`]). Advice only saves the prover inversions: a step
+    /// checks each inverse it is offered and computes any that is missing
+    /// or wrong, so this may be empty.
+    pub advice: &'source [vec::Vec<C::Base>],
 }
 
 impl<C: Affine, R: Rank, N: Len, E: Len, G> MultiStageCircuit<C::Base, R>
@@ -369,7 +615,8 @@ where
         let acc = NonzeroBank::scope(dr, |dr, bank| {
             let mut acc = initial;
             for idx in input_range {
-                let scaled = endoscalar.group_scale(dr, &acc)?;
+                let advice = witness.as_ref().map(|w| scaling_advice(w.advice, idx));
+                let scaled = endoscalar.group_scale_with_advice(dr, &acc, advice)?;
                 acc = scaled.add_incomplete(dr, &points.inputs[idx], bank)?;
             }
             Ok(acc)
@@ -505,11 +752,60 @@ mod tests {
         let expected = compute_horner_native(endoscalar, &base_inputs);
 
         // Construct witness using the constructor
-        let points =
-            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &base_inputs);
+        let (points, accumulators) =
+            PointsWitness::<EpAffine, ConstLen<NUM_POINTS>, E>::with_accumulators::<
+                ragu_backend::ReferenceBackend,
+            >(endoscalar, &base_inputs);
 
         // Verify final interstitial matches expected
         assert_eq!(points.interstitials[num_steps - 1], expected);
+
+        // Each input's scaling starts from the walk over the inputs before
+        // it, and its advice opens with the inverse the scaling divides by
+        // first, that accumulator's y-coordinate.
+        assert_eq!(accumulators.len(), NUM_POINTS - 1);
+        let advisor = super::GroupScaleAdvisor::new(endoscalar);
+        let advice: Vec<Vec<Fp>> = accumulators
+            .iter()
+            .enumerate()
+            .map(|(idx, accumulator)| {
+                assert_eq!(
+                    *accumulator,
+                    compute_horner_native(endoscalar, &base_inputs[..=idx])
+                );
+                let advice = super::walk_advice(&advisor, accumulator);
+                assert_eq!(advice[0] * accumulator.coordinates().unwrap().1, Fp::ONE);
+                advice
+            })
+            .collect();
+
+        // The same walk taken a step at a time: each step's part of it is
+        // the whole walk's, and a step traced from its part alone gives the
+        // polynomial it gives from the whole witness (below).
+        let walk =
+            super::StepWalk::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &base_inputs);
+        assert_eq!(walk.steps(), num_steps);
+        let mut entering = alloc::vec![walk.initial()];
+        let mut walked = Vec::with_capacity(num_steps);
+        for step in 0..num_steps {
+            let after = walk.walk_step(step, entering[step]);
+            entering.push(after.last().copied().unwrap_or(entering[step]));
+            walked.push(after);
+        }
+        for step in 0..num_steps {
+            let from = walk.step_entering(step, entering[step], &walked[step]);
+            for idx in super::input_range(E::len(), step, NUM_POINTS - 1) {
+                assert_eq!(from[idx], accumulators[idx]);
+            }
+        }
+        {
+            let whole =
+                super::StepWalk::<EpAffine, ConstLen<NUM_POINTS>, E>::new(endoscalar, &base_inputs)
+                    .finish(entering[1..].to_vec());
+            assert_eq!(whole.initial, points.initial);
+            assert!(whole.inputs.iter().eq(points.inputs.iter()));
+            assert!(whole.interstitials.iter().eq(points.interstitials.iter()));
+        }
 
         // Run each step through the multi-stage circuit and verify correctness.
         for step in 0..num_steps {
@@ -537,9 +833,22 @@ mod tests {
                 .trace(EndoscalingStepWitness {
                     endoscalar,
                     points: &points,
+                    advice: &advice,
                 })?
                 .into_output();
             let final_rx = registry.assemble(&final_trace, staged_h, Fp::ZERO)?;
+
+            let step_points = walk.step_points(step, entering[step], &walked[step]);
+            let step_entering = walk.step_entering(step, entering[step], &walked[step]);
+            let step_trace = staged
+                .trace(EndoscalingStepWitness {
+                    endoscalar,
+                    points: &step_points,
+                    advice: &super::step_advice(&advisor, &step_entering, E::len(), step),
+                })?
+                .into_output();
+            let step_rx = registry.assemble(&step_trace, staged_h, Fp::ZERO)?;
+            assert!(step_rx.iter_coeffs().eq(final_rx.iter_coeffs()));
 
             let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
@@ -608,6 +917,7 @@ mod tests {
                 .trace(EndoscalingStepWitness {
                     endoscalar,
                     points: &points,
+                    advice: &[],
                 })?
                 .into_output();
             let final_rx = registry.assemble(&final_trace, staged_h, Fp::ZERO)?;
@@ -660,6 +970,7 @@ mod tests {
                 .trace(EndoscalingStepWitness {
                     endoscalar,
                     points: &points,
+                    advice: &[],
                 })?
                 .into_output();
             let mut rx = registry.assemble(&trace, staged_h, Fp::ZERO)?;

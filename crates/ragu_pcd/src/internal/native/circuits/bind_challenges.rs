@@ -44,6 +44,7 @@
 //! [`preamble`]: super::super::stages::preamble
 //! [`query`]: super::super::stages::query
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -142,6 +143,27 @@ pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     pub query_witness: &'a native_query::Witness<C>,
     /// Witness for the eval stage (provides the binding partials).
     pub eval_witness: &'a native_eval::Witness<C>,
+    /// For each bound challenge, in challenge-stage order, the inverses its
+    /// scaling divides by ([`scalings`] with
+    /// [`challenge_advice`](crate::internal::endoscalar::challenge_advice)).
+    /// A circuit checks each inverse it is offered and computes any that is
+    /// missing or wrong, so this may be empty.
+    pub advice: &'a [Vec<C::CircuitField>],
+}
+
+/// What the binders scale: for each bound challenge, in challenge-stage
+/// order, the challenge and the generator scaled by its endoscalar.
+pub fn scalings<C: ProfiledCycle, R: Rank>(
+    params: &C::Params,
+    challenges: [C::CircuitField; NUM_BOUND],
+) -> [(C::CircuitField, C::NestedCurve); NUM_BOUND] {
+    let generators = C::nested_generators(params);
+    core::array::from_fn(|i| {
+        (
+            challenges[i],
+            generators.g()[native_eval::generator_index::<C, R>(i)],
+        )
+    })
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
@@ -185,6 +207,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
 
         let allocator = &mut Standard::new();
+        let advice = witness.as_ref().map(|w| w.advice);
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
         let generators = C::nested_generators(self.params);
 
@@ -200,7 +223,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
 
             let generator = generators.g()[native_eval::generator_index::<C, R>(i)];
             let generator = Point::constant(dr, generator)?;
-            let term = bits.group_scale(dr, &generator)?;
+            let advice = advice
+                .as_ref()
+                .map(|advice| crate::internal::endoscalar::scaling_advice(advice, i));
+            let term = bits.group_scale_with_advice(dr, &generator, advice)?;
 
             acc = Some(match acc {
                 None => term,

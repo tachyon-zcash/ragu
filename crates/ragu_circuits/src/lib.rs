@@ -220,6 +220,19 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// computing absolute constraint offsets.
     fn segment_records(&self) -> &[SegmentRecord];
 
+    /// Returns the wiring polynomial as an explicit sparse matrix, for a
+    /// caller that evaluates many objects' polynomials together. `None` for
+    /// an object that offers none.
+    ///
+    /// A masking polynomial's matrix is its complete polynomial: it includes
+    /// the term [`is_mask`](Self::is_mask) leaves out of the evaluations.
+    fn matrix(
+        &self,
+        _floor_plan: &[floor_planner::ConstraintSegment],
+    ) -> Option<wiring::matrix::Matrix<F>> {
+        None
+    }
+
     /// Returns `true` if this circuit is a masking polynomial whose
     /// `sxy`/`sx`/`sy` return only the $-\text{notch}$ term, expecting
     /// the [`Registry`] to add the shared $S\_{\text{global}}$ once.
@@ -296,6 +309,15 @@ where
         }
         fn segment_records(&self) -> &[SegmentRecord] {
             &self.metrics.segments
+        }
+        fn matrix(
+            &self,
+            floor_plan: &[floor_planner::ConstraintSegment],
+        ) -> Option<wiring::matrix::Matrix<F>> {
+            Some(
+                wiring::matrix::Matrix::extract::<_, R>(&self.circuit, floor_plan)
+                    .expect("should succeed if metrics succeeded"),
+            )
         }
     }
 

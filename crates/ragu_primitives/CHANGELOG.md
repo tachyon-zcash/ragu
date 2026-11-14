@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added inversion advice for endoscaling. `Element::divide_with_advice` takes
+  the inverse of its divisor from the prover and checks it before use;
+  `GroupScaleAdvisor` and `group_scale_advice` compute a scaling's inverses
+  with one batch inversion; `Endoscalar::group_scale_with_advice` and
+  `HoistedEndoscalar::group_scale_with_advice` consume them. The constraints
+  are those of `group_scale`.
+
 ## [0.0.0] - 2025-07-30
 
 ### Added

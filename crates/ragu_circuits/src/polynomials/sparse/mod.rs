@@ -116,37 +116,39 @@ const GAP_TOLERANCE: usize = 4;
 /// `(base + run_offset, run_values)`. Zero gaps of up to [`GAP_TOLERANCE`]
 /// consecutive zeros are kept inline within a run; longer gaps cause a split.
 /// Leading and trailing zeros are always trimmed.
-fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<F>) {
-    let mut run_start: Option<usize> = None;
-    let mut run = Vec::new();
-    let mut zero_count: usize = 0;
+fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, mut data: Vec<F>) {
+    let Some(first) = data.iter().position(|coeff| !coeff.is_zero()) else {
+        return;
+    };
+    let last = data
+        .iter()
+        .rposition(|coeff| !coeff.is_zero())
+        .expect("a nonzero coefficient");
 
-    for (i, coeff) in data.into_iter().enumerate() {
-        let is_zero = coeff.is_zero();
-
-        match (run_start, is_zero) {
-            (None, true) => {}
-            (None, false) => {
-                run_start = Some(base + i);
-                run.push(coeff);
-            }
-            (Some(_), false) => {
-                run.extend(core::iter::repeat_n(F::ZERO, zero_count));
-                zero_count = 0;
-                run.push(coeff);
-            }
-            (Some(_), true) => {
-                zero_count += 1;
-                if zero_count > GAP_TOLERANCE {
-                    out.push((run_start.take().unwrap(), core::mem::take(&mut run)));
-                    zero_count = 0;
-                }
-            }
+    // A run is found by its bounds and copied whole. `start` is where the
+    // current run starts and `end` is one past its last nonzero coefficient
+    // so far.
+    let (mut start, mut end) = (first, first + 1);
+    let mut split = false;
+    for i in first + 1..=last {
+        if data[i].is_zero() {
+            continue;
         }
+        if i - end > GAP_TOLERANCE {
+            out.push((base + start, data[start..end].to_vec()));
+            start = i;
+            split = true;
+        }
+        end = i + 1;
     }
 
-    if let Some(s) = run_start {
-        out.push((s, run));
+    if split || data.capacity() / 2 > last + 1 - first {
+        out.push((base + start, data[start..end].to_vec()));
+    } else {
+        // One run: `data` itself, less the zeros at its ends.
+        data.truncate(last + 1);
+        data.drain(..first);
+        out.push((base + first, data));
     }
 }
 
@@ -230,6 +232,16 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
                 .enumerate()
                 .map(move |(offset, coefficient)| (*start + offset, coefficient))
         })
+    }
+
+    /// The physically stored coefficients as runs of consecutive degrees:
+    /// each item is the degree of a run's first coefficient and the run.
+    /// Runs are in ascending order and do not overlap, and a run may hold
+    /// zeros, as [`iter_stored_coeffs`](Self::iter_stored_coeffs) may yield.
+    pub fn blocks(&self) -> impl Iterator<Item = (usize, &[F])> {
+        self.blocks
+            .iter()
+            .map(|(start, data)| (*start, data.as_slice()))
     }
 
     /// Merges another polynomial into this one using the given binary

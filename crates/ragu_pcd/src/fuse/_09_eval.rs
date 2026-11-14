@@ -14,6 +14,8 @@
 //! ten lifts and the base-case sign derived from the child headers. Their
 //! binding sum goes to the unified instance.
 
+use alloc::vec::Vec;
+
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
@@ -25,6 +27,7 @@ use udon::field::Field;
 use super::{
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
+    device::Devices,
 };
 use crate::{
     Application, Proof,
@@ -47,6 +50,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         builder: &ProofBuilder<'_, C, R, B>,
+        devices: &mut Devices<'_, C, R>,
     ) -> Result<(
         native::stages::eval::Witness<C>,
         nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
@@ -66,11 +70,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             builder.right_header(),
             C::ScalarField::ZERO,
         );
-        let partials = native::stages::eval::BindingPartials::compute::<C, R, B>(
-            self.params,
-            &nested_challenges,
-        );
-
         let u = bound_challenges[native::circuits::bind_challenges::NUM_BOUND - 1];
         let u_nested = nested::challenge::<C>(u)?;
 
@@ -86,21 +85,80 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_b_poly = builder.nested_b_poly();
         let nested_registry_xy_poly = builder.nested_registry_xy_poly();
 
+        // A side with a device evaluates there, from the polynomials it
+        // holds: every polynomial of the batch at once, in the order the
+        // witnesses below take the values. The two sides and the binding
+        // partials read nothing of one another, so the three run together.
+        let native_batch = devices.native.is_some().then(|| {
+            let (polys, _) = self.native_p_terms(left, right, s_prime, registry_wy, builder);
+            (
+                polys,
+                self.native_current_polys(s_prime, registry_wy, builder),
+            )
+        });
+        let nested_batch = devices.nested.is_some().then(|| {
+            let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+            (batch.evaluated().collect::<Vec<_>>(), batch.current())
+        });
+        let (native_device, nested_device) =
+            (devices.native.as_deref_mut(), devices.nested.as_deref_mut());
+        let (native_held, nested_held) = (&mut devices.native_held, &mut devices.nested_held);
+        let params = self.params;
+        let (partials, native_values, nested_values) = par_join!(
+            || native::stages::eval::BindingPartials::compute::<C, R, B>(
+                params,
+                &nested_challenges
+            ),
+            || native_device
+                .zip(native_batch)
+                .map(|(device, (polys, current))| {
+                    let slots = native_held.slots(device, &current, &polys);
+                    let powers = device.powers(u);
+                    let pairs: Vec<_> = slots.into_iter().map(|slot| (slot, powers)).collect();
+                    device.dot(&pairs)
+                }),
+            || nested_device
+                .zip(nested_batch)
+                .map(|(device, (polys, current))| {
+                    let slots = nested_held.slots(device, &current, &polys);
+                    let powers = device.powers(u_nested);
+                    let pairs: Vec<_> = slots.into_iter().map(|slot| (slot, powers)).collect();
+                    device.dot(&pairs)
+                }),
+        );
+
         // Evaluate left/right child witnesses concurrently with the
         // current-step polynomial evaluations at u.
-        let (left_witness, right_witness, current) = par_join!(
-            || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u),
-            || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(right, u),
-            || native::stages::eval::CurrentStepWitness {
-                registry_wx0: B::sparse_eval(&s_prime.registry_wx0_poly, u),
-                registry_wx1: B::sparse_eval(&s_prime.registry_wx1_poly, u),
-                registry_wy: B::sparse_eval(&registry_wy.poly, u),
-                a_poly: B::sparse_eval(native_a_poly, u),
-                b_poly: B::sparse_eval(native_b_poly, u),
-                registry_xy: B::sparse_eval(native_registry_xy_poly, u),
-                online: online_polynomials.map(|poly| B::sparse_eval(poly, u)),
-            },
-        );
+        let (left_witness, right_witness, current) = if let Some(values) = native_values {
+            let mut values = values.into_iter();
+            let left = native::stages::eval::ChildEvaluationsWitness::from_values(&mut values);
+            let right = native::stages::eval::ChildEvaluationsWitness::from_values(&mut values);
+            let mut next = || values.next().expect("one value per polynomial");
+            let current = native::stages::eval::CurrentStepWitness {
+                registry_wx0: next(),
+                registry_wx1: next(),
+                registry_wy: next(),
+                a_poly: next(),
+                b_poly: next(),
+                registry_xy: next(),
+                online: core::array::from_fn(|_| next()),
+            };
+            (left, right, current)
+        } else {
+            par_join!(
+                || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u),
+                || native::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(right, u),
+                || native::stages::eval::CurrentStepWitness {
+                    registry_wx0: B::sparse_eval(&s_prime.registry_wx0_poly, u),
+                    registry_wx1: B::sparse_eval(&s_prime.registry_wx1_poly, u),
+                    registry_wy: B::sparse_eval(&registry_wy.poly, u),
+                    a_poly: B::sparse_eval(native_a_poly, u),
+                    b_poly: B::sparse_eval(native_b_poly, u),
+                    registry_xy: B::sparse_eval(native_registry_xy_poly, u),
+                    online: online_polynomials.map(|poly| B::sparse_eval(poly, u)),
+                },
+            )
+        };
 
         let native = native::stages::eval::Witness {
             left: left_witness,
@@ -109,20 +167,38 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             partials,
         };
 
-        let (left_nested, right_nested, current_nested) = par_join!(
-            || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(left, u_nested),
-            || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(
-                right, u_nested
-            ),
-            || nested::stages::eval::CurrentStepWitness {
-                registry_wx0: B::sparse_eval(&nested_s_prime.registry_wx0_poly, u_nested),
-                registry_wx1: B::sparse_eval(&nested_s_prime.registry_wx1_poly, u_nested),
-                registry_wy: B::sparse_eval(&nested_registry_wy.poly, u_nested),
-                a_poly: B::sparse_eval(nested_a_poly, u_nested),
-                b_poly: B::sparse_eval(nested_b_poly, u_nested),
-                registry_xy: B::sparse_eval(nested_registry_xy_poly, u_nested),
-            },
-        );
+        let (left_nested, right_nested, current_nested) = if let Some(values) = nested_values {
+            let mut values = values.into_iter();
+            let left = nested::stages::eval::ChildEvaluationsWitness::from_values(&mut values);
+            let right = nested::stages::eval::ChildEvaluationsWitness::from_values(&mut values);
+            let mut next = || values.next().expect("one value per polynomial");
+            let current = nested::stages::eval::CurrentStepWitness {
+                registry_wx0: next(),
+                registry_wx1: next(),
+                registry_wy: next(),
+                a_poly: next(),
+                b_poly: next(),
+                registry_xy: next(),
+            };
+            (left, right, current)
+        } else {
+            par_join!(
+                || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(
+                    left, u_nested
+                ),
+                || nested::stages::eval::ChildEvaluationsWitness::from_proof::<C, R, B>(
+                    right, u_nested
+                ),
+                || nested::stages::eval::CurrentStepWitness {
+                    registry_wx0: B::sparse_eval(&nested_s_prime.registry_wx0_poly, u_nested),
+                    registry_wx1: B::sparse_eval(&nested_s_prime.registry_wx1_poly, u_nested),
+                    registry_wy: B::sparse_eval(&nested_registry_wy.poly, u_nested),
+                    a_poly: B::sparse_eval(nested_a_poly, u_nested),
+                    b_poly: B::sparse_eval(nested_b_poly, u_nested),
+                    registry_xy: B::sparse_eval(nested_registry_xy_poly, u_nested),
+                },
+            )
+        };
 
         let nested = nested::stages::eval::Evaluations {
             left: left_nested,

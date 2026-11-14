@@ -8,6 +8,7 @@
 //!
 //! [`compute_v`]: crate::internal::nested::circuits::compute_v
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::polynomials::{Rank, sparse};
@@ -20,7 +21,7 @@ use ragu_core::{
 use ragu_primitives::{
     Element, Point,
     io::Write,
-    vec::{CollectFixed, FixedVec, Len},
+    vec::{FixedVec, Len},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
@@ -66,19 +67,51 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         xz: F,
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Result<Self> {
+        let openings = Self::openings(proof, w, x, xz, registry_wy)?;
+        Ok(Self::from_values(&mut B::map(openings, |(poly, point)| {
+            B::sparse_eval(poly, point)
+        })))
+    }
+
+    /// What a child's values evaluate, as `(polynomial, point)` pairs in
+    /// the order [`from_values`](Self::from_values) takes the values: the
+    /// rx polynomials in [`RxIndex::all`] order at $x_n z_n$, then the
+    /// fields after `rx` in theirs.
+    pub fn openings<'a, C: Cycle<ScalarField = F> + ProfiledCycle<Profile = P>, R: Rank>(
+        proof: &'a Proof<C, R>,
+        w: F,
+        x: F,
+        xz: F,
+        registry_wy: &'a sparse::Polynomial<F, R>,
+    ) -> Result<Vec<(&'a sparse::Polynomial<F, R>, F)>> {
         let child_x = nested::challenge::<C>(proof.x())?;
-        Ok(ChildEvaluationsWitness {
-            rx: B::map(
-                RxIndex::all::<P>().into_iter().map(|id| &proof[id]),
-                |poly| B::sparse_eval(poly, xz),
-            )
-            .collect_fixed()
-            .expect("one evaluation per rx"),
-            a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
-            b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
-            child_registry_xy_at_current_w: B::sparse_eval(proof.nested_registry_xy_poly(), w),
-            current_registry_wy_at_child_x: B::sparse_eval(registry_wy, child_x),
-        })
+        Ok(RxIndex::all::<P>()
+            .into_iter()
+            .map(|id| (&proof[id], xz))
+            .chain([
+                (&proof[RxComponent::AbA], xz),
+                (&proof[RxComponent::AbB], x),
+                (proof.nested_registry_xy_poly(), w),
+                (registry_wy, child_x),
+            ])
+            .collect())
+    }
+
+    /// A child's values from those of [`openings`](Self::openings), in its
+    /// order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values` ends early.
+    pub fn from_values(values: &mut impl Iterator<Item = F>) -> Self {
+        let mut next = || values.next().expect("one value per opening");
+        ChildEvaluationsWitness {
+            rx: FixedVec::from_fn(|_| next()),
+            a_poly_at_xz: next(),
+            b_poly_at_x: next(),
+            child_registry_xy_at_current_w: next(),
+            current_registry_wy_at_child_x: next(),
+        }
     }
 }
 

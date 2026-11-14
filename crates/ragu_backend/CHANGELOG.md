@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `PolyDevice`, a store of polynomials on a device with the operations a
+  fuse applies to whole polynomials, and `Backend::poly_device`, which returns
+  none by default.
+- Added `Backend::sparse_commit_many` for several commitments in one call,
+  `Backend::sparse_commit_many_start` with `StartedCommitments` for
+  commitments begun without waiting, and `Backend::device_commit` for
+  polynomials committed to where a device holds them.
 - Added the correctness-first `Backend` trait and `ReferenceBackend`.
 - Added `Backend::msm_batch`, with an ordered fallback to separate `Backend::msm`
   calls that preserves individual MSM overrides.

@@ -155,6 +155,42 @@ fn malformed_standard_proof_shapes_are_rejected() {
     check_shapes(&app);
 }
 
+/// A clone of proof-carrying data holds the same proof, not a copy of it,
+/// and each comes apart into the whole proof: the first by copying what the
+/// other still holds, the last by taking it.
+#[test]
+fn clones_share_their_proof_and_come_apart_whole() {
+    use alloc::sync::Arc;
+
+    let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+        .finalize(crate::pasta::baked())
+        .unwrap();
+    let pcd = app.bootstrap_pcd();
+    let bytes = pcd.proof().to_bytes().unwrap();
+    // Where the proof keeps a header: a copy of the proof keeps it elsewhere.
+    let header = pcd.proof().left_header.as_ptr();
+    assert_eq!(pcd.proof().left_header.len(), HEADER_SIZE);
+
+    let clone = pcd.clone();
+    assert!(Arc::ptr_eq(&pcd.proof, &clone.proof));
+    let (copied, ()) = clone.into_parts();
+    assert_ne!(copied.left_header.as_ptr(), header);
+    assert_eq!(copied.to_bytes().unwrap(), bytes);
+
+    // A reader of the proof gets the one this value holds.
+    let held = Arc::as_ptr(&pcd.proof);
+    let reader = pcd.clone();
+    let (shared, ()) = reader.into_shared_parts();
+    assert_eq!(Arc::as_ptr(&shared), held);
+    drop(shared);
+
+    // Nothing else holds it now, so it is taken, not copied.
+    assert_eq!(Arc::strong_count(&pcd.proof), 1);
+    let (taken, ()) = pcd.into_parts();
+    assert_eq!(taken.left_header.as_ptr(), header);
+    assert_eq!(taken.to_bytes().unwrap(), bytes);
+}
+
 fn check_extension<P>()
 where
     P: Profile<Context<'static, Pasta, R<14>, ReferenceBackend> = CrossingContext<'static, Pasta>>,

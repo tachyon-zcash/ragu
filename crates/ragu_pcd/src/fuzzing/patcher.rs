@@ -464,12 +464,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
+        // The patcher drives every stage on the host.
+        let mut devices = super::device::Devices::<C, R>::none();
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
             &nested_registry,
             &left,
             &right,
+            &mut devices,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -502,6 +505,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &z,
             &native_source,
             &nested_source,
+            &mut devices,
             &mut builder,
         )?;
         let bridge_inner_error_commitment =
@@ -526,6 +530,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_outer_error_witness,
             nested_a,
             nested_b,
+            native_device,
+            nested_device,
         ) = self.outer_error_terms(
             rng,
             &preamble_witness,
@@ -551,6 +557,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_b,
             nested_a,
             nested_b,
+            native_device,
+            nested_device,
+            &mut devices,
             &nested_registry_wy,
             &native_source,
             &mu_prime,
@@ -570,6 +579,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &left,
             &right,
+            &mut devices,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -590,6 +600,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
             &left,
             &right,
+            &mut devices,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -606,6 +617,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_s_prime,
             &nested_registry_wy,
             &builder,
+            &mut devices,
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
 
@@ -633,19 +645,29 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
         )?;
 
-        let (points_witness, native_points, native_walk) = self.compute_p(
-            rng,
-            &pre_beta,
-            &left,
-            &right,
-            &native_s_prime,
-            &registry_wy,
-            &native_f,
-            &nested_s_prime,
-            &nested_registry_wy,
-            &nested_f,
-            &mut builder,
-        )?;
+        // The walks' steps are committed to behind `compute_p`; here they
+        // are waited for at once.
+        let step_commitments = super::_10_p::StepCommitments::new();
+        let (points_witness, native_points, native_walk, step_polys) =
+            crate::multicore::scope(|background| {
+                self.compute_p(
+                    rng,
+                    &pre_beta,
+                    &left,
+                    &right,
+                    &native_s_prime,
+                    &registry_wy,
+                    &native_f,
+                    &nested_s_prime,
+                    &nested_registry_wy,
+                    &nested_f,
+                    &mut builder,
+                    &mut devices,
+                    background,
+                    &step_commitments,
+                )
+            })?;
+        step_commitments.finish(step_polys, self.params, &mut builder);
 
         builder.set_w(*w.value().take());
         builder.set_y(*y.value().take());
@@ -933,6 +955,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     preamble_witness: &preamble_witness,
                     query_witness: &query_witness,
                     eval_witness: &eval_witness,
+                    advice: &[],
                 })
             };
             // The partial the circuit checks, for all but the last: that one
@@ -977,6 +1000,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 unified: make_unified(&builder)?,
                 binding: &native_points.binding,
                 preamble_witness: &preamble_witness,
+                advice: &[],
             })
         };
         let bind_beta_spec = CircuitSpec {
@@ -1068,6 +1092,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 Ok(native::circuits::endoscaling_step::Witness {
                     inputs: &native_points,
                     walk: &native_walk,
+                    advice: &[],
                 })
             })?;
         }
@@ -1105,6 +1130,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 Ok(EndoscalingStepWitness {
                     endoscalar: beta_endo,
                     points: &points_witness,
+                    advice: &[],
                 })
             })?;
         }

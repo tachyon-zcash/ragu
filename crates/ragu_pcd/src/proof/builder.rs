@@ -15,12 +15,14 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, FixedGenerators, Result};
+use udon::curve::Affine;
 
 use super::{Cached, Proof};
 use crate::{
     header::NUM_ONLINE_POLYNOMIALS,
     internal::{nested, online},
+    multicore::par_join,
     profile::ProfiledCycle,
 };
 
@@ -205,6 +207,104 @@ macro_rules! cached_bridge {
             }))
         }
     };
+}
+
+/// Commitment caches that are still empty, with the polynomials whose
+/// commitments fill them.
+///
+/// The caches belong to a [`ProofBuilder`] and stay with the thread that
+/// owns it; `polys` can be committed anywhere and the result handed to
+/// [`fill`](Self::fill).
+pub(crate) struct Pending<'a, P: Affine, F, R: Rank> {
+    cells: Vec<&'a OnceCell<P>>,
+    lists: Vec<(&'a OnceCell<Vec<P>>, usize)>,
+    online: Option<&'a OnceCell<[P; NUM_ONLINE_POLYNOMIALS]>>,
+    /// The polynomials to commit to: the single caches' in order, then each
+    /// list's, then the online ones.
+    pub(crate) polys: Vec<&'a sparse::Polynomial<F, R>>,
+}
+
+impl<P: Affine, F, R: Rank> Pending<'_, P, F, R> {
+    fn new() -> Self {
+        Self {
+            cells: Vec::new(),
+            lists: Vec::new(),
+            online: None,
+            polys: Vec::new(),
+        }
+    }
+
+    /// Stores the commitments of [`polys`](Self::polys), in the same order,
+    /// in their caches.
+    pub(crate) fn fill(self, commitments: Vec<P>) {
+        assert_eq!(commitments.len(), self.polys.len());
+        let mut commitments = commitments.into_iter();
+        let mut next = || commitments.next().expect("one commitment per polynomial");
+        for cell in self.cells {
+            let _ = cell.set(next());
+        }
+        for (cell, len) in self.lists {
+            let _ = cell.set((0..len).map(|_| next()).collect());
+        }
+        if let Some(cell) = self.online {
+            let _ = cell.set(core::array::from_fn(|_| next()));
+        }
+    }
+}
+
+/// Adds the empty caches of single polynomials to a [`Pending`].
+macro_rules! pending_singles {
+    ($self:ident, $pending:ident, $($cache:ident <- $poly:ident),* $(,)?) => {$(
+        if $self.$cache.get().is_none() {
+            if let Some(poly) = $self.$poly.as_ref() {
+                $pending.cells.push(&$self.$cache);
+                $pending.polys.push(poly);
+            }
+        }
+    )*};
+}
+
+/// Adds the empty caches of polynomial lists to a [`Pending`].
+macro_rules! pending_lists {
+    ($self:ident, $pending:ident, $($cache:ident <- $rxs:ident),* $(,)?) => {$(
+        if $self.$cache.get().is_none() {
+            if let Some(rxs) = $self.$rxs.as_ref() {
+                $pending.lists.push((&$self.$cache, rxs.len()));
+                $pending.polys.extend(rxs.iter());
+            }
+        }
+    )*};
+}
+
+/// Commits to `polys` in one backend call and normalizes the results
+/// together, in input order.
+pub(crate) fn commit_all<B: Backend, P: Affine, R: Rank, G: FixedGenerators<P>>(
+    polys: &[&sparse::Polynomial<P::Scalar, R>],
+    generators: &G,
+) -> Vec<P> {
+    let projective = B::sparse_commit_many(polys, generators);
+    let mut affine = alloc::vec![P::identity(); projective.len()];
+    P::batch_to_affine(&projective, &mut affine);
+    affine
+}
+
+/// [`commit_all`] for a caller with work beside it. Where the backend begins
+/// the commitments without waiting, the calling thread does other work of
+/// the pool until they are ready, rather than be a worker that only waits;
+/// where it does not, this is [`commit_all`]. The results are the same.
+pub(crate) fn commit_all_beside<B: Backend, P: Affine, R: Rank, G: FixedGenerators<P>>(
+    polys: &[&sparse::Polynomial<P::Scalar, R>],
+    generators: &G,
+) -> Vec<P> {
+    let projective = B::sparse_commit_many_start(polys, generators)
+        .and_then(|mut started| {
+            crate::multicore::wait_until(|| started.ready());
+            started.finish()
+        })
+        .unwrap_or_else(|| B::sparse_commit_many(polys, generators));
+    let mut affine = alloc::vec![P::identity(); projective.len()];
+    P::batch_to_affine(&projective, &mut affine);
+    affine
 }
 
 /// Builder for incremental [`Proof`] construction.
@@ -659,6 +759,46 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         })
     }
 
+    /// Sets the native endoscaling steps' rx polynomials together with their
+    /// commitments, computed elsewhere as [`commit_all`] computes them.
+    pub(crate) fn set_native_endoscaling_steps(
+        &mut self,
+        rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
+        commitments: Vec<C::HostCurve>,
+    ) {
+        assert_eq!(rxs.len(), commitments.len());
+        self.set_native_endoscaling_step_rxs(rxs);
+        let _ = self.native_endoscaling_step_commitments.set(commitments);
+    }
+
+    /// Records the commitments of the two `registry_xy` restrictions, which
+    /// are set and were committed to elsewhere, as their getters would
+    /// compute them. A side without one is left to its getter.
+    pub(crate) fn set_registry_xy_commitments(
+        &mut self,
+        native: Option<C::HostCurve>,
+        nested: Option<C::NestedCurve>,
+    ) {
+        if let Some(commitment) = native {
+            let _ = self.native_registry_xy_commitment.set(commitment);
+        }
+        if let Some(commitment) = nested {
+            let _ = self.nested_registry_xy_commitment.set(commitment);
+        }
+    }
+
+    /// Sets the nested endoscaling steps' rx polynomials together with their
+    /// commitments, computed elsewhere as [`commit_all`] computes them.
+    pub(crate) fn set_nested_endoscaling_steps(
+        &mut self,
+        rxs: Vec<sparse::Polynomial<C::ScalarField, R>>,
+        commitments: Vec<C::NestedCurve>,
+    ) {
+        assert_eq!(rxs.len(), commitments.len());
+        self.set_nested_endoscaling_step_rxs(rxs);
+        let _ = self.nested_endoscaling_step_commitments.set(commitments);
+    }
+
     /// Lazily computes and caches the commitments of the native endoscaling
     /// steps' rx polynomials. Returns the cached slice.
     pub(crate) fn native_endoscaling_step_commitments(&self) -> &[C::HostCurve] {
@@ -951,6 +1091,20 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         nested_points_rx
     );
 
+    /// Sets the nested accumulator polynomials together with their
+    /// commitments, computed elsewhere as the getters below compute them.
+    pub(crate) fn set_nested_ab(
+        &mut self,
+        a: sparse::Polynomial<C::ScalarField, R>,
+        b: sparse::Polynomial<C::ScalarField, R>,
+        [a_commitment, b_commitment]: [C::NestedCurve; 2],
+    ) {
+        self.set_nested_a_poly(a);
+        self.set_nested_b_poly(b);
+        let _ = self.nested_a_commitment.set(a_commitment);
+        let _ = self.nested_b_commitment.set(b_commitment);
+    }
+
     setter!(set_nested_a_poly, nested_a_poly, sparse::Polynomial<C::ScalarField, R>);
     setter!(set_nested_b_poly, nested_b_poly, sparse::Polynomial<C::ScalarField, R>);
     ref_getter!(nested_a_poly, nested_a_poly, sparse::Polynomial<C::ScalarField, R>);
@@ -1101,9 +1255,144 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         ))
     }
 
+    /// The native commitment caches that are still empty and whose
+    /// polynomials are set.
+    pub(crate) fn pending_native(&self) -> Pending<'_, C::HostCurve, C::CircuitField, R> {
+        let mut pending = Pending::new();
+        pending_singles!(
+            self, pending,
+            native_application_commitment <- native_application_rx,
+            native_application_stage_commitment <- native_application_stage_rx,
+            native_preamble_commitment <- native_preamble_rx,
+            native_inner_error_commitment <- native_inner_error_rx,
+            native_outer_error_commitment <- native_outer_error_rx,
+            native_query_commitment <- native_query_rx,
+            native_registry_xy_commitment <- native_registry_xy_poly,
+            native_eval_commitment <- native_eval_rx,
+            native_hashes_1_commitment <- native_hashes_1_rx,
+            native_hashes_2_commitment <- native_hashes_2_rx,
+            native_collapse_commitment <- native_collapse_rx,
+            native_compute_v_commitment <- native_compute_v_rx,
+            native_bind_beta_commitment <- native_bind_beta_rx,
+            native_bind_endoscalar_commitment <- native_bind_endoscalar_rx,
+            native_points_binding_commitment <- native_points_binding_rx,
+            native_points_children_commitment <- native_points_children_rx,
+            native_points_registry_wx_commitment <- native_points_registry_wx_rx,
+            native_points_ab_commitment <- native_points_ab_rx,
+            native_points_f_commitment <- native_points_f_rx,
+            native_points_walk_commitment <- native_points_walk_rx,
+        );
+        pending_lists!(
+            self, pending,
+            native_bind_challenges_commitments <- native_bind_challenges_rxs,
+            native_endoscaling_step_commitments <- native_endoscaling_step_rxs,
+            native_extension_circuit_commitments <- native_extension_circuit_rxs,
+            native_extension_stage_commitments <- native_extension_stage_rxs,
+        );
+        if let Some(online) = self
+            .online_polynomials
+            .as_ref()
+            .filter(|_| self.online_commitments.get().is_none())
+        {
+            pending.online = Some(&self.online_commitments);
+            pending.polys.extend(online.iter());
+        }
+        pending
+    }
+
+    /// The nested commitment caches that are still empty and whose
+    /// polynomials are set, the cached `ab` bridge among them.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the `ab` bridge's derivation, which reads native
+    /// commitments.
+    pub(crate) fn pending_nested(&self) -> Result<Pending<'_, C::NestedCurve, C::ScalarField, R>> {
+        let bridge_ab_rx = self.bridge_ab_rx()?;
+        let mut pending = Pending::new();
+        if self.bridge_ab_commitment.get().is_none() {
+            pending.cells.push(&self.bridge_ab_commitment);
+            pending.polys.push(bridge_ab_rx);
+        }
+        pending_singles!(
+            self, pending,
+            nested_endoscalar_commitment <- nested_endoscalar_rx,
+            nested_points_commitment <- nested_points_rx,
+            nested_a_commitment <- nested_a_poly,
+            nested_b_commitment <- nested_b_poly,
+            nested_registry_xy_commitment <- nested_registry_xy_poly,
+            nested_challenges_commitment <- nested_challenges_rx,
+            nested_collapse_commitment <- nested_collapse_rx,
+            nested_compute_v_commitment <- nested_compute_v_rx,
+        );
+        pending_lists!(
+            self, pending,
+            nested_endoscaling_step_commitments <- nested_endoscaling_step_rxs,
+            nested_extension_circuit_commitments <- nested_extension_circuit_rxs,
+            nested_extension_stage_commitments <- nested_extension_stage_rxs,
+        );
+        Ok(pending)
+    }
+
+    /// Computes every native commitment that is still missing and whose
+    /// polynomial is set, in one backend call: for a stage about to read
+    /// several of them, each of which its getter would otherwise compute in
+    /// a call of its own.
+    pub(crate) fn precommit_native(&self) {
+        let native = self.pending_native();
+        let commitments = commit_all::<B, _, R, _>(&native.polys, C::host_generators(self.params));
+        native.fill(commitments);
+    }
+
+    /// As [`precommit_native`](Self::precommit_native) for both curves, the
+    /// two backend calls issued together: for a stage past the `ab` bridge,
+    /// whose derivation the nested list reads.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the `ab` bridge's derivation.
+    pub(crate) fn precommit_together(&self) -> Result<()> {
+        let native = self.pending_native();
+        let nested = self.pending_nested()?;
+        let (host_generators, nested_generators) = (
+            C::host_generators(self.params),
+            C::nested_generators(self.params),
+        );
+        let (native_commitments, nested_commitments) = par_join!(
+            || commit_all::<B, _, R, _>(&native.polys, host_generators),
+            || commit_all::<B, _, R, _>(&nested.polys, nested_generators),
+        );
+        native.fill(native_commitments);
+        nested.fill(nested_commitments);
+        Ok(())
+    }
+
+    /// Computes every lazily cached commitment that has not been accessed
+    /// yet, one backend call per curve, so that a backend can schedule them
+    /// together. Each cache receives what its getter would have computed; a
+    /// cache whose polynomial is not set is left for its getter to report.
+    fn precommit(&self) -> Result<()> {
+        let native = self.pending_native();
+        let commitments = commit_all::<B, _, R, _>(&native.polys, C::host_generators(self.params));
+        native.fill(commitments);
+
+        // The `ab` bridge is derived from native commitments, which are all
+        // cached by now.
+        let nested = self.pending_nested()?;
+        let commitments =
+            commit_all::<B, _, R, _>(&nested.polys, C::nested_generators(self.params));
+        nested.fill(commitments);
+        Ok(())
+    }
+
     /// Build the proof. All polynomial fields must have been set. Commitment
     /// caches that haven't been accessed yet are computed now.
     pub(crate) fn build(mut self) -> Result<Proof<C, R>> {
+        // Every commitment still missing is computed here, together; the
+        // getters below then read their caches, and remain the place where a
+        // polynomial that was never set is reported.
+        self.precommit()?;
+
         // Force lazy evaluation of every native commitment cache by invoking
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
