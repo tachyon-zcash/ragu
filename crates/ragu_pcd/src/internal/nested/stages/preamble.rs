@@ -97,8 +97,8 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub stashed_p: C,
     /// Stashed commitment from the child's native points binding stage.
     pub stashed_points_binding: C,
-    /// Stashed commitment from the child's native points children stage.
-    pub stashed_points_children: C,
+    /// Stashed commitment from the child's native points preamble stage.
+    pub stashed_points_preamble: C,
     /// Stashed commitment from the child's native `registry_wx` points stage.
     pub stashed_points_registry_wx: C,
     /// Stashed commitment from the child's native `ab` points stage.
@@ -173,7 +173,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_registry_xy: proof.native_registry_xy_commitment(),
             stashed_p: proof.native_p_commitment(),
             stashed_points_binding: proof.native_rx_commitment(RxIndex::PointsBinding),
-            stashed_points_children: proof.native_rx_commitment(RxIndex::PointsChildren),
+            stashed_points_preamble: proof.native_rx_commitment(RxIndex::PointsPreamble),
             stashed_points_registry_wx: proof.native_rx_commitment(RxIndex::PointsRegistryWx),
             stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
@@ -197,9 +197,9 @@ pub struct Witness<C: Affine, P: Profile> {
     /// Commitment of the native points binding stage, fixed here before
     /// $w$ is squeezed.
     pub native_points_binding: C,
-    /// Commitment of the native points children stage, fixed here before
+    /// Commitment of the native points preamble stage, fixed here before
     /// $w$ is squeezed.
-    pub native_points_children: C,
+    pub native_points_preamble: C,
     /// Commitments to this step's output polynomials.
     /// Nested collapse binds their exported instance values to the points
     /// in this step's prechallenge Preamble. The parent uses those same
@@ -287,9 +287,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Stashed commitment from the child's native points binding stage.
     #[ragu(gadget)]
     pub stashed_points_binding: Point<'dr, D, C>,
-    /// Stashed commitment from the child's native points children stage.
+    /// Stashed commitment from the child's native points preamble stage.
     #[ragu(gadget)]
-    pub stashed_points_children: Point<'dr, D, C>,
+    pub stashed_points_preamble: Point<'dr, D, C>,
     /// Stashed commitment from the child's native `registry_wx` points stage.
     #[ragu(gadget)]
     pub stashed_points_registry_wx: Point<'dr, D, C>,
@@ -347,7 +347,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 self.stashed_registry_xy.clone(),
                 self.stashed_p.clone(),
                 self.stashed_points_binding.clone(),
-                self.stashed_points_children.clone(),
+                self.stashed_points_preamble.clone(),
                 self.stashed_points_registry_wx.clone(),
                 self.stashed_points_ab.clone(),
                 self.stashed_points_f.clone(),
@@ -386,7 +386,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
             Query => &self.stashed_query,
             Eval => &self.stashed_eval,
             PointsBinding => &self.stashed_points_binding,
-            PointsChildren => &self.stashed_points_children,
+            PointsPreamble => &self.stashed_points_preamble,
             PointsRegistryWx => &self.stashed_points_registry_wx,
             PointsAb => &self.stashed_points_ab,
             PointsF => &self.stashed_points_f,
@@ -431,9 +431,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 dr,
                 witness.as_ref().map(|w| w.stashed_points_binding),
             )?,
-            stashed_points_children: Point::alloc(
+            stashed_points_preamble: Point::alloc(
                 dr,
-                witness.as_ref().map(|w| w.stashed_points_children),
+                witness.as_ref().map(|w| w.stashed_points_preamble),
             )?,
             stashed_points_registry_wx: Point::alloc(
                 dr,
@@ -478,9 +478,9 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Point commitment from the native points binding stage.
     #[ragu(gadget)]
     pub native_points_binding: Point<'dr, D, C>,
-    /// Point commitment from the native points children stage.
+    /// Point commitment from the native points preamble stage.
     #[ragu(gadget)]
-    pub native_points_children: Point<'dr, D, C>,
+    pub native_points_preamble: Point<'dr, D, C>,
     /// The step's polynomial-query commitments, bound to the nested unified
     /// instance's exported commitments by nested collapse.
     #[ragu(gadget)]
@@ -525,9 +525,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
                 dr,
                 witness.as_ref().map(|w| w.native_points_binding),
             )?,
-            native_points_children: Point::alloc(
+            native_points_preamble: Point::alloc(
                 dr,
-                witness.as_ref().map(|w| w.native_points_children),
+                witness.as_ref().map(|w| w.native_points_preamble),
             )?,
             online_commitments: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.online_commitments[i]))

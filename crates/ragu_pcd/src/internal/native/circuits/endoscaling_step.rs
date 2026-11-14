@@ -43,7 +43,7 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
 
 use super::super::stages::points::{
-    AbStage, BindingStage, ChildrenStage, FStage, Inputs, NumInputs, NumSteps, RegistryWxStage,
+    AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, PreambleStage, RegistryWxStage,
     WalkInputs, WalkStage, WalkWitness,
 };
 use crate::{
@@ -104,7 +104,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (binding, dr) = dr.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
-        let (children, dr) = dr.add_stage::<ChildrenStage<C::NestedCurve, C::Profile>>()?;
+        let (preamble, dr) = dr.add_stage::<PreambleStage<C::NestedCurve, C::Profile>>()?;
         let (registry_wx, dr) = dr.add_stage::<RegistryWxStage<C::NestedCurve, C::Profile>>()?;
         let (ab, dr) = dr.add_stage::<AbStage<C::NestedCurve, C::Profile>>()?;
         let (f, dr) = dr.add_stage::<FStage<C::NestedCurve, C::Profile>>()?;
@@ -113,7 +113,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
 
         let inputs = witness.as_ref().map(|w| w.inputs);
         let binding = binding.unenforced(dr, inputs.as_ref().map(|i| &i.binding))?;
-        let children = children.unenforced(dr, inputs.as_ref().map(|i| &i.children))?;
+        let preamble = preamble.unenforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
         let registry_wx = registry_wx.unenforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
         let ab = ab.unenforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.unenforced(dr, inputs.as_ref().map(|i| &i.f))?;
@@ -122,7 +122,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let interstitials = &walked.interstitials;
         let walk = WalkInputs {
             binding: &binding,
-            children: &children,
+            preamble: &preamble,
             registry_wx: &registry_wx,
             ab: &ab,
             f: &f,

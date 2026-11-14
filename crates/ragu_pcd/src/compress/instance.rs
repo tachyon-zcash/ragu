@@ -438,7 +438,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_registry_xy,
                 self.native_p,
                 self.native_commitment(Rx(PointsBinding)),
-                self.native_commitment(Rx(PointsChildren)),
+                self.native_commitment(Rx(PointsPreamble)),
                 self.native_commitment(Rx(PointsRegistryWx)),
                 self.native_commitment(Rx(PointsAb)),
                 self.native_commitment(Rx(PointsF)),

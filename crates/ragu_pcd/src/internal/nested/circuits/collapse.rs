@@ -164,7 +164,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.query.registry_xy,
             last_interstitial,
             &stages.preamble.native_points_binding,
-            &stages.preamble.native_points_children,
+            &stages.preamble.native_points_preamble,
             &stages.s_prime.native_points_registry_wx,
             &stages.ab.native_points_ab,
             &stages.f.native_points_f,

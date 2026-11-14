@@ -1008,8 +1008,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         type Nested<C> = <C as Cycle>::NestedCurve;
         let native_walk_values: Vec<C::CircuitField> = [
             binding_values.clone(),
-            stage_values::<_, R, native_points::ChildrenStage<Nested<C>, C::Profile>>(
-                &native_points.children,
+            stage_values::<_, R, native_points::PreambleStage<Nested<C>, C::Profile>>(
+                &native_points.preamble,
             )?,
             stage_values::<_, R, native_points::RegistryWxStage<Nested<C>, C::Profile>>(
                 &native_points.registry_wx,
@@ -1186,7 +1186,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         builder.native_registry_xy_commitment(),
                         builder.native_p_commitment(),
                         builder.native_points_binding_commitment(),
-                        builder.native_points_children_commitment(),
+                        builder.native_points_preamble_commitment(),
                         builder.native_points_registry_wx_commitment(),
                         builder.native_points_ab_commitment(),
                         builder.native_points_f_commitment(),

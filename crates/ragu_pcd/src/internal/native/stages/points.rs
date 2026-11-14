@@ -14,7 +14,7 @@
 //! | stage | holds | fixed before | carried by |
 //! |---|---|---|---|
 //! | [`BindingStage`] | the children's bridge and challenge-stage commitments, $A_n$, $B_n$, `registry_xy`, $P_n$ and nested extension stages | $w$ | `preamble` bridge |
-//! | [`ChildrenStage`] | the rest of the children's nested commitments, and the step's own online Fq commitments | $w$ | `preamble` bridge |
+//! | [`PreambleStage`] | the rest of the children's nested commitments, and the step's own online Fq commitments | $w$ | `preamble` bridge |
 //! | [`RegistryWxStage`] | $m_n(w_n, x_{i,n}, Y)$ | $y$ | `s_prime` bridge |
 //! | [`AbStage`] | $m_n(w_n, X, y_n)$, $A_n$, $B_n$ | $x$ | `ab` bridge |
 //! | [`FStage`] | $m_n(W, x_n, y_n)$, $F_n$ | $u$ | `f` bridge |
@@ -93,13 +93,13 @@ pub fn num_child_bindings<P: Profile>() -> usize {
     nested::RxIndex::BRIDGES.len() + 5 + nested::NumExtensionStages::<P>::len()
 }
 
-/// The points of [`ChildrenStage`] in profile `P`: each child's points in
+/// The child points of [`PreambleStage`] in profile `P`: each child's points in
 /// walk order, except the ones [`BindingStage`] holds.
 pub fn num_children_points<P: Profile>() -> usize {
     2 * (num_child_points::<P>() - num_child_bindings::<P>())
 }
 
-/// Length type for the [`ChildrenStage`] points.
+/// Length type for the child points in [`PreambleStage`].
 pub struct ChildrenLen<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for ChildrenLen<P> {
@@ -137,7 +137,7 @@ pub enum InputSource {
     /// A child's nested extension stage commitment, by stage, in
     /// [`BindingStage`].
     Extension(Side, usize),
-    /// A point of [`ChildrenStage`], by position.
+    /// A child commitment in [`PreambleStage`], by position.
     Children(usize),
     /// One of the two points of [`RegistryWxStage`].
     RegistryWx(usize),
@@ -149,7 +149,7 @@ pub enum InputSource {
     AbB,
     /// The `registry_xy` point of [`FStage`].
     RegistryXy,
-    /// The step's own online Fq commitment, by index, in [`ChildrenStage`].
+    /// The step's own online Fq commitment, by index, in [`PreambleStage`].
     OnlineFq(usize),
 }
 
@@ -252,9 +252,9 @@ pub struct BindingWitness<C: Affine, P: Profile> {
     pub right: ChildBindingWitness<C, P>,
 }
 
-/// Witness of [`ChildrenStage`].
+/// Witness of [`PreambleStage`].
 #[derive(Clone)]
-pub struct ChildrenWitness<C: Affine, P: Profile> {
+pub struct PreambleWitness<C: Affine, P: Profile> {
     pub points: FixedVec<C, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
     pub online_fq: FixedVec<C, FqPolysLen<P>>,
@@ -312,19 +312,19 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 }
 
 /// Splits the two children's points, each in the order
-/// [`nested::pcs::child_commitments`] fixes, into the binding and children
-/// stages' witnesses. The children stage also holds `online_fq`, the
+/// [`nested::pcs::child_commitments`] fixes, into the binding and preamble
+/// stages' witnesses. The preamble stage also holds `online_fq`, the
 /// step's own online Fq commitments.
 ///
 /// # Panics
 ///
 /// Panics if either child has other than [`num_child_points`] points, or
 /// if `online_fq` has other than [`Profile::ONLINE_FQ_POLYS`] points.
-pub fn children_witnesses<C: Affine, P: Profile>(
+pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
     online_fq: &[C],
-) -> (BindingWitness<C, P>, ChildrenWitness<C, P>) {
+) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
     assert_eq!(left.len(), num_child_points);
@@ -355,7 +355,7 @@ pub fn children_witnesses<C: Affine, P: Profile>(
             left: bound(left),
             right: bound(right),
         },
-        ChildrenWitness {
+        PreambleWitness {
             points: FixedVec::new(points).expect("num_children_points points"),
             online_fq: FixedVec::new(online_fq.to_vec()).expect("ONLINE_FQ_POLYS points"),
         },
@@ -367,7 +367,7 @@ pub fn children_witnesses<C: Affine, P: Profile>(
 #[derive(Clone)]
 pub struct Inputs<C: Affine, P: Profile> {
     pub binding: BindingWitness<C, P>,
-    pub children: ChildrenWitness<C, P>,
+    pub preamble: PreambleWitness<C, P>,
     pub registry_wx: RegistryWxWitness<C>,
     pub ab: AbWitness<C>,
     pub f: FWitness<C>,
@@ -383,14 +383,14 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         let current = &points[1 + 2 * num_child_points..];
-        let (binding, children) = children_witnesses::<C, P>(
+        let (binding, preamble) = preamble_witnesses::<C, P>(
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
             &current[NUM_CURRENT_POINTS..],
         );
         Self {
             binding,
-            children,
+            preamble,
             registry_wx: RegistryWxWitness {
                 registry_wx0: current[0],
                 registry_wx1: current[1],
@@ -421,14 +421,14 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::ChildB(side) => child(side).b,
             InputSource::ChildRegistryXy(side) => child(side).registry_xy,
             InputSource::Extension(side, j) => child(side).extension[j],
-            InputSource::Children(k) => self.children.points[k],
+            InputSource::Children(k) => self.preamble.points[k],
             InputSource::RegistryWx(0) => self.registry_wx.registry_wx0,
             InputSource::RegistryWx(_) => self.registry_wx.registry_wx1,
             InputSource::RegistryWy => self.ab.registry_wy,
             InputSource::AbA => self.ab.a,
             InputSource::AbB => self.ab.b,
             InputSource::RegistryXy => self.f.registry_xy,
-            InputSource::OnlineFq(j) => self.children.online_fq[j],
+            InputSource::OnlineFq(j) => self.preamble.online_fq[j],
         }
     }
 
@@ -489,9 +489,9 @@ pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub right: ChildBinding<'dr, D, C, P>,
 }
 
-/// Output gadget of [`ChildrenStage`].
+/// Output gadget of [`PreambleStage`].
 #[derive(Gadget, Consistent)]
-pub struct Children<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
@@ -549,7 +549,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P>
 /// The loaded input stages, viewed as the walk's inputs.
 pub struct WalkInputs<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub binding: &'a Binding<'dr, D, C, P>,
-    pub children: &'a Children<'dr, D, C, P>,
+    pub preamble: &'a Preamble<'dr, D, C, P>,
     pub registry_wx: &'a RegistryWx<'dr, D, C>,
     pub ab: &'a Ab<'dr, D, C>,
     pub f: &'a F<'dr, D, C>,
@@ -575,14 +575,14 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::ChildB(side) => &child(side).b,
             InputSource::ChildRegistryXy(side) => &child(side).registry_xy,
             InputSource::Extension(side, j) => &child(side).extension[j],
-            InputSource::Children(k) => &self.children.points[k],
+            InputSource::Children(k) => &self.preamble.points[k],
             InputSource::RegistryWx(0) => &self.registry_wx.registry_wx0,
             InputSource::RegistryWx(_) => &self.registry_wx.registry_wx1,
             InputSource::RegistryWy => &self.ab.registry_wy,
             InputSource::AbA => &self.ab.a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
-            InputSource::OnlineFq(j) => &self.children.online_fq[j],
+            InputSource::OnlineFq(j) => &self.preamble.online_fq[j],
         }
     }
 }
@@ -658,12 +658,12 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
 /// The rest of the children's nested commitments and the step's own online
 /// Fq commitments, committed before $w$.
 #[derive(Default)]
-pub struct ChildrenStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
+pub struct PreambleStage<C: Affine, P: Profile>(PhantomData<(C, P)>);
 
-impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for ChildrenStage<C, P> {
+impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStage<C, P> {
     type Parent = BindingStage<C, P>;
-    type Witness<'source> = &'source ChildrenWitness<C, P>;
-    type OutputKind = Kind![C::Base; Children<'_, _, C, P>];
+    type Witness<'source> = &'source PreambleWitness<C, P>;
+    type OutputKind = Kind![C::Base; Preamble<'_, _, C, P>];
 
     fn values() -> usize {
         2 * (num_children_points::<P>() + P::ONLINE_FQ_POLYS)
@@ -677,7 +677,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for ChildrenStag
     where
         Self: 'dr,
     {
-        Ok(Children {
+        Ok(Preamble {
             points: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.points[i]))
             })?,
@@ -691,7 +691,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for ChildrenStag
 points_stage!(
     /// The nested registry's $m_n(w_n, x_{i,n}, Y)$ commitments, committed
     /// before $y$.
-    RegistryWxStage, parent = ChildrenStage<C, P>, witness = RegistryWxWitness, output = RegistryWx,
+    RegistryWxStage, parent = PreambleStage<C, P>, witness = RegistryWxWitness, output = RegistryWx,
     { registry_wx0, registry_wx1 }
 );
 
@@ -759,7 +759,7 @@ mod tests {
     fn stage_values_match_wire_counts() {
         let _: PhantomData<EpAffine> = PhantomData::<C>;
         assert_stage_values::<_, R, _>(&BindingStage::<C, Standard>::default());
-        assert_stage_values::<_, R, _>(&ChildrenStage::<C, Standard>::default());
+        assert_stage_values::<_, R, _>(&PreambleStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&RegistryWxStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&AbStage::<C, Standard>::default());
         assert_stage_values::<_, R, _>(&FStage::<C, Standard>::default());

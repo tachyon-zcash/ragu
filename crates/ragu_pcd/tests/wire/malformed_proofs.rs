@@ -125,7 +125,7 @@ fn rejects_identity_instance_commitments() {
         native_registry_xy_commitment.0,
         native_p_commitment.0,
         native_points_binding_commitment.0,
-        native_points_children_commitment.0,
+        native_points_preamble_commitment.0,
         native_points_registry_wx_commitment.0,
         native_points_ab_commitment.0,
         native_points_f_commitment.0,

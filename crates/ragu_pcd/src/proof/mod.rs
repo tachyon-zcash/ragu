@@ -241,7 +241,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// The rx polynomials of the stages of the profile's native extension.
     pub(crate) native_extension_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_children_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_points_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_ab_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_f_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -362,7 +362,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_extension_circuit_commitments: Vec<Cached<C::HostCurve>>,
     native_extension_stage_commitments: Vec<Cached<C::HostCurve>>,
     native_points_binding_commitment: Cached<C::HostCurve>,
-    native_points_children_commitment: Cached<C::HostCurve>,
+    native_points_preamble_commitment: Cached<C::HostCurve>,
     native_points_registry_wx_commitment: Cached<C::HostCurve>,
     native_points_ab_commitment: Cached<C::HostCurve>,
     native_points_f_commitment: Cached<C::HostCurve>,
@@ -440,7 +440,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             ExtensionCircuit(k) => &self.native_extension_circuit_rxs[k as usize],
             ExtensionStage(k) => &self.native_extension_stage_rxs[k as usize],
             PointsBinding => &self.native_points_binding_rx,
-            PointsChildren => &self.native_points_children_rx,
+            PointsPreamble => &self.native_points_preamble_rx,
             PointsRegistryWx => &self.native_points_registry_wx_rx,
             PointsAb => &self.native_points_ab_rx,
             PointsF => &self.native_points_f_rx,
@@ -626,7 +626,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_registry_xy_commitment(),
                 self.native_p_commitment(),
                 self.native_rx_commitment(RxIndex::PointsBinding),
-                self.native_rx_commitment(RxIndex::PointsChildren),
+                self.native_rx_commitment(RxIndex::PointsPreamble),
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
@@ -753,7 +753,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             ExtensionCircuit(k) => self.native_extension_circuit_commitments[k as usize].0,
             ExtensionStage(k) => self.native_extension_stage_commitments[k as usize].0,
             PointsBinding => self.native_points_binding_commitment.0,
-            PointsChildren => self.native_points_children_commitment.0,
+            PointsPreamble => self.native_points_preamble_commitment.0,
             PointsRegistryWx => self.native_points_registry_wx_commitment.0,
             PointsAb => self.native_points_ab_commitment.0,
             PointsF => self.native_points_f_commitment.0,
@@ -935,11 +935,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok((p_commitment, witness))
     }
 
-    /// Commits the native points binding and children stages over the
+    /// Commits the native points binding and preamble stages over the
     /// children's nested commitments and the step's own online Fq
     /// commitments, before $w$ is squeezed; the preamble bridge carries
     /// their commitments.
-    pub(crate) fn commit_native_points_children<RNG: rand::CryptoRng>(
+    pub(crate) fn commit_native_points_preamble<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
         left: &Proof<C, R>,
@@ -953,7 +953,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .map(|_| online_fq::placeholder())
                 .collect(),
         );
-        let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
+        let (binding, preamble) = native_points::preamble_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
             builder.online_fq_commitments(),
@@ -965,12 +965,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             &binding,
         )?);
-        builder.set_native_points_children_rx(<native_points::ChildrenStage<
+        builder.set_native_points_preamble_rx(<native_points::PreambleStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &children,
+            &preamble,
         )?);
         Ok(())
     }
@@ -1057,12 +1057,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             &inputs.binding,
         )?);
-        builder.set_native_points_children_rx(<native_points::ChildrenStage<
+        builder.set_native_points_preamble_rx(<native_points::PreambleStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &inputs.children,
+            &inputs.preamble,
         )?);
         self.commit_native_points_registry_wx(
             rng,
@@ -1536,7 +1536,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
                 stashed_points_binding: host_commitment,
-                stashed_points_children: host_commitment,
+                stashed_points_preamble: host_commitment,
                 stashed_points_registry_wx: host_commitment,
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
@@ -1557,7 +1557,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 &nested::stages::preamble::Witness {
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
-                    native_points_children: builder.native_points_children_commitment(),
+                    native_points_preamble: builder.native_points_preamble_commitment(),
                     online_commitments: builder.online_commitments(),
                     application_stage: builder.native_application_stage_commitment(),
                     left: trivial_child_witness.clone(),

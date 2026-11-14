@@ -40,7 +40,7 @@ use ragu_primitives::{
 
 use super::super::{
     stages::points::{
-        AbStage, BindingStage, ChildrenStage, FStage, Inputs, RegistryWxStage, WalkStage,
+        AbStage, BindingStage, FStage, Inputs, PreambleStage, RegistryWxStage, WalkStage,
         WalkWitness,
     },
     unified::{self, OutputBuilder},
@@ -99,8 +99,8 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         Self: 'dr,
     {
         let (binding, builder) = builder.add_stage::<BindingStage<C::NestedCurve, C::Profile>>()?;
-        let (children, builder) =
-            builder.add_stage::<ChildrenStage<C::NestedCurve, C::Profile>>()?;
+        let (preamble, builder) =
+            builder.add_stage::<PreambleStage<C::NestedCurve, C::Profile>>()?;
         let (registry_wx, builder) =
             builder.add_stage::<RegistryWxStage<C::NestedCurve, C::Profile>>()?;
         let (ab, builder) = builder.add_stage::<AbStage<C::NestedCurve, C::Profile>>()?;
@@ -111,7 +111,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         // Enforced: every point the walk consumes lies on the curve.
         let inputs = witness.as_ref().map(|w| w.inputs);
         let _ = binding.enforced(dr, inputs.as_ref().map(|i| &i.binding))?;
-        let _ = children.enforced(dr, inputs.as_ref().map(|i| &i.children))?;
+        let _ = preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
         let _ = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
         let ab = ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.enforced(dr, inputs.as_ref().map(|i| &i.f))?;

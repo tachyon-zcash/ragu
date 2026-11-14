@@ -247,7 +247,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_points_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_points_children_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_registry_wx_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_ab_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_f_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -367,7 +367,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_extension_circuit_commitments: OnceCell<Vec<C::HostCurve>>,
     native_extension_stage_commitments: OnceCell<Vec<C::HostCurve>>,
     native_points_binding_commitment: OnceCell<C::HostCurve>,
-    native_points_children_commitment: OnceCell<C::HostCurve>,
+    native_points_preamble_commitment: OnceCell<C::HostCurve>,
     native_points_registry_wx_commitment: OnceCell<C::HostCurve>,
     native_points_ab_commitment: OnceCell<C::HostCurve>,
     native_points_f_commitment: OnceCell<C::HostCurve>,
@@ -410,7 +410,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_rxs: None,
             native_extension_stage_rxs: None,
             native_points_binding_rx: None,
-            native_points_children_rx: None,
+            native_points_preamble_rx: None,
             native_points_registry_wx_rx: None,
             native_points_ab_rx: None,
             native_points_f_rx: None,
@@ -493,7 +493,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_commitments: OnceCell::new(),
             native_extension_stage_commitments: OnceCell::new(),
             native_points_binding_commitment: OnceCell::new(),
-            native_points_children_commitment: OnceCell::new(),
+            native_points_preamble_commitment: OnceCell::new(),
             native_points_registry_wx_commitment: OnceCell::new(),
             native_points_ab_commitment: OnceCell::new(),
             native_points_f_commitment: OnceCell::new(),
@@ -554,12 +554,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         native_points_binding_commitment,
         native_points_binding_rx
     );
-    native_setter!(set_native_points_children_rx, native_points_children_rx);
+    native_setter!(set_native_points_preamble_rx, native_points_preamble_rx);
     lazy_commitment!(
         native,
-        native_points_children_commitment,
-        native_points_children_commitment,
-        native_points_children_rx
+        native_points_preamble_commitment,
+        native_points_preamble_commitment,
+        native_points_preamble_rx
     );
     native_setter!(
         set_native_points_registry_wx_rx,
@@ -1156,7 +1156,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_extension_circuit_commitments();
         self.native_extension_stage_commitments();
         self.native_points_binding_commitment();
-        self.native_points_children_commitment();
+        self.native_points_preamble_commitment();
         self.native_points_registry_wx_commitment();
         self.native_points_ab_commitment();
         self.native_points_f_commitment();
@@ -1227,7 +1227,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
             native_extension_stage_rxs: take!(native_extension_stage_rxs),
             native_points_binding_rx: take!(native_points_binding_rx),
-            native_points_children_rx: take!(native_points_children_rx),
+            native_points_preamble_rx: take!(native_points_preamble_rx),
             native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
             native_points_ab_rx: take!(native_points_ab_rx),
             native_points_f_rx: take!(native_points_f_rx),
@@ -1356,7 +1356,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .map(Cached)
                 .collect(),
             native_points_binding_commitment: cached!(native_points_binding_commitment),
-            native_points_children_commitment: cached!(native_points_children_commitment),
+            native_points_preamble_commitment: cached!(native_points_preamble_commitment),
             native_points_registry_wx_commitment: cached!(native_points_registry_wx_commitment),
             native_points_ab_commitment: cached!(native_points_ab_commitment),
             native_points_f_commitment: cached!(native_points_f_commitment),

@@ -182,8 +182,8 @@ pub enum NativeRx {
     Eval,
     /// The native points binding stage's rx polynomial.
     PointsBinding,
-    /// The native points children stage's rx polynomial.
-    PointsChildren,
+    /// The native points preamble stage's rx polynomial.
+    PointsPreamble,
     /// The native `registry_wx` points stage's rx polynomial.
     PointsRegistryWx,
     /// The native `ab` points stage's rx polynomial.
@@ -255,7 +255,7 @@ impl NativeRx {
             I::Query => Self::Query,
             I::Eval => Self::Eval,
             I::PointsBinding => Self::PointsBinding,
-            I::PointsChildren => Self::PointsChildren,
+            I::PointsPreamble => Self::PointsPreamble,
             I::PointsRegistryWx => Self::PointsRegistryWx,
             I::PointsAb => Self::PointsAb,
             I::PointsF => Self::PointsF,

@@ -194,7 +194,7 @@ A relevant Ragu knowledge we keep referring to is its challenge scheduling among
 
                                 PointsBinding
        ┌──────────────────────────────┤
-   Preamble                    PointsChildren       Preamble
+   Preamble                    PointsPreamble       Preamble
        ├──────────────┐               │                 │
        │              │               │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -286,14 +286,14 @@ Before:
 
      ERROR          QUERY          POINTS            NESTED
 
-   Preamble                    PointsChildren       Preamble (witness L0,L1,R0,R1,O0,O1)
+   Preamble                    PointsPreamble       Preamble (witness L0,L1,R0,R1,O0,O1)
        ├──────────────┐               │                 │
        │              │               │                 │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 
 After:
 
-   Preamble                    PointsChildren       BridgeHash (copy of O1, not absorbed)
+   Preamble                    PointsPreamble       BridgeHash (copy of O1, not absorbed)
        ├──────────────┐               │                 │
        │              │               │             Preamble (witness L0,L1,R0,R1,O0,O1)
        │              │               │                 │
@@ -457,7 +457,7 @@ Swapping the fields swaps every role of the $\F_p$ slots:
 
 | | $\F_p$ slots (v1, v4) | $\F_q$ slot (v5) |
 |---|---|---|
-| commitment | $\E_q$ point, in the nested `Preamble` | $\E_p$ point, in the native `PointsChildren` |
+| commitment | $\E_q$ point, in the nested `Preamble` | $\E_p$ point, in the native `PointsPreamble` |
 | deadline | $w$ | $w$ |
 | challenge | $\zeta = w$ | $\zeta_q = \mathsf{lift}(w)$, already in the nested challenge stage |
 | claimant | application circuit | nested `compute_v` |
@@ -475,7 +475,7 @@ And since no header carries $f_q$, there is no header-carry check.
 ```
      NATIVE                      NESTED
 
-  PointsChildren             Preamble (+ native_points_children)
+  PointsPreamble             Preamble (+ native_points_preamble)
   (+ cm_fq)                        │
        │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -494,7 +494,7 @@ The `Aggregator` profile turns it on when decompression lands; until then only t
 #### Details and soundness notes {#v5-soundness}
 
 - **Placement.**
-  $\cm_{f_q}$ goes in `PointsChildren` because the native walk reads its inputs from the stage they were committed in; `PointsChildren`'s commitment is absorbed before $w$.
+  $\cm_{f_q}$ goes in `PointsPreamble` because the native walk reads its inputs from the stage they were committed in; `PointsPreamble`'s commitment is absorbed before $w$.
   It is committed unblinded, so that it can equal a point such as $G'$ that a circuit computes from public data.
 - **The point.**
   No stage holds the opening point: `compute_v` folds $y_q$ at $\zeta_q$, which it takes from the challenge stage.
@@ -518,7 +518,7 @@ The `Aggregator` profile turns it on when decompression lands; until then only t
   Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; until a check constrains $y_q$, a prover may commit any polynomial.
   The zero polynomial's commitment is the identity, which the walk cannot take, so the placeholder must not be zero.
 - **A native consumer of $\cm_{f_q}$.**
-  Decompression's native half uses $\cm_{f_q}$ as $G'$, but only the walk's circuits load `PointsChildren`.
+  Decompression's native half uses $\cm_{f_q}$ as $G'$, but only the walk's circuits load `PointsPreamble`.
   It would read the point from the native unified instance, which `bind_endoscalar` already exports the walk's points into; decompression adds that export with its consumer.
 - **Not a header slot.**
   Letting the parent reopen $f_q$ as an `L` or `R` slot would cost two more native walk points per step, two more stash equalities, and the children's $\F_q$ polynomials in every proof, for a use the aggregator does not have.
