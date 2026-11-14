@@ -89,6 +89,9 @@
 //! [`floor_plan`]: crate::floor_planner::floor_plan
 //! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/local/wiring.html
 
+// The host never evaluates from a matrix; see `Registry::wiring_matrices`.
+#[allow(dead_code)]
+pub mod matrix;
 pub mod sx;
 pub mod sxy;
 pub mod sy;

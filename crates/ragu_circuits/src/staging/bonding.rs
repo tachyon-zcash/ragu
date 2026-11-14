@@ -267,6 +267,14 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
     fn segment_records(&self) -> &[SegmentRecord] {
         self.0.segment_records()
     }
+
+    fn matrix(&self, floor_plan: &[ConstraintSegment]) -> Option<crate::wiring::matrix::Matrix<F>> {
+        // The same removal as above, on the matrix: the `ONE` wire's
+        // constraint is the term X^0 Y^0.
+        self.0
+            .matrix(floor_plan)
+            .map(crate::wiring::matrix::Matrix::without_one)
+    }
 }
 
 #[cfg(test)]

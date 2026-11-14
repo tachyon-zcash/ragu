@@ -61,6 +61,7 @@ use udon::{
     field::Field,
 };
 
+pub use crate::wiring::matrix::Matrix;
 use crate::{
     BondingObject, Circuit, WiringObject,
     floor_planner::ConstraintSegment,
@@ -514,21 +515,55 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// with no registered circuit hold it alone), and masking circuits also
     /// carry the shared global term.
     pub fn wxy_over_domain(&self, x: F, y: F) -> Vec<F> {
+        self.wxy_over_domain_from(x, y, &[])
+    }
+
+    /// Computes [`wxy_over_domain`](Self::wxy_over_domain) for a caller
+    /// that has evaluated some circuits' wiring matrices itself (see
+    /// [`wiring_matrices`](Self::wiring_matrices)): `known[i]`, where
+    /// present, is the matrix at position `i` of that list evaluated at
+    /// $(x, y)$, and every other circuit is evaluated here.
+    pub fn wxy_over_domain_from(&self, x: F, y: F, known: &[Option<F>]) -> Vec<F> {
         // The tag term k * (XY)^{4n-1} has no W factor, so it adds the same
         // scalar to every domain evaluation.
         let tag_scalar = self.tag_sxy(x, y);
         let global_xy = crate::staging::mask::global_mask::<F, R>(x, y);
 
-        let mut evals = alloc::vec![tag_scalar; self.domain.size()];
+        // Each circuit's evaluation is independent of the others, so the
+        // circuits are split into one consecutive run per worker.
         // Masking polynomials return only -notch from sxy(); add the shared
-        // global term to each mask slot inline.
-        for (i, circuit) in self.circuits.iter().enumerate() {
-            let j = self.bitreversed_index(i);
-            let mut v = circuit.sxy(x, y, &self.floor_plans[i]);
-            if circuit.is_mask() {
-                v += global_xy;
+        // global term to each mask slot inline. A mask's matrix carries the
+        // term itself, so a known value has it already.
+        let mut values = alloc::vec![F::ZERO; self.circuits.len()];
+        #[cfg(feature = "multicore")]
+        let workers = maybe_rayon::current_num_threads();
+        #[cfg(not(feature = "multicore"))]
+        let workers = 1;
+        let per_run = values.len().div_ceil(workers).max(1);
+        maybe_rayon::scope(|scope| {
+            for (run, values) in values.chunks_mut(per_run).enumerate() {
+                scope.spawn(move |_| {
+                    for (offset, value) in values.iter_mut().enumerate() {
+                        let i = run * per_run + offset;
+                        let circuit = &self.circuits[i];
+                        *value = match known.get(i).copied().flatten() {
+                            Some(value) => value,
+                            None => {
+                                let mut value = circuit.sxy(x, y, &self.floor_plans[i]);
+                                if circuit.is_mask() {
+                                    value += global_xy;
+                                }
+                                value
+                            }
+                        };
+                    }
+                });
             }
-            evals[j] += v;
+        });
+
+        let mut evals = alloc::vec![tag_scalar; self.domain.size()];
+        for (i, value) in values.into_iter().enumerate() {
+            evals[self.bitreversed_index(i)] += value;
         }
         evals
     }
@@ -585,6 +620,87 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     pub fn circuit_y(&self, i: CircuitIndex, y: F) -> sparse::Polynomial<F, R> {
         let w: F = i.omega_j();
         self.at(w).y(y)
+    }
+
+    /// Splits [`circuit_y`](Self::circuit_y) as [`RegistryAt::y_parts`]
+    /// splits a restriction.
+    pub fn circuit_y_parts(
+        &self,
+        i: CircuitIndex,
+        y: F,
+        elsewhere: impl Fn(usize) -> bool,
+    ) -> (Vec<(usize, F)>, sparse::Polynomial<F, R>) {
+        let w: F = i.omega_j();
+        self.at(w).y_parts(y, elsewhere)
+    }
+
+    /// Interprets every circuit once and returns its wiring polynomial as
+    /// an explicit matrix, in the positions [`RegistryAt::y_parts`] names
+    /// circuits by. A circuit that offers no matrix has none. A masking
+    /// polynomial's matrix is the complete mask: it includes the term the
+    /// masks share, which the registry otherwise adds once for all of them.
+    ///
+    /// The matrices are large, and nothing in this crate evaluates from
+    /// them: they are for a caller that holds them elsewhere, such as on a
+    /// device, and evaluates all circuits at once.
+    pub fn wiring_matrices(&self) -> Vec<Option<Matrix<F>>> {
+        self.circuits
+            .iter()
+            .zip(&self.floor_plans)
+            .map(|(circuit, floor_plan)| circuit.matrix(floor_plan))
+            .collect()
+    }
+
+    /// The registry tag's contribution to a restriction at `y`, which every
+    /// such restriction carries whatever circuit it selects: restricted at
+    /// $Y$, the term $k (XY)^{4n-1}$ is $k y^{4n-1}$ at $X^{4n-1}$, the
+    /// c-wire of the SYSTEM gate in the wiring layout. `None` at $y = 0$,
+    /// where the term vanishes.
+    pub fn tag_y(&self, y: F) -> Option<sparse::Polynomial<F, R>> {
+        (y != F::ZERO).then(|| {
+            let y_4n_minus_1 = y.pow_u64((4 * R::n() - 1) as u64);
+            let mut tag_view = sparse::View::<_, R, _>::wiring();
+            tag_view.c.push(self.tag.value() * y_4n_minus_1);
+            tag_view.build()
+        })
+    }
+
+    /// The position of circuit `i` in [`wiring_matrices`](Self::wiring_matrices)
+    /// if it is registered. Where it has a matrix there,
+    /// [`circuit_y`](Self::circuit_y) for it is that matrix restricted at
+    /// `y` plus [`tag_y`](Self::tag_y) and nothing else.
+    pub fn registered_circuit(&self, i: CircuitIndex) -> Option<usize> {
+        let position = usize::from(i);
+        (position < self.circuits.len()).then_some(position)
+    }
+
+    /// The position of circuit `i` if it is a registered masking
+    /// polynomial: [`circuit_y`](Self::circuit_y) for it is then
+    /// [`own_y`](Self::own_y) plus [`mask_global_y`](Self::mask_global_y)
+    /// and [`tag_y`](Self::tag_y).
+    pub fn mask_circuit(&self, i: CircuitIndex) -> Option<usize> {
+        let position = usize::from(i);
+        self.circuits
+            .get(position)
+            .is_some_and(|circuit| circuit.is_mask())
+            .then_some(position)
+    }
+
+    /// The restriction at `y` of the circuit at `position` alone, without
+    /// the terms the registry adds: for a masking polynomial, its notch.
+    pub fn own_y(&self, position: usize, y: F) -> sparse::Polynomial<F, R> {
+        self.circuits[position].sy(y, &self.floor_plans[position])
+    }
+
+    /// The term every masking polynomial shares, restricted at `y`.
+    pub fn mask_global_y(&self, y: F) -> sparse::Polynomial<F, R> {
+        crate::staging::mask::global_project::<F, R>(y)
+    }
+
+    /// The number of circuits and the tag, which together with the
+    /// registry's address tell it apart from another for the life of both.
+    pub fn wiring_key(&self) -> (usize, F) {
+        (self.circuits.len(), self.tag.value())
     }
 
     /// Evaluates $s_i(x, y)$ for circuit `i` at point $(x, y)$.
@@ -676,6 +792,58 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         result
     }
 
+    /// The circuits `cache` selects, with their coefficients, in the order
+    /// [`w_cached`](Self::w_cached) visits them.
+    fn w_selected(&self, cache: &LagrangeCache<F>) -> Vec<(usize, F)> {
+        match cache {
+            LagrangeCache::Arbitrary(coeffs) => coeffs
+                .iter()
+                .enumerate()
+                .map(|(j, coeff)| (self.bitreversed_index(j), *coeff))
+                .filter(|(i, _)| *i < self.circuits.len())
+                .collect(),
+            LagrangeCache::Assigned(i) if *i < self.circuits.len() => alloc::vec![(*i, F::ONE)],
+            LagrangeCache::Assigned(_) | LagrangeCache::Zero => Vec::new(),
+        }
+    }
+
+    /// Sums `coeff * restrict(circuit)` over `selected`.
+    fn w_selected_poly(
+        &self,
+        selected: &[(usize, F)],
+        restrict: impl Fn(&dyn WiringObject<F, R>, &[ConstraintSegment]) -> sparse::Polynomial<F, R>
+        + Sync,
+    ) -> sparse::Polynomial<F, R> {
+        #[cfg(feature = "multicore")]
+        let workers = maybe_rayon::current_num_threads();
+        #[cfg(not(feature = "multicore"))]
+        let workers = 1;
+        let per_run = selected.len().div_ceil(workers).max(1);
+        let mut partials: Vec<sparse::Polynomial<F, R>> = selected
+            .chunks(per_run)
+            .map(|_| sparse::Polynomial::default())
+            .collect();
+        let restrict = &restrict;
+        maybe_rayon::scope(|scope| {
+            for (partial, run) in partials.iter_mut().zip(selected.chunks(per_run)) {
+                scope.spawn(move |_| {
+                    for (i, coeff) in run {
+                        let mut tmp = restrict(&*self.circuits[*i], &self.floor_plans[*i]);
+                        tmp.scale(*coeff);
+                        partial.add_assign(&tmp);
+                    }
+                });
+            }
+        });
+
+        let mut partials = partials.into_iter();
+        let mut result = partials.next().unwrap_or_default();
+        for partial in partials {
+            result.add_assign(&partial);
+        }
+        result
+    }
+
     /// Sums Lagrange coefficients for masking polynomials at the given $W$ point.
     ///
     /// Only circuits where [`WiringObject::is_mask`] returns `true` contribute.
@@ -755,54 +923,96 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
 }
 
 impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
+    /// The weight of the term the masks share in a restriction whose `held`
+    /// circuits a caller evaluates from their matrices: the sum of the
+    /// Lagrange coefficients of the other masks. A mask's matrix carries
+    /// the term itself.
+    fn mask_weight_here(&self, held: &[(usize, F)]) -> F {
+        held.iter()
+            .filter(|(i, _)| self.registry.circuits[*i].is_mask())
+            .fold(self.mask_coeff_sum, |weight, (_, coeff)| weight - *coeff)
+    }
+
     /// Evaluate the registry polynomial restricted at $W$ and $Y$, unrestricted at $X$.
     pub fn y(&self, y: F) -> sparse::Polynomial<F, R> {
-        let mut poly = self.registry.w_cached(
-            &self.cache,
-            sparse::Polynomial::default,
-            |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sy(y, floor_plan);
-                tmp.scale(coeff);
-                poly.add_assign(&tmp);
-            },
-        );
+        self.y_parts(y, |_| false).1
+    }
+
+    /// Splits [`y`](Self::y) for a caller that evaluates some circuits'
+    /// wiring matrices itself (see [`Registry::wiring_matrices`]).
+    ///
+    /// `elsewhere` says whether the caller evaluates the circuit at a
+    /// position of that list. Returns those circuits with the coefficient
+    /// each enters the restriction with, and the rest of the restriction:
+    /// the restriction is the sum over the returned circuits of
+    /// `coefficient` times the circuit's matrix restricted at `y`, plus the
+    /// returned polynomial.
+    pub fn y_parts(
+        &self,
+        y: F,
+        elsewhere: impl Fn(usize) -> bool,
+    ) -> (Vec<(usize, F)>, sparse::Polynomial<F, R>) {
+        let (held, here): (Vec<_>, Vec<_>) = self
+            .registry
+            .w_selected(&self.cache)
+            .into_iter()
+            .partition(|(i, _)| elsewhere(*i));
+        let mut poly = self
+            .registry
+            .w_selected_poly(&here, |circuit, floor_plan| circuit.sy(y, floor_plan));
 
         // Masking polynomials return only -notch; add the shared global once,
-        // weighted by the sum of Lagrange coefficients for all mask circuits at W.
-        let mut global = crate::staging::mask::global_project::<F, R>(y);
-        global.scale(self.mask_coeff_sum);
-        poly.add_assign(&global);
-
-        // Add the registry tag contribution k * (XY)^{4n-1}.  Restricted
-        // at Y, this is k * y^{4n-1} at X^{4n-1} (c-wire of the SYSTEM gate in
-        // the wiring layout).
-        if y != F::ZERO {
-            let y_4n_minus_1 = y.pow_u64((4 * R::n() - 1) as u64);
-            let mut tag_view = sparse::View::<_, R, _>::wiring();
-            tag_view.c.push(self.registry.tag.value() * y_4n_minus_1);
-            poly.add_assign(&tag_view.build());
+        // weighted by the sum of Lagrange coefficients for the mask circuits
+        // evaluated here. With none of them the weight is zero and so is the
+        // term.
+        let mask_weight = self.mask_weight_here(&held);
+        if mask_weight != F::ZERO {
+            let mut global = crate::staging::mask::global_project::<F, R>(y);
+            global.scale(mask_weight);
+            poly.add_assign(&global);
         }
 
-        poly
+        // Add the registry tag contribution k * (XY)^{4n-1}.
+        if let Some(tag) = self.registry.tag_y(y) {
+            poly.add_assign(&tag);
+        }
+
+        (held, poly)
     }
 
     /// Evaluate the registry polynomial restricted at $W$ and $X$, unrestricted at $Y$.
     pub fn x(&self, x: F) -> sparse::Polynomial<F, R> {
-        let mut poly = self.registry.w_cached(
-            &self.cache,
-            sparse::Polynomial::default,
-            |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sx(x, floor_plan);
-                tmp.scale(coeff);
-                poly.add_assign(&tmp);
-            },
-        );
+        self.x_parts(x, |_| false).1
+    }
+
+    /// Splits [`x`](Self::x) as [`y_parts`](Self::y_parts) splits
+    /// [`y`](Self::y): the restriction is the sum of
+    /// `coefficient * s_i(x, Y)` over the returned circuits, plus the
+    /// returned polynomial.
+    pub fn x_parts(
+        &self,
+        x: F,
+        elsewhere: impl Fn(usize) -> bool,
+    ) -> (Vec<(usize, F)>, sparse::Polynomial<F, R>) {
+        let (held, here): (Vec<_>, Vec<_>) = self
+            .registry
+            .w_selected(&self.cache)
+            .into_iter()
+            .partition(|(i, _)| elsewhere(*i));
+        let mut poly = self
+            .registry
+            .w_selected_poly(&here, |circuit, floor_plan| circuit.sx(x, floor_plan));
 
         // Masking polynomials return only -notch; add the shared global once,
-        // weighted by the sum of Lagrange coefficients for all mask circuits at W.
-        let mut global = crate::staging::mask::global_project::<F, R>(x);
-        global.scale(self.mask_coeff_sum);
-        poly.add_assign(&global);
+        // weighted by the sum of Lagrange coefficients for the mask circuits
+        // evaluated here. With none of them the weight is zero and so is the
+        // term.
+        let mask_weight = self.mask_weight_here(&held);
+        if mask_weight != F::ZERO {
+            let mut global = crate::staging::mask::global_project::<F, R>(x);
+            global.scale(mask_weight);
+            poly.add_assign(&global);
+        }
 
         // Add the registry tag contribution k * (XY)^{4n-1}.  Restricted
         // at X, this is k * x^{4n-1} at Y^{4n-1}.
@@ -816,7 +1026,12 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
             poly.add_assign(&sparse::Polynomial::from_coeffs(tag_coeffs));
         }
 
-        poly
+        (held, poly)
+    }
+
+    /// The registry this restriction was taken from.
+    pub fn registry(&self) -> &Registry<'_, F, R> {
+        self.registry
     }
 
     /// Evaluate the registry polynomial at the point ($W$, $X$, $Y$).
@@ -975,6 +1190,102 @@ mod tests {
             let probe = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
             assert_eq!(interpolated.eval(probe), registry.wxy(probe, x, y));
         }
+
+        Ok(())
+    }
+
+    /// A caller that evaluates wiring matrices itself gets the registry's
+    /// polynomials back from the split restrictions and from the domain
+    /// evaluation, whichever of the circuits and the masks it holds: a
+    /// mask's matrix carries the term the masks share, which the registry
+    /// must then leave out for that mask alone.
+    #[test]
+    fn test_split_restrictions_match_whole() -> Result<()> {
+        use alloc::{boxed::Box, vec::Vec};
+
+        use crate::{BondingObject, polynomials::sparse, staging::mask::StageMask};
+
+        type Poly = sparse::Polynomial<Fp, TestRank>;
+        let same = |a: &Poly, b: &Poly| a.iter_coeffs().eq(b.iter_coeffs());
+
+        let registry = TestRegistryBuilder::new()
+            .register_circuit(SquareCircuit { times: 2 })?
+            .register_circuit(SquareCircuit { times: 5 })?
+            .register_circuit(SquareCircuit { times: 10 })?
+            .register_bonding(BondingObject::new(Box::new(StageMask::<TestRank>::new(
+                1, 3,
+            )?)))
+            .register_bonding(BondingObject::new(Box::new(StageMask::<TestRank>::new(
+                4, 2,
+            )?)))
+            .register_bonding(BondingObject::new(Box::new(
+                StageMask::<TestRank>::new_final(6)?,
+            )))
+            .finalize()?;
+        let matrices: Vec<_> = registry
+            .wiring_matrices()
+            .into_iter()
+            .map(|matrix| matrix.expect("circuits and masks have matrices"))
+            .collect();
+        let is_mask = |i: usize| registry.circuits[i].is_mask();
+        assert_eq!((0..matrices.len()).filter(|i| is_mask(*i)).count(), 3);
+
+        let random = || Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let (x, y) = (random(), random());
+        let selections: [&dyn Fn(usize) -> bool; 4] =
+            [&|_| true, &|_| false, &is_mask, &|i| !is_mask(i)];
+
+        // A random point selects every circuit, and a domain point one: a
+        // circuit, and a mask.
+        let mask_position = (0..matrices.len()).find(|i| is_mask(*i)).unwrap();
+        let points = [
+            random(),
+            CircuitIndex::new(0).omega_j(),
+            CircuitIndex::new(mask_position).omega_j(),
+        ];
+        for w in points {
+            let at = registry.at(w);
+            for elsewhere in selections {
+                let (held, mut sum) = at.y_parts(y, elsewhere);
+                for (i, coeff) in held {
+                    let mut term: Poly = matrices[i].sy(y);
+                    term.scale(coeff);
+                    sum.add_assign(&term);
+                }
+                assert!(same(&sum, &at.y(y)));
+
+                let (held, mut sum) = at.x_parts(x, elsewhere);
+                for (i, coeff) in held {
+                    let mut term: Poly = matrices[i].sx(x);
+                    term.scale(coeff);
+                    sum.add_assign(&term);
+                }
+                assert!(same(&sum, &at.x(x)));
+            }
+        }
+
+        let whole = registry.wxy_over_domain(x, y);
+        for elsewhere in selections {
+            let known: Vec<_> = matrices
+                .iter()
+                .enumerate()
+                .map(|(i, matrix)| elsewhere(i).then(|| matrix.sxy::<TestRank>(x, y)))
+                .collect();
+            assert_eq!(registry.wxy_over_domain_from(x, y, &known), whole);
+        }
+
+        // One circuit's restriction is its matrix's plus the tag term.
+        for (position, matrix) in matrices.iter().enumerate() {
+            let index = CircuitIndex::new(position);
+            assert_eq!(registry.registered_circuit(index), Some(position));
+            let mut expected: Poly = matrix.sy(y);
+            expected.add_assign(&registry.tag_y(y).unwrap());
+            assert!(same(&expected, &registry.circuit_y(index, y)));
+        }
+        assert_eq!(
+            registry.registered_circuit(CircuitIndex::new(matrices.len())),
+            None
+        );
 
         Ok(())
     }
