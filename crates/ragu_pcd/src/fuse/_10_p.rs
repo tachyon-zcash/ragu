@@ -39,11 +39,10 @@ use crate::{
     Application, Proof,
     internal::{
         native::{
-            RxComponent, RxIndex,
+            RxComponent, RxIndex, online,
             stages::points::{Inputs, WalkWitness},
         },
         nested::{PointsWitness, pcs},
-        online,
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,

@@ -33,9 +33,8 @@ use udon::field::Field;
 
 use crate::{
     Proof,
-    internal::{
-        native::{InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues},
-        online,
+    internal::native::{
+        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues, online,
     },
     profile::{Profile, ProfiledCycle},
 };

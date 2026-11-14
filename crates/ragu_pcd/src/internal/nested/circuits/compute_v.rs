@@ -18,7 +18,7 @@
 //! ### Online Fq openings
 //! - Reads the value $y_q$ of each of the step's own online Fq polynomials
 //!   from the `query` stage, and folds it into $f_n$ below at $\zeta_q$,
-//!   the challenge stage's lift of $w$ (see [`online_fq`]). No stage holds
+//!   the challenge stage's lift of $w$ (see [`online`]). No stage holds
 //!   the point, so the prover cannot choose it.
 //!
 //! ### $f_n(u_n)$ computation
@@ -45,7 +45,7 @@
 //! [`Batch::evaluated`]: crate::internal::nested::pcs::Batch::evaluated
 //! [`build`]: claims::build
 //! [`eval` stage]: crate::internal::nested::stages::eval
-//! [`online_fq`]: crate::internal::online_fq
+//! [`online`]: crate::internal::nested::online
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;

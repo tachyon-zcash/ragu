@@ -21,9 +21,11 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::{
     Proof,
     internal::{
-        native::{self, NUM_BINDERS, RxIndex},
+        native::{
+            self, NUM_BINDERS, RxIndex,
+            online::{self, NUM_ONLINE_FP_POLYS},
+        },
         nested::{PointsStage, unified},
-        online::{self, NUM_ONLINE_FP_POLYS},
     },
     profile::{Profile, ProfiledCycle},
 };

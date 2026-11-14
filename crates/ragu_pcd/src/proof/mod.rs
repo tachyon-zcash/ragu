@@ -96,14 +96,13 @@ use crate::{
     internal::{
         endoscalar::EndoscalarStage,
         native::{
-            self, RxComponent, RxIndex,
+            self, RxComponent, RxIndex, online,
             stages::points::{self as native_points, Inputs},
         },
         nested::{
             self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
-            PointsWitness,
+            PointsWitness, online as online_fq,
         },
-        online, online_fq,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -248,8 +247,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R>,
 
     /// This step's output polynomials exposed through the polynomial-query API,
-    /// padded with the constant one (see `internal::online`). Committed before
-    /// `w`; the parent opens them as its left or right slots.
+    /// padded with the constant one (see `internal::native::online`). Committed
+    /// before `w`; the parent opens them as its left or right slots.
     pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS],
     /// Six opening claims, in [L0, L1, R0, R1, O0, O1] order.
     /// The parent uses these same values in the application and `compute_v`

@@ -22,7 +22,7 @@ use udon::{curve::Affine as _, field::Field};
 
 use crate::{
     Application, Header, Proof,
-    internal::{ky, online},
+    internal::{ky, native::online},
     profile::ProfiledCycle,
     proof::ProofBuilder,
     step::{HeaderInput, Prepared, Step, internal::adapter::Adapter, oracles::OnlineWitness},

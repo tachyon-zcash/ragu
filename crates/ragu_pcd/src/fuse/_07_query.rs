@@ -25,7 +25,10 @@ use udon::{fft::bit_reverse, field::Field};
 use super::_04_inner_error::{NestedRegistryWy, RegistryWy};
 use crate::{
     Application, Proof,
-    internal::{native, nested, online_fq},
+    internal::{
+        native,
+        nested::{self, online as online_fq},
+    },
     multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,

@@ -13,7 +13,7 @@
 //!   contents must be fixed before a challenge is squeezed (see
 //!   [`native::stages::points`](crate::internal::native::stages::points)),
 //!   and the step's own online polynomials', which the parent opens as its
-//!   left or right slots (see [`online`](crate::internal::online)).
+//!   left or right slots (see [`online`](crate::internal::native::online)).
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage. Its
 //! [`collapse`](super::circuits::collapse) circuit computes the expected
@@ -45,7 +45,7 @@ use ragu_primitives::{
 };
 use udon::curve::EndomorphismAffine as Affine;
 
-use crate::internal::{native::unified::Slot, online::NUM_ONLINE_FP_POLYS};
+use crate::internal::native::{online::NUM_ONLINE_FP_POLYS, unified::Slot};
 
 /// The host-curve commitments the instance exports, in [`Write`] order:
 /// the fourteen stage commitments, the step's own online commitments and

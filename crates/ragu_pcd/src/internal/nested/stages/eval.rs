@@ -40,10 +40,7 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
     Proof,
-    internal::{
-        nested::{RxComponent, RxIndex, pcs::OwnRxLen},
-        online_fq::FqPolysLen,
-    },
+    internal::nested::{RxComponent, RxIndex, online::FqPolysLen, pcs::OwnRxLen},
     profile::{Profile, ProfiledCycle},
 };
 

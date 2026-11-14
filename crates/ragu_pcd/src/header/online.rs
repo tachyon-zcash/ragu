@@ -51,17 +51,6 @@ use core::any::TypeId;
 /// [`Header`]: super::Header
 pub const NUM_ONLINE_FP_POLYS: usize = 2;
 
-/// The maximum number of online polynomials over the scalar field that a
-/// step commits.
-///
-/// Such a polynomial belongs to the step that commits it. The step commits
-/// it before its challenge is drawn, and the step's nested batch opens it.
-/// The step does not export it, so a parent never opens it. Only a profile
-/// that asks for the slot has it; see
-/// [`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS),
-/// whose slots hold a placeholder until decompression lands.
-pub const NUM_ONLINE_FQ_POLYS: usize = 1;
-
 /// A kind of online polynomial, identified by a unit type.
 ///
 /// A header lists the kinds its proofs carry in

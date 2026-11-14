@@ -161,7 +161,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     pub(crate) fn online_opening_mut(
         &mut self,
         slot: usize,
-    ) -> Option<&mut crate::internal::online::Query<C::CircuitField>> {
+    ) -> Option<&mut crate::internal::native::online::Query<C::CircuitField>> {
         self.online_openings.get_mut(slot)
     }
 

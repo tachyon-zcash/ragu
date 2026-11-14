@@ -22,7 +22,10 @@ use ragu_primitives::{
 use crate::{
     Proof,
     header::{Header, Suffix},
-    internal::{ky, native::unified, online},
+    internal::{
+        ky,
+        native::{online, unified},
+    },
     profile::{Profile, ProfiledCycle},
     step::{InternalStepIndex, internal::padded},
 };

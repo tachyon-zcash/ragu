@@ -104,7 +104,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     header::{Header, Padding, Suffix},
-    internal::online,
+    internal::native::online,
     ipa::{
         IpaCycle, IpaProof,
         fingerprint::{self, Event},

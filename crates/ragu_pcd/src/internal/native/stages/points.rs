@@ -67,8 +67,7 @@ use crate::{
     internal::{
         Side,
         endoscalar::{InputsLen, PointsWitness},
-        nested::{self, pcs::NUM_CURRENT_POINTS},
-        online_fq::FqPolysLen,
+        nested::{self, online::FqPolysLen, pcs::NUM_CURRENT_POINTS},
     },
     profile::Profile,
 };
@@ -158,7 +157,7 @@ pub enum InputSource {
 /// nested rx commitments in [`nested::RxIndex::all`] order, then its $a_n$,
 /// $b_n$, `registry_xy` and $P_n$; then the current step's two
 /// `registry_wx`, `registry_wy`, $A_n$, $B_n$ and `registry_xy`; then the
-/// step's own online Fq commitments (see [`online_fq`](crate::internal::online_fq)).
+/// step's own online Fq commitments (see [`online`](crate::internal::nested::online)).
 ///
 /// # Panics
 ///

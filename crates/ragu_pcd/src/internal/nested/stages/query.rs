@@ -6,7 +6,7 @@
 //! nested quotient polynomial's evaluation. It also carries the value $y_q$
 //! of each of the step's own online Fq polynomials at $\zeta_q$, which
 //! `compute_v` claims and folds (see
-//! [`online_fq`](crate::internal::online_fq)). They ride here because this
+//! [`online`](crate::internal::nested::online)). They ride here because this
 //! bridge stage's commitment is absorbed before $\alpha$ is squeezed.
 //!
 //! [`compute_v`]: crate::internal::nested::circuits::compute_v
@@ -29,12 +29,10 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
     Proof,
-    internal::{
-        nested::{
-            self, RxComponent, RxIndex,
-            pcs::{InternalLen, OwnRxLen},
-        },
-        online_fq::FqPolysLen,
+    internal::nested::{
+        self, RxComponent, RxIndex,
+        online::FqPolysLen,
+        pcs::{InternalLen, OwnRxLen},
     },
     profile::{Profile, ProfiledCycle},
 };

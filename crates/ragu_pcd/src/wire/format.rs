@@ -309,7 +309,7 @@ mod tests {
     use super::*;
     use crate::{
         header::NUM_ONLINE_FP_POLYS,
-        internal::online::NUM_ONLINE_FP_QUERIES,
+        internal::native::online::NUM_ONLINE_FP_QUERIES,
         profile::{Shape, Standard},
     };
 
@@ -356,9 +356,9 @@ mod tests {
     }
 
     // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
-    // the online polynomials (see `internal::online`) in the batch and the
-    // application stage beside the application trace. A
-    // change to either moves the layout or the verifier semantics and needs
+    // the online polynomials (see `internal::native::online`) in the batch and
+    // the application stage beside the application trace. A change to either
+    // moves the layout or the verifier semantics and needs
     // a new schema or protocol version, not a silent re-pin.
     #[test]
     fn schema_v2_pins_protocol_and_shape() {

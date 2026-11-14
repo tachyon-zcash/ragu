@@ -47,8 +47,8 @@ use udon::field::Field;
 use crate::{
     Proof,
     internal::{
-        native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS},
-        nested, online,
+        native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS, online},
+        nested,
     },
     profile::{Profile, ProfiledCycle},
 };

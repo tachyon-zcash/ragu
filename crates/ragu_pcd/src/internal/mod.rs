@@ -7,17 +7,17 @@
 //! # Submodules
 //!
 //! - [`native`] — circuits, indexed value containers, and claim
-//!   orchestration for the native (host) field
+//!   orchestration for the native (host) field, including the header-associated
+//!   [`online`](native::online) polynomials
 //! - [`nested`] — circuits and claim orchestration for the nested
-//!   (scalar) field, including endoscaling verification
+//!   (scalar) field, including endoscaling verification and the step's own
+//!   [`online`](nested::online) polynomials
 //! - [`claims`] — generic [`claims::Builder`] for assembling revdot
 //!   claims, shared by both fields
 //! - [`fold_revdot`] — two-layer quotient folding that batch-reduces
 //!   revdot claims
 //! - [`endoscalar`] — endoscaling circuit and witness types for iterative
 //!   curve scalar multiplication
-//! - [`online`] — the online polynomials of a step's input and output proofs,
-//!   which its batch opens
 //! - [`transcript`] — Fiat–Shamir transcript wrapper over a Poseidon
 //!   sponge, with domain separation
 //! - [`const_fns`] — compile-time helper functions for array construction
@@ -30,8 +30,6 @@ pub mod inverter;
 pub mod ky;
 pub mod native;
 pub mod nested;
-pub mod online;
-pub mod online_fq;
 pub mod transcript;
 
 /// Identifies which of the two child proofs a component came from.

@@ -103,7 +103,7 @@ use crate::{
     Application, Proof,
     profile::{Profile, ProfiledCycle},
 };
-pub use crate::{header::NUM_ONLINE_FP_POLYS, internal::online::NUM_ONLINE_FP_QUERIES};
+pub use crate::{header::NUM_ONLINE_FP_POLYS, internal::native::online::NUM_ONLINE_FP_QUERIES};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the

@@ -72,6 +72,7 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
+pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     internal::{endoscalar, native, nested},
@@ -140,7 +141,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The number of online polynomials over the scalar field that each
     /// step of the profile commits, at most
-    /// [`NUM_ONLINE_FQ_POLYS`](crate::header::NUM_ONLINE_FQ_POLYS).
+    /// [`NUM_ONLINE_FQ_POLYS`].
     ///
     /// A step commits such a polynomial natively, before its challenge
     /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
@@ -345,7 +346,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// extension's binding names a stage the other extension does not have;
     /// if the product of the two endoscaling counts is at most four; or if
     /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
-    /// [`NUM_ONLINE_FQ_POLYS`](crate::header::NUM_ONLINE_FQ_POLYS).
+    /// [`NUM_ONLINE_FQ_POLYS`].
     fn check() -> Result<()> {
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
@@ -360,7 +361,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
         }
-        if Self::ONLINE_FQ_POLYS > crate::header::NUM_ONLINE_FQ_POLYS {
+        if Self::ONLINE_FQ_POLYS > NUM_ONLINE_FQ_POLYS {
             return Err(Error::Initialization(
                 "the profile commits more online Fq polynomials than a step can open".into(),
             ));
@@ -2451,7 +2452,7 @@ mod tests {
             const NAME: &'static str = "too-many";
             const NATIVE_EXTENSION: usize = 0;
             const NESTED_EXTENSION: usize = 0;
-            const ONLINE_FQ_POLYS: usize = crate::header::NUM_ONLINE_FQ_POLYS + 1;
+            const ONLINE_FQ_POLYS: usize = crate::profile::NUM_ONLINE_FQ_POLYS + 1;
 
             type Context<'params, Base, R, B>
                 = ()

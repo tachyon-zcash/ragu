@@ -21,7 +21,7 @@ use crate::{
             native_components, nested_components,
         },
     },
-    internal::online,
+    internal::native::online,
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{

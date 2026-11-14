@@ -36,9 +36,8 @@ use crate::{
     Application, Proof,
     internal::{
         native,
-        native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery},
+        native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery, online},
         nested::{self, pcs},
-        online,
     },
     profile::ProfiledCycle,
     proof::ProofBuilder,

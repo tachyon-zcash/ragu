@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NUM_ONLINE_POLYNOMIALS` and `NUM_ONLINE_QUERIES` are renamed to
   `NUM_ONLINE_FP_POLYS` and `NUM_ONLINE_FP_QUERIES`. `Shape` gains
   `online_fq`, and `Shape::solve` takes the count of online Fq polynomials.
+  The internal online polynomial helpers live in `native::online` and
+  `nested::online`; `NUM_ONLINE_FQ_POLYS` is re-exported from `profile`
+  rather than `header`.
 
 - `Step::witness` takes the step's `Oracles` after the driver, and the
   application circuit's instance is prefixed by the challenge and the six

@@ -31,7 +31,10 @@ use super::{
 };
 use crate::{
     Application, Proof,
-    internal::{native, nested, online},
+    internal::{
+        native::{self, online},
+        nested,
+    },
     multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,

@@ -184,7 +184,7 @@ pub struct Batch<'a, C: Cycle, R: Rank> {
     /// Current accumulator $b$.
     pub b: &'a sparse::Polynomial<C::ScalarField, R>,
     /// The step's own online Fq polynomials (see
-    /// [`online_fq`](crate::internal::online_fq)).
+    /// [`online`](super::online)).
     pub online_fq: &'a [sparse::Polynomial<C::ScalarField, R>],
 }
 
@@ -205,7 +205,7 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
         let omega_j = |id: InternalCircuitIndex| -> C::ScalarField {
             id.circuit_index::<C::Profile>().omega_j()
         };
-        let online_fq_point = crate::internal::online_fq::point(ch.w);
+        let online_fq_point = super::online::point(ch.w);
 
         STATIC_F_QUERIES
             .iter()

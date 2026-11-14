@@ -20,7 +20,7 @@ use ragu_core::{Cycle, Result};
 use super::{Cached, Proof};
 use crate::{
     header::NUM_ONLINE_FP_POLYS,
-    internal::{nested, online},
+    internal::{native::online, nested},
     profile::ProfiledCycle,
 };
 

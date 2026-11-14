@@ -89,8 +89,7 @@ use crate::{
         claims::Source,
         fold_revdot::{EvaluationFolder, Parameters},
         inverter::Inverter,
-        native::RevdotParameters,
-        online,
+        native::{RevdotParameters, online},
     },
     profile::{Profile, ProfiledCycle},
 };
