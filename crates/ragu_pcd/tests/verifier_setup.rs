@@ -1,5 +1,5 @@
 //! The verifier must check its own registered circuits even when a custom
-//! prover uses the same proof shape and exact public setup tags.
+//! prover uses the same proof shape and the verifier's exact registry tags.
 
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
@@ -18,8 +18,6 @@ use udon::field::Field;
 
 use super::*;
 use crate::profile::{CircuitSlot, Extension, ExtensionRxs, Registered};
-
-const MANIFEST: &[u8] = b"fixed-verifier-circuits-test";
 
 /// Both circuits constrain a Boolean; the verifier additionally requires one.
 struct BitCircuit<F, const REQUIRE_ONE: bool>(PhantomData<fn() -> F>);
@@ -180,11 +178,7 @@ fn verifier<P: Profile, Rk: Rank>() -> Result<App<P, Rk>>
 where
     P::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
 {
-    application::<P, Rk>(
-        RegistryTags::from_beacon(&[0x42; 32], MANIFEST),
-        MANIFEST,
-        Some(Fp::from(7)),
-    )
+    application::<P, Rk>((None, None), Some(Fp::from(7)))
 }
 
 fn check_prover<S: Profile, T: Profile, Rk: Rank>(
@@ -198,18 +192,17 @@ where
     S::Context<'static, Pasta, Rk, ReferenceBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
-    // Private test access gives a custom prover the exact public tags already
-    // fixed by the verifier. This keeps registry contents as the difference
-    // being tested, including after copying away the Rust profile types.
-    // Only the verifier's setup is trusted; the prover's registry generates
-    // the adversarial witnesses and compression messages.
+    // The test seam gives a custom prover the exact tags the verifier derived,
+    // which the derivation would not give the prover's different circuits.
+    // This keeps registry contents as the difference being tested, including
+    // after copying away the Rust profile types. Only the verifier's setup is
+    // trusted; the prover's registry generates the adversarial witnesses and
+    // compression messages.
     let prover = application::<S, Rk>(
-        RegistryTags {
-            native: Tag::new(verifier.native_registry.tag()),
-            nested: Tag::new(verifier.nested_registry.tag()),
-            manifest_digest: MANIFEST.to_vec(),
-        },
-        MANIFEST,
+        (
+            Some(verifier.native_registry.tag()),
+            Some(verifier.nested_registry.tag()),
+        ),
         constraint,
     )?;
     assert_eq!(prover.native_registry.tag(), verifier.native_registry.tag());

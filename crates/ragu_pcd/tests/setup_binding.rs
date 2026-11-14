@@ -1,7 +1,8 @@
-//! The receiver's setup tags must survive proving, recursion and compression.
+//! The receiver's registry tags must survive proving, recursion and compression.
 //! Change one tag at a time, keeping the profile, circuits and parameters fixed.
-//! Private access lets these tests isolate either final tag; the public setup
-//! API does not allow assembling such mixed tag pairs.
+//! The test seam installs a tag the derivation would not give these circuits,
+//! standing in for another setup; the public API derives both tags from the
+//! registered circuits and cannot make such a pair.
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::ProductionRank;
@@ -10,15 +11,15 @@ use ragu_core::{
     pasta::{Pasta, PastaParams},
 };
 use rand::{SeedableRng, rngs::StdRng};
+use udon::field::Field;
 
 use crate::{
-    Application, ApplicationBuilder, Pcd, RegistryTags,
+    Application, ApplicationBuilder, Pcd,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, testing::UnitStep},
 };
 
 const HEADER_SIZE: usize = 4;
-const MANIFEST: &[u8] = &[0x24; 32];
 type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
 type TestPcd<C> = Pcd<C, ProductionRank, ()>;
 
@@ -33,17 +34,17 @@ where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
     <C::Profile as Profile>::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
-    let mut tags = RegistryTags::<C>::from_beacon(&[0x42; 32], MANIFEST);
-    let other = RegistryTags::<C>::from_beacon(&[0x43; 32], MANIFEST);
+    let builder = ApplicationBuilder::<C, ProductionRank, HEADER_SIZE>::new().register(UnitStep)?;
     match changed {
-        Some(ChangedTag::Native) => tags.native = other.native,
-        Some(ChangedTag::Nested) => tags.nested = other.nested,
-        None => {}
+        Some(ChangedTag::Native) => {
+            builder.with_native_tag(C::CircuitField::from_uniform_bytes(&[0x43; 64]))
+        }
+        Some(ChangedTag::Nested) => {
+            builder.with_nested_tag(C::ScalarField::from_uniform_bytes(&[0x43; 64]))
+        }
+        None => builder,
     }
-    ApplicationBuilder::<C, ProductionRank, HEADER_SIZE>::new()
-        .register(UnitStep)?
-        .with_registry_tags(tags, MANIFEST)?
-        .finalize(crate::pasta::baked())
+    .finalize(crate::pasta::baked())
 }
 
 fn check_both_verifiers<C>(
