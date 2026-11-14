@@ -51,6 +51,9 @@ mod backend_equivalence;
 #[path = "../../tests/fuse_fixtures.rs"]
 mod fuse_fixture_tests;
 #[cfg(test)]
+#[path = "../../tests/child_commitments.rs"]
+mod child_commitment_tests;
+#[cfg(test)]
 #[path = "../../tests/profile_substitution.rs"]
 mod profile_substitution_tests;
 #[cfg(test)]

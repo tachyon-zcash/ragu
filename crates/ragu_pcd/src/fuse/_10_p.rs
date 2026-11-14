@@ -290,11 +290,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;
-        debug_assert_eq!(
-            B::sparse_commit_to_affine(&poly, C::nested_generators(self.params)),
-            p_commitment,
-            "nested P must be the Horner walk over the batch's commitments"
-        );
+        // A child can carry a polynomial inconsistent with its cached point.
+        // Keep the debug consistency check fallible for such witnesses.
+        #[cfg(debug_assertions)]
+        if B::sparse_commit_to_affine(&poly, C::nested_generators(self.params)) != p_commitment {
+            return Err(ragu_core::Error::InvalidWitness(
+                "nested P does not match its accumulated polynomial".into(),
+            ));
+        }
         builder.set_nested_p_poly(poly, p_commitment);
 
         Ok(walk)
