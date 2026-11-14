@@ -120,10 +120,11 @@ pub use backend::SelectableBackend;
 /// Temporary setup tags for an [`Application`]'s native and nested registries.
 ///
 /// These are setup parameters for the temporary registry-collision workaround
-/// in [#78](https://github.com/tachyon-zcash/ragu/issues/78). API consumers must
-/// supply them through [`ApplicationBuilder::with_registry_tags`], satisfying
-/// [`Tag`]'s [sampling requirement](Tag#sampling-requirement) for the complete
-/// setup of both registries. Production consumers must not use a fixed test key.
+/// in [#78](https://github.com/tachyon-zcash/ragu/issues/78). API consumers
+/// supply them through [`ApplicationBuilder::with_registry_tags`] in place of
+/// the derived tags, satisfying [`Tag`]'s
+/// [sampling requirement](Tag#sampling-requirement) for the complete setup of
+/// both registries.
 ///
 /// The profile is part of the setup the tags are sampled for (see
 /// [`Profile`]): an application in another profile is another setup, with
@@ -457,10 +458,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Perform finalization and optimization steps to produce the
     /// [`Application`].
     ///
-    /// Requires [`Self::with_registry_tags`] with values chosen after the
-    /// complete application was fixed and publicly committed. The
-    /// `ragu_circuits/insecure-test-registry-tag` feature supplies a fixed
-    /// fallback for tests and must not be enabled in production.
+    /// This derives each registry's [`Tag`](ragu_circuits::registry::Tag)
+    /// from the circuits it holds: the application's steps, and the profile's
+    /// internal circuits. Tags supplied through [`Self::with_registry_tags`]
+    /// replace the derived ones.
     ///
     /// This also bootstraps the recursion: it fuses two synthesized dummies
     /// through an internal step — the only fuse treated as the base case — to

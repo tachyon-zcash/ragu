@@ -262,16 +262,9 @@ so an application cannot relabel tags derived for another profile or manifest.
 manifest digest and rejects a mismatch. The builder stores the tag values and
 `finalize` installs them without hashing them again.
 
-`finalize` requires these tags and returns an initialization error if they
-are missing.
-
-For tests, benchmarks, and fuzzing, `ragu_circuits` provides the explicitly
-named `insecure-test-registry-tag` feature. It uses a fixed test key when
-no tag is supplied. `ragu_testing` enables this feature for the repository's
-test fixtures, so existing test callers can keep using `finalize` directly.
-**Production consumers must supply their own tags and must not enable this
-feature or depend on `ragu_testing`.** Cargo features are additive, including
-features enabled by dependencies and `--all-features`.
+Without supplied tags, `finalize` derives both from the registered circuits,
+by hashing every wiring polynomial written out as its monomials; the `Tag`
+documentation in `ragu_circuits::registry` describes the hash.
 
 The registry tag ($\kappa$) must be sampled independently and without bias
 after the complete pre-keyed system description has been fixed and publicly

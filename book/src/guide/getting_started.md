@@ -20,17 +20,13 @@ Add Ragu to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ragu_circuits = { version = "0.1", features = ["insecure-test-registry-tag"] }
+ragu_circuits = "0.1"
 ragu_core = "0.1"
 ragu_pcd = { version = "0.1", features = ["baked"] }
 ragu_primitives = "0.1"
 udon = { package = "zakura-udon", version = "0.1.0", features = ["traits"] }
 rand = "0.10"
 ```
-
-This example uses a fixed registry tag for testing. **Do not enable
-`insecure-test-registry-tag` in production.** Production applications must
-[supply tags drawn after the circuits are fixed](configuration.md#registry-tags).
 
 ## Overview: Building a Merkle Tree with Proofs
 

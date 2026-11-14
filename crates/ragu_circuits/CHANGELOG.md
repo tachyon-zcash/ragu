@@ -16,12 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registry is built rather than in the type, with the rank's bounds checked.
 - Added iteration over the stored coefficients of sparse polynomials.
 - Added `Tag::from_beacon` and `RegistryBuilder::with_tag` for caller-supplied
-  tags chosen after the circuits are fixed. Finalization requires a tag;
-  `insecure-test-registry-tag` enables a fixed fallback for tests only.
+  tags chosen after the circuits are fixed, which replace the derived tag.
 
 ### Changed
 
-- Temporarily replaced evaluation-based registry tags with caller-supplied tags.
+- Registry tags are derived at finalization by hashing every registered
+  wiring polynomial, written out as its nonzero monomials in canonical order,
+  rather than by evaluating the registry polynomial at a handful of points.
+  The tag is a function of the registered circuits alone.
 
 - Renamed `registry::Key` to `registry::Tag` and `Registry::digest()` to
   `Registry::tag()`.
