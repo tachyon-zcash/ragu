@@ -57,7 +57,7 @@ pub fn point<F: Field>(w: F) -> F {
     // Test hook: this runs on the thread that calls `fuse`, outside its
     // parallel jobs, as the hook's thread-local requires.
     #[cfg(test)]
-    let w = crate::online_fq_tests::mutate_query_point(w);
+    let w = crate::online_fq_oracles_tests::mutate_query_point(w);
     w
 }
 

@@ -45,7 +45,7 @@
 //!
 //! The suite proves at the production rank, so its tests are ignored in the
 //! platform matrix. CI runs it in the `corruption (exhaustive)` job:
-//! `cargo test --release -p ragu_pcd --all-features --test online_oracles -- --include-ignored`.
+//! `cargo test --release -p ragu_pcd --all-features --test online_fp_oracles -- --include-ignored`.
 
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
