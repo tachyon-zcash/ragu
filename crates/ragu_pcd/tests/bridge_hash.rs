@@ -99,7 +99,8 @@ impl Step<Pasta> for HashOut {
         // consume it.
         let zeta = oracles.zeta().clone();
         let _ = oracles.output(Hashed).open(dr, &zeta)?;
-        let [x, y] = oracles.bridge_hash().clone();
+        let bridge_hash = oracles.bridge_hash();
+        let (x, y) = (bridge_hash.x().clone(), bridge_hash.y().clone());
         let data = D::just(|| [*x.value().take(), *y.value().take()]);
         let digest = FixedVec::try_from(vec![x, y])?;
         Ok((

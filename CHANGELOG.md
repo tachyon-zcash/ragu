@@ -37,9 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the challenge must read only values fixed before it. See the `ragu_pcd`
   changelog.
 - Bridge hash: `Oracles::bridge_hash` gives a step the digest of its own last
-  online commitment, and `Application::bridge_hash` computes it outside the
-  circuit, for hash chains over polynomial commitments. A header whose steps
-  read it keeps the hashed kind last in its `OnlinePolyCommit`.
+  online commitment, as a `BridgeHash` gadget that a step writes into a sponge,
+  and `Application::bridge_hash` computes it outside the circuit, for hash
+  chains over polynomial commitments. A header whose steps read it keeps the
+  hashed kind last in its `OnlinePolyCommit`.
 
 ### Changed
 
