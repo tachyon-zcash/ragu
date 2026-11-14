@@ -616,7 +616,8 @@ pub enum RxIndex {
     /// The points stage holding the children's commitments that must match
     /// their native unified instances (see [`stages::points`]).
     PointsBinding,
-    /// The points stage holding the rest of the children's commitments.
+    /// The points stage holding the rest of the children's commitments and
+    /// the step's own online Fq commitments.
     PointsPreamble,
     /// The points stage holding the nested `registry_wx` commitments.
     PointsRegistryWx,

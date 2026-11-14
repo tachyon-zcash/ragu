@@ -489,7 +489,7 @@ And since no header carries $f_q$, there is no header-carry check.
 ```
 
 A profile sets the count with `Profile::ONLINE_FQ_POLYS`, zero by default and at most `NUM_ONLINE_FQ_POLYS = 1`, so the standard profile does not change.
-The `Aggregator` profile turns it on when decompression lands; until then only the `Proving` test profile does, with a fixed placeholder polynomial and a `compute_v` that ignores $y_q$.
+The `Aggregator` profile turns it on when decompression lands; until then only test profiles do, with a fixed placeholder polynomial and a `compute_v` that ignores $y_q$.
 
 #### Details and soundness notes {#v5-soundness}
 
@@ -503,7 +503,8 @@ The `Aggregator` profile turns it on when decompression lands; until then only t
 - **The value.**
   A claimant must read $y_q$ from the `Query` stage rather than witness its own, since only the stage's $y_q$ is folded.
   Any nested internal circuit that loads the `Query` and challenge stages, as `collapse` and `compute_v` do, could be the claimant: the step's nested circuits share its stage commitments.
-  Only a circuit that cannot load them, such as an application circuit, would need v4's binding through its instance.
+  A circuit that cannot load them would need v4's binding through its instance.
+  An application circuit is one, and so is a nested extension circuit, whose claim takes only its own polynomial and its extension's stages.
 - **$\zeta_q$ is not uniform over $\F_q$.**
   It is the lift of a $k$-bit endoscalar, so a nonzero residual of degree $d$ vanishes at it with probability at most $d/2^k$, not $d/q$.
   Every nested challenge is such a lift, so this matches the nested batch's own error.

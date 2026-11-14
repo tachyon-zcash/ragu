@@ -952,10 +952,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .map(|_| online_fq::placeholder())
                 .collect(),
         );
+
+        // The step's own online Fq commitments, which the preamble stage
+        // holds.
+        let online_fq = builder.online_fq_commitments();
+
+        // Test hook: this runs on the thread that calls `fuse`, outside its
+        // parallel jobs, as the hook's thread-local requires.
+        #[cfg(test)]
+        let online_fq = &crate::online_fq_oracles_tests::mutate_stage_commitments(online_fq);
+
         let (binding, preamble) = native_points::preamble_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
-            builder.online_fq_commitments(),
+            online_fq,
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
             C::NestedCurve,

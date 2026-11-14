@@ -749,44 +749,59 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::Standard,
+        profile::{
+            Standard,
+            testing::{Opening, Proving},
+        },
     };
 
     type C = <Pasta as ragu_core::Cycle>::NestedCurve;
 
+    /// Each stage's declared values are its wires, in profile `P`.
+    fn stage_values_match_wire_counts_in<P: Profile>() {
+        assert_stage_values::<_, R, _>(&BindingStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&PreambleStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&RegistryWxStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&AbStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&FStage::<C, P>::default());
+        assert_stage_values::<_, R, _>(&WalkStage::<C, P>::default());
+    }
+
     #[test]
     fn stage_values_match_wire_counts() {
         let _: PhantomData<EpAffine> = PhantomData::<C>;
-        assert_stage_values::<_, R, _>(&BindingStage::<C, Standard>::default());
-        assert_stage_values::<_, R, _>(&PreambleStage::<C, Standard>::default());
-        assert_stage_values::<_, R, _>(&RegistryWxStage::<C, Standard>::default());
-        assert_stage_values::<_, R, _>(&AbStage::<C, Standard>::default());
-        assert_stage_values::<_, R, _>(&FStage::<C, Standard>::default());
-        assert_stage_values::<_, R, _>(&WalkStage::<C, Standard>::default());
+        stage_values_match_wire_counts_in::<Standard>();
+        // With the step's own online Fq commitment in the preamble stage,
+        // alone and beside an extension.
+        stage_values_match_wire_counts_in::<Opening>();
+        stage_values_match_wire_counts_in::<Proving>();
     }
 
     /// Every input has exactly one source, and splitting the walk into the
-    /// stages and reading it back is the identity.
-    #[test]
-    fn walk_round_trips_through_the_stages() {
+    /// stages and reading it back is the identity, in profile `P`. The
+    /// step's own online Fq commitments are the walk's last inputs, in slot
+    /// order, read from the preamble stage.
+    fn walk_round_trips_through_the_stages_in<P: Profile>() {
         use rand::{Rng, SeedableRng, rngs::StdRng};
         use udon::{curve::Projective, field::Field};
         let mut rng = StdRng::seed_from_u64(7);
-        let points: Vec<C> = (0..crate::internal::native::NUM_ENDOSCALING_POINTS)
+        let points: Vec<C> = (0..NumPoints::<P>::len())
             .map(|_| {
                 (ragu_core::pasta::Ep::generator()
                     * ragu_core::pasta::Fq::random(|bytes| rng.fill_bytes(bytes)))
                 .to_affine()
             })
             .collect();
-        let inputs = Inputs::<C, Standard>::from_walk(&points);
+        let inputs = Inputs::<C, P>::from_walk(&points);
         assert_eq!(inputs.walk(), points);
 
-        let mut children = alloc::vec![false; num_children_points::<Standard>()];
+        let num_inputs = NumInputs::<P>::len();
+        let mut children = alloc::vec![false; num_children_points::<P>()];
         let mut sources = Vec::new();
         let mut bindings = 0;
-        for i in 0..NumInputs::<Standard>::len() {
-            let source = input_source::<Standard>(i);
+        let mut online_fq = 0;
+        for i in 0..num_inputs {
+            let source = input_source::<P>(i);
             assert!(
                 !sources.contains(&source),
                 "input source {source:?} used twice"
@@ -804,11 +819,28 @@ mod tests {
                     assert!(!children[k], "child point {k} sourced twice");
                     children[k] = true;
                 }
+                InputSource::OnlineFq(j) => {
+                    assert_eq!(j, online_fq, "online Fq commitments out of slot order");
+                    assert_eq!(i, num_inputs - P::ONLINE_FQ_POLYS + j);
+                    // Input `i` is point `1 + i`: the initial point is first.
+                    assert_eq!(inputs.preamble.online_fq[j], points[1 + i]);
+                    online_fq += 1;
+                }
                 _ => {}
             }
         }
-        assert_eq!(bindings, 2 * num_child_bindings::<Standard>());
+        assert_eq!(bindings, 2 * num_child_bindings::<P>());
         assert!(children.iter().all(|&c| c));
+        assert_eq!(online_fq, P::ONLINE_FQ_POLYS);
+    }
+
+    #[test]
+    fn walk_round_trips_through_the_stages() {
+        walk_round_trips_through_the_stages_in::<Standard>();
+        // With the step's own online Fq commitment at the walk's tail,
+        // alone and beside an extension.
+        walk_round_trips_through_the_stages_in::<Opening>();
+        walk_round_trips_through_the_stages_in::<Proving>();
     }
 
     /// A child's $P_n$ is the last of its points, where

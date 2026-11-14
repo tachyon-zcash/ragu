@@ -1190,6 +1190,25 @@ pub(crate) mod testing {
             B: SelectableBackend;
     }
 
+    /// One online Fq polynomial per step and no extension: the standard
+    /// layout with the slot on, which proves at the production rank.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Opening;
+
+    impl Profile for Opening {
+        const NAME: &'static str = "opening";
+        const NATIVE_EXTENSION: usize = 0;
+        const NESTED_EXTENSION: usize = 0;
+        const ONLINE_FQ_POLYS: usize = 1;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+    }
+
     /// `CIRCUITS` native circuits and one nested circuit, each side's over
     /// one stage under one final mask, with hooks that register the fuse's
     /// own circuits and stages as stand-ins.
@@ -2016,7 +2035,7 @@ mod tests {
     use ragu_circuits::polynomials::R;
 
     use super::{
-        testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Wider},
+        testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Opening, Wider},
         *,
     };
 
@@ -2445,6 +2464,30 @@ mod tests {
     }
 
     #[test]
+    fn an_online_fq_polynomial_alone_adds_a_step_to_each_walk() {
+        // The standard layout with the slot on. Its native walk was full,
+        // so the point adds a native step, whose rx polynomial adds a
+        // nested step in turn: one more rx polynomial on each side.
+        let shape = Shape::of::<Opening>();
+        assert_eq!(shape, Shape::solve(0, 0, 1, 4, 4));
+        assert_eq!(
+            shape,
+            Shape {
+                native_rx: 49,
+                nested_points: 119,
+                nested_steps: 30,
+                nested_rx: 44,
+                online_fq: 1,
+                native_points: 104,
+                native_steps: 26,
+            }
+        );
+        assert_eq!(shape.polynomials(), 101);
+        assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
+        assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
+    }
+
+    #[test]
     fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
         struct TooMany;
@@ -2539,6 +2582,32 @@ mod tests {
             .register(UnitStep)?
             .finalize(crate::pasta::baked_aggregator())?;
         let mut rng = StdRng::seed_from_u64(14);
+        let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
+        assert!(app.verify_uncompressed(&fused, &mut rng)?);
+        let compressed = app.compress(&fused, &mut rng)?;
+        assert!(app.verify_compressed(&compressed)?);
+        Ok(())
+    }
+
+    /// The slot proves without an extension: an application in the
+    /// [`Opening`] profile, one online Fq polynomial per step and nothing
+    /// else beyond the fuse, seeds, fuses, verifies and compresses at the
+    /// production rank.
+    #[test]
+    fn an_online_fq_polynomial_proves_verifies_and_compresses() -> Result<()> {
+        use rand::{SeedableRng, rngs::StdRng};
+
+        use super::testing::UnitStep;
+        use crate::ApplicationBuilder;
+
+        const HEADER_SIZE: usize = 4;
+
+        let app = ApplicationBuilder::<Profiled<Pasta, Opening>, R<13>, HEADER_SIZE>::new()
+            .register(UnitStep)?
+            .finalize(crate::pasta::baked())?;
+        let mut rng = StdRng::seed_from_u64(13);
         let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
         let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
         let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;

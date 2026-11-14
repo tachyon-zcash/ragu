@@ -102,6 +102,11 @@ pub struct Evaluations<F, P: Profile> {
     pub right: ChildEvaluationsWitness<F, P>,
     /// The value of each of the step's own online Fq polynomials at
     /// $\zeta_q$. The point is the challenge stage's, so it is not held.
+    ///
+    /// No other check reads these values, and they are opened at $w_n$, as
+    /// the `registry_xy` polynomials are. They must be committed before
+    /// $\alpha$, as this stage is: a value chosen after $\alpha$ could
+    /// cancel a false `registry_xy` opening in $f_n$.
     pub online_fq: FixedVec<F, FqPolysLen<P>>,
 }
 
@@ -272,11 +277,18 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::Standard,
+        profile::{
+            Standard,
+            testing::{Opening, Proving},
+        },
     };
 
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
+        // With the value of the step's own online Fq polynomial, alone and
+        // beside an extension.
+        assert_stage_values(&Stage::<EqAffine, R, Opening>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Proving>::default());
     }
 }

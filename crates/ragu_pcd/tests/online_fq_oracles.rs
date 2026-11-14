@@ -1,19 +1,26 @@
 //! Adversarial openings of the step's private Fq polynomial.
 //!
-//! Mutations happen before the Query/Eval stages are committed, so the
+//! Mutations happen before the stages they change are committed, so the
 //! transcript, circuit witnesses and parent proofs follow the changed data.
-//! The wrong-point case also changes the quotient's opening point and uses
-//! the polynomial's correct value there: only `compute_v`'s fold at
-//! $\zeta_q$, which no stage can move, should reject it. The other cases
-//! keep the polynomial and quotient construction honest while claiming a
-//! false Query or Eval value.
+//! The swapped-polynomial case commits one polynomial in the native points
+//! stage, which $w$ binds, and then opens and folds another: the transcript
+//! and both openings are coherent, and only the walk's circuits, which read
+//! the commitment from that stage, should reject it. The wrong-point case
+//! also changes the quotient's opening point and uses the polynomial's
+//! correct value there: only `compute_v`'s fold at $\zeta_q$, which no stage
+//! can move, should reject it. The other cases keep the polynomial and
+//! quotient construction honest while claiming a false Query or Eval value.
 
+use alloc::vec::Vec;
 use core::cell::Cell;
 
 use ragu_circuits::polynomials::R;
 use ragu_core::{Result, pasta::Pasta};
 use rand::{SeedableRng, rngs::StdRng};
-use udon::field::Field;
+use udon::{
+    curve::{Affine, Projective},
+    field::Field,
+};
 
 use crate::{
     Application, ApplicationBuilder, Pcd,
@@ -30,6 +37,7 @@ type App = Application<'static, C, Rk, 4>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mutation {
     None,
+    Commitment,
     Point,
     QueryValue,
     EvalValue,
@@ -53,6 +61,20 @@ fn with_mutation<T>(mutation: Mutation, f: impl FnOnce() -> T) -> T {
     let _reset = Reset;
     MUTATION.set(mutation);
     f()
+}
+
+/// Changes the commitments the native points stage holds, which $w$ binds,
+/// to those of twice each polynomial. The step then opens and folds the
+/// polynomials themselves, as a prover that swapped them after $w$ would.
+pub(crate) fn mutate_stage_commitments<C: Affine>(commitments: &[C]) -> Vec<C> {
+    if MUTATION.get() == Mutation::Commitment {
+        commitments
+            .iter()
+            .map(|commitment| commitment.to_projective().double().to_affine())
+            .collect()
+    } else {
+        commitments.to_vec()
+    }
 }
 
 /// Changes the point the prover opens at: the Query value and the quotient
@@ -125,6 +147,11 @@ fn rejects(mutation: Mutation) -> Result<()> {
     // path, but must propagate the child's false claim.
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child)?;
     assert_verification(&app, &parent, &mut rng, false)
+}
+
+#[test]
+fn a_polynomial_swapped_after_its_commitment_rejects() -> Result<()> {
+    rejects(Mutation::Commitment)
 }
 
 #[test]

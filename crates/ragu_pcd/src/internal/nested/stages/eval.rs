@@ -105,6 +105,10 @@ pub struct Evaluations<F, P: Profile> {
     pub right: ChildEvaluationsWitness<F, P>,
     pub current: CurrentStepWitness<F>,
     /// The step's own online Fq polynomials at $u_n$.
+    ///
+    /// No other check reads these values. They must be committed before
+    /// `pre_beta`, as this stage is: a value chosen after $\beta_n$ could
+    /// cancel a false evaluation in $v_n$.
     pub online_fq: FixedVec<F, FqPolysLen<P>>,
 }
 
@@ -277,11 +281,18 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::Standard,
+        profile::{
+            Standard,
+            testing::{Opening, Proving},
+        },
     };
 
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
+        // With the evaluation of the step's own online Fq polynomial, alone
+        // and beside an extension.
+        assert_stage_values(&Stage::<EqAffine, R, Opening>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Proving>::default());
     }
 }
