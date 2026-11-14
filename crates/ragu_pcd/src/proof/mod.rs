@@ -118,8 +118,12 @@ struct Cached<T>(T);
 
 /// Represents proof-carrying data, a recursive proof for the correctness of
 /// some accompanying data.
+///
+/// The proof is shared between the clones of a `Pcd`: cloning one copies
+/// its data and none of the proof's polynomials, and a step that takes a
+/// clone as a child reads the proof where it is.
 pub struct Pcd<C: Cycle, R: Rank, H: Header<C::CircuitField>> {
-    proof: Proof<C, R>,
+    proof: Arc<Proof<C, R>>,
     data: H::Data,
 }
 
@@ -135,8 +139,16 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     }
 
     /// Consumes the proof-carrying data and returns the proof and data
-    /// separately.
+    /// separately. The proof is copied if a clone of this `Pcd` still holds
+    /// it.
     pub fn into_parts(self) -> (Proof<C, R>, H::Data) {
+        let proof = Arc::try_unwrap(self.proof).unwrap_or_else(|shared| (*shared).clone());
+        (proof, self.data)
+    }
+
+    /// [`into_parts`](Self::into_parts) for a caller that only reads the
+    /// proof: it stays shared with whatever clones hold it.
+    pub(crate) fn into_shared_parts(self) -> (Arc<Proof<C, R>>, H::Data) {
         (self.proof, self.data)
     }
 
@@ -159,7 +171,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
 impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
     fn clone(&self) -> Self {
         Pcd {
-            proof: self.proof.clone(),
+            proof: Arc::clone(&self.proof),
             data: self.data.clone(),
         }
     }
@@ -532,7 +544,10 @@ where
 impl<C: Cycle, R: Rank> Proof<C, R> {
     /// Augment a recursive proof with some data, described by a [`Header`].
     pub fn carry<H: Header<C::CircuitField>>(self, data: H::Data) -> Pcd<C, R, H> {
-        Pcd { proof: self, data }
+        Pcd {
+            proof: Arc::new(self),
+            data,
+        }
     }
 
     // TODO: Route this witness-value computation through the selected backend

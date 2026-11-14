@@ -37,7 +37,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use crate::{
-    Application, Pcd, RAGU_TAG,
+    Application, Pcd, Proof, RAGU_TAG,
     internal::{nested, transcript::Transcript},
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -96,16 +96,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         crate::timing::start();
 
-        let (left, left_data) = left.into_parts();
-        let (right, right_data) = right.into_parts();
-        let native_source = NativeFuseProofSource {
-            left: &left,
-            right: &right,
-        };
-        let nested_source = NestedFuseProofSource {
-            left: &left,
-            right: &right,
-        };
+        // The children are read and never changed, so one whose caller
+        // kept a clone is read where it is, not copied.
+        let (left, left_data) = left.into_shared_parts();
+        let (right, right_data) = right.into_shared_parts();
+        let (left, right): (&Proof<C, R>, &Proof<C, R>) = (&left, &right);
+        let native_source = NativeFuseProofSource { left, right };
+        let nested_source = NestedFuseProofSource { left, right };
 
         // Where the backend has them, the stages below keep polynomials on
         // devices rather than on the host. The children's revdot claims read
@@ -160,8 +157,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         rng,
                         &step,
                         &witness,
-                        (&left, &left_data),
-                        (&right, &right_data),
+                        (left, &left_data),
+                        (right, &right_data),
                         &mut builder,
                     )?;
                     crate::timing::mark("application");
@@ -171,7 +168,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
                     let (preamble_witness, nested_preamble) =
-                        self.compute_preamble(rng, &left, &right, &mut builder)?;
+                        self.compute_preamble(rng, left, right, &mut builder)?;
                     let bridge_preamble_commitment =
                         Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
                     bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -185,8 +182,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         rng,
                         step,
                         witness,
-                        (&left, left_data),
-                        (&right, right_data),
+                        (left, left_data),
+                        (right, right_data),
                         *w.value().take(),
                         prepared,
                         &mut builder,
@@ -225,8 +222,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 rng,
                 &native_registry,
                 &nested_registry,
-                &left,
-                &right,
+                left,
+                right,
                 &mut devices,
                 &mut builder,
             )?;
@@ -360,8 +357,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &z,
             &registry_wy,
             &nested_registry_wy,
-            &left,
-            &right,
+            left,
+            right,
             &mut devices,
             &mut builder,
         )?;
@@ -382,8 +379,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_s_prime,
             &nested_registry_wy,
             &mut builder,
-            &left,
-            &right,
+            left,
+            right,
             &mut devices,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
@@ -395,8 +392,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
             &bound_challenges,
-            &left,
-            &right,
+            left,
+            right,
             &native_s_prime,
             &registry_wy,
             &nested_s_prime,
@@ -455,8 +452,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let (points, native_points, native_walk, step_polys) = self.compute_p(
                 rng,
                 &pre_beta,
-                &left,
-                &right,
+                left,
+                right,
                 &native_s_prime,
                 &registry_wy,
                 &native_f,
