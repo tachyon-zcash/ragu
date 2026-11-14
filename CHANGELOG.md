@@ -45,8 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the scalar field. The step commits it before its challenge, and the nested
   `compute_v` circuit opens it at the lift of that challenge and folds the
   opening in the step's own nested batch. The step does not export it.
-  Until decompression lands, the slot holds a fixed test polynomial and no
-  built-in profile sets the count; the standard profile does not change.
+  Until decompression lands, the slot holds a fixed placeholder polynomial,
+  no circuit constrains the opened value, and no built-in profile sets the
+  count; the standard profile does not change.
 
 ### Changed
 

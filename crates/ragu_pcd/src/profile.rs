@@ -146,7 +146,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
     /// opening into the step's own nested batch. The step does not export
     /// the polynomial, so a parent never opens it. Each polynomial adds
-    /// one point to the native walk.
+    /// one point to the native walk, and a full walk then needs another
+    /// step on each side.
+    ///
+    /// Until decompression lands, each slot holds a fixed placeholder
+    /// polynomial, and no circuit constrains its value at the opening
+    /// point: the slot proves only that the value is an opening of the
+    /// committed polynomial. Do not rely on it for anything else.
     ///
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
