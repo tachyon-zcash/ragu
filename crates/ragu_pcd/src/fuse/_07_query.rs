@@ -199,7 +199,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     // outside its parallel jobs, as the hook's thread-local
                     // requires.
                     #[cfg(test)]
-                    let value = crate::online_fq_tests::query_value(value);
+                    let value = crate::online_fq_tests::mutate_query_value(value);
                     value
                 })
                 .collect::<Vec<_>>(),

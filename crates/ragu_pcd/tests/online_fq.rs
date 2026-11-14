@@ -57,7 +57,7 @@ fn with_mutation<T>(mutation: Mutation, f: impl FnOnce() -> T) -> T {
 
 /// Changes the point the prover opens at: the Query value and the quotient
 /// both use it.
-pub(crate) fn query_point<F: Field>(point: F) -> F {
+pub(crate) fn mutate_query_point<F: Field>(point: F) -> F {
     if MUTATION.get() == Mutation::Point {
         point + F::ONE
     } else {
@@ -66,7 +66,7 @@ pub(crate) fn query_point<F: Field>(point: F) -> F {
 }
 
 /// Changes the claimed value without changing the committed polynomial.
-pub(crate) fn query_value<F: Field>(value: F) -> F {
+pub(crate) fn mutate_query_value<F: Field>(value: F) -> F {
     if MUTATION.get() == Mutation::QueryValue {
         value + F::ONE
     } else {
@@ -75,7 +75,7 @@ pub(crate) fn query_value<F: Field>(value: F) -> F {
 }
 
 /// Changes the evaluation at u without changing the committed polynomial.
-pub(crate) fn eval_value<F: Field>(value: F) -> F {
+pub(crate) fn mutate_eval_value<F: Field>(value: F) -> F {
     if MUTATION.get() == Mutation::EvalValue {
         value + F::ONE
     } else {
