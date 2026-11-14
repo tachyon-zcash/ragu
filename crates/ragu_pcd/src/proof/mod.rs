@@ -92,18 +92,17 @@ use udon::{
 };
 
 use crate::{
-    header::{Header, NUM_ONLINE_POLYNOMIALS},
+    header::{Header, NUM_ONLINE_FP_POLYS},
     internal::{
         endoscalar::EndoscalarStage,
         native::{
-            self, RxComponent, RxIndex,
+            self, RxComponent, RxIndex, online,
             stages::points::{self as native_points, Inputs},
         },
         nested::{
             self, EndoscalingStep, EndoscalingStepWitness, NumPoints, NumSteps, PointsStage,
-            PointsWitness,
+            PointsWitness, online as online_fq,
         },
-        online,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -143,7 +142,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// The proof's polynomials associated with its output header, one
     /// coefficient vector in ascending degree per slot, as the step that
     /// produced this proof committed them.
-    pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_POLYNOMIALS] {
+    pub fn polynomials(&self) -> [Vec<C::CircuitField>; NUM_ONLINE_FP_POLYS] {
         online::coefficients(self.proof.online_polynomials())
     }
 
@@ -151,7 +150,7 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Pcd<C, R, H> {
     /// what a parent opens as its left or right slots, and what
     /// [`Application::commit`](crate::Application::commit) computes from
     /// the coefficients.
-    pub fn commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub fn commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         self.proof.online_commitments()
     }
 }
@@ -241,16 +240,16 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// The rx polynomials of the stages of the profile's native extension.
     pub(crate) native_extension_stage_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) native_points_binding_rx: sparse::Polynomial<C::CircuitField, R>,
-    pub(crate) native_points_children_rx: sparse::Polynomial<C::CircuitField, R>,
+    pub(crate) native_points_preamble_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_registry_wx_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_ab_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_f_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R>,
 
     /// This step's output polynomials exposed through the polynomial-query API,
-    /// padded with the constant one (see `internal::online`). Committed before
-    /// `w`; the parent opens them as its left or right slots.
-    pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
+    /// padded with the constant one (see `internal::native::online`). Committed
+    /// before `w`; the parent opens them as its left or right slots.
+    pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS],
     /// Six opening claims, in [L0, L1, R0, R1, O0, O1] order.
     /// The parent uses these same values in the application and `compute_v`
     /// k(y) targets, binding the application's queries to the proved openings.
@@ -362,7 +361,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     native_extension_circuit_commitments: Vec<Cached<C::HostCurve>>,
     native_extension_stage_commitments: Vec<Cached<C::HostCurve>>,
     native_points_binding_commitment: Cached<C::HostCurve>,
-    native_points_children_commitment: Cached<C::HostCurve>,
+    native_points_preamble_commitment: Cached<C::HostCurve>,
     native_points_registry_wx_commitment: Cached<C::HostCurve>,
     native_points_ab_commitment: Cached<C::HostCurve>,
     native_points_f_commitment: Cached<C::HostCurve>,
@@ -371,7 +370,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Nested collapse binds their exported instance values to the points
     /// in this step's prechallenge Preamble. The parent uses those same
     /// exported points as its input polynomial commitments.
-    online_commitments: [Cached<C::HostCurve>; NUM_ONLINE_POLYNOMIALS],
+    online_commitments: [Cached<C::HostCurve>; NUM_ONLINE_FP_POLYS],
 
     // Bridge commitments (non-cached)
     pub(crate) bridge_preamble_commitment: C::NestedCurve,
@@ -440,7 +439,7 @@ impl<C: Cycle, R: Rank> core::ops::Index<RxIndex> for Proof<C, R> {
             ExtensionCircuit(k) => &self.native_extension_circuit_rxs[k as usize],
             ExtensionStage(k) => &self.native_extension_stage_rxs[k as usize],
             PointsBinding => &self.native_points_binding_rx,
-            PointsChildren => &self.native_points_children_rx,
+            PointsPreamble => &self.native_points_preamble_rx,
             PointsRegistryWx => &self.native_points_registry_wx_rx,
             PointsAb => &self.native_points_ab_rx,
             PointsF => &self.native_points_f_rx,
@@ -626,7 +625,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
                 self.native_registry_xy_commitment(),
                 self.native_p_commitment(),
                 self.native_rx_commitment(RxIndex::PointsBinding),
-                self.native_rx_commitment(RxIndex::PointsChildren),
+                self.native_rx_commitment(RxIndex::PointsPreamble),
                 self.native_rx_commitment(RxIndex::PointsRegistryWx),
                 self.native_rx_commitment(RxIndex::PointsAb),
                 self.native_rx_commitment(RxIndex::PointsF),
@@ -642,13 +641,13 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     /// API, in slot order, padded with the constant one.
     pub(crate) fn online_polynomials(
         &self,
-    ) -> &[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS] {
+    ) -> &[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS] {
         &self.online_polynomials
     }
 
     /// The commitments of [`online_polynomials`](Self::online_polynomials),
     /// which this proof's nested instance exports.
-    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         self.online_commitments
             .clone()
             .map(|commitment| commitment.0)
@@ -753,7 +752,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
             ExtensionCircuit(k) => self.native_extension_circuit_commitments[k as usize].0,
             ExtensionStage(k) => self.native_extension_stage_commitments[k as usize].0,
             PointsBinding => self.native_points_binding_commitment.0,
-            PointsChildren => self.native_points_children_commitment.0,
+            PointsPreamble => self.native_points_preamble_commitment.0,
             PointsRegistryWx => self.native_points_registry_wx_commitment.0,
             PointsAb => self.native_points_ab_commitment.0,
             PointsF => self.native_points_f_commitment.0,
@@ -935,19 +934,38 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok((p_commitment, witness))
     }
 
-    /// Commits the native points binding and children stages over the
-    /// children's nested commitments, before $w$ is squeezed; the preamble
-    /// bridge carries their commitments.
-    pub(crate) fn commit_native_points_children<RNG: rand::CryptoRng>(
+    /// Commits the native points binding and preamble stages over the
+    /// children's nested commitments and the step's own online Fq
+    /// commitments, before $w$ is squeezed; the preamble bridge carries
+    /// their commitments.
+    pub(crate) fn commit_native_points_preamble<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let (binding, children) = native_points::children_witnesses::<_, C::Profile>(
+        // TODO(decompression): the profile's prover supplies these
+        // polynomials. Until then each slot holds the placeholder.
+        builder.set_online_fq_polynomials(
+            (0..C::Profile::ONLINE_FQ_POLYS)
+                .map(|_| online_fq::placeholder())
+                .collect(),
+        );
+
+        // The step's own online Fq commitments, which the preamble stage
+        // holds.
+        let online_fq = builder.online_fq_commitments();
+
+        // Test hook: this runs on the thread that calls `fuse`, outside its
+        // parallel jobs, as the hook's thread-local requires.
+        #[cfg(test)]
+        let online_fq = &crate::online_fq_oracles_tests::mutate_stage_commitments(online_fq);
+
+        let (binding, preamble) = native_points::preamble_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
+            online_fq,
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
             C::NestedCurve,
@@ -956,12 +974,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             &binding,
         )?);
-        builder.set_native_points_children_rx(<native_points::ChildrenStage<
+        builder.set_native_points_preamble_rx(<native_points::PreambleStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &children,
+            &preamble,
         )?);
         Ok(())
     }
@@ -1048,12 +1066,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             &inputs.binding,
         )?);
-        builder.set_native_points_children_rx(<native_points::ChildrenStage<
+        builder.set_native_points_preamble_rx(<native_points::PreambleStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &inputs.children,
+            &inputs.preamble,
         )?);
         self.commit_native_points_registry_wx(
             rng,
@@ -1277,6 +1295,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Every placeholder is the commitment of a polynomial this proof
         // holds, so that p_n is their beta-fold and P_n its commitment, as
         // a parent's batch requires of a child.
+        builder.set_online_fq_polynomials(
+            (0..C::Profile::ONLINE_FQ_POLYS)
+                .map(|_| online_fq::placeholder())
+                .collect(),
+        );
         let (nested_p_poly, nested_p_commitment) = {
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
@@ -1305,6 +1328,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             push(nested_commitment, &ones_nested); // a
             push(nested_commitment, &ones_nested); // b
             push(registry_xy_commitment, registry_xy); // registry_xy
+            for (poly, &commitment) in builder
+                .online_fq_polynomials()
+                .iter()
+                .zip(builder.online_fq_commitments())
+            {
+                push(commitment, poly); // the step's own online Fq polynomial
+            }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let inputs = Inputs::from_walk(&points);
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)
@@ -1466,7 +1496,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             // The six online slots: every one is this proof's own padding,
             // as the children of the bootstrap fuse that opens them hold it.
             for _ in 0..3 {
-                for i in 0..NUM_ONLINE_POLYNOMIALS {
+                for i in 0..NUM_ONLINE_FP_POLYS {
                     push(online_commitments[i], &online[i]);
                 }
             }
@@ -1515,7 +1545,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_registry_xy: registry_xy_commitment,
                 stashed_p: p_commitment,
                 stashed_points_binding: host_commitment,
-                stashed_points_children: host_commitment,
+                stashed_points_preamble: host_commitment,
                 stashed_points_registry_wx: host_commitment,
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
@@ -1536,7 +1566,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 &nested::stages::preamble::Witness {
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
-                    native_points_children: builder.native_points_children_commitment(),
+                    native_points_preamble: builder.native_points_preamble_commitment(),
                     online_commitments: builder.online_commitments(),
                     application_stage: builder.native_application_stage_commitment(),
                     left: trivial_child_witness.clone(),
@@ -1547,7 +1577,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);
             builder.set_bridge_preamble_rx(rx, commitment);
 
-            let o1 = builder.online_commitments()[NUM_ONLINE_POLYNOMIALS - 1];
+            let o1 = builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1];
             let rx = nested::stages::bridge_hash::rx::<C::HostCurve, R>(o1)
                 .expect("trivial bridge-hash rx");
             let commitment = B::sparse_commit_to_affine(&rx, nested_gen);

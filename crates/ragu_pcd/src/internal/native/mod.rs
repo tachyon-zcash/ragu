@@ -33,9 +33,9 @@ use crate::{
     step,
 };
 
-/// The nested-curve points the native endoscaling walks into $P_n$: the
-/// nested batch's commitments, in [`nested::pcs::Batch::evaluated`] order
-/// after $f_n$'s.
+/// The nested-curve points the native endoscaling walks into $P_n$ in the
+/// standard profile: the nested batch's commitments, in
+/// [`nested::pcs::Batch::evaluated`] order after $f_n$'s.
 pub const NUM_ENDOSCALING_POINTS: usize = nested::pcs::NUM_BATCHED_POINTS;
 
 /// Length type for the nested-curve points the native endoscaling walks into
@@ -221,6 +221,7 @@ pub mod circuits {
 }
 
 pub mod claims;
+pub mod online;
 pub mod unified;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,7 +253,7 @@ pub enum InternalCircuitIndex {
     QueryStage,
     EvalStage,
     PointsBindingStage,
-    PointsChildrenStage,
+    PointsPreambleStage,
     PointsRegistryWxStage,
     PointsAbStage,
     PointsFStage,
@@ -332,7 +333,7 @@ impl InternalCircuitIndex {
         push(&mut slots, &mut c, Self::QueryStage);
         push(&mut slots, &mut c, Self::EvalStage);
         push(&mut slots, &mut c, Self::PointsBindingStage);
-        push(&mut slots, &mut c, Self::PointsChildrenStage);
+        push(&mut slots, &mut c, Self::PointsPreambleStage);
         push(&mut slots, &mut c, Self::PointsRegistryWxStage);
         push(&mut slots, &mut c, Self::PointsAbStage);
         push(&mut slots, &mut c, Self::PointsFStage);
@@ -416,7 +417,7 @@ impl InternalCircuitIndex {
             | QueryStage
             | EvalStage
             | PointsBindingStage
-            | PointsChildrenStage
+            | PointsPreambleStage
             | PointsRegistryWxStage
             | PointsAbStage
             | PointsFStage
@@ -458,7 +459,7 @@ pub struct InternalCircuitValues<T, P: Profile> {
     pub query_stage: T,
     pub eval_stage: T,
     pub points_binding_stage: T,
-    pub points_children_stage: T,
+    pub points_preamble_stage: T,
     pub points_registry_wx_stage: T,
     pub points_ab_stage: T,
     pub points_f_stage: T,
@@ -510,7 +511,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             QueryStage => &self.query_stage,
             EvalStage => &self.eval_stage,
             PointsBindingStage => &self.points_binding_stage,
-            PointsChildrenStage => &self.points_children_stage,
+            PointsPreambleStage => &self.points_preamble_stage,
             PointsRegistryWxStage => &self.points_registry_wx_stage,
             PointsAbStage => &self.points_ab_stage,
             PointsFStage => &self.points_f_stage,
@@ -565,7 +566,7 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
             query_stage: f(QueryStage)?,
             eval_stage: f(EvalStage)?,
             points_binding_stage: f(PointsBindingStage)?,
-            points_children_stage: f(PointsChildrenStage)?,
+            points_preamble_stage: f(PointsPreambleStage)?,
             points_registry_wx_stage: f(PointsRegistryWxStage)?,
             points_ab_stage: f(PointsAbStage)?,
             points_f_stage: f(PointsFStage)?,
@@ -615,8 +616,9 @@ pub enum RxIndex {
     /// The points stage holding the children's commitments that must match
     /// their native unified instances (see [`stages::points`]).
     PointsBinding,
-    /// The points stage holding the rest of the children's commitments.
-    PointsChildren,
+    /// The points stage holding the rest of the children's commitments and
+    /// the step's own online Fq commitments.
+    PointsPreamble,
     /// The points stage holding the nested `registry_wx` commitments.
     PointsRegistryWx,
     /// The points stage holding the nested `registry_wy` commitment, $A_n$
@@ -676,7 +678,7 @@ impl RxIndex {
         push(&mut slots, &mut c, Self::Query);
         push(&mut slots, &mut c, Self::Eval);
         push(&mut slots, &mut c, Self::PointsBinding);
-        push(&mut slots, &mut c, Self::PointsChildren);
+        push(&mut slots, &mut c, Self::PointsPreamble);
         push(&mut slots, &mut c, Self::PointsRegistryWx);
         push(&mut slots, &mut c, Self::PointsAb);
         push(&mut slots, &mut c, Self::PointsF);
@@ -748,7 +750,7 @@ pub struct RxValues<T, P: Profile> {
     pub query: T,
     pub eval: T,
     pub points_binding: T,
-    pub points_children: T,
+    pub points_preamble: T,
     pub points_registry_wx: T,
     pub points_ab: T,
     pub points_f: T,
@@ -795,7 +797,7 @@ impl<T, P: Profile> RxValues<T, P> {
             Query => &self.query,
             Eval => &self.eval,
             PointsBinding => &self.points_binding,
-            PointsChildren => &self.points_children,
+            PointsPreamble => &self.points_preamble,
             PointsRegistryWx => &self.points_registry_wx,
             PointsAb => &self.points_ab,
             PointsF => &self.points_f,
@@ -844,7 +846,7 @@ impl<T, P: Profile> RxValues<T, P> {
             query: f(Query)?,
             eval: f(Eval)?,
             points_binding: f(PointsBinding)?,
-            points_children: f(PointsChildren)?,
+            points_preamble: f(PointsPreamble)?,
             points_registry_wx: f(PointsRegistryWx)?,
             points_ab: f(PointsAb)?,
             points_f: f(PointsF)?,
@@ -1025,7 +1027,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(
             )?),
-            PointsChildrenStage => registry.register_bonding(<stages::points::ChildrenStage<
+            PointsPreambleStage => registry.register_bonding(<stages::points::PreambleStage<
                 C::NestedCurve,
                 C::Profile,
             > as StageExt<C::CircuitField, R>>::mask(

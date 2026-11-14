@@ -17,7 +17,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::header::{Has, Header, NUM_ONLINE_POLYNOMIALS};
+use super::header::{Has, Header, NUM_ONLINE_FP_POLYS};
 use crate::{internal::native::InternalCircuitIndex, profile::Profile};
 
 #[derive(Copy, Clone)]
@@ -154,14 +154,11 @@ pub struct HeaderInput<'a, F: Field, H: Header<F>> {
     /// The header's data, as the step's [`witness`](Step::witness) phase
     /// also receives it.
     pub data: &'a H::Data,
-    polynomials: &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS],
+    polynomials: &'a [Vec<F>; NUM_ONLINE_FP_POLYS],
 }
 
 impl<'a, F: Field, H: Header<F>> HeaderInput<'a, F, H> {
-    pub(crate) fn new(
-        data: &'a H::Data,
-        polynomials: &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS],
-    ) -> Self {
+    pub(crate) fn new(data: &'a H::Data, polynomials: &'a [Vec<F>; NUM_ONLINE_FP_POLYS]) -> Self {
         HeaderInput { data, polynomials }
     }
 
@@ -176,7 +173,7 @@ impl<'a, F: Field, H: Header<F>> HeaderInput<'a, F, H> {
     }
 
     /// Every slot's coefficients, in slot order.
-    pub(crate) fn polynomials(&self) -> &'a [Vec<F>; NUM_ONLINE_POLYNOMIALS] {
+    pub(crate) fn polynomials(&self) -> &'a [Vec<F>; NUM_ONLINE_FP_POLYS] {
         self.polynomials
     }
 }

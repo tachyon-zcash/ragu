@@ -1008,8 +1008,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         type Nested<C> = <C as Cycle>::NestedCurve;
         let native_walk_values: Vec<C::CircuitField> = [
             binding_values.clone(),
-            stage_values::<_, R, native_points::ChildrenStage<Nested<C>, C::Profile>>(
-                &native_points.children,
+            stage_values::<_, R, native_points::PreambleStage<Nested<C>, C::Profile>>(
+                &native_points.preamble,
             )?,
             stage_values::<_, R, native_points::RegistryWxStage<Nested<C>, C::Profile>>(
                 &native_points.registry_wx,
@@ -1079,7 +1079,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // witnessed: that interstitial is its output; the endoscalar bits and
         // every other point are inputs. The points are the prover's own
         // witness, from `compute_p`.
-        let own_o1 = builder.online_commitments()[crate::header::NUM_ONLINE_POLYNOMIALS - 1];
+        let own_o1 = builder.online_commitments()[crate::header::NUM_ONLINE_FP_POLYS - 1];
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
             stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
@@ -1186,7 +1186,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         builder.native_registry_xy_commitment(),
                         builder.native_p_commitment(),
                         builder.native_points_binding_commitment(),
-                        builder.native_points_children_commitment(),
+                        builder.native_points_preamble_commitment(),
                         builder.native_points_registry_wx_commitment(),
                         builder.native_points_ab_commitment(),
                         builder.native_points_f_commitment(),

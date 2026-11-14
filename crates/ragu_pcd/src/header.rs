@@ -15,7 +15,7 @@ mod online;
 
 pub(crate) use self::online::slot;
 pub use self::online::{
-    Has, NUM_ONLINE_POLYNOMIALS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding,
+    Has, NUM_ONLINE_FP_POLYS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding,
 };
 #[doc(hidden)]
 pub use self::online::{Slot0, Slot1};

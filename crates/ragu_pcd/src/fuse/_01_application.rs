@@ -22,7 +22,7 @@ use udon::{curve::Affine as _, field::Field};
 
 use crate::{
     Application, Header, Proof,
-    internal::{ky, online},
+    internal::{ky, native::online},
     profile::ProfiledCycle,
     proof::ProofBuilder,
     step::{HeaderInput, Prepared, Step, internal::adapter::Adapter, oracles::OnlineWitness},
@@ -86,9 +86,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 ))
             })
             .collect::<Result<_>>()?;
-        builder.set_online_polynomials(own.try_into().unwrap_or_else(|_| {
-            unreachable!("the step returned NUM_ONLINE_POLYNOMIALS polynomials")
-        }));
+        builder.set_online_polynomials(
+            own.try_into().unwrap_or_else(|_| {
+                unreachable!("the step returned NUM_ONLINE_FP_POLYS polynomials")
+            }),
+        );
 
         let staged = prepared.staged();
         if staged.len() != S::NUM_STAGED {

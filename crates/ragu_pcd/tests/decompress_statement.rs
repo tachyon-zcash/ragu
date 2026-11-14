@@ -26,7 +26,7 @@ use udon::field::Field;
 
 use crate::{
     Application, ApplicationBuilder, Pcd, RegistryTags,
-    header::{Header, NUM_ONLINE_POLYNOMIALS},
+    header::{Header, NUM_ONLINE_FP_POLYS},
     internal::ky,
     profile::{
         Profiled,
@@ -154,10 +154,7 @@ fn a_decompression_exposing_its_output_header_verifies() -> Result<()> {
         decompressed.polynomials(),
         core::array::from_fn(|_| alloc::vec![Fp::ONE])
     );
-    assert_eq!(
-        decompressed.commitments(),
-        [padding; NUM_ONLINE_POLYNOMIALS]
-    );
+    assert_eq!(decompressed.commitments(), [padding; NUM_ONLINE_FP_POLYS]);
 
     // Every other step's statement circuit exposes the unit header, as the
     // bootstrap's did under the default context.

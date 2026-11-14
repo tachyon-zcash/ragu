@@ -104,7 +104,7 @@ use crate::{
         revdot::{Reduction, fold::Fold},
     },
     header::{Header, Padding, Suffix},
-    internal::online,
+    internal::native::online,
     ipa::{
         IpaCycle, IpaProof,
         fingerprint::{self, Event},
@@ -521,7 +521,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_extension_circuit_rxs,
         native_extension_stage_rxs,
         native_points_binding_rx,
-        native_points_children_rx,
+        native_points_preamble_rx,
         native_points_registry_wx_rx,
         native_points_ab_rx,
         native_points_f_rx,
@@ -593,7 +593,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_extension_circuit_commitments: _,
         native_extension_stage_commitments: _,
         native_points_binding_commitment: _,
-        native_points_children_commitment: _,
+        native_points_preamble_commitment: _,
         native_points_registry_wx_commitment: _,
         native_points_ab_commitment: _,
         native_points_f_commitment: _,
@@ -637,7 +637,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.polys("native_extension_circuit_rxs", native_extension_circuit_rxs);
     lines.polys("native_extension_stage_rxs", native_extension_stage_rxs);
     lines.poly("native_points_binding_rx", native_points_binding_rx);
-    lines.poly("native_points_children_rx", native_points_children_rx);
+    lines.poly("native_points_preamble_rx", native_points_preamble_rx);
     lines.poly("native_points_registry_wx_rx", native_points_registry_wx_rx);
     lines.poly("native_points_ab_rx", native_points_ab_rx);
     lines.poly("native_points_f_rx", native_points_f_rx);
@@ -927,7 +927,7 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let mut online = [online::Query {
         x: C::CircuitField::ZERO,
         y: C::CircuitField::ZERO,
-    }; online::NUM_ONLINE_QUERIES];
+    }; online::NUM_ONLINE_FP_QUERIES];
     for query in &mut online {
         *query = online::Query {
             x: cursor.field()?,

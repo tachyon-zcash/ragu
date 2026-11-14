@@ -37,7 +37,7 @@ use ragu_primitives::{GadgetExt, allocator::Standard};
 
 use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
-use crate::{Header, header::NUM_ONLINE_POLYNOMIALS};
+use crate::{Header, header::NUM_ONLINE_FP_POLYS};
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,
@@ -105,7 +105,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // each at zeta and hold them equal. The right input's slots, the
         // unit header's, go unqueried.
         let zeta = oracles.zeta().clone();
-        for i in 0..NUM_ONLINE_POLYNOMIALS {
+        for i in 0..NUM_ONLINE_FP_POLYS {
             let left = oracles.left_at(i).open(dr, &zeta)?;
             let output = oracles.output_at(i).open(dr, &zeta)?;
             output.enforce_equal(dr, &left)?;
@@ -235,7 +235,7 @@ mod tests {
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, left.clone())?;
                 let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let zeta = oracles.zeta().clone();
-                for i in 0..NUM_ONLINE_POLYNOMIALS {
+                for i in 0..NUM_ONLINE_FP_POLYS {
                     let left = oracles.left_at(i).open(dr, &zeta)?;
                     let output = oracles.output_at(i).open(dr, &zeta)?;
                     output.enforce_equal(dr, &left)?;

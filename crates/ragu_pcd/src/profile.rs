@@ -72,6 +72,7 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
+pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     internal::{endoscalar, native, nested},
@@ -137,6 +138,25 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NATIVE_EXTENSION: usize;
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
+
+    /// The number of online polynomials over the scalar field that each
+    /// step of the profile commits, at most
+    /// [`NUM_ONLINE_FQ_POLYS`].
+    ///
+    /// A step commits such a polynomial natively, before its challenge
+    /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
+    /// opening into the step's own nested batch. The step does not export
+    /// the polynomial, so a parent never opens it. Each polynomial adds
+    /// one point to the native walk, and a full walk then needs another
+    /// step on each side.
+    ///
+    /// Until decompression lands, each slot holds a fixed placeholder
+    /// polynomial, and no circuit constrains its value at the opening
+    /// point: the slot proves only that the value is an opening of the
+    /// committed polynomial. Do not rely on it for anything else.
+    ///
+    /// The default is zero, which leaves the proof's shape as it is.
+    const ONLINE_FQ_POLYS: usize = 0;
 
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
@@ -324,7 +344,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [consistent](Extension::is_consistent); if the nested extension names
     /// a statement circuit, which only the native side carries; or if an
     /// extension's binding names a stage the other extension does not have;
-    /// or if the product of the two endoscaling counts is at most four.
+    /// if the product of the two endoscaling counts is at most four; or if
+    /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
+    /// [`NUM_ONLINE_FQ_POLYS`].
     fn check() -> Result<()> {
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
@@ -338,6 +360,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
+        }
+        if Self::ONLINE_FQ_POLYS > NUM_ONLINE_FQ_POLYS {
+            return Err(Error::Initialization(
+                "the profile commits more online Fq polynomials than a step can open".into(),
+            ));
         }
         for (name, profile) in [
             (Standard::NAME, TypeId::of::<Standard>()),
@@ -571,7 +598,7 @@ pub struct Extension {
     /// decompressed statement can carry must treat its slots as padding, or
     /// the statement must also expose the compressed proof's online
     /// commitments for the decompression step to hold its output slots to
-    /// (see [`NUM_ONLINE_POLYNOMIALS`](crate::header::NUM_ONLINE_POLYNOMIALS)).
+    /// (see [`NUM_ONLINE_FP_POLYS`](crate::header::NUM_ONLINE_FP_POLYS)).
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is
@@ -895,7 +922,12 @@ pub struct Shape {
     pub nested_steps: usize,
     /// The nested rx polynomials.
     pub nested_rx: usize,
-    /// The host-curve points the native walk folds: the nested batch.
+    /// The step's own online polynomials over the scalar field (see
+    /// [`Profile::ONLINE_FQ_POLYS`]).
+    pub online_fq: usize,
+    /// The nested-curve points the native walk folds: the nested batch,
+    /// with the commitments of the step's own online polynomials over the
+    /// scalar field.
     pub native_points: usize,
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
@@ -913,14 +945,15 @@ impl Shape {
         Self::solve(
             P::NATIVE_EXTENSION,
             P::NESTED_EXTENSION,
+            P::ONLINE_FQ_POLYS,
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
         )
     }
 
-    /// Solves the walk sizes for the given extensions at the given
-    /// endoscalings per native and nested step, iterating the native step
-    /// count to its fixed point.
+    /// Solves the walk sizes for the given extensions and online Fq
+    /// polynomials at the given endoscalings per native and nested step,
+    /// iterating the native step count to its fixed point.
     ///
     /// # Panics
     ///
@@ -929,6 +962,7 @@ impl Shape {
     pub const fn solve(
         native_extension: usize,
         nested_extension: usize,
+        online_fq: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
@@ -939,6 +973,7 @@ impl Shape {
                 native_steps,
                 native_extension,
                 nested_extension,
+                online_fq,
                 native_endoscalings,
                 nested_endoscalings,
             );
@@ -957,6 +992,7 @@ impl Shape {
         native_steps: usize,
         native_extension: usize,
         nested_extension: usize,
+        online_fq: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
@@ -964,13 +1000,14 @@ impl Shape {
         let nested_points = nested::num_endoscaling_points(native_rx);
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
-        let native_points = nested::pcs::num_batched_points(nested_rx);
+        let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
             native_rx,
             nested_points,
             nested_steps,
             nested_rx,
+            online_fq,
             native_points,
             native_steps,
         }
@@ -1144,6 +1181,25 @@ pub(crate) mod testing {
         const NAME: &'static str = "mismatched";
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 0;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+    }
+
+    /// One online Fq polynomial per step and no extension: the standard
+    /// layout with the slot on, which proves at the production rank.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Opening;
+
+    impl Profile for Opening {
+        const NAME: &'static str = "opening";
+        const NATIVE_EXTENSION: usize = 0;
+        const NESTED_EXTENSION: usize = 0;
+        const ONLINE_FQ_POLYS: usize = 1;
 
         type Context<'params, Base, R, B>
             = ()
@@ -1451,9 +1507,9 @@ pub(crate) mod testing {
     }
 
     /// One [`Trivial`] circuit and no stage on each side, with the hooks
-    /// that register and prove it: the profile whose extension proves, at
-    /// a rank above the production one, where the fuse has room for its
-    /// two polynomials.
+    /// that register and prove it, and one online Fq polynomial per step:
+    /// the profile whose extension proves, at a rank above the production
+    /// one, where the fuse has room for its two polynomials.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Proving;
 
@@ -1461,6 +1517,7 @@ pub(crate) mod testing {
         const NAME: &'static str = "proving";
         const NATIVE_EXTENSION: usize = 1;
         const NESTED_EXTENSION: usize = 1;
+        const ONLINE_FQ_POLYS: usize = 1;
 
         type Context<'params, Base, R, B>
             = ()
@@ -1978,7 +2035,7 @@ mod tests {
     use ragu_circuits::polynomials::R;
 
     use super::{
-        testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Wider},
+        testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Opening, Wider},
         *,
     };
 
@@ -2361,7 +2418,7 @@ mod tests {
 
     #[test]
     fn shape_follows_the_declared_extension() {
-        assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 4, 4));
+        assert_eq!(Shape::of::<Wider>(), Shape::solve(4, 2, 0, 4, 4));
         assert_ne!(Shape::of::<Wider>(), Shape::of::<Standard>());
         assert_eq!(
             native::RxIndex::num::<Wider>(),
@@ -2383,11 +2440,71 @@ mod tests {
                 nested_points: 117,
                 nested_steps: 29,
                 nested_rx: 43,
+                online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
             }
         );
         assert_eq!(shape.polynomials(), 99);
+    }
+
+    #[test]
+    fn an_online_fq_polynomial_is_a_native_walk_point() {
+        // The point joins the nested batch's commitments in the native
+        // walk. The walk of the standard layout is full, so the point can
+        // also add a native step, and then the batch grows.
+        let base = Shape::solve(0, 0, 0, 4, 4);
+        let with_fq = Shape::solve(0, 0, 1, 4, 4);
+        assert_eq!(with_fq.online_fq, 1);
+        assert_eq!(
+            with_fq.native_points,
+            nested::pcs::num_batched_points(with_fq.nested_rx, 0) + 1
+        );
+        assert!(with_fq.native_points > base.native_points);
+    }
+
+    #[test]
+    fn an_online_fq_polynomial_alone_adds_a_step_to_each_walk() {
+        // The standard layout with the slot on. Its native walk was full,
+        // so the point adds a native step, whose rx polynomial adds a
+        // nested step in turn: one more rx polynomial on each side.
+        let shape = Shape::of::<Opening>();
+        assert_eq!(shape, Shape::solve(0, 0, 1, 4, 4));
+        assert_eq!(
+            shape,
+            Shape {
+                native_rx: 49,
+                nested_points: 119,
+                nested_steps: 30,
+                nested_rx: 44,
+                online_fq: 1,
+                native_points: 104,
+                native_steps: 26,
+            }
+        );
+        assert_eq!(shape.polynomials(), 101);
+        assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
+        assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
+    }
+
+    #[test]
+    fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        struct TooMany;
+        impl Profile for TooMany {
+            const NAME: &'static str = "too-many";
+            const NATIVE_EXTENSION: usize = 0;
+            const NESTED_EXTENSION: usize = 0;
+            const ONLINE_FQ_POLYS: usize = crate::profile::NUM_ONLINE_FQ_POLYS + 1;
+
+            type Context<'params, Base, R, B>
+                = ()
+            where
+                Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                R: Rank,
+                B: SelectableBackend;
+        }
+        assert!(TooMany::check().is_err());
     }
 
     #[test]
@@ -2412,11 +2529,12 @@ mod tests {
         for (native_extension, nested_extension) in
             [(0, 0), (1, 0), (0, 1), (10, 10), (134, 116), (300, 300)]
         {
-            let shape = Shape::solve(native_extension, nested_extension, 4, 4);
+            let shape = Shape::solve(native_extension, nested_extension, 0, 4, 4);
             let again = Shape::with_native_steps(
                 shape.native_steps,
                 native_extension,
                 nested_extension,
+                0,
                 4,
                 4,
             );
@@ -2432,8 +2550,8 @@ mod tests {
         // Each extra rx polynomial is two points in the other walk (one per
         // child), so a step there per two, and a quarter of a step back: an
         // extension costs about twice its own count in polynomials overall.
-        let base = Shape::solve(0, 0, 4, 4);
-        let wider = Shape::solve(100, 0, 4, 4);
+        let base = Shape::solve(0, 0, 0, 4, 4);
+        let wider = Shape::solve(100, 0, 0, 4, 4);
         assert!(wider.nested_steps > base.nested_steps);
         assert!(wider.native_steps > base.native_steps);
         let extra = wider.polynomials() - base.polynomials();
@@ -2444,9 +2562,9 @@ mod tests {
     }
 
     /// An extension proves: an application in the [`Proving`] profile,
-    /// one trivial circuit on each side, seeds, fuses, verifies and
-    /// compresses at the rank above the production one, where the fuse
-    /// has room for the two polynomials.
+    /// one trivial circuit on each side and one online Fq polynomial per
+    /// step, seeds, fuses, verifies and compresses at the rank above the
+    /// production one, where the fuse has room for the two polynomials.
     #[test]
     fn an_extension_proves_verifies_and_compresses() -> Result<()> {
         use rand::{SeedableRng, rngs::StdRng};
@@ -2456,11 +2574,40 @@ mod tests {
 
         const HEADER_SIZE: usize = 4;
         assert_ne!(Shape::of::<Proving>(), Shape::of::<Standard>());
+        // Each step also commits an online Fq polynomial, which the nested
+        // `compute_v` opens and folds in the step's own nested batch.
+        assert_eq!(Shape::of::<Proving>().online_fq, 1);
 
         let app = ApplicationBuilder::<Profiled<Pasta, Proving>, R<14>, HEADER_SIZE>::new()
             .register(UnitStep)?
             .finalize(crate::pasta::baked_aggregator())?;
         let mut rng = StdRng::seed_from_u64(14);
+        let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;
+        assert!(app.verify_uncompressed(&fused, &mut rng)?);
+        let compressed = app.compress(&fused, &mut rng)?;
+        assert!(app.verify_compressed(&compressed)?);
+        Ok(())
+    }
+
+    /// The slot proves without an extension: an application in the
+    /// [`Opening`] profile, one online Fq polynomial per step and nothing
+    /// else beyond the fuse, seeds, fuses, verifies and compresses at the
+    /// production rank.
+    #[test]
+    fn an_online_fq_polynomial_proves_verifies_and_compresses() -> Result<()> {
+        use rand::{SeedableRng, rngs::StdRng};
+
+        use super::testing::UnitStep;
+        use crate::ApplicationBuilder;
+
+        const HEADER_SIZE: usize = 4;
+
+        let app = ApplicationBuilder::<Profiled<Pasta, Opening>, R<13>, HEADER_SIZE>::new()
+            .register(UnitStep)?
+            .finalize(crate::pasta::baked())?;
+        let mut rng = StdRng::seed_from_u64(13);
         let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
         let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
         let (fused, ()) = app.fuse(&mut rng, UnitStep, (), left, right)?;

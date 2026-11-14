@@ -33,9 +33,8 @@ use udon::field::Field;
 
 use crate::{
     Proof,
-    internal::{
-        native::{InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues},
-        online,
+    internal::native::{
+        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues, online,
     },
     profile::{Profile, ProfiledCycle},
 };
@@ -319,7 +318,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
         InternalCircuitIndex::num::<C::Profile>()
             + 1
             + 2 * (RxIndex::num::<C::Profile>() + 5)
-            + 2 * online::NUM_ONLINE_QUERIES
+            + 2 * online::NUM_ONLINE_FP_QUERIES
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

@@ -55,7 +55,7 @@ const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 2 + NUM_BINDERS;
 /// The points stages the walk's inputs are committed in, in chain order.
 const POINTS_INPUT_STAGES: [RxIndex; 5] = [
     RxIndex::PointsBinding,
-    RxIndex::PointsChildren,
+    RxIndex::PointsPreamble,
     RxIndex::PointsRegistryWx,
     RxIndex::PointsAb,
     RxIndex::PointsF,
@@ -370,8 +370,8 @@ where
             PointsBindingStage => {
                 processor.bonding_claim(id, source.rx(Rx(PointsBinding)))?;
             }
-            PointsChildrenStage => {
-                processor.bonding_claim(id, source.rx(Rx(PointsChildren)))?;
+            PointsPreambleStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsPreamble)))?;
             }
             PointsRegistryWxStage => {
                 processor.bonding_claim(id, source.rx(Rx(PointsRegistryWx)))?;

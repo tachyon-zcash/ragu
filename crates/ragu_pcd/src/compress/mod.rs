@@ -56,7 +56,7 @@ use self::{
 };
 use crate::{
     SelectableBackend,
-    header::{Header, NUM_ONLINE_POLYNOMIALS},
+    header::{Header, NUM_ONLINE_FP_POLYS},
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
     profile::ProfiledCycle,
 };
@@ -100,7 +100,7 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// compression. The instance carries them and the verifier binds them,
     /// so a verifier that accepts the proof may compare them to the
     /// commitments it expects.
-    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         self.instance.online_commitments
     }
 
@@ -143,7 +143,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> CompressedPcd<C, H> {
 
     /// The commitments of the step's own online polynomials; see
     /// [`CompressedProof::online_commitments`].
-    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         self.proof.instance.online_commitments
     }
 

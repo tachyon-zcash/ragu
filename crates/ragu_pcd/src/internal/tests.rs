@@ -69,7 +69,7 @@ type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 type NestedCurve = <Pasta as ragu_core::Cycle>::NestedCurve;
 type PointsBinding = native::stages::points::BindingStage<NestedCurve, crate::profile::Standard>;
-type PointsChildren = native::stages::points::ChildrenStage<NestedCurve, crate::profile::Standard>;
+type PointsPreamble = native::stages::points::PreambleStage<NestedCurve, crate::profile::Standard>;
 type PointsRegistryWx =
     native::stages::points::RegistryWxStage<NestedCurve, crate::profile::Standard>;
 type PointsAb = native::stages::points::AbStage<NestedCurve, crate::profile::Standard>;
@@ -262,7 +262,7 @@ fn test_internal_stage_parameters() {
     check_stage!(InnerError, skip = 389, num = 42);
     check_stage!(Query, skip = 369, num = 86);
     check_stage!(Eval, skip = 455, num = 61);
-    check_stage!(PointsChildren, skip = 29, num = 66);
+    check_stage!(PointsPreamble, skip = 29, num = 66);
     check_stage!(PointsRegistryWx, skip = 95, num = 2);
     check_stage!(PointsAb, skip = 97, num = 3);
     check_stage!(PointsF, skip = 100, num = 2);
@@ -351,7 +351,7 @@ fn claimed_stages_lie_on_each_circuits_chain() {
             RxIndex::Query => range::<Query>(),
             RxIndex::Eval => range::<Eval>(),
             RxIndex::PointsBinding => range::<PointsBinding>(),
-            RxIndex::PointsChildren => range::<PointsChildren>(),
+            RxIndex::PointsPreamble => range::<PointsPreamble>(),
             RxIndex::PointsRegistryWx => range::<PointsRegistryWx>(),
             RxIndex::PointsAb => range::<PointsAb>(),
             RxIndex::PointsF => range::<PointsF>(),
@@ -370,8 +370,8 @@ fn claimed_stages_lie_on_each_circuits_chain() {
         (RxIndex::InnerError, Some(RxIndex::OuterError)),
         (RxIndex::Query, Some(RxIndex::Preamble)),
         (RxIndex::Eval, Some(RxIndex::Query)),
-        (RxIndex::PointsChildren, Some(RxIndex::PointsBinding)),
-        (RxIndex::PointsRegistryWx, Some(RxIndex::PointsChildren)),
+        (RxIndex::PointsPreamble, Some(RxIndex::PointsBinding)),
+        (RxIndex::PointsRegistryWx, Some(RxIndex::PointsPreamble)),
         (RxIndex::PointsAb, Some(RxIndex::PointsRegistryWx)),
         (RxIndex::PointsF, Some(RxIndex::PointsAb)),
         (RxIndex::PointsWalk, Some(RxIndex::PointsF)),
@@ -527,7 +527,7 @@ fn print_internal_circuit_constraint_counts() {
                 | InternalCircuitIndex::QueryStage
                 | InternalCircuitIndex::EvalStage
                 | InternalCircuitIndex::PointsBindingStage
-                | InternalCircuitIndex::PointsChildrenStage
+                | InternalCircuitIndex::PointsPreambleStage
                 | InternalCircuitIndex::PointsRegistryWxStage
                 | InternalCircuitIndex::PointsAbStage
                 | InternalCircuitIndex::PointsFStage
@@ -628,7 +628,7 @@ fn print_internal_stage_parameters() {
     print_stage!(InnerError);
     print_stage!(Query);
     print_stage!(Eval);
-    print_stage!(PointsChildren);
+    print_stage!(PointsPreamble);
     print_stage!(PointsRegistryWx);
     print_stage!(PointsAb);
     print_stage!(PointsF);
