@@ -67,7 +67,7 @@ use crate::{
     internal::{
         Side,
         endoscalar::{InputsLen, PointsWitness},
-        nested,
+        nested::{self, pcs::NUM_CURRENT_POINTS},
         online_fq::FqPolysLen,
     },
     profile::Profile,
@@ -79,7 +79,7 @@ pub type NumInputs<P> = InputsLen<NumPoints<P>>;
 /// The number of points a child contributes to the walk in profile `P`:
 /// every nested rx commitment, then $a_n$, $b_n$, `registry_xy` and $P_n$.
 pub fn num_child_points<P: Profile>() -> usize {
-    nested::RxIndex::num::<P>() + 4
+    nested::pcs::num_child_points(nested::RxIndex::num::<P>())
 }
 
 /// Length type for a child's bridge commitments, in transcript order.
@@ -107,9 +107,6 @@ impl<P: Profile> Len for ChildrenLen<P> {
         num_children_points::<P>()
     }
 }
-
-/// The number of the current step's points at the walk's tail.
-const NUM_CURRENT_POINTS: usize = 6;
 
 /// The position of a child's $P_n$ among its points: the last, as
 /// [`nested::pcs::child_commitments`] orders them.
@@ -214,13 +211,18 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
         };
         return InputSource::Children(base + offset);
     }
+    // The current step's points, in the order of
+    // `nested::pcs::CurrentCommitments::into_array`.
+    const CURRENT: [InputSource; NUM_CURRENT_POINTS] = [
+        InputSource::RegistryWx(0),
+        InputSource::RegistryWx(1),
+        InputSource::RegistryWy,
+        InputSource::AbA,
+        InputSource::AbB,
+        InputSource::RegistryXy,
+    ];
     match i - 2 * num_child_points {
-        0 => InputSource::RegistryWx(0),
-        1 => InputSource::RegistryWx(1),
-        2 => InputSource::RegistryWy,
-        3 => InputSource::AbA,
-        4 => InputSource::AbB,
-        5 => InputSource::RegistryXy,
+        j if j < NUM_CURRENT_POINTS => CURRENT[j],
         j if j - NUM_CURRENT_POINTS < P::ONLINE_FQ_POLYS => {
             InputSource::OnlineFq(j - NUM_CURRENT_POINTS)
         }
@@ -380,11 +382,6 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     pub fn from_walk(points: &[C]) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
-        assert_eq!(
-            NumPoints::<P>::len(),
-            1 + 2 * num_child_points + NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS,
-            "the walk's layout does not match the nested batch"
-        );
         let current = &points[1 + 2 * num_child_points..];
         let (binding, children) = children_witnesses::<C, P>(
             &points[1..1 + num_child_points],

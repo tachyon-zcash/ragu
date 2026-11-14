@@ -993,7 +993,7 @@ impl Shape {
         let nested_points = nested::num_endoscaling_points(native_rx);
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
-        let native_points = nested::pcs::num_batched_points(nested_rx) + online_fq;
+        let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);
         let native_steps = endoscalar::num_steps(native_endoscalings, native_points);
         Shape {
             native_rx,
@@ -2432,7 +2432,7 @@ mod tests {
         assert_eq!(with_fq.online_fq, 1);
         assert_eq!(
             with_fq.native_points,
-            nested::pcs::num_batched_points(with_fq.nested_rx) + 1
+            nested::pcs::num_batched_points(with_fq.nested_rx, 0) + 1
         );
         assert!(with_fq.native_points > base.native_points);
     }

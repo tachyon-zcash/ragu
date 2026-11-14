@@ -93,19 +93,30 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
     StaticFQuery::CurrentBAtX,
 ];
 
-/// The number of nested-curve points the batch folds into $P_n$ for a nested
-/// batch of `nested_rx` rx polynomials: $f_n$, then for each child its own
-/// rx commitments, $a$, $b$, `registry_xy` and $p$, then the current step's
-/// two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`. The step's
-/// own online Fq commitments follow these; [`Shape`](crate::profile::Shape)
-/// adds them.
-pub const fn num_batched_points(nested_rx: usize) -> usize {
-    1 + 2 * (nested_rx + 4) + 6
+/// The number of nested-curve points a child contributes to the batch, for
+/// `nested_rx` rx polynomials: its rx commitments, then $a$, $b$,
+/// `registry_xy` and $p$, as [`child_commitments`] gives them.
+pub const fn num_child_points(nested_rx: usize) -> usize {
+    nested_rx + 4
 }
 
-/// Number of nested-curve points the batch folds into $P_n$, per
+/// The number of the current step's nested-curve points in the batch: the
+/// fields of [`CurrentCommitments`].
+pub const NUM_CURRENT_POINTS: usize = 6;
+
+/// The number of nested-curve points the batch folds into $P_n$, which the
+/// native walk walks, for `nested_rx` rx polynomials and `online_fq` online
+/// Fq polynomials: $f_n$, then each child's points, then the current step's,
+/// then the step's own online Fq commitments. [`Batch::commitments`] gives
+/// them in this order, after $f_n$.
+pub const fn num_batched_points(nested_rx: usize, online_fq: usize) -> usize {
+    1 + 2 * num_child_points(nested_rx) + NUM_CURRENT_POINTS + online_fq
+}
+
+/// Number of nested-curve points the batch folds into $P_n$ in the standard
+/// profile, which commits no online Fq polynomial, per
 /// [`num_batched_points`]. See [`Batch::evaluated`] for the order.
-pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM);
+pub const NUM_BATCHED_POINTS: usize = num_batched_points(RxIndex::NUM, 0);
 
 /// A child's nested-curve commitments in the order the batch walks them:
 /// its rx commitments in [`RxIndex::all`] order, then $a$, $b$,
@@ -283,14 +294,7 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
         [self.left, self.right]
             .into_iter()
             .flat_map(|proof| child_commitments(proof))
-            .chain([
-                current.registry_wx0,
-                current.registry_wx1,
-                current.registry_wy,
-                current.a,
-                current.b,
-                current.registry_xy,
-            ])
+            .chain(current.into_array())
             .chain(online_fq.iter().copied())
     }
 }
@@ -305,4 +309,18 @@ pub struct CurrentCommitments<P> {
     pub a: P,
     pub b: P,
     pub registry_xy: P,
+}
+
+impl<P> CurrentCommitments<P> {
+    /// The commitments in batch order.
+    pub fn into_array(self) -> [P; NUM_CURRENT_POINTS] {
+        [
+            self.registry_wx0,
+            self.registry_wx1,
+            self.registry_wy,
+            self.a,
+            self.b,
+            self.registry_xy,
+        ]
+    }
 }
