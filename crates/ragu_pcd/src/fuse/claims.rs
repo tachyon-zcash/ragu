@@ -27,7 +27,7 @@ use udon::field::Field;
 use crate::{
     Proof,
     internal::{
-        claims::{Builder, Source},
+        claims::{Builder, DeviceRecorder, Source},
         fold_revdot::{self, Foldable},
         native::{InternalCircuitIndex, RxComponent, claims::Processor},
         nested,
@@ -103,6 +103,18 @@ impl<'a, K: Copy, F: Field, R: Rank> TrackedPoly<'a, K, F, R> {
 
     pub(super) fn single(poly: Cow<'a, sparse::Polynomial<F, R>>, key: K) -> Self {
         Self::new(poly, CommitmentDecomposition::single(key))
+    }
+
+    /// The decomposition of the sum of the polynomials with the given keys,
+    /// each with coefficient one, without the sum itself: for claims whose
+    /// polynomials a device holds.
+    pub(super) fn hollow(keys: impl Iterator<Item = K>) -> Self {
+        Self::new(
+            Cow::Owned(sparse::Polynomial::new()),
+            CommitmentDecomposition {
+                terms: keys.map(|key| (key, F::ONE)).collect(),
+            },
+        )
     }
 
     /// Returns a tracked polynomial equal to the sum of the given [`Atom`]s,
@@ -263,6 +275,133 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
     ) -> Result<()> {
         let folded = fold_revdot::fold(groups.map(TrackedPoly::sum), self.z);
         self.bonding_impl(id.circuit_index::<P>(), folded);
+        Ok(())
+    }
+}
+
+/// Records the fuse's native claims for a device.
+#[derive(Default)]
+pub(super) struct NativeDeviceProcessor<'rx, F: Field, R: Rank> {
+    pub(super) recorder: DeviceRecorder<'rx, F, R>,
+}
+
+impl<'rx, P: Profile, F: Field, R: Rank> Processor<P, Atom<'rx, FoldKey, F, R>, CircuitIndex>
+    for NativeDeviceProcessor<'rx, F, R>
+{
+    fn raw_claim(&mut self, a: Atom<'rx, FoldKey, F, R>, b: Atom<'rx, FoldKey, F, R>) {
+        self.recorder.raw_claim(a.poly, b.poly);
+    }
+
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.recorder
+            .circuit_claim(circuit_id, rxs.map(|atom| atom.poly));
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.recorder
+            .circuit_claim(id.circuit_index::<P>(), rxs.map(|atom| atom.poly));
+    }
+
+    fn grouped_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
+    ) -> Result<()> {
+        self.recorder.bonding_claim(
+            id.circuit_index::<P>(),
+            groups.map(|group| group.map(|atom| atom.poly)),
+        );
+        Ok(())
+    }
+}
+
+/// Keeps on the host only what `_06_ab` needs of each native claim's `a`
+/// when a device holds the claims: its [`CommitmentDecomposition`].
+///
+/// The claims pushed to `claims.a` have the decompositions the host
+/// processor gives them and no coefficients; `claims.b` is left empty.
+pub(super) struct HollowProcessor<'b, 'm, 'rx, F: Field, R: Rank, B: ragu_backend::Backend> {
+    pub(super) claims: &'b mut NativeFuseBuilder<'m, 'rx, F, R, B>,
+}
+
+impl<'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
+    Processor<P, Atom<'rx, FoldKey, F, R>, CircuitIndex> for HollowProcessor<'_, '_, 'rx, F, R, B>
+{
+    fn raw_claim(&mut self, a: Atom<'rx, FoldKey, F, R>, _: Atom<'rx, FoldKey, F, R>) {
+        self.claims
+            .a
+            .push(TrackedPoly::hollow(core::iter::once(a.key)));
+    }
+
+    fn circuit_claim(
+        &mut self,
+        _: CircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.claims
+            .a
+            .push(TrackedPoly::hollow(rxs.map(|atom| atom.key)));
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        _: InternalCircuitIndex,
+        rxs: impl Iterator<Item = Atom<'rx, FoldKey, F, R>>,
+    ) {
+        self.claims
+            .a
+            .push(TrackedPoly::hollow(rxs.map(|atom| atom.key)));
+    }
+
+    fn grouped_bonding_claim(
+        &mut self,
+        _: InternalCircuitIndex,
+        groups: impl Iterator<Item = impl Iterator<Item = Atom<'rx, FoldKey, F, R>>>,
+    ) -> Result<()> {
+        let folded = fold_revdot::fold(
+            groups.map(|group| TrackedPoly::hollow(group.map(|atom| atom.key))),
+            self.claims.z,
+        );
+        self.claims.a.push(folded);
+        Ok(())
+    }
+}
+
+/// Records the fuse's nested claims for a device.
+#[derive(Default)]
+pub(super) struct NestedDeviceProcessor<'rx, F: Field, R: Rank> {
+    pub(super) recorder: DeviceRecorder<'rx, F, R>,
+}
+
+impl<'rx, P: Profile, F: Field, R: Rank> nested::claims::Processor<P, &'rx sparse::Polynomial<F, R>>
+    for NestedDeviceProcessor<'rx, F, R>
+{
+    fn raw_claim(&mut self, a: &'rx sparse::Polynomial<F, R>, b: &'rx sparse::Polynomial<F, R>) {
+        self.recorder.raw_claim(a, b);
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        id: nested::InternalCircuitIndex,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+    ) {
+        self.recorder.circuit_claim(id.circuit_index::<P>(), rxs);
+    }
+
+    fn grouped_bonding_claim(
+        &mut self,
+        id: nested::InternalCircuitIndex,
+        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+    ) -> Result<()> {
+        self.recorder.bonding_claim(id.circuit_index::<P>(), groups);
         Ok(())
     }
 }

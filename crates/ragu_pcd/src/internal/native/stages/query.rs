@@ -16,6 +16,7 @@
 //! step's online openings (see [`online`]): the point each slot's
 //! polynomial is opened at and the claimed evaluation.
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -75,22 +76,52 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         registry_xy: &sparse::Polynomial<F, R>,
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
-        let mut rx = B::map(
-            RxIndex::all::<C::Profile>()
-                .into_iter()
-                .map(|id| &proof[id]),
-            |poly| B::sparse_eval(poly, xz),
-        );
+        let openings = Self::openings(proof, w, x, xz, registry_xy, registry_wy);
+        Self::from_values(&mut B::map(openings, |(poly, point)| {
+            B::sparse_eval(poly, point)
+        }))
+    }
+
+    /// What a child's witness evaluates, as `(polynomial, point)` pairs in
+    /// the order [`from_values`](Self::from_values) takes the values: the
+    /// rx polynomials in [`RxIndex::all`] order at $xz$, then the fields
+    /// after `rx` in theirs.
+    pub fn openings<'a, C: Cycle<CircuitField = F> + ProfiledCycle<Profile = P>, R: Rank>(
+        proof: &'a Proof<C, R>,
+        w: F,
+        x: F,
+        xz: F,
+        registry_xy: &'a sparse::Polynomial<F, R>,
+        registry_wy: &'a sparse::Polynomial<F, R>,
+    ) -> Vec<(&'a sparse::Polynomial<F, R>, F)> {
+        RxIndex::all::<C::Profile>()
+            .into_iter()
+            .map(|id| (&proof[id], xz))
+            .chain([
+                (&proof[RxComponent::AbA], xz),
+                (&proof[RxComponent::AbB], x),
+                (proof.native_registry_xy_poly(), w),
+                (registry_xy, proof.circuit_id().omega_j()),
+                (registry_wy, proof.x()),
+            ])
+            .collect()
+    }
+
+    /// Create child evaluations witness from the values of
+    /// [`openings`](Self::openings), in its order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `values` ends early.
+    pub fn from_values(values: &mut impl Iterator<Item = F>) -> Self {
+        let mut next = || values.next().expect("one value per opening");
         ChildEvaluationsWitness {
-            rx: RxValues::<_, P>::from_fn(|_| rx.next().expect("one evaluation per rx")),
-            a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
-            b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
-            child_registry_xy_at_current_w: B::sparse_eval(proof.native_registry_xy_poly(), w),
-            current_registry_xy_at_child_circuit_id: B::sparse_eval(
-                registry_xy,
-                proof.circuit_id().omega_j(),
-            ),
-            current_registry_wy_at_child_x: B::sparse_eval(registry_wy, proof.x()),
+            rx: RxValues::<_, P>::from_fn(|_| next()),
+            a_poly_at_xz: next(),
+            b_poly_at_x: next(),
+            child_registry_xy_at_current_w: next(),
+            current_registry_xy_at_child_circuit_id: next(),
+            current_registry_wy_at_child_x: next(),
         }
     }
 }

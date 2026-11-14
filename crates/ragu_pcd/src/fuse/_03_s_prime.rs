@@ -14,11 +14,15 @@ use ragu_circuits::{
     registry::RegistryAt,
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::{Cycle, FixedGenerators, Result};
 use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
-use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
+use super::device::{Devices, registry_x};
+use crate::{
+    Application, Proof, internal::nested, multicore::par_join, profile::ProfiledCycle,
+    proof::ProofBuilder, timing::span,
+};
 
 /// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
 pub(super) struct NativeSPrime<C: Cycle, R: Rank> {
@@ -47,17 +51,89 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        devices: &mut Devices<'_, C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
-        let native = self.compute_native_s_prime(native_registry, left, right)?;
-        let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
-        self.commit_native_points_registry_wx(
-            rng,
-            nested.registry_wx0_commitment,
-            nested.registry_wx1_commitment,
-            builder,
-        )?;
-        self.compute_bridge_s_prime(rng, &native, builder)?;
+        // The four restrictions are independent of each other and of the
+        // builder, so they run together; their commitments follow in order.
+        let (x0, x1) = (left.x(), right.x());
+        let (nested_x0, nested_x1) = (nested::challenge::<C>(x0)?, nested::challenge::<C>(x1)?);
+        // A side with a device that holds its registry's wiring matrices
+        // restricts there; otherwise the host does, both points together.
+        let (native_device, nested_device) =
+            (devices.native.as_deref_mut(), devices.nested.as_deref_mut());
+        let (native_wired, nested_wired) =
+            (devices.native_wired.take(), devices.nested_wired.take());
+        let (host_generators, nested_generators) = (
+            C::host_generators(self.params),
+            C::nested_generators(self.params),
+        );
+        let (
+            ([native_wx0, native_wx1], native_commitments),
+            ([nested_wx0, nested_wx1], nested_commitments),
+        ) = span("sp.registry_x", || {
+            par_join!(
+                || native_device
+                    .and_then(|device| registry_x::<B, C::HostCurve, R, _, 2>(
+                        device,
+                        native_registry,
+                        [x0, x1],
+                        native_wired.as_ref(),
+                        host_generators,
+                    ))
+                    .unwrap_or_else(|| {
+                        let (wx0, wx1) =
+                            par_join!(|| B::registry_at_x(native_registry, x0), || {
+                                B::registry_at_x(native_registry, x1)
+                            },);
+                        ([wx0, wx1], None)
+                    }),
+                || nested_device
+                    .and_then(|device| registry_x::<B, C::NestedCurve, R, _, 2>(
+                        device,
+                        nested_registry,
+                        [nested_x0, nested_x1],
+                        nested_wired.as_ref(),
+                        nested_generators,
+                    ))
+                    .unwrap_or_else(|| {
+                        let (wx0, wx1) =
+                            par_join!(|| B::registry_at_x(nested_registry, nested_x0), || {
+                                B::registry_at_x(nested_registry, nested_x1)
+                            },);
+                        ([wx0, wx1], None)
+                    }),
+            )
+        });
+        // The two sides' commitments are independent, and on different
+        // curves. A side whose device restricted has committed already.
+        let (native, nested) = span("sp.commit", || {
+            par_join!(
+                || Self::compute_native_s_prime(
+                    host_generators,
+                    native_wx0,
+                    native_wx1,
+                    native_commitments
+                ),
+                || Self::compute_nested_s_prime(
+                    nested_generators,
+                    nested_wx0,
+                    nested_wx1,
+                    nested_commitments
+                ),
+            )
+        });
+        span("sp.points", || {
+            self.commit_native_points_registry_wx(
+                rng,
+                nested.registry_wx0_commitment,
+                nested.registry_wx1_commitment,
+                builder,
+            )
+        })?;
+        span("sp.bridge", || {
+            self.compute_bridge_s_prime(rng, &native, builder)
+        })?;
         Ok((native, nested))
     }
 
@@ -82,56 +158,48 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 
     fn compute_native_s_prime(
-        &self,
-        native_registry: &RegistryAt<'_, C::CircuitField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
-    ) -> Result<NativeSPrime<C, R>> {
-        let x0 = left.x();
-        let x1 = right.x();
+        host_gen: &impl FixedGenerators<C::HostCurve>,
+        registry_wx0_poly: sparse::Polynomial<C::CircuitField, R>,
+        registry_wx1_poly: sparse::Polynomial<C::CircuitField, R>,
+        known: Option<[C::HostCurve; 2]>,
+    ) -> NativeSPrime<C, R> {
+        let [registry_wx0_commitment, registry_wx1_commitment] = known.unwrap_or_else(|| {
+            let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
+            <C::HostCurve as Affine>::batch_to_affine(
+                &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], host_gen),
+                &mut commitments,
+            );
+            commitments
+        });
 
-        let registry_wx0_poly = B::registry_at_x(native_registry, x0);
-        let registry_wx1_poly = B::registry_at_x(native_registry, x1);
-        let host_gen = C::host_generators(self.params);
-        let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
-        <C::HostCurve as Affine>::batch_to_affine(
-            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], host_gen),
-            &mut commitments,
-        );
-        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
-
-        Ok(NativeSPrime {
+        NativeSPrime {
             registry_wx0_poly,
             registry_wx0_commitment,
             registry_wx1_poly,
             registry_wx1_commitment,
-        })
+        }
     }
 
     fn compute_nested_s_prime(
-        &self,
-        nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
-    ) -> Result<NestedSPrime<C, R>> {
-        let x0 = nested::challenge::<C>(left.x())?;
-        let x1 = nested::challenge::<C>(right.x())?;
+        nested_gen: &impl FixedGenerators<C::NestedCurve>,
+        registry_wx0_poly: sparse::Polynomial<C::ScalarField, R>,
+        registry_wx1_poly: sparse::Polynomial<C::ScalarField, R>,
+        known: Option<[C::NestedCurve; 2]>,
+    ) -> NestedSPrime<C, R> {
+        let [registry_wx0_commitment, registry_wx1_commitment] = known.unwrap_or_else(|| {
+            let mut commitments = [<C::NestedCurve as Affine>::identity(); 2];
+            <C::NestedCurve as Affine>::batch_to_affine(
+                &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], nested_gen),
+                &mut commitments,
+            );
+            commitments
+        });
 
-        let registry_wx0_poly = B::registry_at_x(nested_registry, x0);
-        let registry_wx1_poly = B::registry_at_x(nested_registry, x1);
-        let nested_gen = C::nested_generators(self.params);
-        let mut commitments = [<C::NestedCurve as Affine>::identity(); 2];
-        <C::NestedCurve as Affine>::batch_to_affine(
-            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], nested_gen),
-            &mut commitments,
-        );
-        let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
-
-        Ok(NestedSPrime {
+        NestedSPrime {
             registry_wx0_poly,
             registry_wx0_commitment,
             registry_wx1_poly,
             registry_wx1_commitment,
-        })
+        }
     }
 }

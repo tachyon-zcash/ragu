@@ -34,10 +34,15 @@ baked = ["alloc", "dep:bento", "dep:lazy_static"]
 # Additional, separately loaded generators for Aggregator extensions above R<13>.
 baked-aggregator = ["baked"]
 default = ["alloc"]
+# Commits to polynomials on a CUDA device when proving with `AcceleratedProver`.
+gpu = ["ragu_acceleration/gpu", "std"]
 multicore = ["maybe-rayon/threads", "ragu_acceleration/multicore", "ragu_backend/multicore", "ragu_circuits/multicore", "std"]
 std = ["alloc", "ragu_core/std"]
 # `serde::{Serialize, Deserialize}` for `Proof` and `CompressedProof`, as their wire bytes.
 serde = ["dep:serde"]
+# Records wall-clock marks between the stages of `Application::fuse`, read
+# back by the `fuse_experiment` bench. Not part of the stable public API.
+stage-timing = ["std"]
 # Exposes `Application::verify_uncompressed` as a test oracle for the crate's
 # own tests, benchmarks and the fuzz harness. Production verification goes
 # through `Application::verify_compressed`.
@@ -95,6 +100,12 @@ name = "criterion_fuse"
 path = "benches/criterion/fuse.rs"
 harness = false
 required-features = ["multicore"]
+
+[[bench]]
+name = "fuse_experiment"
+path = "benches/experiment/fuse.rs"
+harness = false
+required-features = ["multicore", "stage-timing"]
 
 [[bench]]
 name = "criterion_registry"

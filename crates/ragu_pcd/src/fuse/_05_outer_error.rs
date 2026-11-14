@@ -32,13 +32,16 @@ use super::claims::{
 use crate::{
     Application,
     internal::{
+        claims::DeviceClaims,
         fold_revdot::{self, Parameters},
         ky, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
+    multicore::par_join,
     profile::{Profile, ProfiledCycle},
     proof::ProofBuilder,
+    timing::span,
 };
 
 type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
@@ -58,9 +61,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             native::RevdotParameters<C::Profile>,
         >,
-        native_claims: NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
+        mut native_claims: NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
-        nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
+        mut nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         y: &Element<'dr, D>,
@@ -77,128 +80,234 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        Option<DeviceClaims<C::CircuitField, R>>,
+        Option<DeviceClaims<C::ScalarField, R>>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let y = *y.value().take();
         let mu = *mu.value().take();
-        let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.a,
-            mu,
-        );
-        let native_b = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.b,
-            mu,
-        );
+        // A side whose claims a device holds is folded there, and the host
+        // folds of that side below then carry no coefficients.
+        let mut native_device = native_claims.device.take();
+        let mut nested_device = nested_claims.device.take();
+
+        // The first layer of both folds: four interpolations that read only
+        // the claims, so they run together. The nested pair is at the nested
+        // counterpart of the challenge, whose derivation is reported where
+        // the nested side is assembled below.
+        let (native_a, native_b, nested_folds) = span("oe.folds", || {
+            par_join!(
+                || fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
+                    &native_claims.a,
+                    mu,
+                ),
+                || fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
+                    &native_claims.b,
+                    mu,
+                ),
+                || -> Result<_> {
+                    let nested_mu = nested::challenge::<C>(mu)?;
+                    Ok(par_join!(
+                        || fold_revdot::fold_inner::<
+                            sparse::Polynomial<C::ScalarField, R>,
+                            _,
+                            nested::RevdotParameters<C::Profile>,
+                        >(&nested_claims.a, nested_mu),
+                        || fold_revdot::fold_inner::<
+                            sparse::Polynomial<C::ScalarField, R>,
+                            _,
+                            nested::RevdotParameters<C::Profile>,
+                        >(&nested_claims.b, nested_mu),
+                    ))
+                },
+            )
+        });
         drop(native_claims);
+        drop(nested_claims);
 
-        let (ky, collapsed) = Emulator::emulate_wireless(
-            (
-                preamble_witness,
-                &native_inner_error_witness.error_terms,
-                y,
-                mu,
-            ),
-            |dr, witness| {
-                let (preamble_witness, inner_error_terms, y, mu) = witness.cast();
-                let allocator = &mut ();
+        // The rest of the stage's work before its polynomials is four pieces
+        // that read nothing of one another, so they run together: each
+        // side's collapsed values, emulated on the host, and each side's
+        // second-layer error terms, from the device that holds its claims
+        // or from the host folds above. Their failures are reported in the
+        // order the pieces used to run in.
+        let native_collapse = || {
+            span("oe.native.collapse", || {
+                Emulator::emulate_wireless(
+                    (
+                        preamble_witness,
+                        &native_inner_error_witness.error_terms,
+                        y,
+                        mu,
+                    ),
+                    |dr, witness| {
+                        let (preamble_witness, inner_error_terms, y, mu) = witness.cast();
+                        let allocator = &mut ();
 
-                let preamble = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
-                    .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
+                        let preamble =
+                            native::stages::preamble::Stage::<C, R, HEADER_SIZE>::default()
+                                .witness(dr, preamble_witness.as_ref().map(|w| *w))?;
 
-                let y = Element::alloc(dr, allocator, y)?;
-                let (left_unified_ky, left_unified_bridge_ky) =
-                    preamble.left.unified_ky_values(dr, &y)?;
-                let (right_unified_ky, right_unified_bridge_ky) =
-                    preamble.right.unified_ky_values(dr, &y)?;
+                        let y = Element::alloc(dr, allocator, y)?;
+                        let (left_unified_ky, left_unified_bridge_ky) =
+                            preamble.left.unified_ky_values(dr, &y)?;
+                        let (right_unified_ky, right_unified_bridge_ky) =
+                            preamble.right.unified_ky_values(dr, &y)?;
 
-                let left_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.left.application_ky(dr, &y)?,
-                    unified: left_unified_ky,
-                    unified_bridge: left_unified_bridge_ky,
-                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y)?,
-                };
-                let right_ky = native::stages::outer_error::ChildKyOutputs {
-                    application: preamble.right.application_ky(dr, &y)?,
-                    unified: right_unified_ky,
-                    unified_bridge: right_unified_bridge_ky,
-                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y)?,
-                };
+                        let left_ky = native::stages::outer_error::ChildKyOutputs {
+                            application: preamble.left.application_ky(dr, &y)?,
+                            unified: left_unified_ky,
+                            unified_bridge: left_unified_bridge_ky,
+                            compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y)?,
+                        };
+                        let right_ky = native::stages::outer_error::ChildKyOutputs {
+                            application: preamble.right.application_ky(dr, &y)?,
+                            unified: right_unified_ky,
+                            unified_bridge: right_unified_bridge_ky,
+                            compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y)?,
+                        };
 
-                let mu = Element::alloc(dr, allocator, mu)?;
+                        let mu = Element::alloc(dr, allocator, mu)?;
 
-                // Build k(y) values in claim order.
-                let left_statement = preamble.left.statement_ky::<C::Profile>(dr, &y)?;
-                let right_statement = preamble.right.statement_ky::<C::Profile>(dr, &y)?;
-                // The binding circuit's, over the children's nested
-                // extension stages its binding names: in the circuit the
-                // parent walks them, here they are read off the proofs.
-                let bound = |proof: &crate::Proof<C, R>| {
-                    ky::native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
-                };
-                let left_bound = preamble_witness.as_ref().map(|w| bound(w.left.proof));
-                let right_bound = preamble_witness.as_ref().map(|w| bound(w.right.proof));
-                let count = left_bound.as_ref().map(|b| b.len()).take();
-                let left_binding =
-                    ky::binding_ky_alloc(dr, &y, count, left_bound.as_ref().map(|b| b.as_slice()))?;
-                let right_binding = ky::binding_ky_alloc(
-                    dr,
-                    &y,
-                    count,
-                    right_bound.as_ref().map(|b| b.as_slice()),
-                )?;
-                let ky_source = native::claims::TwoProofKySource::new(
-                    dr,
-                    preamble.left.unified.c.clone(),
-                    preamble.right.unified.c.clone(),
-                    &left_ky,
-                    &right_ky,
-                    left_statement,
-                    right_statement,
-                    left_binding,
-                    right_binding,
-                );
-                let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
+                        // Build k(y) values in claim order.
+                        let left_statement = preamble.left.statement_ky::<C::Profile>(dr, &y)?;
+                        let right_statement = preamble.right.statement_ky::<C::Profile>(dr, &y)?;
+                        // The binding circuit's, over the children's nested
+                        // extension stages its binding names: in the circuit the
+                        // parent walks them, here they are read off the proofs.
+                        let bound = |proof: &crate::Proof<C, R>| {
+                            ky::native_bound::<C::Profile, _>(|index| {
+                                proof.nested_rx_commitment(index)
+                            })
+                        };
+                        let left_bound = preamble_witness.as_ref().map(|w| bound(w.left.proof));
+                        let right_bound = preamble_witness.as_ref().map(|w| bound(w.right.proof));
+                        let count = left_bound.as_ref().map(|b| b.len()).take();
+                        let left_binding = ky::binding_ky_alloc(
+                            dr,
+                            &y,
+                            count,
+                            left_bound.as_ref().map(|b| b.as_slice()),
+                        )?;
+                        let right_binding = ky::binding_ky_alloc(
+                            dr,
+                            &y,
+                            count,
+                            right_bound.as_ref().map(|b| b.as_slice()),
+                        )?;
+                        let ky_source = native::claims::TwoProofKySource::new(
+                            dr,
+                            preamble.left.unified.c.clone(),
+                            preamble.right.unified.c.clone(),
+                            &left_ky,
+                            &right_ky,
+                            left_statement,
+                            right_statement,
+                            left_binding,
+                            right_binding,
+                        );
+                        let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
-                let fold_products = fold_revdot::ClaimFolder::new(&mu);
+                        let fold_products = fold_revdot::ClaimFolder::new(&mu);
 
-                let collapsed = FixedVec::try_from_fn(|i| {
-                    let errors = FixedVec::try_from_fn(|j| {
-                        Element::alloc(dr, allocator, inner_error_terms.as_ref().map(|et| et[i][j]))
-                    })?;
-                    let ky = FixedVec::from_fn(|_| ky.next().unwrap());
+                        let collapsed = FixedVec::try_from_fn(|i| {
+                            let errors = FixedVec::try_from_fn(|j| {
+                                Element::alloc(
+                                    dr,
+                                    allocator,
+                                    inner_error_terms.as_ref().map(|et| et[i][j]),
+                                )
+                            })?;
+                            let ky = FixedVec::from_fn(|_| ky.next().unwrap());
 
-                    let v = fold_products
-                        .fold_inner::<native::RevdotParameters<C::Profile>>(dr, &errors, &ky)?;
-                    Ok(*v.value().take())
-                })?;
+                            let v = fold_products
+                                .fold_inner::<native::RevdotParameters<C::Profile>>(
+                                    dr, &errors, &ky,
+                                )?;
+                            Ok(*v.value().take())
+                        })?;
 
-                let ky = KyValues {
-                    left: ChildKyValues {
-                        application: *left_ky.application.value().take(),
-                        unified: *left_ky.unified.value().take(),
-                        unified_bridge: *left_ky.unified_bridge.value().take(),
-                        compute_v_bridge: *left_ky.compute_v_bridge.value().take(),
+                        let ky = KyValues {
+                            left: ChildKyValues {
+                                application: *left_ky.application.value().take(),
+                                unified: *left_ky.unified.value().take(),
+                                unified_bridge: *left_ky.unified_bridge.value().take(),
+                                compute_v_bridge: *left_ky.compute_v_bridge.value().take(),
+                            },
+                            right: ChildKyValues {
+                                application: *right_ky.application.value().take(),
+                                unified: *right_ky.unified.value().take(),
+                                unified_bridge: *right_ky.unified_bridge.value().take(),
+                                compute_v_bridge: *right_ky.compute_v_bridge.value().take(),
+                            },
+                        };
+
+                        Ok((ky, collapsed))
                     },
-                    right: ChildKyValues {
-                        application: *right_ky.application.value().take(),
-                        unified: *right_ky.unified.value().take(),
-                        unified_bridge: *right_ky.unified_bridge.value().take(),
-                        compute_v_bridge: *right_ky.compute_v_bridge.value().take(),
-                    },
-                };
-
-                Ok((ky, collapsed))
+                )
+            })
+        };
+        let nested_folds_made = nested_folds.as_ref().ok();
+        let (native_collapsed, error_terms, nested_collapsed, nested_error_terms) = par_join!(
+            native_collapse,
+            || {
+                if let Some(held) = &mut native_device {
+                    span("oe.native.device_fold", || {
+                        held.fold_inner::<native::RevdotParameters<C::Profile>>(mu)
+                    });
+                }
+                span("oe.native.errors", || match &mut native_device {
+                    Some(held) => {
+                        held.outer_error_terms::<B, native::RevdotParameters<C::Profile>>()
+                    }
+                    None => fold_revdot::outer_error_terms_with_backend::<
+                        B,
+                        _,
+                        R,
+                        native::RevdotParameters<C::Profile>,
+                    >(&native_a, &native_b),
+                })
             },
-        )?;
-
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
-            B,
-            _,
-            R,
-            native::RevdotParameters<C::Profile>,
-        >(&native_a, &native_b);
+            || span("oe.nested.collapse", || {
+                Self::nested_collapsed(
+                    nested_inner_error_witness,
+                    nested_source,
+                    nested_preamble,
+                    y,
+                    mu,
+                )
+            }),
+            || -> Result<_> {
+                // The claims' first-layer folds at the nested counterpart
+                // of the challenge are the ones computed with the native
+                // folds above, or are made here on the device that holds
+                // the claims.
+                let nested_mu = nested::challenge::<C>(mu)?;
+                if let Some(held) = &mut nested_device {
+                    span("oe.nested.device_fold", || {
+                        held.fold_inner::<nested::RevdotParameters<C::Profile>>(nested_mu)
+                    });
+                }
+                Ok(span("oe.nested.errors", || match &mut nested_device {
+                    Some(held) => {
+                        held.outer_error_terms::<B, nested::RevdotParameters<C::Profile>>()
+                    }
+                    None => {
+                        let (a, b) = nested_folds_made
+                            .expect("the folds were made at the challenge derived just above");
+                        fold_revdot::outer_error_terms_with_backend::<
+                            B,
+                            _,
+                            R,
+                            nested::RevdotParameters<C::Profile>,
+                        >(a, b)
+                    }
+                }))
+            },
+        );
+        let (ky, collapsed) = native_collapsed?;
 
         let native_outer_error_witness =
             native::stages::outer_error::Witness::<C, native::RevdotParameters<C::Profile>> {
@@ -207,20 +316,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 ky,
                 sponge_state_elements,
             };
-        self.compute_native_outer_error(rng, &native_outer_error_witness, builder)?;
+        span("oe.native.rx", || {
+            self.compute_native_outer_error(rng, &native_outer_error_witness, builder)
+        })?;
 
         // The bridge for this stage carries the nested fold's second layer, so
         // it is built once the native commitment it also bridges exists.
-        let (nested_outer_error_witness, nested_a, nested_b) = self.compute_nested_outer_error(
-            rng,
-            nested_inner_error_witness,
-            nested_claims,
-            nested_source,
-            nested_preamble,
-            y,
-            mu,
-            builder,
-        )?;
+        let nested_collapsed = nested_collapsed?;
+        let (nested_a, nested_b) = nested_folds?;
+        let nested_outer_error_witness =
+            self.compute_bridge_outer_error(rng, nested_collapsed, nested_error_terms?, builder)?;
 
         Ok((
             native_outer_error_witness,
@@ -229,6 +334,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_outer_error_witness,
             nested_a,
             nested_b,
+            native_device,
+            nested_device,
         ))
     }
 
@@ -256,8 +363,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 
-    /// Applies the first layer of the nested fold and commits its second
-    /// layer's data into the `outer_error` bridge stage.
+    /// The nested fold's collapsed values.
     ///
     /// The nested $y$ and $\mu$ are derived from the native challenges
     /// (see [`nested::challenge`]). The transcript squeezes $y$ after the
@@ -268,38 +374,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// the bridge preamble's copies of their nested unified instances
     /// determine, so the witness this stage commits is the one that circuit
     /// enforces.
-    #[allow(clippy::too_many_arguments)]
-    fn compute_nested_outer_error<RNG: CryptoRng>(
-        &self,
-        rng: &mut RNG,
+    fn nested_collapsed(
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
-        nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         native_y: C::CircuitField,
         native_mu: C::CircuitField,
-        builder: &mut ProofBuilder<'_, C, R, B>,
-    ) -> Result<(
-        nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
-        FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
-    )> {
+    ) -> Result<FixedVec<C::ScalarField, NestedNumGroups<C::Profile>>> {
         let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
-
-        let a = fold_revdot::fold_inner::<
-            sparse::Polynomial<C::ScalarField, R>,
-            _,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.a, nested_mu);
-        let b = fold_revdot::fold_inner::<
-            sparse::Polynomial<C::ScalarField, R>,
-            _,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.b, nested_mu);
-        drop(nested_claims);
-
-        let collapsed = NestedFuseEmulator::<C>::emulate_wireless(
+        NestedFuseEmulator::<C>::emulate_wireless(
             (
                 (&nested_inner_error_witness.error_terms, nested_y, nested_mu),
                 (
@@ -372,15 +456,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     Ok(*v.value().take())
                 })
             },
-        )?;
+        )
+    }
 
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
-            B,
-            _,
-            R,
-            nested::RevdotParameters<C::Profile>,
-        >(&a, &b);
-
+    /// Commits the nested fold's second layer's data, with the native
+    /// `outer_error` commitment, into the `outer_error` bridge stage.
+    fn compute_bridge_outer_error<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        collapsed: FixedVec<C::ScalarField, NestedNumGroups<C::Profile>>,
+        error_terms: FixedVec<
+            C::ScalarField,
+            fold_revdot::NumErrorTerms<NestedNumGroups<C::Profile>>,
+        >,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<nested::stages::outer_error::Witness<C::HostCurve, C::Profile>> {
         let bridge = nested::stages::outer_error::Witness {
             native_outer_error: builder.native_outer_error_commitment(),
             error_terms,
@@ -390,10 +480,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &bridge,
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = span("oe.bridge.commit", || {
+            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params))
+        });
         builder.set_bridge_outer_error_rx(bridge_rx, bridge_commitment);
 
-        Ok((bridge, a, b))
+        Ok(bridge)
     }
 }

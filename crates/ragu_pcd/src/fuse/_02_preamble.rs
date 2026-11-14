@@ -39,9 +39,30 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
         nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
     )> {
-        let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
-        self.commit_native_points_children(rng, left, right, builder)?;
-        let bridge_witness = self.compute_bridge_preamble(rng, left, right, builder)?;
+        // The bridge's view of each child is read off the child alone, and
+        // deriving its nested instance takes as long as the native stages
+        // here do: it is gathered behind them. The native stages draw their
+        // blindings on this thread, in order; the bridge reads several
+        // native commitments, which are computed together, in one backend
+        // call.
+        let mut children = None;
+        let preamble_witness = crate::multicore::overlap(
+            || {
+                children = Some(crate::multicore::par_join!(
+                    || nested::stages::preamble::ChildWitness::from_proof(left),
+                    || nested::stages::preamble::ChildWitness::from_proof(right),
+                ));
+            },
+            || -> Result<_> {
+                let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
+                self.commit_native_points_children(rng, left, right, builder)?;
+                builder.precommit_native();
+                Ok(preamble_witness)
+            },
+        )?;
+        let (left_child, right_child) = children.expect("the children were gathered");
+        let bridge_witness =
+            self.compute_bridge_preamble(rng, left_child?, right_child?, builder)?;
         Ok((preamble_witness, bridge_witness))
     }
 
@@ -72,8 +93,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     fn compute_bridge_preamble<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        left: nested::stages::preamble::ChildWitness<C::HostCurve, C::Profile>,
+        right: nested::stages::preamble::ChildWitness<C::HostCurve, C::Profile>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
         let bridge_witness = nested::stages::preamble::Witness {
@@ -82,8 +103,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_points_children: builder.native_points_children_commitment(),
             online_commitments: builder.online_commitments(),
             application_stage: builder.native_application_stage_commitment(),
-            left: nested::stages::preamble::ChildWitness::from_proof(left)?,
-            right: nested::stages::preamble::ChildWitness::from_proof(right)?,
+            left,
+            right,
         };
         let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),

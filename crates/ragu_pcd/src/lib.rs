@@ -63,6 +63,9 @@ pub mod pasta;
 pub mod profile;
 mod proof;
 pub mod step;
+#[cfg_attr(not(feature = "stage-timing"), allow(dead_code))]
+#[doc(hidden)]
+pub mod timing;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
 mod verify;

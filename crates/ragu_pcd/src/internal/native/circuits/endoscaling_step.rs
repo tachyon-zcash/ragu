@@ -27,6 +27,7 @@
 //! [`stages::points`]: crate::internal::native::stages::points
 //! [`unified`]: crate::internal::native::unified
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_circuits::{
@@ -81,6 +82,11 @@ impl<C: ProfiledCycle, R: Rank> Circuit<C, R> {
 pub struct Witness<'a, C: ProfiledCycle> {
     pub inputs: &'a Inputs<C::NestedCurve, C::Profile>,
     pub walk: &'a WalkWitness<C::NestedCurve, C::Profile>,
+    /// For each input, the inverses its scaling divides by
+    /// ([`walk_advice`](crate::internal::endoscalar::walk_advice)). A step
+    /// checks each inverse it is offered and computes any that is missing
+    /// or wrong, so this may be empty.
+    pub advice: &'a [Vec<C::CircuitField>],
 }
 
 impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circuit<C, R> {
@@ -145,7 +151,10 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let acc = NonzeroBank::scope(dr, |dr, bank| {
             let mut acc = initial;
             for idx in range {
-                let scaled = endoscalar.group_scale(dr, &acc)?;
+                let advice = witness
+                    .as_ref()
+                    .map(|w| crate::internal::endoscalar::scaling_advice(w.advice, idx));
+                let scaled = endoscalar.group_scale_with_advice(dr, &acc, advice)?;
                 acc = scaled.add_incomplete(dr, walk.input(idx), bank)?;
             }
             Ok(acc)
