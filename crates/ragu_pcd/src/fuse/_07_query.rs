@@ -188,13 +188,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // zeta_q, the lift of w.
         // TODO(decompression): if it opens at another point, the prover
         // computes that point here.
+        let online_fq_point = w;
+        #[cfg(test)]
+        let online_fq_point = crate::online_fq_tests::query_point(online_fq_point);
         let online_fq = FixedVec::try_from(
             builder
                 .online_fq_polynomials()
                 .iter()
                 .map(|poly| online::Query {
-                    x: w,
-                    y: B::sparse_eval(poly, w),
+                    x: online_fq_point,
+                    y: {
+                        let value = B::sparse_eval(poly, online_fq_point);
+                        #[cfg(test)]
+                        let value = crate::online_fq_tests::query_value(value);
+                        value
+                    },
                 })
                 .collect::<Vec<_>>(),
         )?;

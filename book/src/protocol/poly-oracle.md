@@ -445,9 +445,13 @@ After:
 - Solution: mirror [v1](#v1) and [v4](#v4) across the cycle: commit $f_q$ natively before $w$, and open it in the nested `Query` and `Eval` stages, where the nested `compute_v` both claims and folds the opening
 
 The client is the aggregator's decompression.
-Verifying an $\E_p$ IPA in circuit leaves a point $G' = \langle \v{s}, \v{G} \rangle$, where $s(X) = \prod_i (1 + u_i X^{2^i})$ is known from the IPA challenges.
+Verifying an $\E_p$ IPA in circuit leaves a point $G' = \langle \v{s}, \v{G} \rangle$, where $s(X) = \prod_{i=0}^{k-1} (1 + u_{k-1-i} X^{2^i})$ is known from the existing IPA round challenges $u_0, \ldots, u_{k-1}$, listed in transcript order.
 Instead of computing that MSM, the prover commits $s(X)$ as $f_q$, and a nested circuit checks $s(\zeta_q)$ against the closed form in $O(\log n)$ multiplications.
 $G'$ has coordinates in $\F_p$, so it is committed on the native side; $s$ is over $\F_q$, so it is evaluated on the nested side.
+
+V5 adds no IPA challenges and makes no change to the IPA transcript.
+Its random point $\zeta_q$ tests whether the polynomial committed by $G'$ is the expected $s(X)$: V5 proves $f_q(\zeta_q) = y_q$, and decompression must bind $\cm_{f_q} = G'$ and check $y_q = s(\zeta_q)$.
+The last check still uses the original IPA round challenges to compute the expected value; a valid opening of $G'$ alone does not establish that it is the correct folded generator.
 
 Swapping the fields swaps every role of the $\F_p$ slots:
 
@@ -506,6 +510,9 @@ The `Aggregator` profile turns it on when decompression lands; until then only t
   Fixed before $\zeta_q$ are $\cm_{f_q}$, the circuit's constants, and whatever the native pre-$w$ stages hold.
   The values a check at $\zeta_q$ reads, such as decompression's IPA challenges $u_i$, must be witnessed natively before $w$, where the native half of decompression checks them.
   How they reach `compute_v` bound to that stage is decompression's to add, with the challenge stage's binding as the precedent.
+  The IPA round challenges retain the compression transcript's existing conversion: their canonical integer is preserved across the fields within the common 254-bit range for Pasta.
+  This differs from the 143-bit endoscalar lift used for $\zeta_q$; applying that lift to the IPA challenges would change $s(X)$.
+  If the nested circuit already holds the correctly bound $\F_q$ challenges, no further conversion is needed.
 - **A hint until decompression.**
   Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; until a check constrains $y_q$, a prover may commit any polynomial.
   The zero polynomial's commitment is the identity, which the walk cannot take, so the placeholder must not be zero.

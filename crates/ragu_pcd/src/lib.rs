@@ -77,6 +77,10 @@ mod setup_binding_tests;
 mod profile_layout_tests;
 
 #[cfg(test)]
+#[path = "../tests/online_fq.rs"]
+mod online_fq_tests;
+
+#[cfg(test)]
 #[path = "../tests/decompress_statement.rs"]
 mod decompress_statement_tests;
 

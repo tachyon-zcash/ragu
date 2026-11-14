@@ -135,7 +135,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder
                     .online_fq_polynomials()
                     .iter()
-                    .map(|poly| B::sparse_eval(poly, u_nested))
+                    .map(|poly| {
+                        let value = B::sparse_eval(poly, u_nested);
+                        #[cfg(test)]
+                        let value = crate::online_fq_tests::eval_value(value);
+                        value
+                    })
                     .collect::<Vec<_>>(),
             )?,
         };
