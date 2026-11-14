@@ -552,10 +552,10 @@ impl Step<C> for UnitSeed {
 // `anchor' = Poseidon(anchor, H(cm))`, where `cm` is the commitment of a
 // set polynomial. The circuit cannot hash `cm` itself: it is a point on the
 // other curve of the cycle. Instead, `Oracles::bridge_hash` gives the step
-// $H^{bridge}(O_1)$, a binding digest of its own output's slot 1, as two
-// field elements. Outside the circuit, `Application::bridge_hash` computes
-// the same digest, so an application can recompute every anchor from the
-// sets alone, with `Application::commit`.
+// $H^{bridge}(O_1)$, a binding digest of its own output's slot 1, as a
+// `BridgeHash` gadget over its two coordinates. Outside the circuit,
+// `Application::bridge_hash` computes the same digest, so an application can
+// recompute every anchor from the sets alone, with `Application::commit`.
 //
 // Only the step's own slot 1 has a digest. To hash an input's polynomial,
 // the step copies it into its output's slot 1 and proves the copy at zeta.
@@ -653,11 +653,9 @@ impl Step<C> for AdvanceAnchor {
         copy.enforce_equal(dr, &set)?;
 
         // anchor' = Poseidon(anchor, H(O1)).
-        let [x, y] = oracles.bridge_hash().clone();
         let mut sponge = Sponge::new(dr, self.poseidon);
         sponge.absorb(dr, previous.as_gadget())?;
-        sponge.absorb(dr, &x)?;
-        sponge.absorb(dr, &y)?;
+        oracles.bridge_hash().write(dr, &mut sponge)?;
         let anchor = sponge.squeeze(dr)?;
 
         let data = anchor.value().map(|v| *v);

@@ -8,7 +8,7 @@ mod prepared;
 use alloc::vec::Vec;
 
 pub use encoder::Encoded;
-pub use oracles::{Oracle, Oracles};
+pub use oracles::{BridgeHash, Oracle, Oracles};
 pub use prepared::Prepared;
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{

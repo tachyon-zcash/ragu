@@ -58,9 +58,10 @@ use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
     Cycle, Error, Result,
     drivers::{Driver, DriverValue},
+    gadgets::Gadget,
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, io::Write, vec::FixedVec};
 use udon::field::Field;
 
 use super::Step;
@@ -102,7 +103,7 @@ impl<F: Field, R: Rank> Evaluate<F> for OnlineWitness<F, R> {
 /// leaves to padding cannot be opened.
 pub struct Oracles<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> {
     zeta: Element<'dr, D>,
-    bridge_hash: [Element<'dr, D>; 2],
+    bridge_hash: BridgeHash<'dr, D>,
     staged: Vec<Element<'dr, D>>,
     evaluator: DriverValue<D, &'a dyn Evaluate<D::F>>,
     queries: [Option<QueryOutput<'dr, D>>; online::NUM_ONLINE_QUERIES],
@@ -118,10 +119,10 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         staged: Vec<Element<'dr, D>>,
     ) -> Result<Self> {
         let zeta = Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.zeta))?;
-        let bridge_hash = [
+        let bridge_hash = BridgeHash::new(
             Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.bridge_hash[0]))?,
             Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.bridge_hash[1]))?,
-        ];
+        );
         Ok(Oracles {
             zeta,
             bridge_hash,
@@ -143,7 +144,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         &self.zeta
     }
 
-    /// The bridge-hash stage's commitment, as its two coordinates. The
+    /// The bridge-hash stage's commitment, as a [`BridgeHash`]. The
     /// stage holds the step's own last online commitment, and the parent
     /// binds this value to the stage it folds. A step that hashes its
     /// output polynomial's commitment into a header field, for instance
@@ -159,7 +160,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     /// recomputes the honest prover's unblinded encoding. Applications that
     /// use it in anchors must recompute advancement natively and compare
     /// against canonical-chain anchors.
-    pub fn bridge_hash(&self) -> &[Element<'dr, D>; 2] {
+    pub fn bridge_hash(&self) -> &BridgeHash<'dr, D> {
         &self.bridge_hash
     }
 
@@ -305,7 +306,44 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
                 .map(|query| query.expect("every slot was queried"))
                 .collect::<Vec<_>>(),
         )?;
-        Ok((self.zeta, queries, self.bridge_hash))
+        let BridgeHash { x, y } = self.bridge_hash;
+        Ok((self.zeta, queries, [x, y]))
+    }
+}
+
+/// A step's bridge hash: the coordinates of the bridge-hash stage's
+/// commitment, a point on [`Cycle::NestedCurve`].
+///
+/// The step circuit does not constrain the coordinates to lie on the curve.
+/// The parent binds them to the commitment it folds. For this reason, this
+/// gadget gives no curve arithmetic. Write it into a sponge or a buffer with
+/// [`Write`], or read one coordinate with [`x`](Self::x) or [`y`](Self::y).
+#[derive(Gadget, Write)]
+pub struct BridgeHash<'dr, D: Driver<'dr>> {
+    #[ragu(gadget)]
+    x: Element<'dr, D>,
+    #[ragu(gadget)]
+    y: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> BridgeHash<'dr, D> {
+    /// Creates a bridge hash from its coordinates.
+    ///
+    /// Not part of the public API: Ragu allocates the bridge hash for a
+    /// step. This is public only for the mock in the `ragu` crate.
+    #[doc(hidden)]
+    pub fn new(x: Element<'dr, D>, y: Element<'dr, D>) -> Self {
+        BridgeHash { x, y }
+    }
+
+    /// Returns the $x$-coordinate.
+    pub fn x(&self) -> &Element<'dr, D> {
+        &self.x
+    }
+
+    /// Returns the $y$-coordinate.
+    pub fn y(&self) -> &Element<'dr, D> {
+        &self.y
     }
 }
 
