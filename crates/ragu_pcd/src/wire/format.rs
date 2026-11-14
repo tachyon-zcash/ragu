@@ -13,10 +13,51 @@ use crate::{
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
 const ENVELOPE_VERSION: u16 = 3;
 /// Each proof representation has its own payload kind and schema version.
-#[derive(Clone, Copy)]
-pub(crate) enum PayloadKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PayloadKind {
+    /// An uncompressed [`Proof`].
     Proof,
+    /// A [`CompressedProof`].
     Compressed,
+}
+
+/// Reads the payload kind from the envelope at the start of `bytes`.
+///
+/// Checks the magic and envelope version. Later envelope fields and the payload
+/// need not be present. This does not establish proof validity.
+pub fn read_payload_kind(bytes: &[u8]) -> Result<PayloadKind, Error<'_>> {
+    let mut reader = Reader::new(bytes);
+    let offset = reader.offset();
+    let bytes = reader.take(MAGIC.len())?;
+    if bytes != MAGIC {
+        return Err(Error::Invalid {
+            offset,
+            bytes,
+            reason: "invalid proof magic",
+        });
+    }
+
+    let offset = reader.offset();
+    let bytes = reader.take(size_of::<u16>())?;
+    if bytes != ENVELOPE_VERSION.to_le_bytes() {
+        return Err(Error::Invalid {
+            offset,
+            bytes,
+            reason: "unsupported proof envelope version",
+        });
+    }
+
+    let offset = reader.offset();
+    let bytes = reader.take(size_of::<u16>())?;
+    let tag = u16::from_le_bytes(bytes.try_into().expect("2-byte payload kind"));
+    [PayloadKind::Proof, PayloadKind::Compressed]
+        .into_iter()
+        .find(|kind| kind.tag() == tag)
+        .ok_or(Error::Invalid {
+            offset,
+            bytes,
+            reason: "unknown proof payload kind",
+        })
 }
 
 impl PayloadKind {
@@ -271,6 +312,48 @@ mod tests {
         internal::online::NUM_ONLINE_QUERIES,
         profile::{Shape, Standard},
     };
+
+    #[test]
+    fn payload_kind_inspection() {
+        let dims = Dimensions::of::<TestRank, 4>();
+        let prefix_len = MAGIC.len() + 2 * size_of::<u16>();
+        for kind in [PayloadKind::Proof, PayloadKind::Compressed] {
+            let mut bytes = Vec::new();
+            write_envelope(kind, dims, &mut bytes);
+            bytes.truncate(prefix_len);
+            let parsed = read_payload_kind(&bytes).unwrap();
+            assert_eq!(parsed, kind);
+        }
+        assert_eq!(
+            read_payload_kind(&[]),
+            Err(Error::Truncated {
+                offset: 0,
+                requested: MAGIC.len(),
+                bytes: &[],
+            })
+        );
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&ENVELOPE_VERSION.to_le_bytes());
+        let offset = bytes.len();
+        bytes.extend_from_slice(&u16::MAX.to_le_bytes());
+        assert_eq!(
+            read_payload_kind(&bytes),
+            Err(Error::Invalid {
+                offset,
+                bytes: &bytes[offset..],
+                reason: "unknown proof payload kind",
+            })
+        );
+        let bytes = [0xff; ENVELOPE_SIZE];
+        assert_eq!(
+            read_payload_kind(&bytes),
+            Err(Error::Invalid {
+                offset: 0,
+                bytes: &bytes[..MAGIC.len()],
+                reason: "invalid proof magic",
+            })
+        );
+    }
 
     // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
     // the online polynomials (see `internal::online`) in the batch and the
