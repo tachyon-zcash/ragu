@@ -2,7 +2,6 @@
 
 import argparse
 from datetime import datetime, timezone
-import html
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -161,13 +160,6 @@ def owns_comment(comment, app):
         return False
     via = comment.get("performed_via_github_app")
     return via.get("id") == app["id"] if via else comment["user"].get("login") == app["slug"] + "[bot]"
-
-
-def excerpt(text, size=9000):
-    text = html.escape(text, quote=False).replace("@", "&#64;").replace("![", "[")
-    if len(text.encode()) > size:
-        return text.encode()[:size].decode("utf-8", errors="ignore") + "\n\nContinued in the report artifact."
-    return text
 
 
 def incomplete_details(run, out):
