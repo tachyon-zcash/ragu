@@ -602,12 +602,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// It covers *declared* (constant) suffixes only. An internal step whose
     /// input suffix is a witness wire — today only `Rerandomize`, via uniform
     /// encoding — must instead constrain that wire away from `Dummy`
-    /// itself; see `ProofInputs::is_dummy_input`.
+    /// itself, and from zero; see `ProofInputs::is_dummy_input` and
+    /// [`Encoded::new_uniform`](step::Encoded::new_uniform).
     ///
     /// No explicit allowed-suffix set is needed: application steps encode
     /// suffixes as constants, [`Encoded::new_uniform`](step::Encoded::new_uniform)
-    /// excludes `Dummy` and rerandomization preserves the input header, internal
-    /// circuits end in a zero suffix that no application header can use, and
+    /// excludes `Dummy` and zero, rerandomization preserves the input header,
+    /// internal circuits end in a zero suffix that no application header can use, and
     /// only `Bootstrap` declares `Dummy` inputs. An internal step with a
     /// witnessed suffix must preserve these restrictions.
     fn register_internal_step<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {

@@ -321,6 +321,10 @@ mod tests {
         // satisfied by a non-step circuit, such as an endoscaling step, whose
         // instance's linear coefficient is zero. `new_uniform` witnesses the
         // suffix, so it must exclude zero itself.
+        //
+        // End to end, the constraint is pinned only by the fuse fixtures'
+        // digests and the patcher census: forging a zero-suffix child needs a
+        // child proof of a non-step circuit, which no test builds.
         let mut dr = Emulator::execute();
         let forged = Encoded::<_, ZeroSuffixHeader, HEADER_SIZE>::new_uniform(
             &mut dr,

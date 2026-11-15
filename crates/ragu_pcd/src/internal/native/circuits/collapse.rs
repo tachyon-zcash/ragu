@@ -43,7 +43,7 @@
 //! fuse has its child claims enforced — including one whose children carry the
 //! unit `()` header. See [`is_dummy_input`] for how that binding is
 //! established, and for the internal [`Rerandomize`] step, whose suffix is a
-//! witness wire constrained away from `Dummy`.
+//! witness wire constrained away from `Dummy` and from zero.
 //!
 //! [`Dummy`]: crate::header::Dummy
 //! [`Bootstrap`]: crate::step::internal::bootstrap::Bootstrap
