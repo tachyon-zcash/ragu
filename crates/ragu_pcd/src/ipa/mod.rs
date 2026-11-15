@@ -11,6 +11,9 @@
 //! future blinding would need to cover the round commitments to remove this
 //! deterministic failure.
 //!
+//! TODO: Revisit the removal of Pedersen blinds from `S`, `L`, and `R`
+//! during rerandomization work, including the resulting completeness failures.
+//!
 //! The masking polynomial `s`, with `s(x) = 0`, is retained to mask the
 //! coefficients folded by the argument. Fiat-Shamir goes through
 //! [`IpaTranscript`], implemented for both curves by [`CycleTranscript`].

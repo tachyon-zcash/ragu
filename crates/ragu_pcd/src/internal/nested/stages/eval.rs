@@ -40,7 +40,7 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use crate::{
     Proof,
-    internal::nested::{RxComponent, RxIndex, pcs::OwnRxLen},
+    internal::nested::{RxComponent, RxIndex, online::FqPolysLen, pcs::OwnRxLen},
     profile::{Profile, ProfiledCycle},
 };
 
@@ -104,6 +104,12 @@ pub struct Evaluations<F, P: Profile> {
     pub left: ChildEvaluationsWitness<F, P>,
     pub right: ChildEvaluationsWitness<F, P>,
     pub current: CurrentStepWitness<F>,
+    /// The step's own online Fq polynomials at $u_n$.
+    ///
+    /// No other check reads these values. They must be committed before
+    /// `pre_beta`, as this stage is: a value chosen after $\beta_n$ could
+    /// cancel a false evaluation in $v_n$.
+    pub online_fq: FixedVec<F, FqPolysLen<P>>,
 }
 
 impl<F: Field, P: Profile> Evaluations<F, P> {
@@ -127,6 +133,7 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
                 b_poly: F::ZERO,
                 registry_xy: F::ZERO,
             },
+            online_fq: FixedVec::from_fn(|_| F::ZERO),
         }
     }
 }
@@ -200,6 +207,9 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
     pub b_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub registry_xy: Element<'dr, D>,
+    /// The step's own online Fq polynomials at $u_n$.
+    #[ragu(gadget)]
+    pub online_fq: FixedVec<Element<'dr, D>, FqPolysLen<P>>,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -227,7 +237,8 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
 
     fn values() -> usize {
         // (x, y) per point + 2 children + current step elements (6)
-        NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 6
+        // + the online Fq polynomials
+        NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 6 + P::ONLINE_FQ_POLYS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -251,6 +262,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
             a_poly: current(dr, |c| c.a_poly)?,
             b_poly: current(dr, |c| c.b_poly)?,
             registry_xy: current(dr, |c| c.registry_xy)?,
+            online_fq: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.nested.online_fq[i]))
+            })?,
         };
 
         Ok(Output {
@@ -267,11 +281,18 @@ mod tests {
     use super::*;
     use crate::{
         internal::tests::{R, assert_stage_values},
-        profile::Standard,
+        profile::{
+            Standard,
+            testing::{Opening, Proving},
+        },
     };
 
     #[test]
     fn stage_values_matches_wire_count() {
         assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
+        // With the evaluation of the step's own online Fq polynomial, alone
+        // and beside an extension.
+        assert_stage_values(&Stage::<EqAffine, R, Opening>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Proving>::default());
     }
 }

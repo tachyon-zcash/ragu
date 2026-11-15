@@ -563,6 +563,25 @@ mod tests {
     }
 
     #[test]
+    fn test_stage_mask_rejects_out_of_bounds_ranges() {
+        for (skip, num) in [
+            (1, usize::MAX),
+            (usize::MAX, 1),
+            (usize::MAX, 2),
+            (R::n(), 1),
+            (R::n() + 1, 0),
+        ] {
+            assert!(
+                matches!(
+                    StageMask::<R>::new(skip, num),
+                    Err(ragu_core::Error::GateBoundExceeded { limit }) if limit == R::n()
+                ),
+                "should reject out-of-bounds range: skip={skip}, num={num}"
+            );
+        }
+    }
+
+    #[test]
     fn test_stage_mask_reserved_zero() {
         // When reserved = 0, all gates except the SYSTEM gate are active.
         let stage = StageMask::<R>::new(1, R::n() - 1).expect("valid stage mask");

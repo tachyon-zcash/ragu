@@ -164,7 +164,7 @@ pub(crate) struct NativeExtra<C: Cycle> {
     pub left_header: Vec<C::CircuitField>,
     pub right_header: Vec<C::CircuitField>,
     pub output_header: Vec<C::CircuitField>,
-    pub online: crate::internal::online::Queries<C::CircuitField>,
+    pub online: crate::internal::native::online::Queries<C::CircuitField>,
     pub omega_j: C::CircuitField,
 }
 
@@ -589,7 +589,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
                 listed,
                 listed + 1,
                 native_position::<Standard>(Rx(PointsBinding)),
-                native_position::<Standard>(Rx(PointsChildren)),
+                native_position::<Standard>(Rx(PointsPreamble)),
                 native_position::<Standard>(Rx(PointsRegistryWx)),
                 native_position::<Standard>(Rx(PointsAb)),
                 native_position::<Standard>(Rx(PointsF)),

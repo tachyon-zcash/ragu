@@ -955,7 +955,7 @@ class AuditTests(unittest.TestCase):
         self.assertIn("Some tool requests were blocked", self.api.comments[0]["body"])
 
     def test_summary_has_no_mentions_or_active_html_and_is_bounded(self):
-        text = github.excerpt("</details><img src=x> @alice ![tracking](https://example.test)" + "💥" * 30000)
+        text = findings.safe("</details><img src=x> @alice !![tracking](https://example.test)" + "💥" * 30000, 9000)
         self.assertNotIn("</details>", text)
         self.assertNotIn("@alice", text)
         self.assertNotIn("![", text)

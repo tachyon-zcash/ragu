@@ -15,6 +15,7 @@ import selectors
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -284,13 +285,80 @@ def verify_reuse(run, out, phase):
             raise ValueError("reused specialist requires its original core report")
 
 
-def git(root, *args, timeout=GIT_TIMEOUT):
-    return subprocess.check_output(
+def git(root, *args, timeout=GIT_TIMEOUT, text=True):
+    output = subprocess.check_output(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", "-C", str(root), *args],
-        text=True,
+        text=text,
         timeout=timeout,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/bin/false"},
-    ).strip()
+    )
+    return output.strip() if text else output
+
+
+def tracked(root, revision, timeout=GIT_TIMEOUT):
+    """Yield the mode, object ID, size and path of every file in `revision`.
+
+    A gitlink has no size in the listing and yields None.
+    """
+    listing = git(root, "ls-tree", "-r", "-z", "-l", "--full-tree", revision, timeout=timeout, text=False)
+    for entry in listing.split(b"\0")[:-1]:
+        meta, path = entry.split(b"\t", 1)
+        mode, _, oid, size = meta.decode().split()
+        yield mode, oid, None if size == "-" else int(size), os.fsdecode(path)
+
+
+def regular(path, size, executable):
+    """Read a regular file of `size` bytes with this executable bit, else None."""
+    # Opening neither blocks on a FIFO nor follows a final symlink.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != size or bool(info.st_mode & stat.S_IXUSR) != executable:
+            return None
+        data = b""
+        while len(data) <= size and (chunk := os.read(descriptor, size + 1 - len(data))):
+            data += chunk
+        return data
+    finally:
+        os.close(descriptor)
+
+
+def unchanged(root, source, revision, timeout=GIT_TIMEOUT):
+    """Whether `source` still holds every tracked file of `revision`.
+
+    The sandbox keeps a session from writing its checkout, and this confirms it
+    held. Git never runs in `source`, since Git runs configuration it finds in a
+    nested repository. Objects come from the controller's repository, and paths
+    are not followed through symlinks. Untracked files are ignored, as by
+    `git diff`. A file whose size differs from its blob's is never read, and
+    `timeout` bounds the whole comparison.
+    """
+    deadline = time.monotonic() + timeout
+    if source.is_symlink():
+        return False
+    source = source.resolve()
+    for mode, oid, size, name in tracked(root, revision, timeout):
+        if time.monotonic() > deadline:
+            raise TimeoutError("source comparison deadline reached")
+        path = source / name
+        try:
+            if path.parent.resolve() != path.parent:
+                return False
+            if mode == "120000" and stat.S_ISLNK(os.lstat(path).st_mode):
+                data = os.fsencode(os.readlink(path))
+            elif mode in ("100644", "100755"):
+                data = regular(path, size, mode == "100755")
+            else:
+                return False
+        except (OSError, RuntimeError):  # Before Python 3.13 a symlink loop is a RuntimeError.
+            return False
+        if data is None or len(data) != size:
+            return False
+        blob = hashlib.new({40: "sha1", 64: "sha256"}[len(oid)], b"blob %d\0" % size)
+        blob.update(data)
+        if blob.hexdigest() != oid:
+            return False
+    return True
 
 
 def prepare(root, run, work):
@@ -299,9 +367,33 @@ def prepare(root, run, work):
         raise ValueError("controller checkout does not match the trusted configuration revision")
     for revision in (run["base"], run["head"]):
         git(root, "fetch", "--no-tags", "origin", revision)
+    # Git treats a repository planted at a gitlink's path as a submodule and runs
+    # its configuration. Ragu has no submodules, so refuse before any review.
+    if any(mode == "160000" for mode, *_ in tracked(root, run["head"])):
+        raise ValueError("head contains a gitlink")
     merge_base = git(root, "merge-base", run["base"], run["head"])
+    # The head's .gitattributes can make checkout convert files, which `unchanged`
+    # would then see as edits. Info attributes outrank every attributes file in
+    # the tree, so check out each blob byte for byte.
+    info = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "info"
+    info.mkdir(exist_ok=True)
+    (info / "attributes").write_text("* -text -ident -filter !working-tree-encoding\n")
     for skill in ROLES:
         git(root, "worktree", "add", "--detach", str(work / skill), run["head"])
+    # No session can write its checkout, but a tracked symlink leaving it names
+    # files one can, such as the Cargo home: PR code could then swap what a
+    # reviewer reads there. Resolve on disk, since a target can leave through
+    # another symlink without naming a parent directory.
+    checkout = (work / ROLES[0]).resolve()
+    for mode, _, _, name in tracked(root, run["head"]):
+        if mode != "120000":
+            continue
+        try:
+            inside = (checkout / name).resolve().is_relative_to(checkout)
+        except (OSError, RuntimeError):  # Before Python 3.13 a symlink loop is a RuntimeError.
+            inside = False
+        if not inside:
+            raise ValueError("head contains a symlink leaving its checkout")
     return merge_base
 
 
@@ -355,14 +447,17 @@ def settings(root, source, work, out, private, plugin, scratch):
         deny_read.append(str(out / "core-findings.json"))
     protected = [root, root / ".git", out, private, plugin, work / "control", state, scratch / source.name / "shared-temp"]
     protected += peer_scratch + shared_scratch()
-    protected += [work / skill for skill in ROLES if work / skill != source]
+    # No session can write a checkout, its own included. What a reviewer reads
+    # there stays the pinned head throughout, and PR code can neither stage a
+    # change and undo it before the final comparison nor plant files to build.
+    protected += [source] + [work / skill for skill in ROLES if work / skill != source]
     protected += [work / skill / ".git" for skill in ROLES]
     protected += [work / skill / ".claude" for skill in ROLES]
     cargo = cargo_home(work)
     protected += [cargo / name for name in ("bin", "config", "config.toml", ".mcp.json", ".claude")]
     readonly = source.name == RECONCILER
     if readonly:
-        protected += [source, cargo]
+        protected.append(cargo)
     deny = [f"Read(/{path}{suffix})" for path in deny_read for suffix in ("", "/**")]
     deny += [f"{tool}(/{path}{suffix})" for path in protected for tool in ("Write", "Edit") for suffix in ("", "/**")]
     return {
@@ -381,7 +476,7 @@ def settings(root, source, work, out, private, plugin, scratch):
             "filesystem": {
                 "denyRead": deny_read,
                 "denyWrite": [str(path) for path in protected],
-                "allowWrite": ([str(source), str(cargo)] if not readonly else []) + [str(scratch / source.name)],
+                "allowWrite": ([] if readonly else [str(cargo)]) + [str(scratch / source.name)],
             },
             "network": {
                 "allowedDomains": ["crates.io", "*.crates.io", "index.crates.io", "static.rust-lang.org", "github.com", "*.githubusercontent.com"],
@@ -403,6 +498,8 @@ def environment(run, work, skill, scratch):
         "CLAUDE_CODE_TMPDIR": str(scratch / skill),
         "TMPDIR": str(scratch / skill),
         "CARGO_HOME": str(cargo_home(work)),
+        # The checkout is read-only, so builds go to the session's scratch.
+        "CARGO_TARGET_DIR": str(scratch / skill / "target"),
         # Builds are rare and short-lived; a floor of two jobs keeps a specialist
         # from compiling on one core, and dropping debuginfo speeds every build.
         "CARGO_BUILD_JOBS": str(max(2, (os.cpu_count() or 1) // workers)),
@@ -446,6 +543,9 @@ and .claude/review-shared directories.
 Use CARGO_HOME at {cargo_home(source.parent)}; do not replace it or copy
 authentication configuration. Use inherited TMPDIR and CARGO_BUILD_JOBS for
 scratch work and concurrent builds; shared temporary directories are blocked.
+The checkout is read-only, so what you read there is the pinned head, and Cargo
+builds into the inherited CARGO_TARGET_DIR. To try a change, copy the files you
+need under TMPDIR and edit the copy.
 The sandbox allowlist permits Cargo downloads and GitHub. Do not supply
 per-command allowed_domains or ask to widen permissions.
 
@@ -870,7 +970,7 @@ def review_skill(skill, executable, root, run, work, out, private, plugin, merge
     if skill == SKILLS[0]:
         records, _ = findings.review(result["structured_output"], skill)
         write_json(out / "core-findings.json", {"findings": records})
-    if git(source, "rev-parse", "HEAD") != run["head"] or git(source, "diff", "HEAD", "--"):
+    if not unchanged(root, source, run["head"]):
         raise ValueError(f"{skill}: tracked source changed during review")
     duration = round(time.monotonic() - started, 3)
     print(f"Completed {skill} in {duration:.1f}s", flush=True)
@@ -941,13 +1041,11 @@ is a brief account of checks and limitations. Return the requested schema.
             native_cost(result)
             output = result["structured_output"]
             report = findings.render_reconciliation(output, bundle)
-            for args in (("rev-parse", "HEAD"), ("diff", "HEAD", "--")):
-                remaining = RECONCILE_TIMEOUT - (time.monotonic() - started)
-                if remaining <= 0:
-                    raise ValueError("reconciliation deadline reached")
-                value = git(source, *args, timeout=min(remaining, GIT_TIMEOUT))
-                if value != (run["head"] if args[0] == "rev-parse" else ""):
-                    raise ValueError("reconciliation source changed")
+            remaining = RECONCILE_TIMEOUT - (time.monotonic() - started)
+            if remaining <= 0:
+                raise ValueError("reconciliation deadline reached")
+            if not unchanged(root, source, run["head"], timeout=min(remaining, GIT_TIMEOUT)):
+                raise ValueError("reconciliation source changed")
             (out / "reconcile.md").write_text(report)
             record = {**record, "state": "completed", "sha256": digest(out / "reconcile.md"),
                       "result_sha256": digest(out / "reconcile.json"),

@@ -30,7 +30,7 @@
 //!   still verifies after rerandomization.
 //! * The root, once corrupted in a way that binds a verifier, does not.
 //!
-//! An iteration here costs seconds, not microseconds: it is a randomized
+//! An iteration here can take minutes, not microseconds: it is a randomized
 //! integration test that libFuzzer steers, and the corpus it accumulates is
 //! a set of tree shapes rather than a set of byte strings.
 

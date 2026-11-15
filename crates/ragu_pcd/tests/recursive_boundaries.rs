@@ -236,7 +236,7 @@ mod registry {
             QueryStage,
             EvalStage,
             PointsBindingStage,
-            PointsChildrenStage,
+            PointsPreambleStage,
             PointsRegistryWxStage,
             PointsAbStage,
             PointsFStage,

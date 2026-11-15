@@ -14,11 +14,14 @@
 //! ten lifts and the base-case sign derived from the child headers. Their
 //! binding sum goes to the unified instance.
 
+use alloc::vec::Vec;
+
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
 use ragu_core::Result;
+use ragu_primitives::vec::FixedVec;
 use rand::CryptoRng;
 use udon::field::Field;
 
@@ -28,7 +31,10 @@ use super::{
 };
 use crate::{
     Application, Proof,
-    internal::{native, nested, online},
+    internal::{
+        native::{self, online},
+        nested,
+    },
     multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
@@ -128,6 +134,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left: left_nested,
             right: right_nested,
             current: current_nested,
+            online_fq: FixedVec::try_from(
+                builder
+                    .online_fq_polynomials()
+                    .iter()
+                    .map(|poly| {
+                        let value = B::sparse_eval(poly, u_nested);
+                        // Test hook: this runs on the thread that calls
+                        // `fuse`, outside its parallel jobs, as the hook's
+                        // thread-local requires.
+                        #[cfg(test)]
+                        let value = crate::online_fq_oracles_tests::mutate_eval_value(value);
+                        value
+                    })
+                    .collect::<Vec<_>>(),
+            )?,
         };
 
         Ok((native, nested, nested_challenges))

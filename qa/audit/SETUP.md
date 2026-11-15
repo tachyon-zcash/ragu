@@ -208,10 +208,17 @@ filtering happens at the job level. Those runs do not access either environment.
 
 Review skills and policies come from the workflow's trusted `main` revision,
 not the PR. Claude runs noninteractively with a required Bash sandbox, protected
-controller/report paths, and an API key helper outside that sandbox. The model
-job has no App key; publisher jobs never execute PR code. Required Rust
+controller/report paths, and an API key helper outside that sandbox. The
+controller never runs Git in a review worktree: it compares tracked files with
+the pinned head from its own repository, and refuses heads containing gitlinks
+or symlinks that leave the checkout.
+Worktrees hold each blob byte for byte, whatever the head's `.gitattributes`
+request, and no review session can write one: PR code cannot change the source
+a reviewer reads, even briefly, and that comparison only confirms it.
+The model job has no App key; publisher jobs never execute PR code. Required Rust
 toolchains are installed before the model key is made available. Tests can
-write scratch files and Cargo dependencies, but no caches are saved afterward.
+write Cargo dependencies and their reviewer's scratch directory, which also
+holds Cargo's build output, but no caches are saved afterward.
 The controller prepares the Cargo home, executable directory, and readable
 configuration files before starting Claude. Persistent `.mcp.json` and `.claude`
 guards in the shared Cargo home avoid temporary guard-path races between

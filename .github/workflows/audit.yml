@@ -1,6 +1,6 @@
 name: Ragu audit
 
-on: # zizmor: ignore[dangerous-triggers]
+on:
   # Privileged jobs use only default-branch controller code. PR commands run
   # in Claude's required sandbox, with no publisher token or model key in env.
   issue_comment:

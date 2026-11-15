@@ -1,6 +1,7 @@
 """Check evidence accounting, disagreement retention, and bounded publication."""
 
 import copy
+import html
 import unittest
 
 import findings
@@ -147,6 +148,36 @@ class FindingsTests(unittest.TestCase):
         self.assertNotIn("![", text)
         self.assertIn("&lt;script&gt;", text)
 
+    def test_markup_cannot_be_reassembled_from_untrusted_text(self):
+        # Each payload once escaped into a live image, raw HTML, or a mention on GitHub.
+        payloads = [
+            "!![x](https://e.example/a.png) !!![x](u) [!![x](u)](l)",
+            "&#64;octocat &commat;octocat @octocat",
+            "\\`<img src=\"https://e.example/b.png\" width=\"900\">` and \\`@octocat` ping",
+            "double ``@octocat` here and ``<img src=\"https://e.example/c.png\">` there",
+            "Badge \\`![badge](https://e.example/d.png)`",
+            "`<b>X</b>`CamelCase`x",
+            "\\`<details><summary>Verified by maintainers</summary>`",
+            "Odd `quote",
+        ]
+        def assert_inert(text):
+            text = text.replace("<code>", "").replace("</code>", "")
+            self.assertNotIn("<", text)
+            self.assertNotIn("![", text)
+            # GitHub decodes entities before it links mentions.
+            self.assertNotRegex(html.unescape(text), r"@\w")
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                assert_inert(findings.safe(payload))
+                text = findings.prose(payload)
+                assert_inert(text)
+                # Nothing left that Markdown could pair or escape across fields.
+                self.assertNotIn("`", text)
+                self.assertNotIn("\\", text)
+                bundle = findings.bundle(self.run, {"code-review": review(finding(title=payload, cause=payload, correction=payload))})
+                assert_inert("\n".join(findings.shortlist(bundle)))
+                assert_inert("\n".join(findings.shortlist(bundle, compact=True)))
+
     def test_raw_markdown_review_is_preserved_with_metadata_separate(self):
         markdown = """## General review
 
@@ -185,9 +216,10 @@ Source and affected callers reviewed. Benchmark results weren't assessed.
     def test_prose_marks_identifiers_and_keeps_code_spans_literal(self):
         text = findings.prose("RegistryTags keeps `Vec<u32>` and with_registry_tags; NATIVE_EXTENSION = 0 in\n"
                               "tests/profile_layout.rs, see #[doc(hidden)] and Application::context on GitHub <b>@team</b>")
-        self.assertEqual(text, "`RegistryTags` keeps `Vec<u32>` and `with_registry_tags`; `NATIVE_EXTENSION` = 0 in "
-                               "tests/profile_layout.rs, see `#[doc(hidden)]` and `Application::context` on GitHub &lt;b&gt;&#64;team&lt;/b&gt;")
-        self.assertEqual((findings.prose("`<a>` <a>"), findings.safe("`<a>`")), ("`<a>` &lt;a&gt;", "`&lt;a&gt;`"))
+        self.assertEqual(text, "<code>RegistryTags</code> keeps <code>Vec&lt;u32&gt;</code> and <code>with&#95;registry&#95;tags</code>; "
+                               "<code>NATIVE&#95;EXTENSION</code> = 0 in tests/profile_layout.rs, see <code>#&#91;doc(hidden)&#93;</code> "
+                               "and <code>Application::context</code> on GitHub &lt;b&gt;@\u200bteam&lt;/b&gt;")
+        self.assertEqual((findings.prose("`<a>` <a>"), findings.safe("`<a>`")), ("<code>&lt;a&gt;</code> &lt;a&gt;", "`&lt;a&gt;`"))
         self.assertTrue(findings.safe("`long code span here`", 8).endswith("…`"))
 
 

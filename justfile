@@ -227,7 +227,7 @@ ci_test_default:
 [group('ci')]
 ci_corruption:
   cargo test --release -p ragu_pcd --locked --all-features --test corruption -- --include-ignored
-  cargo test --release -p ragu_pcd --locked --all-features --test online_oracles -- --include-ignored
+  cargo test --release -p ragu_pcd --locked --all-features --test online_fp_oracles -- --include-ignored
   PROPTEST_CASES=1 cargo test --release -p ragu_pcd --locked --all-features --lib -- --ignored --test-threads=1 \
     proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations \
     proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations \

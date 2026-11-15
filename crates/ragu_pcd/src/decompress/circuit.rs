@@ -1350,7 +1350,7 @@ where
         use native::{RxComponent::Rx, RxIndex::*};
         for (i, index) in [
             PointsBinding,
-            PointsChildren,
+            PointsPreamble,
             PointsRegistryWx,
             PointsAb,
             PointsF,

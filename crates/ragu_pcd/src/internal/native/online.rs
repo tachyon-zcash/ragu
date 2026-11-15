@@ -2,7 +2,7 @@
 //! proofs and its own output proof, which the step's PCS batch opens at
 //! points the application circuit chooses.
 //!
-//! Each proof stores [`NUM_ONLINE_POLYNOMIALS`] polynomials associated with its
+//! Each proof stores [`NUM_ONLINE_FP_POLYS`] polynomials associated with its
 //! output header, a parameter of the protocol rather than of the header type.
 //! The header's field encoding is separate from these polynomials and their
 //! commitments. A step's online slots are the proofs' polynomials in the
@@ -50,22 +50,22 @@ use ragu_primitives::{
 use udon::field::Field;
 
 use crate::Proof;
-pub(crate) use crate::header::NUM_ONLINE_POLYNOMIALS;
+pub(crate) use crate::header::NUM_ONLINE_FP_POLYS;
 
 /// The number of online polynomials a step opens across its input and output proofs.
-pub const NUM_ONLINE_QUERIES: usize = 3 * NUM_ONLINE_POLYNOMIALS;
+pub const NUM_ONLINE_FP_QUERIES: usize = 3 * NUM_ONLINE_FP_POLYS;
 
 /// Length type for a step's online slots.
-pub(crate) type QueriesLen = ConstLen<NUM_ONLINE_QUERIES>;
+pub(crate) type QueriesLen = ConstLen<NUM_ONLINE_FP_QUERIES>;
 
 /// Length type for one proof's online polynomials.
-pub(crate) type PolynomialsLen = ConstLen<NUM_ONLINE_POLYNOMIALS>;
+pub(crate) type PolynomialsLen = ConstLen<NUM_ONLINE_FP_POLYS>;
 
 /// The coefficients of `polys`, ascending in degree with trailing zeros
 /// stripped: how a step's first phase reads a proof's online polynomials.
 pub(crate) fn coefficients<F: Field, R: Rank>(
-    polys: &[sparse::Polynomial<F, R>; NUM_ONLINE_POLYNOMIALS],
-) -> [Vec<F>; NUM_ONLINE_POLYNOMIALS] {
+    polys: &[sparse::Polynomial<F, R>; NUM_ONLINE_FP_POLYS],
+) -> [Vec<F>; NUM_ONLINE_FP_POLYS] {
     core::array::from_fn(|i| {
         let mut coeffs: Vec<F> = polys[i].iter_coeffs().collect();
         while coeffs.last() == Some(&F::ZERO) {
@@ -80,12 +80,10 @@ pub(crate) fn coefficients<F: Field, R: Rank>(
 pub(crate) fn polys<'a, C: Cycle, R: Rank>(
     left: &'a Proof<C, R>,
     right: &'a Proof<C, R>,
-    own: &'a [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS],
-) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_QUERIES] {
+    own: &'a [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS],
+) -> [&'a sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_QUERIES] {
     let proofs = [left.online_polynomials(), right.online_polynomials(), own];
-    core::array::from_fn(|slot| {
-        &proofs[slot / NUM_ONLINE_POLYNOMIALS][slot % NUM_ONLINE_POLYNOMIALS]
-    })
+    core::array::from_fn(|slot| &proofs[slot / NUM_ONLINE_FP_POLYS][slot % NUM_ONLINE_FP_POLYS])
 }
 
 /// The commitments of [`polys`], in the same order, given the step's own
@@ -93,12 +91,10 @@ pub(crate) fn polys<'a, C: Cycle, R: Rank>(
 pub(crate) fn commitments<C: Cycle, R: Rank>(
     left: &Proof<C, R>,
     right: &Proof<C, R>,
-    own: [C::HostCurve; NUM_ONLINE_POLYNOMIALS],
-) -> [C::HostCurve; NUM_ONLINE_QUERIES] {
+    own: [C::HostCurve; NUM_ONLINE_FP_POLYS],
+) -> [C::HostCurve; NUM_ONLINE_FP_QUERIES] {
     let proofs = [left.online_commitments(), right.online_commitments(), own];
-    core::array::from_fn(|slot| {
-        proofs[slot / NUM_ONLINE_POLYNOMIALS][slot % NUM_ONLINE_POLYNOMIALS]
-    })
+    core::array::from_fn(|slot| proofs[slot / NUM_ONLINE_FP_POLYS][slot % NUM_ONLINE_FP_POLYS])
 }
 
 /// The polynomial of a slot a step leaves unused: the constant one, whose
@@ -120,7 +116,7 @@ pub(crate) struct Query<F> {
 /// A step's online openings, one per slot in slot order. The point every
 /// unqueried slot is opened at is the step's $\zeta = w$, which the
 /// instance does not repeat.
-pub(crate) type Queries<F> = [Query<F>; NUM_ONLINE_QUERIES];
+pub(crate) type Queries<F> = [Query<F>; NUM_ONLINE_FP_QUERIES];
 
 /// The openings of a step that queried nothing: every slot at `zeta`, with
 /// `evaluate(slot, zeta)` the slot's value there.

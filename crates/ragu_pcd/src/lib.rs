@@ -79,6 +79,10 @@ mod setup_binding_tests;
 mod profile_layout_tests;
 
 #[cfg(test)]
+#[path = "../tests/online_fq_oracles.rs"]
+mod online_fq_oracles_tests;
+
+#[cfg(test)]
 #[path = "../tests/decompression/statement.rs"]
 mod decompress_statement_tests;
 

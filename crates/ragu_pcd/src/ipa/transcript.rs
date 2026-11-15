@@ -216,7 +216,8 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
     /// the last, if any, ending the run.
     ///
     /// A run committing to the identity, which a run of all zeros does, is
-    /// rejected by [`absorb`](Self::absorb). This can reject
+    /// deliberately rejected by [`absorb`](Self::absorb) to preserve the
+    /// [`Point`] gadget's nonidentity invariant. This can reject
     /// otherwise-valid proofs.
     fn flush(&mut self) -> Result<()> {
         if self.pending.is_empty() {

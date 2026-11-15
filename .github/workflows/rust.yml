@@ -6,7 +6,7 @@ on:
 
 # Cancel in-progress runs when a new commit is pushed to the same branch/PR
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -152,10 +152,10 @@ jobs:
       # runs here, including the rejection sweeps and controls.
       - name: Run exhaustive corruption coverage
         run: cargo test --release -p ragu_pcd --locked --all-features --test corruption -- --include-ignored
-      # The online oracle suite proves at the production rank, so it is
+      # The online Fp oracle suite proves at the production rank, so it is
       # ignored in the platform matrix and runs here.
-      - name: Run the online oracle suite
-        run: cargo test --release -p ragu_pcd --locked --all-features --test online_oracles -- --include-ignored
+      - name: Run the online Fp oracle suite
+        run: cargo test --release -p ragu_pcd --locked --all-features --test online_fp_oracles -- --include-ignored
       # Replay the saved recursion failures on PRs as well as in heavy-tests.
       # One fresh case follows the committed seeds in each property. Backend
       # equivalence runs its properties in backend.yml.
@@ -168,6 +168,27 @@ jobs:
           proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations
           proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations
           proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
+
+  test-debug-assertions:
+    name: debug regressions (ubuntu-latest)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: debug-assertions
+      - name: Run PCD debug regressions
+        # Optimize production-rank proofs while exercising debug-only checks.
+        env:
+          CARGO_PROFILE_TEST_OPT_LEVEL: "3"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
+        run: cargo test -p ragu_pcd --lib --locked --all-features proof::child_commitment_tests
 
   test-default-feature:
     name: default-feature (ubuntu-latest)
@@ -374,6 +395,7 @@ jobs:
       - clippy
       - mock
       - proptests-fast
+      - test-debug-assertions
       - test-default-feature
       - test-all-feature
       - test-corruption

@@ -398,7 +398,7 @@ impl Layout {
         let instance = InstanceLayout {
             commitments: points.next(NESTED_POINTS),
             scalars: elements.next(NATIVE_SCALARS),
-            online: elements.next(2 * crate::internal::online::NUM_ONLINE_QUERIES),
+            online: elements.next(2 * crate::internal::native::online::NUM_ONLINE_FP_QUERIES),
             left_header: elements.next(HEADER_SIZE),
             right_header: elements.next(HEADER_SIZE),
             output_header: elements.next(HEADER_SIZE),

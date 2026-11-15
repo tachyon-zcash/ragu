@@ -19,8 +19,8 @@ use ragu_core::{Cycle, Result};
 
 use super::{Cached, Proof};
 use crate::{
-    header::NUM_ONLINE_POLYNOMIALS,
-    internal::{nested, online},
+    header::NUM_ONLINE_FP_POLYS,
+    internal::{native::online, nested},
     profile::ProfiledCycle,
 };
 
@@ -247,16 +247,22 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
     native_points_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_points_children_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_registry_wx_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_ab_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_f_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_points_walk_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
 
     // The step's own online polynomials, with their commitments cached.
-    online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]>,
-    online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_POLYNOMIALS]>,
+    online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]>,
+    online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
     online_openings: Option<online::Queries<C::CircuitField>>,
+
+    // The step's own online Fq polynomials, with their commitments cached.
+    // The proof does not carry them: only this step's nested batch opens
+    // them.
+    online_fq_polynomials: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    online_fq_commitments: OnceCell<Vec<C::NestedCurve>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -361,7 +367,7 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     native_extension_circuit_commitments: OnceCell<Vec<C::HostCurve>>,
     native_extension_stage_commitments: OnceCell<Vec<C::HostCurve>>,
     native_points_binding_commitment: OnceCell<C::HostCurve>,
-    native_points_children_commitment: OnceCell<C::HostCurve>,
+    native_points_preamble_commitment: OnceCell<C::HostCurve>,
     native_points_registry_wx_commitment: OnceCell<C::HostCurve>,
     native_points_ab_commitment: OnceCell<C::HostCurve>,
     native_points_f_commitment: OnceCell<C::HostCurve>,
@@ -404,12 +410,14 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_rxs: None,
             native_extension_stage_rxs: None,
             native_points_binding_rx: None,
-            native_points_children_rx: None,
+            native_points_preamble_rx: None,
             native_points_registry_wx_rx: None,
             native_points_ab_rx: None,
             native_points_f_rx: None,
             native_points_walk_rx: None,
             online_polynomials: None,
+            online_fq_polynomials: None,
+            online_fq_commitments: OnceCell::new(),
             online_commitments: OnceCell::new(),
             online_openings: None,
             bridge_preamble_rx: None,
@@ -485,7 +493,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_commitments: OnceCell::new(),
             native_extension_stage_commitments: OnceCell::new(),
             native_points_binding_commitment: OnceCell::new(),
-            native_points_children_commitment: OnceCell::new(),
+            native_points_preamble_commitment: OnceCell::new(),
             native_points_registry_wx_commitment: OnceCell::new(),
             native_points_ab_commitment: OnceCell::new(),
             native_points_f_commitment: OnceCell::new(),
@@ -546,12 +554,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         native_points_binding_commitment,
         native_points_binding_rx
     );
-    native_setter!(set_native_points_children_rx, native_points_children_rx);
+    native_setter!(set_native_points_preamble_rx, native_points_preamble_rx);
     lazy_commitment!(
         native,
-        native_points_children_commitment,
-        native_points_children_commitment,
-        native_points_children_rx
+        native_points_preamble_commitment,
+        native_points_preamble_commitment,
+        native_points_preamble_rx
     );
     native_setter!(
         set_native_points_registry_wx_rx,
@@ -592,12 +600,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     setter!(
         set_online_polynomials,
         online_polynomials,
-        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]
     );
     ref_getter!(
         online_polynomials,
         online_polynomials,
-        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_POLYNOMIALS]
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]
     );
 
     setter!(
@@ -613,11 +621,33 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     /// Lazily computes and caches the commitments of the step's own online
     /// polynomials.
-    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_POLYNOMIALS] {
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         *self.online_commitments.get_or_init(|| {
             let host_gen = C::host_generators(self.params);
             let polys = self.online_polynomials();
             core::array::from_fn(|i| B::sparse_commit_to_affine(&polys[i], host_gen))
+        })
+    }
+    setter!(
+        set_online_fq_polynomials,
+        online_fq_polynomials,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+    slice_getter!(
+        online_fq_polynomials,
+        online_fq_polynomials,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+
+    /// Lazily computes and caches the commitments of the step's own online
+    /// Fq polynomials. They are unblinded.
+    pub(crate) fn online_fq_commitments(&self) -> &[C::NestedCurve] {
+        self.online_fq_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.online_fq_polynomials()
+                .iter()
+                .map(|poly| B::sparse_commit_to_affine(poly, nested_gen))
+                .collect()
         })
     }
     setter!(
@@ -1126,7 +1156,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.native_extension_circuit_commitments();
         self.native_extension_stage_commitments();
         self.native_points_binding_commitment();
-        self.native_points_children_commitment();
+        self.native_points_preamble_commitment();
         self.native_points_registry_wx_commitment();
         self.native_points_ab_commitment();
         self.native_points_f_commitment();
@@ -1197,7 +1227,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
             native_extension_stage_rxs: take!(native_extension_stage_rxs),
             native_points_binding_rx: take!(native_points_binding_rx),
-            native_points_children_rx: take!(native_points_children_rx),
+            native_points_preamble_rx: take!(native_points_preamble_rx),
             native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
             native_points_ab_rx: take!(native_points_ab_rx),
             native_points_f_rx: take!(native_points_f_rx),
@@ -1326,7 +1356,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .map(Cached)
                 .collect(),
             native_points_binding_commitment: cached!(native_points_binding_commitment),
-            native_points_children_commitment: cached!(native_points_children_commitment),
+            native_points_preamble_commitment: cached!(native_points_preamble_commitment),
             native_points_registry_wx_commitment: cached!(native_points_registry_wx_commitment),
             native_points_ab_commitment: cached!(native_points_ab_commitment),
             native_points_f_commitment: cached!(native_points_f_commitment),

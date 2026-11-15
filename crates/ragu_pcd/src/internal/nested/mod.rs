@@ -47,9 +47,9 @@ use crate::{
 /// `native_rx` rx polynomials: `f`'s commitment, then for each child its
 /// native rx commitments, $a$, $b$, `registry_xy` and $p$, then the current
 /// step's two `registry_wx`, `registry_wy`, $a$, $b$ and `registry_xy`,
-/// then the step's online slots (see [`online`](super::online)).
+/// then the step's native online slots (see [`online`](super::native::online)).
 pub const fn num_endoscaling_points(native_rx: usize) -> usize {
-    1 + 2 * (native_rx + 4) + 6 + super::online::NUM_ONLINE_QUERIES
+    1 + 2 * (native_rx + 4) + 6 + super::native::online::NUM_ONLINE_FP_QUERIES
 }
 
 /// Number of curve points accumulated during `compute_p` for nested field
@@ -622,6 +622,7 @@ pub enum RxComponent {
 }
 
 pub mod claims;
+pub mod online;
 pub mod pcs;
 pub mod unified;
 

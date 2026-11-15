@@ -7,7 +7,7 @@ on:
 
 # Cancel in-progress runs when a new commit is pushed to the same branch/PR
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -82,12 +82,22 @@ jobs:
             lake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('qa/fv/lean-toolchain') }}-${{ hashFiles('qa/fv/lake-manifest.json') }}-
             lake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('qa/fv/lean-toolchain') }}-
 
+      # elan is pinned to a release and checked against its sha256; bump the
+      # two together. elan then fetches the Lean toolchain named in
+      # `qa/fv/lean-toolchain` by tag, without a hash.
       - name: Install elan (Lean toolchain manager)
         shell: bash
+        env:
+          ELAN_VERSION: v4.2.4
+          ELAN_SHA256: 42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63
         run: |
           set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o elan.tar.gz \
+            "https://github.com/leanprover/elan/releases/download/${ELAN_VERSION}/elan-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ELAN_SHA256}  elan.tar.gz" | sha256sum -c -
+          tar -xzf elan.tar.gz elan-init
+          ./elan-init -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Build Lean project

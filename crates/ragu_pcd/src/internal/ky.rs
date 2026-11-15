@@ -23,12 +23,11 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::{
     native::{
-        self,
+        self, online,
         stages::preamble::{ProofInputs, encode_output_header},
         unified as native_unified,
     },
     nested::{self, unified as nested_unified},
-    online,
 };
 #[cfg(test)]
 use crate::Pcd;
