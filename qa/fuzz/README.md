@@ -203,7 +203,7 @@ constraint system reject it. The no-execution front end is described in
 |---|---|
 | `fuzz_verify_reject` | Corrupts an honest **leaf** proof through the `fuzzing::corrupt::Corruption` vocabulary — any challenge, any bridge commitment, any header element or length, the circuit id, or an individual coefficient of any native or nested polynomial — and asserts neither verifier accepts a corruption that bound it: the uncompressed decider, and `compress` followed by `verify_compressed`. The cheaper half; compression is most of each iteration. |
 | `fuzz_verify_reject_full` | The same vocabulary against **fused** proofs: a `Hash2` over two leaves and a `Merge2` over two of those, whose accumulators the leaf case leaves degenerate. |
-| `fuzz_pcd_lifecycle` | The whole lifecycle per input: a fuzzer-chosen registry size and tree shape, seeded from fuzzer-chosen witnesses, verified under both verifiers at every level, optionally rerandomized, then corrupted and required to be rejected. Seconds per iteration — a randomized integration test libFuzzer steers. |
+| `fuzz_pcd_lifecycle` | The whole lifecycle per input: a fuzzer-chosen registry size and tree shape, seeded from fuzzer-chosen witnesses, verified under both verifiers at every level, optionally rerandomized, then corrupted and required to be rejected. Up to minutes per iteration — a randomized integration test libFuzzer steers. |
 
 `Proof::corrupt` returns `Binding::Unbound` for no-op edits, such as setting a
 challenge to its existing value. Every effective coefficient edit requires
@@ -332,12 +332,15 @@ Three workflows in `.github/workflows/`:
   | Flavor | Build | Looks for |
   |---|---|---|
   | `careful` | `--careful` (const-UB and init checks over the debug-assertion std, ASan on) | UB and uninitialized reads that plain ASan links past |
-  | `exhaustion` | `-s none`, `-rss_limit_mb=1024 -malloc_limit_mb=512 -timeout=30 -max_len=16384` | OOM and hangs |
+  | `exhaustion` | `-s none`, `-rss_limit_mb=1024 -timeout=30 -max_len=16384` | OOM and hangs |
 
   `exhaustion` turns the sanitizer *off* on purpose: ASan's shadow mapping
   inflates RSS several-fold, so under it a real allocation blowup is
   indistinguishable from sanitizer overhead and a memory ceiling means
-  nothing. TSan is absent because `qa/fuzz` never enables `multicore`, so no
+  nothing. Without a sanitizer libFuzzer cannot cap single allocations
+  (`-malloc_limit_mb` needs its malloc hooks), so a large allocation shows
+  up only once it is touched past the RSS ceiling. `fuzz_pcd_lifecycle`
+  skips this flavor: its honest inputs routinely take longer than 30 s. TSan is absent because `qa/fuzz` never enables `multicore`, so no
   target runs rayon; MSan is absent because it needs every dependency
   instrumented to avoid false positives, and the pinned curve and arithmetic
   crates are not. The sweep reads the campaign's corpus but never writes it,

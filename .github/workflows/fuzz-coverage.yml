@@ -145,8 +145,11 @@ jobs:
           # Each API call lands in its own assignment so a failed request
           # stops the step under `set -e` instead of reading as "no corpus"
           # (an empty run list) or "has a corpus" (an empty count).
+          # Only scheduled runs count: they always run the default branch's
+          # copy of the workflow, whereas a pull request's run of
+          # fuzz-cron.yml, a fork's included, runs whatever that PR wrote.
           RUNS=$(gh api \
-            "repos/${REPO}/actions/workflows/fuzz-cron.yml/runs?status=completed&per_page=10" \
+            "repos/${REPO}/actions/workflows/fuzz-cron.yml/runs?event=schedule&status=completed&per_page=10" \
             --jq '.workflow_runs[] | select(.conclusion == "success" or .conclusion == "failure") | .id')
           RUN_ID=""
           for id in $RUNS; do
@@ -167,11 +170,9 @@ jobs:
 
       - name: Restore corpus from the campaign artifact
         id: artifact
+        # Only runs once the lookup found an unexpired artifact for this
+        # target, so a failed download is a broken run, not a new target.
         if: steps.campaign.outputs.run-id != ''
-        # A miss here is not automatically an error: it also means "this
-        # target has never been fuzzed". The coverage step tells the two
-        # apart from this step's outcome.
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: corpus-${{ matrix.target }}
@@ -191,7 +192,7 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
           FUZZ_TARGET: ${{ matrix.target }}
           # 'success' when a prior campaign's corpus artifact came down, so
-          # the target is established; 'failure'/'skipped' when none exists.
+          # the target is established; 'skipped' when none exists.
           ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
         run: |
           set -euo pipefail

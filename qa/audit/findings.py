@@ -161,15 +161,36 @@ IDENTIFIER = re.compile(r"""(?<![\w/.`#-])(?:
 PROPER_NOUNS = {"GitHub", "GitLab", "LaTeX", "OpenSSL", "JavaScript", "TypeScript", "WebAssembly", "MacOS"}
 
 
+ZWSP = "​"
+# Markdown punctuation that could still format, pair, or link inside a <code> element.
+INERT = str.maketrans({c: f"&#{ord(c)};" for c in "`*_~[]\\"})
+
+
 def escape(text):
-    return html.escape(text, quote=False).replace("@", "&#64;").replace("![", "[")
+    """Escape HTML and break mentions and image openers in the rendered text.
+
+    GitHub decodes entities before linking mentions, so `&#64;user` still pings;
+    a zero-width space after `@` does not, and stays invisible inside code spans.
+    Splitting every `![` the same way cannot reassemble one, unlike deleting `!`.
+    """
+    return html.escape(text, quote=False).replace("@", "@" + ZWSP).replace("![", "!" + ZWSP + "[")
 
 
-def spans(text, transform):
-    """Apply `transform` to the text between code spans; GitHub renders span contents literally."""
+def code(text):
+    """Untrusted text as inline code whose contents Markdown cannot reinterpret."""
+    return f"<code>{escape(text).translate(INERT)}</code>"
+
+
+def plain(text):
+    """Untrusted text with no backtick or backslash left to pair with a neighbouring span."""
+    return escape(text).replace("\\", "&#92;").replace("`", "&#96;")
+
+
+def spans(text, transform, literal):
+    """Apply `transform` to the text between code spans and `literal` to each span's contents."""
     parts, end = [], 0
     for match in CODE_SPAN.finditer(text):
-        parts += [transform(text[end:match.start()]), match.group()]
+        parts += [transform(text[end:match.start()]), literal(match.group()[1:-1])]
         end = match.end()
     return "".join(parts + [transform(text[end:])])
 
@@ -185,9 +206,19 @@ def safe(text, limit=None):
 
 
 def prose(text):
-    """Untrusted finding prose for readers: single spaced, code identifiers in backticks, escaped."""
-    mark = lambda part: IDENTIFIER.sub(lambda m: m.group() if m.group() in PROPER_NOUNS else f"`{m.group()}`", part)
-    return spans(" ".join(text.split()), lambda part: escape(mark(part)))
+    """Untrusted finding prose for readers: single spaced, code identifiers as code, escaped.
+
+    Spans are rebuilt as `<code>` elements rather than passed through, because
+    a regex cannot tell which backticks Markdown will actually pair.
+    """
+    def mark(part):
+        pieces, end = [], 0
+        for match in IDENTIFIER.finditer(part):
+            if match.group() not in PROPER_NOUNS:
+                pieces += [plain(part[end:match.start()]), code(match.group())]
+                end = match.end()
+        return "".join(pieces + [plain(part[end:])])
+    return spans(" ".join(text.split()), mark, code)
 
 
 def detail_lines(item):
