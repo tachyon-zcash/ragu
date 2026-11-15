@@ -21,7 +21,7 @@ fn check(mutate: impl FnOnce(&mut TestProof)) -> Result<()> {
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new().finalize(params)?;
     let mut rng = StdRng::seed_from_u64(0x57a1e);
     let honest = app.rerandomize(app.bootstrap_pcd(), &mut rng)?;
-    assert!(app.verify(&honest, &mut rng)?);
+    assert!(app.verify_uncompressed(&honest, &mut rng)?);
     let (parent, ()) = app.fuse(
         &mut rng,
         Rerandomize::<()>::new(),
@@ -29,7 +29,7 @@ fn check(mutate: impl FnOnce(&mut TestProof)) -> Result<()> {
         honest.clone(),
         honest.clone(),
     )?;
-    assert!(app.verify(&parent, &mut rng)?);
+    assert!(app.verify_uncompressed(&parent, &mut rng)?);
 
     let mut proof = honest.proof().clone();
     mutate(&mut proof);

@@ -44,15 +44,15 @@ pub(crate) mod recursive_propagation_tests;
 #[cfg(test)]
 #[path = "../../tests/backend_equivalence.rs"]
 mod backend_equivalence;
+#[cfg(test)]
+#[path = "../../tests/child_commitments.rs"]
+mod child_commitment_tests;
 // Golden fixtures of the fuse pipeline and the compressed verifier, under
 // `tests/fixtures/fuse/`. Mounted here so the digests destructure `Proof`
 // exhaustively: a new field fails to compile until the fixture pins it.
 #[cfg(test)]
 #[path = "../../tests/fuse_fixtures.rs"]
 mod fuse_fixture_tests;
-#[cfg(test)]
-#[path = "../../tests/child_commitments.rs"]
-mod child_commitment_tests;
 #[cfg(test)]
 #[path = "../../tests/profile_substitution.rs"]
 mod profile_substitution_tests;
