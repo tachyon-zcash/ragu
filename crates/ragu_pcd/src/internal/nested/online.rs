@@ -107,9 +107,6 @@ impl<P: Profile> Len for BoundOpeningsLen<P> {
 /// No stage holds the point: the nested `compute_v` takes it from the
 /// challenge stage. The prover's openings and quotients take it from here,
 /// so this is the one place the prover chooses it.
-///
-/// TODO(decompression): if decompression opens at another point, the
-/// prover computes it here, and `compute_v` must take the same point.
 pub fn point<F: Field>(w: F) -> F {
     // Test hook: this runs on the thread that calls `fuse`, outside its
     // parallel jobs, as the hook's thread-local requires.

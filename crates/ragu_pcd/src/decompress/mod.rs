@@ -257,7 +257,8 @@
 //!   the openings against the wallet registry it holds; that check
 //!   also holds the proof's circuit id to the
 //!   registry's domain, which the native verifier checks and the chunks
-//!   do not. Waits on #944. Until then nothing ties a proof to
+//!   do not. The oracle has merged and the registry's queries are not
+//!   yet built on it. Until they are, nothing ties a proof to
 //!   the canonical wallet application either: an aggregator that builds
 //!   its [`Decompression`](crate::profile::Decompression) over a different
 //!   wallet application, or writes values of no registry at all, has its
@@ -281,7 +282,7 @@
 //! as above.
 //!
 //! TODO: pin the decompressed proof to the approved Standard setup through
-//! the polynomial queries #944 proposes, the registry evaluations
+//! the online polynomial oracle's queries, the registry evaluations
 //! above, so that a Standard proof of another wallet application, or of
 //! no registry at all, is refused in the inner role. The outer role's
 //! substitutions are tested, the inner role's is Standard by type alone,
