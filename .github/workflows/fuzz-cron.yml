@@ -128,11 +128,12 @@ jobs:
         # Per-target overrides; everything else takes the defaults the run
         # step spells out.
         include:
-          # Costs seconds per input, so some units cross the 120-second
-          # default and libFuzzer files them as timeouts rather than as
-          # slow inputs (#887).
+          # Builds and verifies whole proof trees, so one input can take
+          # minutes (the slowest observed took 715 s under ASan) and a
+          # 600-second limit failed about half the campaigns. libFuzzer
+          # checks the limit every timeout/2 + 1 s, so it can overshoot.
           - target: fuzz_pcd_lifecycle
-            input_timeout: 600
+            input_timeout: 1800
           # Synthesizes real circuits. After the Udon migration the build,
           # a five-hour campaign and the bounded cmin no longer fit under
           # the six-hour ceiling, and the cancellation lands before the
@@ -284,7 +285,7 @@ jobs:
           fi
           BEFORE=$(find "corpus/${FUZZ_TARGET}" -type f | wc -l | tr -d ' ')
           # Best-effort, and bounded. cmin re-executes every corpus unit, and
-          # on a target that costs seconds per input a few hundred units take
+          # on a target that costs minutes per input a few hundred units take
           # longer than the hour the job has left after a five-hour campaign;
           # unbounded, the job dies at the runner's six-hour ceiling with
           # nothing uploaded. cargo-fuzz swaps the minimized corpus in only
@@ -378,12 +379,13 @@ jobs:
   # The campaign above hunts logic bugs: ASan on, generous ceilings, five
   # hours a target. It is structurally bad at two other bug classes.
   #
-  # `cargo fuzz` already defaults `--build-std` on, so the campaign does get
-  # a standard library built with debug assertions and ASan. What it does
-  # not get is cargo-careful's extra instrumentation — const-UB detection
-  # and uninitialized-memory checks — which catch a different failure mode
-  # from the out-of-bounds and use-after-free ASan is looking for. The
-  # workspace does carry `unsafe`, so this is not hypothetical.
+  # The campaign links the prebuilt standard library: cargo-fuzz 0.13 builds
+  # std from source only for `--build-std`, `--careful` or MSan. So it gets
+  # neither a debug-assertion std nor cargo-careful's extra instrumentation
+  # — const-UB detection and uninitialized-memory checks — which catch a
+  # different failure mode from the out-of-bounds and use-after-free ASan is
+  # looking for. The workspace does carry `unsafe`, so this is not
+  # hypothetical.
   #
   # The second blind spot is resources. ASan inflates RSS several-fold with
   # its shadow mapping, so a genuine allocation blowup is indistinguishable
@@ -392,14 +394,20 @@ jobs:
   #
   # This sweep covers both, weekly, at a fraction of the budget:
   #
-  #   careful     `--careful`: adds the const-UB and init checks on top of
-  #               the debug-assertion std the campaign already builds, ASan
-  #               still on.
-  #   exhaustion  Sanitizer off, tight RSS/malloc/time ceilings, longer
-  #               inputs. ASan is off *precisely so* the ceilings mean
-  #               something: without the shadow overhead, a gigabyte of RSS
-  #               is a gigabyte the target really allocated. `-max_len` is
-  #               raised because exhaustion scales with input size.
+  #   careful     `--careful`: rebuilds std with debug assertions and adds
+  #               the const-UB and init checks, ASan still on.
+  #   exhaustion  Sanitizer off, tight RSS/time ceilings, longer inputs.
+  #               ASan is off *precisely so* the ceilings mean something:
+  #               without the shadow overhead, a gigabyte of RSS is a
+  #               gigabyte the target really allocated. There is no
+  #               single-allocation cap: libFuzzer's `-malloc_limit_mb`
+  #               needs a sanitizer's malloc hooks, so a large allocation
+  #               shows up only once it is touched past the RSS ceiling.
+  #               `-max_len` is raised because exhaustion scales with input
+  #               size.
+  #
+  # `fuzz_pcd_lifecycle` skips `exhaustion`: its honest inputs routinely
+  # take longer than 30 s, so the limit fails it on its first units.
   #
   # TSan is deliberately absent: `qa/fuzz` never enables the `multicore`
   # feature, so no target runs rayon and there is no race to find. MSan is
@@ -415,8 +423,8 @@ jobs:
     # in the matrix: libFuzzer replays the whole restored corpus before it
     # starts mutating and `-max_total_time` does not cut that replay short,
     # and `fuzz_pcd_lifecycle` builds and verifies real proof trees at
-    # seconds per unit, so a few hundred units under a debug standard
-    # library already fill most of the default ceiling.
+    # minutes per unit, so its corpus replay under a debug standard library
+    # needs the longer ceiling and a per-input limit to match.
     timeout-minutes: ${{ matrix.timeout || 120 }}
     strategy:
       fail-fast: false
@@ -455,9 +463,13 @@ jobs:
           - fuzz_internal_circuits
           - fuzz_completeness
           - fuzz_registry
+        exclude:
+          - flavor: exhaustion
+            target: fuzz_pcd_lifecycle
         include:
           - target: fuzz_pcd_lifecycle
             timeout: 240
+            input_timeout: 3600
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -507,6 +519,7 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.nightly.outputs.toolchain }}
           FUZZ_TARGET: ${{ matrix.target }}
           FLAVOR: ${{ matrix.flavor }}
+          INPUT_TIMEOUT: ${{ matrix.input_timeout }}
         run: |
           set -euo pipefail
           case "$FLAVOR" in
@@ -515,15 +528,17 @@ jobs:
               # checks over it. A debug std is slow, so the per-input
               # timeout is generous — a hang here would be a real one.
               BUILD_ARGS="--careful"
-              LIBFUZZER_ARGS="-max_len=1024 -rss_limit_mb=4096 -malloc_limit_mb=2048 -timeout=300"
+              LIBFUZZER_ARGS="-max_len=1024 -rss_limit_mb=4096 -malloc_limit_mb=2048 -timeout=${INPUT_TIMEOUT:-300}"
               ;;
             exhaustion)
-              # No sanitizer, so RSS is the target's own. 1 GB / 512 MB /
-              # 30 s are well clear of what an honest input needs and well
-              # under what a runner can absorb, which is the window an
-              # exhaustion bug has to show itself in.
+              # No sanitizer, so RSS is the target's own, and no
+              # `-malloc_limit_mb`, which only a sanitizer can enforce.
+              # 1 GB / 30 s are well clear of what an honest input of the
+              # other targets needs and well under what a runner can
+              # absorb, which is the window an exhaustion bug has to show
+              # itself in.
               BUILD_ARGS="-s none"
-              LIBFUZZER_ARGS="-max_len=16384 -rss_limit_mb=1024 -malloc_limit_mb=512 -timeout=30"
+              LIBFUZZER_ARGS="-max_len=16384 -rss_limit_mb=1024 -timeout=${INPUT_TIMEOUT:-30}"
               ;;
             *)
               echo "::error::unknown flavor '${FLAVOR}'"
