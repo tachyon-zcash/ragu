@@ -195,14 +195,33 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // extension stages it names, then of their own online slots it
         // names, as the bridge preamble holds them. A profile without a
         // binding computes nothing here.
-        let left_binding = ky::binding_ky(dr, y, &stages.preamble.left.bound())?;
-        let right_binding = ky::binding_ky(dr, y, &stages.preamble.right.bound())?;
+        let left_binding = ky::binding_ky(
+            dr,
+            y,
+            &stages.preamble.left.bound(),
+            &stages.preamble.left.online_fq_openings,
+        )?;
+        let right_binding = ky::binding_ky(
+            dr,
+            y,
+            &stages.preamble.right.bound(),
+            &stages.preamble.right.online_fq_openings,
+        )?;
+        // The children's `compute_v` claims take the same exported
+        // openings after the unified instance, so the opening a child's
+        // binding circuit exposes is the one its `compute_v` folded. A
+        // profile that exports none keeps the unified k(y) for them.
+        let compute_v = [
+            stages.preamble.left.compute_v_ky(dr, y)?,
+            stages.preamble.right.compute_v_ky(dr, y)?,
+        ];
         let ky = TwoProofKySource::new(
             dr,
             stages.preamble.left.nested.c.clone(),
             stages.preamble.right.nested.c.clone(),
             left_unified,
             right_unified,
+            compute_v,
             left_binding,
             right_binding,
         );

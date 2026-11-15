@@ -172,10 +172,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// one point to the native walk, and a full walk then needs another
     /// step on each side.
     ///
-    /// Until decompression lands, each slot holds a fixed placeholder
-    /// polynomial, and no circuit constrains its value at the opening
-    /// point: the slot proves only that the value is an opening of the
-    /// committed polynomial. Do not rely on it for anything else.
+    /// The profile's prover supplies the polynomials
+    /// ([`online_fq_polynomials`](Self::online_fq_polynomials)), a fixed
+    /// placeholder by default. The fuse proves only that the value is an
+    /// opening of the committed polynomial: which polynomial it is, the
+    /// profile's extension circuits constrain, through the commitment and
+    /// the opening the step exports for the slots its bindings name (see
+    /// [`Binding::online`] and [`Binding::openings`]). A slot no binding
+    /// names holds whatever the prover committed.
     ///
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
@@ -355,11 +359,41 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
+    /// The step's online polynomials over the scalar field,
+    /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) of them, which the fuse
+    /// commits before its challenge $w$: the profile's own for the proof
+    /// its extension runs over in this step, `source`'s, the proof the step
+    /// decompresses, or the context's canonical proof without. None may be
+    /// zero, whose commitment the native walk cannot take.
+    ///
+    /// The default supplies a fixed placeholder in every slot, which no
+    /// circuit of such a profile constrains.
+    ///
+    /// # Errors
+    ///
+    /// The default does not fail.
+    fn online_fq_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, source);
+        Ok((0..Self::ONLINE_FQ_POLYS)
+            .map(|_| nested::online::placeholder())
+            .collect())
+    }
+
     /// The nested counterpart of
     /// [`native_extension_rxs`](Self::native_extension_rxs), with
     /// `output_commitments` the commitments of the step's own output
     /// slots, for an extension whose binding circuit exposes one (see
-    /// [`Binding::online`]).
+    /// [`Binding::online`]), and `online_fq_openings` the openings of its
+    /// own online Fq polynomials the step exports, the point then the
+    /// value of each (see [`Binding::openings`]).
     ///
     /// # Errors
     ///
@@ -368,6 +402,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
         output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+        online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -377,7 +412,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, source, output_commitments, registry, rng);
+        let _ = (
+            context,
+            source,
+            output_commitments,
+            online_fq_openings,
+            registry,
+            rng,
+        );
         if Self::nested_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -470,13 +512,24 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 "only the native extension carries a statement circuit".into(),
             ));
         }
-        if native
-            .binding
-            .as_ref()
-            .is_some_and(|binding| !binding.online.is_empty())
+        // A binding's online slots are its side's: the step's online Fq
+        // polynomials on the native side, its output header's on the
+        // nested side, where alone the Fq openings are values of the field.
+        let within =
+            |slots: &[u32], count: usize| slots.iter().all(|&slot| (slot as usize) < count);
+        if let Some(binding) = &native.binding
+            && !(within(&binding.online, Self::ONLINE_FQ_POLYS) && binding.openings.is_empty())
         {
             return Err(Error::Initialization(
-                "only the nested extension's binding circuit exposes online commitments".into(),
+                "the native binding circuit exposes commitments of the step's online Fq polynomials alone".into(),
+            ));
+        }
+        if let Some(binding) = &nested.binding
+            && !(within(&binding.online, crate::header::NUM_ONLINE_FP_POLYS)
+                && within(&binding.openings, Self::ONLINE_FQ_POLYS))
+        {
+            return Err(Error::Initialization(
+                "the nested binding circuit names an online slot the step does not have".into(),
             ));
         }
         Ok(())
@@ -815,15 +868,29 @@ pub struct Binding {
     /// The slots of the proof's own online polynomials whose commitments
     /// the circuit's output ends with, after the stages' points, in output
     /// order: a point per slot, which the claim's $k(y)$ holds to the
-    /// commitment the proof carries for that slot. The online polynomials
-    /// are committed on the host curve, the curve of the nested binding
-    /// circuit's points, so only the nested extension's binding names any.
+    /// commitment the proof carries for that slot. A binding circuit's
+    /// points are on the curve its side's circuits hold, so the nested
+    /// extension's binding names slots of the step's output header, whose
+    /// polynomials are committed on the host curve, and the native
+    /// extension's names the step's online polynomials over the scalar
+    /// field ([`Profile::ONLINE_FQ_POLYS`]), committed on the nested curve.
     ///
-    /// The slots belong to the step's output header, so a profile that
-    /// names one must have its circuits use the point only where the
-    /// profile's own step fills the slot, as the aggregator's use it only
-    /// under the decompression step's flag.
+    /// A header's slots belong to the application, so a profile whose
+    /// nested binding names one must have its circuits use the point only
+    /// where the profile's own step fills the slot, as the aggregator's
+    /// use it only under the decompression step's flag. An online
+    /// polynomial over the scalar field is the profile's own in every
+    /// step; naming one has the step export its commitment for its parent
+    /// to hold, which a profile that names none does not pay for.
     pub online: Vec<u32>,
+    /// The step's online polynomials over the scalar field whose openings
+    /// the circuit's output ends with, after its points: for each slot the
+    /// point and the value the step's nested `compute_v` opened it at,
+    /// which the claim's $k(y)$ holds to the opening that circuit folded.
+    /// Naming one has the step export the opening for its parent to hold.
+    /// The openings are values of the scalar field, so only the nested
+    /// extension's binding names any.
+    pub openings: Vec<u32>,
 }
 
 impl Extension {
@@ -906,10 +973,7 @@ impl Extension {
                     && !binding.stages.is_empty()
                     && distinct(&binding.stages)
                     && distinct(&binding.online)
-                    && binding
-                        .online
-                        .iter()
-                        .all(|&slot| (slot as usize) < crate::header::NUM_ONLINE_FP_POLYS)
+                    && distinct(&binding.openings)
             });
         // In gate order, which leaves `last()` the stage whose final mask
         // covers the circuit, and names no stage twice.
@@ -1942,6 +2006,7 @@ pub(crate) mod testing {
             _: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
             _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+            _: &[Base::ScalarField],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2154,6 +2219,7 @@ pub(crate) mod testing {
                     circuit: 0,
                     stages: vec![0],
                     online: vec![],
+                    openings: Vec::new(),
                 }),
             }
         }
@@ -2238,6 +2304,7 @@ pub(crate) mod testing {
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
             _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+            _: &[Base::ScalarField],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2303,6 +2370,7 @@ pub(crate) mod testing {
                     circuit: 0,
                     stages: vec![0],
                     online: vec![],
+                    openings: Vec::new(),
                 }),
             }
         }
@@ -2381,6 +2449,7 @@ pub(crate) mod testing {
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
             _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+            _: &[Base::ScalarField],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2613,6 +2682,7 @@ mod tests {
                 circuit,
                 stages,
                 online: vec![],
+                openings: Vec::new(),
             }),
         };
         assert!(binding(1, vec![1, 0]).is_consistent());
@@ -2712,6 +2782,7 @@ mod tests {
                         circuit: 0,
                         stages: vec![0, 1],
                         online: vec![],
+                        openings: Vec::new(),
                     }),
                 }
             }
@@ -2752,6 +2823,7 @@ mod tests {
                         circuit: 0,
                         stages: vec![1],
                         online: vec![],
+                        openings: Vec::new(),
                     }),
                 }
             }
@@ -2998,8 +3070,9 @@ mod tests {
         assert!(TooMany::check().is_err());
     }
 
-    /// The aggregator's shape follows its pinned circuits, and grows with
-    /// the header size through the transcript circuits.
+    /// The aggregator's shape follows its pinned circuits and its one
+    /// online Fq polynomial, and grows with the header size through the
+    /// transcript circuits.
     #[test]
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
@@ -3008,15 +3081,15 @@ mod tests {
         assert_eq!(nested_stages, 27, "a stage per run, then four");
         assert_eq!(
             shape,
-            Shape::solve(32 + 2 + 6, 19 + 1 + nested_stages, 0, per_step, per_step)
+            Shape::solve(32 + 2 + 6, 19 + 1 + nested_stages, 1, per_step, per_step)
         );
         assert_eq!(
             Shape::of::<Aggregator<96>>(),
-            Shape::solve(35 + 2 + 6, 19 + 1 + nested_stages, 0, per_step, per_step)
+            Shape::solve(35 + 2 + 6, 19 + 1 + nested_stages, 1, per_step, per_step)
         );
         // The knob: at the wallet rank's four per step the walks are
         // far longer.
-        assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 0, 4, 4).polynomials());
+        assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 1, 4, 4).polynomials());
         assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
         std::println!(
             "aggregator at header size 4: {shape:?}, {} polynomials",

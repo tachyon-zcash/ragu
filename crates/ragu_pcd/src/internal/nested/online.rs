@@ -14,6 +14,25 @@
 //! The opening point is $\zeta_q$, the challenge stage's lift of $w$, so no
 //! stage holds a point. Every nested circuit that loads the `query` and
 //! challenge stages reads the same $y_q$ and $\zeta_q$.
+//!
+//! The fuse proves that $y_q$ is an opening of the committed polynomial,
+//! not which polynomial was committed. A profile's extension circuits,
+//! which load none of the fuse's stages, constrain it through what the
+//! step exports to its parent, for the slots the profile's bindings name
+//! (see [`Binding`](crate::profile::Binding)):
+//!
+//! - the commitment, which `bind_endoscalar` appends to its instance from
+//!   the preamble stage the walk takes it from ([`bound_commitments`]),
+//!   and the native binding circuit exposes;
+//! - the opening, the point then the value, which the nested `compute_v`
+//!   appends to its instance ([`bound_openings`]), and the nested binding
+//!   circuit exposes.
+//!
+//! The parent holds each once, in its points binding stage and its bridge
+//! preamble, and computes both claims' $k(y)$ from it, so the point and
+//! the opening an extension took are the ones the fuse committed and
+//! folded. A profile that names no slot exports nothing, and its circuits
+//! and proofs are as they would be without the export.
 
 use core::marker::PhantomData;
 
@@ -29,9 +48,9 @@ use crate::profile::Profile;
 /// Such a polynomial belongs to the step that commits it. The step commits
 /// it before its challenge is drawn, and the step's nested batch opens it.
 /// The step does not export it, so a parent never opens it. Only a profile
-/// that asks for the slot has it; see
-/// [`Profile::ONLINE_FQ_POLYS`],
-/// whose slots hold a placeholder until decompression lands.
+/// that asks for the slot has it; see [`Profile::ONLINE_FQ_POLYS`], whose
+/// prover supplies the polynomial
+/// ([`Profile::online_fq_polynomials`]).
 pub const NUM_ONLINE_FQ_POLYS: usize = 1;
 
 /// Length type for a step's own online polynomials over the scalar field
@@ -41,6 +60,44 @@ pub struct FqPolysLen<P: Profile>(PhantomData<P>);
 impl<P: Profile> Len for FqPolysLen<P> {
     fn len() -> usize {
         P::ONLINE_FQ_POLYS
+    }
+}
+
+/// The step's online Fq polynomials whose commitments it exports to its
+/// parent: the slots profile `P`'s native binding circuit names (see
+/// [`Binding::online`](crate::profile::Binding::online)).
+pub fn bound_commitments<P: Profile>() -> alloc::vec::Vec<u32> {
+    P::native_extension()
+        .binding
+        .map_or_else(alloc::vec::Vec::new, |binding| binding.online)
+}
+
+/// The step's online Fq polynomials whose openings it exports to its
+/// parent: the slots profile `P`'s nested binding circuit names (see
+/// [`Binding::openings`](crate::profile::Binding::openings)).
+pub fn bound_openings<P: Profile>() -> alloc::vec::Vec<u32> {
+    P::nested_extension()
+        .binding
+        .map_or_else(alloc::vec::Vec::new, |binding| binding.openings)
+}
+
+/// Length type for the commitments a step in profile `P` exports: one
+/// per slot of [`bound_commitments`].
+pub struct BoundCommitmentsLen<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for BoundCommitmentsLen<P> {
+    fn len() -> usize {
+        bound_commitments::<P>().len()
+    }
+}
+
+/// Length type for the openings a step in profile `P` exports: a point
+/// and a value per slot of [`bound_openings`].
+pub struct BoundOpeningsLen<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for BoundOpeningsLen<P> {
+    fn len() -> usize {
+        2 * bound_openings::<P>().len()
     }
 }
 
@@ -61,15 +118,14 @@ pub fn point<F: Field>(w: F) -> F {
     w
 }
 
-/// The polynomial that a step commits in each of its online Fq slots.
+/// The polynomial a step commits in each of its online Fq slots unless
+/// its profile's prover supplies another
+/// ([`Profile::online_fq_polynomials`]).
 ///
 /// It is not zero, so its commitment is not the identity, which the native
 /// walk cannot take. It is not constant, so its value at $\zeta_q$ depends
-/// on $\zeta_q$.
-///
-/// TODO(decompression): this is a placeholder. Decompression commits the
-/// IPA polynomial $s(X)$ here instead, and its native half reads the
-/// commitment as $G'$.
+/// on $\zeta_q$. The aggregator's decompression commits the nested IPA's
+/// $s(X)$ instead, whose commitment is that IPA's $G'$.
 pub fn placeholder<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(alloc::vec![F::from(1), F::from(2), F::from(3)])
 }

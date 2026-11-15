@@ -164,6 +164,23 @@ where
         >(&self.wallet, pcd)?))
     }
 
+    /// The step's online Fq polynomial: the challenge polynomial $s(X)$
+    /// of the nested curve's IPA of the proof the step's chunks run over,
+    /// whose commitment is that IPA's $G'$.
+    pub(crate) fn online_fq_polynomials(
+        &self,
+        source: Option<&Decompressed<C>>,
+    ) -> Vec<sparse::Polynomial<C::ScalarField, R>> {
+        let nested = &self.sides(source).nested;
+        let rounds: Vec<C::ScalarField> = nested.schedule.regions.lifts[squeezed::ROUNDS..]
+            .iter()
+            .map(|&slot| nested.lifts.elements[slot])
+            .collect();
+        alloc::vec![sparse::Polynomial::from_coeffs(
+            crate::ipa::challenge_polynomial(&rounds)
+        )]
+    }
+
     /// The sides a fuse runs the chunks over: `source`'s, the proof the
     /// step decompresses, or the canonical proof's without.
     fn sides<'a>(&'a self, source: Option<&'a Decompressed<C>>) -> &'a Sides<C> {
@@ -257,12 +274,20 @@ where
         &self,
         source: Option<&Decompressed<C>>,
         output_commitments: &[C::HostCurve; NUM_ONLINE_FP_POLYS],
+        online_fq_openings: &[C::ScalarField],
         registry: &Registry<'_, C::ScalarField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
         let params = self.wallet.params;
+        let &[x, y] = online_fq_openings else {
+            return Err(Error::Initialization(
+                "the aggregator's step exports the opening of its one online Fq polynomial".into(),
+            ));
+        };
         // Every step's binding circuit exposes the commitment of its own
-        // output slot; the decompression step's holds G' to it.
+        // output slot, which the decompression step's holds the host
+        // IPA's G' to, and the opening of its online Fq polynomial, which
+        // every step's chunks hold to the nested IPA's s(X).
         let prepared: Prepared<C, Nested> = self
             .sides(source)
             .nested
@@ -270,6 +295,7 @@ where
                 params,
                 source.is_some(),
                 output_commitments[S_SLOT],
+                [x, y],
             )?;
         let prepared = &prepared;
         let schedule = prepared.schedule.clone();

@@ -135,18 +135,53 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // extension stages its binding names: in the circuit the
                 // parent walks them, here they are read off the proofs.
                 let bound = |proof: &crate::Proof<C, R>| {
-                    ky::native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
+                    ky::native_bound::<C::Profile, _>(
+                        |index| proof.nested_rx_commitment(index),
+                        |i| proof.online_fq_commitments[i],
+                    )
                 };
+                // The `bind_endoscalar` circuit's, over the online Fq
+                // commitments the children exported.
+                let bind_endoscalar = [
+                    ky::bind_endoscalar_ky_alloc::<_, _, C::Profile, HEADER_SIZE>(
+                        dr,
+                        &preamble.left,
+                        &y,
+                        preamble_witness
+                            .as_ref()
+                            .map(|w| w.left.proof.online_fq_commitments.as_slice()),
+                    )?,
+                    ky::bind_endoscalar_ky_alloc::<_, _, C::Profile, HEADER_SIZE>(
+                        dr,
+                        &preamble.right,
+                        &y,
+                        preamble_witness
+                            .as_ref()
+                            .map(|w| w.right.proof.online_fq_commitments.as_slice()),
+                    )?,
+                ];
                 let left_bound = preamble_witness.as_ref().map(|w| bound(w.left.proof));
                 let right_bound = preamble_witness.as_ref().map(|w| bound(w.right.proof));
                 let count = left_bound.as_ref().map(|b| b.len()).take();
-                let left_binding =
-                    ky::binding_ky_alloc(dr, &y, count, left_bound.as_ref().map(|b| b.as_slice()))?;
+                // The native binding circuit exposes points alone.
+                let none = || {
+                    preamble_witness
+                        .as_ref()
+                        .map(|_| -> &[C::CircuitField] { &[] })
+                };
+                let left_binding = ky::binding_ky_alloc(
+                    dr,
+                    &y,
+                    count,
+                    left_bound.as_ref().map(|b| b.as_slice()),
+                    none(),
+                )?;
                 let right_binding = ky::binding_ky_alloc(
                     dr,
                     &y,
                     count,
                     right_bound.as_ref().map(|b| b.as_slice()),
+                    none(),
                 )?;
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
@@ -154,6 +189,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     preamble.right.unified.c.clone(),
                     &left_ky,
                     &right_ky,
+                    bind_endoscalar,
                     left_statement,
                     right_statement,
                     left_binding,
@@ -332,8 +368,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // The binding circuit's k(y), over the children's native
                 // extension stages and own online slots the bridge
                 // preamble holds.
-                let left_binding = ky::binding_ky(dr, &nested_y, &preamble.left.bound())?;
-                let right_binding = ky::binding_ky(dr, &nested_y, &preamble.right.bound())?;
+                let left_binding = ky::binding_ky(
+                    dr,
+                    &nested_y,
+                    &preamble.left.bound(),
+                    &preamble.left.online_fq_openings,
+                )?;
+                let right_binding = ky::binding_ky(
+                    dr,
+                    &nested_y,
+                    &preamble.right.bound(),
+                    &preamble.right.online_fq_openings,
+                )?;
+                // The `compute_v` circuit's, over the openings the children
+                // exported.
+                let compute_v = [
+                    preamble.left.compute_v_ky(dr, &nested_y)?,
+                    preamble.right.compute_v_ky(dr, &nested_y)?,
+                ];
 
                 // Build k(y) values in nested claim order.
                 let ky_source = nested::claims::TwoProofKySource::new(
@@ -342,6 +394,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_c,
                     left_unified,
                     right_unified,
+                    compute_v,
                     left_binding,
                     right_binding,
                 );

@@ -765,19 +765,19 @@ fn the_step_binding_holds_g_prime_to_the_slot() {
     // The scalar-field side: the slot's commitment is G', or not.
     let nested = &sides.nested;
     let held = nested
-        .for_step::<TestR, HEADER_SIZE>(params, true, commitment)
+        .for_step::<TestR, HEADER_SIZE>(params, true, commitment, [Fq::ZERO, Fq::ONE])
         .unwrap();
     assert!(!rejected(&held), "G' in the slot is accepted");
     let stray = Pasta::host_generators(params).g()[7];
     let swapped = nested
-        .for_step::<TestR, HEADER_SIZE>(params, true, stray)
+        .for_step::<TestR, HEADER_SIZE>(params, true, stray, [Fq::ZERO, Fq::ONE])
         .unwrap();
     assert!(
         rejected(&swapped),
         "another point is rejected under the flag"
     );
     let free = nested
-        .for_step::<TestR, HEADER_SIZE>(params, false, stray)
+        .for_step::<TestR, HEADER_SIZE>(params, false, stray, [Fq::ZERO, Fq::ONE])
         .unwrap();
     assert!(!rejected(&free), "no point is held without the flag");
     assert_eq!(exposed(&free)[1], stray, "the slot's commitment is exposed");
@@ -788,6 +788,60 @@ fn the_step_binding_holds_g_prime_to_the_slot() {
     assert_eq!(exposed(&free)[0], digits_commitment(native));
     assert_ne!(exposed(&free)[0], digits_commitment(&opened));
     assert_ne!(exposed(&held)[0], digits_commitment(native));
+}
+
+/// The nested curve's $G'$ is the commitment of the step's online Fq
+/// polynomial, in every step. The polynomial $s(X)$ over the round
+/// challenges the scalar-field side holds commits, unblinded, to the $G'$
+/// the circuit-field side holds and exposes. The scalar-field side
+/// accepts the opening of that polynomial at a point and no other value,
+/// and exposes the opening it took.
+#[test]
+fn the_online_fq_opening_holds_the_nested_g_prime() {
+    let setup = Setup::new();
+    let params = crate::pasta::baked_aggregator();
+    let sides = sides::<SmallR>(&setup);
+    let mut rng = StdRng::seed_from_u64(31);
+
+    // s(X) over the nested IPA's round challenges, and its commitment.
+    let nested = &sides.nested;
+    let rounds: Vec<Fq> = nested.schedule.regions.lifts[squeezed::ROUNDS..]
+        .iter()
+        .map(|&slot| nested.lifts.elements[slot])
+        .collect();
+    let poly =
+        sparse::Polynomial::<Fq, SmallR>::from_coeffs(crate::ipa::challenge_polynomial(&rounds));
+    let commitment: <Pasta as Cycle>::NestedCurve =
+        ReferenceBackend::sparse_commit_to_affine(&poly, Pasta::nested_generators(params));
+    let native = &sides.native;
+    let g_prime = native.work.points[native.schedule.regions.g_prime];
+    assert_eq!(commitment, g_prime, "s(X) commits to G'");
+    assert_eq!(
+        exposed(native).last(),
+        Some(&g_prime),
+        "the circuit-field side exposes its G'"
+    );
+
+    // Prepared outside a step, the side holds the opening at zero.
+    assert!(!rejected(nested), "s(0) = 1 is accepted");
+    let slot = nested.schedule.regions.slot_commitment.unwrap();
+    let held = nested.work.points[slot];
+    let x = Fq::random(|bytes| rng.fill_bytes(bytes));
+    let y = poly.eval(x);
+    let opened = nested
+        .for_step::<TestR, HEADER_SIZE>(params, false, held, [x, y])
+        .unwrap();
+    assert!(!rejected(&opened), "the opening of s(X) is accepted");
+    let [x_slot, y_slot] = opened.schedule.regions.fq_opening.unwrap();
+    assert_eq!(
+        [opened.work.elements[x_slot], opened.work.elements[y_slot]],
+        [x, y],
+        "the opening is what the binding circuit exposes"
+    );
+    let other = nested
+        .for_step::<TestR, HEADER_SIZE>(params, false, held, [x, y + Fq::ONE])
+        .unwrap();
+    assert!(rejected(&other), "another value is rejected");
 }
 
 #[test]
@@ -845,12 +899,13 @@ fn statement_circuit_exposes_the_output_header() {
     );
 }
 
-/// What each side's binding circuit exposes, at the aggregator rank: the
-/// unblinded commitments of the scalar-field side's run stages, which the
-/// transcript absorbed, and of its lifts and digits stages, which the
-/// circuit-field side recomputes; and the commitment of the circuit-field
-/// side's digits stage, then the slot commitment the scalar-field side
-/// holds, a placeholder outside a step.
+/// The points each side's binding circuit exposes, at the aggregator
+/// rank: the unblinded commitments of the scalar-field side's run stages,
+/// which the transcript absorbed, and of its lifts and digits stages,
+/// which the circuit-field side recomputes, then the nested curve's $G'$
+/// that side holds; and the commitment of the circuit-field side's digits
+/// stage, then the slot commitment the scalar-field side holds, a
+/// placeholder outside a step.
 fn bound_commitments(
     sides: &Sides<Pasta>,
 ) -> (
@@ -877,6 +932,8 @@ fn bound_commitments(
     of_nested.extend([
         nested_commit(&<NestedLifts as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.lifts).unwrap()),
         nested_commit(&<NestedDigits as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.digits).unwrap()),
+        // The nested curve's G', which the circuit-field side holds.
+        sides.native.work.points[sides.native.schedule.regions.g_prime],
     ]);
     let slot = nested
         .schedule
@@ -942,17 +999,19 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     for stage in stages {
         rx.add_assign(&stage);
     }
+    // The circuit-field side's binding circuit exposes points alone.
+    let none = || FixedVec::try_from(Vec::<Fp>::new()).unwrap();
     let own = FixedVec::try_from(of_nested.clone()).unwrap();
     assert_eq!(
         rx.revdot(&registry.y(handle, y)),
-        circuit.ky(own, y).unwrap()
+        circuit.ky((own, none()), y).unwrap()
     );
     let mut other = of_nested.clone();
     other[0] = -other[0];
     let other = FixedVec::try_from(other).unwrap();
     assert_ne!(
         rx.revdot(&registry.y(handle, y)),
-        circuit.ky(other, y).unwrap()
+        circuit.ky((other, none()), y).unwrap()
     );
 
     // Another compression of the same proof: the sides prepared from it

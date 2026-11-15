@@ -439,11 +439,23 @@ pub(crate) struct Regions {
     pub lifts_sum: usize,
     /// The recomputed commitment of the other side's digits stage.
     pub digits_sum: usize,
+    /// Scalar-field side: the point and the value at which the step that
+    /// proves the chunks opened its online Fq polynomial, work elements
+    /// the prover supplies, which the binding circuit exposes for the
+    /// proof's consumer to hold to the opening the step's nested
+    /// `compute_v` folded, and which the IPA's scalars hold to $s$ at that
+    /// point. None on the circuit-field side.
+    pub fq_opening: Option<[usize; 2]>,
+    /// The work elements the side's binding circuit exposes after its
+    /// points: on the scalar-field side the opening above.
+    pub exposed_elements: Vec<usize>,
     /// The work points the side's binding circuit exposes, in the order
     /// the profile's [`Binding`](crate::profile::Binding) names what
     /// they hold to: on the circuit-field side the runs' commitments, then
-    /// the recomputed lifts and digits stages; on the scalar-field side
-    /// the recomputed digits stage, then the step's slot commitment.
+    /// the recomputed lifts and digits stages, then its $G'$, which the
+    /// consumer holds to the commitment of the step's online Fq
+    /// polynomial; on the scalar-field side the recomputed digits stage,
+    /// then the step's slot commitment.
     pub exposed: Vec<usize>,
 }
 
@@ -2312,14 +2324,17 @@ fn native_schedule_with<
 
     // The scalar-field side's digits stage, from the scalings' parts, and
     // this side's digits for it, last of all. The binding circuit exposes
-    // the runs' commitments, then the two recomputed stages.
+    // the runs' commitments, then the two recomputed stages, then the
+    // nested curve's G': the proof's consumer holds it to the commitment
+    // of the step's online Fq polynomial, which the step committed before
+    // its challenge and whose opening the other side holds to s(X).
     b.digits_sum();
     b.regions.exposed = b
         .regions
         .runs
         .iter()
         .copied()
-        .chain([b.regions.lifts_sum, b.regions.digits_sum])
+        .chain([b.regions.lifts_sum, b.regions.digits_sum, b.regions.g_prime])
         .collect();
     // The decompression flag crosses to the scalar-field side as a digit.
     b.digits(
@@ -2493,6 +2508,13 @@ fn nested_schedule_with<
     // step commits the host IPA's s(X) there, whose commitment over the
     // same generators G' is, and the other side checks its opening against
     // s(X). Held to the curve as every point the prover supplies is.
+    // The opening of the step's online Fq polynomial, which holds the
+    // nested curve's s(X): the point and value the binding circuit exposes
+    // and the IPA's scalars check, supplied by the prover.
+    let opening = [b.slots.element(), b.slots.element()];
+    b.regions.fq_opening = Some(opening);
+    b.regions.exposed_elements = opening.to_vec();
+
     let slot = b.slots.point();
     b.regions.slot_commitment = Some(slot);
     let slot_commitment = PointSrc::Work(slot);

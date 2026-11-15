@@ -579,7 +579,7 @@ pub(crate) struct Fixed<C> {
 /// and $R_j$, the witness points $u_j^{-1} L_j$, and $G'$. The circuit
 /// binds each $u_j^{-1} L_j$ to its $L_j$; $G'$ it does not bind, which is
 /// the chunk circuits' step binding's to do (see the module's *The step
-/// binding* and *What remains*).
+/// binding*).
 #[cfg(test)]
 pub(crate) struct Opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub s_commitment: Point<'dr, D, C>,

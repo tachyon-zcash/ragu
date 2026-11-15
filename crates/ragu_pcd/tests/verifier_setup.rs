@@ -144,6 +144,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
         _: &Self::Context<'params, Base, Rk, B>,
         _: Option<&core::convert::Infallible>,
         _: &[Base::HostCurve; ragu_pcd::header::NUM_ONLINE_FP_POLYS],
+        _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, Rk>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, Rk>>

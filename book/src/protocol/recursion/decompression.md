@@ -109,9 +109,9 @@ folds $[H]$ through the IPA's rounds to a final multi-scalar multiplication
 that must equal the identity. Every point a side took from P is held to its
 curve before a chain uses it. The native side also recomputes Fuse's
 challenge and AB-bridge stages and holds them to the instance's commitments.
-Two inputs are still taken from P unchecked, the registry's evaluations and
-the nested curve's $G'$ (see *What remains*); the host curve's $G'$ is held
-to a commitment the decompression step made before its challenge.
+One input is still taken from P unchecked, the registry's evaluations (see
+*What remains*); each curve's $G'$ is held to a commitment the step made
+before its challenge.
 
 **Output:** every check of `verify_compressed` enforced in some chunk, and
 each side's recomputation of the other side's [digits].
@@ -147,7 +147,7 @@ compressed proof.
 
 ## What remains
 
-Two of `verify_compressed`'s checks are not yet enforced in circuit, so the
+One of `verify_compressed`'s checks is not yet enforced in circuit, so the
 decompression is sound for an honest prover and not yet against a dishonest
 one:
 
@@ -156,15 +156,20 @@ one:
   wallet registry's polynomial, the decompressing step's own fuse batches
   the queries into its opening accumulator as it does an application's,
   and the decider checks the openings against the wallet registry it holds.
-- **The nested curve's $G'$** is a witness point, so that IPA's final check
-  binds nothing by itself, and with it nothing holds the nested reduction's
-  claimed openings to the committed polynomials. $G' = \langle s, G \rangle$
-  is the commitment to $s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the
-  same generators. The host curve's is bound that way: the decompression
-  step commits $s$ in its first output slot before its challenge and opens
-  it there, the native chunks hold the opened value to $s$ at that point
-  over the round challenges they squeezed, and the nested chunks hold their
-  $G'$ to the slot's commitment, both only in a proof of that step, which a
-  flag the statement circuit's claim sets tells them. The nested curve's
-  $s$ is over the other field, so it takes the same binding over the step's
-  online $\F_q$ polynomial.
+
+Each IPA's $G' = \langle s, G \rangle$ is the commitment to
+$s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the same generators, and is
+bound as that:
+
+- **The host curve's.** The decompression step commits $s$ in its first
+  output slot before its challenge and opens it there. The native chunks
+  hold the opened value to $s$ at that point over the round challenges they
+  squeezed, and the nested chunks hold their $G'$ to the slot's commitment,
+  both only in a proof of that step, which a flag the statement circuit's
+  claim sets tells them.
+- **The nested curve's.** Its $s$ is over the other field, so every step
+  commits it as its online $\F_q$ polynomial, for the proof its chunks run
+  over. The step exports the commitment and the opening its nested
+  `compute_v` folded, through `bind_endoscalar`'s and `compute_v`'s
+  instances; the parent holds each once, so the native chunks' $G'$ is that
+  commitment and the opening the nested chunks hold to $s$ is that one.

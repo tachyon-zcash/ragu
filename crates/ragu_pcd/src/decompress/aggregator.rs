@@ -73,14 +73,15 @@ use crate::{
 ///
 /// The profile is not yet sound against a dishonest prover. The chunk
 /// circuits take the wallet registry's evaluations from the prover
-/// unchecked, and the nested curve's IPA takes its final generator $G'$
-/// as a free witness point, so a dishonest prover can have the aggregator
-/// accept a compressed proof the wallet application's verifier rejects.
-/// The host curve's $G'$ is bound, through the polynomial the
-/// decompression step commits in its first output slot; the other two
-/// close through the online polynomial oracle's queries. Until then an
-/// aggregator proof attests a decompression an honest prover ran, and the
-/// profile is public only under the `unstable-aggregator` feature.
+/// unchecked, so a dishonest prover can have the aggregator accept a
+/// compressed proof the wallet application's verifier rejects. Both IPAs'
+/// final generators are bound: the host curve's through the polynomial
+/// the decompression step commits in its first output slot, the nested
+/// curve's through the step's online Fq polynomial. The registry's
+/// evaluations close through the online polynomial oracle's queries.
+/// Until then an aggregator proof attests a decompression an honest
+/// prover ran, and the profile is public only under the
+/// `unstable-aggregator` feature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
@@ -158,6 +159,9 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     const NESTED_EXTENSION: usize =
         Self::NESTED_CIRCUITS.circuits + 1 + extension::nested_stages(num_runs::<WalletRank>());
 
+    // One online Fq polynomial per step: the nested IPA's s(X).
+    const ONLINE_FQ_POLYS: usize = 1;
+
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
 
@@ -223,6 +227,18 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
 
     fn native_extension() -> Extension {
         extension::native_layout(Self::native_circuits(HEADER_SIZE), num_runs::<WalletRank>())
+    }
+
+    fn online_fq_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+    ) -> Result<alloc::vec::Vec<ragu_circuits::polynomials::sparse::Polynomial<Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        Ok(context.online_fq_polynomials(source))
     }
 
     fn nested_extension() -> Extension {
@@ -308,6 +324,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
         output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+        online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -318,6 +335,12 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         RNG: CryptoRng,
     {
         Self::accepts::<R>(H)?;
-        context.nested_rxs::<Self>(source, output_commitments, registry, rng)
+        context.nested_rxs::<Self>(
+            source,
+            output_commitments,
+            online_fq_openings,
+            registry,
+            rng,
+        )
     }
 }

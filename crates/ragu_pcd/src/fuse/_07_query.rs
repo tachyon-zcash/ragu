@@ -204,6 +204,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 })
                 .collect::<Vec<_>>(),
         )?;
+        // The openings the step exports, for a profile whose nested
+        // binding names any: the point the nested `compute_v` opens at,
+        // the challenge stage's lift of w, then the value the query stage
+        // holds.
+        builder.set_online_fq_openings(
+            online_fq::bound_openings::<C::Profile>()
+                .iter()
+                .flat_map(|&slot| [w, online_fq[slot as usize]])
+                .collect(),
+        );
         let nested_query = nested::stages::query::Evaluations {
             fixed_registry,
             registry_wxy,

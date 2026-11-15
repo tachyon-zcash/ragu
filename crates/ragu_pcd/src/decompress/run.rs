@@ -422,6 +422,15 @@ where
             let gap = y.sub(dr, &expected);
             flag.mul(dr, &gap)?.enforce_zero(dr)?;
         }
+        // The same for the nested curve's G', in every step: the
+        // polynomial the step committed in its online Fq slot takes the
+        // value of s(X) at the point the step's nested `compute_v` opened
+        // it, so its commitment, which the other side holds its G' to, is
+        // that of s(X).
+        if let Some([x, y]) = regions.fq_opening {
+            let expected = ipa::s_at(dr, &rounds, &self.work(x))?;
+            self.work(y).enforce_equal(dr, &expected)?;
+        }
         let scalars = ipa::verify(
             dr,
             &batched.point,
@@ -905,6 +914,10 @@ fn supply<F: Field, P, Q>(
         work.points[*slot] = *point;
     }
     work.points[regions.g_prime] = other.g_prime;
+    // Outside a step the opening is of s(X) at zero, which is one.
+    if let Some([_, y]) = regions.fq_opening {
+        work.elements[y] = F::ONE;
+    }
 }
 
 type Executor<F> = Emulator<Wireless<Always<()>, F>>;
@@ -1053,16 +1066,25 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Nested> {
     /// The side as a step proves it: the commitment of the step's output
-    /// slot the binding circuit exposes, `slot_commitment`, and the flag,
-    /// set in the decompression step, under which that commitment is the
-    /// IPA's $G'$.
+    /// slot the binding circuit exposes, `slot_commitment`, the flag, set
+    /// in the decompression step, under which that commitment is the
+    /// host IPA's $G'$, and `fq_opening`, the point and value at which the
+    /// step opened its online Fq polynomial.
     pub(crate) fn for_step<K: Rank, const HEADER_SIZE: usize>(
         &self,
         params: &C::Params,
         decompression: bool,
         slot_commitment: C::HostCurve,
+        fq_opening: [C::ScalarField; 2],
     ) -> Result<Self> {
         let mut prepared = self.clone();
+        let [x, y] = prepared
+            .schedule
+            .regions
+            .fq_opening
+            .expect("the scalar-field side holds the online Fq opening");
+        prepared.work.elements[x] = fq_opening[0];
+        prepared.work.elements[y] = fq_opening[1];
         let (slot, digits_sum) = {
             let regions = &prepared.schedule.regions;
             (

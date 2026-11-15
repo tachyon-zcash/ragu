@@ -381,7 +381,7 @@ fn walk_inputs(
     points.extend(nested::pcs::child_commitments(left));
     points.extend(nested::pcs::child_commitments(right));
     points.extend([wx[0], wx[1], ab[0], ab[1], ab[2], f[0]]);
-    let inputs = points::Inputs::from_walk(&points);
+    let inputs = points::Inputs::from_walk(&points, [&[], &[]]);
     assert_eq!(
         horner(&points, nested::challenge::<C>(proof.pre_beta())?),
         proof.nested_p_commitment()
@@ -600,7 +600,7 @@ mod walk_binding {
             assert_ne!(points[index], original[index]);
             assert_ne!(points[0], original[0]);
             assert_eq!(horner(&points, beta), honest.proof().nested_p_commitment());
-            let changed_inputs = points::Inputs::from_walk(&points);
+            let changed_inputs = points::Inputs::from_walk(&points, [&[], &[]]);
             let (mut proof, data) = honest.clone().into_parts();
             install_walk(app, &mut proof, &changed_inputs, &mut rng)?;
             assert_eq!(proof.nested_v()?, honest.proof().nested_v()?);
@@ -692,7 +692,7 @@ mod walk_binding {
         install_walk(
             app,
             &mut proof,
-            &points::Inputs::from_walk(&points),
+            &points::Inputs::from_walk(&points, [&[], &[]]),
             &mut rng,
         )?;
         assert_eq!(proof.nested_v()?, honest.proof().nested_v()?);

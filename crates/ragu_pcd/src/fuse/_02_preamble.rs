@@ -23,24 +23,26 @@ use crate::{
     proof::ProofBuilder,
 };
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Commits the native and bridge preamble stages, returning both
     /// witnesses: the native one for the native circuits, the bridge one for
-    /// the nested fold and circuits.
+    /// the nested fold and circuits. `source` is what the step supplies the
+    /// profile's prover, which commits its online Fq polynomials here.
     pub(super) fn compute_preamble<'a, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
+        source: Option<&crate::profile::Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::preamble::Witness<'a, C, R, HEADER_SIZE>,
         nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
     )> {
         let preamble_witness = self.compute_native_preamble(rng, left, right, builder)?;
-        self.commit_native_points_preamble(rng, left, right, builder)?;
+        self.commit_native_points_preamble(rng, left, right, source, builder)?;
         let bridge_witness = self.compute_bridge_preamble(rng, left, right, builder)?;
         Ok((preamble_witness, bridge_witness))
     }

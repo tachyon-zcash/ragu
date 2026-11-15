@@ -170,6 +170,30 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         ky.finish_ky(dr)
     }
 
+    /// The `bind_endoscalar` circuit's $k(y)$ for this child in a profile
+    /// whose native binding names online Fq polynomials: k(y) for
+    /// `(unified, points, 0)`, the unified instance followed by the
+    /// commitments the circuit exported, `points`. `None` for no point,
+    /// where the circuit's instance is the unified instance alone and its
+    /// $k(y)$ the unified one.
+    pub fn bind_endoscalar_ky(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+        points: &[ragu_primitives::Point<'dr, D, C::NestedCurve>],
+    ) -> Result<Option<Element<'dr, D>>> {
+        if points.is_empty() {
+            return Ok(None);
+        }
+        let mut ky = Horner::new(y);
+        self.unified.write(dr, &mut ky)?;
+        for point in points {
+            point.write(dr, &mut ky)?;
+        }
+        Element::zero(dr).write(dr, &mut ky)?;
+        ky.finish_ky(dr).map(Some)
+    }
+
     /// The statement circuit's $k(y)$ for this child, when profile `P`'s
     /// native extension has one: the $k(y)$ of the header the extension
     /// verified, followed by the zero the circuit's slot appends to its

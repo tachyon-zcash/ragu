@@ -85,6 +85,9 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// How many flags the side takes from the other side, whose digits
     /// follow the foreign scalars' in that side's digits stage.
     const FLAGS: usize;
+    /// The elements the side's binding circuit exposes after its points:
+    /// what it took of the step's own online polynomials' openings.
+    const EXPOSED_ELEMENTS: usize;
     /// The points the side's binding circuit exposes for a proof at rank
     /// `K`: the other side's stage commitments it absorbed or recomputed,
     /// in the order the profile's [`Binding`](crate::profile::Binding)
@@ -191,11 +194,13 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
 
     /// The scalar-field side has no flag for this side to take.
     const FLAGS: usize = 0;
+    const EXPOSED_ELEMENTS: usize = 0;
 
     /// The scalar-field side's run stages, then its lifts and digits
-    /// stages.
+    /// stages, then the commitment of the online Fq polynomial of the
+    /// step that proves the chunks.
     fn exposed<K: Rank>() -> usize {
-        num_runs::<K>() + 2
+        num_runs::<K>() + 3
     }
 
     fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
@@ -464,6 +469,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     /// The decompression flag, which the circuit-field side's statement
     /// circuit binds.
     const FLAGS: usize = 1;
+    /// The point and the value of the opening of the online Fq polynomial
+    /// of the step that proves the chunks.
+    const EXPOSED_ELEMENTS: usize = 2;
 
     /// The circuit-field side's digits stage, then the commitment of the
     /// first output slot of the step that proves the chunks.

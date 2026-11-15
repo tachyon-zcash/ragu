@@ -607,6 +607,8 @@ fn check_compressed_proofs_match(
         native_registry_xy: _,
         native_p: _,
         online_commitments: _,
+        online_fq_commitments: _,
+        online_fq_openings: _,
         nested: _,
         nested_registry_xy: _,
         nested_p: _,
@@ -1352,6 +1354,8 @@ mod proof_equivalence {
                 native_points_walk_rx: _,
                 online_polynomials: _,
                 online_openings: _,
+                online_fq_commitments: _,
+                online_fq_openings: _,
                 bridge_preamble_rx: _,
                 bridge_hash_rx: _,
                 bridge_s_prime_rx: _,
@@ -1491,6 +1495,11 @@ mod proof_equivalence {
             }
             if self.online_openings != other.online_openings {
                 return Some("online openings");
+            }
+            if self.online_fq_commitments != other.online_fq_commitments
+                || self.online_fq_openings != other.online_fq_openings
+            {
+                return Some("exported online Fq commitments and openings");
             }
             if nested::RxIndex::ALL
                 .into_iter()

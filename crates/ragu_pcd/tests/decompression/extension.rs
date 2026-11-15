@@ -404,6 +404,33 @@ fn decompresses_a_wallet_proof() {
     assert_eq!(*node.data(), Fp::from(42));
     assert!(app.verify_uncompressed(&node, &mut rng).unwrap());
 
+    // The step exports the commitment and the opening of its online Fq
+    // polynomial, which holds the nested IPA's s(X). The proof carries
+    // them for its verifier, which holds the fuse's circuits and the
+    // chunks' binding circuits to the same values: with another
+    // commitment or another opened value, a claim on one side fails.
+    let (proof, data) = node.clone().into_parts();
+    assert_eq!(proof.online_fq_commitments.len(), 1);
+    assert_eq!(proof.online_fq_openings.len(), 2);
+    let mut other = proof.clone();
+    other.online_fq_commitments[0] = -other.online_fq_commitments[0];
+    assert!(
+        matches!(
+            app.verify_uncompressed(&other.carry::<Value>(data), &mut rng),
+            Ok(false)
+        ),
+        "another exported commitment fails"
+    );
+    let mut other = proof;
+    other.online_fq_openings[1] += <ragu_core::pasta::Fq as udon::field::Field>::ONE;
+    assert!(
+        matches!(
+            app.verify_uncompressed(&other.carry::<Value>(data), &mut rng),
+            Ok(false)
+        ),
+        "another exported opening fails"
+    );
+
     let decompressed = app.context().prepare(&compressed).unwrap();
     let (relabelled, ()) = app
         .fuse_with_source(

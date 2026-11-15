@@ -242,6 +242,10 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         native_registry_xy: native.native_registry_xy,
         native_p: native.native_p,
         online_commitments: native.online_commitments,
+        // The step's online Fq exports are the nested curve's points and
+        // the scalar field's values.
+        online_fq_commitments: nested.online_fq_commitments.clone(),
+        online_fq_openings: nested.online_fq_openings.clone(),
         c: native.c,
         v: native.v,
         left: native.left,

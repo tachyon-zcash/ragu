@@ -63,8 +63,12 @@ fn check(schedule: &Schedule) {
         .flatten()
         .chain(&regions.registry_values)
         .chain([&regions.restriction_at_w])
+        .chain(regions.fq_opening.iter().flatten())
     {
         elements[slot] = true;
+    }
+    for &slot in &regions.exposed_elements {
+        assert!(elements[slot], "exposed element {slot} is supplied");
     }
     for &slot in regions
         .inverse_scaled

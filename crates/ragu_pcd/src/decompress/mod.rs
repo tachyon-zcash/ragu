@@ -48,9 +48,8 @@
 //!   commitment to $s(X)$ over the same generators, so the circuit takes
 //!   $G'$ as a witness point and holds it to a commitment of $s$ the
 //!   decompression step made before its challenge, one evaluation of
-//!   which that step's own fuse batches into its opening accumulator. The
-//!   host curve's is bound so (see *The step binding*); the nested
-//!   curve's is not yet (see *What remains*).
+//!   which that step's own fuse batches into its opening accumulator.
+//!   Both curves' are bound so (see *The step binding*).
 //!
 //! The scalar checks are written once as [`Driver`]-generic gadget code
 //! and run in the circuit over the matching field: the host curve's in the
@@ -172,6 +171,34 @@
 //! verify the canonical proof, whose statement is the unit header's and
 //! binds nothing, and the slot is the application's.
 //!
+//! The nested curve's $s(X)$ is over the scalar field, which no output
+//! slot holds, so its $G'$ is bound through the step's online polynomial
+//! of that field ([`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS)),
+//! which is the profile's own in every step and needs no flag:
+//!
+//! - Every step commits $s(X)$ of the nested curve's IPA of the proof its
+//!   chunks run over, the proof it decompresses or the canonical one, as
+//!   that polynomial, before its challenge $w$, and its nested
+//!   `compute_v` opens it at $\zeta_q$, the lift of $w$, and folds the
+//!   opening into the step's own nested batch.
+//! - The step exports the commitment and the opening to its parent, each
+//!   through the instance of the fuse circuit that holds it:
+//!   `bind_endoscalar`, which takes the commitment from the stage the
+//!   walk does, and the nested `compute_v`. The chunks' binding circuits
+//!   expose what they took, the circuit-field side its $G'$ and the
+//!   scalar-field side an opening, and the parent computes both claims'
+//!   $k(y)$ of each pair from one copy it holds
+//!   ([`Binding::online`](crate::profile::Binding::online) and
+//!   [`Binding::openings`](crate::profile::Binding::openings)). So the
+//!   circuit-field side's $G'$ is the commitment the step made before
+//!   $w$, and the opening the scalar-field side took is the one the step
+//!   folded.
+//! - The scalar-field side holds that opening's value to [`ipa::s_at`]
+//!   at its point over the round challenges it holds, which the
+//!   circuit-field side's transcript squeezed and its lifts stage binds.
+//!   The argument is the host curve's: the polynomial was fixed before
+//!   $\zeta_q$ and the round challenges are the transcript's.
+//!
 //! A decompressed proof's first output slot therefore holds $s(X)$, not
 //! the constant one, which the header types a decompressed statement can
 //! carry must already treat as padding (see [`Decompress`]).
@@ -183,55 +210,37 @@
 //!
 //! The decompression proof is sound for an honest prover, which is what
 //! the end-to-end tests and the measurements cover, and not yet against a
-//! dishonest one: two of the native verifier's checks are not enforced
-//! on it, and a prover who skips either has the aggregator accept a
-//! compressed proof the wallet's verifier would reject. In the verifier's
-//! order:
+//! dishonest one: one of the native verifier's checks is not enforced on
+//! it, and a prover who skips it has the aggregator accept a compressed
+//! proof the wallet's verifier would reject:
 //!
-//! 1. **The registry's evaluations are unchecked.** The native verifier
-//!    evaluates the wallet registry at $(w, r, y)$ and at the circuits'
-//!    $\omega_c$ itself, and at the children's points for the values the
-//!    wire bindings expect; the chunks read these evaluations from the
-//!    work stage ([`Regions::restrictions`](program::Regions::restrictions),
-//!    [`Regions::restriction_at_w`](program::Regions::restriction_at_w) and
-//!    [`Regions::registry_values`](program::Regions::registry_values)) and
-//!    take the values a prover writes there. The fix is the online
-//!    polynomial oracle's ([#944](https://github.com/tachyon-zcash/ragu/pull/944), V4):
-//!    the chunks claim each evaluation as a query on the wallet
-//!    registry's polynomial, the decompressing step's own fuse batches
-//!    the queries into its opening accumulator through its query and
-//!    eval stages, as it does an application's, and the decider checks
-//!    the openings against the wallet registry it holds; that check
-//!    also holds the proof's circuit id to the
-//!    registry's domain, which the native verifier checks and the chunks
-//!    do not. Waits on #944. Until then nothing ties a proof to
-//!    the canonical wallet application either: an aggregator that builds
-//!    its [`Decompression`](crate::profile::Decompression) over a different
-//!    wallet application, or writes values of no registry at all, has its
-//!    proofs accepted. The check pins it once it exists, since the decider
-//!    recomputes the evaluations from the wallet registry it holds, which
-//!    makes the wallet application part of what a verifier of aggregator
-//!    proofs builds. Pinning a digest of the wallet registry in the
-//!    aggregator's registry tag is the alternative, still to decide.
-//! 2. **The nested curve's $G'$ is unbound.** The nested curve's IPA
-//!    takes $G' = \langle s, G \rangle$ as a witness point, so as the
-//!    circuits stand its final check binds nothing: a prover who chooses
-//!    $G'$ satisfies it for any left-hand side, and only that check holds
-//!    the nested reduction's claimed openings to the committed
-//!    polynomials. The host curve's $G'$ is bound, as *The step binding*
-//!    describes; the nested curve's is the commitment to a scalar-field
-//!    polynomial on the nested curve, which a step's output slots cannot
-//!    hold. It takes the same mechanism over the step's online polynomial
-//!    of that field ([`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS)):
-//!    the decompression step commits the nested IPA's $s(X)$ there before
-//!    $w$, the scalar-field side holds the value the nested `compute_v`
-//!    opens to $s$ at that point, and the circuit-field side holds its
-//!    $G'$ to the commitment.
+//! - **The registry's evaluations are unchecked.** The native verifier
+//!   evaluates the wallet registry at $(w, r, y)$ and at the circuits'
+//!   $\omega_c$ itself, and at the children's points for the values the
+//!   wire bindings expect; the chunks read these evaluations from the
+//!   work stage ([`Regions::restrictions`](program::Regions::restrictions),
+//!   [`Regions::restriction_at_w`](program::Regions::restriction_at_w) and
+//!   [`Regions::registry_values`](program::Regions::registry_values)) and
+//!   take the values a prover writes there. The fix is the online
+//!   polynomial oracle's ([#944](https://github.com/tachyon-zcash/ragu/pull/944), V4):
+//!   the chunks claim each evaluation as a query on the wallet
+//!   registry's polynomial, the decompressing step's own fuse batches
+//!   the queries into its opening accumulator through its query and
+//!   eval stages, as it does an application's, and the decider checks
+//!   the openings against the wallet registry it holds; that check
+//!   also holds the proof's circuit id to the
+//!   registry's domain, which the native verifier checks and the chunks
+//!   do not. Waits on #944. Until then nothing ties a proof to
+//!   the canonical wallet application either: an aggregator that builds
+//!   its [`Decompression`](crate::profile::Decompression) over a different
+//!   wallet application, or writes values of no registry at all, has its
+//!   proofs accepted. The check pins it once it exists, since the decider
+//!   recomputes the evaluations from the wallet registry it holds, which
+//!   makes the wallet application part of what a verifier of aggregator
+//!   proofs builds. Pinning a digest of the wallet registry in the
+//!   aggregator's registry tag is the alternative, still to decide.
 //!
-//! The two are independent and land in either order; the aggregator's
-//! proofs are sound against a dishonest prover once both have.
-//!
-//! One cost, not a gap, remains beside them. Every proof of the profile
+//! One cost, not a gap, remains beside it. Every proof of the profile
 //! carries the chunk circuits' polynomials, so an aggregator step that
 //! decompresses nothing still runs every chunk, over the wallet
 //! application's canonical compressed proof: in a tree over $n$ wallet

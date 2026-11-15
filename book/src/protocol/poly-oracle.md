@@ -77,7 +77,8 @@ internal circuits.
   $\anchor' = H(\anchor \| e \| \acc^\tg)$ then $\acc^\tg$ must occupy the output polynomial slot `O1`
 - C5: a profile may give each step one online $\F_q$ polynomial $f_q$, committed as an $\E_p$ point, for Ragu's nested internal circuits to open (see [v5](#v5))
   - it is private to the step: committed before $w$ and opened once, at $\zeta_q = \mathsf{lift}(w)$, by the step's own nested `compute_v`; no header carries it, and C3's rule applies with $\zeta_q$ in place of $\zeta$
-  - application circuits cannot open it; it exists for the `Aggregator` profile's decompression, and until that lands the slot holds a placeholder polynomial
+  - application circuits cannot open it; it exists for the `Aggregator` profile's decompression, which commits the nested IPA's $s(X)$ there. A profile's prover supplies the polynomial, a placeholder by default
+  - Ragu proves the opening is of the committed polynomial; which polynomial it is, a profile's extension circuits constrain, through the commitment and the opening the step exports to its parent for the slots the profile's bindings name (see [v5](#v5))
 
 ## Changes to Tachyon Proof Tree {#changes}
 
@@ -489,7 +490,8 @@ And since no header carries $f_q$, there is no header-carry check.
 ```
 
 A profile sets the count with `Profile::ONLINE_FQ_POLYS`, zero by default and at most `NUM_ONLINE_FQ_POLYS = 1`, so the standard profile does not change.
-The `Aggregator` profile turns it on when decompression lands; until then only test profiles do, with a fixed placeholder polynomial and a `compute_v` that ignores $y_q$.
+The `Aggregator` profile sets it to one and commits the nested IPA's $s(X)$ there, for the proof its decompression circuits run over in the step.
+A profile's prover supplies the polynomial (`Profile::online_fq_polynomials`), a fixed placeholder by default, and `compute_v` folds $y_q$ without constraining it.
 
 #### Details and soundness notes {#v5-soundness}
 
@@ -503,23 +505,26 @@ The `Aggregator` profile turns it on when decompression lands; until then only t
 - **The value.**
   A claimant must read $y_q$ from the `Query` stage rather than witness its own, since only the stage's $y_q$ is folded.
   Any nested internal circuit that loads the `Query` and challenge stages, as `collapse` and `compute_v` do, could be the claimant: the step's nested circuits share its stage commitments.
-  A circuit that cannot load them would need v4's binding through its instance.
+  A circuit that cannot load them needs v4's binding through its instance.
   An application circuit is one, and so is a nested extension circuit, whose claim takes only its own polynomial and its extension's stages.
+  A nested extension has that binding for the slots its profile's binding circuit names (`Binding::openings`): `compute_v` appends $(\zeta_q, y_q)$ to its instance, the parent holds the pair once in its bridge `Preamble` and computes both `compute_v`'s $k(y)$ and the extension's binding circuit's from it, so the opening that circuit exposes is the one `compute_v` folded.
+  A profile that names no slot exports nothing and keeps the unified instance for `compute_v`.
 - **$\zeta_q$ is not uniform over $\F_q$.**
   It is the lift of a $k$-bit endoscalar, so a nonzero residual of degree $d$ vanishes at it with probability at most $d/2^k$, not $d/q$.
   Every nested challenge is such a lift, so this matches the nested batch's own error.
 - **C3's rule.**
   Fixed before $\zeta_q$ are $\cm_{f_q}$, the circuit's constants, and whatever the native pre-$w$ stages hold.
-  The values a check at $\zeta_q$ reads, such as decompression's IPA challenges $u_i$, must be witnessed natively before $w$, where the native half of decompression checks them.
-  How they reach `compute_v` bound to that stage is decompression's to add, with the challenge stage's binding as the precedent.
+  Decompression's check reads the IPA's round challenges $u_i$, which are not witnessed before $w$: its nested circuits hold $y_q$ to $s(\zeta_q)$ over the challenges its native circuits' transcript squeezed from the decompressed proof.
+  This is C3's hash case and has its own argument: $f_q$ is fixed before $\zeta_q$ and the $u_i$ are that transcript's outputs, so a committed polynomial other than $s$ passes only if $\zeta_q$ is a root of $f_q - s$, or if a proof is found whose challenges meet a relation fixed beforehand.
   The IPA round challenges retain the compression transcript's existing conversion: their canonical integer is preserved across the fields within the common 254-bit range for Pasta.
   This differs from the 143-bit endoscalar lift used for $\zeta_q$; applying that lift to the IPA challenges would change $s(X)$.
-  If the nested circuit already holds the correctly bound $\F_q$ challenges, no further conversion is needed.
-- **A hint until decompression.**
-  Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; until a check constrains $y_q$, a prover may commit any polynomial.
+  The nested circuits already hold the $\F_q$ challenges, bound through the lifts stage the native side recomputes, so no further conversion is needed.
+- **A hint unless constrained.**
+  Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; in a profile whose extension does not constrain $y_q$, a prover may commit any polynomial.
   The zero polynomial's commitment is the identity, which the walk cannot take, so the placeholder must not be zero.
 - **A native consumer of $\cm_{f_q}$.**
   Decompression's native half uses $\cm_{f_q}$ as $G'$, but only the walk's circuits load `PointsPreamble`.
-  It would read the point from the native unified instance, which `bind_endoscalar` already exports the walk's points into; decompression adds that export with its consumer.
+  For the slots a profile's native binding circuit names (`Binding::online`), `bind_endoscalar`, which loads that stage, appends $\cm_{f_q}$ to its instance; the parent holds the point once in its `PointsBinding` stage and computes both `bind_endoscalar`'s $k(y)$ and the binding circuit's from it, so the $G'$ that circuit exposes is the point the step committed before $w$ and its walk folded.
+  The unified instance does not change, so a profile that names no slot keeps its circuits and proofs.
 - **Not a header slot.**
   Letting the parent reopen $f_q$ as an `L` or `R` slot would cost two more native walk points per step, two more stash equalities, and the children's $\F_q$ polynomials in every proof, for a use the aggregator does not have.

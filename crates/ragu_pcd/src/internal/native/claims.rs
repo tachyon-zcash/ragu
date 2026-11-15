@@ -455,6 +455,14 @@ pub trait KySource {
     /// The `+ Clone` bound is required for `repeat_n` in [`ky_prefix`].
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the `bind_endoscalar` circuit, the last of
+    /// the unified circuits: the unified $k(y)$, or for a profile whose
+    /// native binding names online Fq polynomials the $k(y)$ of the
+    /// unified instance followed by the commitments the circuit exports, as
+    /// [`bind_endoscalar_ky`](super::stages::preamble::ProofInputs::bind_endoscalar_ky)
+    /// computes it.
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// One value of $1$ per proof, for the endoscaling step checks.
     ///
     /// Repeated once per profile endoscaling step; the `+ Clone` bound is
@@ -497,7 +505,14 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(source.unified_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V).flatten())
         .chain(source.compute_v_bridge_ky())
-        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V).flatten())
+        .chain(
+            repeat_n(
+                source.unified_ky(),
+                NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V - 1,
+            )
+            .flatten(),
+        )
+        .chain(source.bind_endoscalar_ky())
         .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
         .chain({
             let extension = P::native_extension();
@@ -536,6 +551,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_compute_v_bridge: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_bind_endoscalar: Option<Element<'dr, D>>,
+    pub right_bind_endoscalar: Option<Element<'dr, D>>,
     pub left_statement: Option<Element<'dr, D>>,
     pub right_statement: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
@@ -546,8 +563,9 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
     /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values
-    /// and the statement and binding circuits' k(y) values, `None` for a
-    /// profile without one.
+    /// and the `bind_endoscalar`, statement and binding circuits' k(y)
+    /// values, `None` for a profile without one: `bind_endoscalar`'s is
+    /// then the unified one.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
@@ -555,14 +573,18 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_raw_c: Element<'dr, D>,
         left_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
+        bind_endoscalar: [Option<Element<'dr, D>>; 2],
         left_statement: Option<Element<'dr, D>>,
         right_statement: Option<Element<'dr, D>>,
         left_binding: Option<Element<'dr, D>>,
         right_binding: Option<Element<'dr, D>>,
     ) -> Self {
+        let [left_bind_endoscalar, right_bind_endoscalar] = bind_endoscalar;
         Self {
             left_raw_c,
             right_raw_c,
+            left_bind_endoscalar,
+            right_bind_endoscalar,
             left_app: left_ky.application.clone(),
             right_app: right_ky.application.clone(),
             left_bridge: left_ky.unified_bridge.clone(),
@@ -602,6 +624,16 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        let or_unified = |own: &Option<Element<'dr, D>>, unified: &Element<'dr, D>| {
+            own.clone().unwrap_or_else(|| unified.clone())
+        };
+        once(or_unified(&self.left_bind_endoscalar, &self.left_unified)).chain(once(or_unified(
+            &self.right_bind_endoscalar,
+            &self.right_unified,
+        )))
     }
 
     fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

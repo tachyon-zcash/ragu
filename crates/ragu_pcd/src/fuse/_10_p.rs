@@ -108,7 +108,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             points.len(),
             crate::internal::native::NumPoints::<C::Profile>::len()
         );
-        Inputs::from_walk(&points)
+        Inputs::from_walk(
+            &points,
+            [&left.online_fq_commitments, &right.online_fq_commitments],
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

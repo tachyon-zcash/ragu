@@ -126,7 +126,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
         let (preamble_witness, nested_preamble) =
-            self.compute_preamble(rng, &left, &right, &mut builder)?;
+            self.compute_preamble(rng, &left, &right, source, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;

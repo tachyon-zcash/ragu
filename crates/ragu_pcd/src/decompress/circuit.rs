@@ -22,8 +22,8 @@
 //! the two sides allocate them from it, with each side's own $v$ and
 //! $c b z$ held to the witness's. The registry's evaluations arrive as wires nothing yet
 //! checks, and each side's IPA takes its $G'$ as a witness point these
-//! circuits do not bind: the chunk circuits bind the host curve's through
-//! the step binding, and the module's *What remains* records the rest.
+//! circuits do not bind: the chunk circuits bind both through the step
+//! binding, and the module's *What remains* records the rest.
 //!
 //! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
 //! [`stages`]: super::stages
@@ -611,6 +611,12 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
         once(self.unified.clone())
     }
 
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        // The standard profile exports no online Fq commitment, so the
+        // circuit's instance is the unified one.
+        once(self.unified.clone())
+    }
+
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone {
         once(self.one.clone())
     }
@@ -651,6 +657,12 @@ impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
+        once(self.unified.clone())
+    }
+
+    fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        // The standard profile exports no online Fq opening, so the
+        // circuit's instance is the unified one.
         once(self.unified.clone())
     }
 

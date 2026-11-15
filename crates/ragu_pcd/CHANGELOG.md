@@ -16,12 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in place of the context's proof. The `Aggregator` profile, its
   `Decompression` context and `Application::decompress` sit behind the
   `unstable-aggregator` feature: they are not yet sound against a dishonest
-  prover, since the decompression takes the wallet registry's evaluations and
-  the nested curve's IPA's final generator from the prover. The host curve's
-  is bound: the decompression step commits that IPA's challenge polynomial in
-  its first output slot, and the extension holds its opening and commitment
+  prover, since the decompression takes the wallet registry's evaluations
+  from the prover. Both IPAs' final generators are bound. The host curve's:
+  the decompression step commits that IPA's challenge polynomial in its
+  first output slot, and the extension holds its opening and commitment
   through the statement circuit's step binding (`profile::STEP_BINDING`) and
-  the nested binding circuit's online slots (`Binding::online`).
+  the nested binding circuit's online slots (`Binding::online`). The nested
+  curve's: every step commits that IPA's challenge polynomial as its online
+  Fq polynomial (`Profile::online_fq_polynomials`), and exports its
+  commitment and opening for the slots the profile's bindings name
+  (`Binding::online` on the native binding, `Binding::openings` on the
+  nested one), through `bind_endoscalar`'s and the nested `compute_v`'s
+  instances; a proof and a compressed proof of such a profile carry them. A
+  profile that names none, the Standard one included, exports nothing and
+  its proofs are unchanged.
   `Aggregator` is pinned for 4-element headers alone; other header sizes do
   not compile.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for

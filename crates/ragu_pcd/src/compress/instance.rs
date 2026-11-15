@@ -81,6 +81,15 @@ pub(crate) struct Instance<C: Cycle> {
     /// The commitments of the step's own online polynomials, which its
     /// nested instance exports.
     pub online_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
+    /// The commitments of the step's online Fq polynomials it exports,
+    /// which its `bind_endoscalar` and binding circuits' claims take; none
+    /// for a profile whose native binding names none.
+    pub online_fq_commitments: Vec<C::NestedCurve>,
+    /// The openings of the step's online Fq polynomials it exports, a
+    /// point then a value each, which its nested `compute_v` and binding
+    /// circuits' claims take; none for a profile whose nested binding
+    /// names none.
+    pub online_fq_openings: Vec<C::ScalarField>,
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.
@@ -203,6 +212,8 @@ impl<C: ProfiledCycle> Instance<C> {
             native_registry_xy: proof.native_registry_xy_commitment(),
             native_p: proof.native_p_commitment(),
             online_commitments: proof.online_commitments(),
+            online_fq_commitments: proof.online_fq_commitments.clone(),
+            online_fq_openings: proof.online_fq_openings.clone(),
             nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -300,11 +311,16 @@ impl<C: ProfiledCycle> Instance<C> {
         }
 
         let mut nested = transcript.nested();
-        for &point in self.nested.iter().chain([
-            &self.nested_registry_xy,
-            &self.nested_p,
-            &self.nested_challenges_partial,
-        ]) {
+        for &point in self
+            .nested
+            .iter()
+            .chain([
+                &self.nested_registry_xy,
+                &self.nested_p,
+                &self.nested_challenges_partial,
+            ])
+            .chain(&self.online_fq_commitments)
+        {
             nested.write_point(point)?;
         }
         let (l, r) = (self.nested_left, self.nested_right);
@@ -318,7 +334,10 @@ impl<C: ProfiledCycle> Instance<C> {
             r.y,
             self.nested_a_at_u,
             self.nested_b_at_u,
-        ] {
+        ]
+        .into_iter()
+        .chain(self.online_fq_openings.iter().copied())
+        {
             nested.write_scalar(scalar)?;
         }
         Ok(())
@@ -459,9 +478,10 @@ impl<C: ProfiledCycle> Instance<C> {
         nested_y: C::ScalarField,
     ) -> Result<(NativeKy<C::CircuitField>, NestedKy<C::ScalarField>)> {
         let unified = self.unified(challenges);
-        let nested_bound = ky::native_bound::<C::Profile, _>(|index| {
-            self.nested_commitment(nested::RxComponent::Rx(index))
-        });
+        let nested_bound = ky::native_bound::<C::Profile, _>(
+            |index| self.nested_commitment(nested::RxComponent::Rx(index)),
+            |i| self.online_fq_commitments[i],
+        );
         let native = NativeKy {
             c: Some(self.c),
             ..ky::native_ky_of::<C, HEADER_SIZE>(
@@ -473,6 +493,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,
+                    online_fq: &self.online_fq_commitments,
                 },
                 y,
             )?
@@ -484,7 +505,12 @@ impl<C: ProfiledCycle> Instance<C> {
         let nested = NestedKy {
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
-            binding: ky::binding_ky_of(&native_bound, nested_y)?,
+            compute_v: ky::nested_compute_v_ky_of::<C>(
+                &self.nested_unified(challenges)?,
+                &self.online_fq_openings,
+                nested_y,
+            )?,
+            binding: ky::binding_ky_of(&native_bound, &self.online_fq_openings, nested_y)?,
         };
         Ok((native, nested))
     }

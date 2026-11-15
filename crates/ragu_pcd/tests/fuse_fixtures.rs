@@ -558,6 +558,8 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
         native_points_walk_rx,
         online_polynomials,
         online_openings,
+        online_fq_commitments,
+        online_fq_openings,
         bridge_preamble_rx,
         bridge_hash_rx,
         bridge_s_prime_rx,
@@ -680,6 +682,14 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
             .flat_map(|query| [query.x, query.y])
             .collect::<Vec<_>>(),
     );
+    // What the step exports of its online Fq polynomials: nothing for a
+    // profile whose bindings name none, which has no line for them.
+    for (i, commitment) in online_fq_commitments.iter().enumerate() {
+        lines.point(&alloc::format!("online_fq_commitments[{i}]"), commitment);
+    }
+    if !online_fq_openings.is_empty() {
+        lines.fields("online_fq_openings", online_fq_openings);
+    }
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
     lines.poly("bridge_hash_rx", bridge_hash_rx);
@@ -843,6 +853,8 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         native_registry_xy,
         native_p,
         online_commitments,
+        online_fq_commitments,
+        online_fq_openings,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -897,6 +909,14 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
 
     encode_messages(native, out);
     encode_messages(nested, out);
+
+    // What the step exports of its online Fq polynomials, last and only
+    // for a profile whose bindings name any, so that the encoding of a
+    // proof that exports nothing is what it was.
+    if !(online_fq_commitments.is_empty() && online_fq_openings.is_empty()) {
+        out.points(online_fq_commitments);
+        out.fields(online_fq_openings);
+    }
 }
 
 fn encode_messages<P: Affine>(messages: &Messages<P>, out: &mut Writer) {
@@ -998,6 +1018,13 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_right = nested_child()?;
     let nested_a_at_u = cursor.field()?;
     let nested_b_at_u = cursor.field()?;
+    let native = decode_messages(cursor)?;
+    let nested = decode_messages(cursor)?;
+    let (online_fq_commitments, online_fq_openings) = if cursor.finished() {
+        (Vec::new(), Vec::new())
+    } else {
+        (cursor.points()?, cursor.fields()?)
+    };
     let instance = Instance {
         circuit_id,
         left_header,
@@ -1007,6 +1034,8 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         native_registry_xy,
         native_p,
         online_commitments,
+        online_fq_commitments,
+        online_fq_openings,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -1025,8 +1054,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         nested_a_at_u,
         nested_b_at_u,
     };
-    let native = decode_messages(cursor)?;
-    let nested = decode_messages(cursor)?;
     Some(CompressedProof {
         instance,
         native,

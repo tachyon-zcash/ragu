@@ -106,6 +106,10 @@ codec! {
     // output headers
     online_polynomials => wire::Array<wire::DefaultEncoding>,
     online_openings => wire::Array<wire::DefaultEncoding>,
+    // What the step exports of its online Fq polynomials, for a profile
+    // whose bindings name any: nothing on the wire for one that names none
+    online_fq_commitments => wire::FixedSequence<wire::Point, nested::online::BoundCommitmentsLen<C::Profile>>,
+    online_fq_openings => wire::FixedSequence<wire::Scalar, nested::online::BoundOpeningsLen<C::Profile>>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => wire::DefaultEncoding,

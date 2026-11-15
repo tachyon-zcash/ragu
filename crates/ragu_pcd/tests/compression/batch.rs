@@ -364,6 +364,7 @@ fn native_batch_opens_through_the_ipa() {
         unified_bridge: targets.unified_bridge,
         compute_v_bridge: targets.compute_v_bridge,
         application: targets.application + Fp::ONE,
+        bind_endoscalar: targets.bind_endoscalar,
         statement: targets.statement,
         binding: targets.binding,
     };
@@ -397,6 +398,7 @@ fn nested_batch_opens_through_the_ipa() {
     let targets = NestedKy {
         c: proof.nested_c(),
         unified: ky::nested_ky(proof, y).unwrap(),
+        compute_v: None,
         binding: None,
     };
     let generators = Pasta::nested_generators(crate::pasta::baked());

@@ -1217,6 +1217,10 @@ fn test_extension_claims_follow_the_declaration() {
             [40, 41].into_iter()
         }
 
+        fn bind_endoscalar_ky(&self) -> impl Iterator<Item = u32> {
+            [45, 46].into_iter()
+        }
+
         fn ones(&self) -> impl Iterator<Item = u32> + Clone {
             [1, 1].into_iter()
         }
@@ -1258,6 +1262,9 @@ fn test_extension_claims_follow_the_declaration() {
             .collect();
         let walk = targets.iter().position(|&ky| ky == 1).unwrap();
         let extension = walk + 2 * steps;
+        // `bind_endoscalar`, the last circuit before the walk, takes its
+        // own values.
+        assert_eq!(targets[walk - 2..walk], [45, 46]);
         assert!(targets[walk..extension].iter().all(|&ky| ky == 1));
         assert!(
             targets[extension + 2 * circuits..]
@@ -1289,6 +1296,10 @@ fn test_extension_claims_follow_the_declaration() {
             [40, 41].into_iter()
         }
 
+        fn compute_v_ky(&self) -> impl Iterator<Item = u32> {
+            [55, 56].into_iter()
+        }
+
         fn binding_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [70, 71].into_iter()
         }
@@ -1306,6 +1317,8 @@ fn test_extension_claims_follow_the_declaration() {
             .take(extension + 2 * circuits + 8)
             .collect();
         assert!(targets[2..2 + 2 * steps].iter().all(|&ky| ky == 1));
+        // `compute_v`, the last instance circuit, takes its own values.
+        assert_eq!(targets[extension - 2..extension], [55, 56]);
         assert!(
             targets[extension + 2 * circuits..]
                 .iter()

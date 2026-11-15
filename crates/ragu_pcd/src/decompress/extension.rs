@@ -200,7 +200,10 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
             stages: (0..runs as u32)
                 .chain([nested.lifts(), nested.digits()])
                 .collect(),
-            online: Vec::new(),
+            // The step's online Fq polynomial, which holds the nested
+            // IPA's s(X): its commitment is that IPA's G'.
+            online: vec![0],
+            openings: Vec::new(),
         }),
     }
 }
@@ -255,6 +258,9 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
             // The first output slot, where the decompression step commits
             // the host IPA's s(X).
             online: vec![0],
+            // The step's online Fq polynomial, which holds the nested
+            // IPA's s(X): the chunks hold its opening to s at that point.
+            openings: vec![0],
         }),
     }
 }

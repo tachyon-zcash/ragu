@@ -292,10 +292,16 @@ pub trait KySource {
     /// bound is required for `repeat_n`.
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
+    /// One value per proof for the `compute_v` circuit, the last of the
+    /// instance circuits: the unified $k(y)$, or for a profile whose
+    /// nested binding names online Fq openings the $k(y)$ of the unified
+    /// instance followed by the openings the circuit exports.
+    fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// One value per proof for the binding circuit of the profile's nested
-    /// extension: the $k(y)$ of the native extension stage commitments it
-    /// recomputes, as [`binding_ky`](crate::internal::ky::binding_ky)
-    /// computes it, and none for a profile without one.
+    /// extension: the $k(y)$ of what it exposes, as
+    /// [`binding_ky`](crate::internal::ky::binding_ky) computes it, and
+    /// none for a profile without one.
     fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
     /// Returns 0 for stage checks.
@@ -326,7 +332,9 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
     source
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
-        .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
+        // The instance circuits, `compute_v` last, which takes its own.
+        .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS - 1).flatten())
+        .chain(source.compute_v_ky())
         .chain({
             let extension = P::nested_extension();
             let ones: Vec<S::Ky> = source.ones().collect();
@@ -356,6 +364,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_raw_c: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_compute_v: Option<Element<'dr, D>>,
+    pub right_compute_v: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
     pub right_binding: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
@@ -364,8 +374,9 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
     /// Create a [`TwoProofKySource`] from the children's raw `c` values,
-    /// unified $k(y)$ values and binding circuit's $k(y)$ values, `None`
-    /// for a profile without one.
+    /// unified $k(y)$ values and `compute_v` and binding circuits' $k(y)$
+    /// values, `None` for a profile without one: `compute_v`'s is then
+    /// the unified one.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
@@ -373,14 +384,18 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_raw_c: Element<'dr, D>,
         left_unified: Element<'dr, D>,
         right_unified: Element<'dr, D>,
+        compute_v: [Option<Element<'dr, D>>; 2],
         left_binding: Option<Element<'dr, D>>,
         right_binding: Option<Element<'dr, D>>,
     ) -> Self {
+        let [left_compute_v, right_compute_v] = compute_v;
         Self {
             left_raw_c,
             right_raw_c,
             left_unified,
             right_unified,
+            left_compute_v,
+            right_compute_v,
             left_binding,
             right_binding,
             one: Element::one(),
@@ -402,6 +417,14 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn compute_v_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        let or_unified = |own: &Option<Element<'dr, D>>, unified: &Element<'dr, D>| {
+            own.clone().unwrap_or_else(|| unified.clone())
+        };
+        once(or_unified(&self.left_compute_v, &self.left_unified))
+            .chain(once(or_unified(&self.right_compute_v, &self.right_unified)))
     }
 
     fn binding_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

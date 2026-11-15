@@ -375,6 +375,16 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     }
 }
 
+/// Length type for the elements side `S`'s binding circuit exposes after
+/// its points: [`Side::EXPOSED_ELEMENTS`].
+pub(crate) struct ExposedElements<C, S>(PhantomData<fn() -> (C, S)>);
+
+impl<C: Cycle, S: Side<C>> Len for ExposedElements<C, S> {
+    fn len() -> usize {
+        S::EXPOSED_ELEMENTS
+    }
+}
+
 /// Length type for the points side `S`'s binding circuit exposes for a
 /// proof at rank `K`: [`Side::exposed`].
 pub(crate) struct Exposed<C, S, K>(PhantomData<fn() -> (C, S, K)>);
@@ -386,9 +396,11 @@ impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
 }
 
 /// The binding circuit of side `S`: the circuit whose public output is the
-/// other side's stage commitments the side absorbed or recomputed, read
-/// off the work stage where the chunks left them
-/// ([`Regions::exposed`](super::program::Regions::exposed)). The chunks
+/// other side's stage commitments the side absorbed or recomputed and what
+/// it took of the step's own online polynomials, points then elements,
+/// read off the work stage where the chunks left them
+/// ([`Regions::exposed`](super::program::Regions::exposed) and
+/// [`Regions::exposed_elements`](super::program::Regions::exposed_elements)). The chunks
 /// bind those slots to the values the side took from the other side, so a
 /// claim on this circuit's output at the $k(y)$ of the other side's actual
 /// stage commitments, which the proof's consumer computes, holds only if
@@ -431,10 +443,16 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
     MultiStageCircuit<S::F, R> for BindingCircuit<C, S, K, R, HEADER_SIZE>
 {
     type Last = WorkStage<C, S, K, R, HEADER_SIZE>;
-    /// The exposed points.
-    type Instance<'source> = FixedVec<S::P, Exposed<C, S, K>>;
+    /// The exposed points, then the exposed elements.
+    type Instance<'source> = (
+        FixedVec<S::P, Exposed<C, S, K>>,
+        FixedVec<S::F, ExposedElements<C, S>>,
+    );
     type Witness<'source> = &'source Prepared<C, S>;
-    type Output = Kind![S::F; FixedVec<Point<'_, _, S::P>, Exposed<C, S, K>>];
+    type Output = Kind![S::F; (
+        FixedVec<Point<'_, _, S::P>, Exposed<C, S, K>>,
+        FixedVec<Element<'_, _>, ExposedElements<C, S>>,
+    )];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -442,7 +460,17 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        FixedVec::try_from_fn(|i| Point::alloc(dr, instance.as_ref().map(|points| points[i])))
+        let points = FixedVec::try_from_fn(|i| {
+            Point::alloc(dr, instance.as_ref().map(|(points, _)| points[i]))
+        })?;
+        let elements = FixedVec::try_from_fn(|i| {
+            Element::alloc(
+                dr,
+                &mut (),
+                instance.as_ref().map(|(_, elements)| elements[i]),
+            )
+        })?;
+        Ok((points, elements))
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -468,7 +496,17 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
             .iter()
             .map(|&slot| work.points[slot].clone())
             .collect::<alloc::vec::Vec<_>>();
-        Ok(WithAux::new(FixedVec::try_from(exposed)?, D::unit()))
+        let elements = self
+            .schedule
+            .regions
+            .exposed_elements
+            .iter()
+            .map(|&slot| work.elements[slot].clone())
+            .collect::<alloc::vec::Vec<_>>();
+        Ok(WithAux::new(
+            (FixedVec::try_from(exposed)?, FixedVec::try_from(elements)?),
+            D::unit(),
+        ))
     }
 }
 

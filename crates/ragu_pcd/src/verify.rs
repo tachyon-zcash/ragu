@@ -208,10 +208,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     &pcd.proof()[NestedRxComponent::AbB],
                 ),
                 unified: nested_ky,
+                // The nested `compute_v` circuit's claim, over the online
+                // Fq openings the step exports.
+                compute_v: proof_check!(ky::nested_compute_v_ky_of::<C>(
+                    &proof_check!(pcd.proof().nested_instance()),
+                    &pcd.proof().online_fq_openings,
+                    y_nested,
+                )),
                 // The nested binding circuit's claim holds its recomputation
                 // of the native extension stages it names to their
-                // commitments.
-                binding: proof_check!(ky::binding_ky_of(&native_bound, y_nested)),
+                // commitments, and what it took of the step's online
+                // polynomials to their commitments and openings.
+                binding: proof_check!(ky::binding_ky_of(
+                    &native_bound,
+                    &pcd.proof().online_fq_openings,
+                    y_nested,
+                )),
             };
             nested::ky_values::<C::Profile, _>(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))

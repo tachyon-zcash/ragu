@@ -232,16 +232,47 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             (None, None)
         };
         let (left_binding, right_binding) = match (&extension.binding, &binding) {
-            (Some(declared), Some(binding)) => {
-                let bound = |child: &super::super::stages::points::ChildBinding<'dr, D, _, _>| {
-                    ky::bound(Some(declared), |j| child.extension[j as usize].clone())
+            (Some(_), Some(binding)) => {
+                // The children's nested extension stages the binding
+                // names, then the online Fq commitments they exported.
+                let bound = |child: &super::super::stages::points::ChildBinding<
+                    'dr,
+                    D,
+                    C::NestedCurve,
+                    C::Profile,
+                >| {
+                    ky::native_bound::<C::Profile, _>(
+                        |index| match index {
+                            crate::internal::nested::RxIndex::ExtensionStage(j) => {
+                                child.extension[j as usize].clone()
+                            }
+                            _ => unreachable!("a binding names extension stages"),
+                        },
+                        |i| child.online_fq[i].clone(),
+                    )
                 };
                 (
-                    ky::binding_ky(dr, &y, &bound(&binding.left))?,
-                    ky::binding_ky(dr, &y, &bound(&binding.right))?,
+                    ky::binding_ky(dr, &y, &bound(&binding.left), &[])?,
+                    ky::binding_ky(dr, &y, &bound(&binding.right), &[])?,
                 )
             }
             _ => (None, None),
+        };
+        // The children's `bind_endoscalar` claims take the same exported
+        // commitments after the unified instance, so the point a child's
+        // binding circuit exposes is the one its walk took from its
+        // preamble stage. A profile that exports none keeps the unified
+        // k(y) for them.
+        let bind_endoscalar = match &binding {
+            Some(binding) => [
+                preamble
+                    .left
+                    .bind_endoscalar_ky(dr, &y, &binding.left.online_fq)?,
+                preamble
+                    .right
+                    .bind_endoscalar_ky(dr, &y, &binding.right.online_fq)?,
+            ],
+            None => [None, None],
         };
         let ky = TwoProofKySource::new(
             dr,
@@ -249,6 +280,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             preamble.right.unified.c.clone(),
             &outer_error.left,
             &outer_error.right,
+            bind_endoscalar,
             left_statement,
             right_statement,
             left_binding,

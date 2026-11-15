@@ -67,7 +67,11 @@ use crate::{
     internal::{
         Side,
         endoscalar::{InputsLen, PointsWitness},
-        nested::{self, online::FqPolysLen, pcs::NUM_CURRENT_POINTS},
+        nested::{
+            self,
+            online::{BoundCommitmentsLen, FqPolysLen},
+            pcs::NUM_CURRENT_POINTS,
+        },
     },
     profile::Profile,
 };
@@ -241,6 +245,10 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
     pub p: C,
     /// The child's nested extension stage commitments, by stage.
     pub extension: FixedVec<C, nested::NumExtensionStages<P>>,
+    /// The commitments of the child's own online Fq polynomials it
+    /// exported, tied to its `bind_endoscalar` and binding circuits. The
+    /// walk does not fold them: the child's own walk did.
+    pub online_fq: FixedVec<C, BoundCommitmentsLen<P>>,
 }
 
 /// Witness of [`BindingStage`]: the points tied to each child's instance
@@ -312,23 +320,26 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 
 /// Splits the two children's points, each in the order
 /// [`nested::pcs::child_commitments`] fixes, into the binding and preamble
-/// stages' witnesses. The preamble stage also holds `online_fq`, the
-/// step's own online Fq commitments.
+/// stages' witnesses. The binding stage also holds `exported`, the online
+/// Fq commitments the left and the right child exported, and the preamble
+/// stage `online_fq`, the step's own online Fq commitments.
 ///
 /// # Panics
 ///
-/// Panics if either child has other than [`num_child_points`] points, or
-/// if `online_fq` has other than [`Profile::ONLINE_FQ_POLYS`] points.
+/// Panics if either child has other than [`num_child_points`] points or
+/// other than the profile's exported commitments, or if `online_fq` has
+/// other than [`Profile::ONLINE_FQ_POLYS`] points.
 pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
+    exported: [&[C]; 2],
     online_fq: &[C],
 ) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
     assert_eq!(left.len(), num_child_points);
     assert_eq!(right.len(), num_child_points);
-    let bound = |points: &[C]| ChildBindingWitness {
+    let bound = |points: &[C], exported: &[C]| ChildBindingWitness {
         bridges: core::array::from_fn(|i| points[nested::RxIndex::BRIDGES[i].position::<P>()]),
         challenges: points[child_challenges::<P>()],
         a: points[nested_rx],
@@ -338,6 +349,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
         extension: FixedVec::from_fn(|j| {
             points[nested::RxIndex::ExtensionStage(j as u32).position::<P>()]
         }),
+        online_fq: FixedVec::new(exported.to_vec()).expect("the exported online Fq commitments"),
     };
     let rest = |points: &[C]| {
         points
@@ -351,8 +363,8 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     points.extend(rest(right));
     (
         BindingWitness {
-            left: bound(left),
-            right: bound(right),
+            left: bound(left, exported[0]),
+            right: bound(right, exported[1]),
         },
         PreambleWitness {
             points: FixedVec::new(points).expect("num_children_points points"),
@@ -373,18 +385,22 @@ pub struct Inputs<C: Affine, P: Profile> {
 }
 
 impl<C: Affine, P: Profile> Inputs<C, P> {
-    /// Splits the walk's points, the initial $F_n$ first, into the stages.
+    /// Splits the walk's points, the initial $F_n$ first, into the stages,
+    /// with `exported`, the online Fq commitments the left and the right
+    /// child exported, which the binding stage holds and the walk does not
+    /// fold.
     ///
     /// # Panics
     ///
     /// Panics if `points.len() != NumPoints::<P>::len()`.
-    pub fn from_walk(points: &[C]) -> Self {
+    pub fn from_walk(points: &[C], exported: [&[C]; 2]) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         let current = &points[1 + 2 * num_child_points..];
         let (binding, preamble) = preamble_witnesses::<C, P>(
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
+            exported,
             &current[NUM_CURRENT_POINTS..],
         );
         Self {
@@ -459,6 +475,10 @@ pub struct ChildBinding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>
     /// The child's nested extension stage commitments, by stage.
     #[ragu(gadget)]
     pub extension: FixedVec<Point<'dr, D, C>, nested::NumExtensionStages<P>>,
+    /// The commitments of the child's own online Fq polynomials it
+    /// exported.
+    #[ragu(gadget)]
+    pub online_fq: FixedVec<Point<'dr, D, C>, BoundCommitmentsLen<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, D, C, P> {
@@ -474,6 +494,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
             p: Point::alloc(dr, witness.as_ref().map(|w| w.p))?,
             extension: FixedVec::try_from_fn(|j| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.extension[j]))
+            })?,
+            online_fq: FixedVec::try_from_fn(|j| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_fq[j]))
             })?,
         })
     }
@@ -636,7 +659,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     type OutputKind = Kind![C::Base; Binding<'_, _, C, P>];
 
     fn values() -> usize {
-        4 * num_child_bindings::<P>()
+        // (x, y) per point, of each child: the walked points and the
+        // exported online Fq commitments.
+        4 * (num_child_bindings::<P>() + BoundCommitmentsLen::<P>::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -792,7 +817,10 @@ mod tests {
                 .to_affine()
             })
             .collect();
-        let inputs = Inputs::<C, P>::from_walk(&points);
+        // The children's exported online Fq commitments are held beside
+        // the walk's points and are not among them.
+        let exported = alloc::vec![points[0]; BoundCommitmentsLen::<P>::len()];
+        let inputs = Inputs::<C, P>::from_walk(&points, [&exported, &exported]);
         assert_eq!(inputs.walk(), points);
 
         let num_inputs = NumInputs::<P>::len();

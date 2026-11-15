@@ -257,6 +257,17 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// The parent uses these same values in the application and `compute_v`
     /// k(y) targets, binding the application's queries to the proved openings.
     pub(crate) online_openings: online::Queries<C::CircuitField>,
+    /// The commitments of the step's online Fq polynomials the profile's
+    /// native binding names, in its order: what the step's
+    /// `bind_endoscalar` exports and its binding circuit exposes, which
+    /// the parent holds once for both claims. Empty for a profile that
+    /// names none.
+    pub(crate) online_fq_commitments: Vec<C::NestedCurve>,
+    /// The openings of the step's online Fq polynomials the profile's
+    /// nested binding names, the point then the value of each, in its
+    /// order: what the step's nested `compute_v` exports and its binding
+    /// circuit exposes. Empty for a profile that names none.
+    pub(crate) online_fq_openings: Vec<C::ScalarField>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -416,6 +427,10 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.nested_extension_circuit_commitments.len() == nested_extension.circuits.len()
             && self.nested_extension_stage_rxs.len() == nested_extension.stages
             && self.nested_extension_stage_commitments.len() == nested_extension.stages
+            && self.online_fq_commitments.len()
+                == nested::online::BoundCommitmentsLen::<C::Profile>::len()
+            && self.online_fq_openings.len()
+                == nested::online::BoundOpeningsLen::<C::Profile>::len()
     }
 }
 
@@ -872,8 +887,8 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     }
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    crate::Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    crate::Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Runs endoscaling over the host-curve commitments that feed
     /// `PointsStage`, in the order `compute_p` (`_10_p.rs`)
@@ -946,15 +961,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        source: Option<&crate::profile::Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        // TODO(decompression): the profile's prover supplies these
-        // polynomials. Until then each slot holds the placeholder.
-        builder.set_online_fq_polynomials(
-            (0..C::Profile::ONLINE_FQ_POLYS)
-                .map(|_| online_fq::placeholder())
-                .collect(),
-        );
+        // The profile's prover supplies its online Fq polynomials: a
+        // placeholder in every slot by default.
+        let polynomials =
+            C::Profile::online_fq_polynomials::<C::Base, R, B>(&self.context, source)?;
+        if polynomials.len() != C::Profile::ONLINE_FQ_POLYS {
+            return Err(ragu_core::Error::Initialization(
+                "the profile's prover did not supply its online Fq polynomials".into(),
+            ));
+        }
+        builder.set_online_fq_polynomials(polynomials);
 
         // The step's own online Fq commitments, which the preamble stage
         // holds.
@@ -968,6 +987,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (binding, preamble) = native_points::preamble_witnesses::<_, C::Profile>(
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
+            [&left.online_fq_commitments, &right.online_fq_commitments],
             online_fq,
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
@@ -1303,6 +1323,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .map(|_| online_fq::placeholder())
                 .collect(),
         );
+        builder.set_online_fq_openings(alloc::vec![
+            C::ScalarField::ZERO;
+            online_fq::BoundOpeningsLen::<C::Profile>::len()
+        ]);
         let (nested_p_poly, nested_p_commitment) = {
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
@@ -1339,7 +1363,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 push(commitment, poly); // the step's own online Fq polynomial
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
-            let inputs = Inputs::from_walk(&points);
+            // The children stand for proofs like this one, so they
+            // exported the commitments this one does.
+            let exported = builder.exported_online_fq_commitments();
+            let inputs = Inputs::from_walk(&points, [&exported, &exported]);
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)
                 .expect("trivial native points stages");
             let (commitment, _) = self
@@ -1563,6 +1590,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     y: nested_one,
                     u: nested_one,
                 },
+                online_fq_openings: FixedVec::new(builder.online_fq_openings().to_vec())
+                    .expect("the openings the profile exports"),
             };
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
