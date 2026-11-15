@@ -64,6 +64,8 @@ impl<'a, C: Affine> Guard<'a, C> {
 /// commitment `P` opens purportedly to the value `v`. The provided `msm`
 /// should evaluate to the unblinded commitment `P = <p, G>` being opened.
 /// The transcript must already bind `P`, `x`, and `v`.
+///
+/// Returns an error for zero-round (`k = 0`) parameters.
 pub fn verify_proof<'a, C: Affine, T: IpaTranscript<C>>(
     params: &'a Params<C>,
     mut msm: MSM<'a, C>,
@@ -73,6 +75,12 @@ pub fn verify_proof<'a, C: Affine, T: IpaTranscript<C>>(
     v: C::Scalar,
 ) -> Result<Guard<'a, C>> {
     let k = params.k as usize;
+
+    if k == 0 {
+        return Err(Error::InvalidWitness(
+            "IPA parameters must have at least one round".into(),
+        ));
+    }
 
     if proof.rounds.len() != k {
         return Err(Error::InvalidWitness(
