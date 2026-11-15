@@ -15,6 +15,7 @@ import selectors
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -284,13 +285,52 @@ def verify_reuse(run, out, phase):
             raise ValueError("reused specialist requires its original core report")
 
 
-def git(root, *args, timeout=GIT_TIMEOUT):
-    return subprocess.check_output(
+def git(root, *args, timeout=GIT_TIMEOUT, text=True):
+    output = subprocess.check_output(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", "-C", str(root), *args],
-        text=True,
+        text=text,
         timeout=timeout,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/bin/false"},
-    ).strip()
+    )
+    return output.strip() if text else output
+
+
+def tracked(root, revision, timeout=GIT_TIMEOUT):
+    """Yield the mode, object ID and path of every file in `revision`."""
+    listing = git(root, "ls-tree", "-r", "-z", "--full-tree", revision, timeout=timeout, text=False)
+    for entry in listing.split(b"\0")[:-1]:
+        meta, path = entry.split(b"\t", 1)
+        mode, _, oid = meta.decode().split()
+        yield mode, oid, os.fsdecode(path)
+
+
+def unchanged(root, source, revision, timeout=GIT_TIMEOUT):
+    """Whether `source` still holds every tracked file of `revision`.
+
+    Git never runs in `source`: the review sandbox can write there, and Git runs
+    configuration it finds in a nested repository. Objects come from the
+    controller's repository, and paths are not followed through symlinks.
+    Untracked files are ignored, as by `git diff`.
+    """
+    source = source.resolve()
+    for mode, oid, name in tracked(root, revision, timeout):
+        path = source / name
+        try:
+            if path.parent.resolve() != path.parent:
+                return False
+            info = os.lstat(path)
+            if mode == "120000" and stat.S_ISLNK(info.st_mode):
+                data = os.fsencode(os.readlink(path))
+            elif mode in ("100644", "100755") and stat.S_ISREG(info.st_mode) \
+                    and bool(info.st_mode & stat.S_IXUSR) == (mode == "100755"):
+                data = path.read_bytes()
+            else:
+                return False
+        except OSError:
+            return False
+        if hashlib.new({40: "sha1", 64: "sha256"}[len(oid)], b"blob %d\0" % len(data) + data).hexdigest() != oid:
+            return False
+    return True
 
 
 def prepare(root, run, work):
@@ -299,6 +339,10 @@ def prepare(root, run, work):
         raise ValueError("controller checkout does not match the trusted configuration revision")
     for revision in (run["base"], run["head"]):
         git(root, "fetch", "--no-tags", "origin", revision)
+    # Git treats a repository planted at a gitlink's path as a submodule and runs
+    # its configuration. Ragu has no submodules, so refuse before any review.
+    if any(mode == "160000" for mode, _, _ in tracked(root, run["head"])):
+        raise ValueError("head contains a gitlink")
     merge_base = git(root, "merge-base", run["base"], run["head"])
     for skill in ROLES:
         git(root, "worktree", "add", "--detach", str(work / skill), run["head"])
@@ -870,7 +914,7 @@ def review_skill(skill, executable, root, run, work, out, private, plugin, merge
     if skill == SKILLS[0]:
         records, _ = findings.review(result["structured_output"], skill)
         write_json(out / "core-findings.json", {"findings": records})
-    if git(source, "rev-parse", "HEAD") != run["head"] or git(source, "diff", "HEAD", "--"):
+    if not unchanged(root, source, run["head"]):
         raise ValueError(f"{skill}: tracked source changed during review")
     duration = round(time.monotonic() - started, 3)
     print(f"Completed {skill} in {duration:.1f}s", flush=True)
@@ -941,13 +985,11 @@ is a brief account of checks and limitations. Return the requested schema.
             native_cost(result)
             output = result["structured_output"]
             report = findings.render_reconciliation(output, bundle)
-            for args in (("rev-parse", "HEAD"), ("diff", "HEAD", "--")):
-                remaining = RECONCILE_TIMEOUT - (time.monotonic() - started)
-                if remaining <= 0:
-                    raise ValueError("reconciliation deadline reached")
-                value = git(source, *args, timeout=min(remaining, GIT_TIMEOUT))
-                if value != (run["head"] if args[0] == "rev-parse" else ""):
-                    raise ValueError("reconciliation source changed")
+            remaining = RECONCILE_TIMEOUT - (time.monotonic() - started)
+            if remaining <= 0:
+                raise ValueError("reconciliation deadline reached")
+            if not unchanged(root, source, run["head"], timeout=min(remaining, GIT_TIMEOUT)):
+                raise ValueError("reconciliation source changed")
             (out / "reconcile.md").write_text(report)
             record = {**record, "state": "completed", "sha256": digest(out / "reconcile.md"),
                       "result_sha256": digest(out / "reconcile.json"),

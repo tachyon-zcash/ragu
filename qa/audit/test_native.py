@@ -654,7 +654,7 @@ class NativeTests(unittest.TestCase):
                      patch.object(runner, "prepare", return_value=run["base"]), patch.object(runner, "environment", side_effect=environment), \
                      patch.object(runner, "REVIEW_TIMEOUT", 120), \
                      patch.object(runner, "MAX_RUN_COST_USD", Decimal("1") if mode == "budget" else runner.MAX_RUN_COST_USD), \
-                     patch.object(runner, "git", side_effect=lambda root, command, *args, **kwargs: run["head"] if command == "rev-parse" else ""):
+                     patch.object(runner, "unchanged", return_value=True):
                     if denied or mode in ("budget", "shared_budget"):
                         with self.assertRaisesRegex(ValueError, "safety limit" if mode in ("budget", "shared_budget") else "review incomplete"):
                             runner.review(root, run, work, out, private)
