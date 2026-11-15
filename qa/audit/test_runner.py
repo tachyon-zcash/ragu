@@ -568,6 +568,10 @@ class SourceTests(unittest.TestCase):
             (path / "crates/x").rename(path / "elsewhere/x")
             (path / "crates/x").symlink_to(path / "elsewhere/x")
 
+        def fifo(path):
+            (path / "a.rs").unlink()
+            os.mkfifo(path / "a.rs")
+
         head = self.git("rev-parse", "HEAD")
         source = self.worktree("intact")
         self.assertTrue(runner.unchanged(self.root, source, head))
@@ -577,11 +581,30 @@ class SourceTests(unittest.TestCase):
         for change, apply in (("content", lambda path: (path / "a.rs").write_text("fn b() {}\n")),
                               ("mode", lambda path: (path / "bin/run.sh").chmod(0o644)),
                               ("deletion", lambda path: (path / "crates/x/lib.rs").unlink()),
-                              ("type", retype), ("leading symlink", relink)):
+                              ("type", retype), ("leading symlink", relink), ("fifo", fifo),
+                              # Reading a terabyte-long sparse file would exhaust the controller.
+                              ("sparse", lambda path: os.truncate(path / "a.rs", 1 << 40))):
             with self.subTest(change=change):
                 source = self.worktree(change.replace(" ", "-"))
                 apply(source)
                 self.assertFalse(runner.unchanged(self.root, source, head))
+
+    def test_head_attributes_cannot_convert_the_checkout(self):
+        (self.root / "id.rs").write_text("// $Id$\n")
+        (self.root / "crates/x/.gitattributes").write_text("*.rs working-tree-encoding=UTF-16LE\n")
+        (self.root / ".gitattributes").write_text("*.rs text eol=crlf ident\n*.sh filter=lfs\n")
+        self.git("add", "id.rs", ".gitattributes", "crates/x/.gitattributes")
+        self.git("commit", "-qm", "attributes")
+        head = self.git("rev-parse", "HEAD")
+        # A plain checkout converts files, which then differ from their blobs.
+        self.assertFalse(runner.unchanged(self.root, self.worktree("plain"), head))
+        real = runner.git
+        offline = lambda root, *args, **kwargs: "" if args[0] == "fetch" else real(root, *args, **kwargs)
+        with patch.object(runner, "git", side_effect=offline):
+            runner.prepare(self.root, {"configuration": head, "base": head, "head": head}, self.base / "work")
+        for skill in runner.ROLES:
+            with self.subTest(skill=skill):
+                self.assertTrue(runner.unchanged(self.root, self.base / "work" / skill, head))
 
     def test_repository_planted_at_a_gitlink_never_runs(self):
         self.git("update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},crates/vendor/sub")

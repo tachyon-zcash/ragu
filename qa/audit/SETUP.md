@@ -211,6 +211,8 @@ not the PR. Claude runs noninteractively with a required Bash sandbox, protected
 controller/report paths, and an API key helper outside that sandbox. The
 controller never runs Git in a review worktree: it compares tracked files with
 the pinned head from its own repository, and refuses heads containing gitlinks.
+Worktrees hold each blob byte for byte, whatever the head's `.gitattributes`
+request.
 The model job has no App key; publisher jobs never execute PR code. Required Rust
 toolchains are installed before the model key is made available. Tests can
 write scratch files and Cargo dependencies, but no caches are saved afterward.

@@ -296,12 +296,15 @@ def git(root, *args, timeout=GIT_TIMEOUT, text=True):
 
 
 def tracked(root, revision, timeout=GIT_TIMEOUT):
-    """Yield the mode, object ID and path of every file in `revision`."""
-    listing = git(root, "ls-tree", "-r", "-z", "--full-tree", revision, timeout=timeout, text=False)
+    """Yield the mode, object ID, size and path of every file in `revision`.
+
+    A gitlink has no size in the listing and yields None.
+    """
+    listing = git(root, "ls-tree", "-r", "-z", "-l", "--full-tree", revision, timeout=timeout, text=False)
     for entry in listing.split(b"\0")[:-1]:
         meta, path = entry.split(b"\t", 1)
-        mode, _, oid = meta.decode().split()
-        yield mode, oid, os.fsdecode(path)
+        mode, _, oid, size = meta.decode().split()
+        yield mode, oid, None if size == "-" else int(size), os.fsdecode(path)
 
 
 def unchanged(root, source, revision, timeout=GIT_TIMEOUT):
@@ -310,25 +313,37 @@ def unchanged(root, source, revision, timeout=GIT_TIMEOUT):
     Git never runs in `source`: the review sandbox can write there, and Git runs
     configuration it finds in a nested repository. Objects come from the
     controller's repository, and paths are not followed through symlinks.
-    Untracked files are ignored, as by `git diff`.
+    Untracked files are ignored, as by `git diff`. A file whose size differs from
+    its blob's is never read, and `timeout` bounds the whole comparison.
     """
+    deadline = time.monotonic() + timeout
     source = source.resolve()
-    for mode, oid, name in tracked(root, revision, timeout):
+    for mode, oid, size, name in tracked(root, revision, timeout):
+        if time.monotonic() > deadline:
+            raise TimeoutError("source comparison deadline reached")
         path = source / name
         try:
             if path.parent.resolve() != path.parent:
                 return False
-            info = os.lstat(path)
-            if mode == "120000" and stat.S_ISLNK(info.st_mode):
+            if mode == "120000" and stat.S_ISLNK(os.lstat(path).st_mode):
                 data = os.fsencode(os.readlink(path))
-            elif mode in ("100644", "100755") and stat.S_ISREG(info.st_mode) \
-                    and bool(info.st_mode & stat.S_IXUSR) == (mode == "100755"):
-                data = path.read_bytes()
+            elif mode in ("100644", "100755"):
+                # Opening neither blocks on a FIFO nor follows a final symlink.
+                with open(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size != size \
+                            or bool(info.st_mode & stat.S_IXUSR) != (mode == "100755"):
+                        return False
+                    data = stream.read(size + 1)
             else:
                 return False
         except OSError:
             return False
-        if hashlib.new({40: "sha1", 64: "sha256"}[len(oid)], b"blob %d\0" % len(data) + data).hexdigest() != oid:
+        if len(data) != size:
+            return False
+        blob = hashlib.new({40: "sha1", 64: "sha256"}[len(oid)], b"blob %d\0" % size)
+        blob.update(data)
+        if blob.hexdigest() != oid:
             return False
     return True
 
@@ -341,9 +356,15 @@ def prepare(root, run, work):
         git(root, "fetch", "--no-tags", "origin", revision)
     # Git treats a repository planted at a gitlink's path as a submodule and runs
     # its configuration. Ragu has no submodules, so refuse before any review.
-    if any(mode == "160000" for mode, _, _ in tracked(root, run["head"])):
+    if any(mode == "160000" for mode, *_ in tracked(root, run["head"])):
         raise ValueError("head contains a gitlink")
     merge_base = git(root, "merge-base", run["base"], run["head"])
+    # The head's .gitattributes can make checkout convert files, which `unchanged`
+    # would then see as edits. Info attributes outrank every attributes file in
+    # the tree, so check out each blob byte for byte.
+    info = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")) / "info"
+    info.mkdir(exist_ok=True)
+    (info / "attributes").write_text("* -text -ident -filter !working-tree-encoding\n")
     for skill in ROLES:
         git(root, "worktree", "add", "--detach", str(work / skill), run["head"])
     return merge_base
