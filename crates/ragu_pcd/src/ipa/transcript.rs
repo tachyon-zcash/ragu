@@ -114,8 +114,9 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
     /// bridge stages do: committed on the nested curve, then absorbed as that
     /// commitment.
     ///
-    /// An identity bridge, including the encoding of a single zero scalar,
-    /// is rejected by `absorb`. This can reject otherwise-valid proofs.
+    /// Identity bridges are deliberately rejected to preserve the [`Point`]
+    /// gadget's nonidentity invariant. This includes the encoding of a single
+    /// zero scalar and can reject otherwise-valid proofs.
     fn bridge(&mut self, values: &[C::ScalarField]) -> Result<()> {
         let g = C::nested_generators(self.params).g();
         let commitment: C::NestedCurve = B::msm(values, &g[..values.len()]).to_affine();

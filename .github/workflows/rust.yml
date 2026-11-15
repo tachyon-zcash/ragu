@@ -169,6 +169,27 @@ jobs:
           proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations
           proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
 
+  test-debug-assertions:
+    name: debug regressions (ubuntu-latest)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+        with:
+          cache-suffix: debug-assertions
+      - name: Run PCD debug regressions
+        # Optimize production-rank proofs while exercising debug-only checks.
+        env:
+          CARGO_PROFILE_TEST_OPT_LEVEL: "3"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
+        run: cargo test -p ragu_pcd --lib --locked --all-features proof::child_commitment_tests
+
   test-default-feature:
     name: default-feature (ubuntu-latest)
     needs: changes
@@ -374,6 +395,7 @@ jobs:
       - clippy
       - mock
       - proptests-fast
+      - test-debug-assertions
       - test-default-feature
       - test-all-feature
       - test-corruption

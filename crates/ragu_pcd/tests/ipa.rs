@@ -27,7 +27,7 @@ fn fresh() -> CycleTranscript<'static, Pasta> {
 macro_rules! ipa_tests {
     ($name:ident, $curve:ty, $field:ty, $generators_ty:ident, $generators_fn:ident, $u_fn:ident, $side:ident) => {
         mod $name {
-            use alloc::vec::Vec;
+            use alloc::{string::ToString, vec::Vec};
 
             use proptest::prelude::*;
             use ragu_backend::ReferenceBackend;
@@ -305,6 +305,41 @@ macro_rules! ipa_tests {
                 let params = params(K);
                 let (commitment, x, v, proof) = opening(&params, 3);
                 assert!(!check(&params, commitment, x, v + F::ONE, &proof));
+            }
+
+            #[test]
+            fn prover_rejects_zero_round_params() {
+                let params = params(0);
+                let mut rng = StdRng::seed_from_u64(17);
+                let x = F::from(7);
+                let mut transcript = transcript_for(params.g[0], x, F::ONE);
+                assert!(matches!(
+                    prover::create_proof::<ReferenceBackend, _>(
+                        &params,
+                        &mut rng,
+                        &mut transcript.$side(),
+                        &[F::ONE],
+                        x,
+                    ),
+                    Err(Error::InvalidWitness(message))
+                        if message.to_string() == "IPA parameters must have at least one round"
+                ));
+            }
+
+            #[test]
+            fn verifier_rejects_zero_round_params() {
+                let params = params(0);
+                let proof = IpaProof {
+                    // Use a nonidentity S so rejection cannot rely on transcript absorption.
+                    s_commitment: params.g[0],
+                    rounds: Vec::new(),
+                    c: F::ONE,
+                };
+                assert!(matches!(
+                    verify_seeing(&params, params.g[0], F::from(7), F::from(7), F::ONE, &proof),
+                    Err(Error::InvalidWitness(message))
+                        if message.to_string() == "IPA parameters must have at least one round"
+                ));
             }
 
             #[test]

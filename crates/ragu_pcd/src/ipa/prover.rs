@@ -21,6 +21,8 @@ use crate::{SelectableBackend, multicore::parallelize};
 /// $s(x_3) = 0$ masks the coefficients folded by the argument. Neither the
 /// input commitment nor the proof's commitments have Pedersen blinds.
 ///
+/// Returns an error for zero-round (`k = 0`) parameters.
+///
 /// Panics unless the polynomial has exactly `params.n` coefficients.
 ///
 /// **Important:** This function assumes that the provided `transcript` has
@@ -35,6 +37,12 @@ pub fn create_proof<B: SelectableBackend, C: Affine>(
     p_poly: &[C::Scalar],
     x_3: C::Scalar,
 ) -> Result<IpaProof<C>> {
+    if params.k == 0 {
+        return Err(Error::InvalidWitness(
+            "IPA parameters must have at least one round".into(),
+        ));
+    }
+
     // We're limited to polynomials of degree n - 1.
     assert_eq!(p_poly.len(), params.n as usize);
 

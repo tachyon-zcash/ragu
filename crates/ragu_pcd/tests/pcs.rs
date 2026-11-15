@@ -895,7 +895,7 @@ mod challenge_stage {
     use proptest::prelude::*;
     use ragu_circuits::staging::{StageReader, stage_wire_indices, wires_of};
     use ragu_core::{
-        Result,
+        Error, Result,
         pasta::{EqAffine, Fq},
     };
     use ragu_testing::strategies;
@@ -950,9 +950,13 @@ mod challenge_stage {
                 "{case}: root"
             );
 
-            // The honest prover debug-asserts that its walk ends at Com(p_n),
-            // which a stale child cache breaks before the decider is reached.
+            // Debug builds return a prover error when the accumulated nested
+            // polynomial disagrees with the walk over the cached points.
             if case == "stale" && cfg!(debug_assertions) {
+                assert!(matches!(
+                    support::descendants(app, &forged, &sibling, &mut rng),
+                    Err(Error::InvalidWitness(_))
+                ));
                 continue;
             }
             for (position, descendant) in support::descendants(app, &forged, &sibling, &mut rng)? {
