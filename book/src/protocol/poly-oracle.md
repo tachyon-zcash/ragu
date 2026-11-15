@@ -453,6 +453,7 @@ $G'$ has coordinates in $\F_p$, so it is committed on the native side; $s$ is ov
 V5 adds no IPA challenges and makes no change to the IPA transcript.
 Its random point $\zeta_q$ tests whether the polynomial committed by $G'$ is the expected $s(X)$: V5 proves $f_q(\zeta_q) = y_q$, and decompression must bind $\cm_{f_q} = G'$ and check $y_q = s(\zeta_q)$.
 The last check still uses the original IPA round challenges to compute the expected value; a valid opening of $G'$ alone does not establish that it is the correct folded generator.
+Those challenges must be fixed before $\zeta_q$ as $f_q$ is, which the decompression step's staged transcript digest ensures (see [C3's rule](#v5-soundness) below).
 
 Swapping the fields swaps every role of the $\F_p$ slots:
 
@@ -515,7 +516,10 @@ A profile's prover supplies the polynomial (`Profile::online_fq_polynomials`), a
 - **C3's rule.**
   Fixed before $\zeta_q$ are $\cm_{f_q}$, the circuit's constants, and whatever the native pre-$w$ stages hold.
   Decompression's check reads the IPA's round challenges $u_i$, which are not witnessed before $w$: its nested circuits hold $y_q$ to $s(\zeta_q)$ over the challenges its native circuits' transcript squeezed from the decompressed proof.
-  This is C3's hash case and has its own argument: $f_q$ is fixed before $\zeta_q$ and the $u_i$ are that transcript's outputs, so a committed polynomial other than $s$ passes only if $\zeta_q$ is a root of $f_q - s$, or if a proof is found whose challenges meet a relation fixed beforehand.
+  This is C3's hash case, and the $u_i$ alone would not be fixed: a prover could choose the IPA's round messages after $\zeta_q$ and search for challenges whose $s$ meets $y_q$ there.
+  The decompression step therefore stages the transcript's last squeeze, taken after every round message of both IPAs, in its application stage, which is committed before $w$; its native circuits hold the staged value to the squeeze they compute.
+  The $u_i$ are then fixed before $\zeta_q$ unless the prover finds a collision or a preimage in the transcript's sponge, and with $f_q$ fixed too, a committed polynomial other than $s$ passes only if $\zeta_q$ is a root of $f_q - s$.
+  A step that decompresses nothing stages no digest, and nothing rests on its check.
   The IPA round challenges retain the compression transcript's existing conversion: their canonical integer is preserved across the fields within the common 254-bit range for Pasta.
   This differs from the 143-bit endoscalar lift used for $\zeta_q$; applying that lift to the IPA challenges would change $s(X)$.
   The nested circuits already hold the $\F_q$ challenges, bound through the lifts stage the native side recomputes, so no further conversion is needed.

@@ -119,7 +119,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
     fn native_extension_rxs<'params, Base, Rk, const HS: usize, B, RNG>(
         _: &Self::Context<'params, Base, Rk, B>,
         _: Option<&core::convert::Infallible>,
-        _: &[[Base::CircuitField; 2]; ragu_pcd::header::NUM_ONLINE_FP_POLYS],
+        _: &[[Base::CircuitField; 2]; 3 * ragu_pcd::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, Rk>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, Rk>>

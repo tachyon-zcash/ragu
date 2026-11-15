@@ -42,7 +42,7 @@ use crate::{
     profile::{
         Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext, Standard,
     },
-    step::internal::decompress::{Decompress, S_SLOT},
+    step::internal::decompress::{DIGEST_SLOT, Decompress, S_SLOT},
 };
 
 /// A compressed proof prepared for decompression: both sides' stages
@@ -61,6 +61,20 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Decompressed<C> {
             .iter()
             .map(|&slot| native.lifts.elements[slot])
             .collect()
+    }
+
+    /// The digest of the proof's compression transcript, as the
+    /// circuit-field side's chunks squeeze it: the transcript's last
+    /// squeeze, taken after every round message of both curves' IPAs,
+    /// which the decompression step stages.
+    pub(crate) fn transcript_digest(&self) -> C::CircuitField {
+        let native = &self.0.native;
+        let digest = native
+            .schedule
+            .regions
+            .digest
+            .expect("the circuit-field side squeezes the digest");
+        native.work.elements[digest]
     }
 }
 
@@ -172,10 +186,15 @@ where
         source: Option<&Decompressed<C>>,
     ) -> Vec<sparse::Polynomial<C::ScalarField, R>> {
         let nested = &self.sides(source).nested;
-        let rounds: Vec<C::ScalarField> = nested.schedule.regions.lifts[squeezed::ROUNDS..]
+        #[cfg_attr(not(test), allow(unused_mut))]
+        let mut rounds: Vec<C::ScalarField> = nested.schedule.regions.lifts[squeezed::ROUNDS..]
             .iter()
             .map(|&slot| nested.lifts.elements[slot])
             .collect();
+        // Test hook: this runs on the thread that calls `fuse`, outside its
+        // parallel jobs, as the hook's thread-local requires.
+        #[cfg(test)]
+        super::support::mutate_fq_rounds(&mut rounds);
         alloc::vec![sparse::Polynomial::from_coeffs(
             crate::ipa::challenge_polynomial(&rounds)
         )]
@@ -201,13 +220,14 @@ where
     pub(crate) fn native_rxs<P: Profile>(
         &self,
         source: Option<&Decompressed<C>>,
-        output_openings: &[[C::CircuitField; 2]; NUM_ONLINE_FP_POLYS],
+        online_openings: &[[C::CircuitField; 2]; 3 * NUM_ONLINE_FP_POLYS],
         registry: &Registry<'_, C::CircuitField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
         let params = self.wallet.params;
-        // The decompression step sets the step binding: its flag, and the
-        // opening of the slot it committed s(X) in.
+        // The decompression step sets the step binding: its flag, the
+        // opening of the slot it committed s(X) in and the digest it
+        // staged, the point at which it opened its digest slot.
         let stepped;
         let prepared = match source {
             Some(decompressed) => {
@@ -216,7 +236,8 @@ where
                     .native
                     .for_decompression::<WalletRank, HEADER_SIZE>(
                         params,
-                        output_openings[S_SLOT],
+                        online_openings[2 * NUM_ONLINE_FP_POLYS + S_SLOT],
+                        online_openings[DIGEST_SLOT][0],
                     )?;
                 &stepped
             }
@@ -431,7 +452,11 @@ where
         let (pcd, ()) = self.fuse_with_source(
             rng,
             Decompress::<H>::new(),
-            (pcd.data().clone(), decompressed.host_rounds()),
+            (
+                pcd.data().clone(),
+                decompressed.host_rounds(),
+                decompressed.transcript_digest(),
+            ),
             self.bootstrap_pcd(),
             self.bootstrap_pcd(),
             Some(&decompressed),

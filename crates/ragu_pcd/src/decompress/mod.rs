@@ -49,7 +49,8 @@
 //!   $G'$ as a witness point and holds it to a commitment of $s$ the
 //!   decompression step made before its challenge, one evaluation of
 //!   which that step's own fuse batches into its opening accumulator.
-//!   Both curves' are bound so (see *The step binding*).
+//!   Both curves' are bound so, over round challenges a digest that step
+//!   committed with them fixes (see *The step binding*).
 //!
 //! The scalar checks are written once as [`Driver`]-generic gadget code
 //! and run in the circuit over the matching field: the host curve's in the
@@ -140,24 +141,40 @@
 //! The chunks run in every proof of the profile, and what they verify is
 //! the statement of one step alone, the decompression step, whose output
 //! header the statement circuit's claim holds to the header they verified
-//! ([`statement_ky`]). The same claim carries the step binding, three
+//! ([`statement_ky`]). The same claim carries the step binding, four
 //! values of the instance stage after the header: a flag, one in a proof
-//! of the decompression step and zero in any other, and the point and
-//! value at which that step opened its first output slot, zero in any
-//! other. Through them the host curve's $G'$ is bound:
+//! of the decompression step and zero in any other, the point and value
+//! at which that step opened its first output slot, and the transcript
+//! digest that step staged, all zero in any other. Through them both
+//! IPAs' round challenges are fixed before the step's challenge
+//! $\zeta = w$, and the host curve's $G'$ is bound:
 //!
+//! - The decompression step stages the transcript digest: the last
+//!   squeeze of the compression's transcript over the proof it
+//!   decompresses, taken after every round message of both curves' IPAs
+//!   ([`Regions::digest`](program::Regions::digest)). The application
+//!   stage holds it, so the proof commits it before $w$, and the step
+//!   makes it public as the point at which it opens its left input's
+//!   first slot ([`Decompress`]). Under the flag, the circuit-field side
+//!   holds that value to the last squeeze of the transcript it runs. The
+//!   transcript is one sponge over the statement and both curves'
+//!   messages, and a round challenge is a squeeze of what was absorbed
+//!   before it, so a prover who committed the digest before $w$ fixed
+//!   both IPAs' round challenges then, unless it finds a second
+//!   transcript with the same last squeeze, or the first for a digest it
+//!   chose: a collision or a preimage in the sponge.
 //! - The decompression step commits $s(X)$ of the host curve's IPA, over
 //!   the round challenges of the proof it decompresses, in its first
-//!   output slot, before its challenge $\zeta$, and opens the slot at
-//!   $\zeta$ ([`Decompress`]). Its fuse proves the opening is of the
-//!   committed polynomial, as it does an application's.
+//!   output slot, before $\zeta$, and opens the slot at $\zeta$. Its
+//!   fuse proves the opening is of the committed polynomial, as it does
+//!   an application's.
 //! - Under the flag, the circuit-field side holds the opened value to
 //!   [`ipa::s_at`] at that point over the round challenges its transcript
-//!   squeezed. The committed polynomial was fixed before $\zeta$, and the
-//!   round challenges are the transcript's outputs over the proof, so the
-//!   two agree at $\zeta$ only if the slot holds that proof's $s(X)$,
-//!   except with the probability of a root of their difference or of a
-//!   transcript whose challenges meet a relation chosen beforehand.
+//!   squeezed. The committed polynomial and, by the digest, the round
+//!   challenges were fixed before $\zeta$, so the two agree at $\zeta$
+//!   only if the slot holds that proof's $s(X)$, except with the
+//!   probability that $\zeta$ is a root of their difference: at most the
+//!   rank's coefficient count over the size of the challenge's range.
 //! - The flag crosses to the scalar-field side as a digit of the
 //!   circuit-field side's digits stage, which that side's binding circuit
 //!   recomputes. Its binding circuit also exposes a point the proof's
@@ -174,7 +191,7 @@
 //! The nested curve's $s(X)$ is over the scalar field, which no output
 //! slot holds, so its $G'$ is bound through the step's online polynomial
 //! of that field ([`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS)),
-//! which is the profile's own in every step and needs no flag:
+//! which is the profile's own in every step, so its checks need no flag:
 //!
 //! - Every step commits $s(X)$ of the nested curve's IPA of the proof its
 //!   chunks run over, the proof it decompresses or the canonical one, as
@@ -197,7 +214,17 @@
 //!   at its point over the round challenges it holds, which the
 //!   circuit-field side's transcript squeezed and its lifts stage binds.
 //!   The argument is the host curve's: the polynomial was fixed before
-//!   $\zeta_q$ and the round challenges are the transcript's.
+//!   $w$, and so before $\zeta_q$, and in the decompression step the
+//!   digest fixed the round challenges before $w$ too. There $\zeta_q$
+//!   is the lift of a 143-bit endoscalar and the polynomials have at
+//!   most $2^{15}$ coefficients at the aggregator rank, so another
+//!   polynomial passes with probability at most $2^{-128}$.
+//!
+//! These checks run in every step, but only the decompression step
+//! holds the digest. In any other step the round challenges of the proof
+//! the chunks run over are not fixed before $w$, and the opening does not
+//! establish that proof's $G'$; nothing rests on it, since that proof's
+//! statement binds nothing.
 //!
 //! A decompressed proof's first output slot therefore holds $s(X)$, not
 //! the constant one, which the header types a decompressed statement can

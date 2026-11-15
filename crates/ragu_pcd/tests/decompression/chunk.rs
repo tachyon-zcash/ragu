@@ -713,9 +713,10 @@ fn scalings_hold_their_digits_to_the_other_sides_stage() {
 /// step and nothing in any other. The polynomial $s(X)$ over the round
 /// challenges the circuit-field side holds commits, unblinded, to the
 /// $G'$ the scalar-field side holds. With the flag set, the circuit-field
-/// side accepts the opening of that polynomial and no other value, and the
-/// scalar-field side accepts that commitment in the slot and no other
-/// point. With it unset, neither is held. The flag is the same on both
+/// side accepts the opening of that polynomial and no other value, and
+/// the transcript's last squeeze as the staged digest and no other value,
+/// and the scalar-field side accepts that commitment in the slot and no
+/// other point. With it unset, none is held. The flag is the same on both
 /// sides only when the scalar-field side's recomputation of the
 /// circuit-field side's digits stage is that stage's commitment.
 #[test]
@@ -745,22 +746,43 @@ fn the_step_binding_holds_g_prime_to_the_slot() {
     let g_prime = sides.nested.work.points[sides.nested.schedule.regions.g_prime];
     assert_eq!(commitment, g_prime, "s(X) commits to G'");
 
-    // The circuit-field side: the opening of s(X) at a point, or not.
+    // The circuit-field side: the opening of s(X) at a point, or not,
+    // and the transcript's digest, its last squeeze, or not.
     let x = Fp::random(|bytes| rng.fill_bytes(bytes));
     let y = poly.eval(x);
+    let regions = &native.schedule.regions;
+    let digest_slot = regions.digest.expect("the circuit-field side has a digest");
+    assert_eq!(
+        Some(&digest_slot),
+        regions.other_squeezed.last(),
+        "the digest is the transcript's last squeeze"
+    );
+    let digest = native.work.elements[digest_slot];
     let opened = native
-        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y])
+        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y], digest)
         .unwrap();
-    assert!(!rejected(&opened), "the opening of s(X) is accepted");
+    assert!(
+        !rejected(&opened),
+        "the opening of s(X) and the digest are accepted"
+    );
     let other = native
-        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y + Fp::ONE])
+        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y + Fp::ONE], digest)
         .unwrap();
     assert!(rejected(&other), "another value is rejected under the flag");
-    let mut unset = other.clone();
-    let step = unset.schedule.layout.instance.step;
-    unset.instance.elements[step.at(0)] = Fp::ZERO;
-    unset.run::<TestR, HEADER_SIZE>(params).unwrap();
-    assert!(!rejected(&unset), "no value is held without the flag");
+    let other_digest = native
+        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y], digest + Fp::ONE)
+        .unwrap();
+    assert!(
+        rejected(&other_digest),
+        "another digest is rejected under the flag"
+    );
+    let step = native.schedule.layout.instance.step;
+    for held in [other, other_digest] {
+        let mut unset = held;
+        unset.instance.elements[step.at(0)] = Fp::ZERO;
+        unset.run::<TestR, HEADER_SIZE>(params).unwrap();
+        assert!(!rejected(&unset), "nothing is held without the flag");
+    }
 
     // The scalar-field side: the slot's commitment is G', or not.
     let nested = &sides.nested;

@@ -421,6 +421,16 @@ where
             let expected = ipa::s_at(dr, &rounds, x)?;
             let gap = y.sub(dr, &expected);
             flag.mul(dr, &gap)?.enforce_zero(dr)?;
+            // And the digest the step staged before its challenge is the
+            // transcript's last squeeze: the round messages of both
+            // curves' IPAs, and so both challenge polynomials, were fixed
+            // before the point either is opened at.
+            let digest = regions
+                .digest
+                .expect("the side whose instance carries a step binding squeezes the digest");
+            let staged = &elements[step.at(stages::step::DIGEST)];
+            let gap = staged.sub(dr, &self.work(digest));
+            flag.mul(dr, &gap)?.enforce_zero(dr)?;
         }
         // The same for the nested curve's G', in every step: the
         // polynomial the step committed in its online Fq slot takes the
@@ -1043,19 +1053,22 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
 
 impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
     /// The side as the decompression step proves it: the flag set and the
-    /// step binding's opening the step's own, `opening`, the point and
-    /// value at which it opened the output slot holding $s(X)$. Any other
-    /// step proves the side as prepared, the binding all zero.
+    /// step binding the step's own, `opening`, the point and value at
+    /// which it opened the output slot holding $s(X)$, and `digest`, the
+    /// transcript digest it staged. Any other step proves the side as
+    /// prepared, the binding all zero.
     pub(crate) fn for_decompression<K: Rank, const HEADER_SIZE: usize>(
         &self,
         params: &C::Params,
         opening: [C::CircuitField; 2],
+        digest: C::CircuitField,
     ) -> Result<Self> {
         let mut prepared = self.clone();
         let step = prepared.schedule.layout.instance.step;
         prepared.instance.elements[step.at(stages::step::FLAG)] = C::CircuitField::ONE;
         prepared.instance.elements[step.at(stages::step::X)] = opening[0];
         prepared.instance.elements[step.at(stages::step::Y)] = opening[1];
+        prepared.instance.elements[step.at(stages::step::DIGEST)] = digest;
         prepared.rerun::<K, HEADER_SIZE>(
             params,
             |chunk| matches!(chunk, Chunk::Digits { flags, .. } if !flags.is_empty()),

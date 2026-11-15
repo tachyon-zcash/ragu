@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Decompression` context and `Application::decompress` sit behind the
   `unstable-aggregator` feature: they are not yet sound against a dishonest
   prover, since the decompression takes the wallet registry's evaluations
-  from the prover. Both IPAs' final generators are bound. The host curve's:
+  from the prover. Both IPAs' final generators are bound, over round
+  challenges fixed before the step's challenge: the decompression step
+  stages the compression transcript's last squeeze, and the extension holds
+  it to the squeeze it computes, through the step binding. The host curve's:
   the decompression step commits that IPA's challenge polynomial in its
   first output slot, and the extension holds its opening and commitment
   through the statement circuit's step binding (`profile::STEP_BINDING`) and
@@ -27,7 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commitment and opening for the slots the profile's bindings name
   (`Binding::online` on the native binding, `Binding::openings` on the
   nested one), through `bind_endoscalar`'s and the nested `compute_v`'s
-  instances; a proof and a compressed proof of such a profile carry them. A
+  instances; a proof and a compressed proof of such a profile carry them.
+  `Profile::native_extension_rxs` is handed the step's six online openings.
+  A profile with a statement circuit reserves an application stage of at
+  least one value, which the decompression step stages. A
   profile that names none, the Standard one included, exports nothing and
   its proofs are unchanged.
   `Aggregator` is pinned for 4-element headers alone; other header sizes do

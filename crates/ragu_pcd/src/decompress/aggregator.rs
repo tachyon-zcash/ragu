@@ -77,7 +77,9 @@ use crate::{
 /// compressed proof the wallet application's verifier rejects. Both IPAs'
 /// final generators are bound: the host curve's through the polynomial
 /// the decompression step commits in its first output slot, the nested
-/// curve's through the step's online Fq polynomial. The registry's
+/// curve's through the step's online Fq polynomial, each over round
+/// challenges the transcript digest that step stages fixes before its
+/// challenge. The registry's
 /// evaluations close through the online polynomial oracle's queries.
 /// Until then an aggregator proof attests a decompression an honest
 /// prover ran, and the profile is public only under the
@@ -306,7 +308,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
-        output_openings: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
+        online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -317,7 +319,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         RNG: CryptoRng,
     {
         Self::accepts::<R>(H)?;
-        context.native_rxs::<Self>(source, output_openings, registry, rng)
+        context.native_rxs::<Self>(source, online_openings, registry, rng)
     }
 
     fn nested_extension_rxs<'params, Base, R, const H: usize, B, RNG>(

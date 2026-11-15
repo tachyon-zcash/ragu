@@ -227,15 +227,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // stage's polynomial over the context the application holds.
         let extension = C::Profile::native_extension();
         let openings = builder.online_openings();
-        let output_openings: [[C::CircuitField; 2]; NUM_ONLINE_FP_POLYS] =
-            core::array::from_fn(|slot| {
-                let opening = &openings[openings.len() - NUM_ONLINE_FP_POLYS + slot];
-                [opening.x, opening.y]
-            });
+        let online_openings: [[C::CircuitField; 2]; 3 * NUM_ONLINE_FP_POLYS] =
+            core::array::from_fn(|slot| [openings[slot].x, openings[slot].y]);
         let rxs = C::Profile::native_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             source,
-            &output_openings,
+            &online_openings,
             &self.native_registry,
             rng,
         )?;

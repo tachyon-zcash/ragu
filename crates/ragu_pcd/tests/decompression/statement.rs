@@ -104,6 +104,12 @@ fn statement(value: Fp) -> Vec<Fp> {
     ky::output_header::<C, Value, HEADER_SIZE>(value).expect("a value encodes")
 }
 
+/// A stand-in for the transcript digest the decompression step stages: the
+/// stand-in statement circuit exposes whatever the step staged.
+fn digest() -> Fp {
+    Fp::from(0x00d1_6e57)
+}
+
 /// Both verifiers' verdicts on `pcd`.
 fn check_both<H: Header<Fp>>(
     app: &App,
@@ -139,7 +145,7 @@ fn a_decompression_exposing_its_output_header_verifies() -> Result<()> {
     let (decompressed, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        (value, Vec::new()),
+        (value, Vec::new(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -184,7 +190,7 @@ fn a_decompression_exposing_another_statement_is_rejected() -> Result<()> {
     let (relabelled, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        (Fp::from(8), Vec::new()),
+        (Fp::from(8), Vec::new(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -195,7 +201,7 @@ fn a_decompression_exposing_another_statement_is_rejected() -> Result<()> {
     let (unverified, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        (Fp::from(7), Vec::new()),
+        (Fp::from(7), Vec::new(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -224,7 +230,7 @@ fn an_ordinary_step_exposing_a_statement_is_rejected() -> Result<()> {
     let (decompressed, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        (value, Vec::new()),
+        (value, Vec::new(), digest()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;

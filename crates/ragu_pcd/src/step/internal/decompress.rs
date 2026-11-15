@@ -25,8 +25,18 @@
 //! value to $s$ at $\zeta$ over the round challenges they squeeze, and
 //! their IPA's $G'$ to the slot's commitment, through the step binding the
 //! statement claim carries (see the decompression module's *The step
-//! binding*). A prover who commits another polynomial there has a false
-//! claim. The native
+//! binding*). That check is sound only if the round challenges were
+//! fixed before $\zeta$ as the polynomial was, so the step also stages
+//! the digest of the compressed proof's transcript, its last squeeze,
+//! taken after every round message of both curves' IPAs, and opens its
+//! left input's first slot, the bootstrap proof's padding, at the staged
+//! wire: the opening's point makes the digest public and its value is
+//! read by nothing. The chunks hold the digest to the last squeeze of the
+//! transcript they run, through the same claim, so the round challenges
+//! were fixed when the stage was committed. A prover who commits another
+//! polynomial in the slot, or stages another digest, has a false claim.
+//! The digest and the slot's commitment are functions of the compressed
+//! proof, and both can be read from this step's proof. The native
 //! extension's statement circuit exposes the output header the extension
 //! verified as its public output, and its claim's $k(y)$, computed by the
 //! verifier of this proof from this proof's circuit id and output header
@@ -91,6 +101,12 @@ use crate::{Header, ipa::challenge_polynomial};
 /// nested extension's binding circuit holds the IPA's $G'$ to.
 pub(crate) const S_SLOT: usize = 0;
 
+/// The left input slot the step opens at the transcript digest it staged:
+/// the first. The opening's point is public, which is how the staged
+/// digest reaches the statement claim; its value is the bootstrap proof's
+/// padding there and is read by nothing.
+pub(crate) const DIGEST_SLOT: usize = 0;
+
 pub(crate) struct Decompress<H> {
     _marker: PhantomData<H>,
 }
@@ -106,19 +122,24 @@ impl<H> Decompress<H> {
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
-    /// The header data of the decompressed proof, and the round challenges
-    /// of the host curve's IPA of its compressed proof, in transcript
-    /// order.
-    type Witness<'source> = (H::Data, Vec<C::CircuitField>);
+    /// The header data of the decompressed proof, the round challenges of
+    /// the host curve's IPA of its compressed proof, in transcript order,
+    /// and the digest of that proof's compression transcript: its last
+    /// squeeze, taken after every round message of both curves' IPAs.
+    type Witness<'source> = (H::Data, Vec<C::CircuitField>, C::CircuitField);
     type Aux<'source> = ();
 
     type Left = ();
     type Right = ();
     type Output = H;
 
+    /// The transcript digest.
+    const NUM_STAGED: usize = 1;
+
     /// The first output slot holds the host IPA's challenge polynomial
     /// $s(X)$, whose commitment is that IPA's $G'$; the last holds
-    /// padding.
+    /// padding. The transcript digest is staged, so that it is committed
+    /// with $s(X)$ before the step's challenge.
     fn prepare<'source>(
         &self,
         witness: &Self::Witness<'source>,
@@ -132,7 +153,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
             } else {
                 alloc::vec![C::CircuitField::ONE]
             }
-        })))
+        }))
+        .stage([witness.2]))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
@@ -157,8 +179,16 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // Uniform, so that every header type decompresses through the one
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` (see `Encoded::new_uniform`).
-        let (data, _) = witness.cast();
+        let (data, _, _) = witness.cast();
         let output = Encoded::new_uniform(dr, allocator, data.clone())?;
+        // The staged digest, made public as the point of an opening: the
+        // left input's first slot, the bootstrap proof's padding, opened
+        // there and its value left unread. The native extension's chunks
+        // hold the digest to their transcript's last squeeze, through the
+        // statement circuit's claim, so the round challenges they squeeze
+        // were fixed when the stage was committed, before the challenge.
+        let digest = oracles.staged()[0].clone();
+        oracles.left_at(DIGEST_SLOT).open(dr, &digest)?;
         // The slot holding s(X) is opened at the step's challenge and its
         // value left unconstrained here: the native extension's chunks
         // hold it to s at that point, through the statement circuit's
@@ -245,8 +275,9 @@ mod tests {
 
         // A frozen twin of `Decompress`, written from primitives: the
         // standard unit encoding for both inputs, one uniform wire set for
-        // the output, which holds the witness, and the first output slot
-        // opened.
+        // the output, which holds the witness, the left input's first slot
+        // opened at the one staged value and the first output slot opened
+        // at the challenge.
         struct Twin;
         impl Step<Pasta> for Twin {
             const INDEX: Index = Index::internal(INTERNAL_ID);
@@ -255,6 +286,7 @@ mod tests {
             type Left = ();
             type Right = ();
             type Output = ();
+            const NUM_STAGED: usize = 1;
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
                 &self,
                 dr: &mut D,
@@ -276,6 +308,9 @@ mod tests {
                 let right = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let output =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
+                // The left input's first slot opened at the staged value.
+                let staged = oracles.staged()[0].clone();
+                oracles.left_at(0).open(dr, &staged)?;
                 // The first output slot opened at the challenge and left
                 // unconstrained, the last held to one as padding.
                 let zeta = oracles.zeta().clone();
@@ -303,7 +338,7 @@ mod tests {
         assert_eq!(
             registry.xy(unit_h, x, y),
             registry.xy(twin_h, x, y),
-            "Decompress must use standard unit inputs, a uniform output and one opened slot"
+            "Decompress must use standard unit inputs, a uniform output, one staged point and one opened output slot"
         );
     }
 }

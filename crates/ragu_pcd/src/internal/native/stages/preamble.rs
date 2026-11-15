@@ -222,16 +222,20 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         let decompress = Element::constant(dr, decompress.omega_j());
         let is_decompress = self.circuit_id.is_equal(dr, &mut (), &decompress)?;
         // After the header, the step binding: the flag, one for the
-        // decompression step and zero for any other, and that step's
-        // opening of its first output slot, which holds the host IPA's
-        // s(X) there and nothing the chunks read anywhere else.
+        // decompression step and zero for any other, that step's opening
+        // of its first output slot, which holds the host IPA's s(X) there
+        // and nothing the chunks read anywhere else, and the point at
+        // which it opened its left input's first slot, the transcript
+        // digest it staged before its challenge.
         let own = {
             let mut ky = Horner::new(y);
             self.output_header.write(dr, &mut ky)?;
             let opening = &self.online[online::NUM_ONLINE_FP_QUERIES - online::NUM_ONLINE_FP_POLYS];
+            let digest = &self.online[0];
             Element::one().write(dr, &mut ky)?;
             opening.x.write(dr, &mut ky)?;
             opening.y.write(dr, &mut ky)?;
+            digest.x.write(dr, &mut ky)?;
             ky::finish_extension_ky(ky, dr)?
         };
         let canonical = {

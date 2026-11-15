@@ -123,13 +123,15 @@ pub(crate) const AB_TERMS: usize = 7;
 
 /// Positions within the circuit-field side's step binding, the instance
 /// stage's elements that tie the decompression to the step proving it: the
-/// flag, one in the decompression step and zero in any other, and the
-/// point and value at which that step opens its first output slot, which
-/// holds the host IPA's $s(X)$ there; zero in any other step.
+/// flag, one in the decompression step and zero in any other, the point
+/// and value at which that step opens its first output slot, which holds
+/// the host IPA's $s(X)$ there, and the transcript digest that step staged
+/// before its challenge; zero in any other step.
 pub(crate) mod step {
     pub const FLAG: usize = 0;
     pub const X: usize = 1;
     pub const Y: usize = 2;
+    pub const DIGEST: usize = 3;
     pub const LEN: usize = crate::profile::STEP_BINDING;
 }
 

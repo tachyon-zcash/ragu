@@ -436,7 +436,11 @@ fn decompresses_a_wallet_proof() {
         .fuse_with_source(
             &mut rng,
             Decompress::<Value>::new(),
-            (Fp::from(43), decompressed.host_rounds()),
+            (
+                Fp::from(43),
+                decompressed.host_rounds(),
+                decompressed.transcript_digest(),
+            ),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&decompressed),
@@ -459,7 +463,7 @@ fn decompresses_a_wallet_proof() {
         .fuse_with_source(
             &mut rng,
             Decompress::<Value>::new(),
-            (Fp::from(42), rounds),
+            (Fp::from(42), rounds, decompressed.transcript_digest()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&decompressed),
@@ -468,6 +472,57 @@ fn decompresses_a_wallet_proof() {
     assert!(
         matches!(app.verify_uncompressed(&other_slot, &mut rng), Ok(false)),
         "a decompression whose slot holds another polynomial fails"
+    );
+
+    // The transcript digest: the step stages the compression transcript's
+    // last squeeze before its challenge, so both IPAs' round challenges,
+    // and both challenge polynomials, are fixed before the point they are
+    // opened at. A step that stages another value exposes a digest the
+    // chunks' transcript does not squeeze, and its proof fails.
+    let decompressed = app.context().prepare(&compressed).unwrap();
+    let (other_digest, ()) = app
+        .fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            (
+                Fp::from(42),
+                decompressed.host_rounds(),
+                decompressed.transcript_digest() + Fp::ONE,
+            ),
+            app.bootstrap_pcd(),
+            app.bootstrap_pcd(),
+            Some(&decompressed),
+        )
+        .unwrap();
+    assert!(
+        matches!(app.verify_uncompressed(&other_digest, &mut rng), Ok(false)),
+        "a decompression that staged another digest fails"
+    );
+
+    // The nested curve's binding, from the prover's side: a step that
+    // commits, in its online Fq slot, the challenge polynomial of other
+    // round challenges exports that polynomial's own commitment and
+    // opening, which agree with each other and with the proof, but the
+    // opening is not s(X)'s and the commitment not the nested IPA's G'.
+    let decompressed = app.context().prepare(&compressed).unwrap();
+    let (other_fq, ()) = crate::decompress::support::with_other_fq_polynomial(|| {
+        app.fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            (
+                Fp::from(42),
+                decompressed.host_rounds(),
+                decompressed.transcript_digest(),
+            ),
+            app.bootstrap_pcd(),
+            app.bootstrap_pcd(),
+            Some(&decompressed),
+        )
+    })
+    .unwrap();
+    assert!(
+        matches!(app.verify_uncompressed(&other_fq, &mut rng), Ok(false)),
+        "a decompression whose online Fq slot holds another polynomial fails"
     );
 }
 
@@ -595,7 +650,11 @@ fn a_decompression_cannot_output_the_dummy_suffix() {
     match app.fuse_with_source(
         &mut rng,
         Decompress::<Dummy>::new(),
-        ((), decompressed.host_rounds()),
+        (
+            (),
+            decompressed.host_rounds(),
+            decompressed.transcript_digest(),
+        ),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
         Some(&decompressed),
@@ -732,7 +791,7 @@ fn sides_from_different_proofs_are_rejected() {
         .fuse_with_source(
             &mut rng,
             Decompress::<Value>::new(),
-            (Fp::from(42), mixed.host_rounds()),
+            (Fp::from(42), mixed.host_rounds(), mixed.transcript_digest()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&mixed),

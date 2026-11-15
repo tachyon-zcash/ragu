@@ -363,6 +363,14 @@ pub(crate) struct Regions {
     pub squeezed: Vec<usize>,
     /// Circuit-field side: the nested curve's, likewise.
     pub other_squeezed: Vec<usize>,
+    /// Circuit-field side: the compression transcript's digest, its last
+    /// squeeze, the nested curve's last round challenge, taken after every
+    /// round message of both curves' IPAs: a slot of
+    /// [`other_squeezed`](Self::other_squeezed). Under the decompression
+    /// flag the step binding's digest, which the step staged before its
+    /// challenge, is held to it, so both IPAs' round challenges were fixed
+    /// before that challenge. None on the scalar-field side.
+    pub digest: Option<usize>,
     /// The lifts of the compression challenges of the curve whose
     /// reduction this side checks, in [`squeezed`] order: lifts stage
     /// slots.
@@ -2034,6 +2042,10 @@ fn native_schedule_with<
     let per_curve = challenges_per_curve::<K>();
     b.regions.squeezed = b.slots.elements(per_curve);
     b.regions.other_squeezed = b.slots.elements(per_curve);
+    // The transcript's last squeeze, after which it absorbs only the
+    // nested IPA's final scalar: the digest of everything both IPAs'
+    // round challenges are squeezed from.
+    b.regions.digest = Some(b.regions.other_squeezed[squeezed::ROUNDS + rounds - 1]);
     {
         let runs = b.regions.runs.clone();
         let mut t = Ops::new(IPA_TAG, &runs);

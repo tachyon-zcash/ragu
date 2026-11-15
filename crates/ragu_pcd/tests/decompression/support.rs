@@ -27,6 +27,36 @@ use crate::{
     ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript},
 };
 
+std::thread_local! {
+    // The hook's site runs on the thread invoking fuse, outside its
+    // parallel jobs. Other tests and worker threads always see false.
+    static OTHER_FQ_POLYNOMIAL: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Runs `f` with an aggregator prover that commits, in its online Fq
+/// slot, the challenge polynomial of other round challenges than the
+/// nested IPA's, and restores the honest prover on unwind.
+pub(crate) fn with_other_fq_polynomial<T>(f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            OTHER_FQ_POLYNOMIAL.set(false);
+        }
+    }
+    assert!(!OTHER_FQ_POLYNOMIAL.get());
+    let _reset = Reset;
+    OTHER_FQ_POLYNOMIAL.set(true);
+    f()
+}
+
+/// Test hook: changes the round challenges the prover builds its online
+/// Fq polynomial from, when [`with_other_fq_polynomial`] asks.
+pub(crate) fn mutate_fq_rounds<F: Field>(rounds: &mut [F]) {
+    if OTHER_FQ_POLYNOMIAL.get() {
+        rounds[0] += F::ONE;
+    }
+}
+
 pub(crate) type TestR = WalletRank;
 pub(crate) const HEADER_SIZE: usize = 4;
 pub(crate) type App = Application<'static, Pasta, TestR, HEADER_SIZE>;

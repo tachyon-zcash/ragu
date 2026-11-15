@@ -111,7 +111,8 @@ curve before a chain uses it. The native side also recomputes Fuse's
 challenge and AB-bridge stages and holds them to the instance's commitments.
 One input is still taken from P unchecked, the registry's evaluations (see
 *What remains*); each curve's $G'$ is held to a commitment the step made
-before its challenge.
+before its challenge, over round challenges a digest the step committed
+with it fixes.
 
 **Output:** every check of `verify_compressed` enforced in some chunk, and
 each side's recomputation of the other side's [digits].
@@ -159,8 +160,21 @@ one:
 
 Each IPA's $G' = \langle s, G \rangle$ is the commitment to
 $s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the same generators, and is
-bound as that:
+bound as that: the step commits a polynomial before its challenge $w$, opens
+it at a point derived from $w$, and the chunks hold the opened value to $s$
+there and their $G'$ to the commitment. That shows the polynomial is $s$ only
+if the round challenges $u_i$ were fixed before $w$ too, so the
+decompression step commits to them first:
 
+- **The round challenges.** The decompression step stages the digest of
+  P's compression transcript, its last squeeze, taken after every round
+  message of both IPAs. The application stage is committed before $w$, and
+  the step exposes the staged value as the point at which it opens its left
+  input's first slot. In a proof of that step the native chunks hold it to
+  the last squeeze of the transcript they run. The transcript is one sponge
+  and each round challenge a squeeze of what it absorbed before, so both
+  IPAs' round challenges, and both $s$, are fixed before $w$ unless the
+  prover finds a collision or a preimage in the sponge.
 - **The host curve's.** The decompression step commits $s$ in its first
   output slot before its challenge and opens it there. The native chunks
   hold the opened value to $s$ at that point over the round challenges they
@@ -173,3 +187,11 @@ bound as that:
   `compute_v` folded, through `bind_endoscalar`'s and `compute_v`'s
   instances; the parent holds each once, so the native chunks' $G'$ is that
   commitment and the opening the nested chunks hold to $s$ is that one.
+
+With the polynomial and the round challenges both fixed before the point, a
+slot holding another polynomial than $s$ passes only if the point is a root
+of the difference: for the nested curve's, whose point is the lift of a
+143-bit endoscalar, with probability at most $2^{15}/2^{143}$ at the
+aggregator rank, and less for the host curve's. A step that decompresses
+nothing stages no digest, and its openings establish nothing about the
+canonical proof's $G'$, whose statement binds nothing.

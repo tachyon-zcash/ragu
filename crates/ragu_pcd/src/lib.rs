@@ -515,6 +515,24 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         C::Profile::check()?;
         C::Profile::check_context(&context, params, &self.header_map)?;
 
+        // The decompression step, which a profile with a statement circuit
+        // registers below, stages a value: the application stage, which
+        // every step circuit reserves, holds it.
+        let decompresses = C::Profile::native_extension().statement.is_some();
+        if decompresses {
+            type Decompress = step::internal::decompress::Decompress<()>;
+            let stage_size = self.stage_size.max(<Decompress as Step<C>>::NUM_STAGED);
+            if 1usize
+                .checked_add(staging::stage_gates(stage_size))
+                .is_none_or(|end| end >= R::n())
+            {
+                return Err(Error::Initialization(
+                    "the application stage does not fit the rank's gates".into(),
+                ));
+            }
+            self.stage_size = stage_size;
+        }
+
         // Build the native registry:
         // 1. Application circuits (with the final stage size)
         // 2. Internal circuits and masks
@@ -549,7 +567,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // The decompression step, for a profile whose extension verifies a
         // compressed proof: the one step whose output header is that
         // proof's statement (see `step::internal::decompress`).
-        if C::Profile::native_extension().statement.is_some() {
+        if decompresses {
             self =
                 self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
         }
