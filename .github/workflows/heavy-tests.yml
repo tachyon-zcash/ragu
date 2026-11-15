@@ -19,11 +19,11 @@ on:
   # Scheduled runs always use the default branch.
   schedule:
     - cron: '0 2 * * *'
+  # A fresh run on current `main` after a fix or a lost night.
+  workflow_dispatch:
 
-# A run that is still going when the next one fires is superseded.
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: true
+# No concurrency group: a run times out well inside the 24-hour cron, so there
+# is nothing to supersede, and a declared group only lets another run cancel it.
 
 permissions:
   contents: read

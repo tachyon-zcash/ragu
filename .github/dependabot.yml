@@ -1,8 +1,13 @@
 version: 2
 updates:
   # GitHub Actions used by .github/workflows/** and .github/actions/**.
+  # Dependabot reads only .github/workflows from `/`, so each composite
+  # action's directory is listed too; both copies of a pin then move together.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/rust-setup
+      - /.github/actions/rust-nightly-setup
     schedule:
       interval: monthly
     # Cooldown delays adoption of fresh releases — the window when a

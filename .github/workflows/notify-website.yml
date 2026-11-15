@@ -11,7 +11,10 @@ permissions:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    if: github.repository == 'tachyon-zcash/ragu'
+    if: github.repository == 'tachyon-zcash/ragu' && github.ref == 'refs/heads/main'
+    # REPO_DISPATCH_TOKEN lives in this environment, whose deployment-branch
+    # policy admits only `main`, so no other branch's workflow can read it.
+    environment: website-dispatch
     steps:
       - name: Trigger repository_dispatch in website
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0

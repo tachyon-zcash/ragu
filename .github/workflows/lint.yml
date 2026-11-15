@@ -1,17 +1,27 @@
 name: Lint
+# The Poseidon tables live in the `udon` dependency, so a manifest or lockfile
+# bump can change them without touching a `.rs` file here.
 on:
   push:
     branches: [main]
     paths:
       - '**/*.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
       - 'qa/params/**'
+      - '.github/workflows/lint.yml'
+      - '.github/actions/**'
   pull_request:
     paths:
       - '**/*.rs'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
       - 'qa/params/**'
+      - '.github/workflows/lint.yml'
+      - '.github/actions/**'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -36,9 +46,9 @@ jobs:
           fi
 
   # Regenerate the Poseidon round constants and MDS matrices from the Grain
-  # LFSR and fail if the committed tables differ. Nothing else in the tree
-  # pins those values: the permutation and every proof over it are generic in
-  # the parameters, so a wrong constant is invisible to them.
+  # LFSR and fail if the pinned tables differ. The permutation and every proof
+  # over it are generic in the parameters; the golden fixtures notice a changed
+  # table, but only this check says whether the new one is right.
   poseidon-params:
     name: poseidon parameter provenance
     runs-on: ubuntu-latest

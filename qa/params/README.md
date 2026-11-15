@@ -4,9 +4,9 @@ The Poseidon tables ragu runs with — `udon`'s, in the Udon repository's `crate
 revision this workspace pins — are roughly
 700 hand-transcribable field elements that no fingerprint or differential test
 can validate. Every test downstream of them is generic in whatever the tables
-happen to contain: replace a constant and nothing fails, because nothing
-anywhere asserts what the constants should be. Their only external authority
-is the script that generated them.
+happen to contain. Replacing a constant changes the golden fixture digests, so
+the fixtures notice the change, but nothing there says which tables are right.
+Their only external authority is the script that generated them.
 
 `check_poseidon_params.py` regenerates the tables and compares (it finds the pinned
 `udon` through `cargo metadata`, or takes `--udon-dir`):
