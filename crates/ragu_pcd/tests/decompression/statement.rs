@@ -139,7 +139,7 @@ fn a_decompression_exposing_its_output_header_verifies() -> Result<()> {
     let (decompressed, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        value,
+        (value, Vec::new()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -184,7 +184,7 @@ fn a_decompression_exposing_another_statement_is_rejected() -> Result<()> {
     let (relabelled, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        Fp::from(8),
+        (Fp::from(8), Vec::new()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -195,7 +195,7 @@ fn a_decompression_exposing_another_statement_is_rejected() -> Result<()> {
     let (unverified, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        Fp::from(7),
+        (Fp::from(7), Vec::new()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;
@@ -224,7 +224,7 @@ fn an_ordinary_step_exposing_a_statement_is_rejected() -> Result<()> {
     let (decompressed, ()) = app.fuse(
         &mut rng,
         Decompress::<Value>::new(),
-        value,
+        (value, Vec::new()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
     )?;

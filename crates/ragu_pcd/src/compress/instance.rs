@@ -477,9 +477,10 @@ impl<C: ProfiledCycle> Instance<C> {
                 y,
             )?
         };
-        let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
-            self.native_commitment(native::RxComponent::Rx(index))
-        });
+        let native_bound = ky::nested_bound::<C::Profile, _>(
+            |index| self.native_commitment(native::RxComponent::Rx(index)),
+            |slot| self.online_commitments[slot],
+        );
         let nested = NestedKy {
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,

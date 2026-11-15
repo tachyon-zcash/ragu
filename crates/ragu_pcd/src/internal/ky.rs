@@ -165,12 +165,21 @@ pub fn native_bound<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) ->
 }
 
 /// The commitments the nested binding circuit of a proof in profile `P`
-/// recomputes: the native extension stages its binding names, as
-/// `commitment` gives them.
-pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) -> Vec<T> {
-    bound(P::nested_extension().binding.as_ref(), |j| {
+/// exposes: the native extension stages its binding names, as `commitment`
+/// gives them, then the proof's own online slots it names, as `online`
+/// gives their commitments.
+pub fn nested_bound<P: Profile, T>(
+    commitment: impl Fn(native::RxIndex) -> T,
+    online: impl Fn(usize) -> T,
+) -> Vec<T> {
+    let binding = P::nested_extension().binding;
+    let mut points = bound(binding.as_ref(), |j| {
         commitment(native::RxIndex::ExtensionStage(j))
-    })
+    });
+    if let Some(binding) = &binding {
+        points.extend(binding.online.iter().map(|&slot| online(slot as usize)));
+    }
+    points
 }
 
 /// Finishes `ky`, the Horner evaluation of an extension circuit's public

@@ -110,7 +110,8 @@ that must equal the identity. Every point a side took from P is held to its
 curve before a chain uses it. The native side also recomputes Fuse's
 challenge and AB-bridge stages and holds them to the instance's commitments.
 Two inputs are still taken from P unchecked, the registry's evaluations and
-the IPA's $G'$ (see *What remains*).
+the nested curve's $G'$ (see *What remains*); the host curve's $G'$ is held
+to a commitment the decompression step made before its challenge.
 
 **Output:** every check of `verify_compressed` enforced in some chunk, and
 each side's recomputation of the other side's [digits].
@@ -155,14 +156,15 @@ one:
   wallet registry's polynomial, the decompressing step's own fuse batches
   the queries into its opening accumulator as it does an application's,
   and the decider checks the openings against the wallet registry it holds.
-- **$G'$** is a witness point, so the IPA's final check binds nothing by
-  itself, and with it nothing holds the fold's, the batch's and the wire
-  bindings' claimed openings to the committed polynomials. $G' = \langle s,
-  G \rangle$ is the commitment to
-  $s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the same generators, so
-  the fix is to carry $s$ as a polynomial of the decompression proof, bound
-  before the decompressing step's fuse squeezes its fresh challenge, and to
-  claim one evaluation of it at that challenge as a query the same fuse
-  batches; the parent folds the chunk circuits' traces as it does every
-  circuit's, and the decider checks the opening. The same mechanism is
-  needed on both curves.
+- **The nested curve's $G'$** is a witness point, so that IPA's final check
+  binds nothing by itself, and with it nothing holds the nested reduction's
+  claimed openings to the committed polynomials. $G' = \langle s, G \rangle$
+  is the commitment to $s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the
+  same generators. The host curve's is bound that way: the decompression
+  step commits $s$ in its first output slot before its challenge and opens
+  it there, the native chunks hold the opened value to $s$ at that point
+  over the round challenges they squeezed, and the nested chunks hold their
+  $G'$ to the slot's commitment, both only in a proof of that step, which a
+  flag the statement circuit's claim sets tells them. The nested curve's
+  $s$ is over the other field, so it takes the same binding over the step's
+  online $\F_q$ polynomial.

@@ -52,7 +52,7 @@ use super::{
     program::{Last, Schedule},
     run::{self, Ctx, Loaded, Prepared, View},
     side::Side,
-    stages::{DigitsStage, Front, InstanceStage, LiftsStage, TranscriptStage, WorkStage},
+    stages::{DigitsStage, Front, InstanceStage, LiftsStage, TranscriptStage, WorkStage, step},
 };
 
 /// The last stage circuit `index` of `schedule` loads, which says whether
@@ -285,12 +285,15 @@ chunk_circuit!(
 );
 
 /// The statement circuit of side `S`: the circuit whose public output is
-/// the output header of the compressed proof the chunks verified, read off
-/// the instance stage. The chunks bind every value of that stage to the
-/// proof they verify, so a claim on this circuit's output is a claim on the
-/// decompressed proof's statement, which the decompression step's verifier
-/// makes through the circuit's $k(y)$ (see
+/// the output header of the compressed proof the chunks verified, then the
+/// step binding ([`step`]), both read off the instance stage. The chunks
+/// bind the header to the proof they verify, so a claim on this circuit's
+/// output is a claim on the decompressed proof's statement, which the
+/// decompression step's verifier makes through the circuit's $k(y)$ (see
 /// [`statement_ky`](crate::internal::native::stages::preamble::ProofInputs::statement_ky)).
+/// The same claim sets the step binding: the flag to whether the proof is
+/// the decompression step's, and the opening to that step's own, which the
+/// chunks check the IPA's $s(X)$ against.
 pub(crate) struct StatementCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     schedule: Arc<Schedule>,
     _marker: PhantomData<fn() -> (C, S, K, R)>,
@@ -323,10 +326,16 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     for StatementCircuit<C, S, K, R, HEADER_SIZE>
 {
     type Last = InstanceStage<C, S, K, R, HEADER_SIZE>;
-    /// The output header the instance stage holds.
-    type Instance<'source> = FixedVec<S::F, ConstLen<HEADER_SIZE>>;
+    /// The output header and the step binding the instance stage holds.
+    type Instance<'source> = (
+        FixedVec<S::F, ConstLen<HEADER_SIZE>>,
+        FixedVec<S::F, ConstLen<{ step::LEN }>>,
+    );
     type Witness<'source> = &'source Prepared<C, S>;
-    type Output = Kind![S::F; FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>];
+    type Output = Kind![S::F; (
+        FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>,
+        FixedVec<Element<'_, _>, ConstLen<{ step::LEN }>>,
+    )];
     type Aux<'source> = ();
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -334,9 +343,13 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
         dr: &mut D,
         instance: DriverValue<D, Self::Instance<'source>>,
     ) -> Result<Bound<'dr, D, Self::Output>> {
-        FixedVec::try_from_fn(|i| {
-            Element::alloc(dr, &mut (), instance.as_ref().map(|header| header[i]))
-        })
+        let header = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|(header, _)| header[i]))
+        })?;
+        let step = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|(_, step)| step[i]))
+        })?;
+        Ok((header, step))
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = S::F>>(
@@ -350,12 +363,15 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
         let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
         let dr = dr.finish();
         let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
-        let span = self.schedule.layout.instance.output_header;
-        let header = span
-            .positions()
-            .map(|position| instance.elements[position].clone())
-            .collect::<alloc::vec::Vec<_>>();
-        Ok(WithAux::new(FixedVec::try_from(header)?, D::unit()))
+        let layout = self.schedule.layout.instance;
+        let read = |span: super::stages::Span| {
+            span.positions()
+                .map(|position| instance.elements[position].clone())
+                .collect::<alloc::vec::Vec<_>>()
+        };
+        let header = FixedVec::try_from(read(layout.output_header))?;
+        let step = FixedVec::try_from(read(layout.step))?;
+        Ok(WithAux::new((header, step), D::unit()))
     }
 }
 

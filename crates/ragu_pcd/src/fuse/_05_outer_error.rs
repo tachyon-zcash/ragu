@@ -37,7 +37,7 @@ use crate::{
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
-    profile::{Profile, ProfiledCycle},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
@@ -330,22 +330,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let right_unified = preamble.right.nested_instance().ky(dr, &nested_y)?;
 
                 // The binding circuit's k(y), over the children's native
-                // extension stages the bridge preamble holds.
-                let binding = C::Profile::nested_extension().binding;
-                let left_binding = ky::binding_ky(
-                    dr,
-                    &nested_y,
-                    &ky::bound(binding.as_ref(), |j| {
-                        preamble.left.extension_stages[j as usize].clone()
-                    }),
-                )?;
-                let right_binding = ky::binding_ky(
-                    dr,
-                    &nested_y,
-                    &ky::bound(binding.as_ref(), |j| {
-                        preamble.right.extension_stages[j as usize].clone()
-                    }),
-                )?;
+                // extension stages and own online slots the bridge
+                // preamble holds.
+                let left_binding = ky::binding_ky(dr, &nested_y, &preamble.left.bound())?;
+                let right_binding = ky::binding_ky(dr, &nested_y, &preamble.right.bound())?;
 
                 // Build k(y) values in nested claim order.
                 let ky_source = nested::claims::TwoProofKySource::new(

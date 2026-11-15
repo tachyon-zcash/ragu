@@ -14,9 +14,9 @@
 //! With $k$ rounds, $s(X) = \prod\_{i < k} (1 + u\_{k-1-i} X^{2^i})$: $G'$
 //! is the commitment to $s$ over the same generators and $b = s(x)$.
 //! [`s_at`] evaluates $s$ wherever a circuit needs it, in $2k - 1$ gates,
-//! which is how the polynomial standing for $s$ will be checked against
-//! the round challenges once $G'$ is bound (see the module's *What
-//! remains*).
+//! which is how the polynomial a decompression step commits for $s$ is
+//! checked against the round challenges (see the module's *The step
+//! binding*).
 
 use alloc::vec::Vec;
 

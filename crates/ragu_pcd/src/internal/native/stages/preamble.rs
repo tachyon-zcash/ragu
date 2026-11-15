@@ -197,15 +197,26 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         let decompress = InternalStepIndex::Decompress.circuit_index::<P>()?;
         let decompress = Element::constant(dr, decompress.omega_j());
         let is_decompress = self.circuit_id.is_equal(dr, &mut (), &decompress)?;
+        // After the header, the step binding: the flag, one for the
+        // decompression step and zero for any other, and that step's
+        // opening of its first output slot, which holds the host IPA's
+        // s(X) there and nothing the chunks read anywhere else.
         let own = {
             let mut ky = Horner::new(y);
             self.output_header.write(dr, &mut ky)?;
+            let opening = &self.online[online::NUM_ONLINE_FP_QUERIES - online::NUM_ONLINE_FP_POLYS];
+            Element::one().write(dr, &mut ky)?;
+            opening.x.write(dr, &mut ky)?;
+            opening.y.write(dr, &mut ky)?;
             ky::finish_extension_ky(ky, dr)?
         };
         let canonical = {
             let mut ky = Horner::new(y);
             for value in ky::output_header::<C, (), HEADER_SIZE>(())? {
                 Element::constant(dr, value).write(dr, &mut ky)?;
+            }
+            for _ in 0..crate::profile::STEP_BINDING {
+                Element::zero(dr).write(dr, &mut ky)?;
             }
             ky::finish_extension_ky(ky, dr)?
         };

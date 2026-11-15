@@ -82,6 +82,9 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     #[cfg(test)]
     const NAME: &'static str;
 
+    /// How many flags the side takes from the other side, whose digits
+    /// follow the foreign scalars' in that side's digits stage.
+    const FLAGS: usize;
     /// The points the side's binding circuit exposes for a proof at rank
     /// `K`: the other side's stage commitments it absorbed or recomputed,
     /// in the order the profile's [`Binding`](crate::profile::Binding)
@@ -186,6 +189,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     #[cfg(test)]
     const NAME: &'static str = "circuit-field";
 
+    /// The scalar-field side has no flag for this side to take.
+    const FLAGS: usize = 0;
+
     /// The scalar-field side's run stages, then its lifts and digits
     /// stages.
     fn exposed<K: Rank>() -> usize {
@@ -254,6 +260,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         elements.extend_from_slice(&instance.left_header);
         elements.extend_from_slice(&instance.right_header);
         elements.extend_from_slice(output_header);
+        // The step binding, which the step that proves the chunks sets:
+        // zero outside the decompression step.
+        elements.extend([C::CircuitField::ZERO; stages::step::LEN]);
         Values { points, elements }
     }
 
@@ -452,9 +461,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     #[cfg(test)]
     const NAME: &'static str = "scalar-field";
 
-    /// The circuit-field side's digits stage.
+    /// The decompression flag, which the circuit-field side's statement
+    /// circuit binds.
+    const FLAGS: usize = 1;
+
+    /// The circuit-field side's digits stage, then the commitment of the
+    /// first output slot of the step that proves the chunks.
     fn exposed<K: Rank>() -> usize {
-        1
+        2
     }
 
     fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {

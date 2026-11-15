@@ -17,8 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Decompression` context and `Application::decompress` sit behind the
   `unstable-aggregator` feature: they are not yet sound against a dishonest
   prover, since the decompression takes the wallet registry's evaluations and
-  the IPA's final generator from the prover until the polynomial-query hooks
-  land.
+  the nested curve's IPA's final generator from the prover. The host curve's
+  is bound: the decompression step commits that IPA's challenge polynomial in
+  its first output slot, and the extension holds its opening and commitment
+  through the statement circuit's step binding (`profile::STEP_BINDING`) and
+  the nested binding circuit's online slots (`Binding::online`).
   `Aggregator` is pinned for 4-element headers alone; other header sizes do
   not compile.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for

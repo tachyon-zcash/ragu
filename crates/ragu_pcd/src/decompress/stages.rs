@@ -121,6 +121,18 @@ pub(crate) const MESSAGE_SCALARS: usize =
 /// blinding (see [`ab_layout`](super::program::ab_layout)).
 pub(crate) const AB_TERMS: usize = 7;
 
+/// Positions within the circuit-field side's step binding, the instance
+/// stage's elements that tie the decompression to the step proving it: the
+/// flag, one in the decompression step and zero in any other, and the
+/// point and value at which that step opens its first output slot, which
+/// holds the host IPA's $s(X)$ there; zero in any other step.
+pub(crate) mod step {
+    pub const FLAG: usize = 0;
+    pub const X: usize = 1;
+    pub const Y: usize = 2;
+    pub const LEN: usize = crate::profile::STEP_BINDING;
+}
+
 /// Which of the scalar-field side's logical stages a run's values sit in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Where {
@@ -353,6 +365,8 @@ pub(crate) struct InstanceLayout {
     pub left_header: Span,
     pub right_header: Span,
     pub output_header: Span,
+    /// Elements, circuit-field side: the step binding, in [`step`] order.
+    pub step: Span,
     pub points: usize,
     pub elements: usize,
 }
@@ -384,8 +398,13 @@ pub(crate) struct Layout {
     pub lifts: usize,
     /// The digits stage's elements: the signed digits of the full-width
     /// scalars of this field the other side scales by, [`digit_width`]
-    /// per scalar, in the other side's foreign scalars' order.
+    /// per scalar, in the other side's foreign scalars' order, then the
+    /// flags'.
     pub digits: usize,
+    /// How many of the digits stage's elements, last, are flags: a signed
+    /// digit each, $2 f - 1$ for a flag $f$ of this side the other side
+    /// takes.
+    pub flags: usize,
 }
 
 impl Layout {
@@ -402,6 +421,7 @@ impl Layout {
             left_header: elements.next(HEADER_SIZE),
             right_header: elements.next(HEADER_SIZE),
             output_header: elements.next(HEADER_SIZE),
+            step: elements.next(step::LEN),
             points: points.0,
             elements: elements.0,
         };
@@ -409,7 +429,8 @@ impl Layout {
             instance,
             messages: Self::messages::<K>(),
             lifts: challenges_per_curve::<K>(),
-            digits: 3 * digit_width::<F>(),
+            digits: 3 * digit_width::<F>() + 1,
+            flags: 1,
         }
     }
 
@@ -433,6 +454,7 @@ impl Layout {
             messages: Self::messages::<K>(),
             lifts: 2 * challenges_per_curve::<K>() + 3,
             digits: (3 + AB_TERMS) * digit_width::<F>(),
+            flags: 0,
         }
     }
 

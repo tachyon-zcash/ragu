@@ -15,10 +15,18 @@
 //!
 //! The step's circuit constrains nothing about the header data it outputs;
 //! the binding is the claims'. The statement carries no polynomials, so the
-//! resulting proof carries padding: the step opens no output slot, so the
-//! adapter opens each at $\zeta$ and holds it to the constant one, and a
-//! prover cannot put a polynomial of its choosing there, and a proof whose slots carry
-//! meaningful polynomials does not survive decompression. The native
+//! resulting proof carries none of the compressed proof's: a proof whose
+//! slots carry meaningful polynomials does not survive decompression. The
+//! last output slot is padding: the step does not open it, so the adapter
+//! opens it at $\zeta$ and holds it to the constant one. The first holds
+//! the challenge polynomial $s(X)$ of the host curve's IPA of the
+//! compressed proof, which the step commits before $\zeta$ and opens at
+//! $\zeta$ without constraining the value: the extension's chunks hold the
+//! value to $s$ at $\zeta$ over the round challenges they squeeze, and
+//! their IPA's $G'$ to the slot's commitment, through the step binding the
+//! statement claim carries (see the decompression module's *The step
+//! binding*). A prover who commits another polynomial there has a false
+//! claim. The native
 //! extension's statement circuit exposes the output header the extension
 //! verified as its public output, and its claim's $k(y)$, computed by the
 //! verifier of this proof from this proof's circuit id and output header
@@ -38,13 +46,14 @@
 //! The setup description a profile's tags cover records those types.
 //!
 //! A decompressed proof's header fields still describe the polynomials the
-//! statement left behind while the proof's slots hold padding, and a step that
-//! consumes it cannot tell it from one a registered step produced. The
+//! statement left behind while the proof's slots hold $s(X)$ and padding,
+//! and a step that consumes it cannot tell it from one a registered step
+//! produced. The
 //! header types registered at those suffixes must therefore treat their
 //! associated proof slots as padding: no step may open such a slot expecting the
-//! polynomial its fields describe, since a non-membership check against the
-//! constant one holds at every point and a product $O = L \cdot R$ computes
-//! with $L = 1$. Binding the output slots to the polynomials the statement
+//! polynomial its fields describe, since the first holds $s(X)$, and in the
+//! last a non-membership check against the constant one holds at every point
+//! and a product $O = L \cdot R$ computes with $L = 1$. Binding the output slots to the polynomials the statement
 //! stood for, by having the statement extension expose the compressed
 //! proof's own online commitments and this circuit hold its output slots to
 //! them, would change the extension's contract and is not done here.
@@ -63,6 +72,7 @@
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
 //! [`num_internal_steps`]: crate::step::num_internal_steps
 
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use ragu_core::{
@@ -71,10 +81,15 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::allocator::Standard;
+use udon::field::Field;
 
-use super::super::{Encoded, Index, Oracles, Step};
-use crate::Header;
+use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
+use crate::{Header, ipa::challenge_polynomial};
+
+/// The output slot that holds the host IPA's $s(X)$: the first, which the
+/// nested extension's binding circuit holds the IPA's $G'$ to.
+pub(crate) const S_SLOT: usize = 0;
 
 pub(crate) struct Decompress<H> {
     _marker: PhantomData<H>,
@@ -91,18 +106,39 @@ impl<H> Decompress<H> {
 impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
-    /// The header data of the decompressed proof.
-    type Witness<'source> = H::Data;
+    /// The header data of the decompressed proof, and the round challenges
+    /// of the host curve's IPA of its compressed proof, in transcript
+    /// order.
+    type Witness<'source> = (H::Data, Vec<C::CircuitField>);
     type Aux<'source> = ();
 
     type Left = ();
     type Right = ();
     type Output = H;
 
+    /// The first output slot holds the host IPA's challenge polynomial
+    /// $s(X)$, whose commitment is that IPA's $G'$; the last holds
+    /// padding.
+    fn prepare<'source>(
+        &self,
+        witness: &Self::Witness<'source>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+        _: HeaderInput<'_, C::CircuitField, ()>,
+    ) -> Result<Prepared<C::CircuitField, H>> {
+        let s = challenge_polynomial(&witness.1);
+        Ok(Prepared::from_polynomials(core::array::from_fn(|slot| {
+            if slot == S_SLOT {
+                s.clone()
+            } else {
+                alloc::vec![C::CircuitField::ONE]
+            }
+        })))
+    }
+
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
         &self,
         dr: &mut D,
-        _: &mut Oracles<'_, 'dr, D, C, Self>,
+        oracles: &mut Oracles<'_, 'dr, D, C, Self>,
         witness: DriverValue<D, Self::Witness<'source>>,
         left: DriverValue<D, ()>,
         right: DriverValue<D, ()>,
@@ -121,8 +157,16 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         // Uniform, so that every header type decompresses through the one
         // registered circuit; the suffix is a witness wire constrained away
         // from `Dummy` (see `Encoded::new_uniform`).
-        let output = Encoded::new_uniform(dr, allocator, witness.clone())?;
-        Ok(((left, right, output), witness, D::unit()))
+        let (data, _) = witness.cast();
+        let output = Encoded::new_uniform(dr, allocator, data.clone())?;
+        // The slot holding s(X) is opened at the step's challenge and its
+        // value left unconstrained here: the native extension's chunks
+        // hold it to s at that point, through the statement circuit's
+        // claim, over the round challenges they squeeze. The other slot is
+        // not opened, so the adapter holds it to the constant one.
+        let zeta = oracles.zeta().clone();
+        oracles.output_at(S_SLOT).open(dr, &zeta)?;
+        Ok(((left, right, output), data, D::unit()))
     }
 }
 
@@ -200,8 +244,9 @@ mod tests {
             );
 
         // A frozen twin of `Decompress`, written from primitives: the
-        // standard unit encoding for both inputs and one uniform wire set for
-        // the output, which holds the witness.
+        // standard unit encoding for both inputs, one uniform wire set for
+        // the output, which holds the witness, and the first output slot
+        // opened.
         struct Twin;
         impl Step<Pasta> for Twin {
             const INDEX: Index = Index::internal(INTERNAL_ID);
@@ -231,8 +276,11 @@ mod tests {
                 let right = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
                 let output =
                     Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, witness.clone())?;
+                // The first output slot opened at the challenge and left
+                // unconstrained, the last held to one as padding.
                 let zeta = oracles.zeta().clone();
-                for i in 0..NUM_ONLINE_FP_POLYS {
+                oracles.output_at(0).open(dr, &zeta)?;
+                for i in 1..NUM_ONLINE_FP_POLYS {
                     let value = oracles.output_at(i).open(dr, &zeta)?;
                     value.enforce_equal(dr, &Element::one())?;
                 }
@@ -255,7 +303,7 @@ mod tests {
         assert_eq!(
             registry.xy(unit_h, x, y),
             registry.xy(twin_h, x, y),
-            "Decompress must use standard unit inputs and a uniform output"
+            "Decompress must use standard unit inputs, a uniform output and one opened slot"
         );
     }
 }

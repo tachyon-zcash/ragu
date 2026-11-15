@@ -36,6 +36,7 @@ pub use prover::create_proof;
 #[cfg(test)]
 pub(crate) use transcript::convert_challenge;
 pub use transcript::{CycleTranscript, HostSide, IpaTranscript, NestedSide};
+pub(crate) use verifier::challenge_polynomial;
 pub use verifier::{Accumulator, Guard, verify_proof};
 
 /// Domain separation tag for the compression, whose transcript runs from

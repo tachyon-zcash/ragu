@@ -327,6 +327,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// assembled against `registry` at the circuit's index in the layout,
     /// then each stage's, blinded from `rng`, over `source`, the proof the
     /// step decompresses, or over the context's canonical proof without.
+    /// `output_openings` is the point and value at which the step opened
+    /// each of its own output slots, for an extension whose statement
+    /// circuit exposes one.
     ///
     /// # Errors
     ///
@@ -334,6 +337,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        output_openings: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -343,7 +347,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, source, registry, rng);
+        let _ = (context, source, output_openings, registry, rng);
         if Self::native_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -352,7 +356,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 
     /// The nested counterpart of
-    /// [`native_extension_rxs`](Self::native_extension_rxs).
+    /// [`native_extension_rxs`](Self::native_extension_rxs), with
+    /// `output_commitments` the commitments of the step's own output
+    /// slots, for an extension whose binding circuit exposes one (see
+    /// [`Binding::online`]).
     ///
     /// # Errors
     ///
@@ -360,6 +367,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -369,7 +377,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, source, registry, rng);
+        let _ = (context, source, output_commitments, registry, rng);
         if Self::nested_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -460,6 +468,15 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         if nested.statement.is_some() {
             return Err(Error::Initialization(
                 "only the native extension carries a statement circuit".into(),
+            ));
+        }
+        if native
+            .binding
+            .as_ref()
+            .is_some_and(|binding| !binding.online.is_empty())
+        {
+            return Err(Error::Initialization(
+                "only the nested extension's binding circuit exposes online commitments".into(),
             ));
         }
         Ok(())
@@ -737,11 +754,23 @@ pub struct Extension {
     /// $k(y)$ binds the proof's own output header to it. `None` for any
     /// other extension, and always on the nested side.
     ///
+    /// After the header the output carries the step binding,
+    /// [`STEP_BINDING`] elements the same claim sets: a flag, one in a
+    /// proof of the decompression step and zero in any other, then the
+    /// point and the value at which the decompression step opened its
+    /// first output slot, both zero in any other step. An extension reads
+    /// its circuits' own step from them: the flag says whether the proof
+    /// it verified is the one decompressed, and the opening is of a
+    /// polynomial that step committed before its challenge, which the
+    /// extension's prover supplies through
+    /// [`native_extension_rxs`](Profile::native_extension_rxs).
+    ///
     /// The statement binds the header's fields only. A profile that declares
     /// one registers the decompression step, whose output proof carries the
-    /// verified header with the constant one in both online slots, and a
-    /// step consuming that proof cannot tell it from one a registered step
-    /// produced. Before declaring a statement, either every header a
+    /// verified header with none of the compressed proof's polynomials in
+    /// its online slots, the step's own in the first and the constant one
+    /// in the last, and a step consuming that proof cannot tell it from one
+    /// a registered step produced. Before declaring a statement, either every header a
     /// decompressed statement can carry must treat its slots as padding, or
     /// the statement must also expose the compressed proof's online
     /// commitments for the decompression step to hold its output slots to
@@ -754,6 +783,10 @@ pub struct Extension {
     /// `None` for an extension that binds nothing.
     pub binding: Option<Binding>,
 }
+
+/// The elements a statement circuit's public output ends with, after the
+/// output header: the step binding (see [`Extension::statement`]).
+pub const STEP_BINDING: usize = 3;
 
 /// An extension's binding circuit: the circuit, by index among the
 /// extension's circuits, whose public output is one point per stage of
@@ -779,6 +812,18 @@ pub struct Binding {
     /// The other side's extension stages the circuit's output points
     /// recompute, by index among that extension's stages, in output order.
     pub stages: Vec<u32>,
+    /// The slots of the proof's own online polynomials whose commitments
+    /// the circuit's output ends with, after the stages' points, in output
+    /// order: a point per slot, which the claim's $k(y)$ holds to the
+    /// commitment the proof carries for that slot. The online polynomials
+    /// are committed on the host curve, the curve of the nested binding
+    /// circuit's points, so only the nested extension's binding names any.
+    ///
+    /// The slots belong to the step's output header, so a profile that
+    /// names one must have its circuits use the point only where the
+    /// profile's own step fills the slot, as the aggregator's use it only
+    /// under the decompression step's flag.
+    pub online: Vec<u32>,
 }
 
 impl Extension {
@@ -860,6 +905,11 @@ impl Extension {
                     && self.statement != Some(binding.circuit)
                     && !binding.stages.is_empty()
                     && distinct(&binding.stages)
+                    && distinct(&binding.online)
+                    && binding
+                        .online
+                        .iter()
+                        .all(|&slot| (slot as usize) < crate::header::NUM_ONLINE_FP_POLYS)
             });
         // In gate order, which leaves `last()` the stage whose final mask
         // covers the circuit, and names no stage twice.
@@ -1630,7 +1680,8 @@ pub(crate) mod testing {
     /// A statement circuit for the tests of the decompression step: its
     /// public output is the header it is given, `HEADER_SIZE` elements
     /// whose suffix it holds nonzero, standing in for the output header of
-    /// the compressed proof a decompression extension verifies.
+    /// the compressed proof a decompression extension verifies, then the
+    /// step binding it is given, which it leaves unconstrained.
     pub(crate) struct StatementCircuit<F, const HEADER_SIZE: usize>(PhantomData<fn() -> F>);
 
     impl<F, const HEADER_SIZE: usize> StatementCircuit<F, HEADER_SIZE> {
@@ -1640,9 +1691,13 @@ pub(crate) mod testing {
     }
 
     impl<F: Field, const HEADER_SIZE: usize> Circuit<F> for StatementCircuit<F, HEADER_SIZE> {
+        /// The header, then the step binding.
         type Instance<'source> = &'source [F];
         type Witness<'source> = &'source [F];
-        type Output = Kind![F; FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>];
+        type Output = Kind![F; (
+            FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>,
+            FixedVec<Element<'_, _>, ConstLen<STEP_BINDING>>,
+        )];
         type Aux<'source> = ();
 
         fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -1650,9 +1705,17 @@ pub(crate) mod testing {
             dr: &mut D,
             instance: DriverValue<D, Self::Instance<'source>>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
-            FixedVec::try_from_fn(|i| {
-                Element::alloc(dr, &mut (), instance.as_ref().map(|header| header[i]))
-            })
+            let header = FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), instance.as_ref().map(|values| values[i]))
+            })?;
+            let step = FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    instance.as_ref().map(|values| values[HEADER_SIZE + i]),
+                )
+            })?;
+            Ok((header, step))
         }
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -1663,12 +1726,20 @@ pub(crate) mod testing {
         {
             let header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>> =
                 FixedVec::try_from_fn(|i| {
-                    Element::alloc(dr, &mut (), witness.as_ref().map(|header| header[i]))
+                    Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
+                })?;
+            let step: FixedVec<Element<'dr, D>, ConstLen<STEP_BINDING>> =
+                FixedVec::try_from_fn(|i| {
+                    Element::alloc(
+                        dr,
+                        &mut (),
+                        witness.as_ref().map(|values| values[HEADER_SIZE + i]),
+                    )
                 })?;
             // One check stands in for what a decompression verifies of its
             // statement: a header's suffix is never zero.
             header[HEADER_SIZE - 1].clone().enforce_nonzero(dr)?;
-            Ok(WithAux::new(header, D::unit()))
+            Ok(WithAux::new((header, step), D::unit()))
         }
     }
 
@@ -1702,13 +1773,25 @@ pub(crate) mod testing {
             *self.header.lock().unwrap() = header;
         }
 
-        /// The header the statement circuit exposes: the one set, or the
-        /// unit header padded to `HEADER_SIZE`.
-        fn header<C: Cycle<CircuitField = F>, const HEADER_SIZE: usize>(&self) -> Result<Vec<F>> {
-            match self.header.lock().unwrap().clone() {
-                Some(header) => Ok(header),
-                None => ky::output_header::<C, (), HEADER_SIZE>(()),
-            }
+        /// What the statement circuit exposes: the header set, then the
+        /// step binding of a decompression that opened its first output
+        /// slot at `opening`; or the unit header padded to `HEADER_SIZE`,
+        /// then the binding of any other step, all zero.
+        fn statement<C: Cycle<CircuitField = F>, const HEADER_SIZE: usize>(
+            &self,
+            opening: [F; 2],
+        ) -> Result<Vec<F>> {
+            Ok(match self.header.lock().unwrap().clone() {
+                Some(mut header) => {
+                    header.extend([F::ONE, opening[0], opening[1]]);
+                    header
+                }
+                None => {
+                    let mut header = ky::output_header::<C, (), HEADER_SIZE>(())?;
+                    header.extend([F::ZERO; STEP_BINDING]);
+                    header
+                }
+            })
         }
     }
 
@@ -1758,6 +1841,7 @@ pub(crate) mod testing {
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            output_openings: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1767,7 +1851,7 @@ pub(crate) mod testing {
             B: SelectableBackend,
             RNG: CryptoRng,
         {
-            let header = context.header::<Base, HEADER_SIZE>()?;
+            let header = context.statement::<Base, HEADER_SIZE>(output_openings[0])?;
             let (trace, ()) = StatementCircuit::<Base::CircuitField, HEADER_SIZE>::new()
                 .trace(header.as_slice())?
                 .into_parts();
@@ -1840,6 +1924,7 @@ pub(crate) mod testing {
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            _: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1856,6 +1941,7 @@ pub(crate) mod testing {
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2067,6 +2153,7 @@ pub(crate) mod testing {
                 binding: Some(Binding {
                     circuit: 0,
                     stages: vec![0],
+                    online: vec![],
                 }),
             }
         }
@@ -2126,6 +2213,7 @@ pub(crate) mod testing {
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            _: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2149,6 +2237,7 @@ pub(crate) mod testing {
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2213,6 +2302,7 @@ pub(crate) mod testing {
                 binding: Some(Binding {
                     circuit: 0,
                     stages: vec![0],
+                    online: vec![],
                 }),
             }
         }
@@ -2262,6 +2352,7 @@ pub(crate) mod testing {
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            _: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2289,6 +2380,7 @@ pub(crate) mod testing {
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
             _: Option<&core::convert::Infallible>,
+            _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2517,7 +2609,11 @@ mod tests {
             stages: 0,
             final_masks: vec![],
             statement: Some(0),
-            binding: Some(Binding { circuit, stages }),
+            binding: Some(Binding {
+                circuit,
+                stages,
+                online: vec![],
+            }),
         };
         assert!(binding(1, vec![1, 0]).is_consistent());
         // The binding circuit out of range, or the statement circuit.
@@ -2615,6 +2711,7 @@ mod tests {
                     binding: Some(Binding {
                         circuit: 0,
                         stages: vec![0, 1],
+                        online: vec![],
                     }),
                 }
             }
@@ -2654,6 +2751,7 @@ mod tests {
                     binding: Some(Binding {
                         circuit: 0,
                         stages: vec![1],
+                        online: vec![],
                     }),
                 }
             }

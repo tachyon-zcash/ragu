@@ -382,7 +382,9 @@ fn wallet() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
 /// carrying the wallet proof's header and data, which verifies; the same
 /// decompression under another header fails, since the statement circuit's
 /// claim holds the decompression step's output header to the decompressed
-/// statement's.
+/// statement's, and so does one whose first output slot holds a polynomial
+/// other than the host IPA's $s(X)$, since the step binding holds that
+/// IPA's $G'$ to the slot.
 #[test]
 fn decompresses_a_wallet_proof() {
     let pasta = crate::pasta::baked_aggregator();
@@ -407,7 +409,7 @@ fn decompresses_a_wallet_proof() {
         .fuse_with_source(
             &mut rng,
             Decompress::<Value>::new(),
-            Fp::from(43),
+            (Fp::from(43), decompressed.host_rounds()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&decompressed),
@@ -416,6 +418,29 @@ fn decompresses_a_wallet_proof() {
     assert!(
         matches!(app.verify_uncompressed(&relabelled, &mut rng), Ok(false)),
         "a relabelled decompression fails"
+    );
+
+    // The step binding: the decompression step's first output slot holds
+    // s(X) over the host IPA's round challenges. A step that commits the
+    // polynomial of other challenges there has neither the opening the
+    // circuit-field side expects nor the commitment the scalar-field
+    // side's G' is, and its proof fails.
+    let decompressed = app.context().prepare(&compressed).unwrap();
+    let mut rounds = decompressed.host_rounds();
+    rounds[0] += Fp::ONE;
+    let (other_slot, ()) = app
+        .fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            (Fp::from(42), rounds),
+            app.bootstrap_pcd(),
+            app.bootstrap_pcd(),
+            Some(&decompressed),
+        )
+        .unwrap();
+    assert!(
+        matches!(app.verify_uncompressed(&other_slot, &mut rng), Ok(false)),
+        "a decompression whose slot holds another polynomial fails"
     );
 }
 
@@ -543,7 +568,7 @@ fn a_decompression_cannot_output_the_dummy_suffix() {
     match app.fuse_with_source(
         &mut rng,
         Decompress::<Dummy>::new(),
-        (),
+        ((), decompressed.host_rounds()),
         app.bootstrap_pcd(),
         app.bootstrap_pcd(),
         Some(&decompressed),
@@ -680,7 +705,7 @@ fn sides_from_different_proofs_are_rejected() {
         .fuse_with_source(
             &mut rng,
             Decompress::<Value>::new(),
-            Fp::from(42),
+            (Fp::from(42), mixed.host_rounds()),
             app.bootstrap_pcd(),
             app.bootstrap_pcd(),
             Some(&mixed),

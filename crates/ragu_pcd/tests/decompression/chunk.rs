@@ -16,7 +16,7 @@ use ragu_circuits::{
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 use ragu_core::{
-    Cycle,
+    Cycle, FixedGenerators,
     drivers::emulator::Emulator,
     maybe::{Always, MaybeKind},
     pasta::{Fp, Fq, Pasta},
@@ -104,6 +104,7 @@ fn kind(chunk: &Chunk) -> &'static str {
         Chunk::Scale { .. } => "scale",
         Chunk::Sign { .. } => "sign",
         Chunk::Equal { .. } => "equal",
+        Chunk::EqualIf { .. } => "equal under a flag",
         Chunk::Curve { .. } => "curve",
     }
 }
@@ -654,8 +655,9 @@ fn chains_hold_their_bits_to_the_lifts_stage() {
 /// takes the scalar's digits as witnesses and sums their generators into
 /// its recomputation of the other side's digits stage. The scalar-field
 /// side is re-run with another $v$ for the host curve's final check, and
-/// with the $G'$ that keeps the IPA's final equality under it, since
-/// nothing binds $G'$ yet: every chunk circuit is then satisfied, and what
+/// with the $G'$ that keeps the IPA's final equality under it, which
+/// nothing holds outside the decompression step: every chunk circuit is
+/// then satisfied, and what
 /// the side exposes for the circuit-field side's digits stage is no longer
 /// that stage's commitment, so the binding claim is what fails.
 #[test]
@@ -707,6 +709,87 @@ fn scalings_hold_their_digits_to_the_other_sides_stage() {
 /// The statement circuit exposes the instance stage's output header as its
 /// public output: at the aggregator rank its trace satisfies the circuit
 /// at that header's $k(y)$ and at no other's.
+/// The step binding holds the host curve's $G'$ in the decompression
+/// step and nothing in any other. The polynomial $s(X)$ over the round
+/// challenges the circuit-field side holds commits, unblinded, to the
+/// $G'$ the scalar-field side holds. With the flag set, the circuit-field
+/// side accepts the opening of that polynomial and no other value, and the
+/// scalar-field side accepts that commitment in the slot and no other
+/// point. With it unset, neither is held. The flag is the same on both
+/// sides only when the scalar-field side's recomputation of the
+/// circuit-field side's digits stage is that stage's commitment.
+#[test]
+fn the_step_binding_holds_g_prime_to_the_slot() {
+    type NativeDigits = DigitsStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>;
+    let setup = Setup::new();
+    let params = crate::pasta::baked_aggregator();
+    let sides = sides::<SmallR>(&setup);
+    let mut rng = StdRng::seed_from_u64(29);
+    let digits_commitment = |native: &Prepared<Pasta, Native>| {
+        ReferenceBackend::sparse_commit_to_affine(
+            &<NativeDigits as StageExt<Fp, SmallR>>::rx(Fp::ZERO, &native.digits).unwrap(),
+            Pasta::host_generators(params),
+        )
+    };
+
+    // s(X) over the host IPA's round challenges, and its commitment.
+    let native = &sides.native;
+    let rounds: Vec<Fp> = native.schedule.regions.lifts[squeezed::ROUNDS..]
+        .iter()
+        .map(|&slot| native.lifts.elements[slot])
+        .collect();
+    let s = crate::ipa::challenge_polynomial(&rounds);
+    let poly = sparse::Polynomial::<Fp, SmallR>::from_coeffs(s);
+    let commitment: <Pasta as Cycle>::HostCurve =
+        ReferenceBackend::sparse_commit_to_affine(&poly, Pasta::host_generators(params));
+    let g_prime = sides.nested.work.points[sides.nested.schedule.regions.g_prime];
+    assert_eq!(commitment, g_prime, "s(X) commits to G'");
+
+    // The circuit-field side: the opening of s(X) at a point, or not.
+    let x = Fp::random(|bytes| rng.fill_bytes(bytes));
+    let y = poly.eval(x);
+    let opened = native
+        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y])
+        .unwrap();
+    assert!(!rejected(&opened), "the opening of s(X) is accepted");
+    let other = native
+        .for_decompression::<TestR, HEADER_SIZE>(params, [x, y + Fp::ONE])
+        .unwrap();
+    assert!(rejected(&other), "another value is rejected under the flag");
+    let mut unset = other.clone();
+    let step = unset.schedule.layout.instance.step;
+    unset.instance.elements[step.at(0)] = Fp::ZERO;
+    unset.run::<TestR, HEADER_SIZE>(params).unwrap();
+    assert!(!rejected(&unset), "no value is held without the flag");
+
+    // The scalar-field side: the slot's commitment is G', or not.
+    let nested = &sides.nested;
+    let held = nested
+        .for_step::<TestR, HEADER_SIZE>(params, true, commitment)
+        .unwrap();
+    assert!(!rejected(&held), "G' in the slot is accepted");
+    let stray = Pasta::host_generators(params).g()[7];
+    let swapped = nested
+        .for_step::<TestR, HEADER_SIZE>(params, true, stray)
+        .unwrap();
+    assert!(
+        rejected(&swapped),
+        "another point is rejected under the flag"
+    );
+    let free = nested
+        .for_step::<TestR, HEADER_SIZE>(params, false, stray)
+        .unwrap();
+    assert!(!rejected(&free), "no point is held without the flag");
+    assert_eq!(exposed(&free)[1], stray, "the slot's commitment is exposed");
+
+    // The flag crosses in the digits stage: the scalar-field side's
+    // recomputation is the stage's commitment only under the same flag.
+    assert_eq!(exposed(&held)[0], digits_commitment(&opened));
+    assert_eq!(exposed(&free)[0], digits_commitment(native));
+    assert_ne!(exposed(&free)[0], digits_commitment(&opened));
+    assert_ne!(exposed(&held)[0], digits_commitment(native));
+}
+
 #[test]
 fn statement_circuit_exposes_the_output_header() {
     type Instance = InstanceStage<Pasta, Native, TestR, AggregatorRank, HEADER_SIZE>;
@@ -744,25 +827,30 @@ fn statement_circuit_exposes_the_output_header() {
     let mut rx = registry.assemble(&trace, handle, Fp::ZERO).unwrap();
     assert_eq!(rx.revdot(&registry.y(final_mask, y)), Fp::ZERO);
     rx.add_assign(&stage);
+    // Prepared outside a step, the side's step binding is all zero.
+    let step = || -> FixedVec<Fp, ConstLen<{ crate::profile::STEP_BINDING }>> {
+        FixedVec::try_from(alloc::vec![Fp::ZERO; crate::profile::STEP_BINDING]).unwrap()
+    };
     let own: FixedVec<Fp, ConstLen<HEADER_SIZE>> = FixedVec::try_from(header.clone()).unwrap();
     assert_eq!(
         rx.revdot(&registry.y(handle, y)),
-        circuit.ky(own, y).unwrap()
+        circuit.ky((own, step()), y).unwrap()
     );
     let mut other = header;
     other[0] += Fp::ONE;
     let other: FixedVec<Fp, ConstLen<HEADER_SIZE>> = FixedVec::try_from(other).unwrap();
     assert_ne!(
         rx.revdot(&registry.y(handle, y)),
-        circuit.ky(other, y).unwrap()
+        circuit.ky((other, step()), y).unwrap()
     );
 }
 
-/// The commitments of the stages the other side's binding circuit exposes,
-/// unblinded, at the aggregator rank: the scalar-field side's run stages,
-/// which the transcript absorbed, and its lifts and digits stages, which
-/// the circuit-field side recomputes; and the circuit-field side's digits
-/// stage.
+/// What each side's binding circuit exposes, at the aggregator rank: the
+/// unblinded commitments of the scalar-field side's run stages, which the
+/// transcript absorbed, and of its lifts and digits stages, which the
+/// circuit-field side recomputes; and the commitment of the circuit-field
+/// side's digits stage, then the slot commitment the scalar-field side
+/// holds, a placeholder outside a step.
 fn bound_commitments(
     sides: &Sides<Pasta>,
 ) -> (
@@ -790,10 +878,18 @@ fn bound_commitments(
         nested_commit(&<NestedLifts as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.lifts).unwrap()),
         nested_commit(&<NestedDigits as StageExt<Fq, R>>::rx(Fq::ZERO, &nested.digits).unwrap()),
     ]);
-    let of_native = alloc::vec![ReferenceBackend::sparse_commit_to_affine(
-        &<NativeDigits as StageExt<Fp, R>>::rx(Fp::ZERO, &sides.native.digits).unwrap(),
-        Pasta::host_generators(params),
-    )];
+    let slot = nested
+        .schedule
+        .regions
+        .slot_commitment
+        .expect("the scalar-field side holds the slot commitment");
+    let of_native = alloc::vec![
+        ReferenceBackend::sparse_commit_to_affine(
+            &<NativeDigits as StageExt<Fp, R>>::rx(Fp::ZERO, &sides.native.digits).unwrap(),
+            Pasta::host_generators(params),
+        ),
+        nested.work.points[slot],
+    ];
     (of_nested, of_native)
 }
 

@@ -20,7 +20,7 @@ use ragu_core::{
     maybe::{Always, Maybe},
 };
 use ragu_primitives::{
-    Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
+    Boolean, Element, Endoscalar, EndoscalarChallenge, GadgetExt, NonzeroBank, Point, Uendo,
     consistent::Consistent,
     extract_endoscalar,
     poseidon::{Sponge, SpongeState},
@@ -119,6 +119,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Copy for Loaded<'_, 'dr, D, P>
 /// What a side allocates beyond the stages: the challenges squeezed on
 /// the other side as their endoscalars' bits, and the other field's
 /// full-width scalars.
+#[derive(Clone)]
 pub(crate) struct Aux<G> {
     /// Every compression challenge the side did not squeeze, in the order
     /// the schedule's [`ChallengeRef::Bits`] indexes them: the reduction
@@ -129,6 +130,9 @@ pub(crate) struct Aux<G> {
     /// and $c b z$ of the reduction whose points the side checks, then
     /// what the side's [`Side::foreign`] adds.
     pub foreign: Vec<G>,
+    /// The other side's flags, by [`Chunk::EqualIf`]'s index: unset until
+    /// the step that proves the chunks sets them.
+    pub flags: Vec<bool>,
 }
 
 /// Everything a side's chunks need: the stages' values, the lifts, work,
@@ -143,7 +147,23 @@ pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
     pub transcript: Values<S::F, S::P>,
     pub digits: Values<S::F, S::P>,
     pub aux: Aux<S::Other>,
-    pub extra: S::Extra,
+    pub extra: Arc<S::Extra>,
+}
+
+impl<C: Cycle, S: Side<C>> Clone for Prepared<C, S> {
+    fn clone(&self) -> Self {
+        Prepared {
+            schedule: self.schedule.clone(),
+            instance: self.instance.clone(),
+            messages: self.messages.clone(),
+            lifts: self.lifts.clone(),
+            work: self.work.clone(),
+            transcript: self.transcript.clone(),
+            digits: self.digits.clone(),
+            aux: self.aux.clone(),
+            extra: self.extra.clone(),
+        }
+    }
 }
 
 /// What every chunk of a side can reach.
@@ -215,6 +235,11 @@ where
     /// The other field's value at `id` of the side's foreign scalars.
     fn foreign(&self, id: usize) -> DriverValue<D, S::Other> {
         self.witness.as_ref().map(|w| w.aux.foreign[id])
+    }
+
+    /// The other side's flag at `id` of the side's foreign flags.
+    fn flag(&self, id: usize) -> DriverValue<D, bool> {
+        self.witness.as_ref().map(|w| w.aux.flags[id])
     }
 
     /// A challenge's endoscalar: read off the squeezed element,
@@ -383,6 +408,20 @@ where
             .iter()
             .map(|&slot| self.lift(slot))
             .collect();
+        // The step binding: in the decompression step, the polynomial the
+        // step committed in its first output slot takes the value of s(X)
+        // at the point the step opened it. The slot's commitment is then
+        // that of s(X), the IPA's G', which the other side holds its G' to.
+        let step = self.schedule.layout.instance.step;
+        if step.len != 0 {
+            let elements = self.loaded.instance.elements;
+            let flag = &elements[step.at(stages::step::FLAG)];
+            let x = &elements[step.at(stages::step::X)];
+            let y = &elements[step.at(stages::step::Y)];
+            let expected = ipa::s_at(dr, &rounds, x)?;
+            let gap = y.sub(dr, &expected);
+            flag.mul(dr, &gap)?.enforce_zero(dr)?;
+        }
         let scalars = ipa::verify(
             dr,
             &batched.point,
@@ -606,7 +645,7 @@ where
             writes.push(Write::Element(out[0], v));
             writes.push(Write::Element(out[1], cbz));
         }
-        Chunk::Digits { scalars } => {
+        Chunk::Digits { scalars, flags } => {
             // Each scalar's digits, bound to it, as the signed digits
             // 2b - 1 the other side scales by, into the digits stage.
             for &(src, first) in scalars {
@@ -620,6 +659,16 @@ where
                     );
                     writes.push(Write::Digit(first + i, digit));
                 }
+            }
+            // A flag is zero or one where the side binds it, so 2f - 1 is
+            // its signed digit.
+            for &(src, slot) in flags {
+                let digit = ctx.element(dr, src)?.scale(dr, Coeff::Two).add_coeff(
+                    dr,
+                    &Element::one(),
+                    Coeff::NegativeOne,
+                );
+                writes.push(Write::Digit(slot, digit));
             }
         }
         Chunk::Sums { sums } => {
@@ -699,6 +748,27 @@ where
             let left = ctx.point(dr, *left)?;
             let right = ctx.point(dr, *right)?;
             left.enforce_equal(dr, &right)?;
+        }
+        Chunk::EqualIf {
+            flag,
+            left,
+            right,
+            bind,
+        } => {
+            // The flag's bit is the chunk's own witness, held to the other
+            // side's flag by the digit's part of that side's digits stage
+            // commitment below.
+            let bit = Boolean::alloc(dr, &mut (), ctx.flag(*flag))?;
+            let mut left_coordinates = Vec::with_capacity(2);
+            GadgetExt::write(&ctx.point(dr, *left)?, dr, &mut left_coordinates)?;
+            let mut right_coordinates = Vec::with_capacity(2);
+            GadgetExt::write(&ctx.point(dr, *right)?, dr, &mut right_coordinates)?;
+            for (left, right) in left_coordinates.iter().zip(&right_coordinates) {
+                let gap = left.sub(dr, right);
+                bit.element().mul(dr, &gap)?.enforce_zero(dr)?;
+            }
+            let digit = Digits::of_flag(bit);
+            writes.push(Write::Point(bind.out, bind_sum(dr, ctx, &digit, bind)?));
         }
         Chunk::Curve { points } => {
             // The stages are loaded unenforced, so the curve equation a
@@ -874,11 +944,12 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         let aux = Aux {
             challenge_bits,
             foreign: S::foreign(witness, &schedule)?,
+            flags: alloc::vec![false; S::FLAGS],
         };
         let mut prepared = Prepared {
             instance: S::instance(params, instance, &witness.header),
             messages: S::messages(params, &witness.proof),
-            extra: S::extra(witness)?,
+            extra: Arc::new(S::extra(witness)?),
             schedule,
             lifts,
             work,
@@ -895,7 +966,21 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         &mut self,
         params: &C::Params,
     ) -> Result<()> {
+        self.rerun::<K, HEADER_SIZE>(params, |_| true)
+    }
+
+    /// Runs natively the chunks `select` picks, in schedule order, storing
+    /// what each writes: every chunk for a fresh side, or the chunks that
+    /// read what the step proving them set afterwards.
+    fn rerun<K: Rank, const HEADER_SIZE: usize>(
+        &mut self,
+        params: &C::Params,
+        select: impl Fn(&Chunk) -> bool,
+    ) -> Result<()> {
         for k in 0..self.schedule.chunks.len() {
+            if !select(&self.schedule.chunks[k]) {
+                continue;
+            }
             let mut dr = Executor::<S::F>::execute();
             let allocated = Allocated::alloc(
                 &mut dr,
@@ -940,6 +1025,61 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             }
         }
         Ok(())
+    }
+}
+
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Native> {
+    /// The side as the decompression step proves it: the flag set and the
+    /// step binding's opening the step's own, `opening`, the point and
+    /// value at which it opened the output slot holding $s(X)$. Any other
+    /// step proves the side as prepared, the binding all zero.
+    pub(crate) fn for_decompression<K: Rank, const HEADER_SIZE: usize>(
+        &self,
+        params: &C::Params,
+        opening: [C::CircuitField; 2],
+    ) -> Result<Self> {
+        let mut prepared = self.clone();
+        let step = prepared.schedule.layout.instance.step;
+        prepared.instance.elements[step.at(stages::step::FLAG)] = C::CircuitField::ONE;
+        prepared.instance.elements[step.at(stages::step::X)] = opening[0];
+        prepared.instance.elements[step.at(stages::step::Y)] = opening[1];
+        prepared.rerun::<K, HEADER_SIZE>(
+            params,
+            |chunk| matches!(chunk, Chunk::Digits { flags, .. } if !flags.is_empty()),
+        )?;
+        Ok(prepared)
+    }
+}
+
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Prepared<C, Nested> {
+    /// The side as a step proves it: the commitment of the step's output
+    /// slot the binding circuit exposes, `slot_commitment`, and the flag,
+    /// set in the decompression step, under which that commitment is the
+    /// IPA's $G'$.
+    pub(crate) fn for_step<K: Rank, const HEADER_SIZE: usize>(
+        &self,
+        params: &C::Params,
+        decompression: bool,
+        slot_commitment: C::HostCurve,
+    ) -> Result<Self> {
+        let mut prepared = self.clone();
+        let (slot, digits_sum) = {
+            let regions = &prepared.schedule.regions;
+            (
+                regions
+                    .slot_commitment
+                    .expect("the scalar-field side exposes the slot commitment"),
+                regions.digits_sum,
+            )
+        };
+        prepared.aux.flags[0] = decompression;
+        prepared.work.points[slot] = slot_commitment;
+        prepared.rerun::<K, HEADER_SIZE>(params, |chunk| match chunk {
+            Chunk::EqualIf { .. } => true,
+            Chunk::Sums { sums } => sums.iter().any(|(out, _)| *out == digits_sum),
+            _ => false,
+        })?;
+        Ok(prepared)
     }
 }
 

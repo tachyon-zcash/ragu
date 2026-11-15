@@ -192,23 +192,11 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let left_unified = stages.preamble.left.nested_instance().ky(dr, y)?;
         let right_unified = stages.preamble.right.nested_instance().ky(dr, y)?;
         // The binding circuit's k(y): the k(y) of the children's native
-        // extension stages it names, as the bridge preamble holds them. A
-        // profile without a binding computes nothing here.
-        let binding = P::nested_extension().binding;
-        let left_binding = ky::binding_ky(
-            dr,
-            y,
-            &ky::bound(binding.as_ref(), |j| {
-                stages.preamble.left.extension_stages[j as usize].clone()
-            }),
-        )?;
-        let right_binding = ky::binding_ky(
-            dr,
-            y,
-            &ky::bound(binding.as_ref(), |j| {
-                stages.preamble.right.extension_stages[j as usize].clone()
-            }),
-        )?;
+        // extension stages it names, then of their own online slots it
+        // names, as the bridge preamble holds them. A profile without a
+        // binding computes nothing here.
+        let left_binding = ky::binding_ky(dr, y, &stages.preamble.left.bound())?;
+        let right_binding = ky::binding_ky(dr, y, &stages.preamble.right.bound())?;
         let ky = TwoProofKySource::new(
             dr,
             stages.preamble.left.nested.c.clone(),

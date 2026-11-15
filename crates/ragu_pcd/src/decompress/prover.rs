@@ -29,20 +29,20 @@ use udon::field::Field;
 
 use super::{
     chunk::{self, last},
-    program::Last,
+    program::{Last, squeezed},
     run::{Prepared, Sides},
     side::{Native, Nested},
     stages::{DigitsStage, Front, LiftsStage, TranscriptStage, WorkStage},
 };
 use crate::{
     Application, CompressedPcd, Pcd, SelectableBackend,
-    header::Header,
+    header::{Header, NUM_ONLINE_FP_POLYS},
     internal::{native, nested},
     ipa::IpaCycle,
     profile::{
         Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext, Standard,
     },
-    step::internal::decompress::Decompress,
+    step::internal::decompress::{Decompress, S_SLOT},
 };
 
 /// A compressed proof prepared for decompression: both sides' stages
@@ -50,6 +50,19 @@ use crate::{
 /// decompression step's fuse runs the chunk circuits over in place of the
 /// canonical proof.
 pub struct Decompressed<C: IpaCycle + ProfiledCycle<Profile = Standard>>(pub(crate) Sides<C>);
+
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Decompressed<C> {
+    /// The round challenges of the host curve's IPA of the proof, in
+    /// transcript order, as the circuit-field side's chunks hold them: the
+    /// challenges of $s(X)$, which the decompression step commits.
+    pub(crate) fn host_rounds(&self) -> Vec<C::CircuitField> {
+        let native = &self.0.native;
+        native.schedule.regions.lifts[squeezed::ROUNDS..]
+            .iter()
+            .map(|&slot| native.lifts.elements[slot])
+            .collect()
+    }
+}
 
 /// The aggregator's prover context: the wallet application whose proofs
 /// the aggregator decompresses and a canonical decompression, prepared
@@ -171,12 +184,28 @@ where
     pub(crate) fn native_rxs<P: Profile>(
         &self,
         source: Option<&Decompressed<C>>,
+        output_openings: &[[C::CircuitField; 2]; NUM_ONLINE_FP_POLYS],
         registry: &Registry<'_, C::CircuitField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
-        let prepared = &self.sides(source).native;
-        let schedule = prepared.schedule.clone();
         let params = self.wallet.params;
+        // The decompression step sets the step binding: its flag, and the
+        // opening of the slot it committed s(X) in.
+        let stepped;
+        let prepared = match source {
+            Some(decompressed) => {
+                stepped = decompressed
+                    .0
+                    .native
+                    .for_decompression::<WalletRank, HEADER_SIZE>(
+                        params,
+                        output_openings[S_SLOT],
+                    )?;
+                &stepped
+            }
+            None => &self.canonical.native,
+        };
+        let schedule = prepared.schedule.clone();
         let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
         for index in 0..schedule.circuits.len() {
             let trace =
@@ -227,12 +256,23 @@ where
     pub(crate) fn nested_rxs<P: Profile>(
         &self,
         source: Option<&Decompressed<C>>,
+        output_commitments: &[C::HostCurve; NUM_ONLINE_FP_POLYS],
         registry: &Registry<'_, C::ScalarField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
-        let prepared: &Prepared<C, Nested> = &self.sides(source).nested;
-        let schedule = prepared.schedule.clone();
         let params = self.wallet.params;
+        // Every step's binding circuit exposes the commitment of its own
+        // output slot; the decompression step's holds G' to it.
+        let prepared: Prepared<C, Nested> = self
+            .sides(source)
+            .nested
+            .for_step::<WalletRank, HEADER_SIZE>(
+                params,
+                source.is_some(),
+                output_commitments[S_SLOT],
+            )?;
+        let prepared = &prepared;
+        let schedule = prepared.schedule.clone();
         let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
         for index in 0..schedule.circuits.len() {
             let trace =
@@ -365,7 +405,7 @@ where
         let (pcd, ()) = self.fuse_with_source(
             rng,
             Decompress::<H>::new(),
-            pcd.data().clone(),
+            (pcd.data().clone(), decompressed.host_rounds()),
             self.bootstrap_pcd(),
             self.bootstrap_pcd(),
             Some(&decompressed),

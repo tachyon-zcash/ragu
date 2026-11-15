@@ -21,8 +21,9 @@
 //! the whole-side circuits the tests run, the [`Witness`] carries them and
 //! the two sides allocate them from it, with each side's own $v$ and
 //! $c b z$ held to the witness's. The registry's evaluations arrive as wires nothing yet
-//! checks, and each side's IPA takes its $G'$ as a witness point nothing
-//! yet binds; the module's *What remains* records both.
+//! checks, and each side's IPA takes its $G'$ as a witness point these
+//! circuits do not bind: the chunk circuits bind the host curve's through
+//! the step binding, and the module's *What remains* records the rest.
 //!
 //! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
 //! [`stages`]: super::stages

@@ -314,13 +314,15 @@ and the verifier rejects a proof that a modified prover makes.
 
 A step may leave an output slot's content unconstrained on purpose, as a
 hint for the steps that consume it: it opens the slot once and ignores the
-value, and those steps constrain it themselves. Ragu's own bootstrap and
-decompression steps leave both of their output slots as padding, and
+value, and those steps constrain it themselves. Ragu's own bootstrap step
+leaves both of its output slots as padding, its decompression step keeps
+the first for a polynomial of its own and leaves the last as padding, and
 rerandomization holds its output slots equal to its input's.
 
 A compressed proof's statement carries a header's fields but not its
 polynomials. In a profile that decompresses statements back into proofs, the
-decompressed proof has the original header fields and padding in both slots,
+decompressed proof has the original header fields and none of the original
+polynomials, the decompression's own in the first slot and padding in the last,
 and a step consuming it cannot tell it from one a registered step produced.
 Under such a profile, a header that can be compressed and decompressed must
 treat its slots as padding: no step may open them expecting the polynomials

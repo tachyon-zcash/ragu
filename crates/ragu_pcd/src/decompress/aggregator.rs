@@ -73,13 +73,14 @@ use crate::{
 ///
 /// The profile is not yet sound against a dishonest prover. The chunk
 /// circuits take the wallet registry's evaluations from the prover
-/// unchecked, and the IPA's final generator $G'$ as a free witness point,
-/// so a dishonest prover can have the aggregator accept a compressed proof
-/// the wallet application's verifier rejects. Both close through the
-/// polynomial queries the online polynomial oracle
-/// ([#944](https://github.com/tachyon-zcash/ragu/pull/944)) proposes; until
-/// then an aggregator proof attests a decompression an honest prover ran,
-/// and the profile is public only under the `unstable-aggregator` feature.
+/// unchecked, and the nested curve's IPA takes its final generator $G'$
+/// as a free witness point, so a dishonest prover can have the aggregator
+/// accept a compressed proof the wallet application's verifier rejects.
+/// The host curve's $G'$ is bound, through the polynomial the
+/// decompression step commits in its first output slot; the other two
+/// close through the online polynomial oracle's queries. Until then an
+/// aggregator proof attests a decompression an honest prover ran, and the
+/// profile is public only under the `unstable-aggregator` feature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 
@@ -289,6 +290,7 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     fn native_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
+        output_openings: &[[Base::CircuitField; 2]; crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -299,12 +301,13 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         RNG: CryptoRng,
     {
         Self::accepts::<R>(H)?;
-        context.native_rxs::<Self>(source, registry, rng)
+        context.native_rxs::<Self>(source, output_openings, registry, rng)
     }
 
     fn nested_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
         source: Option<&Decompressed<Base>>,
+        output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -315,6 +318,6 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         RNG: CryptoRng,
     {
         Self::accepts::<R>(H)?;
-        context.nested_rxs::<Self>(source, registry, rng)
+        context.nested_rxs::<Self>(source, output_commitments, registry, rng)
     }
 }

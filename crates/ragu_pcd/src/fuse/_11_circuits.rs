@@ -226,9 +226,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // The profile's extension: its prover fills every circuit's and
         // stage's polynomial over the context the application holds.
         let extension = C::Profile::native_extension();
+        let openings = builder.online_openings();
+        let output_openings: [[C::CircuitField; 2]; NUM_ONLINE_FP_POLYS] =
+            core::array::from_fn(|slot| {
+                let opening = &openings[openings.len() - NUM_ONLINE_FP_POLYS + slot];
+                [opening.x, opening.y]
+            });
         let rxs = C::Profile::native_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             source,
+            &output_openings,
             &self.native_registry,
             rng,
         )?;
@@ -346,6 +353,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let rxs = C::Profile::nested_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             source,
+            &builder.online_commitments(),
             &self.nested_registry,
             rng,
         )?;

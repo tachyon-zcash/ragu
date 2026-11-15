@@ -200,6 +200,7 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
             stages: (0..runs as u32)
                 .chain([nested.lifts(), nested.digits()])
                 .collect(),
+            online: Vec::new(),
         }),
     }
 }
@@ -210,7 +211,8 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
 /// trailing stage and the lifts and work stages, a digits one the digits
 /// stage after them, and the binding circuit the same stages as the rest,
 /// under the work stage's final mask then the digits stage's. The binding
-/// circuit recomputes the native extension's digits stage.
+/// circuit recomputes the native extension's digits stage and exposes, after
+/// it, the commitment of the proof's first output slot.
 ///
 /// # Panics
 ///
@@ -250,6 +252,9 @@ pub(crate) fn nested_layout(counts: Counts, runs: usize) -> Extension {
         binding: Some(Binding {
             circuit: binding,
             stages: vec![Indices::native().digits()],
+            // The first output slot, where the decompression step commits
+            // the host IPA's s(X).
+            online: vec![0],
         }),
     }
 }

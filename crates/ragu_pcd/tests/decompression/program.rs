@@ -46,12 +46,16 @@ fn check(schedule: &Schedule) {
         .chunks
         .iter()
         .map(|chunk| match chunk {
-            Chunk::Digits { scalars } => scalars.len(),
+            Chunk::Digits { scalars, .. } => scalars.len(),
             _ => 0,
         })
         .sum();
-    let width = layout.digits / digit_scalars;
-    assert_eq!(width * digit_scalars, layout.digits, "whole scalars");
+    let width = (layout.digits - layout.flags) / digit_scalars;
+    assert_eq!(
+        width * digit_scalars + layout.flags,
+        layout.digits,
+        "whole scalars, then the flags"
+    );
     let regions = &schedule.regions;
     for &slot in regions
         .restrictions
@@ -67,6 +71,7 @@ fn check(schedule: &Schedule) {
         .iter()
         .chain([&regions.g_prime])
         .chain(&regions.runs)
+        .chain(&regions.slot_commitment)
     {
         points[slot] = true;
     }
@@ -156,13 +161,18 @@ fn check(schedule: &Schedule) {
                     write_element(slot, &mut elements);
                 }
             }
-            Chunk::Digits { scalars } => {
+            Chunk::Digits { scalars, flags } => {
                 for (src, first) in scalars {
                     read_element(src, &elements, &points, &lifts);
                     for (slot, written) in digits.iter_mut().enumerate().skip(*first).take(width) {
                         assert!(!*written, "digit slot {slot} written twice");
                         *written = true;
                     }
+                }
+                for (src, slot) in flags {
+                    read_element(src, &elements, &points, &lifts);
+                    assert!(!digits[*slot], "digit slot {slot} written twice");
+                    digits[*slot] = true;
                 }
             }
             Chunk::Sums { sums } => {
@@ -221,6 +231,15 @@ fn check(schedule: &Schedule) {
                 read_point(left, &points);
                 read_point(right, &points);
             }
+            Chunk::EqualIf {
+                left, right, bind, ..
+            } => {
+                read_point(left, &points);
+                read_point(right, &points);
+                assert_eq!(bind.generators.len(), 1, "a flag has one digit");
+                assert!(bind.init.is_none(), "a flag's part starts its own sum");
+                write_point(bind.out, &mut points);
+            }
             Chunk::Curve { points: held } => {
                 for point in held {
                     read_point(point, &points);
@@ -248,6 +267,7 @@ fn check(schedule: &Schedule) {
         .iter()
         .chain(&regions.inverse_scaled)
         .chain([&regions.g_prime])
+        .chain(&regions.slot_commitment)
     {
         assert!(
             on_curve.contains(&PointSrc::Work(slot)),
@@ -297,6 +317,7 @@ fn schedules_are_consistent<R: Rank>() {
                 Chunk::Scale { .. } => "scale",
                 Chunk::Sign { .. } => "sign",
                 Chunk::Equal { .. } => "equal",
+                Chunk::EqualIf { .. } => "equal under a flag",
                 Chunk::Curve { .. } => "curve",
             };
             match counts.iter_mut().find(|(n, _)| *n == name) {

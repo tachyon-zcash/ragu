@@ -236,9 +236,12 @@ pub(crate) enum Chunk {
         out: [usize; 2],
     },
     /// The signed digits of full-width elements of this field, bound to
-    /// them, into the digits stage from the slot each names.
+    /// them, into the digits stage from the slot each names; and each of
+    /// `flags`, an element the side holds to zero or one, as the signed
+    /// digit $2 f - 1$ at its slot.
     Digits {
         scalars: Vec<(ElementSrc, usize)>,
+        flags: Vec<(ElementSrc, usize)>,
     },
     /// Sums of points into work point slots.
     Sums {
@@ -275,6 +278,17 @@ pub(crate) enum Chunk {
     Equal {
         left: PointSrc,
         right: PointSrc,
+    },
+    /// Enforces that `left` equals `right` when the other side's flag
+    /// `flag` is set: its bit, by index into the side's foreign flags,
+    /// which the chunk allocates as a witness and the other side's digits
+    /// stage binds, its signed digit's part of that stage's commitment
+    /// (`bind`) riding along as a scaling's digits' does.
+    EqualIf {
+        flag: usize,
+        left: PointSrc,
+        right: PointSrc,
+        bind: Bind,
     },
     /// Holds each of `points` to the side's curve: the points the prover
     /// supplies, the instance's and the messages' commitments and the work
@@ -401,6 +415,12 @@ pub(crate) struct Regions {
     pub inverse_scaled: Vec<usize>,
     /// $G'$, prover-supplied.
     pub g_prime: usize,
+    /// Scalar-field side: the commitment of the first output slot of the
+    /// step that proves the chunks, prover-supplied, which the binding
+    /// circuit exposes for the proof's consumer to hold to that
+    /// commitment, and which the decompression flag holds $G'$ to. None on
+    /// the circuit-field side.
+    pub slot_commitment: Option<usize>,
     /// The IPA's left-hand side and its three scaled terms.
     pub ipa_left: usize,
     pub ipa_terms: [usize; 3],
@@ -420,9 +440,10 @@ pub(crate) struct Regions {
     /// The recomputed commitment of the other side's digits stage.
     pub digits_sum: usize,
     /// The work points the side's binding circuit exposes, in the order
-    /// the profile's [`Binding`](crate::profile::Binding) names the
-    /// stages they hold to: on the circuit-field side the runs'
-    /// commitments, then the recomputed lifts and digits stages.
+    /// the profile's [`Binding`](crate::profile::Binding) names what
+    /// they hold to: on the circuit-field side the runs' commitments, then
+    /// the recomputed lifts and digits stages; on the scalar-field side
+    /// the recomputed digits stage, then the step's slot commitment.
     pub exposed: Vec<usize>,
 }
 
@@ -515,6 +536,11 @@ mod cost {
     /// A point held to the curve: its coordinates squared, one cubed, and
     /// the equation.
     pub const CURVE: usize = 4;
+    /// A flag's signed digit.
+    pub const FLAG: usize = 2;
+    /// A point equality under a flag from the other side: the flag's bit,
+    /// its digit's generator and the two coordinates' products.
+    pub const EQUAL_IF: usize = 30;
     /// What any chunk pays beyond its operations.
     pub const BASE: usize = 10;
 }
@@ -550,8 +576,8 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
         Chunk::RevdotWeights { .. } => 1440,
         Chunk::Bindings { .. } => 1080,
         Chunk::RevdotPublic { .. } => 355,
-        Chunk::BatchIpa { .. } => 115,
-        Chunk::Digits { scalars } => DIGITS * scalars.len(),
+        Chunk::BatchIpa { .. } => 150,
+        Chunk::Digits { scalars, flags } => DIGITS * scalars.len() + FLAG * flags.len(),
         Chunk::Sums { sums } => sums
             .iter()
             .map(|(_, terms)| SUM + SUM_TERM * terms.len().saturating_sub(1))
@@ -584,6 +610,7 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
         Chunk::Scale { digits, .. } => SCALE_DIGIT * (digits.1 - digits.0),
         Chunk::Curve { points } => CURVE * points.len(),
         Chunk::Sign { .. } | Chunk::Equal { .. } => 0,
+        Chunk::EqualIf { .. } => EQUAL_IF,
     }
 }
 
@@ -1145,19 +1172,31 @@ struct Builder {
     /// Each foreign scalar's part of the other side's digits stage
     /// commitment, by the scalar's index, as the scalings leave them.
     bound: Vec<Option<usize>>,
+    /// Each foreign flag's part of it, by the flag's index, as the
+    /// equalities under the flags leave them.
+    flag_bound: Vec<Option<usize>>,
 }
 
 impl Builder {
-    fn new(layout: Layout, scalar_bits: usize, foreign: Foreign, limits: Limits) -> Self {
+    /// A builder for a side that takes `flags` flags from the other side,
+    /// whose digits follow the foreign scalars' in that side's digits
+    /// stage.
+    fn new(
+        layout: Layout,
+        scalar_bits: usize,
+        foreign: Foreign,
+        flags: usize,
+        limits: Limits,
+    ) -> Self {
         let scalars = match &foreign {
             Foreign::Scalars(scalars) => *scalars,
             Foreign::Degrees(degrees) => {
                 assert_eq!(
-                    degrees.len() % scalar_bits,
+                    (degrees.len() - flags) % scalar_bits,
                     0,
-                    "the other side holds whole scalars' digits"
+                    "the other side holds whole scalars' digits, then its flags'"
                 );
-                degrees.len() / scalar_bits
+                (degrees.len() - flags) / scalar_bits
             }
         };
         Builder {
@@ -1169,7 +1208,36 @@ impl Builder {
             regions: Regions::default(),
             chunks: Vec::new(),
             bound: alloc::vec![None; scalars],
+            flag_bound: alloc::vec![None; flags],
         }
+    }
+
+    /// Holds `left` to `right` under the other side's flag `flag`, whose
+    /// digit's part of that side's digits stage commitment goes into a
+    /// slot [`digits_sum`](Self::digits_sum) takes. A flag is taken once.
+    fn equal_if(&mut self, flag: usize, left: PointSrc, right: PointSrc) {
+        assert!(
+            self.flag_bound[flag].is_none(),
+            "a foreign flag binds its digit once"
+        );
+        let out = self.slots.point();
+        self.flag_bound[flag] = Some(out);
+        let generators = match &self.foreign {
+            Foreign::Degrees(degrees) => {
+                alloc::vec![degrees[self.bound.len() * self.scalar_bits + flag]]
+            }
+            Foreign::Scalars(_) => Vec::new(),
+        };
+        self.chunks.push(Chunk::EqualIf {
+            flag,
+            left,
+            right,
+            bind: Bind {
+                generators,
+                init: None,
+                out,
+            },
+        });
     }
 
     /// $k P$ for a full-width scalar, as [`Limits::scale_parts`] chunks
@@ -1224,13 +1292,18 @@ impl Builder {
     }
 
     /// The other side's digits stage commitment: the sum of every foreign
-    /// scalar's part, each scaling having left one, into
-    /// [`Regions::digits_sum`].
+    /// scalar's part, each scaling having left one, and of every foreign
+    /// flag's, into [`Regions::digits_sum`].
     fn digits_sum(&mut self) {
         let terms: Vec<PointSrc> = self
             .bound
             .iter()
             .map(|slot| PointSrc::Work(slot.expect("every foreign scalar was scaled by")))
+            .chain(
+                self.flag_bound
+                    .iter()
+                    .map(|slot| PointSrc::Work(slot.expect("every foreign flag was taken"))),
+            )
             .collect();
         self.regions.digits_sum = self.slots.point();
         self.chunks.push(Chunk::Sums {
@@ -1240,17 +1313,31 @@ impl Builder {
 
     /// The signed digits of this side's full-width `scalars`, bound to
     /// them, into the digits stage in order: the other side's foreign
-    /// scalars, which it scales by their digits.
-    fn digits(&mut self, scalars: Vec<ElementSrc>) {
-        let width = self.layout.digits / scalars.len();
-        assert_eq!(width * scalars.len(), self.layout.digits);
+    /// scalars, which it scales by their digits. Then `flags`, a signed
+    /// digit each, with the last scalars.
+    fn digits(&mut self, scalars: Vec<ElementSrc>, flags: Vec<ElementSrc>) {
+        assert_eq!(flags.len(), self.layout.flags, "every flag has its digit");
+        let digits = self.layout.digits - self.layout.flags;
+        let width = digits / scalars.len();
+        assert_eq!(width * scalars.len(), digits);
         let scalars: Vec<(ElementSrc, usize)> = scalars
             .into_iter()
             .map(|src| (src, self.slots.digits(width)))
             .collect();
-        for batch in scalars.chunks(self.limits.digits) {
+        let mut flags: Vec<(ElementSrc, usize)> = flags
+            .into_iter()
+            .map(|src| (src, self.slots.digits(1)))
+            .collect();
+        let batches = scalars.chunks(self.limits.digits).count();
+        for (i, batch) in scalars.chunks(self.limits.digits).enumerate() {
+            let flags = if i + 1 == batches {
+                core::mem::take(&mut flags)
+            } else {
+                Vec::new()
+            };
             self.chunks.push(Chunk::Digits {
                 scalars: batch.to_vec(),
+                flags,
             });
         }
     }
@@ -1880,6 +1967,7 @@ fn native_schedule_with<
         layout,
         C::ScalarField::CAPACITY as usize + 1,
         foreign,
+        <Native as Side<C>>::FLAGS,
         Limits::at::<R>(),
     );
     let claims = native_claims()?;
@@ -2233,7 +2321,13 @@ fn native_schedule_with<
         .copied()
         .chain([b.regions.lifts_sum, b.regions.digits_sum])
         .collect();
-    b.digits(digits);
+    // The decompression flag crosses to the scalar-field side as a digit.
+    b.digits(
+        digits,
+        vec![ElementSrc::Instance(
+            layout.instance.step.at(super::stages::step::FLAG),
+        )],
+    );
 
     let front = <Native as Side<C>>::front_shapes::<K, HEADER_SIZE>();
     Ok(b.finish(claims, bindings, ab_terms, &front))
@@ -2280,6 +2374,7 @@ fn nested_schedule_with<
         layout,
         C::CircuitField::CAPACITY as usize + 1,
         foreign,
+        <Nested as Side<C>>::FLAGS,
         Limits::at::<R>(),
     );
     let claims = nested_claims()?;
@@ -2392,16 +2487,30 @@ fn nested_schedule_with<
         },
     );
 
-    // The circuit-field side's digits stage, from the scalings' parts, and
-    // this side's digits for it, last of all.
+    // The step binding: the commitment of the first output slot of the
+    // step that proves the chunks, which the binding circuit exposes, and
+    // in the decompression step, by the other side's flag, is G': that
+    // step commits the host IPA's s(X) there, whose commitment over the
+    // same generators G' is, and the other side checks its opening against
+    // s(X). Held to the curve as every point the prover supplies is.
+    let slot = b.slots.point();
+    b.regions.slot_commitment = Some(slot);
+    let slot_commitment = PointSrc::Work(slot);
+    b.chunks.push(Chunk::Curve {
+        points: vec![slot_commitment],
+    });
+    b.equal_if(0, slot_commitment, PointSrc::Work(b.regions.g_prime));
+
+    // The circuit-field side's digits stage, from the scalings' parts and
+    // the flag's, and this side's digits for it, last of all.
     b.digits_sum();
-    b.regions.exposed = vec![b.regions.digits_sum];
+    b.regions.exposed = vec![b.regions.digits_sum, slot];
     assert_eq!(
         digits.len(),
         3 + AB_TERMS,
         "the ab bridge's terms are pinned"
     );
-    b.digits(digits);
+    b.digits(digits, Vec::new());
 
     let front = <Nested as Side<C>>::front_shapes::<K, HEADER_SIZE>();
     Ok(b.finish(claims, bindings, ab_terms, &front))

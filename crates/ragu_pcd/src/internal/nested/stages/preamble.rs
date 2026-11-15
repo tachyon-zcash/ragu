@@ -329,6 +329,20 @@ pub struct NestedValuesOutput<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
+    /// The points the child's nested binding circuit exposes, as this stage
+    /// holds them: the child's native extension stages the profile's
+    /// binding names, then its own online slots the binding names. Empty
+    /// for a profile without a binding.
+    pub fn bound(&self) -> alloc::vec::Vec<Point<'dr, D, C>> {
+        crate::internal::ky::nested_bound::<P, _>(
+            |index| match index {
+                native::RxIndex::ExtensionStage(j) => self.extension_stages[j as usize].clone(),
+                _ => unreachable!("a binding names extension stages"),
+            },
+            |slot| self.stashed_online_commitments[slot].clone(),
+        )
+    }
+
     /// The child's nested unified instance, assembled from the values this
     /// stage holds, in the order the child's circuits serialize it.
     pub fn nested_instance(&self) -> unified::Output<'dr, D, C> {

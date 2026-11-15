@@ -45,11 +45,12 @@
 //!   of the generators. Without it an off-curve point with $x = 0$ leaves
 //!   an endoscaling's output unconstrained.
 //! - **$G'$.** The IPA's final generator $G' = \langle s, G \rangle$ is the
-//!   commitment to $s(X)$ over the same generators, so $s$ can be a
-//!   polynomial of the decompression proof whose commitment is $G'$, with
-//!   one evaluation of it claimed as a polynomial query the decompressing
-//!   step's own fuse batches into its opening accumulator. Today the
-//!   circuit takes $G'$ as a witness point (see *What remains*).
+//!   commitment to $s(X)$ over the same generators, so the circuit takes
+//!   $G'$ as a witness point and holds it to a commitment of $s$ the
+//!   decompression step made before its challenge, one evaluation of
+//!   which that step's own fuse batches into its opening accumulator. The
+//!   host curve's is bound so (see *The step binding*); the nested
+//!   curve's is not yet (see *What remains*).
 //!
 //! The scalar checks are written once as [`Driver`]-generic gadget code
 //! and run in the circuit over the matching field: the host curve's in the
@@ -59,8 +60,8 @@
 //!
 //! - [`revdot`], [`batch`] and [`ipa`]: the fold and split, the batch's
 //!   $f(u)$, $v$ and $\beta$ weights, and the IPA's round inverses, $b$
-//!   and final-check scalars, as gadgets. Binding $G'$ through $s(X)$ is in
-//!   *What remains*, below.
+//!   and final-check scalars, as gadgets, with $s$ at any point
+//!   ([`ipa::s_at`]), which the step binding checks an opening against.
 //! - The compression's transcript over the allocated instance and messages,
 //!   squeezing the native challenges; the derived commitments, $\[H\]$ and
 //!   the IPA's final check as endoscalar chains over the other curve's
@@ -135,6 +136,49 @@
 //! compressed proofs, each consistent with itself, or who chooses a
 //! message after the challenge that depends on it, fails that claim.
 //!
+//! # The step binding
+//!
+//! The chunks run in every proof of the profile, and what they verify is
+//! the statement of one step alone, the decompression step, whose output
+//! header the statement circuit's claim holds to the header they verified
+//! ([`statement_ky`]). The same claim carries the step binding, three
+//! values of the instance stage after the header: a flag, one in a proof
+//! of the decompression step and zero in any other, and the point and
+//! value at which that step opened its first output slot, zero in any
+//! other. Through them the host curve's $G'$ is bound:
+//!
+//! - The decompression step commits $s(X)$ of the host curve's IPA, over
+//!   the round challenges of the proof it decompresses, in its first
+//!   output slot, before its challenge $\zeta$, and opens the slot at
+//!   $\zeta$ ([`Decompress`]). Its fuse proves the opening is of the
+//!   committed polynomial, as it does an application's.
+//! - Under the flag, the circuit-field side holds the opened value to
+//!   [`ipa::s_at`] at that point over the round challenges its transcript
+//!   squeezed. The committed polynomial was fixed before $\zeta$, and the
+//!   round challenges are the transcript's outputs over the proof, so the
+//!   two agree at $\zeta$ only if the slot holds that proof's $s(X)$,
+//!   except with the probability of a root of their difference or of a
+//!   transcript whose challenges meet a relation chosen beforehand.
+//! - The flag crosses to the scalar-field side as a digit of the
+//!   circuit-field side's digits stage, which that side's binding circuit
+//!   recomputes. Its binding circuit also exposes a point the proof's
+//!   consumer holds to the commitment of the proof's first output slot
+//!   ([`Binding::online`](crate::profile::Binding::online)), and under
+//!   the flag the side holds its $G'$ to that point. The slot's
+//!   commitment is unblinded and over the generators the IPA folds, so it
+//!   is $\langle s, G \rangle$.
+//!
+//! In any other step the flag is zero and nothing is held: the chunks
+//! verify the canonical proof, whose statement is the unit header's and
+//! binds nothing, and the slot is the application's.
+//!
+//! A decompressed proof's first output slot therefore holds $s(X)$, not
+//! the constant one, which the header types a decompressed statement can
+//! carry must already treat as padding (see [`Decompress`]).
+//!
+//! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+//! [`Decompress`]: crate::step::internal::decompress
+//!
 //! # What remains
 //!
 //! The decompression proof is sound for an honest prover, which is what
@@ -157,8 +201,8 @@
 //!    registry's polynomial, the decompressing step's own fuse batches
 //!    the queries into its opening accumulator through its query and
 //!    eval stages, as it does an application's, and the decider checks
-//!    the openings against the wallet registry it holds, as $G'$ below
-//!    does; that check also holds the proof's circuit id to the
+//!    the openings against the wallet registry it holds; that check
+//!    also holds the proof's circuit id to the
 //!    registry's domain, which the native verifier checks and the chunks
 //!    do not. Waits on #944. Until then nothing ties a proof to
 //!    the canonical wallet application either: an aggregator that builds
@@ -169,31 +213,20 @@
 //!    makes the wallet application part of what a verifier of aggregator
 //!    proofs builds. Pinning a digest of the wallet registry in the
 //!    aggregator's registry tag is the alternative, still to decide.
-//! 2. **$G'$ is unbound.** The IPA's final check takes $G' = \langle s,
-//!    G \rangle$ as a witness point, so as the circuits stand that check
-//!    binds nothing: a prover who chooses $G'$ satisfies it for any
-//!    left-hand side. Everything else before the IPA's final check is bound
-//!    to the proof's wires, not to its commitments: the fold, the batch and
-//!    the wire bindings are checked over the openings the prover claims,
-//!    and only that check would hold those openings to the committed
-//!    polynomials.
-//!    $G'$ is the commitment to $s(X) = \prod\_{i < k} (1 + u\_{k-1-i}
-//!    X^{2^i})$ over the same generators, so the fix is to witness $s$ as
-//!    a polynomial of the decompression proof, take its commitment as
-//!    $G'$, and claim one evaluation of it, $s$ at a fresh challenge
-//!    against [`ipa::s_at`], as a polynomial query: the commitment is
-//!    bound before the decompressing step's fuse squeezes that challenge,
-//!    the query enters that same fuse's opening accumulator through its
-//!    query and eval stages, the parent folds the chunk circuits' traces
-//!    as it does every circuit's, and the decider checks the opening.
-//!    That is the online polynomial oracle's V4 ([#944](https://github.com/tachyon-zcash/ragu/pull/944),
-//!    after the hooks [#783](https://github.com/tachyon-zcash/ragu/pull/783)
-//!    and [#821](https://github.com/tachyon-zcash/ragu/pull/821) drafted,
-//!    both since closed) for a circuit-field polynomial, which covers the
-//!    host curve's $G'$. The nested curve's $G'$ is the commitment to a
-//!    scalar-field polynomial on the nested curve, which it does not
-//!    reach, so it needs the same mechanism on the nested side. Waits on
-//!    #944 and a nested counterpart.
+//! 2. **The nested curve's $G'$ is unbound.** The nested curve's IPA
+//!    takes $G' = \langle s, G \rangle$ as a witness point, so as the
+//!    circuits stand its final check binds nothing: a prover who chooses
+//!    $G'$ satisfies it for any left-hand side, and only that check holds
+//!    the nested reduction's claimed openings to the committed
+//!    polynomials. The host curve's $G'$ is bound, as *The step binding*
+//!    describes; the nested curve's is the commitment to a scalar-field
+//!    polynomial on the nested curve, which a step's output slots cannot
+//!    hold. It takes the same mechanism over the step's online polynomial
+//!    of that field ([`Profile::ONLINE_FQ_POLYS`](crate::profile::Profile::ONLINE_FQ_POLYS)):
+//!    the decompression step commits the nested IPA's $s(X)$ there before
+//!    $w$, the scalar-field side holds the value the nested `compute_v`
+//!    opens to $s$ at that point, and the circuit-field side holds its
+//!    $G'$ to the commitment.
 //!
 //! The two are independent and land in either order; the aggregator's
 //! proofs are sound against a dishonest prover once both have.
