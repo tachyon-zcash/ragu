@@ -307,16 +307,35 @@ def tracked(root, revision, timeout=GIT_TIMEOUT):
         yield mode, oid, None if size == "-" else int(size), os.fsdecode(path)
 
 
+def regular(path, size, executable):
+    """Read a regular file of `size` bytes with this executable bit, else None."""
+    # Opening neither blocks on a FIFO nor follows a final symlink.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != size or bool(info.st_mode & stat.S_IXUSR) != executable:
+            return None
+        data = b""
+        while len(data) <= size and (chunk := os.read(descriptor, size + 1 - len(data))):
+            data += chunk
+        return data
+    finally:
+        os.close(descriptor)
+
+
 def unchanged(root, source, revision, timeout=GIT_TIMEOUT):
     """Whether `source` still holds every tracked file of `revision`.
 
-    Git never runs in `source`: the review sandbox can write there, and Git runs
-    configuration it finds in a nested repository. Objects come from the
-    controller's repository, and paths are not followed through symlinks.
-    Untracked files are ignored, as by `git diff`. A file whose size differs from
-    its blob's is never read, and `timeout` bounds the whole comparison.
+    The sandbox keeps a session from writing its checkout, and this confirms it
+    held. Git never runs in `source`, since Git runs configuration it finds in a
+    nested repository. Objects come from the controller's repository, and paths
+    are not followed through symlinks. Untracked files are ignored, as by
+    `git diff`. A file whose size differs from its blob's is never read, and
+    `timeout` bounds the whole comparison.
     """
     deadline = time.monotonic() + timeout
+    if source.is_symlink():
+        return False
     source = source.resolve()
     for mode, oid, size, name in tracked(root, revision, timeout):
         if time.monotonic() > deadline:
@@ -328,18 +347,12 @@ def unchanged(root, source, revision, timeout=GIT_TIMEOUT):
             if mode == "120000" and stat.S_ISLNK(os.lstat(path).st_mode):
                 data = os.fsencode(os.readlink(path))
             elif mode in ("100644", "100755"):
-                # Opening neither blocks on a FIFO nor follows a final symlink.
-                with open(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
-                    info = os.fstat(stream.fileno())
-                    if not stat.S_ISREG(info.st_mode) or info.st_size != size \
-                            or bool(info.st_mode & stat.S_IXUSR) != (mode == "100755"):
-                        return False
-                    data = stream.read(size + 1)
+                data = regular(path, size, mode == "100755")
             else:
                 return False
-        except OSError:
+        except (OSError, RuntimeError):  # Before Python 3.13 a symlink loop is a RuntimeError.
             return False
-        if len(data) != size:
+        if data is None or len(data) != size:
             return False
         blob = hashlib.new({40: "sha1", 64: "sha256"}[len(oid)], b"blob %d\0" % size)
         blob.update(data)
@@ -367,6 +380,20 @@ def prepare(root, run, work):
     (info / "attributes").write_text("* -text -ident -filter !working-tree-encoding\n")
     for skill in ROLES:
         git(root, "worktree", "add", "--detach", str(work / skill), run["head"])
+    # No session can write its checkout, but a tracked symlink leaving it names
+    # files one can, such as the Cargo home: PR code could then swap what a
+    # reviewer reads there. Resolve on disk, since a target can leave through
+    # another symlink without naming a parent directory.
+    checkout = (work / ROLES[0]).resolve()
+    for mode, _, _, name in tracked(root, run["head"]):
+        if mode != "120000":
+            continue
+        try:
+            inside = (checkout / name).resolve().is_relative_to(checkout)
+        except (OSError, RuntimeError):  # Before Python 3.13 a symlink loop is a RuntimeError.
+            inside = False
+        if not inside:
+            raise ValueError("head contains a symlink leaving its checkout")
     return merge_base
 
 
@@ -420,14 +447,17 @@ def settings(root, source, work, out, private, plugin, scratch):
         deny_read.append(str(out / "core-findings.json"))
     protected = [root, root / ".git", out, private, plugin, work / "control", state, scratch / source.name / "shared-temp"]
     protected += peer_scratch + shared_scratch()
-    protected += [work / skill for skill in ROLES if work / skill != source]
+    # No session can write a checkout, its own included. What a reviewer reads
+    # there stays the pinned head throughout, and PR code can neither stage a
+    # change and undo it before the final comparison nor plant files to build.
+    protected += [source] + [work / skill for skill in ROLES if work / skill != source]
     protected += [work / skill / ".git" for skill in ROLES]
     protected += [work / skill / ".claude" for skill in ROLES]
     cargo = cargo_home(work)
     protected += [cargo / name for name in ("bin", "config", "config.toml", ".mcp.json", ".claude")]
     readonly = source.name == RECONCILER
     if readonly:
-        protected += [source, cargo]
+        protected.append(cargo)
     deny = [f"Read(/{path}{suffix})" for path in deny_read for suffix in ("", "/**")]
     deny += [f"{tool}(/{path}{suffix})" for path in protected for tool in ("Write", "Edit") for suffix in ("", "/**")]
     return {
@@ -446,7 +476,7 @@ def settings(root, source, work, out, private, plugin, scratch):
             "filesystem": {
                 "denyRead": deny_read,
                 "denyWrite": [str(path) for path in protected],
-                "allowWrite": ([str(source), str(cargo)] if not readonly else []) + [str(scratch / source.name)],
+                "allowWrite": ([] if readonly else [str(cargo)]) + [str(scratch / source.name)],
             },
             "network": {
                 "allowedDomains": ["crates.io", "*.crates.io", "index.crates.io", "static.rust-lang.org", "github.com", "*.githubusercontent.com"],
@@ -468,6 +498,8 @@ def environment(run, work, skill, scratch):
         "CLAUDE_CODE_TMPDIR": str(scratch / skill),
         "TMPDIR": str(scratch / skill),
         "CARGO_HOME": str(cargo_home(work)),
+        # The checkout is read-only, so builds go to the session's scratch.
+        "CARGO_TARGET_DIR": str(scratch / skill / "target"),
         # Builds are rare and short-lived; a floor of two jobs keeps a specialist
         # from compiling on one core, and dropping debuginfo speeds every build.
         "CARGO_BUILD_JOBS": str(max(2, (os.cpu_count() or 1) // workers)),
@@ -511,6 +543,9 @@ and .claude/review-shared directories.
 Use CARGO_HOME at {cargo_home(source.parent)}; do not replace it or copy
 authentication configuration. Use inherited TMPDIR and CARGO_BUILD_JOBS for
 scratch work and concurrent builds; shared temporary directories are blocked.
+The checkout is read-only, so what you read there is the pinned head, and Cargo
+builds into the inherited CARGO_TARGET_DIR. To try a change, copy the files you
+need under TMPDIR and edit the copy.
 The sandbox allowlist permits Cargo downloads and GitHub. Do not supply
 per-command allowed_domains or ask to widen permissions.
 

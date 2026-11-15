@@ -341,8 +341,13 @@ class RunnerTests(unittest.TestCase):
             scratch = self.work / "scratch"
             settings = runner.settings(self.root, source, self.work, self.out, self.private, self.work / "trusted-plugin", scratch)
             filesystem = settings["sandbox"]["filesystem"]
-            self.assertIn(str(source), filesystem["allowWrite"])
-            self.assertNotIn(str(source), filesystem["denyWrite"])
+            # A session cannot write its own checkout either; builds go to its scratch.
+            self.assertNotIn(str(source), filesystem["allowWrite"])
+            self.assertIn(str(source), filesystem["denyWrite"])
+            self.assertIn(f"Edit(/{source}/**)", settings["permissions"]["deny"])
+            self.assertIn(str(scratch / skill), filesystem["allowWrite"])
+            target = Path(runner.environment(self.run, self.work, skill, scratch)["CARGO_TARGET_DIR"])
+            self.assertTrue(target.is_relative_to(scratch / skill))
             self.assertNotIn(str(self.work / "claude" / skill), filesystem["denyRead"])
             self.assertNotIn(str(self.out / "code-review.md"), filesystem["denyRead"])
             for peer in runner.SKILLS:
@@ -558,6 +563,15 @@ class SourceTests(unittest.TestCase):
         self.git("worktree", "add", "-q", "--detach", str(path), "HEAD")
         return path
 
+    def prepare(self, name):
+        """Prepare the review worktrees of the current commit without fetching it."""
+        head = self.git("rev-parse", "HEAD")
+        real = runner.git
+        offline = lambda root, *args, **kwargs: "" if args[0] == "fetch" else real(root, *args, **kwargs)
+        with patch.object(runner, "git", side_effect=offline):
+            runner.prepare(self.root, {"configuration": head, "base": head, "head": head}, self.base / name)
+        return self.base / name
+
     def test_tracked_files_must_match_the_pinned_head(self):
         def retype(path):
             (path / "link").unlink()
@@ -572,6 +586,15 @@ class SourceTests(unittest.TestCase):
             (path / "a.rs").unlink()
             os.mkfifo(path / "a.rs")
 
+        def alias(path):
+            (path / "copy.rs").write_text("fn a() {}\n")
+            (path / "a.rs").unlink()
+            (path / "a.rs").symlink_to("copy.rs")
+
+        def directory(path):
+            (path / "a.rs").unlink()
+            (path / "a.rs").mkdir()
+
         head = self.git("rev-parse", "HEAD")
         source = self.worktree("intact")
         self.assertTrue(runner.unchanged(self.root, source, head))
@@ -582,12 +605,16 @@ class SourceTests(unittest.TestCase):
                               ("mode", lambda path: (path / "bin/run.sh").chmod(0o644)),
                               ("deletion", lambda path: (path / "crates/x/lib.rs").unlink()),
                               ("type", retype), ("leading symlink", relink), ("fifo", fifo),
+                              ("symlink to a copy", alias), ("directory", directory),
                               # Reading a terabyte-long sparse file would exhaust the controller.
                               ("sparse", lambda path: os.truncate(path / "a.rs", 1 << 40))):
             with self.subTest(change=change):
                 source = self.worktree(change.replace(" ", "-"))
                 apply(source)
                 self.assertFalse(runner.unchanged(self.root, source, head))
+        # A checkout reached through a symlink is not the one that was prepared.
+        (self.base / "alias").symlink_to(self.base / "work/intact")
+        self.assertFalse(runner.unchanged(self.root, self.base / "alias", head))
 
     def test_head_attributes_cannot_convert_the_checkout(self):
         (self.root / "id.rs").write_text("// $Id$\n")
@@ -598,20 +625,33 @@ class SourceTests(unittest.TestCase):
         head = self.git("rev-parse", "HEAD")
         # A plain checkout converts files, which then differ from their blobs.
         self.assertFalse(runner.unchanged(self.root, self.worktree("plain"), head))
-        real = runner.git
-        offline = lambda root, *args, **kwargs: "" if args[0] == "fetch" else real(root, *args, **kwargs)
-        with patch.object(runner, "git", side_effect=offline):
-            runner.prepare(self.root, {"configuration": head, "base": head, "head": head}, self.base / "work")
+        work = self.prepare("prepared")
         for skill in runner.ROLES:
             with self.subTest(skill=skill):
-                self.assertTrue(runner.unchanged(self.root, self.base / "work" / skill, head))
+                self.assertTrue(runner.unchanged(self.root, work / skill, head))
+
+    def test_head_symlinks_must_stay_inside_the_checkout(self):
+        # `up` is the checkout itself, so a target through it leaves without naming a parent.
+        (self.root / "crates/x/up").symlink_to("../..")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "inside")
+        self.prepare("inside")
+        for case, target in (("absolute", "/etc/hosts"), ("relative", "../cargo/registry/lib.rs"),
+                             ("chained", "crates/x/up/../cargo/registry/lib.rs")):
+            with self.subTest(target=target):
+                (self.root / "escape").symlink_to(target)
+                self.git("add", "-A")
+                self.git("commit", "-qm", case)
+                with self.assertRaisesRegex(ValueError, "symlink leaving"):
+                    self.prepare(case)
+                (self.root / "escape").unlink()
 
     def test_repository_planted_at_a_gitlink_never_runs(self):
         self.git("update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},crates/vendor/sub")
         self.git("commit", "-qm", "gitlink")
         head = self.git("rev-parse", "HEAD")
         source = self.worktree("code-review")
-        # What a build script in the review sandbox can write under its worktree.
+        # What a build script could plant if the sandbox let it write its worktree.
         planted, marker = source / "target/.g", self.base / "escaped"
         for name in ("objects", "refs"):
             (planted / name).mkdir(parents=True)
@@ -622,10 +662,8 @@ class SourceTests(unittest.TestCase):
 
         self.assertFalse(runner.unchanged(self.root, source, head))
         self.assertFalse(marker.exists())
-        real = runner.git
-        offline = lambda root, *args, **kwargs: "" if args[0] == "fetch" else real(root, *args, **kwargs)
-        with patch.object(runner, "git", side_effect=offline), self.assertRaisesRegex(ValueError, "gitlink"):
-            runner.prepare(self.root, {"configuration": head, "base": head, "head": head}, self.base / "pending")
+        with self.assertRaisesRegex(ValueError, "gitlink"):
+            self.prepare("pending")
         self.assertFalse((self.base / "pending").exists())
         self.assertFalse(marker.exists())
         # Diffing the worktree, as the controller once did, runs the planted hook.
