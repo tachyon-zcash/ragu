@@ -314,8 +314,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // Fresh eval-stage blindings each attempt: re-deriving the eval
                 // commitment is what makes `pre_beta` independent across
                 // retries.
-                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) = self
+                    .sample_eval_commitment(
+                        rng,
+                        &eval_witness,
+                        &nested_eval,
+                        ragu_primitives::vec::FixedVec::from_fn(|_| {
+                            builder.native_private_stage_commitment(2)
+                        }),
+                    )?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -384,6 +391,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_points_ab: builder.native_points_ab_commitment(),
         };
         let nested_query_witness = nested::stages::query::Witness {
+            private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                builder.native_private_stage_commitment(1)
+            }),
             native_query: builder.native_query_commitment(),
             registry_xy: builder.native_registry_xy_commitment(),
             nested: nested_query,
@@ -393,6 +403,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_points_f: builder.native_points_f_commitment(),
         };
         let nested_eval_witness = nested::stages::eval::Witness {
+            private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                builder.native_private_stage_commitment(2)
+            }),
             native_eval: builder.native_eval_commitment(),
             nested: nested_eval,
         };

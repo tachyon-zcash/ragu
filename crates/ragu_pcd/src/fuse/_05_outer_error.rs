@@ -382,6 +382,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         &preamble.left.nested_instance(),
                         &left_unified,
                         &preamble.left.private,
+                        &ky::native_private_stages::<C::Profile, _>(|index| {
+                            preamble.left[index].clone()
+                        }),
                     )?;
                 let (right_compute_v, right_private_helper) =
                     ky::nested_private_ky::<_, _, C::Profile>(
@@ -390,6 +393,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         &preamble.right.nested_instance(),
                         &right_unified,
                         &preamble.right.private,
+                        &ky::native_private_stages::<C::Profile, _>(|index| {
+                            preamble.right[index].clone()
+                        }),
                     )?;
                 let ky_source = nested::claims::TwoProofKySource::new(
                     dr,

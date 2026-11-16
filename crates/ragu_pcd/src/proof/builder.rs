@@ -425,6 +425,14 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         point
     }
 
+    /// Native private stage commitment fixed at its transcript deadline.
+    pub(crate) fn native_private_stage_commitment(&self, index: usize) -> C::HostCurve {
+        self.native_private.as_ref().map_or_else(
+            || self.native_extension_stage_commitments()[index],
+            |state| state.stage_commitment(index),
+        )
+    }
+
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {

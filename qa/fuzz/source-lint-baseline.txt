@@ -28,7 +28,7 @@ RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|254|Save behavior is selected
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|257|Pending-value count is structural sponge state, not a circuit witness.
 RAGU005|crates/ragu_primitives/src/poseidon/mod.rs|325|ALPHA is a type-level permutation parameter and unsupported values panic before synthesis.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|276|The profile's extension is a constant of the profile: without a statement circuit nothing is computed and the value is absent, with one the same gates run for every proof.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|245|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
+RAGU005|crates/ragu_pcd/src/internal/ky.rs|251|Whether a profile's extension binds, and so has points, is a constant of the profile: without one nothing is computed and the value is absent, with one the same gates run for every proof.
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|241|A second opening of the same slot is a structural API misuse by the step: which slots a step opens is fixed by its circuit, not by witness values.
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|283|Which output slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are held to one.
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|299|Which slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are opened at zeta.
@@ -37,6 +37,7 @@ RAGU005|src/mock/step/oracles.rs|137|Per-slot occupancy follows prior structural
 RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|198|Wire counts are checked against the setup-fixed layout before synthesis; a mismatch is an API error, not a witness-dependent circuit branch.
 RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|210|The opening descriptor is fixed by the profile at setup; it selects a constant, challenge wire or staged point without inspecting witness values.
 RAGU005|crates/ragu_primitives/src/conditional_point.rs|74|The type-level PointEncoding policy is fixed at setup: finite encodings already guarantee a nonidentity point, while complete encodings require the checked finite endpoint conversion.
-RAGU005|crates/ragu_pcd/src/internal/ky.rs|495|The profile fixes whether the private batch exists at setup; inactive profiles reuse the unified target without adding gates, and active profiles always synthesize both targets.
+RAGU005|crates/ragu_pcd/src/internal/ky.rs|504|The profile fixes whether the private batch exists at setup; inactive profiles reuse the unified target without adding gates, and active profiles always synthesize both targets.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|245|The profile fixes whether private commitment exports exist at setup; an empty layout reuses its unified target, and an active layout always exports every declared point.
 RAGU005|crates/ragu_pcd/src/internal/native/stages/preamble.rs|211|The profile fixes whether the native private helper exists at setup; inactive profiles have no helper target, and active profiles always synthesize the same challenge, sum and commitment target.
+RAGU005|crates/ragu_pcd/src/internal/ky.rs|516|The profile fixes whether the nested helper exists: native-only layouts still export stage points from compute-v and then omit only the absent helper target.

@@ -167,6 +167,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
+        private_stage: ragu_primitives::vec::FixedVec<
+            C::HostCurve,
+            crate::profile::online::stages::Present<
+                C::Profile,
+                crate::profile::online::stages::Native,
+                1,
+            >,
+        >,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
@@ -182,6 +190,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::eval::Witness {
+                private_stage,
                 native_eval: native_eval_commitment,
                 nested: nested_eval.clone(),
             },

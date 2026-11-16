@@ -199,6 +199,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let (compute_v, private_helper) = proof_check!(ky::nested_private_ky_of::<C>(
                 &proof_check!(pcd.proof().nested_instance()),
                 &proof_check!(pcd.proof().nested_private_values()),
+                &ky::native_private_stages::<C::Profile, _>(|index| pcd
+                    .proof()
+                    .native_rx_commitment(index)),
                 y_nested,
             ));
             let ky_source = ky::NestedKy {

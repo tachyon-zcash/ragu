@@ -513,6 +513,9 @@ impl<C: ProfiledCycle> Instance<C> {
         let (compute_v, private_helper) = ky::nested_private_ky_of::<C>(
             &self.nested_unified(challenges)?,
             &ky::nested_private_values::<C>(challenges, &self.nested_private_sums)?,
+            &ky::native_private_stages::<C::Profile, _>(|index| {
+                self.native_commitment(native::RxComponent::Rx(index))
+            }),
             nested_y,
         )?;
         let nested = NestedKy {

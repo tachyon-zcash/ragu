@@ -1473,6 +1473,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::query::Witness {
+                    private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                        builder.native_private_stage_commitment(1)
+                    }),
                     native_query: builder.native_query_commitment(),
                     registry_xy: builder.native_registry_xy_commitment(),
                     nested: nested::stages::query::Evaluations::zero(),
@@ -1498,6 +1501,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::eval::Witness {
+                    private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                        builder.native_private_stage_commitment(2)
+                    }),
                     native_eval: builder.native_eval_commitment(),
                     nested: nested::stages::eval::Evaluations::zero(),
                 },
@@ -1627,6 +1633,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::preamble::Witness {
+                    private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                        builder.native_private_stage_commitment(0)
+                    }),
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
                     native_points_preamble: builder.native_points_preamble_commitment(),

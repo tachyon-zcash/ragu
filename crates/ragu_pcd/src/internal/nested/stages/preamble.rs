@@ -40,6 +40,7 @@ use crate::{
 /// $a$, $b$, `registry_xy` and $P$, and its exported online commitments.
 pub fn num_points<P: Profile>() -> usize {
     3 + NUM_ONLINE_FP_POLYS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_FP_POLYS)
+        + <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len()
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -203,6 +204,11 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
 
 /// Witness data for the preamble bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
+    /// This boundary's native private stage commitment.
+    pub private_stage: FixedVec<
+        C,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
+    >,
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
     /// Commitment of the native points binding stage, fixed here before
@@ -489,6 +495,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The native private stage fixed by this bridge's transcript commitment.
+    #[ragu(gadget)]
+    pub private_stage: FixedVec<
+        Point<'dr, D, C>,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
+    >,
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
@@ -538,6 +550,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         Ok(Output {
+            private_stage: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.private_stage[i]))
+            })?,
             native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
             native_points_binding: Point::alloc(
                 dr,

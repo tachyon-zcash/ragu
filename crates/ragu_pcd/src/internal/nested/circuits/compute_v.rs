@@ -93,6 +93,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Lifted w, alpha and beta, then the helper's quotient and evaluation sums.
     #[ragu(gadget)]
     pub private: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    /// The native private Input, Query and Eval commitments at their deadlines.
+    #[ragu(gadget)]
+    pub private_stages: FixedVec<
+        ragu_primitives::Point<'dr, D, C>,
+        Present<P, crate::profile::online::stages::Native, 3>,
+    >,
 }
 
 /// Circuit computing the nested batch evaluation $v_n$.
@@ -239,6 +245,11 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             Output {
                 unified: output,
                 private,
+                private_stages: FixedVec::from_fn(|i| match i {
+                    0 => stages.preamble.private_stage[0].clone(),
+                    1 => stages.query.private_stage[0].clone(),
+                    _ => stages.eval.private_stage[0].clone(),
+                }),
             },
             instance,
         ))
