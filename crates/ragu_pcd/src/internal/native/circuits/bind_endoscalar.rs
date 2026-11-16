@@ -31,11 +31,12 @@ use ragu_circuits::{
 use ragu_core::{
     Cycle, Result,
     drivers::{Driver, DriverValue},
-    gadgets::{Bound, Gadget as _},
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, allocator::Standard,
+    CompletePoint, Element, Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar,
+    WithSuffix, allocator::Standard, io::Write, vec::FixedVec,
 };
 
 use super::super::{
@@ -45,7 +46,20 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::profile::ProfiledCycle;
+use crate::profile::{
+    Profile, ProfiledCycle,
+    online::stages::{Nested, PolynomialsLen},
+};
+
+/// The unified instance followed by the actual nested private walk points.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
+    #[ragu(gadget)]
+    pub unified: unified::Output<'dr, D, C>,
+    #[ragu(gadget)]
+    pub private_points:
+        FixedVec<CompletePoint<'dr, D, C::NestedCurve>, PolynomialsLen<C::Profile, Nested>>,
+}
 
 /// Circuit binding the walk stage's endoscalar bits to `pre_beta`, the
 /// points stages to the curve and the persistent polynomial commitments
@@ -76,7 +90,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
     type Last = WalkStage<C::NestedCurve, C::Profile>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = Witness<'source, C>;
-    type Output = unified::InternalOutputKind<C>;
+    type Output = Kind![C::CircuitField; WithSuffix<'_, _, Output<'_, _, C>>];
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -111,7 +125,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         // Enforced: every point the walk consumes lies on the curve.
         let inputs = witness.as_ref().map(|w| w.inputs);
         let _ = binding.enforced(dr, inputs.as_ref().map(|i| &i.binding))?;
-        let _ = preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
+        let preamble = preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
         let _ = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
         let ab = ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.enforced(dr, inputs.as_ref().map(|i| &i.f))?;
@@ -143,7 +157,22 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .receive(dr, allocator)?;
         f.registry_xy.enforce_equal(dr, &registry_xy)?;
 
-        let (output, aux) = unified_output.finish(dr, allocator)?;
-        Ok(WithAux::new(output, aux))
+        let private_points = FixedVec::from_fn(|i| {
+            preamble.online_fq[C::Profile::ONLINE_FQ_POLYS + i]
+                .complete()
+                .clone()
+        });
+        let zero = Element::zero(dr);
+        let (unified, aux) = unified_output.finish_no_suffix(dr, allocator)?;
+        Ok(WithAux::new(
+            WithSuffix::new(
+                Output {
+                    unified,
+                    private_points,
+                },
+                zero,
+            ),
+            aux,
+        ))
     }
 }

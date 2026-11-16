@@ -1212,6 +1212,10 @@ fn test_extension_claims_follow_the_declaration() {
             [50, 51].into_iter()
         }
 
+        fn bind_endoscalar_ky(&self) -> impl Iterator<Item = u32> {
+            [80, 81].into_iter()
+        }
+
         fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [40, 41].into_iter()
         }
@@ -1240,6 +1244,7 @@ fn test_extension_claims_follow_the_declaration() {
     let steps = native::NumSteps::<Wider>::len();
     assert_eq!(ones, 2 * (steps + extension.circuits.len()));
     let first_one = targets.iter().position(|&ky| ky == 1).unwrap();
+    assert_eq!(&targets[first_one - 2..first_one], &[80, 81]);
     assert!(
         targets[first_one..first_one + ones]
             .iter()

@@ -47,10 +47,10 @@ const NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V: usize = 2;
 
 /// Number of circuits using unified $k(y)$ in [`build`] after
 /// [`compute_v`]: the [`NUM_BINDERS`] `bind_challenges` circuits,
-/// `bind_beta` and `bind_endoscalar`.
+/// and `bind_beta`; `bind_endoscalar` exports its own point target.
 ///
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
-const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 2 + NUM_BINDERS;
+const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 1 + NUM_BINDERS;
 
 /// The points stages the walk's inputs are committed in, in chain order.
 const POINTS_INPUT_STAGES: [RxIndex; 5] = [
@@ -455,6 +455,9 @@ pub trait KySource {
     /// instance followed by the step's online openings.
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
+    /// The unified instance followed by actual nested private walk points.
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// Base iterator over unified $k(y)$ values.
     ///
     /// Will be repeated [`NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V`] times,
@@ -505,6 +508,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V).flatten())
         .chain(source.compute_v_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V).flatten())
+        .chain(source.bind_endoscalar_ky())
         .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
         .chain({
             let extension = crate::profile::native_extension::<P>();
@@ -541,6 +545,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_compute_v_bridge: Element<'dr, D>,
     pub right_compute_v_bridge: Element<'dr, D>,
+    pub left_bind_endoscalar: Element<'dr, D>,
+    pub right_bind_endoscalar: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
     pub left_statement: Option<Element<'dr, D>>,
@@ -566,10 +572,14 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_statement: Option<Element<'dr, D>>,
         left_binding: Option<Element<'dr, D>>,
         right_binding: Option<Element<'dr, D>>,
+        left_bind_endoscalar: Element<'dr, D>,
+        right_bind_endoscalar: Element<'dr, D>,
     ) -> Self {
         Self {
             left_raw_c,
             right_raw_c,
+            left_bind_endoscalar,
+            right_bind_endoscalar,
             left_app: left_ky.application.clone(),
             right_app: right_ky.application.clone(),
             left_bridge: left_ky.unified_bridge.clone(),
@@ -605,6 +615,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
         once(self.left_compute_v_bridge.clone()).chain(once(self.right_compute_v_bridge.clone()))
+    }
+
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_bind_endoscalar.clone()).chain(once(self.right_bind_endoscalar.clone()))
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

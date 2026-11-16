@@ -219,6 +219,13 @@ fn application() -> Result<App> {
 fn verify(app: &App, pcd: &Pcd<C, Rk, ()>, rng: &mut StdRng, expected: bool) -> Result<()> {
     assert_eq!(app.verify_uncompressed(pcd, &mut *rng)?, expected);
     let compressed = app.compress(pcd, rng)?;
+    let bytes = compressed
+        .proof()
+        .to_bytes()
+        .expect("encode private points");
+    let compressed = crate::CompressedProof::<C>::from_bytes(&bytes)
+        .expect("decode private points")
+        .carry::<()>(());
     assert_eq!(app.verify_compressed(&compressed)?, expected);
     Ok(())
 }
@@ -239,6 +246,19 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
         .carry::<()>(());
     verify(&app, &decoded, &mut rng, true)?;
 
+    assert!(child.proof().nested_private_commitments[1].is_identity());
+    for i in 0..2 {
+        let mut proof = child.proof().clone();
+        proof.nested_private_commitments[i] = if i == 0 {
+            -proof.nested_private_commitments[0]
+        } else {
+            proof.nested_private_commitments[0]
+        };
+        let bad = proof.carry::<()>(());
+        verify(&app, &bad, &mut rng, false)?;
+        let (parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
+        verify(&app, &parent, &mut rng, false)?;
+    }
     for i in 0..2 {
         let mut proof = child.proof().clone();
         proof.nested_private_sums[i] += Fq::ONE;

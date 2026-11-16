@@ -58,7 +58,7 @@ use crate::{
     SelectableBackend,
     header::{Header, NUM_ONLINE_FP_POLYS},
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
 };
 
 pub(crate) mod batch;
@@ -118,6 +118,8 @@ impl<C: ProfiledCycle> CompressedProof<C> {
         }
         self.instance.native.len() == native_components::<C::Profile>().count()
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
+            && self.instance.nested_private_commitments.len()
+                == C::Profile::NESTED_ONLINE.polynomials.len()
             && self.instance.nested_private_sums.len()
                 == <crate::profile::online::stages::Present<
                     C::Profile,

@@ -276,6 +276,9 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
 
     pub(crate) native_private_sums: Option<[C::CircuitField; 2]>,
     pub(crate) nested_private_sums: Option<[C::ScalarField; 2]>,
+    // Explicit commitments for the synthetic bootstrap proof, which has no
+    // private prover state. Ordinary proofs retain their state's actual points.
+    pub(crate) dummy_nested_private_commitments: Option<Vec<C::NestedCurve>>,
 
     // The step's own online Fq polynomials, with their commitments cached.
     // The proof does not carry them: only this step's nested batch opens
@@ -462,6 +465,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             online_polynomials: None,
             native_private_sums: None,
             nested_private_sums: None,
+            dummy_nested_private_commitments: None,
             native_private: None,
             nested_private: None,
             online_fq_polynomials: None,
@@ -1252,6 +1256,15 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             circuit_id: take!(circuit_id),
             left_header: take!(left_header),
             right_header: take!(right_header),
+            nested_private_commitments: if C::Profile::NESTED_ONLINE.is_empty() {
+                Vec::new()
+            } else if let Some(state) = &self.nested_private {
+                state.commitments().to_vec()
+            } else {
+                self.dummy_nested_private_commitments
+                    .take()
+                    .expect("bootstrap private commitments must be set")
+            },
             nested_private_sums: if C::Profile::NESTED_ONLINE.is_empty() {
                 Vec::new()
             } else {

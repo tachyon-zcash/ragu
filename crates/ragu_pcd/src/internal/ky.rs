@@ -60,6 +60,8 @@ pub struct NativeKy<F> {
     /// The `compute_v` circuit's $k(y)$, over the unified instance and the
     /// online openings.
     pub compute_v_bridge: F,
+    /// Bind-endoscalar exports the actual private nested commitment points.
+    pub bind_endoscalar: F,
     /// The application circuit's $k(y)$.
     pub application: F,
     /// The statement circuit's $k(y)$, for a profile whose native extension
@@ -87,6 +89,10 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
 
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = F> {
         once(self.compute_v_bridge)
+    }
+
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = F> {
+        once(self.bind_endoscalar)
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
@@ -312,6 +318,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             private_stages.as_ref().map(|p| p.as_slice()),
         )?;
         let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &private_stages)?;
+        let bind_endoscalar = proof_inputs.bind_endoscalar_ky(dr, &y, &unified)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
@@ -321,6 +328,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             compute_v_bridge: *compute_v_bridge.value().take(),
+            bind_endoscalar: *bind_endoscalar.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
@@ -375,6 +383,8 @@ pub struct NativeParts<'a, C: Cycle> {
     pub nested_bound: &'a [C::NestedCurve],
     /// The actual nested private stages, for the compute-v transcript-copy target.
     pub nested_private_stages: &'a [C::NestedCurve],
+    /// Common targets for the private nested walk points.
+    pub nested_private_commitments: &'a [C::NestedCurve],
 }
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
@@ -395,6 +405,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.online),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
+            parts.as_ref().map(|p| p.nested_private_commitments),
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
@@ -403,6 +414,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.nested_private_stages),
         )?;
         let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &private_stages)?;
+        let bind_endoscalar = proof_inputs.bind_endoscalar_ky(dr, &y, &unified)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();
@@ -412,6 +424,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             unified: *unified.value().take(),
             unified_bridge: *unified_bridge.value().take(),
             compute_v_bridge: *compute_v_bridge.value().take(),
+            bind_endoscalar: *bind_endoscalar.value().take(),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),

@@ -213,6 +213,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) right_header: Vec<C::CircuitField>,
     /// Private nested quotient and evaluation sums, empty for an inactive layout.
     pub(crate) nested_private_sums: Vec<C::ScalarField>,
+    /// Common claim targets for the actual nested private/auxiliary walk points.
+    pub(crate) nested_private_commitments: Vec<C::NestedCurve>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -412,6 +414,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
 
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
+            && self.nested_private_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
             && self.nested_private_sums.len()
                 == crate::profile::online::stages::Present::<
                     C::Profile,
@@ -1249,6 +1252,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Bootstrap bypasses the synthetic child's circuit claims.
         if !C::Profile::NESTED_ONLINE.is_empty() {
             builder.nested_private_sums = Some([C::ScalarField::ZERO; 2]);
+            builder.dummy_nested_private_commitments = Some(
+                alloc::vec![C::NestedCurve::identity(); C::Profile::NESTED_ONLINE.polynomials.len()],
+            );
         }
 
         builder.set_circuit_id(CircuitIndex::new(0));

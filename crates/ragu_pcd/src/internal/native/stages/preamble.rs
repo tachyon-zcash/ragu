@@ -85,8 +85,12 @@ pub struct ChildHeaders<'dr, D: Driver<'dr>, const HEADER_SIZE: usize> {
 
 /// Processed inputs from a single child proof in the preamble stage.
 #[derive(Gadget, Consistent)]
-pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
-{
+pub struct ProofInputs<
+    'dr,
+    D: Driver<'dr>,
+    C: ProfiledCycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+> {
     /// Headers this child proof claimed for its own children.
     #[ragu(gadget)]
     pub children: ChildHeaders<'dr, D, HEADER_SIZE>,
@@ -98,13 +102,22 @@ pub struct ProofInputs<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const
     /// k(y) targets, binding the application's queries to the proved openings.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
+    /// The child's common targets for its actual nested private walk points.
+    #[ragu(gadget)]
+    pub private_points: FixedVec<
+        ragu_primitives::CompletePoint<'dr, D, C::NestedCurve>,
+        crate::profile::online::stages::PolynomialsLen<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+        >,
+    >,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SIZE: usize>
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
     /// Compute unified k(y) and unified+bridged k(y) values simultaneously,
@@ -178,6 +191,24 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         ky.finish_ky(dr)
     }
 
+    /// The actual nested private commitments exported by bind_endoscalar.
+    pub fn bind_endoscalar_ky(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+        unified_ky: &Element<'dr, D>,
+    ) -> Result<Element<'dr, D>> {
+        // Setup-fixed empty layouts preserve the existing unified target.
+        if C::Profile::NESTED_ONLINE.is_empty() {
+            return Ok(unified_ky.clone());
+        }
+        let mut ky = Horner::new(y);
+        self.unified.write(dr, &mut ky)?;
+        self.private_points.write(dr, &mut ky)?;
+        Element::zero(dr).write(dr, &mut ky)?;
+        ky.finish_ky(dr)
+    }
+
     /// The statement circuit's $k(y)$ for this child, when profile `P`'s
     /// native extension has one: the $k(y)$ of the header the extension
     /// verified, followed by the zero the circuit's slot appends to its
@@ -238,7 +269,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     }
 }
 
-impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usize>
+impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SIZE: usize>
     ProofInputs<'dr, D, C, HEADER_SIZE>
 {
     /// Allocate ProofInputs from a proof reference and pre-computed output header.
@@ -279,6 +310,12 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
                 allocator,
                 proof.as_ref().map(|p| p.online_openings()),
             )?,
+            private_points: FixedVec::try_from_fn(|i| {
+                ragu_primitives::CompletePoint::alloc(
+                    dr,
+                    proof.as_ref().map(|p| p.nested_private_commitments[i]),
+                )
+            })?,
             circuit_id: Element::alloc(
                 dr,
                 allocator,
@@ -291,6 +328,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// Allocate ProofInputs from the parts a proof's instance carries: the
     /// child headers, the encoded output header, the online openings, the
     /// circuit id as its domain point, and the unified instance's values.
+    #[allow(clippy::too_many_arguments)]
     pub fn alloc_from_parts(
         dr: &mut D,
         left_header: DriverValue<D, &[D::F]>,
@@ -299,6 +337,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         online: DriverValue<D, &online::Queries<D::F>>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
+        private_points: DriverValue<D, &[C::NestedCurve]>,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
@@ -324,6 +363,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
             },
             output_header: alloc_header(dr, output_header)?,
             online: online::alloc_queries(dr, &mut (), online)?,
+            private_points: FixedVec::try_from_fn(|i| {
+                ragu_primitives::CompletePoint::alloc(dr, private_points.as_ref().map(|p| p[i]))
+            })?,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
         })
@@ -357,14 +399,19 @@ pub fn encode_output_header<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_S
 /// This is stage communication data, not part of the circuit's public instance.
 /// The verifier never sees these values directly.
 #[derive(Gadget, Consistent)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<
+    'dr,
+    D: Driver<'dr>,
+    C: ProfiledCycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+> {
     #[ragu(gadget)]
     pub left: ProofInputs<'dr, D, C, HEADER_SIZE>,
     #[ragu(gadget)]
     pub right: ProofInputs<'dr, D, C, HEADER_SIZE>,
 }
 
-impl<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize>
+impl<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>
     Output<'dr, D, C, HEADER_SIZE>
 {
     /// Returns true when the current step declared [`Dummy`] for both of its
@@ -400,7 +447,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     fn values() -> usize {
         // 2 proofs * (3 headers * HEADER_SIZE + the online openings + 1
         // circuit_id + unified instance wires)
-        2 * (3 * HEADER_SIZE + 2 * online::NUM_ONLINE_FP_QUERIES + 1 + unified::NUM_WIRES)
+        2 * (3 * HEADER_SIZE
+            + 2 * online::NUM_ONLINE_FP_QUERIES
+            + 1
+            + unified::NUM_WIRES
+            + 2 * C::Profile::NESTED_ONLINE.polynomials.len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

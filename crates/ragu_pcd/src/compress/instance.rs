@@ -98,6 +98,8 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_v: C::ScalarField,
     /// The private nested helper's two sums, absent for an inactive layout.
     pub nested_private_sums: Vec<C::ScalarField>,
+    /// The private/auxiliary points exported by bind_endoscalar.
+    pub nested_private_commitments: Vec<C::NestedCurve>,
 
     /// The wires the decider reads off the preamble and eval stages.
     pub left: Child<C::CircuitField>,
@@ -221,6 +223,7 @@ impl<C: ProfiledCycle> Instance<C> {
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
             nested_private_sums: proof.nested_private_sums.clone(),
+            nested_private_commitments: proof.nested_private_commitments.clone(),
             left: Child {
                 x: lx,
                 y: ly,
@@ -302,6 +305,15 @@ impl<C: ProfiledCycle> Instance<C> {
             host.write_scalar(scalar)?;
         }
 
+        // Private commitments admit the identity, encoded as (0, 0). These
+        // coordinates are also the bind_endoscalar common claim target.
+        for point in &self.nested_private_commitments {
+            let (x, y) = point
+                .coordinates()
+                .unwrap_or((C::CircuitField::ZERO, C::CircuitField::ZERO));
+            host.write_scalar(x)?;
+            host.write_scalar(y)?;
+        }
         let mut nested = transcript.nested();
         for &point in self.nested.iter().chain([
             &self.nested_registry_xy,
@@ -483,6 +495,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     unified: &unified,
                     nested_bound: &nested_bound,
                     nested_private_stages: &nested_private_stages,
+                    nested_private_commitments: &self.nested_private_commitments,
                 },
                 y,
             )?
