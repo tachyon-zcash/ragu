@@ -32,8 +32,7 @@
 //!    give $E_q$ points, with coordinates in $\mathbb{F}_q$, which the
 //!    circuit-field transcript cannot absorb.
 //! 2. Bridge stage: a nested stage, an $\mathbb{F}_q\[X\]$ polynomial, holds
-//!    those $E_q$ points, and in some bridges $\mathbb{F}_q$ values beside
-//!    them.
+//!    those $E_q$ points, along with any other $\mathbb{F}_q$ values.
 //! 3. Bridge commitment: that stage committed on $E_p$ gives an $E_p$ point,
 //!    with coordinates in $\mathbb{F}_p$, which the transcript absorbs.
 //!
@@ -43,15 +42,15 @@
 //! A **points** stage holds the other side's batch commitments for this
 //! side's endoscaling walk to fold into that batch's $P$.
 //!
-//! | stage         | stage polynomial                        | direction                    |
+//! | stages        | stage polynomial                        | direction                    |
 //! |---------------|-----------------------------------------|------------------------------|
 //! | bridge        | $\mathbb{F}_q\[X\]$, committed on $E_p$ | native → **nested** → native |
 //! | native points | $\mathbb{F}_p\[X\]$, committed on $E_q$ | nested → **native**          |
 //! | nested points | $\mathbb{F}_q\[X\]$, committed on $E_p$ | native → **nested**          |
 //!
-//! The bold hop is where the stage lives.
+//! In the direction column, the bold hop is the side the stage lives on.
 //!
-//! | stage         | holds                      | purpose               | how it's bound        |
+//! | stages        | holds                      | purpose               | how it's bound        |
 //! |---------------|----------------------------|-----------------------|-----------------------|
 //! | bridge        | host points + scalars      | transcript absorption | transcript absorbs it |
 //! | native points | nested points + endoscalar | native walk, bindings | a bridge carries it   |
