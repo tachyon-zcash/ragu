@@ -46,8 +46,8 @@ fn ordinary<C: ProfiledCycle, R: Rank>(label: &str, proof: &Proof<C, R>) {
 
 fn compressed<C: ProfiledCycle, R: Rank>(profile: &str, label: &str, proof: &CompressedProof<C>) {
     let bytes = proof.to_bytes().expect("compressed proof encodes");
-    let polynomials =
-        Shape::of::<C::Profile>().polynomials() + ragu_pcd::header::NUM_ONLINE_FP_POLYS;
+    let shape = Shape::of::<C::Profile>();
+    let polynomials = shape.polynomials() + ragu_pcd::header::NUM_ONLINE_FP_POLYS + shape.online_fq;
     let points = polynomials + 4 * R::RANK as usize + 13;
     // The envelope and circuit index occupy 32 bytes; remaining fields
     // are canonical 32-byte Pasta points and scalars.
