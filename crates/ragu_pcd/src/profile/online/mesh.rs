@@ -44,6 +44,53 @@ pub struct Mesh {
     pub outgoing: usize,
 }
 impl Mesh {
+    /// Early coordinates followed by one value for each mesh intersection.
+    pub fn claims_len(&self) -> usize {
+        self.coordinate_indices().len() + self.restrictions().count() + self.helpers.len() + 1
+    }
+
+    /// Selects the committed wires shared by the helper and terminal targets.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid layout or a witness with the wrong fixed lengths.
+    pub fn claim_values<T: Clone>(
+        &self,
+        layout: Layout,
+        inputs: &[T],
+        values: &[T],
+    ) -> Result<alloc::vec::Vec<T>> {
+        if inputs.len() != layout.inputs || values.len() != layout.values {
+            return Err(Error::InvalidWitness(
+                "mesh witness length does not match its layout".into(),
+            ));
+        }
+        Ok(self
+            .coordinate_indices()
+            .into_iter()
+            .map(|i| inputs[i].clone())
+            .chain(
+                self.edges(layout)?
+                    .into_iter()
+                    .map(|edge| values[edge[0].value].clone()),
+            )
+            .collect())
+    }
+
+    /// The two children's coordinates from the common helper metadata.
+    ///
+    /// The caller must supply `claims_len()` values from a checked layout.
+    pub(crate) fn inherited_values<T: Clone>(&self, values: &[T]) -> [T; 4] {
+        let indices = self.coordinate_indices();
+        self.inherited_coordinates().map(|i| {
+            values[indices
+                .iter()
+                .position(|&j| j == i)
+                .expect("inherited coordinate")]
+            .clone()
+        })
+    }
+
     /// Every pre-w restriction, with inherited entries first.
     pub fn restrictions(&self) -> impl Iterator<Item = &Restriction> {
         self.inherited.iter().chain(self.introduced)

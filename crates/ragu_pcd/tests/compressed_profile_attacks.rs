@@ -255,6 +255,8 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         bridge_alpha: nested.bridge_alpha,
         nested_c: nested.nested_c,
         nested_v: nested.nested_v,
+        native_mesh: native.native_mesh.clone(),
+        nested_mesh: nested.nested_mesh.clone(),
         nested_private_sums: nested.nested_private_sums.clone(),
         native_private_sums: native.native_private_sums.clone(),
         nested_private_commitments: nested.nested_private_commitments.clone(),

@@ -97,8 +97,12 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_c: C::ScalarField,
     pub nested_v: C::ScalarField,
     /// The private nested helper's two sums, absent for an inactive layout.
+    /// Common source-mesh coordinates and shared intersection values.
+    pub nested_mesh: Vec<C::ScalarField>,
     pub nested_private_sums: Vec<C::ScalarField>,
     /// Native helper quotient and evaluation sums, absent when inactive.
+    /// Common source-mesh coordinates and shared intersection values.
+    pub native_mesh: Vec<C::CircuitField>,
     pub native_private_sums: Vec<C::CircuitField>,
     /// The private/auxiliary points exported by bind_endoscalar.
     pub nested_private_commitments: Vec<C::NestedCurve>,
@@ -226,7 +230,9 @@ impl<C: ProfiledCycle> Instance<C> {
             v: proof.v(),
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
+            nested_mesh: proof.nested_mesh.clone(),
             nested_private_sums: proof.nested_private_sums.clone(),
+            native_mesh: proof.native_mesh.clone(),
             native_private_sums: proof.native_private_sums.clone(),
             nested_private_commitments: proof.nested_private_commitments.clone(),
             native_private_commitments: proof.native_private_commitments.clone(),
@@ -279,7 +285,7 @@ impl<C: ProfiledCycle> Instance<C> {
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
         let mut host = transcript.host();
-        for &sum in &self.native_private_sums {
+        for &sum in self.native_mesh.iter().chain(&self.native_private_sums) {
             host.write_scalar(sum)?;
         }
         host.write_scalar(self.circuit_id.omega_j())?;
@@ -354,7 +360,7 @@ impl<C: ProfiledCycle> Instance<C> {
             transcript.write_private_scalar(x)?;
             transcript.write_private_scalar(y)?;
         }
-        for &sum in &self.nested_private_sums {
+        for &sum in self.nested_mesh.iter().chain(&self.nested_private_sums) {
             transcript.write_private_scalar(sum)?;
         }
         Ok(())
@@ -515,6 +521,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     nested_private_stages: &nested_private_stages,
                     nested_private_commitments: &self.nested_private_commitments,
                     native_private_sums: &self.native_private_sums,
+                    native_mesh: &self.native_mesh,
                 },
                 y,
             )?
@@ -529,6 +536,7 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(native::RxComponent::Rx(index))
             }),
             &self.native_private_commitments,
+            &self.nested_mesh,
             nested_y,
         )?;
         let nested = NestedKy {

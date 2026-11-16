@@ -212,8 +212,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
     /// Private nested quotient and evaluation sums, empty for an inactive layout.
+    /// Common source-mesh coordinates and shared intersection values.
+    pub(crate) nested_mesh: Vec<C::ScalarField>,
     pub(crate) nested_private_sums: Vec<C::ScalarField>,
     /// Private native quotient and evaluation sums, empty for an inactive layout.
+    /// Common source-mesh coordinates and shared intersection values.
+    pub(crate) native_mesh: Vec<C::CircuitField>,
     pub(crate) native_private_sums: Vec<C::CircuitField>,
     /// Common claim targets for the actual nested private/auxiliary walk points.
     pub(crate) nested_private_commitments: Vec<C::NestedCurve>,
@@ -426,6 +430,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.right_header.len() == HEADER_SIZE
             && self.native_source_out.len() == usize::from(C::Profile::NATIVE_MESH.is_some())
             && self.nested_source_out.len() == usize::from(C::Profile::NESTED_MESH.is_some())
+            && self.native_mesh.len() == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.nested_mesh.len() == C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len())
             && self.native_private_commitments.len() == C::Profile::NATIVE_ONLINE.polynomials.len()
             && self.nested_private_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
             && self.native_private_sums.len()
@@ -1684,6 +1690,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_online_commitments: builder.online_commitments(),
                 private_points: FixedVec::from_fn(|i| builder.native_private_commitment(i)),
                 stashed_application_stage: builder.native_application_stage_commitment(),
+                mesh: FixedVec::from_fn(|i| {
+                    if i < C::Profile::NESTED_MESH
+                        .expect("mesh values only when declared")
+                        .coordinate_indices()
+                        .len()
+                    {
+                        nested_one
+                    } else {
+                        C::ScalarField::ZERO
+                    }
+                }),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
                 private: FixedVec::from_fn(|i| {

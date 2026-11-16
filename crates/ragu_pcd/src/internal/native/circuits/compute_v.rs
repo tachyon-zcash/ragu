@@ -120,6 +120,18 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
         Element<'dr, D>,
         crate::profile::online::stages::PhaseCoordinatesLen<C::Profile, Nested, 3>,
     >,
+    /// Actual child coordinates, bound to this step's inherited mesh inputs.
+    #[ragu(gadget)]
+    pub inherited_coordinates: FixedVec<
+        Element<'dr, D>,
+        crate::profile::online::stages::MeshPresent<C::Profile, Native, 4>,
+    >,
+    /// Actual child outgoing points, bound to this step's inherited nested walk slots.
+    #[ragu(gadget)]
+    pub inherited_points: FixedVec<
+        ragu_primitives::CompletePoint<'dr, D, C::NestedCurve>,
+        crate::profile::online::stages::MeshPresent<C::Profile, Nested, 2>,
+    >,
 }
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
@@ -347,6 +359,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             private_sums,
             private_stages,
             private_auxiliaries: query.private_auxiliaries,
+            inherited_coordinates: FixedVec::from_fn(|i| {
+                [
+                    &preamble.left.unified.x,
+                    &preamble.left.unified.y,
+                    &preamble.right.unified.x,
+                    &preamble.right.unified.y,
+                ][i]
+                    .clone()
+            }),
+            inherited_points: FixedVec::from_fn(|i| {
+                [&preamble.left, &preamble.right][i].private_points
+                    [C::Profile::NESTED_MESH.expect("mesh present").outgoing]
+                    .clone()
+            }),
         };
         let zero = Element::zero(dr);
         Ok(WithAux::new(WithSuffix::new(output, zero), aux))

@@ -39,6 +39,8 @@ pub struct Instance<F, P: Profile, S: Side> {
     pub sums: [F; 2],
     /// The opposite field's pre-w polynomial commitments, as canonical coordinates.
     pub foreign: FixedVec<F, ForeignLen<P, S>>,
+    /// Early coordinates and shared edge values, in the mesh's fixed order.
+    pub mesh: FixedVec<F, super::stages::MeshClaimsLen<P, S>>,
 }
 
 /// The helper's public output, before the extension's zero suffix.
@@ -53,6 +55,9 @@ pub struct Output<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     /// The same commitment coordinates that private consumers read before w.
     #[ragu(gadget)]
     pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
+    /// The same early coordinates and intersection wires used by consumers.
+    #[ragu(gadget)]
+    pub mesh: FixedVec<Element<'dr, D>, super::stages::MeshClaimsLen<P, S>>,
 }
 
 /// The three committed stage witnesses and the authenticated challenge inputs.
@@ -118,10 +123,14 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
         let foreign = FixedVec::try_from_fn(|i| {
             Element::alloc(dr, &mut (), instance.as_ref().map(|v| v.foreign[i]))
         })?;
+        let mesh = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|v| v.mesh[i]))
+        })?;
         Ok(Output {
             challenges,
             sums,
             foreign,
+            mesh,
         })
     }
 
@@ -176,6 +185,12 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
             u: public[4].clone(),
             beta,
         };
+        let mesh = if let Some(mesh) = S::mesh::<P>() {
+            mesh.claim_values(S::layout::<P>(), &inputs.values, &query.values)?
+        } else {
+            alloc::vec::Vec::new()
+        }
+        .try_into()?;
         let query = Queries {
             inputs: inputs.values.to_vec(),
             points: query.points.to_vec(),
@@ -189,6 +204,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
                 challenges: public,
                 sums,
                 foreign: inputs.foreign,
+                mesh,
             },
             values,
         ))

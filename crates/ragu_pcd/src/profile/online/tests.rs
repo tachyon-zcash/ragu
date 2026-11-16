@@ -373,6 +373,7 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
     };
     let private = [13, 17, 19, 23, 29].map(Fq::from);
     let helper = circuit::Instance::<_, NestedOnly, S> {
+        mesh: FixedVec::new(vec![])?,
         challenges: Challenges {
             w: private[0],
             y: unified.y,
@@ -400,8 +401,10 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
             &private,
             &[],
             &[],
+            &[],
         )?;
         let output = nested::circuits::compute_v::Output::<_, C, NestedOnly> {
+            inherited_coordinates: FixedVec::new(vec![])?,
             unified: unified.clone(),
             private: private.clone(),
             private_stages: FixedVec::from_fn(|_| unreachable!()),
@@ -434,6 +437,7 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
                 &unified,
                 &unified_ky,
                 &corrupt,
+                &[],
                 &[],
                 &[],
             )?;
@@ -598,6 +602,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
     let sums = [Fp::from(101), Fp::from(103)];
     let (px, py) = EpAffine::generator().coordinates().unwrap();
     let helper = circuit::Instance::<_, Batched, S> {
+        mesh: FixedVec::new(vec![])?,
         challenges: Challenges {
             w: unified.w,
             y: unified.y,
@@ -636,6 +641,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 unified.as_ref(),
                 points.as_ref().map(|p| p.as_slice()),
                 sums.as_ref().map(|s| s.as_slice()),
+                sums.as_ref().map(|s| &s[..0]),
             )?;
             let stages =
                 FixedVec::<_, stages::Present<Batched, stages::Nested, 3>>::try_from_fn(|i| {
@@ -646,6 +652,8 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
             let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky)?;
             let output = native::circuits::compute_v::Output::<_, C> {
+                inherited_coordinates: FixedVec::new(vec![])?,
+                inherited_points: FixedVec::new(vec![])?,
                 private_auxiliaries: FixedVec::from_fn(|_| {
                     unreachable!("no later auxiliary phase")
                 }),
@@ -807,9 +815,11 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
             &[],
             &stages,
             &private_points,
+            &[],
         )?;
         assert!(helper.is_none());
         let output = nested::circuits::compute_v::Output::<_, C, P> {
+            inherited_coordinates: FixedVec::new(vec![])?,
             unified: unified.clone(),
             private: FixedVec::from_fn(|_| unreachable!()),
             private_stages: stages.clone(),
@@ -829,6 +839,7 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
                 &[],
                 &corrupt,
                 &private_points,
+                &[],
             )?;
             assert!(helper.is_none());
             assert_ne!(target.value().take(), changed.value().take());
@@ -859,6 +870,7 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
     };
     let private = [13, 17, 19, 23, 29].map(Fq::from);
     let helper = circuit::Instance::<_, P, S> {
+        mesh: FixedVec::new(vec![])?,
         challenges: Challenges {
             w: private[0],
             y: unified.y,
@@ -896,8 +908,10 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
                 &private,
                 &private_stages,
                 &points,
+                &[],
             )?;
             let output = nested::circuits::compute_v::Output::<_, C, P> {
+                inherited_coordinates: FixedVec::new(vec![])?,
                 unified: unified.clone(),
                 private: private.clone(),
                 private_stages: private_stages.clone(),
@@ -927,6 +941,7 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
                 &private,
                 &private_stages,
                 &changed,
+                &[],
             )?;
             assert_ne!(target.value().take(), corrupt.value().take());
             assert_ne!(
@@ -1155,6 +1170,10 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
                 ProductionRank,
             >>::rx(F::ZERO, &eval)?);
             let instance = circuit::Instance {
+                mesh: S::mesh::<SourceMesh>()
+                    .unwrap()
+                    .claim_values(S::layout::<SourceMesh>(), &inputs.values, &query.values)?
+                    .try_into()?,
                 challenges: Challenges {
                     w: F::from(5),
                     y: F::from(7),
@@ -1176,6 +1195,17 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
                     tag == 23,
                     "source tag {tag}"
                 );
+                if tag == 23 {
+                    for i in 0..instance.mesh.len() {
+                        let mut altered = instance.clone();
+                        altered.mesh[i] += F::ONE;
+                        assert_ne!(
+                            assignment.revdot(&rhs),
+                            helper.ky(&altered, y)?,
+                            "unbound mesh metadata {i}"
+                        );
+                    }
+                }
             }
         }
         let registry = |tag| {

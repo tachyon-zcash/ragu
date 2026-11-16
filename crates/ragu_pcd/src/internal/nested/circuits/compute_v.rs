@@ -105,6 +105,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
         ragu_primitives::CompletePoint<'dr, D, C>,
         crate::profile::online::stages::PolynomialsLen<P, crate::profile::online::stages::Native>,
     >,
+    /// Actual child coordinates, bound to this step's inherited nested mesh inputs.
+    #[ragu(gadget)]
+    pub inherited_coordinates:
+        FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshPresent<P, Nested, 4>>,
 }
 
 /// Circuit computing the nested batch evaluation $v_n$.
@@ -142,6 +146,18 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (dr, stages) = common::load_all(dr, &witness)?;
 
+        if let Some(mesh) = P::NATIVE_MESH {
+            for (restriction, child) in mesh
+                .inherited
+                .iter()
+                .zip([&stages.preamble.left, &stages.preamble.right])
+            {
+                let own = stages.preamble.private_points[restriction.polynomial].coordinates();
+                let inherited = child.private_points[mesh.outgoing].coordinates();
+                own.0.enforce_equal(dr, inherited.0)?;
+                own.1.enforce_equal(dr, inherited.1)?;
+            }
+        }
         let allocator = &mut Standard::new();
         let private_sums = FixedVec::<_, Present<P, Nested, 2>>::try_from_fn(|i| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_sums[i]))
@@ -249,6 +265,15 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         });
         Ok(WithAux::new(
             Output {
+                inherited_coordinates: FixedVec::from_fn(|i| {
+                    [
+                        &stages.preamble.left.nested.x,
+                        &stages.preamble.left.nested.y,
+                        &stages.preamble.right.nested.x,
+                        &stages.preamble.right.nested.y,
+                    ][i]
+                        .clone()
+                }),
                 unified: output,
                 private,
                 private_points: stages

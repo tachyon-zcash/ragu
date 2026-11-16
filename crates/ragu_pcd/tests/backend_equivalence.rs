@@ -618,6 +618,8 @@ fn check_compressed_proofs_match(
         nested_v: _,
         nested_private_sums: _,
         native_private_sums: _,
+        native_mesh: _,
+        nested_mesh: _,
         nested_private_commitments: _,
         native_private_commitments: _,
         left: Child { x: _, y: _, id: _ },
@@ -1323,6 +1325,8 @@ mod proof_equivalence {
                 right_header: _,
                 nested_private_sums: _,
                 native_private_sums: _,
+                native_mesh: _,
+                nested_mesh: _,
                 native_source_out: _,
                 nested_source_out: _,
                 nested_private_commitments: _,
@@ -1442,6 +1446,9 @@ mod proof_equivalence {
                 || !extension_eq(&self.nested_source_out, &other.nested_source_out)
             {
                 return Some("retained source restrictions");
+            }
+            if self.native_mesh != other.native_mesh || self.nested_mesh != other.nested_mesh {
+                return Some("source mesh metadata");
             }
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");

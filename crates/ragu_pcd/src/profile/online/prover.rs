@@ -254,6 +254,14 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         Ok((registry.assemble(&trace, index, rng)?, sums))
     }
 
+    /// Common targets read from the already committed stage witnesses.
+    pub(crate) fn mesh_claims(&self) -> Result<Vec<C::Scalar>> {
+        S::mesh::<P>().map_or_else(
+            || Ok(Vec::new()),
+            |mesh| mesh.claim_values(S::layout::<P>(), self.early_values(), &self.query().values),
+        )
+    }
+
     pub(crate) fn take_stages(&mut self) -> Vec<sparse::Polynomial<C::Scalar, R>> {
         self.stages
             .iter_mut()

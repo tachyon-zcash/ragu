@@ -1397,12 +1397,32 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                     .take()
                     .expect("bootstrap private commitments must be set")
             },
+            native_mesh: if let Some(state) = &self.native_private {
+                state.mesh_claims()?
+            } else if let Some(mesh) = C::Profile::NATIVE_MESH {
+                let mut values = alloc::vec![C::CircuitField::ZERO;mesh.claims_len()];
+                values[..mesh.coordinate_indices().len()].fill(C::CircuitField::ONE);
+                values
+            } else {
+                Vec::new()
+            },
             native_private_sums: if C::Profile::NATIVE_ONLINE.is_empty() {
                 Vec::new()
             } else {
                 self.native_private_sums
                     .expect("native private helper sums must be set")
                     .to_vec()
+            },
+            nested_mesh: if let Some(state) = &self.nested_private {
+                state.mesh_claims()?
+            } else if let Some(mesh) = C::Profile::NESTED_MESH {
+                let mut values = alloc::vec![C::ScalarField::ZERO;mesh.claims_len()];
+                values[..mesh.coordinate_indices().len()].fill(
+                    crate::internal::nested::challenge::<C>(C::CircuitField::ONE)?,
+                );
+                values
+            } else {
+                Vec::new()
             },
             nested_private_sums: if C::Profile::NESTED_ONLINE.is_empty() {
                 Vec::new()

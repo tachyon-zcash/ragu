@@ -127,6 +127,8 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub nested: NestedValues<C::Base>,
     /// Lifted w, alpha, beta and the two private helper sums of this child.
     pub private: FixedVec<C::Base, Present<P, Nested, 5>>,
+    /// Common source-mesh coordinates and intersection values.
+    pub mesh: FixedVec<C::Base, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
     /// Common targets for the child's actual private native walk points.
     pub private_points: FixedVec<C, PolynomialsLen<P, Native>>,
 }
@@ -194,6 +196,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
             stashed_online_commitments: proof.online_commitments(),
             stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
+            mesh: proof.nested_mesh.clone().try_into()?,
             private: proof.nested_private_values()?.try_into()?,
             private_points: proof.native_private_commitments.clone().try_into()?,
             nested: NestedValues {
@@ -336,6 +339,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Public values shared by the child's compute-v and private helper claims.
     #[ragu(gadget)]
     pub private: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    /// Common source-mesh coordinates and intersection values.
+    #[ragu(gadget)]
+    pub mesh: FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
     /// Common targets for the child's private native commitments.
     #[ragu(gadget)]
     pub private_points: FixedVec<CompletePoint<'dr, D, C>, PolynomialsLen<P, Native>>,
@@ -484,6 +490,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 dr,
                 witness.as_ref().map(|w| w.stashed_application_stage),
             )?,
+            mesh: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.mesh[i]))
+            })?,
             private: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.private[i]))
             })?,
@@ -554,7 +563,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     fn values() -> usize {
         // (x, y) per point, then the five nested scalars of each child.
         num_points::<P>() * 2
-            + 2 * (5 + <Present<P, Nested, 5> as ragu_primitives::vec::Len>::len())
+            + 2 * (5
+                + <Present<P, Nested, 5> as ragu_primitives::vec::Len>::len()
+                + P::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

@@ -401,6 +401,7 @@ pub struct NativeParts<'a, C: Cycle> {
     pub nested_private_commitments: &'a [C::NestedCurve],
     /// Native private helper sums.
     pub native_private_sums: &'a [C::CircuitField],
+    pub native_mesh: &'a [C::CircuitField],
 }
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
@@ -423,6 +424,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.unified),
             parts.as_ref().map(|p| p.nested_private_commitments),
             parts.as_ref().map(|p| p.native_private_sums),
+            parts.as_ref().map(|p| p.native_mesh),
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
@@ -493,6 +495,7 @@ pub fn nested_private_values<C: ProfiledCycle>(
 /// helper exports those, the unified x, y and u, and the same two sums.
 /// Compute-v also exports the native private stage commitments, even when
 /// this profile has no nested helper.
+#[allow(clippy::too_many_arguments)]
 pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     dr: &mut D,
     y: &Element<'dr, D>,
@@ -501,6 +504,7 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     private: &[Element<'dr, D>],
     private_stages: &[Point<'dr, D, C>],
     private_points: &[ragu_primitives::CompletePoint<'dr, D, C>],
+    mesh_values: &[Element<'dr, D>],
 ) -> Result<(Element<'dr, D>, Option<Element<'dr, D>>)> {
     if P::NESTED_ONLINE.is_empty() && P::NATIVE_ONLINE.is_empty() {
         return Ok((unified_ky.clone(), None));
@@ -515,6 +519,11 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     }
     for point in private_points {
         GadgetExt::write(point, dr, &mut compute_v)?;
+    }
+    if let Some(mesh) = P::NESTED_MESH {
+        for value in mesh.inherited_values(mesh_values) {
+            value.write(dr, &mut compute_v)?;
+        }
     }
     let compute_v = compute_v.finish_ky(dr)?;
     if P::NESTED_ONLINE.is_empty() {
@@ -542,6 +551,9 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     ) {
         GadgetExt::write(point, dr, &mut helper)?;
     }
+    for value in mesh_values {
+        value.write(dr, &mut helper)?;
+    }
     Ok((compute_v, Some(finish_extension_ky(helper, dr)?)))
 }
 
@@ -551,12 +563,21 @@ pub fn nested_private_ky_of<C: ProfiledCycle>(
     private: &[C::ScalarField],
     private_stages: &[C::HostCurve],
     private_points: &[C::HostCurve],
+    mesh_values: &[C::ScalarField],
     y: C::ScalarField,
 ) -> Result<(C::ScalarField, Option<C::ScalarField>)> {
     Emulator::emulate_wireless(
-        (instance, private, private_stages, private_points, y),
+        (
+            instance,
+            private,
+            private_stages,
+            private_points,
+            mesh_values,
+            y,
+        ),
         |dr, witness| {
-            let (instance, private, private_stages, private_points, y) = witness.cast();
+            let (instance, private, private_stages, private_points, mesh_values, y) =
+                witness.cast();
             let y = Element::alloc(dr, &mut (), y)?;
             let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
             let private = (0..if C::Profile::NESTED_ONLINE.is_empty() {
@@ -585,6 +606,9 @@ pub fn nested_private_ky_of<C: ProfiledCycle>(
             >::try_from_fn(|i| {
                 ragu_primitives::CompletePoint::alloc(dr, private_points.as_ref().map(|p| p[i]))
             })?;
+            let mesh_values = (0..C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
+                .map(|i| Element::alloc(dr, &mut (), mesh_values.as_ref().map(|v| v[i])))
+                .collect::<Result<Vec<_>>>()?;
             let unified_ky = output.ky(dr, &y)?;
             let (compute_v, helper) = nested_private_ky::<_, _, C::Profile>(
                 dr,
@@ -594,6 +618,7 @@ pub fn nested_private_ky_of<C: ProfiledCycle>(
                 &private,
                 &private_stages,
                 &private_points,
+                &mesh_values,
             )?;
             Ok((
                 *compute_v.value().take(),

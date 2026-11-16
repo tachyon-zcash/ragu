@@ -116,6 +116,14 @@ impl<P: Profile, S: Side, const N: usize> Len for MeshPresent<P, S, N> {
     }
 }
 
+/// Number of common source-mesh coordinates and intersection values.
+pub struct MeshClaimsLen<P: Profile, S: Side>(PhantomData<(P, S)>);
+impl<P: Profile, S: Side> Len for MeshClaimsLen<P, S> {
+    fn len() -> usize {
+        S::mesh::<P>().map_or(0, |mesh| mesh.claims_len())
+    }
+}
+
 /// Number of polynomials at one commitment deadline.
 ///
 /// PHASE indexes Phase::ALL, from BeforeW (0) through BeforeAlpha (3).

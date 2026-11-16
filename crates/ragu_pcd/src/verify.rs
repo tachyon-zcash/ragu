@@ -203,6 +203,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     .proof()
                     .native_rx_commitment(index)),
                 &pcd.proof().native_private_commitments,
+                &pcd.proof().nested_mesh,
                 y_nested,
             ));
             let ky_source = ky::NestedKy {
