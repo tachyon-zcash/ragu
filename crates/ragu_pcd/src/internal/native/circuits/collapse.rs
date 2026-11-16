@@ -83,7 +83,7 @@ use super::super::{
 };
 use crate::{
     internal::{fold_revdot, ky},
-    profile::{Profile, ProfiledCycle},
+    profile::ProfiledCycle,
 };
 
 /// Circuit that verifies both layers of the revdot reduction.
@@ -161,7 +161,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // The binding stage is loaded, and so in the circuit's claim, only
         // for a profile whose native extension binds: the circuit reads
         // its extension points for the binding k(y) and nothing else.
-        let extension = C::Profile::native_extension();
+        let extension = crate::profile::native_extension::<C::Profile>();
         let (binding, builder) = if extension.binding.is_some() {
             let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
             (Some(binding), builder)

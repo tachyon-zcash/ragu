@@ -191,7 +191,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
         dr: &mut D,
         y: &Element<'dr, D>,
     ) -> Result<Option<Element<'dr, D>>> {
-        if P::native_extension().statement.is_none() {
+        if crate::profile::native_extension::<P>().statement.is_none() {
             return Ok(None);
         }
         let decompress = InternalStepIndex::Decompress.circuit_index::<P>()?;

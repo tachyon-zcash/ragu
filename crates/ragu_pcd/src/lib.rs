@@ -534,7 +534,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // The decompression step, for a profile whose extension verifies a
         // compressed proof: the one step whose output header is that
         // proof's statement (see `step::internal::decompress`).
-        if C::Profile::native_extension().statement.is_some() {
+        if crate::profile::native_extension::<C::Profile>()
+            .statement
+            .is_some()
+        {
             self =
                 self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
         }

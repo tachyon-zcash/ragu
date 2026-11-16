@@ -216,7 +216,7 @@ where
             // and PointsBinding for a profile whose native extension binds,
             // whose binding k(y) the circuit takes from that stage.
             CollapseCircuit => {
-                let bound = P::native_extension().binding.is_some();
+                let bound = crate::profile::native_extension::<P>().binding.is_some();
                 for ((((pc, pb), pre), em), en) in source
                     .rx(Rx(Collapse))
                     .zip(source.rx(Rx(PointsBinding)))
@@ -315,7 +315,7 @@ where
             // Its k(y) is 1, or the statement's for the statement circuit
             // (see `ky_values`).
             ExtensionCircuit(k) => {
-                let extension = P::native_extension();
+                let extension = crate::profile::native_extension::<P>();
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
                     extension.circuits[k as usize]
@@ -337,7 +337,7 @@ where
             // An extension bonding: a stage's mask over its rx, or a final
             // mask over its circuits' rxs
             ExtensionBonding(j) => {
-                let extension = P::native_extension();
+                let extension = crate::profile::native_extension::<P>();
                 if (j as usize) < extension.stages {
                     processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
@@ -500,7 +500,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V).flatten())
         .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
         .chain({
-            let extension = P::native_extension();
+            let extension = crate::profile::native_extension::<P>();
             let ones: Vec<S::Ky> = source.ones().collect();
             let statement: Vec<S::Ky> = source.statement_ky().collect();
             let binding: Vec<S::Ky> = source.binding_ky().collect();

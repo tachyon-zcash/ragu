@@ -170,7 +170,7 @@ where
             // An extension circuit: its rx and the extension stages it loads
             // (k(y) = 1).
             ExtensionCircuit(k) => {
-                let extension = P::nested_extension();
+                let extension = crate::profile::nested_extension::<P>();
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
                     extension.circuits[k as usize]
@@ -191,7 +191,7 @@ where
             // An extension bonding: a stage's mask over its rx, or a final
             // mask over its circuits' rxs.
             ExtensionBonding(j) => {
-                let extension = P::nested_extension();
+                let extension = crate::profile::nested_extension::<P>();
                 if (j as usize) < extension.stages {
                     processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
@@ -328,7 +328,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
         .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
         .chain({
-            let extension = P::nested_extension();
+            let extension = crate::profile::nested_extension::<P>();
             let ones: Vec<S::Ky> = source.ones().collect();
             let binding: Vec<S::Ky> = source.binding_ky().collect();
             assert!(

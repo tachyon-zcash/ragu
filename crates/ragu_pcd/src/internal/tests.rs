@@ -1251,7 +1251,7 @@ fn test_extension_claims_follow_the_declaration() {
     // circuits, after the walk's ones and before the stages' zeros.
     fn native_targets<P: Profile>() -> Vec<u32> {
         let steps = native::NumSteps::<P>::len();
-        let circuits = P::native_extension().circuits.len();
+        let circuits = crate::profile::native_extension::<P>().circuits.len();
         let targets: Vec<u32> = ky_values::<P, _>(&Tagged)
             .take(2 * InternalCircuitIndex::num::<P>() + 8)
             .collect();
@@ -1299,7 +1299,7 @@ fn test_extension_claims_follow_the_declaration() {
 
     fn nested_targets<P: Profile>() -> Vec<u32> {
         let steps = nested::NumSteps::<P>::len();
-        let circuits = P::nested_extension().circuits.len();
+        let circuits = crate::profile::nested_extension::<P>().circuits.len();
         let extension = 2 + 2 * steps + 2 * nested::NUM_INSTANCE_CIRCUITS;
         let targets: Vec<u32> = nested::claims::ky_values::<P, _>(&NestedTagged)
             .take(extension + 2 * circuits + 8)

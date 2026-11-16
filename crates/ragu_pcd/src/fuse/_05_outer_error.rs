@@ -37,7 +37,7 @@ use crate::{
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
-    profile::{Profile, ProfiledCycle},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
@@ -331,7 +331,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
                 // The binding circuit's k(y), over the children's native
                 // extension stages the bridge preamble holds.
-                let binding = C::Profile::nested_extension().binding;
+                let binding = crate::profile::nested_extension::<C::Profile>().binding;
                 let left_binding = ky::binding_ky(
                     dr,
                     &nested_y,

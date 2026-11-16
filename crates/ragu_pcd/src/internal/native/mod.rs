@@ -98,7 +98,7 @@ pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionCircuits<P> {
     fn len() -> usize {
-        P::native_extension().circuits.len()
+        crate::profile::native_extension::<P>().circuits.len()
     }
 }
 
@@ -107,7 +107,7 @@ pub struct NumExtensionStages<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionStages<P> {
     fn len() -> usize {
-        P::native_extension().stages
+        crate::profile::native_extension::<P>().stages
     }
 }
 
@@ -116,7 +116,7 @@ pub struct NumExtensionBondings<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionBondings<P> {
     fn len() -> usize {
-        P::native_extension().bondings()
+        crate::profile::native_extension::<P>().bondings()
     }
 }
 
@@ -352,14 +352,16 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_INTERNAL + NumSteps::<P>::len() + P::native_extension().internal()
+        NUM_FIXED_INTERNAL
+            + NumSteps::<P>::len()
+            + crate::profile::native_extension::<P>().internal()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
     /// profile's extension circuits after the walk and its bondings last.
     pub fn all<P: Profile>() -> Vec<Self> {
-        let extension = P::native_extension();
+        let extension = crate::profile::native_extension::<P>();
         let all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
@@ -689,14 +691,14 @@ impl RxIndex {
 
     /// The number of rx polynomial components in profile `P`.
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_RX + NumSteps::<P>::len() + P::NATIVE_EXTENSION
+        Shape::of::<P>().native_rx
     }
 
     /// All variants in canonical order, for profile `P`: [`ALL`](Self::ALL)
     /// with the walk resized to the profile's steps, then the profile's
     /// extension circuits' and stages' polynomials.
     pub fn all<P: Profile>() -> Vec<Self> {
-        let extension = P::native_extension();
+        let extension = crate::profile::native_extension::<P>();
         let all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
@@ -965,18 +967,31 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
-            ExtensionCircuit(k) => C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
-                k as usize,
-                CircuitSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
-            ExtensionBonding(j) => C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
-                j as usize,
-                BondingSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
+            ExtensionCircuit(k) => {
+                use crate::profile::online::{extension, stages::Native};
+                let slot = CircuitSlot::new(registry);
+                if Some(k) == extension::helper::<C::Profile, Native>() {
+                    extension::register_circuit::<_, R, C::Profile, Native>(slot)?
+                } else {
+                    C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
+                        k as usize, slot, params,
+                    )?
+                }
+                .into_registry()
+            }
+            ExtensionBonding(j) => {
+                use crate::profile::online::{extension, stages::Native};
+                let slot = BondingSlot::new(registry);
+                match extension::bonding::<_, R, C::Profile, Native>(j as usize)? {
+                    extension::Bonding::Private(mask) => slot.register(mask),
+                    extension::Bonding::User(index) => {
+                        C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
+                            index, slot, params,
+                        )?
+                    }
+                }
+                .into_registry()
+            }
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }

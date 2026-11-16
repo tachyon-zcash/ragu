@@ -397,8 +397,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
         let native_steps = native::NumSteps::<C::Profile>::len();
         let nested_steps = nested::NumSteps::<C::Profile>::len();
-        let native_extension = C::Profile::native_extension();
-        let nested_extension = C::Profile::nested_extension();
+        let native_extension = crate::profile::native_extension::<C::Profile>();
+        let nested_extension = crate::profile::nested_extension::<C::Profile>();
 
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
@@ -1273,7 +1273,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_endoscalar_rx(ones_host.clone());
         // The dummy carries the profile's extension polynomials as it does
         // the fuse's own circuits', as all-ones traces.
-        let extension = C::Profile::native_extension();
+        let extension = crate::profile::native_extension::<C::Profile>();
         builder.set_native_extension_circuit_rxs(vec![ones_host.clone(); extension.circuits.len()]);
         builder.set_native_extension_stage_rxs(vec![ones_host.clone(); extension.stages]);
 
@@ -1360,7 +1360,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         builder.set_nested_collapse_rx(ones_nested.clone());
         builder.set_nested_compute_v_rx(ones_nested.clone());
-        let extension = C::Profile::nested_extension();
+        let extension = crate::profile::nested_extension::<C::Profile>();
         builder
             .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
         builder.set_nested_extension_stage_rxs(vec![ones_nested; extension.stages]);

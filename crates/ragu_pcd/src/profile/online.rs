@@ -8,6 +8,7 @@ use ragu_core::{Error, Result};
 
 pub mod batch;
 pub mod circuit;
+pub(crate) mod extension;
 pub mod prepared;
 pub mod stages;
 

@@ -172,6 +172,15 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Nonempty declarations are rejected until the batch integration lands.
     const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
 
+    /// Native extension circuits that reserve the private input and query
+    /// stages before their own stages, indexed in `native_extension`.
+    /// A consumer's first own stage must have `online::stages::QueryStage`
+    /// as its parent. Circuits with no own stage end at that query stage.
+    const NATIVE_ONLINE_CONSUMERS: &'static [u32] = &[];
+
+    /// Nested counterpart of [`Self::NATIVE_ONLINE_CONSUMERS`].
+    const NESTED_ONLINE_CONSUMERS: &'static [u32] = &[];
+
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
     /// over the nested batch takes a step per so many points, so more per
@@ -436,8 +445,20 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 "only the native extension carries a statement circuit".into(),
             ));
         }
+        online::extension::check::<Self, online::stages::Native>()?;
+        online::extension::check::<Self, online::stages::Nested>()?;
         Ok(())
     }
+}
+
+/// The registered native extension, including the private batch helper.
+pub(crate) fn native_extension<P: Profile>() -> Extension {
+    online::extension::layout::<P, online::stages::Native>()
+}
+
+/// The registered nested extension, including the private batch helper.
+pub(crate) fn nested_extension<P: Profile>() -> Extension {
+    online::extension::layout::<P, online::stages::Nested>()
 }
 
 /// A registry slot a profile's circuit hook fills with one internal circuit.
@@ -964,8 +985,18 @@ impl Shape {
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
         Self::solve(
-            P::NATIVE_EXTENSION,
-            P::NESTED_EXTENSION,
+            P::NATIVE_EXTENSION
+                + if P::NATIVE_ONLINE.is_empty() {
+                    0
+                } else {
+                    online::extension::RXS
+                },
+            P::NESTED_EXTENSION
+                + if P::NESTED_ONLINE.is_empty() {
+                    0
+                } else {
+                    online::extension::RXS
+                },
             P::ONLINE_FQ_POLYS,
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,

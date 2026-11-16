@@ -194,7 +194,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // The binding circuit's k(y): the k(y) of the children's native
         // extension stages it names, as the bridge preamble holds them. A
         // profile without a binding computes nothing here.
-        let binding = P::nested_extension().binding;
+        let binding = crate::profile::nested_extension::<P>().binding;
         let left_binding = ky::binding_ky(
             dr,
             y,

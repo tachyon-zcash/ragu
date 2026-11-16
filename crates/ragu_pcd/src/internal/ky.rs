@@ -159,18 +159,20 @@ pub fn bound<T>(binding: Option<&Binding>, stage: impl Fn(u32) -> T) -> Vec<T> {
 /// recomputes: the nested extension stages its binding names, as
 /// `commitment` gives them.
 pub fn native_bound<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) -> Vec<T> {
-    bound(P::native_extension().binding.as_ref(), |j| {
-        commitment(nested::RxIndex::ExtensionStage(j))
-    })
+    bound(
+        crate::profile::native_extension::<P>().binding.as_ref(),
+        |j| commitment(nested::RxIndex::ExtensionStage(j)),
+    )
 }
 
 /// The commitments the nested binding circuit of a proof in profile `P`
 /// recomputes: the native extension stages its binding names, as
 /// `commitment` gives them.
 pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) -> Vec<T> {
-    bound(P::nested_extension().binding.as_ref(), |j| {
-        commitment(native::RxIndex::ExtensionStage(j))
-    })
+    bound(
+        crate::profile::nested_extension::<P>().binding.as_ref(),
+        |j| commitment(native::RxIndex::ExtensionStage(j)),
+    )
 }
 
 /// Finishes `ky`, the Horner evaluation of an extension circuit's public
