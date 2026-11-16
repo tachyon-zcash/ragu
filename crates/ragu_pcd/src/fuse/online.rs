@@ -20,7 +20,7 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    pub(super) fn prepare_private_inputs<RNG: CryptoRng>(
+    pub(crate) fn prepare_private_inputs<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
@@ -69,7 +69,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 
-    pub(super) fn prepare_private_phase(
+    pub(crate) fn prepare_private_phase(
         &self,
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
@@ -96,7 +96,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 
-    pub(super) fn prepare_private_queries<RNG: CryptoRng>(
+    pub(crate) fn prepare_private_queries<RNG: CryptoRng>(
         &self,
         challenges: PreparationChallenges<C::CircuitField>,
         rng: &mut RNG,
@@ -132,7 +132,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 
-    pub(super) fn prepare_private_evaluations<RNG: CryptoRng>(
+    pub(crate) fn prepare_private_evaluations<RNG: CryptoRng>(
         &self,
         u: C::CircuitField,
         rng: &mut RNG,

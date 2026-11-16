@@ -73,7 +73,7 @@
 use alloc::{format, string::String, vec::Vec};
 
 use ragu_circuits::{
-    Circuit,
+    Circuit, CircuitExt,
     polynomials::Rank,
     staging::{MultiStage, Stage, StageExt, stage_wire_indices, wires_of},
 };
@@ -443,6 +443,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
+        self.prepare_private_inputs(rng, &mut builder)?;
         let (preamble_witness, nested_preamble) =
             self.compute_preamble(rng, &left, &right, &mut builder)?;
         let bridge_preamble_commitment =
@@ -464,6 +465,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
+        use crate::profile::online::{Phase, batch::Challenges, prepared::PreparationChallenges};
+        let mut private_challenges = PreparationChallenges {
+            w: Some(*w.value().take()),
+            y: None,
+            x: None,
+        };
+        self.prepare_private_phase(Phase::BeforeY, private_challenges, &mut builder)?;
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
@@ -545,6 +553,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
 
+        private_challenges.y = Some(*y.value().take());
+        self.prepare_private_phase(Phase::BeforeX, private_challenges, &mut builder)?;
         self.compute_ab(
             rng,
             native_a,
@@ -560,6 +570,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
+        private_challenges.x = Some(*x.value().take());
+        self.prepare_private_phase(Phase::BeforeAlpha, private_challenges, &mut builder)?;
+        self.prepare_private_queries(private_challenges, rng, &mut builder)?;
         let (query_witness, nested_query) = self.compute_query(
             rng,
             &w,
@@ -595,6 +608,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
+        self.prepare_private_evaluations(*u.value().take(), rng, &mut builder)?;
         let bound_challenges =
             [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
@@ -663,6 +677,50 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_alpha(*alpha.value().take());
         builder.set_u(*u.value().take());
         builder.set_pre_beta(*pre_beta.element().value().take());
+
+        // Compute-v consumes the same helper sums as the real prover. Keep
+        // the committed stages in state for capture; no extension rx needs
+        // to be assembled for this visitor-only execution.
+        if let Some(state) = &builder.native_private {
+            let circuit = MultiStage::<C::CircuitField, R, _>::new(
+                crate::profile::online::circuit::Circuit::<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                >::default(),
+            );
+            builder.native_private_sums = Some(
+                circuit
+                    .trace(state.witness(Challenges {
+                        w: builder.w(),
+                        y: builder.y(),
+                        x: builder.x(),
+                        alpha: builder.alpha(),
+                        u: builder.u(),
+                        beta: builder.pre_beta(),
+                    }))?
+                    .into_aux(),
+            );
+        }
+        if let Some(state) = &builder.nested_private {
+            let circuit = MultiStage::<C::ScalarField, R, _>::new(
+                crate::profile::online::circuit::Circuit::<
+                    C::Profile,
+                    crate::profile::online::stages::Nested,
+                >::default(),
+            );
+            builder.nested_private_sums = Some(
+                circuit
+                    .trace(state.witness(Challenges {
+                        w: nested::challenge::<C>(builder.w())?,
+                        y: nested::challenge::<C>(builder.y())?,
+                        x: nested::challenge::<C>(builder.x())?,
+                        alpha: nested::challenge::<C>(builder.alpha())?,
+                        u: nested::challenge::<C>(builder.u())?,
+                        beta: nested::challenge::<C>(builder.pre_beta())?,
+                    }))?
+                    .into_aux(),
+            );
+        }
 
         // Rebuild the shared instance from the finished builder for each
         // circuit. Threading the accumulated coverage (as the prover does) is

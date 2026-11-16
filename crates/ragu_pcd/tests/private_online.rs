@@ -591,3 +591,75 @@ fn native_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(feature = "unstable-fuzzing")]
+mod capture {
+    use ragu_circuits::Circuit;
+    use ragu_testing::patcher::{capture_with_stage_values, constraints_hold, playback};
+
+    use super::*;
+    use crate::fuzzing::patcher::{
+        CircuitSpec, InternalCircuitVisitor, capture_internal_circuits,
+        capture_internal_circuits_bootstrap,
+    };
+    struct Visitor([usize; 2]);
+    impl<Cy: ProfiledCycle> InternalCircuitVisitor<Cy> for Visitor {
+        fn visit<'w, Cir: Circuit<Cy::CircuitField>>(
+            &mut self,
+            spec: &CircuitSpec,
+            circuit: &Cir,
+            stage_values: &[Cy::CircuitField],
+            make_witness: impl Fn() -> Result<Cir::Witness<'w>>,
+        ) -> Result<()> {
+            if spec.name == "compute_v" {
+                let capture = capture_with_stage_values(circuit, make_witness()?, stage_values)?;
+                assert!(constraints_hold(
+                    &capture.recorder.events,
+                    &capture.recorder.values
+                ));
+                assert!(playback(circuit, make_witness()?, capture.recorder.values)?);
+                self.0[0] += 1;
+            }
+            Ok(())
+        }
+        fn visit_nested<'w, Cir: Circuit<Cy::ScalarField>>(
+            &mut self,
+            spec: &CircuitSpec,
+            circuit: &Cir,
+            stage_values: &[Cy::ScalarField],
+            make_witness: impl Fn() -> Result<Cir::Witness<'w>>,
+        ) -> Result<()> {
+            if spec.name == "nested_compute_v" {
+                let capture = capture_with_stage_values(circuit, make_witness()?, stage_values)?;
+                assert!(constraints_hold(
+                    &capture.recorder.events,
+                    &capture.recorder.values
+                ));
+                assert!(playback(circuit, make_witness()?, capture.recorder.values)?);
+                self.0[1] += 1;
+            }
+            Ok(())
+        }
+    }
+    #[test]
+    fn both_private_compute_v_circuits_capture_and_replay() -> Result<()> {
+        let app = ApplicationBuilder::<Profiled<Pasta, NativeBatch<true>>, Rk, 2>::new()
+            .register(UnitStep)?
+            .finalize(crate::pasta::baked_aggregator())?;
+        let mut rng = StdRng::seed_from_u64(0x6163);
+        let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
+        let mut visitor = Visitor([0; 2]);
+        capture_internal_circuits(
+            &app,
+            &mut rng,
+            UnitStep,
+            (),
+            child.clone(),
+            child,
+            &mut visitor,
+        )?;
+        capture_internal_circuits_bootstrap(&app, &mut rng, &mut visitor)?;
+        assert_eq!(visitor.0, [2; 2]);
+        Ok(())
+    }
+}
