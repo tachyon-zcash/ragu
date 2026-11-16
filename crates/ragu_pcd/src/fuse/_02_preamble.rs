@@ -77,9 +77,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::preamble::Witness<C::HostCurve, C::Profile>> {
         let bridge_witness = nested::stages::preamble::Witness {
-            private_points: ragu_primitives::vec::FixedVec::from_fn(|i| {
-                builder.native_private_commitment(i)
-            }),
+            private_points: builder.native_private_phase::<0>(),
             private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
                 builder.native_private_stage_commitment(0)
             }),

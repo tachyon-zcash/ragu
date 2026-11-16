@@ -251,7 +251,16 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             Output {
                 unified: output,
                 private,
-                private_points: stages.preamble.private_points.clone(),
+                private_points: stages
+                    .preamble
+                    .private_points
+                    .iter()
+                    .chain(stages.s_prime.private_points.iter())
+                    .chain(stages.ab.private_points.iter())
+                    .chain(stages.query.private_points.iter())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .try_into()?,
                 private_stages: FixedVec::from_fn(|i| match i {
                     0 => stages.preamble.private_stage[0].clone(),
                     1 => stages.query.private_stage[0].clone(),

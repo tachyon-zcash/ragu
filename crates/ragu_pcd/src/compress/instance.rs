@@ -566,6 +566,12 @@ impl<C: ProfiledCycle> Instance<C> {
         let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested_stages::ab::Witness {
+                private_points: crate::profile::online::stages::phase_points::<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    2,
+                    _,
+                >(&self.native_private_commitments),
                 a: self.native_commitment(native::RxComponent::AbA),
                 b: self.native_commitment(native::RxComponent::AbB),
                 native_points_ab: self

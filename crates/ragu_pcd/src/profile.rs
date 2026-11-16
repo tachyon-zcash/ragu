@@ -163,13 +163,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Private native polynomial and opening declarations. The application
     /// slots are separate from this layout.
     ///
-    /// Nonempty declarations are rejected until the batch integration lands.
+    /// Commitments follow their declared private or auxiliary phases.
     const NATIVE_ONLINE: online::Layout = online::Layout::EMPTY;
 
     /// Private nested polynomial and opening declarations, independent of
     /// the native layout and of the legacy V5 slot.
     ///
-    /// Nonempty declarations are rejected until the batch integration lands.
+    /// Currently all nested commitments must be fixed before `w`.
     const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
 
     /// Native extension circuits that reserve the private input and query
@@ -601,14 +601,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
-        if Self::NATIVE_ONLINE
+        if Self::NESTED_ONLINE
             .polynomials
             .iter()
-            .chain(Self::NESTED_ONLINE.polynomials)
             .any(|&phase| phase != online::Phase::BeforeW)
         {
             return Err(Error::Initialization(
-                "later auxiliary phases are not integrated yet".into(),
+                "nested auxiliary phases are not integrated yet".into(),
             ));
         }
         // Each added step contributes two points to the other side's walk.

@@ -29,6 +29,16 @@ pub enum Phase {
     BeforeAlpha,
 }
 
+impl Phase {
+    /// The commitment deadlines in polynomial order.
+    pub const ALL: [Self; 4] = [
+        Self::BeforeW,
+        Self::BeforeY,
+        Self::BeforeX,
+        Self::BeforeAlpha,
+    ];
+}
+
 /// An enclosing-step challenge that can be an opening point.
 ///
 /// On the nested side these mean the prescribed nested lifts. The batch point
@@ -104,6 +114,15 @@ impl Layout {
         points: 0,
         values: 0,
     };
+
+    /// The distinct-polynomial indices committed at one deadline.
+    ///
+    /// Layout validation requires the polynomial list to follow phase order.
+    pub fn phase_range(&self, phase: Phase) -> core::ops::Range<usize> {
+        let start = self.polynomials.partition_point(|&p| p < phase);
+        let end = self.polynomials.partition_point(|&p| p <= phase);
+        start..end
+    }
 
     /// Whether this declaration adds nothing.
     pub const fn is_empty(&self) -> bool {

@@ -100,6 +100,24 @@ impl<P: Profile, S: Side> Len for PolynomialsLen<P, S> {
     }
 }
 
+/// Number of polynomials at one commitment deadline.
+///
+/// PHASE indexes Phase::ALL, from BeforeW (0) through BeforeAlpha (3).
+pub struct PhaseLen<P: Profile, S: Side, const PHASE: usize>(PhantomData<(P, S)>);
+impl<P: Profile, S: Side, const PHASE: usize> Len for PhaseLen<P, S, PHASE> {
+    fn len() -> usize {
+        S::layout::<P>().phase_range(super::Phase::ALL[PHASE]).len()
+    }
+}
+
+/// Selects a fixed phase from commitment-fold order, preserving identity points.
+pub(crate) fn phase_points<P: Profile, S: Side, const PHASE: usize, T: Clone>(
+    points: &[T],
+) -> FixedVec<T, PhaseLen<P, S, PHASE>> {
+    let start = S::layout::<P>().phase_range(super::Phase::ALL[PHASE]).start;
+    FixedVec::from_fn(|i| points[start + i].clone())
+}
+
 /// Coordinates of the other field's private commitments fixed before w.
 /// Each point occupies two wires, with the identity encoded as two zeroes.
 pub struct ForeignLen<P: Profile, S: Side>(PhantomData<(P, S)>);

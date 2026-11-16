@@ -381,16 +381,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
+            private_points: builder.native_private_phase::<1>(),
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {
+            private_points: builder.native_private_phase::<2>(),
             a: builder.native_a_commitment(),
             b: builder.native_b_commitment(),
             native_points_ab: builder.native_points_ab_commitment(),
         };
         let nested_query_witness = nested::stages::query::Witness {
+            private_points: builder.native_private_phase::<3>(),
             private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
                 builder.native_private_stage_commitment(1)
             }),

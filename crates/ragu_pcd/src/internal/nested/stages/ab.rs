@@ -11,16 +11,25 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Point, io::Write};
+use ragu_primitives::{
+    CompletePoint, Point,
+    io::Write,
+    vec::{FixedVec, Len},
+};
 use udon::curve::EndomorphismAffine as Affine;
 
-use crate::profile::Profile;
+use crate::profile::{
+    Profile,
+    online::stages::{Native, PhaseLen},
+};
 
 /// Number of curve points in this stage.
 const NUM: usize = 3;
 
 /// Witness data for this bridge stage.
-pub struct Witness<C: Affine> {
+pub struct Witness<C: Affine, P: Profile> {
+    /// Native auxiliary commitments fixed at this boundary.
+    pub private_points: FixedVec<C, PhaseLen<P, Native, 2>>,
     pub a: C,
     pub b: C,
     /// Commitment of the native points stage holding the nested
@@ -34,7 +43,10 @@ pub struct Witness<C: Affine> {
 /// This is stage communication data, not part of the circuit's
 /// public instance.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// Native auxiliary points bound to the walk and common claim target.
+    #[ragu(gadget)]
+    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 2>>,
     #[ragu(gadget)]
     pub a: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -50,11 +62,11 @@ pub struct Stage<C: Affine, R, P> {
 
 impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
     type Parent = super::outer_error::Stage<C, R, P>;
-    type Witness<'source> = &'source Witness<C>;
-    type OutputKind = Kind![C::Base; Output<'_, _, C>];
+    type Witness<'source> = &'source Witness<C, P>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        NUM * 2
+        (NUM + PhaseLen::<P, Native, 2>::len()) * 2
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -66,6 +78,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         Ok(Output {
+            private_points: FixedVec::try_from_fn(|i| {
+                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.private_points[i]))
+            })?,
             a: Point::alloc(dr, witness.as_ref().map(|w| w.a))?,
             b: Point::alloc(dr, witness.as_ref().map(|w| w.b))?,
             native_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.native_points_ab))?,

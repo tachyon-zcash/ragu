@@ -663,3 +663,164 @@ mod capture {
         Ok(())
     }
 }
+
+/// Four restrictions with shared intersection values, prepared at the four
+/// transcript boundaries. This exercises the batch schedule, independently of
+/// the later source-registry identity accumulator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NativePhases;
+impl Profile for NativePhases {
+    const NAME: &'static str = "native-private-phases";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NATIVE_ONLINE: Layout = Layout {
+        polynomials: &[
+            Phase::BeforeW,
+            Phase::BeforeY,
+            Phase::BeforeX,
+            Phase::BeforeAlpha,
+        ],
+        openings: &[
+            Opening {
+                polynomial: 0,
+                point: Point::Challenge(Challenge::W),
+                value: 0,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Input(1),
+                value: 0,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Challenge(Challenge::Y),
+                value: 1,
+            },
+            Opening {
+                polynomial: 2,
+                point: Point::Input(0),
+                value: 1,
+            },
+            Opening {
+                polynomial: 2,
+                point: Point::Challenge(Challenge::X),
+                value: 2,
+            },
+            Opening {
+                polynomial: 3,
+                point: Point::Challenge(Challenge::W),
+                value: 2,
+            },
+        ],
+        inputs: 2,
+        points: 0,
+        values: 3,
+    };
+    type Context<'params, Base, Rk, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend;
+    fn native_online_inputs<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(vec![
+            Base::CircuitField::from(2),
+            Base::CircuitField::from(3),
+        ])
+    }
+    fn native_online_polynomials<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        phase: Phase,
+        inputs: &[Base::CircuitField],
+        challenges: PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::CircuitField, Rk>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        let constant = match phase {
+            Phase::BeforeW => {
+                assert!(challenges.w.is_none() && challenges.y.is_none() && challenges.x.is_none());
+                inputs[0] + inputs[1]
+            }
+            Phase::BeforeY => {
+                assert!(challenges.y.is_none() && challenges.x.is_none());
+                challenges.w.expect("w precedes T") + inputs[0]
+            }
+            Phase::BeforeX => {
+                assert!(challenges.x.is_none());
+                challenges.w.expect("w precedes U") + challenges.y.expect("y precedes U")
+            }
+            Phase::BeforeAlpha => {
+                assert!(challenges.w.is_some());
+                challenges.x.expect("x precedes outgoing restriction")
+                    + challenges.y.expect("y precedes outgoing restriction")
+            }
+        };
+        Ok(vec![sparse::Polynomial::from_coeffs(vec![
+            constant,
+            Base::CircuitField::ONE,
+        ])])
+    }
+}
+
+std::thread_local! { static ALTER_NATIVE_PHASE: Cell<Option<usize>> = const { Cell::new(None) }; }
+pub(crate) fn mutate_native_phase<P: Affine>(phase: usize, point: P) -> P {
+    if ALTER_NATIVE_PHASE.get() == Some(phase) {
+        -point
+    } else {
+        point
+    }
+}
+
+#[test]
+fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<()> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ALTER_NATIVE_PHASE.set(None);
+        }
+    }
+    type Cycle = Profiled<Pasta, NativePhases>;
+    let app = ApplicationBuilder::<Cycle, Rk, 2>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked_aggregator())?;
+    let mut rng = StdRng::seed_from_u64(0x6260);
+    let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
+    verify_profile(&app, &child, &mut rng, true)?;
+    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
+    let bytes = parent.proof().to_bytes().expect("encode phased batch");
+    let decoded = Proof::<Cycle, Rk>::from_bytes(&bytes)
+        .expect("decode phased batch")
+        .carry::<()>(());
+    verify_profile(&app, &decoded, &mut rng, true)?;
+    for phase in 0..4 {
+        // Only the transcript copies are altered; the state used to build the
+        // quotient, helper and actual point fold remains honest.
+        let (bad, ()) = {
+            assert!(ALTER_NATIVE_PHASE.replace(Some(phase)).is_none());
+            let _reset = Reset;
+            app.seed(&mut rng, UnitStep, ())?
+        };
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
+        verify_profile(&app, &bad_parent, &mut rng, false)?;
+        let mut proof = child.proof().clone();
+        proof.native_private_commitments[phase] = -proof.native_private_commitments[phase];
+        let bad = proof.carry::<()>(());
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
+        verify_profile(&app, &bad_parent, &mut rng, false)?;
+    }
+    Ok(())
+}

@@ -16,6 +16,7 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::Result;
+use ragu_primitives::vec::FixedVec;
 use udon::curve::Affine;
 
 use super::{Cached, Proof};
@@ -186,7 +187,7 @@ macro_rules! explicit_commitment_getter {
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
-     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
+     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident $(::<$phase:literal>)?()),* }) => {
         pub(crate) fn $rx(&self) -> Result<&Arc<sparse::Polynomial<C::ScalarField, R>>> {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
@@ -194,7 +195,7 @@ macro_rules! cached_bridge {
             let rx = nested::stages::$stage::Stage::<C::HostCurve, R, C::Profile>::rx(
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Witness {
-                    $($wit_field: self.$getter()),*
+                    $($wit_field: self.$getter$(::<$phase>)?()),*
                 },
             )?;
             // The early return above guarantees the cell is empty, so
@@ -426,7 +427,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         point
     }
 
-    /// The actual private native polynomial commitment fixed before w.
+    /// The actual private native polynomial commitment in fold order.
     pub(crate) fn native_private_commitment(&self, index: usize) -> C::HostCurve {
         if let Some(state) = &self.native_private {
             state.commitments()[index]
@@ -435,6 +436,40 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .as_ref()
                 .expect("bootstrap native private commitments must be set")[index]
         }
+    }
+
+    /// Private native commitment copies fixed at one transcript deadline.
+    pub(crate) fn native_private_phase<const PHASE: usize>(
+        &self,
+    ) -> FixedVec<
+        C::HostCurve,
+        crate::profile::online::stages::PhaseLen<
+            C::Profile,
+            crate::profile::online::stages::Native,
+            PHASE,
+        >,
+    > {
+        if C::Profile::NATIVE_ONLINE.is_empty() {
+            return FixedVec::from_fn(|_| unreachable!("empty native declaration"));
+        }
+        let points = if let Some(state) = &self.native_private {
+            state.commitments()
+        } else {
+            self.dummy_native_private_commitments
+                .as_deref()
+                .expect("bootstrap native private commitments")
+        };
+        let points = crate::profile::online::stages::phase_points::<
+            C::Profile,
+            crate::profile::online::stages::Native,
+            PHASE,
+            _,
+        >(points);
+        #[cfg(test)]
+        let points = FixedVec::from_fn(|i| {
+            crate::private_online_tests::mutate_native_phase(PHASE, points[i])
+        });
+        points
     }
 
     /// Native private stage commitment fixed at its transcript deadline.
@@ -973,7 +1008,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         {
             a: native_a_commitment(),
             b: native_b_commitment(),
-            native_points_ab: native_points_ab_commitment()
+            native_points_ab: native_points_ab_commitment(),
+            private_points: native_private_phase::<2>()
         }
     );
 

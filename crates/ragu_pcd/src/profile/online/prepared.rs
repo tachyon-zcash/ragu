@@ -33,12 +33,7 @@ pub struct Prepared<F: Field, R: Rank> {
     next: usize,
 }
 
-const PHASES: [Phase; 4] = [
-    Phase::BeforeW,
-    Phase::BeforeY,
-    Phase::BeforeX,
-    Phase::BeforeAlpha,
-];
+const PHASES: [Phase; 4] = Phase::ALL;
 
 impl<F: Field, R: Rank> Prepared<F, R> {
     /// Starts preparation with the values to commit before `w`.

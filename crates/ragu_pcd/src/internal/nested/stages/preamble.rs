@@ -29,7 +29,7 @@ use crate::{
     },
     profile::{
         Profile, ProfiledCycle,
-        online::stages::{Native, Nested, PolynomialsLen, Present},
+        online::stages::{Native, Nested, PhaseLen, PolynomialsLen, Present},
     },
 };
 
@@ -40,7 +40,8 @@ use crate::{
 /// $a$, $b$, `registry_xy` and $P$, and its exported online commitments.
 pub fn num_points<P: Profile>() -> usize {
     3 + NUM_ONLINE_FP_POLYS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_FP_POLYS)
-        + 3 * P::NATIVE_ONLINE.polynomials.len()
+        + 2 * P::NATIVE_ONLINE.polynomials.len()
+        + <PhaseLen<P, Native, 0> as ragu_primitives::vec::Len>::len()
         + <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len()
 }
 
@@ -209,7 +210,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
 /// Witness data for the preamble bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
     /// This step's private native commitments, fixed before w.
-    pub private_points: FixedVec<C, PolynomialsLen<P, Native>>,
+    pub private_points: FixedVec<C, PhaseLen<P, Native, 0>>,
     /// This boundary's native private stage commitment.
     pub private_stage: FixedVec<
         C,
@@ -509,7 +510,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// The private native commitments fixed by this bridge and bound to the walk.
     #[ragu(gadget)]
-    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PolynomialsLen<P, Native>>,
+    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 0>>,
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub private_stage: FixedVec<

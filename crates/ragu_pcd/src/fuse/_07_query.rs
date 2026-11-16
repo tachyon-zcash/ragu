@@ -218,6 +218,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::query::Witness {
+                private_points: builder.native_private_phase::<3>(),
                 private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
                     builder.native_private_stage_commitment(1)
                 }),

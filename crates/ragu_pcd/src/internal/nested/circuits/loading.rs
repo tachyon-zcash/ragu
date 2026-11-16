@@ -156,7 +156,13 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             walker.enforce_equal(dr, point)?;
         }
 
-        for point in preamble.private_points.iter() {
+        for point in preamble
+            .private_points
+            .iter()
+            .chain(s_prime.private_points.iter())
+            .chain(ab.private_points.iter())
+            .chain(query.private_points.iter())
+        {
             walker.points.inputs[walker.index]
                 .complete()
                 .enforce_equal(dr, point)?;

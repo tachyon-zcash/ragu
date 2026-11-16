@@ -387,6 +387,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     nested_internal::RxIndex::BridgeAB,
                 ),
                 &nested_ab::Witness {
+                    private_points: crate::profile::online::stages::phase_points::<
+                        C::Profile,
+                        crate::profile::online::stages::Native,
+                        2,
+                        _,
+                    >(&proof.native_private_commitments),
                     a: proof.native_commitment(RxComponent::AbA),
                     b: proof.native_commitment(RxComponent::AbB),
                     native_points_ab: proof

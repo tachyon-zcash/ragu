@@ -21,7 +21,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Point,
+    CompletePoint, Element, Point,
     io::Write,
     vec::{CollectFixed, FixedVec, Len},
 };
@@ -34,7 +34,10 @@ use crate::{
         online::FqPolysLen,
         pcs::{InternalLen, OwnRxLen},
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Native, PhaseLen, Present},
+    },
 };
 
 /// Number of curve points in this stage.
@@ -132,11 +135,10 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
+    /// Native auxiliary commitments fixed before alpha.
+    pub private_points: FixedVec<C, PhaseLen<P, Native, 3>>,
     /// This boundary's native private stage commitment.
-    pub private_stage: FixedVec<
-        C,
-        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
-    >,
+    pub private_stage: FixedVec<C, Present<P, Native, 1>>,
     pub native_query: C,
     pub registry_xy: C,
     /// The nested query values.
@@ -207,12 +209,12 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 /// public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// Native auxiliary points fixed before alpha and bound to the walk.
+    #[ragu(gadget)]
+    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 3>>,
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
-    pub private_stage: FixedVec<
-        Point<'dr, D, C>,
-        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
-    >,
+    pub private_stage: FixedVec<Point<'dr, D, C>, Present<P, Native, 1>>,
     #[ragu(gadget)]
     pub native_query: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -235,7 +237,11 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     fn values() -> usize {
         // (x, y) per point + fixed registry + registry_wxy + 2 children
         // + y per online Fq opening
-        2 * <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len() + NUM * 2 + InternalLen::<P>::len() + 1 + 2 * (OwnRxLen::<P>::len() + 4) + P::ONLINE_FQ_POLYS
+        2 * (PhaseLen::<P, Native, 3>::len() + Present::<P, Native, 1>::len() + NUM)
+            + InternalLen::<P>::len()
+            + 1
+            + 2 * (OwnRxLen::<P>::len() + 4)
+            + P::ONLINE_FQ_POLYS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -274,6 +280,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         };
 
         Ok(Output {
+            private_points: FixedVec::try_from_fn(|i| {
+                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.private_points[i]))
+            })?,
             private_stage: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.private_stage[i]))
             })?,
