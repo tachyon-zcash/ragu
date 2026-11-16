@@ -345,7 +345,7 @@ fn rerandomize_unit_proof_still_verifies() {
     // A `Pcd<()>` used to trip the over-broad base case during
     // rerandomization (both fuse inputs carried a `()` output), silently
     // dropping its revdot claim. With the base case confined to `Bootstrap`
-    // and `Rerandomize`'s suffix wire constrained away from `Dummy`,
+    // and `Rerandomize`'s suffix wire constrained away from `Dummy` and zero,
     // an honest rerandomize takes the normal claim-enforcing path — and
     // must still preserve verification.
     let pasta = ragu_pcd::pasta::baked();

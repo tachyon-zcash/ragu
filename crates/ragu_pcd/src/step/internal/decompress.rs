@@ -11,7 +11,7 @@
 //! [`Rerandomize`] does; `test_decompress_consistency` pins that. Its
 //! inputs are constants, so it cannot take the base case, and
 //! [`Encoded::new_uniform`] holds its witnessed output suffix away from
-//! [`Dummy`].
+//! [`Dummy`] and from zero.
 //!
 //! The step's circuit constrains nothing about the header data it outputs;
 //! the binding is the claims'. The statement carries no polynomials, so the
@@ -115,7 +115,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         let right = Encoded::new(dr, allocator, right)?;
         // Uniform, so that every header type decompresses through the one
         // registered circuit; the suffix is a witness wire constrained away
-        // from `Dummy` (see `Encoded::new_uniform`).
+        // from `Dummy` and from zero (see `Encoded::new_uniform`).
         let output = Encoded::new_uniform(dr, allocator, witness.clone())?;
         Ok(((left, right, output), witness, D::unit()))
     }
