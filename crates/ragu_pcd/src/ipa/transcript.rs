@@ -20,7 +20,7 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{Element, GadgetExt, Point};
+use ragu_primitives::{CompletePoint, Element, GadgetExt, Point};
 use udon::{
     curve::{Affine, Projective},
     field::Field,
@@ -121,6 +121,18 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
         let g = C::nested_generators(self.params).g();
         let commitment: C::NestedCurve = B::msm(values, &g[..values.len()]).to_affine();
         self.absorb(commitment)
+    }
+
+    /// Absorbs a new private-batch scalar through a complete bridge encoding.
+    ///
+    /// Unlike legacy transcript messages, private helper sums and commitment
+    /// coordinates may be zero. Their bridge then has coordinates (0, 0).
+    /// Nonzero values retain the same encoding as the ordinary scalar bridge;
+    /// callers use this only for the profile's new, fixed private fields.
+    pub(crate) fn write_private_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
+        let commitment = B::msm(&[scalar], &C::nested_generators(self.params).g()[..1]).to_affine();
+        super::fingerprint::record_point(&commitment);
+        CompletePoint::constant(&mut self.dr, commitment).write(&mut self.dr, &mut self.transcript)
     }
 
     /// Squeezes a circuit-field challenge.

@@ -247,6 +247,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             for (poly, commitment) in polys.into_iter().zip(commitments) {
                 acc.acc(poly, commitment);
             }
+            // Each distinct private polynomial enters the commitment fold
+            // once, independently of how many openings the quotient checks.
+            if let Some(state) = &builder.native_private {
+                for (poly, &point) in state.polynomials().iter().zip(state.commitments()) {
+                    acc.acc(poly, point);
+                }
+            }
         }
 
         // Build the PointsStage input vector ([f.commitment, commitments..])

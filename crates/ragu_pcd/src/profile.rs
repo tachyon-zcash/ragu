@@ -601,14 +601,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
-        if !Self::NATIVE_ONLINE.is_empty()
-            || Self::NESTED_ONLINE
-                .polynomials
-                .iter()
-                .any(|&phase| phase != online::Phase::BeforeW)
+        if Self::NATIVE_ONLINE
+            .polynomials
+            .iter()
+            .chain(Self::NESTED_ONLINE.polynomials)
+            .any(|&phase| phase != online::Phase::BeforeW)
         {
             return Err(Error::Initialization(
-                "native private batches and later auxiliary phases are not integrated yet".into(),
+                "later auxiliary phases are not integrated yet".into(),
             ));
         }
         // Each added step contributes two points to the other side's walk.

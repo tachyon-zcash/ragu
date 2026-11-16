@@ -360,3 +360,234 @@ fn private_consumer_challenges_are_bound_to_the_enclosing_step() -> Result<()> {
     verify(&app, &parent, &mut rng, false)?;
     Ok(())
 }
+
+/// Exercise the native batch both on its own and alongside the nested batch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NativeBatch<const WITH_NESTED: bool>;
+impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
+    const NAME: &'static str = if WITH_NESTED {
+        "private-both-batches"
+    } else {
+        "private-native-batch"
+    };
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NATIVE_ONLINE: Layout = PrivateBatch::NESTED_ONLINE;
+    const NESTED_ONLINE: Layout = if WITH_NESTED {
+        Self::NATIVE_ONLINE
+    } else {
+        Layout::EMPTY
+    };
+    type Context<'params, Base, Rk, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend;
+
+    fn native_online_inputs<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(vec![Base::CircuitField::from(4)])
+    }
+    fn native_online_points<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        _: &[Base::CircuitField],
+        _: PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(vec![Base::CircuitField::from(6)])
+    }
+    fn native_online_polynomials<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        phase: Phase,
+        _: &[Base::CircuitField],
+        _: PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::CircuitField, Rk>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(if phase == Phase::BeforeW {
+            vec![
+                sparse::Polynomial::from_coeffs(vec![
+                    Base::CircuitField::ZERO,
+                    -Base::CircuitField::ONE,
+                    Base::CircuitField::ONE,
+                ]),
+                sparse::Polynomial::new(),
+            ]
+        } else {
+            Vec::new()
+        })
+    }
+    fn nested_online_inputs<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(if WITH_NESTED {
+            vec![Base::ScalarField::from(4)]
+        } else {
+            Vec::new()
+        })
+    }
+    fn nested_online_points<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        _: &[Base::ScalarField],
+        _: PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(if WITH_NESTED {
+            vec![Base::ScalarField::from(6)]
+        } else {
+            Vec::new()
+        })
+    }
+    fn nested_online_polynomials<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        phase: Phase,
+        _: &[Base::ScalarField],
+        _: PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, Rk>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(if WITH_NESTED && phase == Phase::BeforeW {
+            vec![
+                sparse::Polynomial::from_coeffs(vec![
+                    Base::ScalarField::ZERO,
+                    -Base::ScalarField::ONE,
+                    Base::ScalarField::ONE,
+                ]),
+                sparse::Polynomial::new(),
+            ]
+        } else {
+            Vec::new()
+        })
+    }
+}
+
+fn verify_profile<P: Profile>(
+    app: &Application<'_, Profiled<Pasta, P>, Rk, 2>,
+    pcd: &Pcd<Profiled<Pasta, P>, Rk, ()>,
+    rng: &mut StdRng,
+    expected: bool,
+) -> Result<()> {
+    assert_eq!(app.verify_uncompressed(pcd, &mut *rng)?, expected);
+    let compressed = app.compress(pcd, rng)?;
+    let bytes = compressed.proof().to_bytes().expect("encode private batch");
+    let decoded = crate::CompressedProof::<Profiled<Pasta, P>>::from_bytes(&bytes)
+        .expect("decode private batch")
+        .carry::<()>(());
+    assert_eq!(app.verify_compressed(&decoded)?, expected);
+    Ok(())
+}
+
+fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
+    type Cycle<const N: bool> = Profiled<Pasta, NativeBatch<N>>;
+    let app = ApplicationBuilder::<Cycle<WITH_NESTED>, Rk, 2>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked_aggregator())?;
+    let mut rng = StdRng::seed_from_u64(0x6160 + u64::from(WITH_NESTED));
+    let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
+    verify_profile(&app, &child, &mut rng, true)?;
+    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
+    let bytes = parent
+        .proof()
+        .to_bytes()
+        .expect("encode native private proof");
+    let decoded = Proof::<Cycle<WITH_NESTED>, Rk>::from_bytes(&bytes)
+        .expect("decode native private proof")
+        .carry::<()>(());
+    verify_profile(&app, &decoded, &mut rng, true)?;
+    assert!(child.proof().native_private_commitments[1].is_identity());
+    // Both foreign helper exports and the actual walk use these common points.
+    for i in 0..2 {
+        let mut proof = child.proof().clone();
+        proof.native_private_commitments[i] = if i == 0 {
+            -proof.native_private_commitments[0]
+        } else {
+            proof.native_private_commitments[0]
+        };
+        let bad = proof.carry::<()>(());
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
+        verify_profile(&app, &parent, &mut rng, false)?;
+    }
+    for i in 0..2 {
+        let mut proof = child.proof().clone();
+        proof.native_private_sums[i] += ragu_core::pasta::Fp::ONE;
+        let bad = proof.carry::<()>(());
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
+        verify_profile(&app, &parent, &mut rng, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn native_private_batches_round_trip_without_a_nested_helper() -> Result<()> {
+    native_round_trip::<false>()
+}
+
+#[test]
+fn both_private_batches_round_trip_and_bind_points_and_sums() -> Result<()> {
+    native_round_trip::<true>()
+}
+
+std::thread_local! { static ALTER_NATIVE_STAGE: Cell<Option<usize>> = const { Cell::new(None) }; }
+pub(crate) fn mutate_native_stage_commitment<P: Affine>(index: usize, point: P) -> P {
+    if ALTER_NATIVE_STAGE.get() == Some(index) {
+        -point
+    } else {
+        point
+    }
+}
+
+#[test]
+fn native_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ALTER_NATIVE_STAGE.set(None);
+        }
+    }
+    let app = ApplicationBuilder::<Profiled<Pasta, NativeBatch<true>>, Rk, 2>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked_aggregator())?;
+    let mut rng = StdRng::seed_from_u64(0x6162);
+    let (sibling, ()) = app.seed(&mut rng, UnitStep, ())?;
+    for stage in 0..3 {
+        let (bad, ()) = {
+            assert!(ALTER_NATIVE_STAGE.replace(Some(stage)).is_none());
+            let _reset = Reset;
+            app.seed(&mut rng, UnitStep, ())?
+        };
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (parent, ()) = app.fuse(&mut rng, UnitStep, (), sibling.clone(), bad)?;
+        verify_profile(&app, &parent, &mut rng, false)?;
+    }
+    Ok(())
+}

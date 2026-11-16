@@ -244,7 +244,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let mut poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        if let Some(state) = &builder.native_private {
+            let layout = C::Profile::NATIVE_ONLINE;
+            for _ in layout.openings {
+                poly.scale(alpha);
+            }
+            let private = layout.quotient(
+                state.polynomials(),
+                state.early_values(),
+                &state.query().points,
+                &Challenges {
+                    w: state.query().challenges[0],
+                    y: state.query().challenges[1],
+                    x: state.query().challenges[2],
+                    alpha,
+                    u: C::CircuitField::ZERO,
+                    beta: C::CircuitField::ZERO,
+                },
+            )?;
+            poly += &private;
+        }
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })

@@ -142,7 +142,7 @@ fn private_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
     assert_eq!(shape.native_rx, native::RxIndex::all::<Batched>().len());
     assert_eq!(shape.nested_rx, nested::RxIndex::all::<Batched>().len());
     assert!(shape.native_rx > Shape::of::<Standard>().native_rx);
-    assert!(Batched::check().is_err(), "integration gate stays closed");
+    Batched::check()?;
     Ok(())
 }
 

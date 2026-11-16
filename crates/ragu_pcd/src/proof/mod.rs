@@ -1526,6 +1526,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // polynomial this proof holds, p is their beta-fold, and P is the
         // walk's result, which is then p's commitment.
         let (p_poly, p_commitment) = {
+            let private_zero = sparse::Polynomial::<C::CircuitField, R>::new();
             let mut points = Vec::with_capacity(NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> =
                 Vec::with_capacity(NumPoints::<C::Profile>::len());
@@ -1569,6 +1570,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 }
             }
 
+            for _ in C::Profile::NATIVE_ONLINE.polynomials {
+                push(C::HostCurve::identity(), &private_zero);
+            }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let (commitment, _) = self
                 .compute_endoscaling(

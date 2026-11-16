@@ -351,11 +351,11 @@ impl<C: ProfiledCycle> Instance<C> {
             let (x, y) = point
                 .coordinates()
                 .unwrap_or((C::ScalarField::ZERO, C::ScalarField::ZERO));
-            nested.write_scalar(x)?;
-            nested.write_scalar(y)?;
+            transcript.write_private_scalar(x)?;
+            transcript.write_private_scalar(y)?;
         }
         for &sum in &self.nested_private_sums {
-            nested.write_scalar(sum)?;
+            transcript.write_private_scalar(sum)?;
         }
         Ok(())
     }
