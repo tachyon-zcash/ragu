@@ -110,8 +110,8 @@ fn shared_gate_value_matches_polynomial_at_production_ranks() {
     }
     check::<Fp, ragu_circuits::polynomials::WalletRank>();
     check::<Fq, ragu_circuits::polynomials::WalletRank>();
-    check::<Fp, ragu_circuits::polynomials::AggregatorRank>();
-    check::<Fq, ragu_circuits::polynomials::AggregatorRank>();
+    check::<Fp, ragu_circuits::polynomials::R<14>>();
+    check::<Fq, ragu_circuits::polynomials::R<14>>();
 }
 
 /// Repeated circuit claims share an evaluation, while their claim positions
@@ -138,8 +138,8 @@ fn selected_registry_queries_match_individual_evaluations() {
         }
     }
     fn check<F: Field>() {
-        let mut builder = ragu_circuits::registry::RegistryBuilder::<F, TestRank>::new()
-            .with_tag(ragu_circuits::registry::Tag::new(F::from(17)));
+        let mut builder =
+            ragu_circuits::registry::RegistryBuilder::<F, TestRank>::new().with_tag(F::from(17));
         for times in 1..=5 {
             builder = builder
                 .register_circuit(ragu_testing::circuits::SquareCircuit { times })

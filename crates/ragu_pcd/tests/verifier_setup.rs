@@ -4,7 +4,8 @@
 use alloc::{vec, vec::Vec};
 use core::marker::PhantomData;
 
-use ragu_backend::{Backend, AcceleratedBackend};
+use ragu_acceleration::AcceleratedBackend;
+use ragu_backend::Backend;
 use ragu_circuits::{
     Circuit, CircuitExt, WithAux,
     registry::{CircuitIndex, Registry},
