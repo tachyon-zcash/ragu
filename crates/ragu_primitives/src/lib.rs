@@ -20,6 +20,7 @@ extern crate self as ragu_primitives;
 pub mod allocator;
 mod boolean;
 pub mod comparison;
+mod complete_point;
 pub mod consistent;
 mod element;
 mod endoscalar;
@@ -36,6 +37,7 @@ mod util;
 pub mod vec;
 
 pub use boolean::{Boolean, decompose, multipack};
+pub use complete_point::CompletePoint;
 pub use element::{Element, multiadd};
 pub use endoscalar::{
     ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Endoscalar, EndoscalarChallenge,
