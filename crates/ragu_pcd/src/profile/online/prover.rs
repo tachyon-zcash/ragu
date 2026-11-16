@@ -153,6 +153,8 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             u: C::Scalar::ZERO,
             beta: C::Scalar::ZERO,
         };
+        #[cfg(test)]
+        let challenges = crate::private_online_tests::mutate_query_challenges(challenges);
         let queries = S::layout::<P>().query::<_, R, B>(
             &self.polynomials,
             self.early_values().to_vec(),
@@ -160,6 +162,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             &challenges,
         )?;
         let query = QueryWitness {
+            challenges: FixedVec::from_fn(|i| [challenges.w, challenges.y, challenges.x][i]),
             points: FixedVec::new(queries.points)?,
             values: FixedVec::new(queries.values)?,
         };

@@ -3,20 +3,36 @@
 use alloc::{vec, vec::Vec};
 use core::cell::Cell;
 
-use ragu_circuits::polynomials::{R, Rank, sparse};
+use ragu_circuits::{
+    CircuitExt, WithAux,
+    polynomials::{R, Rank, sparse},
+    registry::Registry,
+    staging::{MultiStage, MultiStageCircuit, StageBuilder},
+};
 use ragu_core::{
     Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Kind},
+    maybe::Maybe,
     pasta::{Fq, Pasta},
 };
-use rand::{SeedableRng, rngs::StdRng};
+use ragu_primitives::GadgetExt;
+use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use udon::{curve::Affine, field::Field};
 
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
     ipa::IpaCycle,
     profile::{
-        Profile, Profiled, ProfiledCycle, Standard,
-        online::{Challenge, Layout, Opening, Phase, Point, prepared::PreparationChallenges},
+        CircuitSlot, Extension, ExtensionRxs, Profile, Profiled, ProfiledCycle, Registered,
+        Standard,
+        online::{
+            Challenge, Layout, Opening, Phase, Point,
+            batch::Challenges,
+            circuit,
+            prepared::PreparationChallenges,
+            stages::{InputStage, InputWitness, Nested, QueryStage, QueryWitness},
+        },
         testing::UnitStep,
     },
 };
@@ -26,9 +42,53 @@ struct PrivateBatch;
 impl Profile for PrivateBatch {
     const NAME: &'static str = "private-nested-batch";
     const NATIVE_EXTENSION: usize = 0;
-    const NESTED_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 1;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ONLINE_CONSUMERS: &'static [u32] = &[0];
+
+    fn nested_extension() -> Extension {
+        Extension {
+            circuits: vec![vec![]],
+            ..Extension::EMPTY
+        }
+    }
+
+    fn register_nested_circuit<'params, Base, Rk: Rank>(
+        circuit: usize,
+        slot: CircuitSlot<'params, Base::ScalarField, Rk>,
+        _: &'params Base::Params,
+    ) -> Result<Registered<'params, Base::ScalarField, Rk>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+    {
+        assert_eq!(circuit, 0);
+        slot.register(MultiStage::<Base::ScalarField, Rk, _>::new(Consumer))
+    }
+
+    fn nested_extension_rxs_with_online<'params, Base, Rk, const HS: usize, B, RNG>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        registry: &Registry<'params, Base::ScalarField, Rk>,
+        online: Option<&circuit::Witness<'_, Base::ScalarField, Self, Nested>>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, Rk>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let online = online.expect("declared consumer has private stages");
+        let circuit = MultiStage::<Base::ScalarField, Rk, _>::new(Consumer);
+        let trace = circuit.trace((online.inputs, online.query))?.into_parts().0;
+        let index = crate::internal::nested::InternalCircuitIndex::ExtensionCircuit(0)
+            .circuit_index::<Self>();
+        Ok(ExtensionRxs {
+            circuits: vec![registry.assemble(&trace, index, rng)?],
+            stages: Vec::new(),
+        })
+    }
+
     const NESTED_ONLINE: Layout = Layout {
         polynomials: &[Phase::BeforeW, Phase::BeforeW],
         openings: &[
@@ -201,5 +261,82 @@ fn nested_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
         let (parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, sibling.clone())?;
         verify(&app, &parent, &mut rng, false)?;
     }
+    Ok(())
+}
+
+/// A scalar consumer reserves only the independent private input/query prefix.
+/// It checks the known formula at the authenticated w and at an early input.
+struct Consumer;
+impl<F: Field, Rk: Rank> MultiStageCircuit<F, Rk> for Consumer {
+    type Last = QueryStage<PrivateBatch, Nested>;
+    type Instance<'source> = ();
+    type Witness<'source> = (
+        &'source InputWitness<F, PrivateBatch, Nested>,
+        &'source QueryWitness<F, PrivateBatch, Nested>,
+    );
+    type Output = Kind![F; ()];
+    type Aux<'source> = ();
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        _: &mut D,
+        _: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Ok(())
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        builder: StageBuilder<'a, 'dr, D, Rk, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
+        let (inputs, builder) = builder.add_stage::<InputStage<PrivateBatch, Nested>>()?;
+        let (query, builder) = builder.add_stage::<QueryStage<PrivateBatch, Nested>>()?;
+        let dr = builder.finish();
+        let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.0))?;
+        let query = query.unenforced(dr, witness.as_ref().map(|w| w.1))?;
+        for (point, value) in [
+            (&query.challenges[0], &query.values[1]),
+            (&inputs.values[0], &query.values[3]),
+        ] {
+            point
+                .mul(dr, point)?
+                .sub(dr, point)
+                .enforce_equal(dr, value)?;
+        }
+        Ok(WithAux::new((), D::just(|| ())))
+    }
+}
+
+std::thread_local! { static ALTER_CHALLENGE: Cell<bool> = const { Cell::new(false) }; }
+
+/// q(w) = q(1-w), so the scalar consumer still accepts the forged w.
+/// Only the helper target ties this staged challenge to the outer transcript.
+pub(crate) fn mutate_query_challenges<F: Field>(mut challenges: Challenges<F>) -> Challenges<F> {
+    if ALTER_CHALLENGE.get() {
+        challenges.w = F::ONE - challenges.w;
+    }
+    challenges
+}
+
+#[test]
+fn private_consumer_challenges_are_bound_to_the_enclosing_step() -> Result<()> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ALTER_CHALLENGE.set(false);
+        }
+    }
+    let app = application()?;
+    let mut rng = StdRng::seed_from_u64(0x6062);
+    let (sibling, ()) = app.seed(&mut rng, UnitStep, ())?;
+    let (bad, ()) = {
+        assert!(!ALTER_CHALLENGE.replace(true));
+        let _reset = Reset;
+        app.seed(&mut rng, UnitStep, ())?
+    };
+    verify(&app, &bad, &mut rng, false)?;
+    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, sibling)?;
+    verify(&app, &parent, &mut rng, false)?;
     Ok(())
 }

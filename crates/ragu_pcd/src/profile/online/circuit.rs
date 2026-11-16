@@ -113,7 +113,22 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
         let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.inputs))?;
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval))?;
-        let public = allocate_challenges(dr, witness.as_ref().map(|w| &w.challenges))?;
+        // Consumers use these very same staged wires. Their authenticity is
+        // supplied by the helper's public claim target, not a prover copy.
+        let public = FixedVec::<_, ConstLen<6>>::try_from_fn(|i| {
+            if i < query.challenges.len() {
+                Ok(query.challenges[i].clone())
+            } else {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    witness.as_ref().map(|w| {
+                        let c = &w.challenges;
+                        [c.w, c.y, c.x, c.alpha, c.u, c.beta][i]
+                    }),
+                )
+            }
+        })?;
         let beta = if S::NATIVE {
             let challenge = EndoscalarChallenge::from_element(dr, &mut (), public[5].clone())?;
             Endoscalar::extract(challenge).lift(dr)?

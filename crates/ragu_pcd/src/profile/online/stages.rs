@@ -137,6 +137,8 @@ pub struct InputOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
 /// Witnessed query points and claimed values in the profile's fixed order.
 #[derive(Clone)]
 pub struct QueryWitness<F, P: Profile, S: Side> {
+    /// Authenticated enclosing-step w, y and x, in that order.
+    pub challenges: FixedVec<F, Present<P, S, 3>>,
     /// The separately witnessed points, fixed before `alpha`.
     pub points: FixedVec<F, PointsLen<P, S>>,
     /// Shared value wires, fixed before `alpha`.
@@ -146,6 +148,9 @@ pub struct QueryWitness<F, P: Profile, S: Side> {
 /// The query wires shared by consumers and the batch helper.
 #[derive(Gadget, Write, Consistent)]
 pub struct QueryOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
+    /// Enclosing-step w, y and x, bound by the helper public target.
+    #[ragu(gadget)]
+    pub challenges: FixedVec<Element<'dr, D>, Present<P, S, 3>>,
     /// Separately witnessed query points.
     #[ragu(gadget)]
     pub points: FixedVec<Element<'dr, D>, PointsLen<P, S>>,
@@ -208,7 +213,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> Stage<F, R> for QueryStage<P, S> {
     type Witness<'source> = &'source QueryWitness<F, P, S>;
     type OutputKind = Kind![F; QueryOutput<'_, _, P, S>];
     fn values() -> usize {
-        PointsLen::<P, S>::len() + ValuesLen::<P, S>::len()
+        Present::<P, S, 3>::len() + PointsLen::<P, S>::len() + ValuesLen::<P, S>::len()
     }
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -219,6 +224,9 @@ impl<F: Field, R: Rank, P: Profile, S: Side> Stage<F, R> for QueryStage<P, S> {
         Self: 'dr,
     {
         Ok(QueryOutput {
+            challenges: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|v| v.challenges[i]))
+            })?,
             points: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), witness.as_ref().map(|v| v.points[i]))
             })?,

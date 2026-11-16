@@ -74,6 +74,7 @@ fn check<F: Field, S: Side>() -> Result<()> {
         foreign: FixedVec::new(vec![F::from(101), F::from(103)])?,
     };
     let query = stages::QueryWitness {
+        challenges: FixedVec::new(vec![F::from(5), F::from(7), F::from(11)])?,
         points: FixedVec::new(vec![F::from(6)])?,
         values: FixedVec::new(vec![F::from(9), F::from(11), F::from(13)])?,
     };

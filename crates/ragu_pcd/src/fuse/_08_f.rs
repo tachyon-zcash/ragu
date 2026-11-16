@@ -279,9 +279,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 state.early_values(),
                 &state.query().points,
                 &Challenges {
-                    w: challenges.w,
-                    y: challenges.y,
-                    x: challenges.x,
+                    w: state.query().challenges[0],
+                    y: state.query().challenges[1],
+                    x: state.query().challenges[2],
                     alpha,
                     u: C::ScalarField::ZERO,
                     beta: C::ScalarField::ZERO,
