@@ -1169,6 +1169,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         .concat();
         let nested_witness = || {
             Ok(nested::circuits::common::Witness {
+                private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
+                    builder
+                        .nested_private_sums
+                        .expect("private helper must be traced before capture")[i]
+                }),
                 instance: nested::unified::Instance {
                     c: builder.nested_c(),
                     v: builder.nested_v()?,

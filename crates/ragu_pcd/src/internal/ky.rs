@@ -118,6 +118,10 @@ pub struct NestedKy<F> {
     pub c: F,
     /// The nested unified instance's $k(y)$.
     pub unified: F,
+    /// Compute-v's unified instance followed by the private helper values.
+    pub compute_v: F,
+    /// The private helper's challenge and sum target, when active.
+    pub private_helper: Option<F>,
     /// The binding circuit's $k(y)$, for a profile whose nested extension
     /// has one; `None` for a profile without one.
     pub binding: Option<F>,
@@ -136,6 +140,14 @@ impl<F: Field> nested::claims::KySource for NestedKy<F> {
 
     fn unified_ky(&self) -> impl Iterator<Item = F> + Clone {
         once(self.unified)
+    }
+
+    fn compute_v_ky(&self) -> impl Iterator<Item = F> {
+        once(self.compute_v)
+    }
+
+    fn private_helper_ky(&self) -> impl Iterator<Item = F> {
+        self.private_helper.into_iter()
     }
 
     fn binding_ky(&self) -> impl Iterator<Item = F> + Clone {
@@ -381,5 +393,90 @@ pub fn nested_ky_of<C: Cycle>(
         let y = Element::alloc(dr, &mut (), y)?;
         let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
         Ok(*output.ky(dr, &y)?.value().take())
+    })
+}
+
+/// Values shared by the nested compute-v and private helper targets. The
+/// transcript supplies the challenge lifts; only the two sums are carried.
+pub fn nested_private_values<C: ProfiledCycle>(
+    challenges: &nested::Challenges<C::CircuitField>,
+    sums: &[C::ScalarField],
+) -> Result<Vec<C::ScalarField>> {
+    if C::Profile::NESTED_ONLINE.is_empty() {
+        return Ok(Vec::new());
+    }
+    if sums.len() != 2 {
+        return Err(ragu_core::Error::InvalidWitness(
+            "private batch requires two sums".into(),
+        ));
+    }
+    Ok(alloc::vec![
+        nested::challenge::<C>(challenges.w)?,
+        nested::challenge::<C>(challenges.alpha)?,
+        nested::challenge::<C>(challenges.pre_beta)?,
+        sums[0],
+        sums[1],
+    ])
+}
+
+/// The nested compute-v and private helper claims use the same five values.
+/// Compute-v exports the authenticated lifts of w, alpha and beta. The
+/// helper exports those, the unified x, y and u, and the same two sums.
+pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
+    dr: &mut D,
+    y: &Element<'dr, D>,
+    unified: &nested_unified::Output<'dr, D, C>,
+    unified_ky: &Element<'dr, D>,
+    private: &[Element<'dr, D>],
+) -> Result<(Element<'dr, D>, Option<Element<'dr, D>>)> {
+    if P::NESTED_ONLINE.is_empty() {
+        return Ok((unified_ky.clone(), None));
+    }
+    let mut compute_v = Horner::new(y);
+    GadgetExt::write(unified, dr, &mut compute_v)?;
+    for value in private {
+        value.write(dr, &mut compute_v)?;
+    }
+    let compute_v = compute_v.finish_ky(dr)?;
+    let mut helper = Horner::new(y);
+    for value in [
+        &private[0],
+        &unified.y,
+        &unified.x,
+        &private[1],
+        &unified.u,
+        &private[2],
+        &private[3],
+        &private[4],
+    ] {
+        value.write(dr, &mut helper)?;
+    }
+    Ok((compute_v, Some(finish_extension_ky(helper, dr)?)))
+}
+
+/// Host evaluation of the same targets used by the parent's collapse circuit.
+pub fn nested_private_ky_of<C: ProfiledCycle>(
+    instance: &nested_unified::Instance<C::HostCurve>,
+    private: &[C::ScalarField],
+    y: C::ScalarField,
+) -> Result<(C::ScalarField, Option<C::ScalarField>)> {
+    Emulator::emulate_wireless((instance, private, y), |dr, witness| {
+        let (instance, private, y) = witness.cast();
+        let y = Element::alloc(dr, &mut (), y)?;
+        let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
+        let private = (0..if C::Profile::NESTED_ONLINE.is_empty() {
+            0
+        } else {
+            5
+        })
+            .map(|i| Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i])))
+            .collect::<Result<Vec<_>>>()?;
+        let unified_ky = output.ky(dr, &y)?;
+        let (compute_v, helper) =
+            nested_private_ky::<_, _, C::Profile>(dr, &y, &output, &unified_ky, &private)?;
+        Ok((
+            *compute_v.value().take(),
+            helper.map(|value| *value.value().take()),
+        ))
     })
 }

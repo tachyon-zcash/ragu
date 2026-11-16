@@ -196,7 +196,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let nested_ky = proof_check!(ky::nested_ky(pcd.proof(), y_nested));
             let native_bound =
                 ky::nested_bound::<C::Profile, _>(|index| pcd.proof().native_rx_commitment(index));
+            let (compute_v, private_helper) = proof_check!(ky::nested_private_ky_of::<C>(
+                &proof_check!(pcd.proof().nested_instance()),
+                &proof_check!(pcd.proof().nested_private_values()),
+                y_nested,
+            ));
             let ky_source = ky::NestedKy {
+                compute_v,
+                private_helper,
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
                 // It remains meaningful inside the collapse circuit, where

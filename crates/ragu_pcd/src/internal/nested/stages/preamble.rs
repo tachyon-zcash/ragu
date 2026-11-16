@@ -27,7 +27,10 @@ use crate::{
         },
         nested::{PointsStage, unified},
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// Number of curve points in this stage in profile `P`: the native
@@ -119,6 +122,8 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     /// and $u$. With the stashed commitments above these make up the child's
     /// nested instance.
     pub nested: NestedValues<C::Base>,
+    /// Lifted w, alpha, beta and the two private helper sums of this child.
+    pub private: FixedVec<C::Base, Present<P, Nested, 5>>,
 }
 
 /// The scalar half of a child's nested unified instance (see
@@ -139,7 +144,10 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
     ///
     /// Fails if a challenge of the child lies outside the endoscalar range,
     /// which an honest transcript output does with negligible probability.
-    pub fn from_proof<CC: Cycle<HostCurve = C> + ProfiledCycle<Profile = P>, R: Rank>(
+    pub fn from_proof<
+        CC: Cycle<HostCurve = C, ScalarField = C::Base> + ProfiledCycle<Profile = P>,
+        R: Rank,
+    >(
         proof: &Proof<CC, R>,
     ) -> Result<Self> {
         use crate::internal::native::RxComponent;
@@ -181,6 +189,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
             stashed_online_commitments: proof.online_commitments(),
             stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
+            private: proof.nested_private_values()?.try_into()?,
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -311,6 +320,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
     pub nested: NestedValuesOutput<'dr, D>,
+    /// Public values shared by the child's compute-v and private helper claims.
+    #[ragu(gadget)]
+    pub private: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
 }
 
 /// Gadget for the scalar half of a child's nested unified instance.
@@ -453,6 +465,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 dr,
                 witness.as_ref().map(|w| w.stashed_application_stage),
             )?,
+            private: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.private[i]))
+            })?,
             nested: {
                 let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
                     Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))
@@ -510,7 +525,8 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
 
     fn values() -> usize {
         // (x, y) per point, then the five nested scalars of each child.
-        num_points::<P>() * 2 + 2 * 5
+        num_points::<P>() * 2
+            + 2 * (5 + <Present<P, Nested, 5> as ragu_primitives::vec::Len>::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(

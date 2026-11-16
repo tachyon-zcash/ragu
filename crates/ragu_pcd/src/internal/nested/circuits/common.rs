@@ -18,7 +18,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{HoistedEndoscalar, Uendo};
+use ragu_primitives::{HoistedEndoscalar, Uendo, vec::FixedVec};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
@@ -26,13 +26,18 @@ use crate::{
         endoscalar::EndoscalarStage,
         nested::{Points, PointsStage, PointsWitness, stages, unified},
     },
-    profile::Profile,
+    profile::{
+        Profile,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// The witnesses of every stage a nested circuit reserves, and the nested
 /// unified instance the circuit outputs.
 pub struct Witness<'a, C: Affine, P: Profile> {
     pub instance: unified::Instance<C>,
+    /// The private helper's two sums, exported by compute-v to the same targets.
+    pub private_sums: FixedVec<C::Base, Present<P, Nested, 2>>,
     pub endoscalar: Uendo,
     pub bridge_hash: C,
     pub points: &'a PointsWitness<C, P>,

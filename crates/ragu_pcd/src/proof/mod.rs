@@ -211,6 +211,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
+    /// Private nested quotient and evaluation sums, empty for an inactive layout.
+    pub(crate) nested_private_sums: Vec<C::ScalarField>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -390,6 +392,14 @@ pub struct Proof<C: Cycle, R: Rank> {
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// The helper's public values, deriving challenges from the proof transcript.
+    pub(crate) fn nested_private_values(&self) -> Result<Vec<C::ScalarField>> {
+        crate::internal::ky::nested_private_values::<C>(
+            &self.challenges(),
+            &self.nested_private_sums,
+        )
+    }
+
     /// Whether the headers, polynomial vectors and commitment-cache vectors
     /// have exactly the receiving profile's shape. Check before traversing
     /// components so that missing entries cannot panic and trailing ones
@@ -402,6 +412,12 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
 
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
+            && self.nested_private_sums.len()
+                == crate::profile::online::stages::Present::<
+                    C::Profile,
+                    crate::profile::online::stages::Nested,
+                    2,
+                >::len()
             && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
             && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
             && self.native_endoscaling_step_rxs.len() == native_steps
@@ -1225,6 +1241,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
+        // Bootstrap bypasses the synthetic child's circuit claims.
+        if !C::Profile::NESTED_ONLINE.is_empty() {
+            builder.nested_private_sums = Some([C::ScalarField::ZERO; 2]);
+        }
 
         builder.set_circuit_id(CircuitIndex::new(0));
 
@@ -1556,6 +1576,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_application_stage: builder.native_application_stage_commitment(),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
+                private: FixedVec::from_fn(|i| {
+                    if i < 3 {
+                        nested_one
+                    } else {
+                        C::ScalarField::ZERO
+                    }
+                }),
                 nested: nested::stages::preamble::NestedValues {
                     c: builder.nested_c(),
                     v: B::sparse_eval(builder.nested_p_poly(), nested_one),

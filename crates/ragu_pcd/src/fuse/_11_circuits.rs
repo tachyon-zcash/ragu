@@ -314,8 +314,33 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ],
             coverage: Default::default(),
         };
+        let extension = C::Profile::nested_extension();
+        let challenges = Challenges {
+            w: nested::challenge::<C>(builder.w())?,
+            y: nested::challenge::<C>(builder.y())?,
+            x: nested::challenge::<C>(builder.x())?,
+            alpha: nested::challenge::<C>(builder.alpha())?,
+            u: nested::challenge::<C>(builder.u())?,
+            beta: nested::challenge::<C>(builder.pre_beta())?,
+        };
+        let private_helper = if let Some(state) = &mut builder.nested_private {
+            let index =
+                nested::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
+                    .circuit_index::<C::Profile>();
+            let (helper, sums) =
+                state.trace(challenges.clone(), &self.nested_registry, index, rng)?;
+            builder.nested_private_sums = Some(sums);
+            Some(helper)
+        } else {
+            None
+        };
         let witness = |instance| nested::circuits::common::Witness {
             instance,
+            private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
+                builder
+                    .nested_private_sums
+                    .expect("private helper traced before compute-v")[i]
+            }),
             endoscalar: nested_endoscalar,
             bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
             points: nested_points,
@@ -362,15 +387,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 
-        let extension = C::Profile::nested_extension();
-        let challenges = Challenges {
-            w: nested::challenge::<C>(builder.w())?,
-            y: nested::challenge::<C>(builder.y())?,
-            x: nested::challenge::<C>(builder.x())?,
-            alpha: nested::challenge::<C>(builder.alpha())?,
-            u: nested::challenge::<C>(builder.u())?,
-            beta: nested::challenge::<C>(builder.pre_beta())?,
-        };
         let online = builder
             .nested_private
             .as_ref()
@@ -387,14 +403,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 "the profile's prover did not fill its nested extension".into(),
             ));
         }
-        if let Some(state) = &mut builder.nested_private {
-            let index =
-                nested::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
-                    .circuit_index::<C::Profile>();
-            let (helper, sums) = state.trace(challenges, &self.nested_registry, index, rng)?;
-            builder.nested_private_sums = Some(sums);
+        if let Some(helper) = private_helper {
             rxs.circuits.push(helper);
-            rxs.stages.splice(0..0, state.take_stages());
+            rxs.stages.splice(
+                0..0,
+                builder
+                    .nested_private
+                    .as_mut()
+                    .expect("private helper has stages")
+                    .take_stages(),
+            );
         }
         builder.set_nested_extension_circuit_rxs(rxs.circuits);
         builder.set_nested_extension_stage_rxs(rxs.stages);

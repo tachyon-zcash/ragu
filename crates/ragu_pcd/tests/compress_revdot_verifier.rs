@@ -192,6 +192,8 @@ fn claim_targets_match_positional_ky_values() {
     let nested_ky = NestedKy {
         c: Fq::from(2),
         unified: Fq::from(3),
+        compute_v: Fq::from(3),
+        private_helper: None,
         binding: None,
     };
     let masked = [Masked::new(

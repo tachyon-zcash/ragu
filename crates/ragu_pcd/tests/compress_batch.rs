@@ -396,6 +396,8 @@ fn nested_batch_opens_through_the_ipa() {
     let targets = NestedKy {
         c: proof.nested_c(),
         unified: ky::nested_ky(proof, y).unwrap(),
+        compute_v: ky::nested_ky(proof, y).unwrap(),
+        private_helper: None,
         binding: None,
     };
     let generators = Pasta::nested_generators(crate::pasta::baked());

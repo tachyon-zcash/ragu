@@ -84,6 +84,14 @@ count!(
     "The number of shared claimed query values."
 );
 
+/// A fixed number of values when this side has a private batch, otherwise none.
+pub struct Present<P: Profile, S: Side, const N: usize>(PhantomData<(P, S)>);
+impl<P: Profile, S: Side, const N: usize> Len for Present<P, S, N> {
+    fn len() -> usize {
+        if S::layout::<P>().is_empty() { 0 } else { N }
+    }
+}
+
 /// The number of distinct polynomials, including auxiliary polynomials.
 pub struct PolynomialsLen<P: Profile, S: Side>(PhantomData<(P, S)>);
 impl<P: Profile, S: Side> Len for PolynomialsLen<P, S> {

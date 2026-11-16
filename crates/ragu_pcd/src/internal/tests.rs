@@ -1288,6 +1288,13 @@ fn test_extension_claims_follow_the_declaration() {
             [40, 41].into_iter()
         }
 
+        fn compute_v_ky(&self) -> impl Iterator<Item = u32> {
+            [50, 51].into_iter()
+        }
+        fn private_helper_ky(&self) -> impl Iterator<Item = u32> {
+            core::iter::empty()
+        }
+
         fn binding_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [70, 71].into_iter()
         }

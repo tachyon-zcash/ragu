@@ -21,7 +21,7 @@ use super::{Cached, Proof};
 use crate::{
     header::NUM_ONLINE_FP_POLYS,
     internal::{native::online, nested},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
 };
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -1229,6 +1229,13 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             circuit_id: take!(circuit_id),
             left_header: take!(left_header),
             right_header: take!(right_header),
+            nested_private_sums: if C::Profile::NESTED_ONLINE.is_empty() {
+                Vec::new()
+            } else {
+                self.nested_private_sums
+                    .expect("private helper sums must be set")
+                    .to_vec()
+            },
 
             native_application_rx: take!(native_application_rx),
             native_application_stage_rx: take!(native_application_stage_rx),

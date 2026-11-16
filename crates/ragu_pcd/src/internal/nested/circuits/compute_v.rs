@@ -59,10 +59,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, allocator::Standard, io::Write, vec::FixedVec};
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::common;
@@ -79,8 +79,21 @@ use crate::{
             unified,
         },
     },
-    profile::Profile,
+    profile::{
+        Profile,
+        online::stages::{Nested, Present},
+    },
 };
+
+/// The batch instance and the private helper's authenticated challenges and sums.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    #[ragu(gadget)]
+    pub unified: unified::Output<'dr, D, C>,
+    /// Lifted w, alpha and beta, then the helper's quotient and evaluation sums.
+    #[ragu(gadget)]
+    pub private: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+}
 
 /// Circuit computing the nested batch evaluation $v_n$.
 pub struct Circuit<C: Affine, R: Rank, P: Profile> {
@@ -99,7 +112,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     type Last = stages::challenges::Stage<C, R, P>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C, P>;
-    type Output = unified::OutputKind<C>;
+    type Output = Kind![C::Base; Output<'_, _, C, P>];
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -118,6 +131,9 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         let (dr, stages) = common::load_all(dr, &witness)?;
 
         let allocator = &mut Standard::new();
+        let private_sums = FixedVec::<_, Present<P, Nested, 2>>::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_sums[i]))
+        })?;
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
         let lift = |i: usize| &stages.challenges.pairs[i].lift;
         let query = &stages.query.nested;
@@ -194,7 +210,19 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         unified.v.provide(computed_v);
 
         let (output, instance) = unified.finish(dr, allocator)?;
-        Ok(WithAux::new(output, instance))
+        let private = FixedVec::from_fn(|i| match i {
+            0 => lift(challenges::W).clone(),
+            1 => lift(challenges::ALPHA).clone(),
+            2 => beta.clone(),
+            _ => private_sums[i - 3].clone(),
+        });
+        Ok(WithAux::new(
+            Output {
+                unified: output,
+                private,
+            },
+            instance,
+        ))
     }
 }
 

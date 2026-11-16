@@ -144,6 +144,7 @@ codec!([C: ProfiledCycle] Instance<C> {
     v => Scalar,
     nested_c => Scalar,
     nested_v => Scalar,
+    nested_private_sums => FixedSequence<Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Nested, 2>>,
     left => DefaultEncoding,
     right => DefaultEncoding,
     a_at_u => Scalar,

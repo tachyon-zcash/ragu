@@ -67,6 +67,7 @@ codec! {
     circuit_id => wire::DefaultEncoding,
     left_header => wire::SizedSequence<wire::Scalar, wire::HeaderSize>,
     right_header => wire::SizedSequence<wire::Scalar, wire::HeaderSize>,
+    nested_private_sums => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Nested, 2>>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     native_application_rx => wire::DefaultEncoding,

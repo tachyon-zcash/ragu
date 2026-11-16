@@ -118,6 +118,12 @@ impl<C: ProfiledCycle> CompressedProof<C> {
         }
         self.instance.native.len() == native_components::<C::Profile>().count()
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
+            && self.instance.nested_private_sums.len()
+                == <crate::profile::online::stages::Present<
+                    C::Profile,
+                    crate::profile::online::stages::Nested,
+                    2,
+                > as ragu_primitives::vec::Len>::len()
             && side::<_, R>(&self.native)
             && side::<_, R>(&self.nested)
     }

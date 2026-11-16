@@ -499,6 +499,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         circuit_id,
         left_header,
         right_header,
+        nested_private_sums,
         native_application_rx,
         native_application_stage_rx,
         native_preamble_rx,
@@ -613,6 +614,9 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.push("circuit_id", usize::from(*circuit_id));
     lines.fields("left_header", left_header);
     lines.fields("right_header", right_header);
+    if !nested_private_sums.is_empty() {
+        lines.fields("nested_private_sums", nested_private_sums);
+    }
     lines.field("bridge_alpha", bridge_alpha);
 
     lines.poly("native_application_rx", native_application_rx);
@@ -808,6 +812,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         circuit_id,
         left_header,
         right_header,
+        nested_private_sums,
         online,
         native: native_commitments,
         native_registry_xy,
@@ -851,6 +856,8 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(v);
     out.field(nested_c);
     out.field(nested_v);
+    // These fixtures pin the zero-capability encoding.
+    assert!(nested_private_sums.is_empty());
     for Child { x, y, id } in [left, right] {
         out.field(x);
         out.field(y);
@@ -968,10 +975,12 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_right = nested_child()?;
     let nested_a_at_u = cursor.field()?;
     let nested_b_at_u = cursor.field()?;
+    let nested_private_sums = Vec::new();
     let instance = Instance {
         circuit_id,
         left_header,
         right_header,
+        nested_private_sums,
         online,
         native: native_commitments,
         native_registry_xy,
@@ -1320,7 +1329,15 @@ fn wire_lines<C: FixtureCycle>(
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
 ) {
-    lines.push("wire.fields", super::codec::WIRE_FIELDS.join(","));
+    lines.push(
+        "wire.fields",
+        super::codec::WIRE_FIELDS
+            .iter()
+            .copied()
+            .filter(|&name| name != "nested_private_sums" || !proof.nested_private_sums.is_empty())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
     let bytes = proof.to_bytes().unwrap();
     let payload = &bytes[crate::wire::ENVELOPE_SIZE..];
     lines.push("wire.proof.bytes", payload.len());

@@ -330,3 +330,114 @@ fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()
     }
     Ok(())
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NestedOnly;
+impl Profile for NestedOnly {
+    const NAME: &'static str = "nested-private-targets";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NESTED_ONLINE: Layout = Batched::NESTED_ONLINE;
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
+#[test]
+fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Result<()> {
+    use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
+    use ragu_core::{Cycle, drivers::emulator::Emulator, maybe::Maybe, pasta::Pasta};
+    use ragu_primitives::{Element, GadgetExt, vec::Len};
+    use udon::curve::Affine;
+
+    use crate::internal::{ky, nested};
+
+    type C = <Pasta as Cycle>::HostCurve;
+    type S = stages::Nested;
+    let unified = nested::unified::Instance::<C> {
+        c: Fq::from(2),
+        v: Fq::from(3),
+        x: Fq::from(5),
+        y: Fq::from(7),
+        u: Fq::from(11),
+        exported: [C::generator(); nested::unified::NUM_EXPORTED],
+        coverage: Default::default(),
+    };
+    let private = [13, 17, 19, 23, 29].map(Fq::from);
+    let helper = circuit::Instance::<_, NestedOnly, S> {
+        challenges: Challenges {
+            w: private[0],
+            y: unified.y,
+            x: unified.x,
+            alpha: private[1],
+            u: unified.u,
+            beta: private[2],
+        },
+        sums: [private[3], private[4]],
+        foreign: FixedVec::from_fn(|_| unreachable!()),
+    };
+    Emulator::emulate_wireless((unified, helper, private), |dr, witness| {
+        let (unified, helper, private) = witness.cast();
+        let y = Element::constant(dr, Fq::from(31));
+        let unified = nested::unified::Output::<_, C>::alloc(dr, &mut (), unified.as_ref())?;
+        let private = FixedVec::<_, stages::Present<NestedOnly, S, 5>>::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i]))
+        })?;
+        let unified_ky = unified.ky(dr, &y)?;
+        let (compute_target, helper_target) =
+            ky::nested_private_ky::<_, _, NestedOnly>(dr, &y, &unified, &unified_ky, &private)?;
+        let output = nested::circuits::compute_v::Output::<_, C, NestedOnly> {
+            unified: unified.clone(),
+            private: private.clone(),
+        };
+        let mut actual = Horner::new(&y);
+        GadgetExt::write(&output, dr, &mut actual)?;
+        assert_eq!(
+            compute_target.value().take(),
+            actual.finish_ky(dr)?.value().take()
+        );
+        let output =
+            <circuit::Circuit<NestedOnly, S> as MultiStageCircuit<Fq, ProductionRank>>::instance(
+                &circuit::Circuit::default(),
+                dr,
+                helper.as_ref(),
+            )?;
+        let mut actual = Horner::new(&y);
+        GadgetExt::write(&output, dr, &mut actual)?;
+        assert_eq!(
+            helper_target.as_ref().unwrap().value().take(),
+            ky::finish_extension_ky(actual, dr)?.value().take()
+        );
+        // Every public challenge and sum is held by both claims. Changing a
+        // helper value independently cannot retain either claim's target.
+        for i in 0..private.len() {
+            let mut corrupt = private.clone();
+            corrupt[i] = corrupt[i].add(dr, &Element::one());
+            let (compute, helper) =
+                ky::nested_private_ky::<_, _, NestedOnly>(dr, &y, &unified, &unified_ky, &corrupt)?;
+            assert_ne!(compute.value().take(), compute_target.value().take());
+            assert_ne!(
+                helper.unwrap().value().take(),
+                helper_target.as_ref().unwrap().value().take()
+            );
+        }
+        Ok(())
+    })?;
+    let targets = ky::NestedKy {
+        c: Fq::from(2),
+        unified: Fq::from(3),
+        compute_v: Fq::from(5),
+        private_helper: Some(Fq::from(7)),
+        binding: None,
+    };
+    let prefix: alloc::vec::Vec<_> = nested::claims::ky_prefix::<NestedOnly, _>(&targets).collect();
+    let collapse = 1 + nested::NumSteps::<NestedOnly>::len();
+    assert_eq!(
+        &prefix[collapse..],
+        &[Fq::from(3), Fq::from(5), Fq::from(7)]
+    );
+    Ok(())
+}

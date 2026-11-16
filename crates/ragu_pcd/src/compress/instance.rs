@@ -96,6 +96,8 @@ pub(crate) struct Instance<C: Cycle> {
     pub v: C::CircuitField,
     pub nested_c: C::ScalarField,
     pub nested_v: C::ScalarField,
+    /// The private nested helper's two sums, absent for an inactive layout.
+    pub nested_private_sums: Vec<C::ScalarField>,
 
     /// The wires the decider reads off the preamble and eval stages.
     pub left: Child<C::CircuitField>,
@@ -218,6 +220,7 @@ impl<C: ProfiledCycle> Instance<C> {
             v: proof.v(),
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
+            nested_private_sums: proof.nested_private_sums.clone(),
             left: Child {
                 x: lx,
                 y: ly,
@@ -320,6 +323,9 @@ impl<C: ProfiledCycle> Instance<C> {
             self.nested_b_at_u,
         ] {
             nested.write_scalar(scalar)?;
+        }
+        for &sum in &self.nested_private_sums {
+            nested.write_scalar(sum)?;
         }
         Ok(())
     }
@@ -480,7 +486,14 @@ impl<C: ProfiledCycle> Instance<C> {
         let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
             self.native_commitment(native::RxComponent::Rx(index))
         });
+        let (compute_v, private_helper) = ky::nested_private_ky_of::<C>(
+            &self.nested_unified(challenges)?,
+            &ky::nested_private_values::<C>(challenges, &self.nested_private_sums)?,
+            nested_y,
+        )?;
         let nested = NestedKy {
+            compute_v,
+            private_helper,
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
             binding: ky::binding_ky_of(&native_bound, nested_y)?,
