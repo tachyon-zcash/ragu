@@ -1217,7 +1217,7 @@ impl Shape {
     /// Panics under the same conditions as [`Self::solve`]. When used in
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
-        Self::solve(
+        Self::solve_with_private(
             P::NATIVE_EXTENSION
                 + if P::NATIVE_ONLINE.is_empty() {
                     0
@@ -1231,6 +1231,7 @@ impl Shape {
                     online::extension::RXS
                 },
             P::ONLINE_FQ_POLYS + P::NESTED_ONLINE.polynomials.len(),
+            P::NATIVE_ONLINE.polynomials.len(),
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
         )
@@ -1251,6 +1252,24 @@ impl Shape {
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
+        Self::solve_with_private(
+            native_extension,
+            nested_extension,
+            online_fq,
+            0,
+            native_endoscalings,
+            nested_endoscalings,
+        )
+    }
+
+    const fn solve_with_private(
+        native_extension: usize,
+        nested_extension: usize,
+        online_fq: usize,
+        private_fp: usize,
+        native_endoscalings: usize,
+        nested_endoscalings: usize,
+    ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
         loop {
@@ -1259,6 +1278,7 @@ impl Shape {
                 native_extension,
                 nested_extension,
                 online_fq,
+                private_fp,
                 native_endoscalings,
                 nested_endoscalings,
             );
@@ -1278,11 +1298,12 @@ impl Shape {
         native_extension: usize,
         nested_extension: usize,
         online_fq: usize,
+        private_fp: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
-        let nested_points = nested::num_endoscaling_points(native_rx);
+        let nested_points = nested::num_endoscaling_points(native_rx) + private_fp;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
         let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);
@@ -2819,6 +2840,7 @@ mod tests {
                 shape.native_steps,
                 native_extension,
                 nested_extension,
+                0,
                 0,
                 4,
                 4,

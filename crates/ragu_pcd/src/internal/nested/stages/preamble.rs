@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Point,
+    CompletePoint, Element, Point,
     io::Write,
     vec::{ConstLen, FixedVec},
 };
@@ -29,7 +29,7 @@ use crate::{
     },
     profile::{
         Profile, ProfiledCycle,
-        online::stages::{Nested, Present},
+        online::stages::{Native, Nested, PolynomialsLen, Present},
     },
 };
 
@@ -40,6 +40,7 @@ use crate::{
 /// $a$, $b$, `registry_xy` and $P$, and its exported online commitments.
 pub fn num_points<P: Profile>() -> usize {
     3 + NUM_ONLINE_FP_POLYS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_FP_POLYS)
+        + 3 * P::NATIVE_ONLINE.polynomials.len()
         + <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len()
 }
 
@@ -125,6 +126,8 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     pub nested: NestedValues<C::Base>,
     /// Lifted w, alpha, beta and the two private helper sums of this child.
     pub private: FixedVec<C::Base, Present<P, Nested, 5>>,
+    /// Common targets for the child's actual private native walk points.
+    pub private_points: FixedVec<C, PolynomialsLen<P, Native>>,
 }
 
 /// The scalar half of a child's nested unified instance (see
@@ -191,6 +194,7 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_online_commitments: proof.online_commitments(),
             stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
             private: proof.nested_private_values()?.try_into()?,
+            private_points: proof.native_private_commitments.clone().try_into()?,
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -204,6 +208,8 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
 
 /// Witness data for the preamble bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
+    /// This step's private native commitments, fixed before w.
+    pub private_points: FixedVec<C, PolynomialsLen<P, Native>>,
     /// This boundary's native private stage commitment.
     pub private_stage: FixedVec<
         C,
@@ -329,6 +335,9 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// Public values shared by the child's compute-v and private helper claims.
     #[ragu(gadget)]
     pub private: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    /// Common targets for the child's private native commitments.
+    #[ragu(gadget)]
+    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PolynomialsLen<P, Native>>,
 }
 
 /// Gadget for the scalar half of a child's nested unified instance.
@@ -418,6 +427,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
     fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, P>>) -> Result<Self> {
         Ok(ChildOutput {
+            private_points: FixedVec::try_from_fn(|i| {
+                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.private_points[i]))
+            })?,
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
             hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
@@ -495,6 +507,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The private native commitments fixed by this bridge and bound to the walk.
+    #[ragu(gadget)]
+    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PolynomialsLen<P, Native>>,
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub private_stage: FixedVec<
@@ -550,6 +565,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         Ok(Output {
+            private_points: FixedVec::try_from_fn(|i| {
+                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.private_points[i]))
+            })?,
             private_stage: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.private_stage[i]))
             })?,

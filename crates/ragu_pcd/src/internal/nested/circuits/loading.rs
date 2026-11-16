@@ -22,7 +22,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::Point;
+use ragu_primitives::{GadgetExt, Point};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
@@ -156,6 +156,12 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             walker.enforce_equal(dr, point)?;
         }
 
+        for point in preamble.private_points.iter() {
+            walker.points.inputs[walker.index]
+                .complete()
+                .enforce_equal(dr, point)?;
+            walker.index += 1;
+        }
         walker.finish();
 
         // The initial point (f.commitment) must match BridgeF.native_f.

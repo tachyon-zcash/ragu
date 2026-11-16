@@ -217,6 +217,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_private_sums: Vec<C::CircuitField>,
     /// Common claim targets for the actual nested private/auxiliary walk points.
     pub(crate) nested_private_commitments: Vec<C::NestedCurve>,
+    /// Common claim targets for the actual native private/auxiliary walk points.
+    pub(crate) native_private_commitments: Vec<C::HostCurve>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -416,6 +418,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
 
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
+            && self.native_private_commitments.len() == C::Profile::NATIVE_ONLINE.polynomials.len()
             && self.nested_private_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
             && self.native_private_sums.len()
                 == <crate::profile::online::stages::Present<
@@ -1260,6 +1263,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Bootstrap bypasses the synthetic child's circuit claims.
         if !C::Profile::NATIVE_ONLINE.is_empty() {
             builder.native_private_sums = Some([C::CircuitField::ZERO; 2]);
+            builder.dummy_native_private_commitments = Some(
+                alloc::vec![C::HostCurve::identity(); C::Profile::NATIVE_ONLINE.polynomials.len()],
+            );
         }
         if !C::Profile::NESTED_ONLINE.is_empty() {
             builder.nested_private_sums = Some([C::ScalarField::ZERO; 2]);
@@ -1612,6 +1618,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
                 stashed_online_commitments: builder.online_commitments(),
+                private_points: FixedVec::from_fn(|i| builder.native_private_commitment(i)),
                 stashed_application_stage: builder.native_application_stage_commitment(),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
@@ -1633,6 +1640,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::preamble::Witness {
+                    private_points: ragu_primitives::vec::FixedVec::from_fn(|i| {
+                        builder.native_private_commitment(i)
+                    }),
                     private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
                         builder.native_private_stage_commitment(0)
                     }),

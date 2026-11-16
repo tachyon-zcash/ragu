@@ -99,6 +99,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
         ragu_primitives::Point<'dr, D, C>,
         Present<P, crate::profile::online::stages::Native, 3>,
     >,
+    /// Actual native private commitment points, also the helper's foreign exports.
+    #[ragu(gadget)]
+    pub private_points: FixedVec<
+        ragu_primitives::CompletePoint<'dr, D, C>,
+        crate::profile::online::stages::PolynomialsLen<P, crate::profile::online::stages::Native>,
+    >,
 }
 
 /// Circuit computing the nested batch evaluation $v_n$.
@@ -245,6 +251,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             Output {
                 unified: output,
                 private,
+                private_points: stages.preamble.private_points.clone(),
                 private_stages: FixedVec::from_fn(|i| match i {
                     0 => stages.preamble.private_stage[0].clone(),
                     1 => stages.query.private_stage[0].clone(),

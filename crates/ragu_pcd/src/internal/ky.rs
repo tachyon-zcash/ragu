@@ -500,6 +500,7 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     unified_ky: &Element<'dr, D>,
     private: &[Element<'dr, D>],
     private_stages: &[Point<'dr, D, C>],
+    private_points: &[ragu_primitives::CompletePoint<'dr, D, C>],
 ) -> Result<(Element<'dr, D>, Option<Element<'dr, D>>)> {
     if P::NESTED_ONLINE.is_empty() && P::NATIVE_ONLINE.is_empty() {
         return Ok((unified_ky.clone(), None));
@@ -510,6 +511,9 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
         value.write(dr, &mut compute_v)?;
     }
     for point in private_stages {
+        GadgetExt::write(point, dr, &mut compute_v)?;
+    }
+    for point in private_points {
         GadgetExt::write(point, dr, &mut compute_v)?;
     }
     let compute_v = compute_v.finish_ky(dr)?;
@@ -529,6 +533,15 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     ] {
         value.write(dr, &mut helper)?;
     }
+    for point in private_points.iter().take(
+        P::NATIVE_ONLINE
+            .polynomials
+            .iter()
+            .take_while(|&&phase| phase == crate::profile::online::Phase::BeforeW)
+            .count(),
+    ) {
+        GadgetExt::write(point, dr, &mut helper)?;
+    }
     Ok((compute_v, Some(finish_extension_ky(helper, dr)?)))
 }
 
@@ -537,41 +550,55 @@ pub fn nested_private_ky_of<C: ProfiledCycle>(
     instance: &nested_unified::Instance<C::HostCurve>,
     private: &[C::ScalarField],
     private_stages: &[C::HostCurve],
+    private_points: &[C::HostCurve],
     y: C::ScalarField,
 ) -> Result<(C::ScalarField, Option<C::ScalarField>)> {
-    Emulator::emulate_wireless((instance, private, private_stages, y), |dr, witness| {
-        let (instance, private, private_stages, y) = witness.cast();
-        let y = Element::alloc(dr, &mut (), y)?;
-        let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
-        let private = (0..if C::Profile::NESTED_ONLINE.is_empty() {
-            0
-        } else {
-            5
-        })
-            .map(|i| Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i])))
-            .collect::<Result<Vec<_>>>()?;
-        let private_stages = FixedVec::<
-            _,
-            crate::profile::online::stages::Present<
-                C::Profile,
-                crate::profile::online::stages::Native,
-                3,
-            >,
-        >::try_from_fn(|i| {
-            Point::alloc(dr, private_stages.as_ref().map(|p| p[i]))
-        })?;
-        let unified_ky = output.ky(dr, &y)?;
-        let (compute_v, helper) = nested_private_ky::<_, _, C::Profile>(
-            dr,
-            &y,
-            &output,
-            &unified_ky,
-            &private,
-            &private_stages,
-        )?;
-        Ok((
-            *compute_v.value().take(),
-            helper.map(|value| *value.value().take()),
-        ))
-    })
+    Emulator::emulate_wireless(
+        (instance, private, private_stages, private_points, y),
+        |dr, witness| {
+            let (instance, private, private_stages, private_points, y) = witness.cast();
+            let y = Element::alloc(dr, &mut (), y)?;
+            let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
+            let private = (0..if C::Profile::NESTED_ONLINE.is_empty() {
+                0
+            } else {
+                5
+            })
+                .map(|i| Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i])))
+                .collect::<Result<Vec<_>>>()?;
+            let private_stages = FixedVec::<
+                _,
+                crate::profile::online::stages::Present<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    3,
+                >,
+            >::try_from_fn(|i| {
+                Point::alloc(dr, private_stages.as_ref().map(|p| p[i]))
+            })?;
+            let private_points = FixedVec::<
+                _,
+                crate::profile::online::stages::PolynomialsLen<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                >,
+            >::try_from_fn(|i| {
+                ragu_primitives::CompletePoint::alloc(dr, private_points.as_ref().map(|p| p[i]))
+            })?;
+            let unified_ky = output.ky(dr, &y)?;
+            let (compute_v, helper) = nested_private_ky::<_, _, C::Profile>(
+                dr,
+                &y,
+                &output,
+                &unified_ky,
+                &private,
+                &private_stages,
+                &private_points,
+            )?;
+            Ok((
+                *compute_v.value().take(),
+                helper.map(|value| *value.value().take()),
+            ))
+        },
+    )
 }

@@ -217,6 +217,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &left_unified,
             &stages.preamble.left.private,
             &ky::native_private_stages::<P, _>(|index| stages.preamble.left[index].clone()),
+            &stages.preamble.left.private_points,
         )?;
         let (right_compute_v, right_private_helper) = ky::nested_private_ky::<_, _, P>(
             dr,
@@ -225,6 +226,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &right_unified,
             &stages.preamble.right.private,
             &ky::native_private_stages::<P, _>(|index| stages.preamble.right[index].clone()),
+            &stages.preamble.right.private_points,
         )?;
         let ky = TwoProofKySource::new(
             dr,

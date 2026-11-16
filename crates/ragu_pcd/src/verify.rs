@@ -202,6 +202,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 &ky::native_private_stages::<C::Profile, _>(|index| pcd
                     .proof()
                     .native_rx_commitment(index)),
+                &pcd.proof().native_private_commitments,
                 y_nested,
             ));
             let ky_source = ky::NestedKy {

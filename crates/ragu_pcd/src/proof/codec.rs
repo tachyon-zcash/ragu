@@ -70,6 +70,7 @@ codec! {
     nested_private_sums => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Nested, 2>>,
     native_private_sums => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Native, 2>>,
     nested_private_commitments => wire::FixedSequence<crate::wire::CompletePoint, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Nested>>,
+    native_private_commitments => wire::FixedSequence<crate::wire::CompletePoint, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Native>>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     native_application_rx => wire::DefaultEncoding,

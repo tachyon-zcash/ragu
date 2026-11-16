@@ -118,6 +118,8 @@ impl<C: ProfiledCycle> CompressedProof<C> {
         }
         self.instance.native.len() == native_components::<C::Profile>().count()
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
+            && self.instance.native_private_commitments.len()
+                == C::Profile::NATIVE_ONLINE.polynomials.len()
             && self.instance.nested_private_commitments.len()
                 == C::Profile::NESTED_ONLINE.polynomials.len()
             && self.instance.native_private_sums.len()

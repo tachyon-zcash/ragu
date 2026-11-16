@@ -102,6 +102,8 @@ pub(crate) struct Instance<C: Cycle> {
     pub native_private_sums: Vec<C::CircuitField>,
     /// The private/auxiliary points exported by bind_endoscalar.
     pub nested_private_commitments: Vec<C::NestedCurve>,
+    /// Common claim targets for the actual native private/auxiliary walk points.
+    pub native_private_commitments: Vec<C::HostCurve>,
 
     /// The wires the decider reads off the preamble and eval stages.
     pub left: Child<C::CircuitField>,
@@ -227,6 +229,7 @@ impl<C: ProfiledCycle> Instance<C> {
             nested_private_sums: proof.nested_private_sums.clone(),
             native_private_sums: proof.native_private_sums.clone(),
             nested_private_commitments: proof.nested_private_commitments.clone(),
+            native_private_commitments: proof.native_private_commitments.clone(),
             left: Child {
                 x: lx,
                 y: ly,
@@ -341,6 +344,15 @@ impl<C: ProfiledCycle> Instance<C> {
             self.nested_b_at_u,
         ] {
             nested.write_scalar(scalar)?;
+        }
+        // The same complete point coordinates form the nested compute-v
+        // target and the nested helper's foreign commitment exports.
+        for point in &self.native_private_commitments {
+            let (x, y) = point
+                .coordinates()
+                .unwrap_or((C::ScalarField::ZERO, C::ScalarField::ZERO));
+            nested.write_scalar(x)?;
+            nested.write_scalar(y)?;
         }
         for &sum in &self.nested_private_sums {
             nested.write_scalar(sum)?;
@@ -516,6 +528,7 @@ impl<C: ProfiledCycle> Instance<C> {
             &ky::native_private_stages::<C::Profile, _>(|index| {
                 self.native_commitment(native::RxComponent::Rx(index))
             }),
+            &self.native_private_commitments,
             nested_y,
         )?;
         let nested = NestedKy {

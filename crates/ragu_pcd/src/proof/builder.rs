@@ -278,6 +278,7 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     pub(crate) nested_private_sums: Option<[C::ScalarField; 2]>,
     // Explicit commitments for the synthetic bootstrap proof, which has no
     // private prover state. Ordinary proofs retain their state's actual points.
+    pub(crate) dummy_native_private_commitments: Option<Vec<C::HostCurve>>,
     pub(crate) dummy_nested_private_commitments: Option<Vec<C::NestedCurve>>,
 
     // The step's own online Fq polynomials, with their commitments cached.
@@ -425,6 +426,17 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         point
     }
 
+    /// The actual private native polynomial commitment fixed before w.
+    pub(crate) fn native_private_commitment(&self, index: usize) -> C::HostCurve {
+        if let Some(state) = &self.native_private {
+            state.commitments()[index]
+        } else {
+            self.dummy_native_private_commitments
+                .as_ref()
+                .expect("bootstrap native private commitments must be set")[index]
+        }
+    }
+
     /// Native private stage commitment fixed at its transcript deadline.
     pub(crate) fn native_private_stage_commitment(&self, index: usize) -> C::HostCurve {
         self.native_private.as_ref().map_or_else(
@@ -474,6 +486,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_private_sums: None,
             nested_private_sums: None,
             dummy_nested_private_commitments: None,
+            dummy_native_private_commitments: None,
             native_private: None,
             nested_private: None,
             online_fq_polynomials: None,
@@ -1264,6 +1277,15 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             circuit_id: take!(circuit_id),
             left_header: take!(left_header),
             right_header: take!(right_header),
+            native_private_commitments: if C::Profile::NATIVE_ONLINE.is_empty() {
+                Vec::new()
+            } else if let Some(state) = &self.native_private {
+                state.commitments().to_vec()
+            } else {
+                self.dummy_native_private_commitments
+                    .take()
+                    .expect("bootstrap native private commitments must be set")
+            },
             nested_private_commitments: if C::Profile::NESTED_ONLINE.is_empty() {
                 Vec::new()
             } else if let Some(state) = &self.nested_private {

@@ -395,11 +395,13 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
             &unified_ky,
             &private,
             &[],
+            &[],
         )?;
         let output = nested::circuits::compute_v::Output::<_, C, NestedOnly> {
             unified: unified.clone(),
             private: private.clone(),
             private_stages: FixedVec::from_fn(|_| unreachable!()),
+            private_points: FixedVec::from_fn(|_| unreachable!()),
         };
         let mut actual = Horner::new(&y);
         GadgetExt::write(&output, dr, &mut actual)?;
@@ -430,6 +432,7 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
                 &unified,
                 &unified_ky,
                 &corrupt,
+                &[],
                 &[],
             )?;
             assert_ne!(compute.value().take(), compute_target.value().take());
@@ -786,14 +789,26 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
         let stages = FixedVec::<_, stages::Present<P, stages::Native, 3>>::try_from_fn(|i| {
             CurvePoint::alloc(dr, points.as_ref().map(|p| p[i]))
         })?;
+        let private_points =
+            FixedVec::<_, stages::PolynomialsLen<P, stages::Native>>::try_from_fn(|_| {
+                ragu_primitives::CompletePoint::alloc(dr, points.as_ref().map(|_| C::identity()))
+            })?;
         let base = unified.ky(dr, &y)?;
-        let (target, helper) =
-            ky::nested_private_ky::<_, _, P>(dr, &y, &unified, &base, &[], &stages)?;
+        let (target, helper) = ky::nested_private_ky::<_, _, P>(
+            dr,
+            &y,
+            &unified,
+            &base,
+            &[],
+            &stages,
+            &private_points,
+        )?;
         assert!(helper.is_none());
         let output = nested::circuits::compute_v::Output::<_, C, P> {
             unified: unified.clone(),
             private: FixedVec::from_fn(|_| unreachable!()),
             private_stages: stages.clone(),
+            private_points: private_points.clone(),
         };
         let mut actual = Horner::new(&y);
         GadgetExt::write(&output, dr, &mut actual)?;
@@ -801,11 +816,119 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
         for i in 0..3 {
             let mut corrupt = stages.clone();
             corrupt[i] = CurvePoint::alloc(dr, points.as_ref().map(|p| -p[i]))?;
-            let (changed, helper) =
-                ky::nested_private_ky::<_, _, P>(dr, &y, &unified, &base, &[], &corrupt)?;
+            let (changed, helper) = ky::nested_private_ky::<_, _, P>(
+                dr,
+                &y,
+                &unified,
+                &base,
+                &[],
+                &corrupt,
+                &private_points,
+            )?;
             assert!(helper.is_none());
             assert_ne!(target.value().take(), changed.value().take());
         }
         Ok(())
     })
+}
+
+#[test]
+fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
+    use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
+    use ragu_core::{drivers::emulator::Emulator, maybe::Maybe, pasta::EqAffine};
+    use ragu_primitives::{CompletePoint, Element, GadgetExt, Point as CurvePoint};
+    use udon::curve::Affine;
+
+    use crate::internal::{ky, nested};
+    type C = EqAffine;
+    type P = Batched;
+    type S = stages::Nested;
+    let unified = nested::unified::Instance::<C> {
+        c: Fq::from(2),
+        v: Fq::from(3),
+        x: Fq::from(5),
+        y: Fq::from(7),
+        u: Fq::from(11),
+        exported: [C::generator(); nested::unified::NUM_EXPORTED],
+        coverage: Default::default(),
+    };
+    let private = [13, 17, 19, 23, 29].map(Fq::from);
+    let helper = circuit::Instance::<_, P, S> {
+        challenges: Challenges {
+            w: private[0],
+            y: unified.y,
+            x: unified.x,
+            alpha: private[1],
+            u: unified.u,
+            beta: private[2],
+        },
+        sums: [private[3], private[4]],
+        foreign: FixedVec::new(vec![Fq::ZERO; 2])?,
+    };
+    Emulator::emulate_wireless(
+        (unified, helper, private, C::identity(), C::generator()),
+        |dr, witness| {
+            let (unified, helper, private, identity, generator) = witness.cast();
+            let y = Element::constant(dr, Fq::from(31));
+            let unified = nested::unified::Output::<_, C>::alloc(dr, &mut (), unified.as_ref())?;
+            let private = FixedVec::<_, stages::Present<P, S, 5>>::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i]))
+            })?;
+            let points =
+                FixedVec::<_, stages::PolynomialsLen<P, stages::Native>>::try_from_fn(|_| {
+                    CompletePoint::alloc(dr, identity.clone())
+                })?;
+            let private_stages =
+                FixedVec::<_, stages::Present<P, stages::Native, 3>>::try_from_fn(|_| {
+                    CurvePoint::alloc(dr, generator.clone())
+                })?;
+            let base = unified.ky(dr, &y)?;
+            let (target, helper_target) = ky::nested_private_ky::<_, _, P>(
+                dr,
+                &y,
+                &unified,
+                &base,
+                &private,
+                &private_stages,
+                &points,
+            )?;
+            let output = nested::circuits::compute_v::Output::<_, C, P> {
+                unified: unified.clone(),
+                private: private.clone(),
+                private_stages: private_stages.clone(),
+                private_points: points.clone(),
+            };
+            let mut actual = Horner::new(&y);
+            GadgetExt::write(&output, dr, &mut actual)?;
+            assert_eq!(target.value().take(), actual.finish_ky(dr)?.value().take());
+            let helper_output = <circuit::Circuit<P, S> as MultiStageCircuit<
+                Fq,
+                ProductionRank,
+            >>::instance(
+                &circuit::Circuit::default(), dr, helper.as_ref()
+            )?;
+            let mut actual = Horner::new(&y);
+            GadgetExt::write(&helper_output, dr, &mut actual)?;
+            assert_eq!(
+                helper_target.as_ref().unwrap().value().take(),
+                ky::finish_extension_ky(actual, dr)?.value().take()
+            );
+            let changed = [CompletePoint::alloc(dr, generator)?];
+            let (corrupt, corrupt_helper) = ky::nested_private_ky::<_, _, P>(
+                dr,
+                &y,
+                &unified,
+                &base,
+                &private,
+                &private_stages,
+                &changed,
+            )?;
+            assert_ne!(target.value().take(), corrupt.value().take());
+            assert_ne!(
+                helper_target.unwrap().value().take(),
+                corrupt_helper.unwrap().value().take()
+            );
+            Ok(())
+        },
+    )
 }
