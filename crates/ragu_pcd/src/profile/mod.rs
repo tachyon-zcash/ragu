@@ -1076,6 +1076,58 @@ pub(crate) const NO_NATIVE_EXTENSION_PROVER: &str = "the profile's native extens
 /// The nested counterpart of [`NO_NATIVE_EXTENSION_PROVER`].
 pub(crate) const NO_NESTED_EXTENSION_PROVER: &str = "the profile's nested extension has no prover";
 
+/// Invariant layout dimensions used by arithmetic index lookups. Keep the
+/// descriptor's Vec allocations out of these lookups, as well as the index
+/// lists themselves. The no-std path retains the original allocation behavior.
+#[derive(Clone, Copy)]
+pub(crate) struct ExtensionLengths {
+    pub circuits: usize,
+    pub stages: usize,
+    pub bondings: usize,
+}
+
+pub(crate) fn extension_lengths<P: Profile>(nested: bool) -> ExtensionLengths {
+    let build = || {
+        let extension = if nested {
+            nested_extension::<P>()
+        } else {
+            native_extension::<P>()
+        };
+        ExtensionLengths {
+            circuits: extension.circuits.len(),
+            stages: extension.stages,
+            bondings: extension.bondings(),
+        }
+    };
+    #[cfg(feature = "std")]
+    {
+        use std::sync::{Mutex, OnceLock, PoisonError};
+        static LENGTHS: OnceLock<
+            Mutex<std::collections::HashMap<(TypeId, bool), ExtensionLengths>>,
+        > = OnceLock::new();
+        let lengths = LENGTHS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+        let key = (TypeId::of::<P>(), nested);
+        if let Some(value) = lengths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            .copied()
+        {
+            return value;
+        }
+        // Build outside the lock: descriptor construction can ask for other
+        // profile dimensions through a stage's length type.
+        let value = build();
+        *lengths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(key)
+            .or_insert(value)
+    }
+    #[cfg(not(feature = "std"))]
+    build()
+}
+
 /// An extension's polynomials for one proof: its circuits' rx polynomials
 /// in circuit order, then its stages' in stage order.
 #[derive(Clone, Debug)]
