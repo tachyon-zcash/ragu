@@ -297,16 +297,8 @@ where
     S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
     T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
-    let sender = application::<S, ProductionRank>(
-        RegistryTags::from_beacon(&[0x42; 32], SENDER_MANIFEST),
-        SENDER_MANIFEST,
-        source_constraint,
-    )?;
-    let receiver = application::<T, ProductionRank>(
-        RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-        RECEIVER_MANIFEST,
-        Some(Fp::from(7)),
-    )?;
+    let sender = application::<S, ProductionRank>((None, None), source_constraint)?;
+    let receiver = application::<T, ProductionRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c001);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -332,7 +324,19 @@ where
     let local = receiver.compress(&parent, &mut rng)?;
     assert!(receiver.verify_compressed(&local)?);
     let (local, data) = local.into_parts();
-    check_splices(&receiver, &local, data, &foreign, foreign_data, false);
+    // The tags are derived from the registered circuits, so a complete foreign
+    // packet verifies exactly when the sender's registries are the receiver's;
+    // every splice of the two packets is rejected either way.
+    let same_registries = sender.native_registry.tag() == receiver.native_registry.tag()
+        && sender.nested_registry.tag() == receiver.nested_registry.tag();
+    check_splices(
+        &receiver,
+        &local,
+        data,
+        &foreign,
+        foreign_data,
+        same_registries,
+    );
 
     let (second, ()) = receiver.fuse(&mut rng, Sum, (), leaf.clone(), leaf)?;
     let second = receiver.compress(&second, &mut rng)?;
@@ -356,13 +360,18 @@ where
     Ok(())
 }
 
+/// The aggregator declares no extension yet, so its registries are the
+/// standard profile's and the two profiles derive the same tags: a complete
+/// packet of either verifies under the other, while every splice of the two
+/// is rejected, as is every edit. Once the aggregator's decompression circuits
+/// land, the tags diverge and the complete foreign packet is rejected too.
 #[test]
-fn compressed_standard_rejects_aggregator_packets_and_edits() -> Result<()> {
+fn compressed_standard_checks_aggregator_packets_and_edits() -> Result<()> {
     check_profile_packets::<Aggregator, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
-fn compressed_aggregator_rejects_standard_packets_and_edits() -> Result<()> {
+fn compressed_aggregator_checks_standard_packets_and_edits() -> Result<()> {
     check_profile_packets::<Standard, Aggregator>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
@@ -375,11 +384,7 @@ fn check_fresh_weaker_proving<P: Profile>() -> Result<()>
 where
     P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
-    let app = application::<P, ProductionRank>(
-        RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-        RECEIVER_MANIFEST,
-        Some(Fp::from(7)),
-    )?;
+    let app = application::<P, ProductionRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c002);
     let (honest, ()) = app.seed(
         &mut rng,
@@ -452,10 +457,6 @@ where
             expected: Some(Fp::from(7)),
         })?
         .register(Sum)?
-        .with_registry_tags(
-            RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-            RECEIVER_MANIFEST,
-        )?
         .finalize_with(
             params,
             CrossingContext {

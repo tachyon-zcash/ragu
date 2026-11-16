@@ -132,9 +132,6 @@ name = "profiles"
 name = "registration_errors"
 
 [[test]]
-name = "registry_tags"
-
-[[test]]
 name = "rerandomization"
 
 [[test]]

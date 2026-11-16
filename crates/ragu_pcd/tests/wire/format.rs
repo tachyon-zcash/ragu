@@ -117,27 +117,27 @@ fn envelope_rejects_mismatches_before_payload_decoding() {
 #[test]
 fn verification_uses_the_receiving_application() {
     use ragu_core::Cycle;
-    use ragu_pcd::{ApplicationBuilder, RegistryTags};
-    use ragu_testing::pcd::nontrivial::WitnessLeaf;
+    use ragu_pcd::ApplicationBuilder;
+    use ragu_testing::pcd::nontrivial::{Hash2, WitnessLeaf};
 
     let params = ragu_pcd::pasta::baked();
-    let build = |beacon| {
-        let manifest = [0x24; 20];
-        ApplicationBuilder::<C, R, 4>::new()
-            .with_registry_tags(
-                RegistryTags::from_beacon(&[beacon; 32], &manifest),
-                &manifest,
-            )
-            .unwrap()
-            .register(WitnessLeaf::<C> {
-                poseidon_params: C::circuit_poseidon(params),
-            })
-            .unwrap()
-            .finalize(params)
-            .unwrap()
+    let poseidon_params = C::circuit_poseidon(params);
+    // The receiver registers one more step than the sender. Its registry tag
+    // differs, while the layout of its proofs is the same.
+    let build = |another_step| {
+        let builder = ApplicationBuilder::<C, R, 4>::new()
+            .register(WitnessLeaf::<C> { poseidon_params })
+            .unwrap();
+        if another_step {
+            builder.register(Hash2::<C> { poseidon_params }).unwrap()
+        } else {
+            builder
+        }
+        .finalize(params)
+        .unwrap()
     };
-    let sender = build(0x42);
-    let receiver = build(0x43);
+    let sender = build(false);
+    let receiver = build(true);
     let mut rng = StdRng::seed_from_u64(0x5eed);
     let proof = leaf(&sender, &mut rng, 7);
     let data = *proof.data();

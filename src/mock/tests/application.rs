@@ -30,50 +30,35 @@ fn test_builder() -> ApplicationBuilder {
 
 pub(super) fn test_builder_for<R: Rank>() -> crate::ApplicationBuilder<'static, Pasta, R, 4> {
     crate::ApplicationBuilder::new()
-        .with_registry_tags(
-            crate::RegistryTags::from_beacon(b"mock test beacon", b"mock test manifest"),
-            b"mock test manifest",
-        )
-        .expect("test tags")
 }
 
 #[test]
-fn registry_tags_check_manifest_and_bind_the_mock_setup() -> Result<()> {
-    let manifest = b"setup manifest";
-    let tags = crate::RegistryTags::<Pasta>::from_beacon(b"beacon one", manifest);
-    let native_tag = tags.native();
+fn registry_tags_are_derived_by_finalize() -> Result<()> {
     let app = ApplicationBuilder::new()
-        .with_registry_tags(tags, manifest)?
         .with_backend::<ragu_backend::ReferenceBackend>()
         .finalize_with(test_params(), ())?;
     assert_eq!(app.context(), &());
-    assert_eq!(app.native_registry().tag(), native_tag);
-    assert!(matches!(
-        ApplicationBuilder::new().with_registry_tags(
-            crate::RegistryTags::from_beacon(b"beacon one", manifest),
-            b"another manifest",
-        ),
-        Err(Error::Initialization(message))
-            if message.to_string() == "registry tags do not match the expected setup manifest"
-    ));
-    let other = ApplicationBuilder::new()
-        .with_registry_tags(
-            crate::RegistryTags::from_beacon(b"beacon two", manifest),
-            manifest,
-        )?
+    // The placeholder registries hold no circuits, so the mock carries the
+    // tag the registry crate derives for an empty registry.
+    let empty = ragu_circuits::registry::RegistryBuilder::<Fp, TestRank>::new().finalize()?;
+    assert_eq!(app.native_registry().tag(), empty.tag());
+    Ok(())
+}
+
+/// The setup binds the registered steps, as the real registries' tags do:
+/// an application with the same steps accepts another's proofs, and one with
+/// different steps rejects them.
+#[test]
+fn different_steps_are_different_setups() -> Result<()> {
+    let app = test_builder().register(SeedStep)?.finalize(test_params())?;
+    let same = test_builder().register(SeedStep)?.finalize(test_params())?;
+    let other = test_builder()
+        .register(PointSeedStep)?
         .finalize(test_params())?;
-    let mut rng = StdRng::seed_from_u64(4);
+    let mut rng = StdRng::seed_from_u64(5);
     let bootstrap = app.bootstrap_proof().clone().carry::<()>(());
-    assert!(app.verify_uncompressed(&bootstrap, &mut rng)?);
+    assert!(same.verify_uncompressed(&bootstrap, &mut rng)?);
     assert!(!other.verify_uncompressed(&bootstrap, &mut rng)?);
-    // Respect exactly the registry crate's feature-controlled test fallback.
-    let registry_requires_tags = ragu_circuits::registry::RegistryBuilder::<Fp, TestRank>::new()
-        .finalize()
-        .is_err();
-    assert_eq!(
-        ApplicationBuilder::new().finalize(test_params()).is_err(),
-        registry_requires_tags,
-    );
     Ok(())
 }
 
@@ -99,12 +84,7 @@ impl crate::profile::Profile for ContextProfile {
 #[test]
 fn finalize_with_preserves_a_nondefault_profile_context() -> Result<()> {
     type Profiled = crate::profile::Profiled<Pasta, ContextProfile>;
-    let manifest = b"profiled setup";
     let app = crate::ApplicationBuilder::<Profiled, TestRank, 4>::new()
-        .with_registry_tags(
-            crate::RegistryTags::from_beacon(b"beacon", manifest),
-            manifest,
-        )?
         .with_backend::<ragu_backend::ReferenceBackend>()
         .finalize_with(test_params(), ProverContext(19))?;
     assert_eq!(app.context().0, 19);
