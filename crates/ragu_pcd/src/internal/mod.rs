@@ -24,9 +24,9 @@
 //!
 //! # Crossing the cycle
 //!
-//! A bridge commitment lets a native commitment be witnessed in a nested
-//! stage and committed on the nested curve ($E_p$), so it can be bound and
-//! absorbed into the transcript:
+//! A bridge commitment lets a native commitment, a host-curve ($E_q$) point,
+//! be witnessed in a nested stage and committed on the nested curve ($E_p$),
+//! so it can be bound and absorbed into the transcript:
 //!
 //! 1. Native commitments: $\mathbb{F}_p\[X\]$ polynomials committed on $E_q$
 //!    give $E_q$ points, with coordinates in $\mathbb{F}_q$, which the
