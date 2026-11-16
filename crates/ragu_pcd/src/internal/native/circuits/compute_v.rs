@@ -114,6 +114,12 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     /// The nested private Input, Query and Eval commitments, in deadline order.
     #[ragu(gadget)]
     pub private_stages: FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 6>>,
+    /// Nested auxiliary coordinates read from the query committed before alpha.
+    #[ragu(gadget)]
+    pub private_auxiliaries: FixedVec<
+        Element<'dr, D>,
+        crate::profile::online::stages::PhaseCoordinatesLen<C::Profile, Nested, 3>,
+    >,
 }
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
@@ -340,6 +346,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
             online: query.online,
             private_sums,
             private_stages,
+            private_auxiliaries: query.private_auxiliaries,
         };
         let zero = Element::zero(dr);
         Ok(WithAux::new(WithSuffix::new(output, zero), aux))

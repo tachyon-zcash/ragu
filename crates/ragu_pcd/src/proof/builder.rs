@@ -17,7 +17,7 @@ use ragu_circuits::{
 };
 use ragu_core::Result;
 use ragu_primitives::vec::FixedVec;
-use udon::curve::Affine;
+use udon::{curve::Affine, field::Field};
 
 use super::{Cached, Proof};
 use crate::{
@@ -470,6 +470,63 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             crate::private_online_tests::mutate_native_phase(PHASE, points[i])
         });
         points
+    }
+
+    /// Private nested commitment copies fixed at one transcript deadline.
+    pub(crate) fn nested_private_phase<const PHASE: usize>(
+        &self,
+    ) -> FixedVec<
+        C::NestedCurve,
+        crate::profile::online::stages::PhaseLen<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+            PHASE,
+        >,
+    > {
+        if C::Profile::NESTED_ONLINE.is_empty() {
+            return FixedVec::from_fn(|_| unreachable!("empty nested declaration"));
+        }
+        let points = if let Some(state) = &self.nested_private {
+            state.commitments()
+        } else {
+            self.dummy_nested_private_commitments
+                .as_deref()
+                .expect("bootstrap nested private commitments")
+        };
+        let points = crate::profile::online::stages::phase_points::<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+            PHASE,
+            _,
+        >(points);
+        #[cfg(test)]
+        let points = FixedVec::from_fn(|i| {
+            crate::private_online_tests::mutate_nested_phase(PHASE, points[i])
+        });
+        points
+    }
+
+    /// Early coordinates of nested auxiliaries, fixed in the query before alpha.
+    pub(crate) fn nested_private_auxiliary_coordinates(
+        &self,
+    ) -> FixedVec<
+        C::CircuitField,
+        crate::profile::online::stages::PhaseCoordinatesLen<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+            3,
+        >,
+    > {
+        let points = self.nested_private_phase::<3>();
+        FixedVec::from_fn(|i| {
+            let point = points[i / 2];
+            #[cfg(test)]
+            let point = crate::private_online_tests::mutate_nested_auxiliary_query(point);
+            let (x, y) = point
+                .coordinates()
+                .unwrap_or((C::CircuitField::ZERO, C::CircuitField::ZERO));
+            [x, y][i % 2]
+        })
     }
 
     /// Native private stage commitment fixed at its transcript deadline.

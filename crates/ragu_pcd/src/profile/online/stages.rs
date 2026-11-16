@@ -110,6 +110,14 @@ impl<P: Profile, S: Side, const PHASE: usize> Len for PhaseLen<P, S, PHASE> {
     }
 }
 
+/// Scalar coordinate count for the commitments fixed at one deadline.
+pub struct PhaseCoordinatesLen<P: Profile, S: Side, const PHASE: usize>(PhantomData<(P, S)>);
+impl<P: Profile, S: Side, const PHASE: usize> Len for PhaseCoordinatesLen<P, S, PHASE> {
+    fn len() -> usize {
+        2 * PhaseLen::<P, S, PHASE>::len()
+    }
+}
+
 /// Selects a fixed phase from commitment-fold order, preserving identity points.
 pub(crate) fn phase_points<P: Profile, S: Side, const PHASE: usize, T: Clone>(
     points: &[T],

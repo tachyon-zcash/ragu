@@ -644,6 +644,9 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
             let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky)?;
             let output = native::circuits::compute_v::Output::<_, C> {
+                private_auxiliaries: FixedVec::from_fn(|_| {
+                    unreachable!("no later auxiliary phase")
+                }),
                 unified: inputs.unified.clone(),
                 online: inputs.online.clone(),
                 private_sums: inputs.private_sums.clone(),

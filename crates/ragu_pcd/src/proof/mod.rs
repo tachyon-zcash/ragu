@@ -989,9 +989,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The step's own online Fq commitments, which the preamble stage
         // holds.
         let mut online_fq = builder.online_fq_commitments().to_vec();
-        if let Some(state) = &builder.nested_private {
-            online_fq.extend_from_slice(state.commitments());
-        }
+        online_fq.extend_from_slice(&builder.nested_private_phase::<0>());
         let online_fq = &online_fq;
 
         // Test hook: this runs on the thread that calls `fuse`, outside its
@@ -1033,6 +1031,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let witness = native_points::RegistryWxWitness {
+            private_points: builder.nested_private_phase::<1>(),
             registry_wx0,
             registry_wx1,
         };
@@ -1057,7 +1056,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         b: C::NestedCurve,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let witness = native_points::AbWitness { registry_wy, a, b };
+        let witness = native_points::AbWitness {
+            registry_wy,
+            a,
+            b,
+            private_points: builder.nested_private_phase::<2>(),
+        };
         builder.set_native_points_ab_rx(<native_points::AbStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,
@@ -1078,7 +1082,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         f: C::NestedCurve,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let witness = native_points::FWitness { registry_xy, f };
+        let witness = native_points::FWitness {
+            registry_xy,
+            f,
+            private_points: builder.nested_private_phase::<3>(),
+        };
         builder.set_native_points_f_rx(<native_points::FStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,

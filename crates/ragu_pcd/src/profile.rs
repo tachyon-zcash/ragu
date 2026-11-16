@@ -169,7 +169,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Private nested polynomial and opening declarations, independent of
     /// the native layout and of the legacy V5 slot.
     ///
-    /// Currently all nested commitments must be fixed before `w`.
+    /// Commitments follow their declared private or auxiliary phases.
     const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
 
     /// Native extension circuits that reserve the private input and query
@@ -601,15 +601,6 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
-        if Self::NESTED_ONLINE
-            .polynomials
-            .iter()
-            .any(|&phase| phase != online::Phase::BeforeW)
-        {
-            return Err(Error::Initialization(
-                "nested auxiliary phases are not integrated yet".into(),
-            ));
-        }
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
         if Self::NATIVE_ENDOSCALINGS_PER_STEP.saturating_mul(Self::NESTED_ENDOSCALINGS_PER_STEP)

@@ -824,3 +824,186 @@ fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<(
     }
     Ok(())
 }
+
+/// Four restrictions with shared intersection values, prepared at the four
+/// transcript boundaries. This exercises the batch schedule, independently of
+/// the later source-registry identity accumulator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NestedPhases;
+impl Profile for NestedPhases {
+    const NAME: &'static str = "nested-private-phases";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ONLINE: Layout = Layout {
+        polynomials: &[
+            Phase::BeforeW,
+            Phase::BeforeY,
+            Phase::BeforeX,
+            Phase::BeforeAlpha,
+        ],
+        openings: &[
+            Opening {
+                polynomial: 0,
+                point: Point::Challenge(Challenge::W),
+                value: 0,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Input(1),
+                value: 0,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Challenge(Challenge::Y),
+                value: 1,
+            },
+            Opening {
+                polynomial: 2,
+                point: Point::Input(0),
+                value: 1,
+            },
+            Opening {
+                polynomial: 2,
+                point: Point::Challenge(Challenge::X),
+                value: 2,
+            },
+            Opening {
+                polynomial: 3,
+                point: Point::Challenge(Challenge::W),
+                value: 2,
+            },
+        ],
+        inputs: 2,
+        points: 0,
+        values: 3,
+    };
+    type Context<'params, Base, Rk, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend;
+    fn nested_online_inputs<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(vec![Base::ScalarField::from(2), Base::ScalarField::from(3)])
+    }
+    fn nested_online_polynomials<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        phase: Phase,
+        inputs: &[Base::ScalarField],
+        challenges: PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, Rk>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        let constant = match phase {
+            Phase::BeforeW => {
+                assert!(challenges.w.is_none() && challenges.y.is_none() && challenges.x.is_none());
+                inputs[0] + inputs[1]
+            }
+            Phase::BeforeY => {
+                assert!(challenges.y.is_none() && challenges.x.is_none());
+                challenges.w.expect("w precedes T") + inputs[0]
+            }
+            Phase::BeforeX => {
+                assert!(challenges.x.is_none());
+                challenges.w.expect("w precedes U") + challenges.y.expect("y precedes U")
+            }
+            Phase::BeforeAlpha => {
+                assert!(challenges.w.is_some());
+                challenges.x.expect("x precedes outgoing restriction")
+                    + challenges.y.expect("y precedes outgoing restriction")
+            }
+        };
+        Ok(vec![sparse::Polynomial::from_coeffs(vec![
+            constant,
+            Base::ScalarField::ONE,
+        ])])
+    }
+}
+
+std::thread_local! { static ALTER_NESTED_PHASE: Cell<Option<usize>> = const { Cell::new(None) }; }
+pub(crate) fn mutate_nested_phase<P: Affine>(phase: usize, point: P) -> P {
+    if ALTER_NESTED_PHASE.get() == Some(phase) {
+        -point
+    } else {
+        point
+    }
+}
+
+#[test]
+fn nested_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<()> {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ALTER_NESTED_PHASE.set(None);
+        }
+    }
+    type Cycle = Profiled<Pasta, NestedPhases>;
+    let app = ApplicationBuilder::<Cycle, Rk, 2>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked_aggregator())?;
+    let mut rng = StdRng::seed_from_u64(0x6261);
+    let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
+    verify_profile(&app, &child, &mut rng, true)?;
+    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
+    let bytes = parent.proof().to_bytes().expect("encode phased batch");
+    let decoded = Proof::<Cycle, Rk>::from_bytes(&bytes)
+        .expect("decode phased batch")
+        .carry::<()>(());
+    verify_profile(&app, &decoded, &mut rng, true)?;
+    for phase in 0..4 {
+        // Only the transcript copies are altered; the state used to build the
+        // quotient, helper and actual point fold remains honest.
+        let (bad, ()) = {
+            assert!(ALTER_NESTED_PHASE.replace(Some(phase)).is_none());
+            let _reset = Reset;
+            app.seed(&mut rng, UnitStep, ())?
+        };
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
+        verify_profile(&app, &bad_parent, &mut rng, false)?;
+        let mut proof = child.proof().clone();
+        proof.nested_private_commitments[phase] = -proof.nested_private_commitments[phase];
+        let bad = proof.carry::<()>(());
+        verify_profile(&app, &bad, &mut rng, false)?;
+        let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
+        verify_profile(&app, &bad_parent, &mut rng, false)?;
+    }
+    let (bad, ()) = {
+        struct ResetQuery;
+        impl Drop for ResetQuery {
+            fn drop(&mut self) {
+                ALTER_NESTED_QUERY.set(false);
+            }
+        }
+        assert!(!ALTER_NESTED_QUERY.replace(true));
+        let _reset = ResetQuery;
+        app.seed(&mut rng, UnitStep, ())?
+    };
+    verify_profile(&app, &bad, &mut rng, false)?;
+    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child, bad)?;
+    verify_profile(&app, &parent, &mut rng, false)?;
+    Ok(())
+}
+
+std::thread_local! { static ALTER_NESTED_QUERY: Cell<bool> = const { Cell::new(false) }; }
+/// Alter only the copy committed before alpha. The later point stage, actual
+/// polynomial fold and exported commitment stay unchanged.
+pub(crate) fn mutate_nested_auxiliary_query<P: Affine>(point: P) -> P {
+    if ALTER_NESTED_QUERY.get() {
+        -point
+    } else {
+        point
+    }
+}

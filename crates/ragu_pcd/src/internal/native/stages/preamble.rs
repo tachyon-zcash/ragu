@@ -198,6 +198,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         for point in private_stages {
             point.write(dr, &mut ky)?;
         }
+        for i in C::Profile::NESTED_ONLINE.phase_range(crate::profile::online::Phase::BeforeAlpha) {
+            self.private_points[i].write(dr, &mut ky)?;
+        }
         Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }

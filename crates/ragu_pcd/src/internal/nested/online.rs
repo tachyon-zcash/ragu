@@ -52,6 +52,14 @@ impl<P: Profile> Len for FqPointsLen<P> {
     }
 }
 
+/// Legacy and private points fixed before w; later auxiliaries live in later stages.
+pub struct FqEarlyPointsLen<P: Profile>(PhantomData<P>);
+impl<P: Profile> Len for FqEarlyPointsLen<P> {
+    fn len() -> usize {
+        P::ONLINE_FQ_POLYS + <crate::profile::online::stages::PhaseLen<P,crate::profile::online::stages::Nested,0> as Len>::len()
+    }
+}
+
 /// The point at which a step opens its online Fq polynomials, given the
 /// lift of $w$ into the scalar field: $\zeta_q$ itself.
 ///

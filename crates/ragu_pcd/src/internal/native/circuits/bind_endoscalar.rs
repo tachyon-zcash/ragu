@@ -36,7 +36,10 @@ use ragu_core::{
 };
 use ragu_primitives::{
     CompletePoint, Element, Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar,
-    WithSuffix, allocator::Standard, io::Write, vec::FixedVec,
+    WithSuffix,
+    allocator::Standard,
+    io::Write,
+    vec::{CollectFixed, FixedVec},
 };
 
 use super::super::{
@@ -126,7 +129,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let inputs = witness.as_ref().map(|w| w.inputs);
         let _ = binding.enforced(dr, inputs.as_ref().map(|i| &i.binding))?;
         let preamble = preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
-        let _ = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
+        let registry_wx = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
         let ab = ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.enforced(dr, inputs.as_ref().map(|i| &i.f))?;
         let walk = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
@@ -157,11 +160,15 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .receive(dr, allocator)?;
         f.registry_xy.enforce_equal(dr, &registry_xy)?;
 
-        let private_points = FixedVec::from_fn(|i| {
-            preamble.online_fq[C::Profile::ONLINE_FQ_POLYS + i]
-                .complete()
-                .clone()
-        });
+        let private_points = preamble
+            .online_fq
+            .iter()
+            .skip(C::Profile::ONLINE_FQ_POLYS)
+            .chain(registry_wx.private_points.iter())
+            .chain(ab.private_points.iter())
+            .chain(f.private_points.iter())
+            .map(|point| point.complete().clone())
+            .collect_fixed()?;
         let zero = Element::zero(dr);
         let (unified, aux) = unified_output.finish_no_suffix(dr, allocator)?;
         Ok(WithAux::new(

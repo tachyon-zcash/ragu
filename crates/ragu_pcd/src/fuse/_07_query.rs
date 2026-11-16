@@ -115,6 +115,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let query_witness = native::stages::query::Witness {
+            private_auxiliaries: builder.nested_private_auxiliary_coordinates(),
             private_stage: builder.nested_private_stage_coordinates(1),
             fixed_registry,
             registry_wxy,
