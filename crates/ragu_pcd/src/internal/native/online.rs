@@ -22,7 +22,7 @@
 //! header's fields are; Ragu proves only that every opening is of the
 //! committed polynomial.
 //!
-//! The commitments live on the nested side, in the `preamble` bridge stage,
+//! The commitments sit in the `preamble` bridge stage,
 //! and the nested walk folds them into $P$ with the rest of the native
 //! batch; the polynomials themselves are native, evaluated at $u$ in the
 //! `eval` stage and folded into $p$ in the same order. Each slot is opened

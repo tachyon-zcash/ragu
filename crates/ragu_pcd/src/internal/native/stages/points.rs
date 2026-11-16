@@ -40,7 +40,7 @@
 //! [`bind_endoscalar`](super::super::circuits::bind_endoscalar) pins to the
 //! step's own [`nested_p_commitment`] slot. That circuit also exports the
 //! $A_n$, $B_n$ and `registry_xy` points for the next parent and the decider.
-//! Every point stage's curve membership is enforced once, by `bind_endoscalar`.
+//! Every points stage's curve membership is enforced once, by `bind_endoscalar`.
 //!
 //! [`nested_p_commitment`]: super::super::unified::Output::nested_p_commitment
 
