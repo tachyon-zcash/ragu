@@ -106,5 +106,5 @@ rayon = "1.11.0"
 bento = { package = "zakura-bento", version = "0.1.0", default-features = false }
 # Udon supplies the Pasta fields, curves, generic arithmetic traits, cycle, and
 # Poseidon parameters.
-udon = { package = "zakura-udon", version = "0.1.0", default-features = false, features = ["traits", "poseidon"] }
+udon = { package = "zakura-udon", version = "0.2.0", default-features = false, features = ["traits", "poseidon"] }
 criterion = { version = "0.8", default-features = false }
