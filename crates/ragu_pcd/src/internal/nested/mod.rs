@@ -653,6 +653,7 @@ pub mod stages {
 pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
     params: &'params C::Params,
+    source_tag: Option<C::ScalarField>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
@@ -737,7 +738,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 use crate::profile::online::{extension, stages::Nested};
                 let slot = CircuitSlot::new(registry);
                 if Some(k) == extension::helper::<C::Profile, Nested>() {
-                    extension::register_circuit::<_, R, C::Profile, Nested>(slot)?
+                    extension::register_circuit::<_, R, C::Profile, Nested>(slot, source_tag)?
                 } else {
                     C::Profile::register_nested_circuit::<C::Base, R>(k as usize, slot, params)?
                 }

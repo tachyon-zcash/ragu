@@ -112,9 +112,10 @@ pub fn check<P: Profile, S: Side>() -> Result<()> {
 /// Registers the private helper at its automatically assigned circuit index.
 pub fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
     slot: CircuitSlot<'params, F, R>,
+    source_tag: Option<F>,
 ) -> Result<Registered<'params, F, R>> {
     slot.register(MultiStage::<F, R, _>::new(
-        circuit::Circuit::<P, S>::default(),
+        circuit::Circuit::<F, P, S>::with_source_tag(source_tag)?,
     ))
 }
 

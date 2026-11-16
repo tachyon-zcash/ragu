@@ -958,6 +958,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     params: &'params C::Params,
     log2_circuits: u32,
     stage_size: usize,
+    source_tag: Option<C::CircuitField>,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
@@ -971,7 +972,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 use crate::profile::online::{extension, stages::Native};
                 let slot = CircuitSlot::new(registry);
                 if Some(k) == extension::helper::<C::Profile, Native>() {
-                    extension::register_circuit::<_, R, C::Profile, Native>(slot)?
+                    extension::register_circuit::<_, R, C::Profile, Native>(slot, source_tag)?
                 } else {
                     C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
                         k as usize, slot, params,

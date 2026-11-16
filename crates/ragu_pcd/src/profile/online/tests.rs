@@ -70,6 +70,7 @@ fn check<F: Field, S: Side>() -> Result<()> {
     assert_stage_values::<F, ProductionRank, _>(&stages::QueryStage::<Batched, S>::default());
     assert_stage_values::<F, ProductionRank, _>(&stages::EvalStage::<Batched, S>::default());
     let inputs = stages::InputWitness {
+        source_tag: FixedVec::new(vec![])?,
         values: FixedVec::new(vec![F::from(4)])?,
         foreign: FixedVec::new(vec![F::from(101), F::from(103)])?,
     };
@@ -80,7 +81,7 @@ fn check<F: Field, S: Side>() -> Result<()> {
     };
     let eval = FixedVec::new(vec![F::from(35)])?;
     let circuit =
-        MultiStage::<F, ProductionRank, _>::new(circuit::Circuit::<Batched, S>::default());
+        MultiStage::<F, ProductionRank, _>::new(circuit::Circuit::<F, Batched, S>::default());
     let traced = circuit.trace(circuit::Witness {
         inputs: &inputs,
         query: &query,
@@ -123,6 +124,7 @@ fn private_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
         extension::check::<Batched, S>()?;
         let mut registry = extension::register_circuit::<F, ProductionRank, Batched, S>(
             CircuitSlot::new(RegistryBuilder::new()),
+            None,
         )?
         .into_registry();
         for j in 0..layout.bondings() {
@@ -307,9 +309,11 @@ fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()
     );
     assert_eq!(state.stage_commitment(2), eval_commitment);
     let registry = RegistryBuilder::<Fp, R>::new()
-        .register_internal_circuit(MultiStage::<Fp, R, _>::new(
-            circuit::Circuit::<Batched, S>::default(),
-        ))?
+        .register_internal_circuit(MultiStage::<Fp, R, _>::new(circuit::Circuit::<
+            Fp,
+            Batched,
+            S,
+        >::default()))?
         .finalize()?;
     let challenges = Challenges {
         w: Fp::from(5),
@@ -409,12 +413,10 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
             compute_target.value().take(),
             actual.finish_ky(dr)?.value().take()
         );
-        let output =
-            <circuit::Circuit<NestedOnly, S> as MultiStageCircuit<Fq, ProductionRank>>::instance(
-                &circuit::Circuit::default(),
-                dr,
-                helper.as_ref(),
-            )?;
+        let output = <circuit::Circuit<Fq, NestedOnly, S> as MultiStageCircuit<
+            Fq,
+            ProductionRank,
+        >>::instance(&circuit::Circuit::default(), dr, helper.as_ref())?;
         let mut actual = Horner::new(&y);
         GadgetExt::write(&output, dr, &mut actual)?;
         assert_eq!(
@@ -662,12 +664,12 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 compute_target.value().take(),
                 ky::finish_extension_ky(actual, dr)?.value().take()
             );
-            let output =
-                <circuit::Circuit<Batched, S> as MultiStageCircuit<Fp, ProductionRank>>::instance(
-                    &circuit::Circuit::default(),
-                    dr,
-                    helper.as_ref(),
-                )?;
+            let output = <circuit::Circuit<Fp, Batched, S> as MultiStageCircuit<
+                Fp,
+                ProductionRank,
+            >>::instance(
+                &circuit::Circuit::default(), dr, helper.as_ref()
+            )?;
             let mut actual = Horner::new(&y);
             GadgetExt::write(&output, dr, &mut actual)?;
             assert_eq!(
@@ -904,7 +906,7 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
             let mut actual = Horner::new(&y);
             GadgetExt::write(&output, dr, &mut actual)?;
             assert_eq!(target.value().take(), actual.finish_ky(dr)?.value().take());
-            let helper_output = <circuit::Circuit<P, S> as MultiStageCircuit<
+            let helper_output = <circuit::Circuit<Fq, P, S> as MultiStageCircuit<
                 Fq,
                 ProductionRank,
             >>::instance(
@@ -955,6 +957,7 @@ fn point_consumers_use_the_authenticated_foreign_wires() -> Result<()> {
                 let x = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.0))?;
                 let y = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.1))?;
                 let inputs = stages::InputOutput::<_, Batched, S> {
+                    source_tag: FixedVec::new(vec![])?,
                     values: FixedVec::from_fn(|_| Element::one()),
                     foreign: FixedVec::new(vec![x.clone(), y.clone()])?,
                 };
@@ -969,4 +972,248 @@ fn point_consumers_use_the_authenticated_foreign_wires() -> Result<()> {
     }
     check::<EpAffine, stages::Native>()?;
     check::<EqAffine, stages::Nested>()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SourceMesh;
+impl Profile for SourceMesh {
+    const NAME: &'static str = "source-mesh-setup-test";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NATIVE_ONLINE: Layout = Layout {
+        polynomials: &[
+            Phase::BeforeW,
+            Phase::BeforeW,
+            Phase::BeforeY,
+            Phase::BeforeY,
+            Phase::BeforeX,
+            Phase::BeforeAlpha,
+        ],
+        openings: &[
+            Opening {
+                polynomial: 0,
+                point: Point::Challenge(Challenge::W),
+                value: 0,
+            },
+            Opening {
+                polynomial: 2,
+                point: Point::Input(1),
+                value: 0,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Challenge(Challenge::W),
+                value: 1,
+            },
+            Opening {
+                polynomial: 3,
+                point: Point::Input(3),
+                value: 1,
+            },
+            Opening {
+                polynomial: 2,
+                point: Point::Challenge(Challenge::Y),
+                value: 2,
+            },
+            Opening {
+                polynomial: 4,
+                point: Point::Input(0),
+                value: 2,
+            },
+            Opening {
+                polynomial: 3,
+                point: Point::Challenge(Challenge::Y),
+                value: 3,
+            },
+            Opening {
+                polynomial: 4,
+                point: Point::Input(2),
+                value: 3,
+            },
+            Opening {
+                polynomial: 4,
+                point: Point::Challenge(Challenge::X),
+                value: 4,
+            },
+            Opening {
+                polynomial: 5,
+                point: Point::Challenge(Challenge::W),
+                value: 4,
+            },
+        ],
+        inputs: 4,
+        points: 0,
+        values: 5,
+    };
+    const NESTED_ONLINE: Layout = Self::NATIVE_ONLINE;
+    const NATIVE_MESH: Option<super::mesh::Mesh> = Some(super::mesh::Mesh {
+        inherited: [
+            super::mesh::Restriction {
+                polynomial: 0,
+                x: 0,
+                y: 1,
+                helper: 2,
+            },
+            super::mesh::Restriction {
+                polynomial: 1,
+                x: 2,
+                y: 3,
+                helper: 3,
+            },
+        ],
+        introduced: &[],
+        helpers: &[
+            super::mesh::Helper {
+                polynomial: 2,
+                x: 0,
+            },
+            super::mesh::Helper {
+                polynomial: 3,
+                x: 2,
+            },
+        ],
+        u: 4,
+        outgoing: 5,
+    });
+    const NESTED_MESH: Option<super::mesh::Mesh> = Self::NATIVE_MESH;
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
+#[test]
+fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
+    use ragu_backend::{Backend, ReferenceBackend};
+    use ragu_circuits::{
+        registry::{CircuitIndex, RegistryBuilder, Tag},
+        staging::StageExt,
+    };
+
+    fn check<F: Field, S: Side>() -> Result<()> {
+        S::mesh::<SourceMesh>()
+            .unwrap()
+            .check(S::layout::<SourceMesh>())?;
+        crate::internal::tests::assert_stage_values::<F, ProductionRank, _>(&stages::InputStage::<
+            SourceMesh,
+            S,
+        >::default());
+        assert!(circuit::Circuit::<F, SourceMesh, S>::with_source_tag(None).is_err());
+        assert!(circuit::Circuit::<F, Batched, S>::with_source_tag(Some(F::from(23))).is_err());
+        let query = stages::QueryWitness::<F, SourceMesh, S> {
+            challenges: FixedVec::new(vec![F::from(5), F::from(7), F::from(11)])?,
+            points: FixedVec::new(vec![])?,
+            values: FixedVec::new(vec![F::ZERO; 5])?,
+        };
+        let eval = FixedVec::new(vec![F::ZERO; 6])?;
+        for tag in [23, 29] {
+            let inputs = stages::InputWitness::<F, SourceMesh, S> {
+                source_tag: FixedVec::new(vec![F::from(tag)])?,
+                values: FixedVec::new(vec![F::from(2), F::from(3), F::from(13), F::from(19)])?,
+                foreign: FixedVec::new(vec![F::ZERO; 4])?,
+            };
+            let helper =
+                MultiStage::<F, ProductionRank, _>::new(
+                    circuit::Circuit::<F, SourceMesh, S>::with_source_tag(Some(F::from(23)))?,
+                );
+            let witness = circuit::Witness {
+                inputs: &inputs,
+                query: &query,
+                eval: &eval,
+                challenges: Challenges {
+                    w: F::from(5),
+                    y: F::from(7),
+                    x: F::from(11),
+                    alpha: F::from(13),
+                    u: F::from(17),
+                    beta: F::from(3),
+                },
+            };
+            // A staged trace must be checked with its committed stage
+            // polynomials: Simulator's reserved stage wires contain zeroes.
+            let (trace, sums) = helper.trace(witness)?.into_parts();
+            let registry = RegistryBuilder::<F, ProductionRank>::new()
+                .with_tag(Tag::new(F::ZERO))
+                .register_internal_circuit(MultiStage::<F, ProductionRank, _>::new(
+                    circuit::Circuit::<F, SourceMesh, S>::with_source_tag(Some(F::from(23)))?,
+                ))?
+                .finalize()?;
+            let index = CircuitIndex::new(0);
+            let mut assignment = registry.assemble_with_alpha(&trace, index, F::ZERO)?;
+            assignment.add_assign(&<stages::InputStage<SourceMesh, S> as StageExt<
+                F,
+                ProductionRank,
+            >>::rx(F::ZERO, &inputs)?);
+            assignment.add_assign(&<stages::QueryStage<SourceMesh, S> as StageExt<
+                F,
+                ProductionRank,
+            >>::rx(F::ZERO, &query)?);
+            assignment.add_assign(&<stages::EvalStage<SourceMesh, S> as StageExt<
+                F,
+                ProductionRank,
+            >>::rx(F::ZERO, &eval)?);
+            let instance = circuit::Instance {
+                challenges: Challenges {
+                    w: F::from(5),
+                    y: F::from(7),
+                    x: F::from(11),
+                    alpha: F::from(13),
+                    u: F::from(17),
+                    beta: F::from(3),
+                },
+                sums,
+                foreign: inputs.foreign.clone(),
+            };
+            for (y, z) in [(F::from(31), F::from(37)), (F::from(41), F::from(43))] {
+                let mut rhs = assignment.clone();
+                rhs.dilate(z);
+                rhs.add_assign(&registry.circuit_y(index, y));
+                rhs.add_assign(&ProductionRank::tz(z));
+                assert_eq!(
+                    assignment.revdot(&rhs) == helper.ky(&instance, y)?,
+                    tag == 23,
+                    "source tag {tag}"
+                );
+            }
+        }
+        let registry = |tag| {
+            RegistryBuilder::<F, ProductionRank>::new()
+                .with_tag(Tag::new(F::from(101)))
+                .register_internal_circuit(MultiStage::<F, ProductionRank, _>::new(
+                    circuit::Circuit::<F, SourceMesh, S>::with_source_tag(Some(F::from(tag)))?,
+                ))?
+                .finalize()
+        };
+        assert_ne!(
+            ReferenceBackend::registry_wxy(&registry(23)?, F::from(2), F::from(3), F::from(5)),
+            ReferenceBackend::registry_wxy(&registry(29)?, F::from(2), F::from(3), F::from(5)),
+        );
+        Ok(())
+    }
+    check::<Fp, stages::Native>()?;
+    check::<Fq, stages::Nested>()
+}
+
+#[test]
+fn backend_selection_preserves_source_setup_and_undeclared_sources_reject() -> Result<()> {
+    use ragu_backend::ReferenceBackend;
+    use ragu_circuits::{
+        polynomials::TestRank,
+        registry::{RegistryBuilder, Tag},
+    };
+    use ragu_core::pasta::Pasta;
+
+    let registry = RegistryBuilder::<Fp, TestRank>::new()
+        .with_tag(Tag::new(Fp::from(23)))
+        .register_circuit(())?
+        .finalize()?;
+    let source = super::source::SourceRegistry::new::<_, ReferenceBackend>(&registry);
+    let builder = crate::ApplicationBuilder::<Pasta, ProductionRank, 2>::new()
+        .with_source_registries(Some(source), None)
+        .with_backend::<ReferenceBackend>();
+    assert_eq!(builder.native_source.as_ref().unwrap().tag(), Fp::from(23));
+    assert!(builder.finalize(crate::pasta::baked()).is_err());
+    Ok(())
 }

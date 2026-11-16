@@ -26,18 +26,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         if !C::Profile::NATIVE_ONLINE.is_empty() {
-            builder.native_private = Some(State::new(C::Profile::native_online_inputs::<
-                C::Base,
-                R,
-                B,
-            >(&self.context)?)?);
+            builder.native_private = Some(
+                State::new(C::Profile::native_online_inputs::<C::Base, R, B>(
+                    &self.context,
+                )?)?
+                .with_source_tag(self.native_source.as_ref().map(|source| source.tag()))?,
+            );
         }
         if !C::Profile::NESTED_ONLINE.is_empty() {
-            builder.nested_private = Some(State::new(C::Profile::nested_online_inputs::<
-                C::Base,
-                R,
-                B,
-            >(&self.context)?)?);
+            builder.nested_private = Some(
+                State::new(C::Profile::nested_online_inputs::<C::Base, R, B>(
+                    &self.context,
+                )?)?
+                .with_source_tag(self.nested_source.as_ref().map(|source| source.tag()))?,
+            );
         }
         self.prepare_private_phase(Phase::BeforeW, PreparationChallenges::default(), builder)?;
         // Both fields' private polynomials exist before either input stage is

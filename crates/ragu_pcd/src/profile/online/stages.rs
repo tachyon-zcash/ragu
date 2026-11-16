@@ -30,6 +30,8 @@ pub trait Side: sealed::Sealed + Copy + Default + Send + Sync + 'static {
     fn layout<P: Profile>() -> Layout;
     /// Selects the other field's fixed layout.
     fn other_layout<P: Profile>() -> Layout;
+    /// Selects the source identity accumulator on this field.
+    fn mesh<P: Profile>() -> Option<super::mesh::Mesh>;
     /// Whether the helper must lift the native `pre_beta` endoscalar.
     const NATIVE: bool;
 }
@@ -49,6 +51,9 @@ impl Side for Native {
     fn other_layout<P: Profile>() -> Layout {
         P::NESTED_ONLINE
     }
+    fn mesh<P: Profile>() -> Option<super::mesh::Mesh> {
+        P::NATIVE_MESH
+    }
     const NATIVE: bool = true;
 }
 impl Side for Nested {
@@ -57,6 +62,9 @@ impl Side for Nested {
     }
     fn other_layout<P: Profile>() -> Layout {
         P::NATIVE_ONLINE
+    }
+    fn mesh<P: Profile>() -> Option<super::mesh::Mesh> {
+        P::NESTED_MESH
     }
     const NATIVE: bool = false;
 }
@@ -97,6 +105,14 @@ pub struct PolynomialsLen<P: Profile, S: Side>(PhantomData<(P, S)>);
 impl<P: Profile, S: Side> Len for PolynomialsLen<P, S> {
     fn len() -> usize {
         S::layout::<P>().polynomials.len()
+    }
+}
+
+/// A fixed number of wires when this side has a source-registry mesh.
+pub struct MeshPresent<P: Profile, S: Side, const N: usize>(PhantomData<(P, S)>);
+impl<P: Profile, S: Side, const N: usize> Len for MeshPresent<P, S, N> {
+    fn len() -> usize {
+        if S::mesh::<P>().is_some() { N } else { 0 }
     }
 }
 
@@ -142,6 +158,8 @@ impl<P: Profile, S: Side> Len for ForeignLen<P, S> {
 /// User inputs and the opposite field's private commitment coordinates.
 #[derive(Clone)]
 pub struct InputWitness<F, P: Profile, S: Side> {
+    /// The source tag, constrained to the registry captured by setup.
+    pub source_tag: FixedVec<F, MeshPresent<P, S, 1>>,
     /// User data fixed before w.
     pub values: FixedVec<F, InputsLen<P, S>>,
     /// Opposite-field pre-w commitments in polynomial order, x then y.
@@ -151,6 +169,9 @@ pub struct InputWitness<F, P: Profile, S: Side> {
 /// Early wires shared by all declared private consumers.
 #[derive(Gadget, Write, Consistent)]
 pub struct InputOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
+    /// The source tag, authenticated by the batch helper's circuit constant.
+    #[ragu(gadget)]
+    pub source_tag: FixedVec<Element<'dr, D>, MeshPresent<P, S, 1>>,
     /// User data fixed before w.
     #[ragu(gadget)]
     pub values: FixedVec<Element<'dr, D>, InputsLen<P, S>>,
@@ -239,7 +260,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> Stage<F, R> for InputStage<P, S> {
     type Witness<'source> = &'source InputWitness<F, P, S>;
     type OutputKind = Kind![F; InputOutput<'_, _, P, S>];
     fn values() -> usize {
-        InputsLen::<P, S>::len() + ForeignLen::<P, S>::len()
+        MeshPresent::<P, S, 1>::len() + InputsLen::<P, S>::len() + ForeignLen::<P, S>::len()
     }
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -250,6 +271,9 @@ impl<F: Field, R: Rank, P: Profile, S: Side> Stage<F, R> for InputStage<P, S> {
         Self: 'dr,
     {
         Ok(InputOutput {
+            source_tag: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|v| v.source_tag[i]))
+            })?,
             values: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), witness.as_ref().map(|v| v.values[i]))
             })?,

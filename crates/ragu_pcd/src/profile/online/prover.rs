@@ -26,6 +26,7 @@ use crate::profile::Profile;
 /// A step's private polynomials and stages. Only stage polynomials survive in
 /// the proof; the private polynomials are consumed by this step's PCS fold.
 pub(crate) struct State<C: Affine, R: Rank, P: Profile, S: Side> {
+    source_tag: Option<C::Scalar>,
     prepared: Option<Prepared<C::Scalar, R>>,
     polynomials: Vec<sparse::Polynomial<C::Scalar, R>>,
     commitments: Vec<C>,
@@ -39,6 +40,7 @@ pub(crate) struct State<C: Affine, R: Rank, P: Profile, S: Side> {
 impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     pub(crate) fn new(inputs: Vec<C::Scalar>) -> Result<Self> {
         Ok(Self {
+            source_tag: None,
             prepared: Some(Prepared::new(S::layout::<P>(), inputs)?),
             polynomials: Vec::new(),
             commitments: Vec::new(),
@@ -48,6 +50,17 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             stages: core::array::from_fn(|_| None),
             stage_commitments: [None; 3],
         })
+    }
+
+    pub(crate) fn with_source_tag(mut self, tag: Option<C::Scalar>) -> Result<Self> {
+        circuit::Circuit::<C::Scalar, P, S>::with_source_tag(tag)?;
+        self.source_tag = tag;
+        Ok(self)
+    }
+
+    pub(crate) fn circuit(&self) -> circuit::Circuit<C::Scalar, P, S> {
+        circuit::Circuit::with_source_tag(self.source_tag)
+            .expect("source checked at initialization")
     }
 
     pub(crate) fn early_values(&self) -> &[C::Scalar] {
@@ -118,6 +131,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             .ok_or_else(|| Error::InvalidWitness("private preparation already finished".into()))?
             .phase(Phase::BeforeW)?;
         let inputs = InputWitness {
+            source_tag: FixedVec::new(self.source_tag.into_iter().collect())?,
             values: FixedVec::new(self.early_values().to_vec())?,
             foreign: FixedVec::new(foreign)?,
         };
@@ -235,7 +249,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         index: CircuitIndex,
         rng: &mut RNG,
     ) -> Result<(sparse::Polynomial<C::Scalar, R>, [C::Scalar; 2])> {
-        let circuit = MultiStage::<C::Scalar, R, _>::new(circuit::Circuit::<P, S>::default());
+        let circuit = MultiStage::<C::Scalar, R, _>::new(self.circuit());
         let (trace, sums) = circuit.trace(self.witness(challenges))?.into_parts();
         Ok((registry.assemble(&trace, index, rng)?, sums))
     }

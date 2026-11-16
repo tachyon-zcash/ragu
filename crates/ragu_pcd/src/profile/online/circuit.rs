@@ -8,13 +8,13 @@ use ragu_circuits::{
     staging::{MultiStageCircuit, StageBuilder},
 };
 use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Endoscalar, EndoscalarChallenge,
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt,
     io::Write,
     vec::{ConstLen, FixedVec},
 };
@@ -68,14 +68,38 @@ pub struct Witness<'a, F: Field, P: Profile, S: Side> {
 }
 
 /// Computes the two private-batch sums without loading the fuse preamble.
-pub struct Circuit<P: Profile, S: Side>(PhantomData<(P, S)>);
-impl<P: Profile, S: Side> Default for Circuit<P, S> {
+pub struct Circuit<F: Field, P: Profile, S: Side> {
+    source_tag: Option<F>,
+    marker: PhantomData<(P, S)>,
+}
+impl<F: Field, P: Profile, S: Side> Default for Circuit<F, P, S> {
     fn default() -> Self {
-        Self(PhantomData)
+        Self {
+            source_tag: None,
+            marker: PhantomData,
+        }
+    }
+}
+impl<F: Field, P: Profile, S: Side> Circuit<F, P, S> {
+    /// Uses the source tag captured when the enclosing application was set up.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a missing or undeclared source identity.
+    pub fn with_source_tag(source_tag: Option<F>) -> Result<Self> {
+        if source_tag.is_some() != S::mesh::<P>().is_some() {
+            return Err(Error::Initialization(
+                "source registry does not match the mesh declaration".into(),
+            ));
+        }
+        Ok(Self {
+            source_tag,
+            marker: PhantomData,
+        })
     }
 }
 
-impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit<P, S> {
+impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit<F, P, S> {
     type Last = EvalStage<P, S>;
     type Instance<'source> = &'source Instance<F, P, S>;
     type Witness<'source> = Witness<'source, F, P, S>;
@@ -111,6 +135,15 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
         let (eval, builder) = builder.add_stage::<EvalStage<P, S>>()?;
         let dr = builder.finish();
         let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.inputs))?;
+        if self.source_tag.is_some() != S::mesh::<P>().is_some() {
+            return Err(Error::Initialization(
+                "private helper is missing its captured source".into(),
+            ));
+        }
+        if let Some(tag) = self.source_tag {
+            let expected = Element::constant(dr, tag);
+            inputs.source_tag[0].enforce_equal(dr, &expected)?;
+        }
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval))?;
         // Consumers use these very same staged wires. Their authenticity is

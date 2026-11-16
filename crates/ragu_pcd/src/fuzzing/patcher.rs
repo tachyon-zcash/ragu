@@ -682,12 +682,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // the committed stages in state for capture; no extension rx needs
         // to be assembled for this visitor-only execution.
         if let Some(state) = &builder.native_private {
-            let circuit = MultiStage::<C::CircuitField, R, _>::new(
-                crate::profile::online::circuit::Circuit::<
-                    C::Profile,
-                    crate::profile::online::stages::Native,
-                >::default(),
-            );
+            let circuit = MultiStage::<C::CircuitField, R, _>::new(state.circuit());
             builder.native_private_sums = Some(
                 circuit
                     .trace(state.witness(Challenges {
@@ -702,12 +697,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             );
         }
         if let Some(state) = &builder.nested_private {
-            let circuit = MultiStage::<C::ScalarField, R, _>::new(
-                crate::profile::online::circuit::Circuit::<
-                    C::Profile,
-                    crate::profile::online::stages::Nested,
-                >::default(),
-            );
+            let circuit = MultiStage::<C::ScalarField, R, _>::new(state.circuit());
             builder.nested_private_sums = Some(
                 circuit
                     .trace(state.witness(Challenges {

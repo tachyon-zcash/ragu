@@ -172,6 +172,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Commitments follow their declared private or auxiliary phases.
     const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
 
+    /// A setup-fixed native source-registry mesh over declared online slots.
+    /// Both inherited obligations are carried by every ordinary step.
+    const NATIVE_MESH: Option<online::mesh::Mesh> = None;
+
+    /// Nested counterpart of [`Self::NATIVE_MESH`].
+    const NESTED_MESH: Option<online::mesh::Mesh> = None;
+
     /// Native extension circuits that reserve the private input and query
     /// stages before their own stages, indexed in `native_extension`.
     /// A consumer's first own stage must have `online::stages::QueryStage`
@@ -601,6 +608,18 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
+        for (mesh, layout) in [
+            (Self::NATIVE_MESH, Self::NATIVE_ONLINE),
+            (Self::NESTED_MESH, Self::NESTED_ONLINE),
+        ] {
+            if let Some(mesh) = mesh {
+                mesh.check(layout)?;
+                // Enable only once inherited carry and terminal closure are complete.
+                return Err(Error::Initialization(
+                    "source-registry proof integration is not enabled".into(),
+                ));
+            }
+        }
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
         if Self::NATIVE_ENDOSCALINGS_PER_STEP.saturating_mul(Self::NESTED_ENDOSCALINGS_PER_STEP)
