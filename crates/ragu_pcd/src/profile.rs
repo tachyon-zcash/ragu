@@ -629,10 +629,6 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         ] {
             if let Some(mesh) = mesh {
                 mesh.check(layout)?;
-                // Enable only once inherited carry and terminal closure are complete.
-                return Err(Error::Initialization(
-                    "source-registry proof integration is not enabled".into(),
-                ));
             }
         }
         // Each added step contributes two points to the other side's walk.

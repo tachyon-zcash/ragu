@@ -83,6 +83,9 @@ mod online_fq_oracles_tests;
 #[cfg(test)]
 #[path = "../tests/private_online.rs"]
 mod private_online_tests;
+#[cfg(test)]
+#[path = "../tests/source_mesh.rs"]
+mod source_mesh_tests;
 
 #[cfg(test)]
 #[path = "../tests/decompress_statement.rs"]
