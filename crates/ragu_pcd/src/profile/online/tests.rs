@@ -932,3 +932,38 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
         },
     )
 }
+
+#[test]
+fn point_consumers_use_the_authenticated_foreign_wires() -> Result<()> {
+    use ragu_core::{
+        maybe::Maybe,
+        pasta::{EpAffine, EqAffine},
+    };
+    use ragu_primitives::{Element, Simulator};
+    use udon::curve::EndomorphismAffine;
+    fn check<C: EndomorphismAffine, S: stages::Side>() -> Result<()> {
+        for expected in [C::identity(), C::generator()] {
+            Simulator::<C::Base>::simulate(expected, |dr, witness| {
+                let coordinates = witness.map(|point| {
+                    point
+                        .coordinates()
+                        .unwrap_or((C::Base::ZERO, C::Base::ZERO))
+                });
+                let x = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.0))?;
+                let y = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.1))?;
+                let inputs = stages::InputOutput::<_, Batched, S> {
+                    values: FixedVec::from_fn(|_| Element::one()),
+                    foreign: FixedVec::new(vec![x.clone(), y.clone()])?,
+                };
+                let point = inputs.foreign_point::<C>(dr, 0)?;
+                assert_eq!(point.value().take(), expected);
+                assert_eq!(point.coordinates().0.wire(), x.wire());
+                assert_eq!(point.coordinates().1.wire(), y.wire());
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+    check::<EpAffine, stages::Native>()?;
+    check::<EqAffine, stages::Nested>()
+}

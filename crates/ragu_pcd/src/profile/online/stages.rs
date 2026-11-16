@@ -134,6 +134,32 @@ pub struct InputOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
 }
 
+impl<'dr, D: Driver<'dr>, P: Profile, S: Side> InputOutput<'dr, D, P, S> {
+    /// Reads an authenticated opposite-field commitment from its staged wires.
+    ///
+    /// The index follows the other layout's BeforeW polynomial order. Zero
+    /// polynomials are represented by the identity.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the index is outside the fixed foreign commitment layout.
+    pub fn foreign_point<C: udon::curve::EndomorphismAffine<Base = D::F>>(
+        &self,
+        dr: &mut D,
+        index: usize,
+    ) -> Result<ragu_primitives::CompletePoint<'dr, D, C>> {
+        assert!(
+            index < self.foreign.len() / 2,
+            "foreign commitment index outside layout"
+        );
+        ragu_primitives::CompletePoint::from_coordinates(
+            dr,
+            self.foreign[2 * index].clone(),
+            self.foreign[2 * index + 1].clone(),
+        )
+    }
+}
+
 /// Witnessed query points and claimed values in the profile's fixed order.
 #[derive(Clone)]
 pub struct QueryWitness<F, P: Profile, S: Side> {

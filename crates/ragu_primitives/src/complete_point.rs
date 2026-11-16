@@ -38,9 +38,19 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> CompletePoint<'dr, D, C> {
     /// The coordinates satisfy the curve equation, or both equal zero.
     pub fn alloc(dr: &mut D, value: DriverValue<D, C>) -> Result<Self> {
         let coordinates = value.map(|p| p.coordinates().unwrap_or((D::F::ZERO, D::F::ZERO)));
+        let x = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.0))?;
+        let y = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.1))?;
+        Self::from_coordinates(dr, x, y)
+    }
+
+    /// Uses existing coordinate wires, enforcing the complete affine encoding.
+    ///
+    /// Both zeroes represent the identity; every other pair must satisfy the
+    /// curve equation. The returned point retains the supplied wires.
+    pub fn from_coordinates(dr: &mut D, x: Element<'dr, D>, y: Element<'dr, D>) -> Result<Self> {
         let point = Self {
-            x: Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.0))?,
-            y: Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.1))?,
+            x,
+            y,
             marker: PhantomData,
         };
         point.enforce_curve(dr)?;
@@ -224,12 +234,10 @@ mod tests {
         for (x, y) in [(Fp::ZERO, Fp::ONE), (Fp::ONE, Fp::ZERO)] {
             assert!(
                 Simulator::<Fp>::simulate((x, y), |dr, witness| {
-                    let point = CompletePoint::<_, EpAffine> {
-                        x: Element::alloc(dr, &mut (), witness.as_ref().map(|p| p.0))?,
-                        y: Element::alloc(dr, &mut (), witness.as_ref().map(|p| p.1))?,
-                        marker: PhantomData,
-                    };
-                    point.enforce_consistent(dr)
+                    let x = Element::alloc(dr, &mut (), witness.as_ref().map(|p| p.0))?;
+                    let y = Element::alloc(dr, &mut (), witness.as_ref().map(|p| p.1))?;
+                    CompletePoint::<_, EpAffine>::from_coordinates(dr, x, y)?;
+                    Ok(())
                 })
                 .is_err()
             );
