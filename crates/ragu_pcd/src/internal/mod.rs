@@ -24,9 +24,9 @@
 //!
 //! # Crossing the cycle
 //!
-//! A bridge commitment lets a native commitment, a host-curve ($E_q$) point,
-//! be witnessed in a nested stage and committed on the nested curve ($E_p$),
-//! so it can be bound and absorbed into the transcript:
+//! A **bridge** commitment lets a native commitment, a host-curve ($E_q$)
+//! point, be witnessed in a nested stage and committed on the nested curve
+//! ($E_p$), so it can be bound and absorbed into the transcript:
 //!
 //! 1. Native commitments: $\mathbb{F}_p\[X\]$ polynomials committed on $E_q$
 //!    give $E_q$ points, with coordinates in $\mathbb{F}_q$, which the
@@ -37,11 +37,11 @@
 //! 3. Bridge commitment: that stage committed on $E_p$ gives an $E_p$ point,
 //!    with coordinates in $\mathbb{F}_p$, which the transcript absorbs.
 //!
-//! The exception is the bridge-hash stage, whose commitment is not absorbed
-//! but is the digest [`Oracles::bridge_hash`] gives a step.
+//! The exception is the **bridge-hash** stage, whose commitment is not
+//! absorbed but is the digest [`Oracles::bridge_hash`] gives a step.
 //!
-//! A points stage holds the other side's batch commitments for this side's
-//! endoscaling walk to fold into that batch's $P$.
+//! A **points** stage holds the other side's batch commitments for this
+//! side's endoscaling walk to fold into that batch's $P$.
 //!
 //! | stage         | stage polynomial                        | direction                    |
 //! |---------------|-----------------------------------------|------------------------------|
