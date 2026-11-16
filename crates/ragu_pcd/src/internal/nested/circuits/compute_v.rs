@@ -194,6 +194,16 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             horner.finish(dr)
         };
 
+        let fu = if P::NESTED_ONLINE.is_empty() {
+            fu
+        } else {
+            let mut scaled = fu;
+            for _ in P::NESTED_ONLINE.openings {
+                scaled = scaled.mul(dr, lift(challenges::ALPHA))?;
+            }
+            scaled.add(dr, &private_sums[0])
+        };
+
         // The endoscalar the endoscaling steps walked P with lifts to the
         // challenge stage's beta wire, which the parent's `bind_beta` ties
         // to pre_beta.
@@ -206,6 +216,15 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             fu.write(dr, &mut horner)?;
             eval.write(dr, &mut horner)?;
             horner.finish(dr)
+        };
+        let computed_v = if P::NESTED_ONLINE.is_empty() {
+            computed_v
+        } else {
+            let mut scaled = computed_v;
+            for _ in P::NESTED_ONLINE.polynomials {
+                scaled = scaled.mul(dr, beta)?;
+            }
+            scaled.add(dr, &private_sums[1])
         };
         unified.v.provide(computed_v);
 

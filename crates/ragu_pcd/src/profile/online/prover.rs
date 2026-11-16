@@ -97,7 +97,6 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         &self.commitments
     }
 
-    #[allow(dead_code)] // Read by the gated PCS/transcript integration.
     pub(crate) fn polynomials(&self) -> &[sparse::Polynomial<C::Scalar, R>] {
         &self.polynomials
     }

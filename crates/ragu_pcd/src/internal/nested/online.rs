@@ -44,6 +44,14 @@ impl<P: Profile> Len for FqPolysLen<P> {
     }
 }
 
+/// The walked commitments: legacy slots followed by distinct private polynomials.
+pub struct FqPointsLen<P: Profile>(PhantomData<P>);
+impl<P: Profile> Len for FqPointsLen<P> {
+    fn len() -> usize {
+        P::ONLINE_FQ_POLYS + P::NESTED_ONLINE.polynomials.len()
+    }
+}
+
 /// The point at which a step opens its online Fq polynomials, given the
 /// lift of $w$ into the scalar field: $\zeta_q$ itself.
 ///

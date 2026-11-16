@@ -81,6 +81,10 @@ mod profile_layout_tests;
 mod online_fq_oracles_tests;
 
 #[cfg(test)]
+#[path = "../tests/private_online.rs"]
+mod private_online_tests;
+
+#[cfg(test)]
 #[path = "../tests/decompress_statement.rs"]
 mod decompress_statement_tests;
 

@@ -413,10 +413,13 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     /// The actual private stage commitment, or the synthetic dummy's stored stage.
     pub(crate) fn nested_private_stage_commitment(&self, index: usize) -> C::NestedCurve {
-        self.nested_private.as_ref().map_or_else(
+        let point = self.nested_private.as_ref().map_or_else(
             || self.nested_extension_stage_commitments()[index],
             |state| state.stage_commitment(index),
-        )
+        );
+        #[cfg(test)]
+        let point = crate::private_online_tests::mutate_stage_commitment(index, point);
+        point
     }
 
     /// Create a new empty builder with the given `bridge_alpha` source for

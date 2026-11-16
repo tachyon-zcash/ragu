@@ -39,7 +39,7 @@ use crate::{
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery, online},
         nested::{self, pcs},
     },
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle, online::batch::Challenges},
     proof::ProofBuilder,
 };
 
@@ -93,7 +93,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
             let challenges = self.nested_challenges(w, x, y, z, left, right)?;
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
-            self.compute_nested_f(&batch, challenges, alpha)
+            self.compute_nested_f(&batch, challenges, alpha, builder)?
         };
         self.commit_native_points_f(
             rng,
@@ -257,7 +257,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         batch: &pcs::Batch<'_, C, R>,
         challenges: pcs::Challenges<C::ScalarField>,
         alpha: C::ScalarField,
-    ) -> NestedF<C, R> {
+        builder: &ProofBuilder<'_, C, R, B>,
+    ) -> Result<NestedF<C, R>> {
         use udon::polynomial::divide_linear_rev;
 
         let iters: Vec<_> = batch
@@ -265,10 +266,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
             .collect();
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let mut poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        if let Some(state) = &builder.nested_private {
+            let layout = C::Profile::NESTED_ONLINE;
+            for _ in layout.openings {
+                poly.scale(alpha);
+            }
+            // Opening descriptors can use w, y and x; u and beta are not
+            // sampled yet and are never read by quotient construction.
+            let private = layout.quotient(
+                state.polynomials(),
+                state.early_values(),
+                &state.query().points,
+                &Challenges {
+                    w: challenges.w,
+                    y: challenges.y,
+                    x: challenges.x,
+                    alpha,
+                    u: C::ScalarField::ZERO,
+                    beta: C::ScalarField::ZERO,
+                },
+            )?;
+            poly += &private;
+        }
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
-        NestedF { poly, commitment }
+        Ok(NestedF { poly, commitment })
     }
 
     /// The nested batch this step opens, over the nested polynomials the

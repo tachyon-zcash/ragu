@@ -601,9 +601,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
-        if !Self::NATIVE_ONLINE.is_empty() || !Self::NESTED_ONLINE.is_empty() {
+        if !Self::NATIVE_ONLINE.is_empty()
+            || Self::NESTED_ONLINE
+                .polynomials
+                .iter()
+                .any(|&phase| phase != online::Phase::BeforeW)
+        {
             return Err(Error::Initialization(
-                "private opening batches are not integrated yet".into(),
+                "native private batches and later auxiliary phases are not integrated yet".into(),
             ));
         }
         // Each added step contributes two points to the other side's walk.
@@ -1225,7 +1230,7 @@ impl Shape {
                 } else {
                     online::extension::RXS
                 },
-            P::ONLINE_FQ_POLYS,
+            P::ONLINE_FQ_POLYS + P::NESTED_ONLINE.polynomials.len(),
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
         )

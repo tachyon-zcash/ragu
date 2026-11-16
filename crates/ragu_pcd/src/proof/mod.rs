@@ -974,7 +974,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The step's own online Fq commitments, which the preamble stage
         // holds.
-        let online_fq = builder.online_fq_commitments();
+        let mut online_fq = builder.online_fq_commitments().to_vec();
+        if let Some(state) = &builder.nested_private {
+            online_fq.extend_from_slice(state.commitments());
+        }
+        let online_fq = &online_fq;
 
         // Test hook: this runs on the thread that calls `fuse`, outside its
         // parallel jobs, as the hook's thread-local requires.
@@ -1333,6 +1337,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
+            let private_polynomials = vec![
+                sparse::Polynomial::<C::ScalarField, R>::new();
+                C::Profile::NESTED_ONLINE.polynomials.len()
+            ];
             let mut points = Vec::with_capacity(native::NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> =
                 Vec::with_capacity(native::NumPoints::<C::Profile>::len());
@@ -1363,6 +1371,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .zip(builder.online_fq_commitments())
             {
                 push(commitment, poly); // the step's own online Fq polynomial
+            }
+            for poly in &private_polynomials {
+                push(C::NestedCurve::identity(), poly);
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let inputs = Inputs::from_walk(

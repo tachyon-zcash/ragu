@@ -68,7 +68,7 @@ use crate::{
         Side,
         batch_point::BatchPoint,
         endoscalar::{InputsLen, PointsWitness},
-        nested::{self, online::FqPolysLen, pcs::NUM_CURRENT_POINTS},
+        nested::{self, online::FqPointsLen, pcs::NUM_CURRENT_POINTS},
     },
     profile::{
         Profile,
@@ -229,7 +229,7 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
     ];
     match i - 2 * num_child_points {
         j if j < NUM_CURRENT_POINTS => CURRENT[j],
-        j if j - NUM_CURRENT_POINTS < P::ONLINE_FQ_POLYS => {
+        j if j - NUM_CURRENT_POINTS < FqPointsLen::<P>::len() => {
             InputSource::OnlineFq(j - NUM_CURRENT_POINTS)
         }
         _ => panic!("input {i} is past the walk"),
@@ -265,7 +265,7 @@ pub struct BindingWitness<C: Affine, P: Profile> {
 pub struct PreambleWitness<C: Affine, P: Profile> {
     pub points: FixedVec<C, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
-    pub online_fq: FixedVec<C, FqPolysLen<P>>,
+    pub online_fq: FixedVec<C, FqPointsLen<P>>,
 }
 
 /// Witness of [`RegistryWxStage`].
@@ -327,7 +327,7 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 /// # Panics
 ///
 /// Panics if either child has other than [`num_child_points`] points, or
-/// if `online_fq` has other than [`Profile::ONLINE_FQ_POLYS`] points.
+/// if `online_fq` has other than [`FqPointsLen`] points.
 pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
@@ -510,7 +510,7 @@ pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
     #[ragu(gadget)]
-    pub online_fq: FixedVec<PrivatePoint<'dr, D, C, P>, FqPolysLen<P>>,
+    pub online_fq: FixedVec<PrivatePoint<'dr, D, C, P>, FqPointsLen<P>>,
 }
 
 /// Output gadget of [`RegistryWxStage`].
@@ -684,7 +684,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
     type OutputKind = Kind![C::Base; Preamble<'_, _, C, P>];
 
     fn values() -> usize {
-        2 * (num_children_points::<P>() + P::ONLINE_FQ_POLYS)
+        2 * (num_children_points::<P>() + FqPointsLen::<P>::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -840,7 +840,7 @@ mod tests {
                 }
                 InputSource::OnlineFq(j) => {
                     assert_eq!(j, online_fq, "online Fq commitments out of slot order");
-                    assert_eq!(i, num_inputs - P::ONLINE_FQ_POLYS + j);
+                    assert_eq!(i, num_inputs - FqPointsLen::<P>::len() + j);
                     // Input `i` is point `1 + i`: the initial point is first.
                     assert_eq!(inputs.preamble.online_fq[j], points[1 + i]);
                     online_fq += 1;
@@ -850,7 +850,7 @@ mod tests {
         }
         assert_eq!(bindings, 2 * num_child_bindings::<P>());
         assert!(children.iter().all(|&c| c));
-        assert_eq!(online_fq, P::ONLINE_FQ_POLYS);
+        assert_eq!(online_fq, FqPointsLen::<P>::len());
     }
 
     #[test]
