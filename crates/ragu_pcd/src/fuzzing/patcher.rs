@@ -901,6 +901,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new();
         let compute_v_witness = || {
             Ok(native::circuits::compute_v::Witness {
+                binding: &native_points.binding,
                 unified: make_unified(&builder)?,
                 preamble_witness: &preamble_witness,
                 query_witness: &query_witness,

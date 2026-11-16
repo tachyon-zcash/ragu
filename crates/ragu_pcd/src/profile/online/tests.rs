@@ -441,3 +441,92 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn private_stage_bindings_are_in_the_native_claims() -> Result<()> {
+    use alloc::vec::Vec;
+
+    use ragu_circuits::registry::CircuitIndex;
+    use ragu_core::{Cycle, pasta::Pasta};
+
+    use crate::{
+        internal::{claims::Source, native, tests::assert_stage_values},
+        profile::Profiled,
+    };
+    type C = Profiled<Pasta, NestedOnly>;
+    type R = ProductionRank;
+    assert_stage_values::<Fp, R, _>(&native::stages::points::BindingStage::<
+        <C as Cycle>::NestedCurve,
+        NestedOnly,
+    >::default());
+    assert_stage_values::<Fp, R, _>(&native::stages::query::Stage::<C, R, 2>::default());
+    assert_stage_values::<Fp, R, _>(&native::stages::eval::Stage::<C, R, 2>::default());
+
+    struct Components;
+    impl Source for Components {
+        type RxComponent = native::RxComponent;
+        type Rx = native::RxComponent;
+        type AppCircuitId = CircuitIndex;
+        fn rx(&self, component: Self::Rx) -> impl Iterator<Item = Self::Rx> {
+            core::iter::once(component)
+        }
+        fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
+            core::iter::once(CircuitIndex::new(0))
+        }
+    }
+    #[derive(Default)]
+    struct Recorder(Vec<(native::InternalCircuitIndex, Vec<native::RxComponent>)>);
+    impl<P: Profile> native::claims::Processor<P, native::RxComponent, CircuitIndex> for Recorder {
+        fn raw_claim(&mut self, _: native::RxComponent, _: native::RxComponent) {}
+        fn circuit_claim(&mut self, _: CircuitIndex, _: impl Iterator<Item = native::RxComponent>) {
+        }
+        fn internal_circuit_claim(
+            &mut self,
+            id: native::InternalCircuitIndex,
+            rxs: impl Iterator<Item = native::RxComponent>,
+        ) {
+            self.0.push((id, rxs.collect()));
+        }
+        fn grouped_bonding_claim(
+            &mut self,
+            _: native::InternalCircuitIndex,
+            _: impl Iterator<Item = impl Iterator<Item = native::RxComponent>>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+    for active in [false, true] {
+        let mut claims = Recorder::default();
+        if active {
+            native::claims::build::<NestedOnly, _, _>(&Components, &mut claims)?;
+        } else {
+            native::claims::build::<Standard, _, _>(&Components, &mut claims)?;
+        }
+        for id in [
+            native::InternalCircuitIndex::ComputeVCircuit,
+            native::InternalCircuitIndex::CollapseCircuit,
+        ] {
+            let components = &claims
+                .0
+                .iter()
+                .find(|(circuit, _)| *circuit == id)
+                .unwrap()
+                .1;
+            assert_eq!(
+                components.contains(&native::RxComponent::Rx(native::RxIndex::PointsBinding)),
+                active
+            );
+        }
+    }
+    use crate::internal::{ky, nested::RxIndex};
+    assert_eq!(
+        ky::nested_private_stages::<NestedOnly, _>(|index| index),
+        [
+            RxIndex::ExtensionStage(0),
+            RxIndex::ExtensionStage(1),
+            RxIndex::ExtensionStage(2)
+        ]
+    );
+    assert!(ky::nested_private_stages::<Standard, _>(|index| index).is_empty());
+    Ok(())
+}

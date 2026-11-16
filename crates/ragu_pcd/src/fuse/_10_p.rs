@@ -27,7 +27,10 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::Always,
 };
-use ragu_primitives::{EndoscalarChallenge, Uendo, lift_endoscalar, vec::Len};
+use ragu_primitives::{
+    EndoscalarChallenge, Uendo, lift_endoscalar,
+    vec::{FixedVec, Len},
+};
 use udon::field::Field;
 
 use super::{
@@ -108,7 +111,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             points.len(),
             crate::internal::native::NumPoints::<C::Profile>::len()
         );
-        Inputs::from_walk(&points)
+        Inputs::from_walk(
+            &points,
+            FixedVec::from_fn(|_| builder.nested_private_stage_commitment(0)),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

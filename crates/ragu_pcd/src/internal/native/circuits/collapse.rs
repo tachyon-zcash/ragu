@@ -11,7 +11,7 @@
 //!
 //! A profile's statement targets come from its headers; its binding targets
 //! come from the extension commitments in the points binding stage. That
-//! stage is loaded only when the profile declares a native binding circuit.
+//! stage is loaded when a native binding or private nested batch needs it.
 //! Its point contracts remain the responsibility of [`super::bind_endoscalar`].
 //!
 //! The inner quotient is fixed before mu is derived, and the outer quotient
@@ -83,7 +83,7 @@ use super::super::{
 };
 use crate::{
     internal::{fold_revdot, ky},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
 };
 
 /// Circuit that verifies both layers of the revdot reduction.
@@ -159,10 +159,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     {
         type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
         // The binding stage is loaded, and so in the circuit's claim, only
-        // for a profile whose native extension binds: the circuit reads
-        // its extension points for the binding k(y) and nothing else.
+        // when the profile needs extension targets: user bindings or private
+        // stage copies. Both use the actual walked child commitments.
         let extension = crate::profile::native_extension::<C::Profile>();
-        let (binding, builder) = if extension.binding.is_some() {
+        let (binding, builder) = if extension.binding.is_some()
+            || !C::Profile::NESTED_ONLINE.is_empty()
+        {
             let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
             (Some(binding), builder)
         } else {
@@ -204,8 +206,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // The compute_v bridge k(y) values, over the same unified and online
         // wires: what ties the openings each child's batch verified to the
         // openings its application circuit's instance will be held to.
-        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y)?;
-        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y)?;
+        let (left_private, right_private) = if C::Profile::NESTED_ONLINE.is_empty() {
+            (&[][..], &[][..])
+        } else {
+            let binding = binding
+                .as_ref()
+                .expect("private stage targets load binding");
+            (&binding.left.extension[..3], &binding.right.extension[..3])
+        };
+        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y, left_private)?;
+        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y, right_private)?;
         left_compute_v_ky.enforce_equal(dr, &outer_error.left.compute_v_bridge)?;
         right_compute_v_ky.enforce_equal(dr, &outer_error.right.compute_v_bridge)?;
 

@@ -187,6 +187,27 @@ pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) ->
     )
 }
 
+/// The actual nested private Input, Query and Eval stage commitments, in
+/// deadline order. These targets bind transcript copies to the walked rxs.
+pub fn nested_private_stages<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) -> Vec<T> {
+    (0..<crate::profile::online::stages::Present<P, crate::profile::online::stages::Nested, 3> as ragu_primitives::vec::Len>::len())
+        .map(|i| commitment(nested::RxIndex::ExtensionStage(i as u32)))
+        .collect()
+}
+
+/// Allocates the profile-fixed private stage points for a native claim target.
+pub fn nested_private_stage_points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
+    dr: &mut D,
+    points: DriverValue<D, &[C]>,
+) -> Result<
+    ragu_primitives::vec::FixedVec<
+        Point<'dr, D, C>,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Nested, 3>,
+    >,
+> {
+    ragu_primitives::vec::FixedVec::try_from_fn(|i| Point::alloc(dr, points.as_ref().map(|p| p[i])))
+}
+
 /// Finishes `ky`, the Horner evaluation of an extension circuit's public
 /// output, as the circuit's $k(y)$: the constant zero its registry slot
 /// appends to the output (see [`CircuitSlot`](crate::profile::CircuitSlot)),
@@ -276,11 +297,21 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         let bound = proof
             .as_ref()
             .map(|proof| native_bound::<C::Profile, _>(|index| proof.nested_rx_commitment(index)));
-        let proof_inputs =
-            ProofInputs::<_, C, HEADER_SIZE>::alloc::<R>(dr, proof, output_header.as_ref())?;
+        let proof_inputs = ProofInputs::<_, C, HEADER_SIZE>::alloc::<R>(
+            dr,
+            proof.as_ref().map(|p| *p),
+            output_header.as_ref(),
+        )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y)?;
+        let private_stages = proof.as_ref().map(|proof| {
+            nested_private_stages::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
+        });
+        let private_stages = nested_private_stage_points::<_, _, C::Profile>(
+            dr,
+            private_stages.as_ref().map(|p| p.as_slice()),
+        )?;
+        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &private_stages)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = bound.as_ref().map(|bound| bound.len()).take();
@@ -342,6 +373,8 @@ pub struct NativeParts<'a, C: Cycle> {
     /// The nested extension stage commitments the native binding circuit
     /// recomputes, in its output order; none for a profile without one.
     pub nested_bound: &'a [C::NestedCurve],
+    /// The actual nested private stages, for the compute-v transcript-copy target.
+    pub nested_private_stages: &'a [C::NestedCurve],
 }
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
@@ -365,7 +398,11 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y)?;
+        let private_stages = nested_private_stage_points::<_, _, C::Profile>(
+            dr,
+            parts.as_ref().map(|p| p.nested_private_stages),
+        )?;
+        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &private_stages)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
         let count = parts.as_ref().map(|p| p.nested_bound.len()).take();

@@ -109,6 +109,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let native = native::stages::eval::Witness {
+            private_stage: builder.nested_private_stage_coordinates(2),
             left: left_witness,
             right: right_witness,
             current,

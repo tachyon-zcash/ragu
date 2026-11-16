@@ -40,7 +40,7 @@ use ragu_primitives::{
     Element, Point,
     allocator::Allocator,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{ConstLen, FixedVec, Len},
 };
 use udon::field::Field;
 
@@ -50,7 +50,10 @@ use crate::{
         native::{RxComponent, RxIndex, RxValues, circuits::bind_challenges::NUM_BINDERS, online},
         nested,
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// Length type for the binding partial sums: one per `bind_challenges`
@@ -213,6 +216,9 @@ pub struct CurrentStepWitness<F> {
 
 /// Witness for the eval stage.
 pub struct Witness<C: ProfiledCycle> {
+    /// Coordinates of the private nested eval-stage commitment.
+    pub private_stage:
+        ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>>,
     /// Left proof's evaluations at $u$.
     pub left: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
 
@@ -239,6 +245,7 @@ impl<C: ProfiledCycle> Witness<C> {
             p_poly: C::CircuitField::ZERO,
         };
         Witness {
+            private_stage: FixedVec::from_fn(|_| C::CircuitField::ZERO),
             left: child(),
             right: child(),
             current: CurrentStepWitness {
@@ -335,6 +342,10 @@ pub struct Evaluations<'dr, D: Driver<'dr>, P: Profile> {
 /// the evaluations into the $v$ Horner sum never includes them.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
+    /// The private eval commitment fixed at this transcript boundary.
+    #[ragu(gadget)]
+    pub private_stage:
+        ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 2>>,
     #[ragu(gadget)]
     pub evaluations: Evaluations<'dr, D, C::Profile>,
     #[ragu(gadget)]
@@ -361,6 +372,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             + 6
             + online::NUM_ONLINE_FP_QUERIES
             + 2 * (NUM_BINDERS - 1)
+            + Present::<C::Profile, Nested, 2>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -403,6 +415,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             Point::alloc(dr, witness.as_ref().map(|w| w.partials.partials[k]))
         })?;
         Ok(Output {
+            private_stage: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_stage[i]))
+            })?,
             evaluations: Evaluations {
                 left,
                 right,

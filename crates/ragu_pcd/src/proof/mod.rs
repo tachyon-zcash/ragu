@@ -985,6 +985,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested::pcs::child_commitments(left).collect::<Vec<_>>(),
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
             online_fq,
+            FixedVec::from_fn(|_| builder.nested_private_stage_commitment(0)),
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
             C::NestedCurve,
@@ -1251,6 +1252,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
 
+        let extension = crate::profile::nested_extension::<C::Profile>();
+        builder
+            .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
+        builder.set_nested_extension_stage_rxs(vec![ones_nested.clone(); extension.stages]);
+
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
         builder.set_native_application_stage_rx(ones_host.clone());
@@ -1359,7 +1365,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 push(commitment, poly); // the step's own online Fq polynomial
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
-            let inputs = Inputs::from_walk(&points);
+            let inputs = Inputs::from_walk(
+                &points,
+                FixedVec::from_fn(|_| builder.nested_private_stage_commitment(0)),
+            );
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)
                 .expect("trivial native points stages");
             let (commitment, _) = self
@@ -1380,10 +1389,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         builder.set_nested_collapse_rx(ones_nested.clone());
         builder.set_nested_compute_v_rx(ones_nested.clone());
-        let extension = crate::profile::nested_extension::<C::Profile>();
-        builder
-            .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
-        builder.set_nested_extension_stage_rxs(vec![ones_nested; extension.stages]);
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).

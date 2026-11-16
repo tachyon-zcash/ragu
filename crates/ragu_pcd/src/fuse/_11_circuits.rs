@@ -138,6 +138,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
                 .trace(native::circuits::compute_v::Witness {
+                    binding: &native_points.binding,
                     unified,
                     preamble_witness,
                     query_witness,

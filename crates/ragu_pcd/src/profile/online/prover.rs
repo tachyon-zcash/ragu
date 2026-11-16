@@ -205,7 +205,6 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         self.stages[index] = Some(rx);
     }
 
-    #[allow(dead_code)] // Read by the gated PCS/transcript integration.
     pub(crate) fn stage_commitment(&self, index: usize) -> C {
         self.stage_commitments[index].expect("private stage committed at its deadline")
     }

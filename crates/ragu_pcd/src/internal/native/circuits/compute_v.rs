@@ -91,20 +91,26 @@ use crate::{
         inverter::Inverter,
         native::{RevdotParameters, online},
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// Public output of the compute-v circuit: the unified instance and the
 /// step's online openings, which the parent holds the application circuit's
 /// instance to.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
+pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
     /// The online openings, in slot order, as the `query` stage holds them.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
+    /// The nested private Input, Query and Eval commitments, in deadline order.
+    #[ragu(gadget)]
+    pub private_stages: FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 6>>,
 }
 
 /// Circuit that computes and verifies the claimed evaluation value [$v$].
@@ -137,6 +143,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_S
 pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
+    /// Holds the private nested input-stage commitment fixed before w.
+    pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides child proof data).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
     /// Witness for the query stage (provides registry and polynomial evaluations).
@@ -176,14 +184,25 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
     {
         // Set up multi-stage circuit pipeline: preamble -> query -> eval.
         // Each stage provides data needed for the v computation.
-        let builder = builder
-            .skip_stage::<super::super::stages::points::BindingStage<C::NestedCurve, C::Profile>>(
-            )?;
+        type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
+        let (binding, builder) = if C::Profile::NESTED_ONLINE.is_empty() {
+            (
+                None,
+                builder.skip_stage::<Binding<C::NestedCurve, C::Profile>>()?,
+            )
+        } else {
+            let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
+            (Some(binding), builder)
+        };
         let (preamble, builder) =
             builder.add_stage::<native_preamble::Stage<C, R, HEADER_SIZE>>()?;
         let (query, builder) = builder.add_stage::<native_query::Stage<C, R, HEADER_SIZE>>()?;
         let (eval, builder) = builder.add_stage::<native_eval::Stage<C, R, HEADER_SIZE>>()?;
         let dr = builder.finish();
+        let binding = match binding {
+            Some(binding) => Some(binding.unenforced(dr, witness.as_ref().map(|w| w.binding))?),
+            None => None,
+        };
 
         // Preamble is enforced because it contains child proof data that must
         // be validated (Points, Booleans, etc.).
@@ -191,8 +210,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
 
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
-        // The binding partials the eval stage also carries are the binders'
-        // business; only the evaluations enter v.
+        // Export deadline-bound copies of the private helper chain. The
+        // parent and terminal targets use its actual rx commitments.
+        let private_stages = FixedVec::from_fn(|i| match i {
+            0 | 1 => {
+                let point = ragu_primitives::CompletePoint::from_affine(
+                    binding
+                        .as_ref()
+                        .expect("active private batch loads binding")
+                        .private_input[0]
+                        .clone(),
+                );
+                let (x, y) = point.coordinates();
+                if i == 0 { x.clone() } else { y.clone() }
+            }
+            2 | 3 => query.private_stage[i - 2].clone(),
+            _ => eval.private_stage[i - 4].clone(),
+        });
+        // Neither binding partials nor commitment coordinates enter v.
         let eval = &eval.evaluations;
 
         let allocator = &mut Standard::new();
@@ -281,6 +316,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let output = Output {
             unified,
             online: query.online,
+            private_stages,
         };
         let zero = Element::zero(dr);
         Ok(WithAux::new(WithSuffix::new(output, zero), aux))

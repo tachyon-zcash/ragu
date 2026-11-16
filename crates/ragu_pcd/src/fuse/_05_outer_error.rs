@@ -113,17 +113,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let (right_unified_ky, right_unified_bridge_ky) =
                     preamble.right.unified_ky_values(dr, &y)?;
 
+                let stages = |proof: &crate::Proof<C, R>| {
+                    ky::nested_private_stages::<C::Profile, _>(|index| {
+                        proof.nested_rx_commitment(index)
+                    })
+                };
+                let left_stages = preamble_witness.as_ref().map(|w| stages(w.left.proof));
+                let right_stages = preamble_witness.as_ref().map(|w| stages(w.right.proof));
+                let left_stages = ky::nested_private_stage_points::<_, _, C::Profile>(
+                    dr,
+                    left_stages.as_ref().map(|p| p.as_slice()),
+                )?;
+                let right_stages = ky::nested_private_stage_points::<_, _, C::Profile>(
+                    dr,
+                    right_stages.as_ref().map(|p| p.as_slice()),
+                )?;
                 let left_ky = native::stages::outer_error::ChildKyOutputs {
                     application: preamble.left.application_ky(dr, &y)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
-                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y)?,
+                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y, &left_stages)?,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
                     application: preamble.right.application_ky(dr, &y)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
-                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y)?,
+                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y, &right_stages)?,
                 };
 
                 let mu = Element::alloc(dr, allocator, mu)?;

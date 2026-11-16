@@ -70,7 +70,10 @@ use crate::{
         endoscalar::{InputsLen, PointsWitness},
         nested::{self, online::FqPolysLen, pcs::NUM_CURRENT_POINTS},
     },
-    profile::{Profile, online::stages::Nested as PrivateNested},
+    profile::{
+        Profile,
+        online::stages::{Nested, Nested as PrivateNested, Present},
+    },
 };
 
 /// Point representation selected by the nested private batch declaration.
@@ -251,6 +254,8 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
 /// and binding circuit.
 #[derive(Clone)]
 pub struct BindingWitness<C: Affine, P: Profile> {
+    /// This step's private nested input stage, committed before w.
+    pub private_input: FixedVec<C, Present<P, Nested, 1>>,
     pub left: ChildBindingWitness<C, P>,
     pub right: ChildBindingWitness<C, P>,
 }
@@ -327,6 +332,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
     online_fq: &[C],
+    private_input: FixedVec<C, Present<P, Nested, 1>>,
 ) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
@@ -355,6 +361,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     points.extend(rest(right));
     (
         BindingWitness {
+            private_input,
             left: bound(left),
             right: bound(right),
         },
@@ -382,7 +389,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     /// # Panics
     ///
     /// Panics if `points.len() != NumPoints::<P>::len()`.
-    pub fn from_walk(points: &[C]) -> Self {
+    pub fn from_walk(points: &[C], private_input: FixedVec<C, Present<P, Nested, 1>>) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         let current = &points[1 + 2 * num_child_points..];
@@ -390,6 +397,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
             &current[NUM_CURRENT_POINTS..],
+            private_input,
         );
         Self {
             binding,
@@ -486,6 +494,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
 /// Output gadget of [`BindingStage`].
 #[derive(Gadget, Consistent)]
 pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The nested private input-stage commitment absorbed before w.
+    #[ragu(gadget)]
+    pub private_input: FixedVec<Point<'dr, D, C>, Present<P, Nested, 1>>,
     #[ragu(gadget)]
     pub left: ChildBinding<'dr, D, C, P>,
     #[ragu(gadget)]
@@ -641,7 +652,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
     type OutputKind = Kind![C::Base; Binding<'_, _, C, P>];
 
     fn values() -> usize {
-        4 * num_child_bindings::<P>()
+        4 * num_child_bindings::<P>() + 2 * Present::<P, Nested, 1>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -653,6 +664,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
         Self: 'dr,
     {
         Ok(Binding {
+            private_input: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.private_input[i]))
+            })?,
             left: ChildBinding::alloc(dr, witness.as_ref().map(|w| &w.left))?,
             right: ChildBinding::alloc(dr, witness.as_ref().map(|w| &w.right))?,
         })
@@ -797,7 +811,7 @@ mod tests {
                 .to_affine()
             })
             .collect();
-        let inputs = Inputs::<C, P>::from_walk(&points);
+        let inputs = Inputs::<C, P>::from_walk(&points, FixedVec::from_fn(|_| points[0]));
         assert_eq!(inputs.walk(), points);
 
         let num_inputs = NumInputs::<P>::len();

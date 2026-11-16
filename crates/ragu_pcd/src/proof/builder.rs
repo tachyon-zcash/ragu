@@ -16,12 +16,16 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::Result;
+use udon::curve::Affine;
 
 use super::{Cached, Proof};
 use crate::{
     header::NUM_ONLINE_FP_POLYS,
     internal::{native::online, nested},
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -267,14 +271,8 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
             crate::profile::online::stages::Native,
         >,
     >,
-    pub(crate) nested_private: Option<
-        crate::profile::online::prover::State<
-            C::NestedCurve,
-            R,
-            C::Profile,
-            crate::profile::online::stages::Nested,
-        >,
-    >,
+    pub(crate) nested_private:
+        Option<crate::profile::online::prover::State<C::NestedCurve, R, C::Profile, Nested>>,
 
     pub(crate) native_private_sums: Option<[C::CircuitField; 2]>,
     pub(crate) nested_private_sums: Option<[C::ScalarField; 2]>,
@@ -399,6 +397,28 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
 }
 
 impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
+    /// The two coordinates fixed in the native query or eval stage.
+    pub(crate) fn nested_private_stage_coordinates(
+        &self,
+        index: usize,
+    ) -> ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>> {
+        ragu_primitives::vec::FixedVec::from_fn(|i| {
+            let (x, y) = self
+                .nested_private_stage_commitment(index)
+                .coordinates()
+                .expect("private stage commitment is finite");
+            [x, y][i]
+        })
+    }
+
+    /// The actual private stage commitment, or the synthetic dummy's stored stage.
+    pub(crate) fn nested_private_stage_commitment(&self, index: usize) -> C::NestedCurve {
+        self.nested_private.as_ref().map_or_else(
+            || self.nested_extension_stage_commitments()[index],
+            |state| state.stage_commitment(index),
+        )
+    }
+
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {

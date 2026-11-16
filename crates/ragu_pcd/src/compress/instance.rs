@@ -468,6 +468,9 @@ impl<C: ProfiledCycle> Instance<C> {
         let nested_bound = ky::native_bound::<C::Profile, _>(|index| {
             self.nested_commitment(nested::RxComponent::Rx(index))
         });
+        let nested_private_stages = ky::nested_private_stages::<C::Profile, _>(|index| {
+            self.nested_commitment(nested::RxComponent::Rx(index))
+        });
         let native = NativeKy {
             c: Some(self.c),
             ..ky::native_ky_of::<C, HEADER_SIZE>(
@@ -479,6 +482,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,
+                    nested_private_stages: &nested_private_stages,
                 },
                 y,
             )?

@@ -213,10 +213,10 @@ where
             }
 
             // collapse: Collapse + Preamble + InnerError + OuterError,
-            // and PointsBinding for a profile whose native extension binds,
-            // whose binding k(y) the circuit takes from that stage.
+            // and PointsBinding when extension targets use child stage points.
             CollapseCircuit => {
-                let bound = crate::profile::native_extension::<P>().binding.is_some();
+                let bound = crate::profile::native_extension::<P>().binding.is_some()
+                    || !P::NESTED_ONLINE.is_empty();
                 for ((((pc, pb), pre), em), en) in source
                     .rx(Rx(Collapse))
                     .zip(source.rx(Rx(PointsBinding)))
@@ -234,15 +234,22 @@ where
                 }
             }
 
-            // compute_v: ComputeV + Preamble + Query + Eval
+            // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
+            // when it exports the nested private input-stage commitment.
             ComputeVCircuit => {
-                for (((cv, pre), q), e) in source
+                for ((((cv, pb), pre), q), e) in source
                     .rx(Rx(ComputeV))
+                    .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(Query)))
                     .zip(source.rx(Rx(Eval)))
                 {
-                    processor.internal_circuit_claim(id, [cv, pre, q, e].into_iter());
+                    let mut rxs = alloc::vec![cv];
+                    if !P::NESTED_ONLINE.is_empty() {
+                        rxs.push(pb);
+                    }
+                    rxs.extend([pre, q, e]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 

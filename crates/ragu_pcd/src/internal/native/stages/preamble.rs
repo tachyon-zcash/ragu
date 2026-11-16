@@ -13,7 +13,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Boolean, Element, GadgetExt,
+    Boolean, Element, GadgetExt, Point,
     allocator::Allocator,
     consistent::Consistent,
     vec::{CollectFixed, ConstLen, FixedVec},
@@ -162,10 +162,18 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: Cycle, const HEADER_SIZE: usiz
     /// `(unified, online, 0)`, the unified instance followed by the online
     /// openings the circuit exported (see
     /// [`compute_v::Output`](crate::internal::native::circuits::compute_v::Output)).
-    pub fn compute_v_bridge_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Element<'dr, D>> {
+    pub fn compute_v_bridge_ky(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+        private_stages: &[Point<'dr, D, C::NestedCurve>],
+    ) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
         self.online.write(dr, &mut ky)?;
+        for point in private_stages {
+            point.write(dr, &mut ky)?;
+        }
         Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }
