@@ -1,4 +1,10 @@
-//! Modules for evaluating the wiring polynomial $s(X, Y)$.
+//! Recording and evaluating the public wiring polynomial $s(X, Y)$.
+//!
+//! Registries record each circuit once with [`compiled`]. Evaluations then
+//! run that linear program forwards or backwards without re-synthesizing the
+//! circuit. The direct interpreter modules below remain independent reference
+//! implementations for parity tests. Symbolic stage masks keep their compact
+//! closed-form representation.
 //!
 //! # Background
 //!
@@ -89,6 +95,11 @@
 //! [`floor_plan`]: crate::floor_planner::floor_plan
 //! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/local/wiring.html
 
+#[allow(dead_code)]
 pub mod sx;
+#[allow(dead_code)]
 pub mod sxy;
+#[allow(dead_code)]
 pub mod sy;
+
+pub(crate) mod compiled;
