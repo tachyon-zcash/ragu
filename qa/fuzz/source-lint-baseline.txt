@@ -34,3 +34,5 @@ RAGU005|crates/ragu_pcd/src/step/oracles.rs|283|Which output slots the step left
 RAGU005|crates/ragu_pcd/src/step/oracles.rs|299|Which slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are opened at zeta.
 RAGU005|src/mock/step/oracles.rs|93|Which output slots the step left unopened is structural: the step opens the same slots every synthesis, so the same slots are held to one.
 RAGU005|src/mock/step/oracles.rs|137|Per-slot occupancy follows prior structural openings; a repeated opening fails before allocation, independently of points or witness values.
+RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|178|Wire counts are checked against the setup-fixed layout before synthesis; a mismatch is an API error, not a witness-dependent circuit branch.
+RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|189|The opening descriptor is fixed by the profile at setup; it selects a constant, challenge wire or staged point without inspecting witness values.

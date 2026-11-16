@@ -6,6 +6,8 @@
 
 use ragu_core::{Error, Result};
 
+pub mod batch;
+
 /// The last transcript boundary before a polynomial must be committed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {

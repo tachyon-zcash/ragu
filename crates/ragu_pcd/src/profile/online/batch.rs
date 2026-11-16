@@ -1,0 +1,392 @@
+//! Arithmetic shared by private batches on either field.
+
+use alloc::vec::Vec;
+
+use ragu_backend::Backend;
+use ragu_circuits::{
+    horner::Horner,
+    polynomials::{Rank, sparse},
+    registry::CircuitIndex,
+};
+use ragu_core::{Error, Result, drivers::Driver};
+use ragu_primitives::{Element, GadgetExt};
+use udon::field::Field;
+
+use super::{Challenge, Layout, Point};
+
+/// The enclosing step's authenticated challenges on one field.
+///
+/// `beta` is the effective endoscalar lift used by the commitment walk.
+#[derive(Clone, Debug)]
+pub struct Challenges<T> {
+    /// Challenge sampled after the private commitments.
+    pub w: T,
+    /// Challenge sampled after the first auxiliary commitments.
+    pub y: T,
+    /// Challenge sampled after the second auxiliary commitments.
+    pub x: T,
+    /// Quotient batching challenge.
+    pub alpha: T,
+    /// Fresh evaluation point for the quotient and all polynomials.
+    pub u: T,
+    /// Effective commitment-fold scalar, rather than raw `pre_beta`.
+    pub beta: T,
+}
+
+impl<T> Challenges<T> {
+    fn opening(&self, challenge: Challenge) -> &T {
+        match challenge {
+            Challenge::W => &self.w,
+            Challenge::Y => &self.y,
+            Challenge::X => &self.x,
+        }
+    }
+}
+
+impl Point {
+    /// Resolves an opening point from setup and the staged witness points.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an out-of-range witness or circuit domain index.
+    pub fn resolve<F: Field>(&self, challenges: &Challenges<F>, points: &[F]) -> Result<F> {
+        match *self {
+            Self::Challenge(challenge) => Ok(*challenges.opening(challenge)),
+            Self::Constant(value) => Ok(F::from(value)),
+            Self::Circuit(index) => circuit_point(index),
+            Self::Witness(index) => points
+                .get(index)
+                .copied()
+                .ok_or_else(|| Error::InvalidWitness("missing private opening point".into())),
+        }
+    }
+}
+
+/// Resolves a setup-fixed registry index without allowing bit-reversal aliases.
+fn circuit_point<F: Field>(index: u32) -> Result<F> {
+    if u64::from(index) >= 1u64.checked_shl(F::TWO_ADICITY).unwrap_or(u64::MAX) {
+        return Err(Error::Initialization(
+            "private opening circuit index exceeds the field domain".into(),
+        ));
+    }
+    Ok(CircuitIndex::from_u32(index).omega_j())
+}
+
+/// Claimed query wires, committed before `alpha`.
+#[derive(Clone, Debug)]
+pub struct Queries<F> {
+    /// Arbitrary points, indexed by [`Point::Witness`].
+    pub points: Vec<F>,
+    /// Claimed values, indexed by [`super::Opening::value`].
+    pub values: Vec<F>,
+}
+
+impl Layout {
+    /// Evaluates every opening and fills its shared claimed-value slot.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed declarations, wrong witness lengths, and shared
+    /// values that disagree. This is a prover helper; circuit binding still
+    /// comes from opening every claim in [`Self::fold`].
+    pub fn query<F: Field, R: Rank, B: Backend>(
+        &self,
+        polynomials: &[sparse::Polynomial<F, R>],
+        points: Vec<F>,
+        challenges: &Challenges<F>,
+    ) -> Result<Queries<F>> {
+        self.check()?;
+        if polynomials.len() != self.polynomials.len() || points.len() != self.points {
+            return Err(Error::InvalidWitness(
+                "private batch has the wrong witness lengths".into(),
+            ));
+        }
+        let mut values = alloc::vec![None; self.values];
+        for opening in self.openings {
+            let point = opening.point.resolve(challenges, &points)?;
+            let value = B::sparse_eval(&polynomials[opening.polynomial], point);
+            if values[opening.value].is_some_and(|prior| prior != value) {
+                return Err(Error::InvalidWitness(
+                    "private openings disagree on a shared value".into(),
+                ));
+            }
+            values[opening.value] = Some(value);
+        }
+        Ok(Queries {
+            points,
+            values: values
+                .into_iter()
+                .map(|v| v.expect("layout checks value coverage"))
+                .collect(),
+        })
+    }
+
+    /// Builds the appended quotient in opening order.
+    ///
+    /// Repeated polynomial indices contribute separate quotient terms.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed layouts, witness lengths or point indices.
+    pub fn quotient<F: Field, R: Rank>(
+        &self,
+        polynomials: &[sparse::Polynomial<F, R>],
+        points: &[F],
+        challenges: &Challenges<F>,
+    ) -> Result<sparse::Polynomial<F, R>> {
+        self.check()?;
+        if polynomials.len() != self.polynomials.len() || points.len() != self.points {
+            return Err(Error::InvalidWitness(
+                "private batch has the wrong witness lengths".into(),
+            ));
+        }
+        let quotients = self
+            .openings
+            .iter()
+            .map(|opening| {
+                let point = opening.point.resolve(challenges, points)?;
+                let mut coefficients: Vec<_> = udon::polynomial::divide_linear_rev(
+                    polynomials[opening.polynomial].iter_coeffs(),
+                    point,
+                )
+                .collect();
+                coefficients.reverse();
+                Ok(sparse::Polynomial::from_coeffs(coefficients))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(sparse::Polynomial::fold(quotients, challenges.alpha))
+    }
+
+    /// Constrains the private quotient and evaluation sums.
+    ///
+    /// `queries` must be the shared `OnlineQuery` wires, `evaluations` the
+    /// `OnlineEval` wires, and `challenges` authenticated by the containing
+    /// circuit's instance. The caller binds both returned sums to `compute_v`.
+    ///
+    /// # Errors
+    ///
+    /// Rejects wrong lengths and enforces every denominator nonzero, including
+    /// when the opening's numerator is zero.
+    pub fn fold<'dr, D: Driver<'dr>>(
+        &self,
+        dr: &mut D,
+        queries: &Queries<Element<'dr, D>>,
+        evaluations: &[Element<'dr, D>],
+        challenges: &Challenges<Element<'dr, D>>,
+    ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
+        self.check()?;
+        if queries.points.len() != self.points
+            || queries.values.len() != self.values
+            || evaluations.len() != self.polynomials.len()
+        {
+            return Err(Error::Initialization(
+                "private batch wires do not match the layout".into(),
+            ));
+        }
+        let mut inverter = crate::internal::inverter::Inverter::with_base(challenges.u.clone());
+        let mut denominators = Vec::with_capacity(self.openings.len());
+        for opening in self.openings {
+            let point = match opening.point {
+                Point::Challenge(challenge) => challenges.opening(challenge).clone(),
+                Point::Constant(value) => Element::constant(dr, D::F::from(value)),
+                Point::Circuit(index) => Element::constant(dr, circuit_point::<D::F>(index)?),
+                Point::Witness(index) => queries.points[index].clone(),
+            };
+            denominators.push(inverter.add(dr, &point)?);
+        }
+        let inverses = inverter.invert(dr)?;
+        let mut quotient = Horner::new(&challenges.alpha);
+        for (opening, denominator) in self.openings.iter().zip(denominators) {
+            evaluations[opening.polynomial]
+                .sub(dr, &queries.values[opening.value])
+                .mul(dr, &inverses[denominator])?
+                .write(dr, &mut quotient)?;
+        }
+        let mut evaluated = Horner::new(&challenges.beta);
+        for value in evaluations {
+            value.write(dr, &mut evaluated)?;
+        }
+        Ok((quotient.finish(dr), evaluated.finish(dr)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use ragu_backend::ReferenceBackend;
+    use ragu_circuits::polynomials::TestRank;
+    use ragu_core::{
+        maybe::Maybe,
+        pasta::{Fp, Fq},
+    };
+    use ragu_primitives::Simulator;
+
+    use super::*;
+    use crate::profile::online::{Opening, Phase};
+
+    const LAYOUT: Layout = Layout {
+        polynomials: &[Phase::BeforeW, Phase::BeforeW],
+        openings: &[
+            Opening {
+                polynomial: 0,
+                point: Point::Challenge(Challenge::W),
+                value: 0,
+            },
+            Opening {
+                polynomial: 0,
+                point: Point::Witness(0),
+                value: 1,
+            },
+            Opening {
+                polynomial: 1,
+                point: Point::Constant(0),
+                value: 2,
+            },
+            Opening {
+                polynomial: 0,
+                point: Point::Constant(0),
+                value: 2,
+            },
+        ],
+        points: 1,
+        values: 3,
+    };
+
+    fn check<F: Field>() -> Result<()> {
+        let polynomials: [sparse::Polynomial<F, TestRank>; 2] = [
+            sparse::Polynomial::from_coeffs(vec![F::ONE, F::from(2), F::from(3)]),
+            sparse::Polynomial::from_coeffs(vec![F::ONE, F::from(5)]),
+        ];
+        let challenges = Challenges {
+            w: F::from(2),
+            y: F::from(3),
+            x: F::from(5),
+            alpha: F::from(11),
+            u: F::from(17),
+            beta: F::from(13),
+        };
+        let queries =
+            LAYOUT.query::<_, _, ReferenceBackend>(&polynomials, vec![F::from(7)], &challenges)?;
+        assert_eq!(queries.values, vec![F::from(17), F::from(162), F::ONE]);
+        let quotient = LAYOUT.quotient(&polynomials, &queries.points, &challenges)?;
+        let u = challenges.u;
+        let a = challenges.alpha;
+        let expected_f = a.pow_u64(3) * (F::from(2) + F::from(3) * (u + F::from(2)))
+            + a.square() * (F::from(2) + F::from(3) * (u + F::from(7)))
+            + a * F::from(5)
+            + F::from(2)
+            + F::from(3) * u;
+        let expected_e = challenges.beta * (F::ONE + F::from(2) * u + F::from(3) * u.square())
+            + F::ONE
+            + F::from(5) * u;
+        assert_eq!(quotient.eval(u), expected_f);
+        let evaluations = polynomials.iter().map(|p| p.eval(u)).collect::<Vec<_>>();
+        for mutation in 0..5 {
+            let result =
+                Simulator::<F>::simulate((queries.clone(), evaluations.clone()), |dr, witness| {
+                    let mut query = witness.as_ref().map(|w| w.0.clone()).take();
+                    let mut evaluations = witness.as_ref().map(|w| w.1.clone()).take();
+                    let mut challenges = challenges.clone();
+                    match mutation {
+                        1 => query.values[1] += F::ONE,
+                        2 => query.points[0] += F::ONE,
+                        3 => evaluations[0] += F::ONE,
+                        4 => challenges.u = challenges.w,
+                        _ => {}
+                    }
+                    let query = Queries {
+                        points: query
+                            .points
+                            .into_iter()
+                            .map(|v| Element::constant(dr, v))
+                            .collect(),
+                        values: query
+                            .values
+                            .into_iter()
+                            .map(|v| Element::constant(dr, v))
+                            .collect(),
+                    };
+                    let evaluations = evaluations
+                        .into_iter()
+                        .map(|v| Element::constant(dr, v))
+                        .collect::<Vec<_>>();
+                    let challenges = Challenges {
+                        w: Element::constant(dr, challenges.w),
+                        y: Element::constant(dr, challenges.y),
+                        x: Element::constant(dr, challenges.x),
+                        alpha: Element::constant(dr, challenges.alpha),
+                        u: Element::constant(dr, challenges.u),
+                        beta: Element::constant(dr, challenges.beta),
+                    };
+                    let (f, e) = LAYOUT.fold(dr, &query, &evaluations, &challenges)?;
+                    let expected_f = Element::constant(dr, expected_f);
+                    let expected_e = Element::constant(dr, expected_e);
+                    f.enforce_equal(dr, &expected_f)?;
+                    e.enforce_equal(dr, &expected_e)
+                });
+            assert_eq!(result.is_ok(), mutation == 0, "mutation {mutation}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_openings_match_direct_polynomial_algebra() -> Result<()> {
+        check::<Fp>()?;
+        check::<Fq>()
+    }
+
+    #[test]
+    fn shared_values_and_witness_lengths_are_checked() {
+        let polynomials = [
+            sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![Fp::ONE]),
+            sparse::Polynomial::from_coeffs(vec![Fp::from(2)]),
+        ];
+        let challenges = Challenges {
+            w: Fp::ONE,
+            y: Fp::ONE,
+            x: Fp::ONE,
+            alpha: Fp::ONE,
+            u: Fp::from(3),
+            beta: Fp::ONE,
+        };
+        assert!(
+            LAYOUT
+                .query::<_, _, ReferenceBackend>(&polynomials, vec![Fp::ONE], &challenges)
+                .is_err()
+        );
+        assert!(
+            LAYOUT
+                .quotient(&polynomials[..1], &[Fp::ONE], &challenges)
+                .is_err()
+        );
+        assert!(LAYOUT.quotient(&polynomials, &[], &challenges).is_err());
+    }
+
+    #[test]
+    fn empty_and_zero_batches_are_zero() -> Result<()> {
+        let challenges = Challenges {
+            w: Fp::from(2),
+            y: Fp::from(3),
+            x: Fp::from(5),
+            alpha: Fp::from(7),
+            u: Fp::from(11),
+            beta: Fp::from(13),
+        };
+        for layout in [Layout::EMPTY, LAYOUT] {
+            let polynomials =
+                vec![sparse::Polynomial::<Fp, TestRank>::new(); layout.polynomials.len()];
+            let points = vec![Fp::ZERO; layout.points];
+            let queries =
+                layout.query::<_, _, ReferenceBackend>(&polynomials, points, &challenges)?;
+            assert!(queries.values.iter().all(|v| *v == Fp::ZERO));
+            assert_eq!(
+                layout
+                    .quotient(&polynomials, &queries.points, &challenges)?
+                    .eval(challenges.u),
+                Fp::ZERO
+            );
+        }
+        Ok(())
+    }
+}
