@@ -22,35 +22,43 @@ use udon::field::Field;
 
 use super::{
     batch::{Challenges, Queries},
-    stages::{EvalStage, InputStage, InputsLen, PolynomialsLen, QueryStage, QueryWitness, Side},
+    stages::{
+        EvalStage, ForeignLen, InputStage, InputWitness, PolynomialsLen, QueryStage, QueryWitness,
+        Side,
+    },
 };
 use crate::profile::Profile;
 
 /// Public values shared by the batch helper and the fuse's `compute_v` target.
-#[derive(Clone, Debug)]
-pub struct Instance<F> {
+#[derive(Clone)]
+pub struct Instance<F, P: Profile, S: Side> {
     /// The authenticated enclosing-step challenges. On the native side `beta`
     /// carries raw `pre_beta`; on the nested side it is the effective lift.
     pub challenges: Challenges<F>,
     /// The quotient and polynomial-evaluation sums, in that order.
     pub sums: [F; 2],
+    /// The opposite field's pre-w polynomial commitments, as canonical coordinates.
+    pub foreign: FixedVec<F, ForeignLen<P, S>>,
 }
 
 /// The helper's public output, before the extension's zero suffix.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>> {
+pub struct Output<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     /// `w`, `y`, `x`, `alpha`, `u`, and the side's `beta` input, in order.
     #[ragu(gadget)]
     pub challenges: FixedVec<Element<'dr, D>, ConstLen<6>>,
     /// The quotient and evaluation sums.
     #[ragu(gadget)]
     pub sums: FixedVec<Element<'dr, D>, ConstLen<2>>,
+    /// The same commitment coordinates that private consumers read before w.
+    #[ragu(gadget)]
+    pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
 }
 
 /// The three committed stage witnesses and the authenticated challenge inputs.
 pub struct Witness<'a, F: Field, P: Profile, S: Side> {
     /// Input values committed before `w`.
-    pub inputs: &'a FixedVec<F, InputsLen<P, S>>,
+    pub inputs: &'a InputWitness<F, P, S>,
     /// Opening points and claims committed before `alpha`.
     pub query: &'a QueryWitness<F, P, S>,
     /// One value at `u` per polynomial, committed before `pre_beta`.
@@ -69,9 +77,9 @@ impl<P: Profile, S: Side> Default for Circuit<P, S> {
 
 impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit<P, S> {
     type Last = EvalStage<P, S>;
-    type Instance<'source> = &'source Instance<F>;
+    type Instance<'source> = &'source Instance<F, P, S>;
     type Witness<'source> = Witness<'source, F, P, S>;
-    type Output = Kind![F; Output<'_, _>];
+    type Output = Kind![F; Output<'_, _, P, S>];
     type Aux<'source> = [F; 2];
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -83,7 +91,14 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
         let sums = FixedVec::try_from_fn(|j| {
             Element::alloc(dr, &mut (), instance.as_ref().map(|i| i.sums[j]))
         })?;
-        Ok(Output { challenges, sums })
+        let foreign = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|v| v.foreign[i]))
+        })?;
+        Ok(Output {
+            challenges,
+            sums,
+            foreign,
+        })
     }
 
     fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -114,7 +129,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
             beta,
         };
         let query = Queries {
-            inputs: inputs.to_vec(),
+            inputs: inputs.values.to_vec(),
             points: query.points.to_vec(),
             values: query.values.to_vec(),
         };
@@ -125,6 +140,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
             Output {
                 challenges: public,
                 sums,
+                foreign: inputs.foreign,
             },
             values,
         ))

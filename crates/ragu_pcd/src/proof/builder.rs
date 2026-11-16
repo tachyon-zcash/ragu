@@ -15,7 +15,7 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::StageExt,
 };
-use ragu_core::{Cycle, Result};
+use ragu_core::Result;
 
 use super::{Cached, Proof};
 use crate::{
@@ -212,7 +212,7 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
+pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     params: &'params C::Params,
     _backend: PhantomData<B>,
 
@@ -257,6 +257,27 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]>,
     online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
     online_openings: Option<online::Queries<C::CircuitField>>,
+
+    /// Private polynomial preparation, discarded after this step's PCS fold.
+    pub(crate) native_private: Option<
+        crate::profile::online::prover::State<
+            C::HostCurve,
+            R,
+            C::Profile,
+            crate::profile::online::stages::Native,
+        >,
+    >,
+    pub(crate) nested_private: Option<
+        crate::profile::online::prover::State<
+            C::NestedCurve,
+            R,
+            C::Profile,
+            crate::profile::online::stages::Nested,
+        >,
+    >,
+
+    pub(crate) native_private_sums: Option<[C::CircuitField; 2]>,
+    pub(crate) nested_private_sums: Option<[C::ScalarField; 2]>,
 
     // The step's own online Fq polynomials, with their commitments cached.
     // The proof does not carry them: only this step's nested batch opens
@@ -416,6 +437,10 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: None,
             native_points_walk_rx: None,
             online_polynomials: None,
+            native_private_sums: None,
+            nested_private_sums: None,
+            native_private: None,
+            nested_private: None,
             online_fq_polynomials: None,
             online_fq_commitments: OnceCell::new(),
             online_commitments: OnceCell::new(),

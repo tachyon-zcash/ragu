@@ -10,6 +10,7 @@ pub mod batch;
 pub mod circuit;
 pub(crate) mod extension;
 pub mod prepared;
+pub(crate) mod prover;
 pub mod stages;
 
 #[cfg(test)]

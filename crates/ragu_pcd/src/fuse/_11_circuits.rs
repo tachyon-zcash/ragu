@@ -16,7 +16,7 @@ use crate::{
     Application,
     header::NUM_ONLINE_FP_POLYS,
     internal::{native, native::total_circuit_counts, nested},
-    profile::{Profile, ProfiledCycle},
+    profile::{Profile, ProfiledCycle, online::batch::Challenges},
     proof::ProofBuilder,
 };
 
@@ -225,15 +225,38 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The profile's extension: its prover fills every circuit's and
         // stage's polynomial over the context the application holds.
         let extension = C::Profile::native_extension();
-        let rxs = C::Profile::native_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
-            &self.context,
-            &self.native_registry,
-            rng,
-        )?;
+        let challenges = Challenges {
+            w: builder.w(),
+            y: builder.y(),
+            x: builder.x(),
+            alpha: builder.alpha(),
+            u: builder.u(),
+            beta: builder.pre_beta(),
+        };
+        let online = builder
+            .native_private
+            .as_ref()
+            .map(|state| state.witness(challenges.clone()));
+        let mut rxs = C::Profile::native_extension_rxs_with_online::<
+            C::Base,
+            R,
+            HEADER_SIZE,
+            B,
+            RNG,
+        >(&self.context, &self.native_registry, online.as_ref(), rng)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its native extension".into(),
             ));
+        }
+        if let Some(state) = &mut builder.native_private {
+            let index =
+                native::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
+                    .circuit_index::<C::Profile>();
+            let (helper, sums) = state.trace(challenges, &self.native_registry, index, rng)?;
+            builder.native_private_sums = Some(sums);
+            rxs.circuits.push(helper);
+            rxs.stages.splice(0..0, state.take_stages());
         }
         builder.set_native_extension_circuit_rxs(rxs.circuits);
         builder.set_native_extension_stage_rxs(rxs.stages);
@@ -340,15 +363,38 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_compute_v_rx(compute_v_rx);
 
         let extension = C::Profile::nested_extension();
-        let rxs = C::Profile::nested_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
-            &self.context,
-            &self.nested_registry,
-            rng,
-        )?;
+        let challenges = Challenges {
+            w: nested::challenge::<C>(builder.w())?,
+            y: nested::challenge::<C>(builder.y())?,
+            x: nested::challenge::<C>(builder.x())?,
+            alpha: nested::challenge::<C>(builder.alpha())?,
+            u: nested::challenge::<C>(builder.u())?,
+            beta: nested::challenge::<C>(builder.pre_beta())?,
+        };
+        let online = builder
+            .nested_private
+            .as_ref()
+            .map(|state| state.witness(challenges.clone()));
+        let mut rxs = C::Profile::nested_extension_rxs_with_online::<
+            C::Base,
+            R,
+            HEADER_SIZE,
+            B,
+            RNG,
+        >(&self.context, &self.nested_registry, online.as_ref(), rng)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),
             ));
+        }
+        if let Some(state) = &mut builder.nested_private {
+            let index =
+                nested::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
+                    .circuit_index::<C::Profile>();
+            let (helper, sums) = state.trace(challenges, &self.nested_registry, index, rng)?;
+            builder.nested_private_sums = Some(sums);
+            rxs.circuits.push(helper);
+            rxs.stages.splice(0..0, state.take_stages());
         }
         builder.set_nested_extension_circuit_rxs(rxs.circuits);
         builder.set_nested_extension_stage_rxs(rxs.stages);

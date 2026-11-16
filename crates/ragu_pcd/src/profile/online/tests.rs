@@ -69,7 +69,10 @@ fn check<F: Field, S: Side>() -> Result<()> {
     assert_stage_values::<F, ProductionRank, _>(&stages::InputStage::<Batched, S>::default());
     assert_stage_values::<F, ProductionRank, _>(&stages::QueryStage::<Batched, S>::default());
     assert_stage_values::<F, ProductionRank, _>(&stages::EvalStage::<Batched, S>::default());
-    let inputs = FixedVec::new(vec![F::from(4)])?;
+    let inputs = stages::InputWitness {
+        values: FixedVec::new(vec![F::from(4)])?,
+        foreign: FixedVec::new(vec![F::from(101), F::from(103)])?,
+    };
     let query = stages::QueryWitness {
         points: FixedVec::new(vec![F::from(6)])?,
         values: FixedVec::new(vec![F::from(9), F::from(11), F::from(13)])?,
@@ -213,5 +216,117 @@ fn consumer_prefixes_preserve_user_indices_and_cross_field_bindings() -> Result<
     assert!(extension::check::<Consumers<1>, stages::Native>().is_err());
     assert!(extension::check::<Consumers<2>, stages::Native>().is_err());
     assert!(extension::check::<Consumers<3>, stages::Native>().is_err());
+    Ok(())
+}
+
+#[cfg(feature = "baked")]
+#[test]
+fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()> {
+    use ragu_backend::{Backend, ReferenceBackend};
+    use ragu_circuits::{
+        polynomials::sparse,
+        registry::{CircuitIndex, RegistryBuilder},
+    };
+    use ragu_core::{Cycle, pasta::Pasta};
+    use udon::curve::Affine;
+
+    use super::{prepared::PreparationChallenges, prover::State};
+
+    type C = <Pasta as Cycle>::HostCurve;
+    type R = ProductionRank;
+    type S = stages::Native;
+    let generators = Pasta::host_generators(crate::pasta::baked());
+    let mut rng = rand::rng();
+    let mut state = State::<C, R, Batched, S>::new(vec![Fp::from(4)])?;
+    assert!(
+        state
+            .commit_eval::<ReferenceBackend, _, _>(Fp::from(17), generators, &mut rng)
+            .is_err()
+    );
+    state.supply::<ReferenceBackend, _>(
+        Phase::BeforeW,
+        vec![sparse::Polynomial::new()],
+        generators,
+    )?;
+    assert_eq!(state.commitments(), &[C::identity()]);
+    assert!(
+        state
+            .supply::<ReferenceBackend, _>(Phase::BeforeY, vec![], generators)
+            .is_err()
+    );
+    assert!(
+        state
+            .commit_inputs::<ReferenceBackend, _, _>(vec![], generators, &mut rng)
+            .is_err()
+    );
+    state.commit_inputs::<ReferenceBackend, _, _>(vec![Fp::ZERO; 2], generators, &mut rng)?;
+    assert!(
+        state
+            .commit_inputs::<ReferenceBackend, _, _>(vec![Fp::ZERO; 2], generators, &mut rng)
+            .is_err()
+    );
+    let inputs_commitment = state.stage_commitment(0);
+    for phase in [Phase::BeforeY, Phase::BeforeX, Phase::BeforeAlpha] {
+        state.supply::<ReferenceBackend, _>(phase, vec![], generators)?;
+    }
+    assert!(
+        state
+            .supply::<ReferenceBackend, _>(Phase::BeforeAlpha, vec![], generators)
+            .is_err()
+    );
+    assert!(
+        state
+            .commit_query::<ReferenceBackend, _, _>(
+                vec![Fp::from(6)],
+                PreparationChallenges::default(),
+                generators,
+                &mut rng
+            )
+            .is_err()
+    );
+    let available = PreparationChallenges {
+        w: Some(Fp::from(5)),
+        y: Some(Fp::from(7)),
+        x: Some(Fp::from(11)),
+    };
+    state.commit_query::<ReferenceBackend, _, _>(
+        vec![Fp::from(6)],
+        available,
+        generators,
+        &mut rng,
+    )?;
+    assert_eq!(&*state.query().values, &[Fp::ZERO; 3]);
+    assert_eq!(state.stage_commitment(0), inputs_commitment);
+    state.commit_eval::<ReferenceBackend, _, _>(Fp::from(17), generators, &mut rng)?;
+    let eval_commitment = state.stage_commitment(2);
+    assert!(
+        state
+            .commit_eval::<ReferenceBackend, _, _>(Fp::from(19), generators, &mut rng)
+            .is_err()
+    );
+    assert_eq!(state.stage_commitment(2), eval_commitment);
+    let registry = RegistryBuilder::<Fp, R>::new()
+        .register_internal_circuit(MultiStage::<Fp, R, _>::new(
+            circuit::Circuit::<Batched, S>::default(),
+        ))?
+        .finalize()?;
+    let challenges = Challenges {
+        w: Fp::from(5),
+        y: Fp::from(7),
+        x: Fp::from(11),
+        alpha: Fp::from(13),
+        u: Fp::from(17),
+        beta: Fp::from(3),
+    };
+    let (_, sums) = state.trace(challenges, &registry, CircuitIndex::new(0), &mut rng)?;
+    assert_eq!(sums, [Fp::ZERO; 2]);
+    assert_eq!(state.polynomials().len(), 1);
+    let commitments = core::array::from_fn::<_, 3, _>(|i| state.stage_commitment(i));
+    for (stage, commitment) in state.take_stages().iter().zip(commitments) {
+        assert_eq!(
+            ReferenceBackend::sparse_commit_to_affine(stage, generators),
+            commitment
+        );
+    }
     Ok(())
 }

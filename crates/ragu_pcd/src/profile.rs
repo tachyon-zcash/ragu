@@ -353,6 +353,234 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
+    /// Supplies this step's private native inputs before any fuse challenge.
+    ///
+    /// The returned values are committed once in `online::stages::InputStage`.
+    /// Consumers must use those stage wires for data that defines a random test.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies no values and rejects a nonempty declaration.
+    fn native_online_inputs<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = context;
+        if Self::NATIVE_ONLINE.inputs == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(Error::Initialization(
+                "the profile has no native private input prover".into(),
+            ))
+        }
+    }
+
+    /// Supplies private native polynomials at one commitment deadline.
+    ///
+    /// Return only the slots declared for `phase`, in declaration order.
+    /// `inputs` are the immutable pre-w values; `challenges` contains only
+    /// challenges sampled before this phase. Prover hooks supply witnesses;
+    /// the transcript and registered consumers enforce the relation.
+    ///
+    /// # Errors
+    ///
+    /// The default handles empty phases and rejects a phase needing polynomials.
+    fn native_online_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        phase: online::Phase,
+        inputs: &[Base::CircuitField],
+        challenges: online::prepared::PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::CircuitField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        if Self::NATIVE_ONLINE.polynomials.contains(&phase) {
+            Err(Error::Initialization(
+                "the profile has no native private polynomial prover".into(),
+            ))
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Supplies the native witness query points after x and before alpha.
+    ///
+    /// These fill only `Point::Witness` slots. Input, challenge and setup-fixed
+    /// points are resolved by the protocol; consumers constrain arbitrary
+    /// witness points to their intended values using the shared query stage.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies no points and rejects a nonempty declaration.
+    fn native_online_points<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        inputs: &[Base::CircuitField],
+        challenges: online::prepared::PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        if Self::NATIVE_ONLINE.points == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(Error::Initialization(
+                "the profile has no native private query prover".into(),
+            ))
+        }
+    }
+
+    /// Traces the user extension with the private batch's immutable stage data.
+    ///
+    /// Consumer circuits reserve the declared private prefix. Their witnesses
+    /// must use `online`'s input and query values, including the opposite
+    /// field's pre-w polynomial commitment coordinates. The protocol supplies
+    /// the helper trace and private stage polynomials separately.
+    ///
+    /// # Errors
+    ///
+    /// The default delegates to [`Self::native_extension_rxs`].
+    fn native_extension_rxs_with_online<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::CircuitField, R>,
+        online: Option<
+            &online::circuit::Witness<'_, Base::CircuitField, Self, online::stages::Native>,
+        >,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let _ = online;
+        Self::native_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
+    }
+
+    /// Supplies this step's private nested inputs before any fuse challenge.
+    ///
+    /// The returned values are committed once in `online::stages::InputStage`.
+    /// Consumers must use those stage wires for data that defines a random test.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies no values and rejects a nonempty declaration.
+    fn nested_online_inputs<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = context;
+        if Self::NESTED_ONLINE.inputs == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(Error::Initialization(
+                "the profile has no nested private input prover".into(),
+            ))
+        }
+    }
+
+    /// Supplies private nested polynomials at one commitment deadline.
+    ///
+    /// Return only the slots declared for `phase`, in declaration order.
+    /// `inputs` are the immutable pre-w values; `challenges` contains only
+    /// challenges sampled before this phase. Prover hooks supply witnesses;
+    /// the transcript and registered consumers enforce the relation.
+    ///
+    /// # Errors
+    ///
+    /// The default handles empty phases and rejects a phase needing polynomials.
+    fn nested_online_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        phase: online::Phase,
+        inputs: &[Base::ScalarField],
+        challenges: online::prepared::PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        if Self::NESTED_ONLINE.polynomials.contains(&phase) {
+            Err(Error::Initialization(
+                "the profile has no nested private polynomial prover".into(),
+            ))
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Supplies the nested witness query points after x and before alpha.
+    ///
+    /// These fill only `Point::Witness` slots. Input, challenge and setup-fixed
+    /// points are resolved by the protocol; consumers constrain arbitrary
+    /// witness points to their intended values using the shared query stage.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies no points and rejects a nonempty declaration.
+    fn nested_online_points<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        inputs: &[Base::ScalarField],
+        challenges: online::prepared::PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        if Self::NESTED_ONLINE.points == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(Error::Initialization(
+                "the profile has no nested private query prover".into(),
+            ))
+        }
+    }
+
+    /// Traces the user extension with the private batch's immutable stage data.
+    ///
+    /// Consumer circuits reserve the declared private prefix. Their witnesses
+    /// must use `online`'s input and query values, including the opposite
+    /// field's pre-w polynomial commitment coordinates. The protocol supplies
+    /// the helper trace and private stage polynomials separately.
+    ///
+    /// # Errors
+    ///
+    /// The default delegates to [`Self::nested_extension_rxs`].
+    fn nested_extension_rxs_with_online<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::ScalarField, R>,
+        online: Option<
+            &online::circuit::Witness<'_, Base::ScalarField, Self, online::stages::Nested>,
+        >,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let _ = online;
+        Self::nested_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
+    }
+
     /// Checks that the constants agree with the extensions and that the
     /// extensions are well formed, and that the endoscaling counts allow
     /// the walk sizes to converge.

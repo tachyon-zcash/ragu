@@ -28,6 +28,8 @@ mod sealed {
 pub trait Side: sealed::Sealed + Copy + Default + Send + Sync + 'static {
     /// Selects the profile's fixed layout.
     fn layout<P: Profile>() -> Layout;
+    /// Selects the other field's fixed layout.
+    fn other_layout<P: Profile>() -> Layout;
     /// Whether the helper must lift the native `pre_beta` endoscalar.
     const NATIVE: bool;
 }
@@ -44,11 +46,17 @@ impl Side for Native {
     fn layout<P: Profile>() -> Layout {
         P::NATIVE_ONLINE
     }
+    fn other_layout<P: Profile>() -> Layout {
+        P::NESTED_ONLINE
+    }
     const NATIVE: bool = true;
 }
 impl Side for Nested {
     fn layout<P: Profile>() -> Layout {
         P::NESTED_ONLINE
+    }
+    fn other_layout<P: Profile>() -> Layout {
+        P::NATIVE_ONLINE
     }
     const NATIVE: bool = false;
 }
@@ -82,6 +90,40 @@ impl<P: Profile, S: Side> Len for PolynomialsLen<P, S> {
     fn len() -> usize {
         S::layout::<P>().polynomials.len()
     }
+}
+
+/// Coordinates of the other field's private commitments fixed before w.
+/// Each point occupies two wires, with the identity encoded as two zeroes.
+pub struct ForeignLen<P: Profile, S: Side>(PhantomData<(P, S)>);
+impl<P: Profile, S: Side> Len for ForeignLen<P, S> {
+    fn len() -> usize {
+        2 * S::other_layout::<P>()
+            .polynomials
+            .iter()
+            .filter(|&&p| p == super::Phase::BeforeW)
+            .count()
+    }
+}
+
+/// User inputs and the opposite field's private commitment coordinates.
+#[derive(Clone)]
+pub struct InputWitness<F, P: Profile, S: Side> {
+    /// User data fixed before w.
+    pub values: FixedVec<F, InputsLen<P, S>>,
+    /// Opposite-field pre-w commitments in polynomial order, x then y.
+    pub foreign: FixedVec<F, ForeignLen<P, S>>,
+}
+
+/// Early wires shared by all declared private consumers.
+#[derive(Gadget, Write, Consistent)]
+pub struct InputOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
+    /// User data fixed before w.
+    #[ragu(gadget)]
+    pub values: FixedVec<Element<'dr, D>, InputsLen<P, S>>,
+    /// Coordinates authenticated against the commitment walk through the
+    /// helper's public target. Consumers reconstruct points from these wires.
+    #[ragu(gadget)]
+    pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
 }
 
 /// Witnessed query points and claimed values in the profile's fixed order.
@@ -129,10 +171,10 @@ default_stage!(EvalStage);
 
 impl<F: Field, R: Rank, P: Profile, S: Side> Stage<F, R> for InputStage<P, S> {
     type Parent = ();
-    type Witness<'source> = &'source FixedVec<F, InputsLen<P, S>>;
-    type OutputKind = Kind![F; FixedVec<Element<'_, _>, InputsLen<P, S>>];
+    type Witness<'source> = &'source InputWitness<F, P, S>;
+    type OutputKind = Kind![F; InputOutput<'_, _, P, S>];
     fn values() -> usize {
-        InputsLen::<P, S>::len()
+        InputsLen::<P, S>::len() + ForeignLen::<P, S>::len()
     }
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
@@ -142,7 +184,14 @@ impl<F: Field, R: Rank, P: Profile, S: Side> Stage<F, R> for InputStage<P, S> {
     where
         Self: 'dr,
     {
-        FixedVec::try_from_fn(|i| Element::alloc(dr, &mut (), witness.as_ref().map(|v| v[i])))
+        Ok(InputOutput {
+            values: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|v| v.values[i]))
+            })?,
+            foreign: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|v| v.foreign[i]))
+            })?,
+        })
     }
 }
 
