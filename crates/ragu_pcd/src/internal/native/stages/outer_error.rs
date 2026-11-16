@@ -61,7 +61,7 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     pub ky: KyValues<C::CircuitField>,
 
     /// Sponge state elements saved after absorbing bridge_inner_error_commitment.
-    /// Used to bridge the Fiat-Shamir transcript between hashes_1 and hashes_2.
+    /// Carries the Fiat-Shamir transcript from hashes_1 into hashes_2.
     pub sponge_state_elements:
         FixedVec<C::CircuitField, PoseidonStateLen<C::CircuitField, C::CircuitPoseidon>>,
 }
@@ -107,7 +107,7 @@ pub struct Output<
     #[ragu(gadget)]
     pub right: ChildKyOutputs<'dr, D>,
     /// Sponge state saved after absorbing bridge_inner_error_commitment.
-    /// Used to bridge the Fiat-Shamir transcript between hashes_1 and hashes_2.
+    /// Carries the Fiat-Shamir transcript from hashes_1 into hashes_2.
     #[ragu(gadget)]
     pub sponge_state: SpongeState<'dr, D, Poseidon>,
 }

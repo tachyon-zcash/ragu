@@ -2,7 +2,7 @@
 //!
 //! This computes the multi-quotient polynomial $f(X)$ that acts as a witness
 //! for the claimed evaluations in the `query` stage. This also constructs the
-//! bridge for committing to the polynomial.
+//! `f` bridge stage, which carries the polynomial's commitment.
 //!
 //! Each `udon::polynomial::divide_linear_rev` call below produces the coefficients of $(p\_i(X) - v\_i)
 //! / (X - x\_i)$ for a single query. The static query prefix is defined by
