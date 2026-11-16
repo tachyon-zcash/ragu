@@ -832,6 +832,9 @@ pub struct Extension {
     /// the statement must also expose the compressed proof's online
     /// commitments for the decompression step to hold its output slots to
     /// (see [`NUM_ONLINE_FP_POLYS`](crate::header::NUM_ONLINE_FP_POLYS)).
+    /// The aggregator profile takes the first: its
+    /// [`check_context`](Profile::check_context) refuses a wallet
+    /// application whose steps output a header naming a polynomial.
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is

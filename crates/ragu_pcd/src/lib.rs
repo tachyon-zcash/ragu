@@ -265,10 +265,12 @@ pub struct ApplicationBuilder<
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
     /// which finalization installs instead of building one.
     bootstrap: Option<Proof<C, R>>,
-    /// The header type each registered step outputs, by suffix: what a
-    /// profile's context is checked against (see
+    /// The header type each registered step outputs, by suffix, and
+    /// whether its proofs carry an online polynomial, in a slot its
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) does not leave to
+    /// padding: what a profile's context is checked against (see
     /// [`Profile::check_context`]).
-    output_headers: BTreeMap<header::Suffix, TypeId>,
+    output_headers: BTreeMap<header::Suffix, (TypeId, bool)>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -429,7 +431,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffixes::<S::Right>()?;
         self.output_headers.insert(
             <S::Output as Header<C::CircuitField>>::SUFFIX,
-            TypeId::of::<S::Output>(),
+            (
+                TypeId::of::<S::Output>(),
+                !<<S::Output as Header<C::CircuitField>>::OnlinePolyCommit as header::OnlinePolyCommit>::is_padding(),
+            ),
         );
 
         let stage_size = self.stage_size.max(S::NUM_STAGED);
@@ -715,9 +720,10 @@ pub struct Application<
     nested_registry: Registry<'params, C::ScalarField, R>,
     params: &'params C::Params,
     num_application_steps: usize,
-    /// The header type each registered step outputs, by suffix.
+    /// The header type each registered step outputs, by suffix, and
+    /// whether its proofs carry an online polynomial.
     #[cfg(feature = "unstable-aggregator")]
-    output_headers: BTreeMap<header::Suffix, TypeId>,
+    output_headers: BTreeMap<header::Suffix, (TypeId, bool)>,
     /// The application stage's size, in values.
     stage_size: usize,
     /// The profile's prover context: what its prover holds across proofs
@@ -749,10 +755,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         &self.context
     }
 
-    /// The header type each registered step outputs, by suffix: the headers
-    /// the application's statements carry.
+    /// The header type each registered step outputs, by suffix, and
+    /// whether its proofs carry an online polynomial: the headers the
+    /// application's statements carry.
     #[cfg(feature = "unstable-aggregator")]
-    pub(crate) fn output_headers(&self) -> &BTreeMap<header::Suffix, TypeId> {
+    pub(crate) fn output_headers(&self) -> &BTreeMap<header::Suffix, (TypeId, bool)> {
         &self.output_headers
     }
 

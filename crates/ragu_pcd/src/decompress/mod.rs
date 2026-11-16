@@ -227,8 +227,8 @@
 //! statement binds nothing.
 //!
 //! A decompressed proof's first output slot therefore holds $s(X)$, not
-//! the constant one, which the header types a decompressed statement can
-//! carry must already treat as padding (see [`Decompress`]).
+//! the constant one; the header types a decompressed statement can carry
+//! leave their slots to padding, which `finalize_with` checks ([`Decompress`]).
 //!
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
 //! [`Decompress`]: crate::step::internal::decompress

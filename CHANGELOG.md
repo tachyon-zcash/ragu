@@ -88,9 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Header suffix `2` is reserved for the internal `Dummy` header; application
   suffixes begin at `3`.
 - The base proof is built once in `finalize`; `seed` is an ordinary step
-  against it. The bootstrap and decompression steps hold their output
-  header's polynomial slots to the constant one, so the unit header and a
-  decompressed header carry padding a prover cannot choose.
+  against it. The bootstrap step holds its output header's polynomial
+  slots to the constant one, and the decompression step its last, its
+  first holding the host IPA's challenge polynomial, so the unit header
+  and a decompressed header carry slots a prover cannot choose.
 
 ### Removed
 

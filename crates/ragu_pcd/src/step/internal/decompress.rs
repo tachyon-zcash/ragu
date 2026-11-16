@@ -58,15 +58,18 @@
 //! A decompressed proof's header fields still describe the polynomials the
 //! statement left behind while the proof's slots hold $s(X)$ and padding,
 //! and a step that consumes it cannot tell it from one a registered step
-//! produced. The
-//! header types registered at those suffixes must therefore treat their
-//! associated proof slots as padding: no step may open such a slot expecting the
-//! polynomial its fields describe, since the first holds $s(X)$, and in the
-//! last a non-membership check against the constant one holds at every point
-//! and a product $O = L \cdot R$ computes with $L = 1$. Binding the output slots to the polynomials the statement
-//! stood for, by having the statement extension expose the compressed
-//! proof's own online commitments and this circuit hold its output slots to
-//! them, would change the extension's contract and is not done here.
+//! produced. A step that opened such a slot as the polynomial its header
+//! names would read $s(X)$ in the first, and in the last a non-membership
+//! check against the constant one holds at every point and a product
+//! $O = L \cdot R$ computes with $L = 1$. The header types registered at
+//! those suffixes must therefore leave their slots to padding, which no
+//! step can open. The aggregator profile enforces it: [`finalize_with`]
+//! refuses a wallet application whose steps output a header naming a
+//! polynomial ([`Profile::check_context`]). Binding the output slots to
+//! the polynomials the statement stood for, by having the statement
+//! extension expose the compressed proof's own online commitments and this
+//! circuit hold its output slots to them, would change the extension's
+//! contract and is not done here.
 //!
 //! Only a profile whose native extension declares a statement circuit
 //! registers this step ([`num_internal_steps`]); for any other, its

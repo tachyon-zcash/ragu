@@ -369,6 +369,67 @@ impl<C: Cycle<CircuitField = Fp>> Step<C> for Leaf {
     }
 }
 
+/// A kind of online polynomial.
+#[derive(Clone, Copy)]
+struct Carried;
+
+impl crate::header::OnlinePoly for Carried {}
+
+/// A header whose proofs carry a [`Carried`] polynomial in their first
+/// slot.
+struct Carrying;
+
+impl Header<Fp> for Carrying {
+    const SUFFIX: Suffix = Suffix::new(7);
+    type OnlinePolyCommit = (Carried, crate::header::Padding);
+    type Data = Fp;
+    type Output = Kind![Fp; Element<'_, _>];
+
+    fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        Element::alloc(dr, allocator, witness)
+    }
+}
+
+/// A seed step outputting its witness as a [`Carrying`] header, its slot
+/// left at the constant one.
+struct CarryingLeaf;
+
+impl<C: Cycle<CircuitField = Fp>> Step<C> for CarryingLeaf {
+    const INDEX: Index = Index::new(0);
+    type Witness<'source> = Fp;
+    type Aux<'source> = ();
+    type Left = ();
+    type Right = ();
+    type Output = Carrying;
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const H: usize>(
+        &self,
+        dr: &mut D,
+        _: &mut crate::step::Oracles<'_, 'dr, D, C, Self>,
+        witness: DriverValue<D, Fp>,
+        left: DriverValue<D, ()>,
+        right: DriverValue<D, ()>,
+    ) -> Result<(
+        (
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, (), H>,
+            Encoded<'dr, D, Carrying, H>,
+        ),
+        DriverValue<D, Fp>,
+        DriverValue<D, ()>,
+    )> {
+        let allocator = &mut ragu_primitives::allocator::Standard::new();
+        let left = Encoded::new(dr, allocator, left)?;
+        let right = Encoded::new(dr, allocator, right)?;
+        let output = Encoded::new(dr, allocator, witness.clone())?;
+        Ok(((left, right, output), witness, D::unit()))
+    }
+}
+
 /// A wallet application with a leaf step, for proofs with a header.
 fn wallet() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
     ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
@@ -376,6 +437,34 @@ fn wallet() -> Application<'static, Pasta, TestR, HEADER_SIZE> {
         .unwrap()
         .finalize(crate::pasta::baked_aggregator())
         .unwrap()
+}
+
+/// Every consumer of a decompression agrees on it, `accepts` or not: the
+/// ordinary verifier, the compressed verifier on its compression, and the
+/// ordinary verifier on a parent that folds its claims, its
+/// rerandomization. The three compute the step binding's claim from the
+/// proof alike, each on its own path.
+fn every_consumer(
+    app: &Application<'_, Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>,
+    pcd: crate::Pcd<Profiled<Pasta, P>, AggregatorRank, Value>,
+    accepts: bool,
+    rng: &mut StdRng,
+    case: &str,
+) {
+    assert!(
+        matches!(app.verify_uncompressed(&pcd, &mut *rng), Ok(v) if v == accepts),
+        "{case}: ordinary verifier"
+    );
+    let compressed = app.compress(&pcd, &mut *rng).unwrap();
+    assert!(
+        matches!(app.verify_compressed(&compressed), Ok(v) if v == accepts),
+        "{case}: compressed verifier"
+    );
+    let parent = app.rerandomize(pcd, &mut *rng).unwrap();
+    assert!(
+        matches!(app.verify_uncompressed(&parent, &mut *rng), Ok(v) if v == accepts),
+        "{case}: as a child"
+    );
 }
 
 /// A wallet's compressed proof decompresses into a proof of the aggregator
@@ -402,7 +491,7 @@ fn decompresses_a_wallet_proof() {
         .unwrap();
     let node = app.decompress(&mut rng, &compressed).unwrap();
     assert_eq!(*node.data(), Fp::from(42));
-    assert!(app.verify_uncompressed(&node, &mut rng).unwrap());
+    every_consumer(&app, node.clone(), true, &mut rng, "the decompression");
 
     // The step exports the commitment and the opening of its online Fq
     // polynomial, which holds the nested IPA's s(X). The proof carries
@@ -469,9 +558,12 @@ fn decompresses_a_wallet_proof() {
             Some(&decompressed),
         )
         .unwrap();
-    assert!(
-        matches!(app.verify_uncompressed(&other_slot, &mut rng), Ok(false)),
-        "a decompression whose slot holds another polynomial fails"
+    every_consumer(
+        &app,
+        other_slot,
+        false,
+        &mut rng,
+        "a decompression whose slot holds another polynomial",
     );
 
     // The transcript digest: the step stages the compression transcript's
@@ -494,9 +586,12 @@ fn decompresses_a_wallet_proof() {
             Some(&decompressed),
         )
         .unwrap();
-    assert!(
-        matches!(app.verify_uncompressed(&other_digest, &mut rng), Ok(false)),
-        "a decompression that staged another digest fails"
+    every_consumer(
+        &app,
+        other_digest,
+        false,
+        &mut rng,
+        "a decompression that staged another digest",
     );
 
     // The nested curve's binding, from the prover's side: a step that
@@ -520,9 +615,12 @@ fn decompresses_a_wallet_proof() {
         )
     })
     .unwrap();
-    assert!(
-        matches!(app.verify_uncompressed(&other_fq, &mut rng), Ok(false)),
-        "a decompression whose online Fq slot holds another polynomial fails"
+    every_consumer(
+        &app,
+        other_fq,
+        false,
+        &mut rng,
+        "a decompression whose online Fq slot holds another polynomial",
     );
 }
 
@@ -719,6 +817,33 @@ fn the_aggregator_reads_statements_with_the_wallets_headers() {
     assert!(
         matches!(none, Err(Error::Initialization(_))),
         "no header at the wallet's suffix"
+    );
+}
+
+/// A decompressed proof's slots hold the host IPA's $s(X)$ and padding,
+/// not the polynomials the wallet's proof carried, so the aggregator
+/// refuses a wallet application whose steps output a header naming a
+/// polynomial: a step of its own could open the slot as that polynomial.
+#[test]
+fn a_wallet_whose_headers_name_a_polynomial_is_refused() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(42);
+    let wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+    let refused = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+        .register(CarryingLeaf)
+        .unwrap()
+        .finalize_with(pasta, Decompression::new(wallet, &mut rng).unwrap());
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Initialization(ref reason))
+                if reason.to_string().contains("online polynomial")
+        ),
+        "a wallet header naming a polynomial"
     );
 }
 
