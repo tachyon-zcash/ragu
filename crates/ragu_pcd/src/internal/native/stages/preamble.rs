@@ -102,6 +102,16 @@ pub struct ProofInputs<
     /// k(y) targets, binding the application's queries to the proved openings.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
+    /// Common quotient and evaluation sums for the native private helper.
+    #[ragu(gadget)]
+    pub private_sums: FixedVec<
+        Element<'dr, D>,
+        crate::profile::online::stages::Present<
+            C::Profile,
+            crate::profile::online::stages::Native,
+            2,
+        >,
+    >,
     /// The child's common targets for its actual nested private walk points.
     #[ragu(gadget)]
     pub private_points: FixedVec<
@@ -184,11 +194,44 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
         self.online.write(dr, &mut ky)?;
+        self.private_sums.write(dr, &mut ky)?;
         for point in private_stages {
             point.write(dr, &mut ky)?;
         }
         Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)
+    }
+
+    /// The private helper shares the core's sums and the walk's point exports.
+    pub fn private_helper_ky(
+        &self,
+        dr: &mut D,
+        y: &Element<'dr, D>,
+    ) -> Result<Option<Element<'dr, D>>> {
+        if C::Profile::NATIVE_ONLINE.is_empty() {
+            return Ok(None);
+        }
+        let mut target = Horner::new(y);
+        for value in [
+            &self.unified.w,
+            &self.unified.y,
+            &self.unified.x,
+            &self.unified.alpha,
+            &self.unified.u,
+            &self.unified.pre_beta,
+        ] {
+            value.write(dr, &mut target)?;
+        }
+        self.private_sums.write(dr, &mut target)?;
+        let count = C::Profile::NESTED_ONLINE
+            .polynomials
+            .iter()
+            .take_while(|&&phase| phase == crate::profile::online::Phase::BeforeW)
+            .count();
+        for point in self.private_points.iter().take(count) {
+            point.write(dr, &mut target)?;
+        }
+        ky::finish_extension_ky(target, dr).map(Some)
     }
 
     /// The actual nested private commitments exported by bind_endoscalar.
@@ -310,6 +353,13 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
                 allocator,
                 proof.as_ref().map(|p| p.online_openings()),
             )?,
+            private_sums: FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    proof.as_ref().map(|p| p.native_private_sums[i]),
+                )
+            })?,
             private_points: FixedVec::try_from_fn(|i| {
                 ragu_primitives::CompletePoint::alloc(
                     dr,
@@ -338,6 +388,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
         private_points: DriverValue<D, &[C::NestedCurve]>,
+        private_sums: DriverValue<D, &[D::F]>,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
             dr: &mut D,
@@ -365,6 +416,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             online: online::alloc_queries(dr, &mut (), online)?,
             private_points: FixedVec::try_from_fn(|i| {
                 ragu_primitives::CompletePoint::alloc(dr, private_points.as_ref().map(|p| p[i]))
+            })?,
+            private_sums: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), private_sums.as_ref().map(|s| s[i]))
             })?,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
@@ -451,7 +505,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             + 2 * online::NUM_ONLINE_FP_QUERIES
             + 1
             + unified::NUM_WIRES
-            + 2 * C::Profile::NESTED_ONLINE.polynomials.len())
+            + 2 * C::Profile::NESTED_ONLINE.polynomials.len()
+            + <crate::profile::online::stages::Present<
+                C::Profile,
+                crate::profile::online::stages::Native,
+                2,
+            > as ragu_primitives::vec::Len>::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(

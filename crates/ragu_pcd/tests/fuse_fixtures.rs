@@ -500,6 +500,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         left_header,
         right_header,
         nested_private_sums,
+        native_private_sums,
         nested_private_commitments,
         native_application_rx,
         native_application_stage_rx,
@@ -616,6 +617,7 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.fields("left_header", left_header);
     lines.fields("right_header", right_header);
     assert!(nested_private_commitments.is_empty());
+    assert!(native_private_sums.is_empty());
     if !nested_private_sums.is_empty() {
         lines.fields("nested_private_sums", nested_private_sums);
     }
@@ -815,6 +817,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         left_header,
         right_header,
         nested_private_sums,
+        native_private_sums,
         nested_private_commitments,
         online,
         native: native_commitments,
@@ -861,6 +864,7 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(nested_v);
     // These fixtures pin the zero-capability encoding.
     assert!(nested_private_sums.is_empty());
+    assert!(native_private_sums.is_empty());
     assert!(nested_private_commitments.is_empty());
     for Child { x, y, id } in [left, right] {
         out.field(x);
@@ -980,12 +984,14 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_a_at_u = cursor.field()?;
     let nested_b_at_u = cursor.field()?;
     let nested_private_sums = Vec::new();
+    let native_private_sums = Vec::new();
     let nested_private_commitments = Vec::new();
     let instance = Instance {
         circuit_id,
         left_header,
         right_header,
         nested_private_sums,
+        native_private_sums,
         nested_private_commitments,
         online,
         native: native_commitments,
@@ -1341,6 +1347,7 @@ fn wire_lines<C: FixtureCycle>(
             .iter()
             .copied()
             .filter(|&name| name != "nested_private_sums" || !proof.nested_private_sums.is_empty())
+            .filter(|&name| name != "native_private_sums" || !proof.native_private_sums.is_empty())
             .filter(|&name| {
                 name != "nested_private_commitments" || !proof.nested_private_commitments.is_empty()
             })

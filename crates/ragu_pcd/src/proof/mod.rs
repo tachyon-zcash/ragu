@@ -213,6 +213,8 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) right_header: Vec<C::CircuitField>,
     /// Private nested quotient and evaluation sums, empty for an inactive layout.
     pub(crate) nested_private_sums: Vec<C::ScalarField>,
+    /// Private native quotient and evaluation sums, empty for an inactive layout.
+    pub(crate) native_private_sums: Vec<C::CircuitField>,
     /// Common claim targets for the actual nested private/auxiliary walk points.
     pub(crate) nested_private_commitments: Vec<C::NestedCurve>,
 
@@ -415,6 +417,12 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
             && self.nested_private_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
+            && self.native_private_sums.len()
+                == <crate::profile::online::stages::Present<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    2,
+                > as ragu_primitives::vec::Len>::len()
             && self.nested_private_sums.len()
                 == crate::profile::online::stages::Present::<
                     C::Profile,
@@ -1250,6 +1258,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
         // Bootstrap bypasses the synthetic child's circuit claims.
+        if !C::Profile::NATIVE_ONLINE.is_empty() {
+            builder.native_private_sums = Some([C::CircuitField::ZERO; 2]);
+        }
         if !C::Profile::NESTED_ONLINE.is_empty() {
             builder.nested_private_sums = Some([C::ScalarField::ZERO; 2]);
             builder.dummy_nested_private_commitments = Some(

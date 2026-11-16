@@ -363,6 +363,7 @@ fn native_batch_opens_through_the_ipa() {
         unified_bridge: targets.unified_bridge,
         compute_v_bridge: targets.compute_v_bridge,
         bind_endoscalar: targets.bind_endoscalar,
+        private_helper: targets.private_helper,
         application: targets.application + Fp::ONE,
         statement: targets.statement,
         binding: targets.binding,

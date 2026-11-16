@@ -135,9 +135,36 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut *rng,
         )?;
 
+        let extension = C::Profile::native_extension();
+        let challenges = Challenges {
+            w: builder.w(),
+            y: builder.y(),
+            x: builder.x(),
+            alpha: builder.alpha(),
+            u: builder.u(),
+            beta: builder.pre_beta(),
+        };
+        let private_helper = if let Some(state) = &builder.native_private {
+            let index =
+                native::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
+                    .circuit_index::<C::Profile>();
+            let (helper, sums) =
+                state.trace(challenges.clone(), &self.native_registry, index, rng)?;
+            builder.native_private_sums = Some(sums);
+            Some(helper)
+        } else {
+            None
+        };
+
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
                 .trace(native::circuits::compute_v::Witness {
+                    private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
+                        builder
+                            .native_private_sums
+                            .as_ref()
+                            .expect("private helper traced before compute-v")[i]
+                    }),
                     binding: &native_points.binding,
                     unified,
                     preamble_witness,
@@ -225,15 +252,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The profile's extension: its prover fills every circuit's and
         // stage's polynomial over the context the application holds.
-        let extension = C::Profile::native_extension();
-        let challenges = Challenges {
-            w: builder.w(),
-            y: builder.y(),
-            x: builder.x(),
-            alpha: builder.alpha(),
-            u: builder.u(),
-            beta: builder.pre_beta(),
-        };
         let online = builder
             .native_private
             .as_ref()
@@ -250,14 +268,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 "the profile's prover did not fill its native extension".into(),
             ));
         }
-        if let Some(state) = &mut builder.native_private {
-            let index =
-                native::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
-                    .circuit_index::<C::Profile>();
-            let (helper, sums) = state.trace(challenges, &self.native_registry, index, rng)?;
-            builder.native_private_sums = Some(sums);
+        if let Some(helper) = private_helper {
             rxs.circuits.push(helper);
-            rxs.stages.splice(0..0, state.take_stages());
+            rxs.stages.splice(
+                0..0,
+                builder
+                    .native_private
+                    .as_mut()
+                    .expect("active private helper")
+                    .take_stages(),
+            );
         }
         builder.set_native_extension_circuit_rxs(rxs.circuits);
         builder.set_native_extension_stage_rxs(rxs.stages);

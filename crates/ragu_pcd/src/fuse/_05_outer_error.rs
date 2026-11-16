@@ -169,6 +169,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     preamble
                         .right
                         .bind_endoscalar_ky(dr, &y, &right_ky.unified)?;
+                let left_private_helper = preamble.left.private_helper_ky(dr, &y)?;
+                let right_private_helper = preamble.right.private_helper_ky(dr, &y)?;
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
                     preamble.left.unified.c.clone(),
@@ -181,6 +183,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_binding,
                     left_bind_endoscalar,
                     right_bind_endoscalar,
+                    left_private_helper,
+                    right_private_helper,
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 

@@ -98,6 +98,8 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_v: C::ScalarField,
     /// The private nested helper's two sums, absent for an inactive layout.
     pub nested_private_sums: Vec<C::ScalarField>,
+    /// Native helper quotient and evaluation sums, absent when inactive.
+    pub native_private_sums: Vec<C::CircuitField>,
     /// The private/auxiliary points exported by bind_endoscalar.
     pub nested_private_commitments: Vec<C::NestedCurve>,
 
@@ -223,6 +225,7 @@ impl<C: ProfiledCycle> Instance<C> {
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
             nested_private_sums: proof.nested_private_sums.clone(),
+            native_private_sums: proof.native_private_sums.clone(),
             nested_private_commitments: proof.nested_private_commitments.clone(),
             left: Child {
                 x: lx,
@@ -273,6 +276,9 @@ impl<C: ProfiledCycle> Instance<C> {
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
         let mut host = transcript.host();
+        for &sum in &self.native_private_sums {
+            host.write_scalar(sum)?;
+        }
         host.write_scalar(self.circuit_id.omega_j())?;
         for &element in self.left_header.iter().chain(&self.right_header) {
             host.write_scalar(element)?;
@@ -496,6 +502,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     nested_bound: &nested_bound,
                     nested_private_stages: &nested_private_stages,
                     nested_private_commitments: &self.nested_private_commitments,
+                    native_private_sums: &self.native_private_sums,
                 },
                 y,
             )?

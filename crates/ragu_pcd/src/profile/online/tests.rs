@@ -531,3 +531,181 @@ fn private_stage_bindings_are_in_the_native_claims() -> Result<()> {
     assert!(ky::nested_private_stages::<Standard, _>(|index| index).is_empty());
     Ok(())
 }
+
+#[test]
+fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
+    use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
+    use ragu_core::{
+        drivers::emulator::Emulator,
+        maybe::Maybe,
+        pasta::{EpAffine, Pasta},
+    };
+    use ragu_primitives::{CompletePoint, Element, GadgetExt, Point as CurvePoint};
+    use udon::curve::Affine;
+
+    use crate::{
+        internal::{ky, native},
+        profile::Profiled,
+    };
+    type C = Profiled<Pasta, Batched>;
+    type S = stages::Native;
+    let unified = native::unified::Instance::<C> {
+        bridge_preamble_commitment: EpAffine::generator(),
+        bridge_hash_commitment: EpAffine::generator(),
+        w: Fp::from(4),
+        bridge_s_prime_commitment: EpAffine::generator(),
+        y: Fp::from(6),
+        z: Fp::from(7),
+        bridge_inner_error_commitment: EpAffine::generator(),
+        mu: Fp::from(9),
+        bridge_outer_error_commitment: EpAffine::generator(),
+        mu_prime: Fp::from(11),
+        c: Fp::from(12),
+        bridge_ab_commitment: EpAffine::generator(),
+        x: Fp::from(14),
+        bridge_query_commitment: EpAffine::generator(),
+        alpha: Fp::from(16),
+        bridge_f_commitment: EpAffine::generator(),
+        u: Fp::from(18),
+        bridge_eval_commitment: EpAffine::generator(),
+        pre_beta: Fp::from(20),
+        v: Fp::from(21),
+        nested_challenges_partial: EpAffine::generator(),
+        nested_p_commitment: EpAffine::generator(),
+        nested_a_commitment: EpAffine::generator(),
+        nested_b_commitment: EpAffine::generator(),
+        nested_registry_xy_commitment: EpAffine::generator(),
+        coverage: Default::default(),
+    };
+    let sums = [Fp::from(101), Fp::from(103)];
+    let (px, py) = EpAffine::generator().coordinates().unwrap();
+    let helper = circuit::Instance::<_, Batched, S> {
+        challenges: Challenges {
+            w: unified.w,
+            y: unified.y,
+            x: unified.x,
+            alpha: unified.alpha,
+            u: unified.u,
+            beta: unified.pre_beta,
+        },
+        sums,
+        foreign: FixedVec::new(vec![px, py])?,
+    };
+    let online = [native::online::Query {
+        x: Fp::from(5),
+        y: Fp::from(7),
+    }; native::online::NUM_ONLINE_FP_QUERIES];
+    Emulator::emulate_wireless(
+        (
+            unified,
+            helper,
+            online,
+            [Fp::ZERO; 2],
+            [EpAffine::generator()],
+            sums,
+            [EpAffine::generator(); 3],
+        ),
+        |dr, witness| {
+            let (unified, helper, online, header, points, sums, stages) = witness.cast();
+            let y = Element::constant(dr, Fp::from(107));
+            let mut inputs = native::stages::preamble::ProofInputs::<_, C, 2>::alloc_from_parts(
+                dr,
+                header.as_ref().map(|h| h.as_slice()),
+                header.as_ref().map(|h| h.as_slice()),
+                header.as_ref().map(|h| h.as_slice()),
+                online.as_ref(),
+                header.as_ref().map(|_| Fp::ONE),
+                unified.as_ref(),
+                points.as_ref().map(|p| p.as_slice()),
+                sums.as_ref().map(|s| s.as_slice()),
+            )?;
+            let stages =
+                FixedVec::<_, stages::Present<Batched, stages::Nested, 3>>::try_from_fn(|i| {
+                    CurvePoint::alloc(dr, stages.as_ref().map(|p| p[i]))
+                })?;
+            let compute_target = inputs.compute_v_bridge_ky(dr, &y, &stages)?;
+            let helper_target = inputs.private_helper_ky(dr, &y)?.unwrap();
+            let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
+            let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky)?;
+            let output = native::circuits::compute_v::Output::<_, C> {
+                unified: inputs.unified.clone(),
+                online: inputs.online.clone(),
+                private_sums: inputs.private_sums.clone(),
+                private_stages: FixedVec::from_fn(|i| {
+                    let point = CompletePoint::from_affine(stages[i / 2].clone());
+                    let (x, y) = point.coordinates();
+                    if i % 2 == 0 { x.clone() } else { y.clone() }
+                }),
+            };
+            let mut actual = Horner::new(&y);
+            GadgetExt::write(&output, dr, &mut actual)?;
+            assert_eq!(
+                compute_target.value().take(),
+                ky::finish_extension_ky(actual, dr)?.value().take()
+            );
+            let output =
+                <circuit::Circuit<Batched, S> as MultiStageCircuit<Fp, ProductionRank>>::instance(
+                    &circuit::Circuit::default(),
+                    dr,
+                    helper.as_ref(),
+                )?;
+            let mut actual = Horner::new(&y);
+            GadgetExt::write(&output, dr, &mut actual)?;
+            assert_eq!(
+                helper_target.value().take(),
+                ky::finish_extension_ky(actual, dr)?.value().take()
+            );
+            let output = native::circuits::bind_endoscalar::Output::<_, C> {
+                unified: inputs.unified.clone(),
+                private_points: inputs.private_points.clone(),
+            };
+            let mut actual = Horner::new(&y);
+            GadgetExt::write(&output, dr, &mut actual)?;
+            assert_eq!(
+                points_target.value().take(),
+                ky::finish_extension_ky(actual, dr)?.value().take()
+            );
+            for i in 0..2 {
+                let original = inputs.private_sums[i].clone();
+                inputs.private_sums[i] = original.add(dr, &Element::one());
+                assert_ne!(
+                    compute_target.value().take(),
+                    inputs.compute_v_bridge_ky(dr, &y, &stages)?.value().take()
+                );
+                assert_ne!(
+                    helper_target.value().take(),
+                    inputs.private_helper_ky(dr, &y)?.unwrap().value().take()
+                );
+                inputs.private_sums[i] = original;
+            }
+            inputs.private_points[0] = CompletePoint::alloc(dr, points.as_ref().map(|p| -p[0]))?;
+            assert_ne!(
+                helper_target.value().take(),
+                inputs.private_helper_ky(dr, &y)?.unwrap().value().take()
+            );
+            assert_ne!(
+                points_target.value().take(),
+                inputs
+                    .bind_endoscalar_ky(dr, &y, &unified_ky)?
+                    .value()
+                    .take()
+            );
+            Ok(())
+        },
+    )?;
+    let targets = ky::NativeKy {
+        c: Some(Fp::from(2)),
+        application: Fp::from(3),
+        unified: Fp::from(5),
+        unified_bridge: Fp::from(7),
+        compute_v_bridge: Fp::from(11),
+        bind_endoscalar: Fp::from(13),
+        private_helper: Some(Fp::from(17)),
+        statement: None,
+        binding: None,
+    };
+    let prefix: alloc::vec::Vec<_> = native::claims::ky_prefix::<Batched, _>(&targets).collect();
+    assert_eq!(prefix.last(), Some(&Fp::from(17)));
+    assert_eq!(prefix.iter().filter(|&&v| v == Fp::from(13)).count(), 1);
+    Ok(())
+}

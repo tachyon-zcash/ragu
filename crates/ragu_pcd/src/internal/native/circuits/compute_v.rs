@@ -93,7 +93,7 @@ use crate::{
     },
     profile::{
         Profile, ProfiledCycle,
-        online::stages::{Nested, Present},
+        online::stages::{Native, Nested, Present},
     },
 };
 
@@ -108,6 +108,9 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     /// The online openings, in slot order, as the `query` stage holds them.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
+    /// Quotient and evaluation sums shared with the independent private helper.
+    #[ragu(gadget)]
+    pub private_sums: FixedVec<Element<'dr, D>, Present<C::Profile, Native, 2>>,
     /// The nested private Input, Query and Eval commitments, in deadline order.
     #[ragu(gadget)]
     pub private_stages: FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 6>>,
@@ -143,6 +146,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_S
 pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
+    /// Common sums supplied by the independent private helper.
+    pub private_sums: FixedVec<C::CircuitField, Present<C::Profile, Native, 2>>,
     /// Holds the private nested input-stage commitment fixed before w.
     pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides child proof data).
@@ -231,6 +236,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let eval = &eval.evaluations;
 
         let allocator = &mut Standard::new();
+        let private_sums = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_sums[i]))
+        })?;
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
         // Extract endoscalar early: each Boolean gate it allocates has a
@@ -291,7 +299,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 ) {
                     pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
                 }
-                horner.finish(dr)
+                let mut fu = horner.finish(dr);
+                if !C::Profile::NATIVE_ONLINE.is_empty() {
+                    for _ in C::Profile::NATIVE_ONLINE.openings {
+                        fu = fu.mul(dr, &alpha)?;
+                    }
+                    fu = fu.add(dr, &private_sums[0]);
+                }
+                fu
             };
 
             // Step 3: Compute v = f(u) + beta * eval via Horner accumulation.
@@ -301,7 +316,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let mut horner = Horner::new(&effective_beta);
                 fu.write(dr, &mut horner)?;
                 eval.write(dr, &mut horner)?;
-                horner.finish(dr)
+                let mut value = horner.finish(dr);
+                if !C::Profile::NATIVE_ONLINE.is_empty() {
+                    for _ in C::Profile::NATIVE_ONLINE.polynomials {
+                        value = value.mul(dr, &effective_beta)?;
+                    }
+                    value = value.add(dr, &private_sums[1]);
+                }
+                value
             };
 
             // Constrain v: the computed value must equal the claimed v in the
@@ -316,6 +338,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let output = Output {
             unified,
             online: query.online,
+            private_sums,
             private_stages,
         };
         let zero = Element::zero(dr);

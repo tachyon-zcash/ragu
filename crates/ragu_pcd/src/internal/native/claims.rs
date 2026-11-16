@@ -455,6 +455,9 @@ pub trait KySource {
     /// instance followed by the step's online openings.
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
+    /// Native private helper target, when the profile has a private batch.
+    fn private_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// The unified instance followed by actual nested private walk points.
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
@@ -523,9 +526,20 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 extension.binding.is_none() || binding.len() == ones.len(),
                 "a profile with a binding circuit takes one binding value per proof"
             );
+            let helper = crate::profile::online::extension::helper::<
+                P,
+                crate::profile::online::stages::Native,
+            >();
+            let private: Vec<S::Ky> = source.private_helper_ky().collect();
+            assert!(
+                helper.is_none() || private.len() == ones.len(),
+                "a private helper takes one target per proof"
+            );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {
-                if extension.statement == Some(circuit) {
+                if helper == Some(circuit) {
+                    private.clone()
+                } else if extension.statement == Some(circuit) {
                     statement.clone()
                 } else if bound == Some(circuit) {
                     binding.clone()
@@ -545,6 +559,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_compute_v_bridge: Element<'dr, D>,
     pub right_compute_v_bridge: Element<'dr, D>,
+    pub left_private_helper: Option<Element<'dr, D>>,
+    pub right_private_helper: Option<Element<'dr, D>>,
     pub left_bind_endoscalar: Element<'dr, D>,
     pub right_bind_endoscalar: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
@@ -574,12 +590,16 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_binding: Option<Element<'dr, D>>,
         left_bind_endoscalar: Element<'dr, D>,
         right_bind_endoscalar: Element<'dr, D>,
+        left_private_helper: Option<Element<'dr, D>>,
+        right_private_helper: Option<Element<'dr, D>>,
     ) -> Self {
         Self {
             left_raw_c,
             right_raw_c,
             left_bind_endoscalar,
             right_bind_endoscalar,
+            left_private_helper,
+            right_private_helper,
             left_app: left_ky.application.clone(),
             right_app: right_ky.application.clone(),
             left_bridge: left_ky.unified_bridge.clone(),
@@ -615,6 +635,13 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
         once(self.left_compute_v_bridge.clone()).chain(once(self.right_compute_v_bridge.clone()))
+    }
+
+    fn private_helper_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        self.left_private_helper
+            .iter()
+            .chain(self.right_private_helper.iter())
+            .cloned()
     }
 
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {

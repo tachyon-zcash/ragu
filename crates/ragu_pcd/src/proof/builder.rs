@@ -1265,6 +1265,13 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                     .take()
                     .expect("bootstrap private commitments must be set")
             },
+            native_private_sums: if C::Profile::NATIVE_ONLINE.is_empty() {
+                Vec::new()
+            } else {
+                self.native_private_sums
+                    .expect("native private helper sums must be set")
+                    .to_vec()
+            },
             nested_private_sums: if C::Profile::NESTED_ONLINE.is_empty() {
                 Vec::new()
             } else {

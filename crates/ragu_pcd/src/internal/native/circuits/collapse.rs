@@ -261,6 +261,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             preamble
                 .right
                 .bind_endoscalar_ky(dr, &y, &outer_error.right.unified)?;
+        let left_private_helper = preamble.left.private_helper_ky(dr, &y)?;
+        let right_private_helper = preamble.right.private_helper_ky(dr, &y)?;
         let ky = TwoProofKySource::new(
             dr,
             preamble.left.unified.c.clone(),
@@ -273,6 +275,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             right_binding,
             left_bind_endoscalar,
             right_bind_endoscalar,
+            left_private_helper,
+            right_private_helper,
         );
         let mut ky = ky_values::<C::Profile, _>(&ky);
 

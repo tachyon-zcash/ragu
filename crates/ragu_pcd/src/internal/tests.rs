@@ -1212,6 +1212,10 @@ fn test_extension_claims_follow_the_declaration() {
             [50, 51].into_iter()
         }
 
+        fn private_helper_ky(&self) -> impl Iterator<Item = u32> {
+            [90, 91].into_iter()
+        }
+
         fn bind_endoscalar_ky(&self) -> impl Iterator<Item = u32> {
             [80, 81].into_iter()
         }

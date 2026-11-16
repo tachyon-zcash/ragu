@@ -901,6 +901,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new();
         let compute_v_witness = || {
             Ok(native::circuits::compute_v::Witness {
+                private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
+                    builder
+                        .native_private_sums
+                        .as_ref()
+                        .expect("private helper traced before compute-v")[i]
+                }),
                 binding: &native_points.binding,
                 unified: make_unified(&builder)?,
                 preamble_witness: &preamble_witness,

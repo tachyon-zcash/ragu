@@ -256,6 +256,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         nested_c: nested.nested_c,
         nested_v: nested.nested_v,
         nested_private_sums: nested.nested_private_sums.clone(),
+        native_private_sums: native.native_private_sums.clone(),
         nested_private_commitments: nested.nested_private_commitments.clone(),
         nested_left: nested.nested_left,
         nested_right: nested.nested_right,
