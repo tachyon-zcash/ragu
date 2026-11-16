@@ -126,7 +126,7 @@ mod tests {
         let points: Vec<_> = (1..=17)
             .map(|i| AffineAdapter::from(generator.to_projective() * FieldAdapter::from(i)))
             .collect();
-        for n in [8193, 1, 0, 128, 8192, 31, 2049, 129, 257, 0] {
+        for n in [8193, 1, 0, 128, 8192, 31, 2049, 129, 32768, 32769, 257, 0] {
             let bases: Vec<_> = (0..n).map(|i| points[i % points.len()]).collect();
             let prepared = PreparedMsm::new(&bases).unwrap();
             assert_eq!(prepared.bases(), bases);

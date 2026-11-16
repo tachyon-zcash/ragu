@@ -36,9 +36,8 @@ rayon = "1.11.0"
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 # This workspace cannot inherit repo-root [workspace.dependencies], so keep
-# the direct rand version in sync with the repo-root dependency set. Field and
-# curve types come through ragu_core.
-udon = { package = "zakura-udon", version = "0.1.0", default-features = false, features = ["traits"] }
+# the direct udon and rand versions in sync with the repo-root dependency set.
+udon = { package = "zakura-udon", version = "0.2.0", default-features = false, features = ["traits"] }
 ragu_primitives = { path = "../../crates/ragu_primitives" }
 ragu_core = { path = "../../crates/ragu_core" }
 ragu_circuits = { path = "../../crates/ragu_circuits" }
