@@ -7,6 +7,12 @@
 use ragu_core::{Error, Result};
 
 pub mod batch;
+pub mod circuit;
+pub mod prepared;
+pub mod stages;
+
+#[cfg(test)]
+mod tests;
 
 /// The last transcript boundary before a polynomial must be committed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -44,6 +50,8 @@ pub enum Point {
     Constant(u64),
     /// The registry domain point for this circuit index.
     Circuit(u32),
+    /// A value from the input stage committed before `w`.
+    Input(usize),
     /// A wire of `OnlineQuery`, constrained by the consuming circuit.
     ///
     /// This supports arbitrary field elements. The consumer must bind any
@@ -77,6 +85,8 @@ pub struct Layout {
     pub polynomials: &'static [Phase],
     /// Opening claims, in quotient-fold order.
     pub openings: &'static [Opening],
+    /// Number of input values committed before `w` and shared by consumers.
+    pub inputs: usize,
     /// Number of separately witnessed point wires in `OnlineQuery`.
     pub points: usize,
     /// Number of claimed value wires in `OnlineQuery`.
@@ -88,6 +98,7 @@ impl Layout {
     pub const EMPTY: Self = Self {
         polynomials: &[],
         openings: &[],
+        inputs: 0,
         points: 0,
         values: 0,
     };
@@ -96,6 +107,7 @@ impl Layout {
     pub const fn is_empty(&self) -> bool {
         self.polynomials.is_empty()
             && self.openings.is_empty()
+            && self.inputs == 0
             && self.points == 0
             && self.values == 0
     }
@@ -113,6 +125,7 @@ impl Layout {
                 opening.polynomial < self.polynomials.len()
                     && opening.value < self.values
                     && match opening.point {
+                        Point::Input(input) => input < self.inputs,
                         Point::Witness(point) => point < self.points,
                         _ => true,
                     }
@@ -131,7 +144,7 @@ impl Layout {
 }
 
 #[cfg(test)]
-mod tests {
+mod layout_tests {
     use super::*;
 
     const LAYOUT: Layout = Layout {
@@ -153,6 +166,7 @@ mod tests {
                 value: 0,
             },
         ],
+        inputs: 0,
         points: 1,
         values: 2,
     };

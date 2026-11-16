@@ -49,11 +49,20 @@ impl Point {
     /// # Errors
     ///
     /// Rejects an out-of-range witness or circuit domain index.
-    pub fn resolve<F: Field>(&self, challenges: &Challenges<F>, points: &[F]) -> Result<F> {
+    pub fn resolve<F: Field>(
+        &self,
+        challenges: &Challenges<F>,
+        inputs: &[F],
+        points: &[F],
+    ) -> Result<F> {
         match *self {
             Self::Challenge(challenge) => Ok(*challenges.opening(challenge)),
             Self::Constant(value) => Ok(F::from(value)),
             Self::Circuit(index) => circuit_point(index),
+            Self::Input(index) => inputs
+                .get(index)
+                .copied()
+                .ok_or_else(|| Error::InvalidWitness("missing private input point".into())),
             Self::Witness(index) => points
                 .get(index)
                 .copied()
@@ -75,6 +84,8 @@ fn circuit_point<F: Field>(index: u32) -> Result<F> {
 /// Claimed query wires, committed before `alpha`.
 #[derive(Clone, Debug)]
 pub struct Queries<F> {
+    /// Input values from the stage committed before `w`.
+    pub inputs: Vec<F>,
     /// Arbitrary points, indexed by [`Point::Witness`].
     pub points: Vec<F>,
     /// Claimed values, indexed by [`super::Opening::value`].
@@ -92,18 +103,22 @@ impl Layout {
     pub fn query<F: Field, R: Rank, B: Backend>(
         &self,
         polynomials: &[sparse::Polynomial<F, R>],
+        inputs: Vec<F>,
         points: Vec<F>,
         challenges: &Challenges<F>,
     ) -> Result<Queries<F>> {
         self.check()?;
-        if polynomials.len() != self.polynomials.len() || points.len() != self.points {
+        if polynomials.len() != self.polynomials.len()
+            || inputs.len() != self.inputs
+            || points.len() != self.points
+        {
             return Err(Error::InvalidWitness(
                 "private batch has the wrong witness lengths".into(),
             ));
         }
         let mut values = alloc::vec![None; self.values];
         for opening in self.openings {
-            let point = opening.point.resolve(challenges, &points)?;
+            let point = opening.point.resolve(challenges, &inputs, &points)?;
             let value = B::sparse_eval(&polynomials[opening.polynomial], point);
             if values[opening.value].is_some_and(|prior| prior != value) {
                 return Err(Error::InvalidWitness(
@@ -113,6 +128,7 @@ impl Layout {
             values[opening.value] = Some(value);
         }
         Ok(Queries {
+            inputs,
             points,
             values: values
                 .into_iter()
@@ -131,11 +147,15 @@ impl Layout {
     pub fn quotient<F: Field, R: Rank>(
         &self,
         polynomials: &[sparse::Polynomial<F, R>],
+        inputs: &[F],
         points: &[F],
         challenges: &Challenges<F>,
     ) -> Result<sparse::Polynomial<F, R>> {
         self.check()?;
-        if polynomials.len() != self.polynomials.len() || points.len() != self.points {
+        if polynomials.len() != self.polynomials.len()
+            || inputs.len() != self.inputs
+            || points.len() != self.points
+        {
             return Err(Error::InvalidWitness(
                 "private batch has the wrong witness lengths".into(),
             ));
@@ -144,7 +164,7 @@ impl Layout {
             .openings
             .iter()
             .map(|opening| {
-                let point = opening.point.resolve(challenges, points)?;
+                let point = opening.point.resolve(challenges, inputs, points)?;
                 let mut coefficients: Vec<_> = udon::polynomial::divide_linear_rev(
                     polynomials[opening.polynomial].iter_coeffs(),
                     point,
@@ -175,7 +195,8 @@ impl Layout {
         challenges: &Challenges<Element<'dr, D>>,
     ) -> Result<(Element<'dr, D>, Element<'dr, D>)> {
         self.check()?;
-        if queries.points.len() != self.points
+        if queries.inputs.len() != self.inputs
+            || queries.points.len() != self.points
             || queries.values.len() != self.values
             || evaluations.len() != self.polynomials.len()
         {
@@ -190,6 +211,7 @@ impl Layout {
                 Point::Challenge(challenge) => challenges.opening(challenge).clone(),
                 Point::Constant(value) => Element::constant(dr, D::F::from(value)),
                 Point::Circuit(index) => Element::constant(dr, circuit_point::<D::F>(index)?),
+                Point::Input(index) => queries.inputs[index].clone(),
                 Point::Witness(index) => queries.points[index].clone(),
             };
             denominators.push(inverter.add(dr, &point)?);
@@ -249,6 +271,7 @@ mod tests {
                 value: 2,
             },
         ],
+        inputs: 0,
         points: 1,
         values: 3,
     };
@@ -266,10 +289,15 @@ mod tests {
             u: F::from(17),
             beta: F::from(13),
         };
-        let queries =
-            LAYOUT.query::<_, _, ReferenceBackend>(&polynomials, vec![F::from(7)], &challenges)?;
+        let queries = LAYOUT.query::<_, _, ReferenceBackend>(
+            &polynomials,
+            vec![],
+            vec![F::from(7)],
+            &challenges,
+        )?;
         assert_eq!(queries.values, vec![F::from(17), F::from(162), F::ONE]);
-        let quotient = LAYOUT.quotient(&polynomials, &queries.points, &challenges)?;
+        let quotient =
+            LAYOUT.quotient(&polynomials, &queries.inputs, &queries.points, &challenges)?;
         let u = challenges.u;
         let a = challenges.alpha;
         let expected_f = a.pow_u64(3) * (F::from(2) + F::from(3) * (u + F::from(2)))
@@ -296,6 +324,7 @@ mod tests {
                         _ => {}
                     }
                     let query = Queries {
+                        inputs: vec![],
                         points: query
                             .points
                             .into_iter()
@@ -352,15 +381,19 @@ mod tests {
         };
         assert!(
             LAYOUT
-                .query::<_, _, ReferenceBackend>(&polynomials, vec![Fp::ONE], &challenges)
+                .query::<_, _, ReferenceBackend>(&polynomials, vec![], vec![Fp::ONE], &challenges)
                 .is_err()
         );
         assert!(
             LAYOUT
-                .quotient(&polynomials[..1], &[Fp::ONE], &challenges)
+                .quotient(&polynomials[..1], &[], &[Fp::ONE], &challenges)
                 .is_err()
         );
-        assert!(LAYOUT.quotient(&polynomials, &[], &challenges).is_err());
+        assert!(
+            LAYOUT
+                .quotient(&polynomials, &[], &[], &challenges)
+                .is_err()
+        );
     }
 
     #[test]
@@ -377,12 +410,16 @@ mod tests {
             let polynomials =
                 vec![sparse::Polynomial::<Fp, TestRank>::new(); layout.polynomials.len()];
             let points = vec![Fp::ZERO; layout.points];
-            let queries =
-                layout.query::<_, _, ReferenceBackend>(&polynomials, points, &challenges)?;
+            let queries = layout.query::<_, _, ReferenceBackend>(
+                &polynomials,
+                vec![],
+                points,
+                &challenges,
+            )?;
             assert!(queries.values.iter().all(|v| *v == Fp::ZERO));
             assert_eq!(
                 layout
-                    .quotient(&polynomials, &queries.points, &challenges)?
+                    .quotient(&polynomials, &queries.inputs, &queries.points, &challenges)?
                     .eval(challenges.u),
                 Fp::ZERO
             );
