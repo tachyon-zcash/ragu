@@ -80,6 +80,11 @@ impl<P: Profile> Len for NumPoints<P> {
     }
 }
 
+impl<P: Profile> endoscalar::WalkShape for NumPoints<P> {
+    type Profile = P;
+    type Side = crate::profile::online::stages::Native;
+}
+
 /// The endoscalings a nested step performs in the standard profile: what
 /// fits a step beside the stages it reserves, which hold every point the
 /// walk consumes, at the production rank. A profile sets its own

@@ -36,3 +36,4 @@ RAGU005|src/mock/step/oracles.rs|93|Which output slots the step left unopened is
 RAGU005|src/mock/step/oracles.rs|137|Per-slot occupancy follows prior structural openings; a repeated opening fails before allocation, independently of points or witness values.
 RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|198|Wire counts are checked against the setup-fixed layout before synthesis; a mismatch is an API error, not a witness-dependent circuit branch.
 RAGU005|crates/ragu_pcd/src/profile/online/batch.rs|210|The opening descriptor is fixed by the profile at setup; it selects a constant, challenge wire or staged point without inspecting witness values.
+RAGU005|crates/ragu_primitives/src/conditional_point.rs|74|The type-level PointEncoding policy is fixed at setup: finite encodings already guarantee a nonidentity point, while complete encodings require the checked finite endpoint conversion.

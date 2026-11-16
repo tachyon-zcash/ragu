@@ -132,7 +132,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         // The walk's last interstitial is P_n: pin it to the instance, where
         // a parent reads it.
         let p = unified_output.nested_p_commitment.receive(dr, allocator)?;
-        walk.p().enforce_equal(dr, &p)?;
+        walk.p().enforce_equal_affine(dr, &p)?;
 
         let a = unified_output.nested_a_commitment.receive(dr, allocator)?;
         ab.a.enforce_equal(dr, &a)?;

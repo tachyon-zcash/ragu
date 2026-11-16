@@ -66,11 +66,15 @@ pub use super::super::NumSteps;
 use crate::{
     internal::{
         Side,
+        batch_point::BatchPoint,
         endoscalar::{InputsLen, PointsWitness},
         nested::{self, online::FqPolysLen, pcs::NUM_CURRENT_POINTS},
     },
-    profile::Profile,
+    profile::{Profile, online::stages::Nested as PrivateNested},
 };
+
+/// Point representation selected by the nested private batch declaration.
+pub(crate) type PrivatePoint<'dr, D, C, P> = BatchPoint<'dr, D, C, P, PrivateNested>;
 
 /// Length type for the walk's inputs, the initial point aside.
 pub type NumInputs<P> = InputsLen<NumPoints<P>>;
@@ -495,7 +499,7 @@ pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
     #[ragu(gadget)]
-    pub online_fq: FixedVec<Point<'dr, D, C>, FqPolysLen<P>>,
+    pub online_fq: FixedVec<PrivatePoint<'dr, D, C, P>, FqPolysLen<P>>,
 }
 
 /// Output gadget of [`RegistryWxStage`].
@@ -533,12 +537,12 @@ pub struct Walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub endoscalar: HoistedEndoscalar<'dr, D>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<Point<'dr, D, C>, NumSteps<P>>,
+    pub interstitials: FixedVec<PrivatePoint<'dr, D, C, P>, NumSteps<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P> {
     /// The walk's last interstitial: $P_n$.
-    pub fn p(&self) -> &Point<'dr, D, C> {
+    pub fn p(&self) -> &PrivatePoint<'dr, D, C, P> {
         self.interstitials
             .last()
             .expect("every walk has at least one interstitial")
@@ -561,12 +565,12 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
     }
 
     /// The walk's `i`-th input.
-    pub fn input(&self, i: usize) -> &'a Point<'dr, D, C> {
+    pub fn input(&self, i: usize) -> PrivatePoint<'dr, D, C, P> {
         let child = |side| match side {
             Side::Left => &self.binding.left,
             Side::Right => &self.binding.right,
         };
-        match input_source::<P>(i) {
+        let finite = match input_source::<P>(i) {
             InputSource::Bridge(side, i) => &child(side).bridges[i],
             InputSource::Challenges(side) => &child(side).challenges,
             InputSource::P(side) => &child(side).p,
@@ -581,8 +585,9 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::AbA => &self.ab.a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
-            InputSource::OnlineFq(j) => &self.preamble.online_fq[j],
-        }
+            InputSource::OnlineFq(j) => return self.preamble.online_fq[j].clone(),
+        };
+        BatchPoint::from_affine(finite.clone())
     }
 }
 
@@ -681,7 +686,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
                 Point::alloc(dr, witness.as_ref().map(|w| w.points[i]))
             })?,
             online_fq: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.online_fq[i]))
+                BatchPoint::alloc(dr, witness.as_ref().map(|w| w.online_fq[i]))
             })?,
         })
     }
@@ -736,7 +741,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
         Ok(Walk {
             endoscalar: HoistedEndoscalar::alloc(dr, witness.as_ref().map(|w| w.endoscalar))?,
             interstitials: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
+                BatchPoint::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
             })?,
         })
     }
