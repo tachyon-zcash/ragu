@@ -48,6 +48,8 @@
 //! manifest digest is a mix-up check; the setup procedure must authenticate the
 //! manifest and its artifacts independently.
 
+pub mod online;
+
 use alloc::vec::Vec;
 use core::{
     any::{TypeId, type_name},
@@ -157,6 +159,18 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     ///
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
+
+    /// Private native polynomial and opening declarations. The application
+    /// slots are separate from this layout.
+    ///
+    /// Nonempty declarations are rejected until the batch integration lands.
+    const NATIVE_ONLINE: online::Layout = online::Layout::EMPTY;
+
+    /// Private nested polynomial and opening declarations, independent of
+    /// the native layout and of the legacy V5 slot.
+    ///
+    /// Nonempty declarations are rejected until the batch integration lands.
+    const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
 
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
@@ -348,6 +362,13 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
     /// [`NUM_ONLINE_FQ_POLYS`].
     fn check() -> Result<()> {
+        Self::NATIVE_ONLINE.check()?;
+        Self::NESTED_ONLINE.check()?;
+        if !Self::NATIVE_ONLINE.is_empty() || !Self::NESTED_ONLINE.is_empty() {
+            return Err(Error::Initialization(
+                "private opening batches are not integrated yet".into(),
+            ));
+        }
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
         if Self::NATIVE_ENDOSCALINGS_PER_STEP.saturating_mul(Self::NESTED_ENDOSCALINGS_PER_STEP)
