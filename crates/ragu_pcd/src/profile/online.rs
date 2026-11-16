@@ -11,6 +11,7 @@ pub mod circuit;
 pub(crate) mod extension;
 pub mod mesh;
 pub(crate) mod mesh_preparation;
+pub(crate) mod mesh_terminal;
 pub mod prepared;
 pub(crate) mod prover;
 pub mod source;

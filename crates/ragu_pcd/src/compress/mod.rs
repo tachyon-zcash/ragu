@@ -108,12 +108,13 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// commitment per component, one opening per derived polynomial, one
     /// value per batched polynomial and one IPA round per bit of the rank.
     fn well_formed<R: Rank>(&self) -> bool {
-        fn side<P: Affine, R: Rank>(messages: &Messages<P>) -> bool {
+        fn side<P: Affine, R: Rank>(messages: &Messages<P>, mesh_polynomials: usize) -> bool {
             let derived = Derived::ALL.len();
             // The batch covers the derived polynomials, the reduction's p
             // and q, and the four the instance opens.
             messages.reduction.openings.len() == derived
-                && messages.batch.evaluations.len() == derived + 2 + instance::OPENED
+                && messages.batch.evaluations.len()
+                    == derived + 2 + instance::OPENED + mesh_polynomials
                 && messages.opening.rounds.len() == R::RANK as usize
         }
         self.instance.native.len() == native_components::<C::Profile>().count()
@@ -138,8 +139,14 @@ impl<C: ProfiledCycle> CompressedProof<C> {
                     crate::profile::online::stages::Nested,
                     2,
                 > as ragu_primitives::vec::Len>::len()
-            && side::<_, R>(&self.native)
-            && side::<_, R>(&self.nested)
+            && side::<_, R>(
+                &self.native,
+                C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.polynomial_indices().len()),
+            )
+            && side::<_, R>(
+                &self.nested,
+                C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.polynomial_indices().len()),
+            )
     }
 }
 

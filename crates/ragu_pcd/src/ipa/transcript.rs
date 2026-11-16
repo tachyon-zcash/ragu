@@ -100,7 +100,12 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
 
     /// The transcript as the nested-curve IPA sees it.
     pub fn nested(&mut self) -> NestedSide<'_, 'dr, C, B> {
-        NestedSide(self)
+        NestedSide(self, false)
+    }
+
+    /// Selects complete scalar bridges for the fixed source-mesh batch.
+    pub(crate) fn nested_mesh(&mut self, mesh: bool) -> NestedSide<'_, 'dr, C, B> {
+        NestedSide(self, mesh)
     }
 
     /// Absorbs a nested-curve point through the [`Point`] gadget, which
@@ -180,6 +185,7 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::HostCurve> for HostSide<'_
 /// these fresh compression challenges must reproduce this conversion.
 pub struct NestedSide<'a, 'dr, C: Cycle, B: SelectableBackend = ReferenceBackend>(
     &'a mut CycleTranscript<'dr, C, B>,
+    bool,
 );
 
 impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSide<'_, '_, C, B> {
@@ -188,7 +194,11 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSid
     }
 
     fn write_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
-        self.0.bridge(&[scalar])
+        if self.1 {
+            self.0.write_private_scalar(scalar)
+        } else {
+            self.0.bridge(&[scalar])
+        }
     }
 
     fn squeeze_challenge(&mut self) -> Result<C::ScalarField> {

@@ -1409,3 +1409,83 @@ fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligation
     check::<Fp>()?;
     check::<Fq>()
 }
+
+#[test]
+fn terminal_mesh_opens_both_ends_and_counts_each_polynomial_once() -> Result<()> {
+    use ragu_backend::{Backend, ReferenceBackend};
+    use ragu_circuits::{
+        polynomials::TestRank,
+        registry::{RegistryBuilder, Tag},
+    };
+
+    use super::{mesh_terminal::Coordinates, source::SourceRegistry};
+    fn check<F: Field>() -> Result<()> {
+        let registry = RegistryBuilder::<F, TestRank>::new()
+            .with_tag(Tag::new(F::from(23)))
+            .register_circuit(())?
+            .finalize()?;
+        let source = SourceRegistry::new::<_, ReferenceBackend>(&registry);
+        let mesh = SourceMesh::NATIVE_MESH.unwrap();
+        let layout = SourceMesh::NATIVE_ONLINE;
+        let coordinates = Coordinates {
+            w: F::from(5),
+            y: F::from(7),
+            x: F::from(11),
+        };
+        let inputs = vec![F::from(2), F::from(3), F::from(13), F::from(19)];
+        let values = vec![
+            source.evaluate(coordinates.w, inputs[0], inputs[1]),
+            source.evaluate(coordinates.w, inputs[2], inputs[3]),
+            source.evaluate(coordinates.w, inputs[0], coordinates.y),
+            source.evaluate(coordinates.w, inputs[2], coordinates.y),
+            source.evaluate(coordinates.w, coordinates.x, coordinates.y),
+        ];
+        let metadata = mesh.claim_values(layout, &inputs, &values)?;
+        assert_eq!(
+            mesh.inherited_values(&metadata).as_slice(),
+            inputs.as_slice()
+        );
+        let polynomials =
+            mesh.terminal_polynomials::<_, ProductionRank>(&source, &metadata, coordinates)?;
+        let tau = F::from(29);
+        let expected = source.evaluate(tau, coordinates.x, coordinates.y);
+        let claims = mesh.terminal_claims(layout, &metadata, coordinates, tau, expected, 7)?;
+        assert_eq!(polynomials.len(), 6);
+        assert_eq!(claims.len(), 11);
+        for claim in &claims {
+            assert_eq!(
+                ReferenceBackend::sparse_eval(&polynomials[claim.poly - 7], claim.point),
+                claim.value
+            );
+        }
+        for edge in claims[..10].chunks_exact(2) {
+            assert_eq!(edge[0].value, edge[1].value);
+            assert_ne!(edge[0].poly, edge[1].poly);
+        }
+        assert_eq!(claims[10].poly, 7 + mesh.outgoing);
+        assert_eq!(claims[10].point, tau);
+        for i in mesh.coordinate_indices().len()..metadata.len() {
+            let mut altered = metadata.clone();
+            altered[i] += F::ONE;
+            let forged = mesh.terminal_claims(layout, &altered, coordinates, tau, expected, 7)?;
+            assert!(forged.iter().any(|claim| ReferenceBackend::sparse_eval(
+                &polynomials[claim.poly - 7],
+                claim.point
+            ) != claim.value));
+        }
+        assert!(
+            mesh.terminal_claims(
+                layout,
+                &metadata[..metadata.len() - 1],
+                coordinates,
+                tau,
+                expected,
+                0
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+    check::<Fp>()?;
+    check::<Fq>()
+}

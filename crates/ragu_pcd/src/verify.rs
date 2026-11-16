@@ -123,6 +123,39 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             return Ok(false);
         }
 
+        if let Some(mesh) = <C::Profile as crate::profile::Profile>::NATIVE_MESH {
+            let source = self
+                .native_source
+                .as_ref()
+                .expect("source captured at setup");
+            let outgoing = &pcd.proof().native_source_out[0];
+            let tau = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
+            let (x, y) = (pcd.proof().x(), pcd.proof().y());
+            if Verifier::<B>::sparse_commit_to_affine(outgoing, C::host_generators(self.params))
+                != pcd.proof().native_private_commitments[mesh.outgoing]
+                || Verifier::<B>::sparse_eval(outgoing, tau) != source.evaluate(tau, x, y)
+            {
+                return Ok(false);
+            }
+        }
+        if let Some(mesh) = <C::Profile as crate::profile::Profile>::NESTED_MESH {
+            let source = self
+                .nested_source
+                .as_ref()
+                .expect("source captured at setup");
+            let outgoing = &pcd.proof().nested_source_out[0];
+            let tau = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
+            let (x, y) = (
+                proof_check!(nested_challenge::<C>(pcd.proof().x())),
+                proof_check!(nested_challenge::<C>(pcd.proof().y())),
+            );
+            if Verifier::<B>::sparse_commit_to_affine(outgoing, C::nested_generators(self.params))
+                != pcd.proof().nested_private_commitments[mesh.outgoing]
+                || Verifier::<B>::sparse_eval(outgoing, tau) != source.evaluate(tau, x, y)
+            {
+                return Ok(false);
+            }
+        }
         // Sample verification challenges w, y, and z.
         let w = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let y = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));

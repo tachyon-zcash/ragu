@@ -9,7 +9,7 @@ use crate::{
     header::Header,
     internal::ky,
     ipa::{CycleTranscript, IpaCycle},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
 };
 
 /// The backend whose kernels [`Application::verify_compressed`] consults for
@@ -124,6 +124,30 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             );
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
+            if let Some(mesh) = C::Profile::NATIVE_MESH {
+                let source = self
+                    .native_source
+                    .as_ref()
+                    .expect("source captured at setup");
+                let coordinates = Coordinates {
+                    w: challenges.w,
+                    x: challenges.x,
+                    y: challenges.y,
+                };
+                openings.claims.extend(proof_check!(mesh.terminal_claims(
+                    C::Profile::NATIVE_ONLINE,
+                    &instance.native_mesh,
+                    coordinates,
+                    w,
+                    source.evaluate(w, coordinates.x, coordinates.y),
+                    openings.commitments.len()
+                )));
+                openings.commitments.extend(
+                    mesh.polynomial_indices()
+                        .into_iter()
+                        .map(|i| instance.native_private_commitments[i]),
+                );
+            }
             proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
                 &openings,
                 &proof.native.batch,
@@ -162,13 +186,37 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             )?;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
+            if let Some(mesh) = C::Profile::NESTED_MESH {
+                let source = self
+                    .nested_source
+                    .as_ref()
+                    .expect("source captured at setup");
+                let coordinates = Coordinates {
+                    w: crate::internal::nested::challenge::<C>(challenges.w)?,
+                    x: crate::internal::nested::challenge::<C>(challenges.x)?,
+                    y: crate::internal::nested::challenge::<C>(challenges.y)?,
+                };
+                openings.claims.extend(proof_check!(mesh.terminal_claims(
+                    C::Profile::NESTED_ONLINE,
+                    &instance.nested_mesh,
+                    coordinates,
+                    w,
+                    source.evaluate(w, coordinates.x, coordinates.y),
+                    openings.commitments.len()
+                )));
+                openings.commitments.extend(
+                    mesh.polynomial_indices()
+                        .into_iter()
+                        .map(|i| instance.nested_private_commitments[i]),
+                );
+            }
             proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
                 &openings,
                 &proof.nested.batch,
                 &proof.nested.opening,
                 C::nested_generators(self.params),
                 *C::nested_u(self.params),
-                &mut transcript.nested(),
+                &mut transcript.nested_mesh(C::Profile::NESTED_MESH.is_some()),
             ))
         };
         Ok(nested)
