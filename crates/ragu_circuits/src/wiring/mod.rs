@@ -82,8 +82,9 @@
 //! * [`sx`]: Evaluates $s(X, Y)$ at $X = x$ for some $x \in \mathbb{F}$.
 //! * [`sy`]: Evaluates $s(X, Y)$ at $Y = y$ for some $y \in \mathbb{F}$.
 //! * [`sxy`]: Evaluates $s(X, Y)$ at $(x, y)$ for some $x, y \in \mathbb{F}$.
-//! * [`monomials`]: Writes down $s(X, Y)$ itself, as its nonzero monomials,
-//!   for the registry to hash into its tag.
+//! * [`monomials`]: Writes out $s(X, Y)$ itself as the list of its nonzero
+//!   terms $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum
+//!   is $s(X, Y)$, for the registry to hash into its tag.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Routine`]: ragu_core::routines::Routine

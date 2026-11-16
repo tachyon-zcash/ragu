@@ -168,7 +168,7 @@ enum Wire<F> {
     /// A virtual wire from [`Driver::add`]: a canonical linear form.
     ///
     /// [`Driver::add`]: ragu_core::drivers::Driver::add
-    Form(Rc<[(usize, F)]>),
+    Virtual(Rc<[(usize, F)]>),
 }
 
 /// Scales `value` by a coefficient, sparing the multiplication for the unit
@@ -224,7 +224,7 @@ impl<F: Field> LinearExpression<Wire<F>, F> for Terms<F> {
         }
         match wire {
             Wire::Monomial(x) => self.terms.push((*x, coeff.value())),
-            Wire::Form(form) => self
+            Wire::Virtual(form) => self
                 .terms
                 .extend(form.iter().map(|&(x, value)| (x, scale(value, coeff)))),
         }
@@ -340,7 +340,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 
     /// Combines wires into a canonical linear form.
     fn add(&mut self, lc: impl Fn(Self::LCadd) -> Self::LCadd) -> Self::Wire {
-        Wire::Form(Rc::from(lc(Terms::new()).canonical()))
+        Wire::Virtual(Rc::from(lc(Terms::new()).canonical()))
     }
 
     /// Records the constraint's form as the coefficient of $Y^q$ for the
@@ -540,7 +540,7 @@ mod tests {
     fn degree(wire: &Wire<Fp>) -> usize {
         match wire {
             Wire::Monomial(degree) => *degree,
-            Wire::Form(_) => panic!("a gate wire is a monomial"),
+            Wire::Virtual(_) => panic!("a gate wire is a monomial"),
         }
     }
 
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn terms_apply_the_gain_and_expand_virtual_wires() {
-        let virtual_wire = Wire::Form(Rc::from(vec![(1, Fp::from(2)), (6, -Fp::ONE)]));
+        let virtual_wire = Wire::Virtual(Rc::from(vec![(1, Fp::from(2)), (6, -Fp::ONE)]));
         let terms = Terms::new()
             .add_term(&Wire::Monomial(3), Coeff::Two)
             .add_term(&Wire::Monomial(9), Coeff::Zero)

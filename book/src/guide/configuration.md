@@ -258,8 +258,10 @@ with identical ones, override the derived tags through a `test-utils` seam.
 The tag guards against circuits that read as honest but were chosen after
 challenges were derived. It does not make circuit code untrusted: the steps an
 application registers define what its verifier accepts. In particular, the tag
-hashes one walk of each circuit and every evaluation performs another, so it
-relies on circuit code emitting the same constraints on every walk, as the
+hashes the wiring polynomial produced by one driver walk of each circuit, while
+the prover and verifier evaluate that polynomial through separate walks with
+their own drivers. The tag therefore relies on circuit code emitting the same
+constraints on every walk, as the
 [determinism rule](../implementation/circuit-code-documentation.md#determinism)
 requires.
 
