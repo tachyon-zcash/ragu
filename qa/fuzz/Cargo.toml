@@ -49,7 +49,7 @@ ragu_testing = { path = "../../crates/ragu_testing" }
 proptest = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 rand = "0.10"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 
 # Poseidon sponge: absorb/squeeze mode transitions + save/resume consistency
 [[bin]]
