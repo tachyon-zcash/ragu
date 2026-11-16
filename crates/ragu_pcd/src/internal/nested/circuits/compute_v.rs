@@ -209,16 +209,18 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 &stages.preamble,
             )?;
             let mut horner = Horner::new(lift(challenges::ALPHA));
-            for (pu, v, denominator) in poly_queries(
-                eval,
-                query,
-                &stages.preamble,
-                &denominators,
-                &computed_ax,
-                &computed_bx,
-            ) {
-                pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
-            }
+            crate::profile::online::batch::append_quotients(
+                dr,
+                &mut horner,
+                poly_queries(
+                    eval,
+                    query,
+                    &stages.preamble,
+                    &denominators,
+                    &computed_ax,
+                    &computed_bx,
+                ),
+            )?;
             horner.finish(dr)
         };
 
@@ -565,7 +567,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
         (&eval.registry_xy, &query.fixed_registry[j], &d.internal[j])
     }))
     // The step's own online Fq polynomials at zeta_q, the lift of w.
-    .chain((0..eval.online_fq.len()).map(move |i| {
-        (&eval.online_fq[i], &query.online_fq[i], &d.challenges.w)
+    .chain(crate::internal::nested::online::openings(eval.online_fq.len()).map(move |opening| {
+        (&eval.online_fq[opening.polynomial], &query.online_fq[opening.value], &d.challenges.w)
     }))
 }

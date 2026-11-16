@@ -244,7 +244,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
-        let mut poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let mut poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
         if let Some(state) = &builder.native_private {
             let layout = C::Profile::NATIVE_ONLINE;
             for _ in layout.openings {
@@ -286,7 +286,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
             .collect();
 
-        let mut poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let mut poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
         if let Some(state) = &builder.nested_private {
             let layout = C::Profile::NESTED_ONLINE;
             for _ in layout.openings {
@@ -357,23 +357,4 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right: pcs::ChildChallenges::of(right)?,
         })
     }
-}
-
-/// Horner-batches quotient coefficient streams with $\alpha$: the first
-/// stream receives the highest power.
-fn alpha_batched_quotients<F: Field, R: Rank>(
-    mut iters: Vec<impl Iterator<Item = F>>,
-    alpha: F,
-) -> sparse::Polynomial<F, R> {
-    let mut coeffs = Vec::with_capacity(R::num_coeffs());
-    let (first, rest) = iters.split_first_mut().unwrap();
-    for val in first.by_ref() {
-        let c = rest
-            .iter_mut()
-            .fold(val, |acc, iter| acc.mul_add(&alpha, &iter.next().unwrap()));
-        coeffs.push(c);
-    }
-    coeffs.reverse();
-
-    sparse::Polynomial::from_coeffs(coeffs)
 }

@@ -1007,3 +1007,78 @@ pub(crate) fn mutate_nested_auxiliary_query<P: Affine>(point: P) -> P {
         point
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LegacyMixed;
+impl Profile for LegacyMixed {
+    const NAME: &'static str = "legacy-and-multipoint-batch";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const ONLINE_FQ_POLYS: usize = 2;
+    const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
+    const NESTED_ONLINE: Layout = Layout {
+        polynomials: &[Phase::BeforeW],
+        openings: &[
+            Opening {
+                polynomial: 0,
+                point: Point::Challenge(Challenge::W),
+                value: 0,
+            },
+            Opening {
+                polynomial: 0,
+                point: Point::Challenge(Challenge::X),
+                value: 1,
+            },
+        ],
+        inputs: 0,
+        points: 0,
+        values: 2,
+    };
+    type Context<'params, Base, Rk, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend;
+    fn nested_online_polynomials<'params, Base, Rk, B>(
+        _: &Self::Context<'params, Base, Rk, B>,
+        phase: Phase,
+        _: &[Base::ScalarField],
+        _: PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, Rk>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        Rk: Rank,
+        B: SelectableBackend,
+    {
+        Ok(if phase == Phase::BeforeW {
+            vec![sparse::Polynomial::from_coeffs(vec![
+                Base::ScalarField::ONE,
+                Base::ScalarField::from(2),
+            ])]
+        } else {
+            vec![]
+        })
+    }
+}
+
+#[test]
+fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitments() -> Result<()>
+{
+    type Mixed = Profiled<Pasta, LegacyMixed>;
+    let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked_aggregator())?;
+    assert_eq!(crate::profile::Shape::of::<LegacyMixed>().online_fq, 3);
+    let mut rng = StdRng::seed_from_u64(0x606050);
+    let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
+    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
+    for proof in [child, parent] {
+        assert_eq!(proof.proof().nested_private_commitments.len(), 1);
+        assert!(app.verify_uncompressed(&proof, &mut rng)?);
+        let compressed = app.compress(&proof, &mut rng)?;
+        assert!(app.verify_compressed(&compressed)?);
+    }
+    Ok(())
+}

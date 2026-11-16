@@ -307,16 +307,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 let denominators =
                     Denominators::new(dr, &u, &w, x.element(), &y, z.element(), &preamble, &query)?;
                 let mut horner = Horner::new(&alpha);
-                for (pu, v, denominator) in poly_queries(
-                    eval,
-                    &query,
-                    &preamble,
-                    &denominators,
-                    &computed_ax,
-                    &computed_bx,
-                ) {
-                    pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
-                }
+                crate::profile::online::batch::append_quotients(
+                    dr,
+                    &mut horner,
+                    poly_queries(
+                        eval,
+                        &query,
+                        &preamble,
+                        &denominators,
+                        &computed_ax,
+                        &computed_bx,
+                    ),
+                )?;
                 let mut fu = horner.finish(dr);
                 if !C::Profile::NATIVE_ONLINE.is_empty() {
                     for _ in C::Profile::NATIVE_ONLINE.openings {

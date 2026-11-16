@@ -192,10 +192,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The value of each online Fq polynomial at its opening point.
         let online_fq_point = online_fq::point(w);
         let online_fq = FixedVec::try_from(
-            builder
-                .online_fq_polynomials()
-                .iter()
-                .map(|poly| {
+            online_fq::openings(builder.online_fq_polynomials().len())
+                .map(|opening| {
+                    let poly = &builder.online_fq_polynomials()[opening.polynomial];
                     let value = B::sparse_eval(poly, online_fq_point);
                     // Test hook: this runs on the thread that calls `fuse`,
                     // outside its parallel jobs, as the hook's thread-local

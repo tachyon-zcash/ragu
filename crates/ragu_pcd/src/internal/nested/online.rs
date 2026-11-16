@@ -23,16 +23,16 @@ use udon::field::Field;
 
 use crate::profile::Profile;
 
-/// The maximum number of online polynomials over the scalar field that a
-/// step commits.
-///
-/// Such a polynomial belongs to the step that commits it. The step commits
-/// it before its challenge is drawn, and the step's nested batch opens it.
-/// The step does not export it, so a parent never opens it. Only a profile
-/// that asks for the slot has it; see
-/// [`Profile::ONLINE_FQ_POLYS`],
-/// whose slots hold a placeholder until decompression lands.
-pub const NUM_ONLINE_FQ_POLYS: usize = 1;
+/// Compatibility descriptors for pre-w slots opened at the lifted w.
+/// Their stage placement is retained for existing profiles; their opening
+/// algebra is shared with the general private batch.
+pub(crate) fn openings(count: usize) -> impl Iterator<Item = crate::profile::online::Opening> {
+    (0..count).map(|i| crate::profile::online::Opening {
+        polynomial: i,
+        point: crate::profile::online::Point::Challenge(crate::profile::online::Challenge::W),
+        value: i,
+    })
+}
 
 /// Length type for a step's own online polynomials over the scalar field
 /// in profile `P`.
@@ -67,8 +67,7 @@ impl<P: Profile> Len for FqEarlyPointsLen<P> {
 /// challenge stage. The prover's openings and quotients take it from here,
 /// so this is the one place the prover chooses it.
 ///
-/// TODO(decompression): if decompression opens at another point, the
-/// prover computes it here, and `compute_v` must take the same point.
+/// New consumers with other opening points use [`Profile::NESTED_ONLINE`].
 pub fn point<F: Field>(w: F) -> F {
     // Test hook: this runs on the thread that calls `fuse`, outside its
     // parallel jobs, as the hook's thread-local requires.
@@ -83,9 +82,8 @@ pub fn point<F: Field>(w: F) -> F {
 /// walk cannot take. It is not constant, so its value at $\zeta_q$ depends
 /// on $\zeta_q$.
 ///
-/// TODO(decompression): this is a placeholder. Decompression commits the
-/// IPA polynomial $s(X)$ here instead, and its native half reads the
-/// commitment as $G'$.
+/// This witness is retained for compatibility profiles. New consumers supply
+/// their own polynomials through the private-batch preparation hooks.
 pub fn placeholder<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(alloc::vec![F::from(1), F::from(2), F::from(3)])
 }

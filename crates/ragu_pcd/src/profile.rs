@@ -74,7 +74,6 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
-pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     internal::{endoscalar, native, nested},
@@ -141,9 +140,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
 
-    /// The number of online polynomials over the scalar field that each
-    /// step of the profile commits, at most
-    /// [`NUM_ONLINE_FQ_POLYS`].
+    /// Compatibility slots over the scalar field, each opened at the lift of w.
+    /// The count is bounded by the enclosing rank and circuit budgets.
+    /// New consumers should use [`Self::NESTED_ONLINE`] for explicit points,
+    /// preparation hooks and authenticated staged access.
     ///
     /// A step commits such a polynomial natively, before its challenge
     /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
@@ -152,10 +152,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// one point to the native walk, and a full walk then needs another
     /// step on each side.
     ///
-    /// Until decompression lands, each slot holds a fixed placeholder
-    /// polynomial, and no circuit constrains its value at the opening
-    /// point: the slot proves only that the value is an opening of the
-    /// committed polynomial. Do not rely on it for anything else.
+    /// These compatibility slots retain fixed placeholder witnesses. They
+    /// establish opening consistency only. Use [`Self::NESTED_ONLINE`]
+    /// preparation hooks and consumers for a polynomial-specific relation.
     ///
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
@@ -620,9 +619,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [consistent](Extension::is_consistent); if the nested extension names
     /// a statement circuit, which only the native side carries; or if an
     /// extension's binding names a stage the other extension does not have;
-    /// if the product of the two endoscaling counts is at most four; or if
-    /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
-    /// [`NUM_ONLINE_FQ_POLYS`].
+    /// if the product of the two endoscaling counts is at most four.
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
@@ -650,11 +647,6 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
-        }
-        if Self::ONLINE_FQ_POLYS > NUM_ONLINE_FQ_POLYS {
-            return Err(Error::Initialization(
-                "the profile commits more online Fq polynomials than a step can open".into(),
-            ));
         }
         for (name, profile) in [
             (Standard::NAME, TypeId::of::<Standard>()),
@@ -2821,14 +2813,14 @@ mod tests {
     }
 
     #[test]
-    fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
+    fn compatibility_slots_are_not_limited_to_the_historical_one_slot() {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-        struct TooMany;
-        impl Profile for TooMany {
+        struct MultipleSlots;
+        impl Profile for MultipleSlots {
             const NAME: &'static str = "too-many";
             const NATIVE_EXTENSION: usize = 0;
             const NESTED_EXTENSION: usize = 0;
-            const ONLINE_FQ_POLYS: usize = crate::profile::NUM_ONLINE_FQ_POLYS + 1;
+            const ONLINE_FQ_POLYS: usize = 2;
 
             type Context<'params, Base, R, B>
                 = ()
@@ -2837,7 +2829,7 @@ mod tests {
                 R: Rank,
                 B: SelectableBackend;
         }
-        assert!(TooMany::check().is_err());
+        assert!(MultipleSlots::check().is_ok());
     }
 
     #[test]

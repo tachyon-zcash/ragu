@@ -165,16 +165,13 @@ impl Layout {
             .iter()
             .map(|opening| {
                 let point = opening.point.resolve(challenges, inputs, points)?;
-                let mut coefficients: Vec<_> = udon::polynomial::divide_linear_rev(
+                Ok(udon::polynomial::divide_linear_rev(
                     polynomials[opening.polynomial].iter_coeffs(),
                     point,
-                )
-                .collect();
-                coefficients.reverse();
-                Ok(sparse::Polynomial::from_coeffs(coefficients))
+                ))
             })
             .collect::<Result<Vec<_>>>()?;
-        Ok(sparse::Polynomial::fold(quotients, challenges.alpha))
+        Ok(quotient_sum(quotients, challenges.alpha))
     }
 
     /// Constrains the private quotient and evaluation sums.
@@ -218,18 +215,69 @@ impl Layout {
         }
         let inverses = inverter.invert(dr)?;
         let mut quotient = Horner::new(&challenges.alpha);
-        for (opening, denominator) in self.openings.iter().zip(denominators) {
-            evaluations[opening.polynomial]
-                .sub(dr, &queries.values[opening.value])
-                .mul(dr, &inverses[denominator])?
-                .write(dr, &mut quotient)?;
-        }
+        append_quotients(
+            dr,
+            &mut quotient,
+            self.openings
+                .iter()
+                .zip(denominators)
+                .map(|(opening, denominator)| {
+                    (
+                        &evaluations[opening.polynomial],
+                        &queries.values[opening.value],
+                        &inverses[denominator],
+                    )
+                }),
+        )?;
         let mut evaluated = Horner::new(&challenges.beta);
         for value in evaluations {
             value.write(dr, &mut evaluated)?;
         }
         Ok((quotient.finish(dr), evaluated.finish(dr)))
     }
+}
+
+/// Horner-batches quotient coefficient streams with $\alpha$: the first
+/// stream receives the highest power.
+pub(crate) fn quotient_sum<F: Field, R: Rank>(
+    mut iters: Vec<impl Iterator<Item = F>>,
+    alpha: F,
+) -> sparse::Polynomial<F, R> {
+    let mut coeffs = Vec::with_capacity(R::num_coeffs());
+    let Some((first, rest)) = iters.split_first_mut() else {
+        return sparse::Polynomial::new();
+    };
+    for val in first.by_ref() {
+        let c = rest
+            .iter_mut()
+            .fold(val, |acc, iter| acc.mul_add(&alpha, &iter.next().unwrap()));
+        coeffs.push(c);
+    }
+    coeffs.reverse();
+
+    sparse::Polynomial::from_coeffs(coeffs)
+}
+
+/// Appends opening terms to a quotient fold in descriptor order.
+/// Used by both private helpers and the compatibility placement in compute-v.
+pub(crate) fn append_quotients<'a, 'dr: 'a, D: Driver<'dr> + 'a>(
+    dr: &mut D,
+    horner: &mut Horner<'_, 'dr, D>,
+    terms: impl IntoIterator<
+        Item = (
+            &'a Element<'dr, D>,
+            &'a Element<'dr, D>,
+            &'a Element<'dr, D>,
+        ),
+    >,
+) -> Result<()> {
+    for (evaluated, value, inverse) in terms {
+        evaluated
+            .sub(dr, value)
+            .mul(dr, inverse)?
+            .write(dr, horner)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
