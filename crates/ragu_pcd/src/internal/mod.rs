@@ -42,19 +42,19 @@
 //! A **points** stage holds the other side's batch commitments for this
 //! side's endoscaling walk to fold into that batch's $P$.
 //!
-//! | stages        | stage polynomial                        | direction                    |
-//! |---------------|-----------------------------------------|------------------------------|
-//! | bridge        | $\mathbb{F}_q\[X\]$, committed on $E_p$ | native → **nested** → native |
-//! | native points | $\mathbb{F}_p\[X\]$, committed on $E_q$ | nested → **native**          |
-//! | nested points | $\mathbb{F}_q\[X\]$, committed on $E_p$ | native → **nested**          |
+//! | stages          | stage polynomial                        | direction                    |
+//! |-----------------|-----------------------------------------|------------------------------|
+//! | bridge          | $\mathbb{F}_q\[X\]$, committed on $E_p$ | native → **nested** → native |
+//! | points (native) | $\mathbb{F}_p\[X\]$, committed on $E_q$ | nested → **native**          |
+//! | points (nested) | $\mathbb{F}_q\[X\]$, committed on $E_p$ | native → **nested**          |
 //!
 //! In the direction column, the bold hop is the side the stage lives on.
 //!
-//! | stages        | holds                      | purpose               | how it's bound        |
-//! |---------------|----------------------------|-----------------------|-----------------------|
-//! | bridge        | host points + scalars      | transcript absorption | transcript absorbs it |
-//! | native points | nested points + endoscalar | native walk, bindings | a bridge carries it   |
-//! | nested points | host points                | nested walk           | [`loading`] ties it   |
+//! | stages          | holds                     | purpose               | how it's bound        |
+//! |-----------------|---------------------------|-----------------------|-----------------------|
+//! | bridge          | $E_q$ points + scalars    | transcript absorption | transcript absorbs it |
+//! | points (native) | $E_p$ points + endoscalar | native walk, bindings | a bridge carries it   |
+//! | points (nested) | $E_q$ points              | nested walk           | [`loading`] ties it   |
 //!
 //! Commitment fields are named for their curve: `native_*` on the host
 //! curve ($E_q$), `nested_*` and `bridge_*` on the nested curve ($E_p$).
