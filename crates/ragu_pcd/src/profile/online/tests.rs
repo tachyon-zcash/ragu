@@ -1217,3 +1217,165 @@ fn backend_selection_preserves_source_setup_and_undeclared_sources_reject() -> R
     assert!(builder.finalize(crate::pasta::baked()).is_err());
     Ok(())
 }
+
+#[test]
+fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligations() -> Result<()> {
+    use alloc::vec::Vec;
+
+    use ragu_backend::{Backend, ReferenceBackend};
+    use ragu_circuits::{
+        polynomials::{TestRank, sparse},
+        registry::{RegistryBuilder, Tag},
+    };
+
+    use super::{
+        mesh_preparation::PhaseWitness, prepared::PreparationChallenges, source::SourceRegistry,
+    };
+
+    fn check<F: Field>() -> Result<()> {
+        let registry = RegistryBuilder::<F, TestRank>::new()
+            .with_tag(Tag::new(F::from(23)))
+            .register_circuit(())?
+            .finalize()?;
+        let source = SourceRegistry::new::<_, ReferenceBackend>(&registry);
+        let mesh = SourceMesh::NATIVE_MESH.unwrap();
+        let layout = SourceMesh::NATIVE_ONLINE;
+        let inherited = [
+            source.xy::<ProductionRank>(F::from(2), F::from(3))?,
+            source.xy::<ProductionRank>(F::from(13), F::from(19))?,
+        ];
+        let inputs = mesh.carry_inputs(
+            layout,
+            vec![F::ZERO; 4],
+            [[F::from(2), F::from(3)], [F::from(13), F::from(19)]],
+        )?;
+        assert_eq!(
+            inputs,
+            vec![F::from(2), F::from(3), F::from(13), F::from(19)]
+        );
+        let challenges = Challenges {
+            w: F::from(5),
+            y: F::from(7),
+            x: F::from(11),
+            alpha: F::from(13),
+            u: F::from(17),
+            beta: F::from(3),
+        };
+        let prepare = |phase, preparation, inherited| {
+            mesh.prepare(
+                layout,
+                &source,
+                PhaseWitness {
+                    phase,
+                    inputs: &inputs,
+                    challenges: preparation,
+                    inherited,
+                    supplied: vec![],
+                },
+            )
+        };
+        let mut polynomials = Vec::new();
+        for (phase, preparation) in [
+            (Phase::BeforeW, PreparationChallenges::default()),
+            (
+                Phase::BeforeY,
+                PreparationChallenges {
+                    w: Some(challenges.w),
+                    y: None,
+                    x: None,
+                },
+            ),
+            (
+                Phase::BeforeX,
+                PreparationChallenges {
+                    w: Some(challenges.w),
+                    y: Some(challenges.y),
+                    x: None,
+                },
+            ),
+            (
+                Phase::BeforeAlpha,
+                PreparationChallenges {
+                    w: Some(challenges.w),
+                    y: Some(challenges.y),
+                    x: Some(challenges.x),
+                },
+            ),
+        ] {
+            polynomials.extend(prepare(
+                phase,
+                preparation,
+                Some([&inherited[0], &inherited[1]]),
+            )?);
+        }
+        let queries = layout.query::<_, _, ReferenceBackend>(
+            &polynomials,
+            inputs.clone(),
+            vec![],
+            &challenges,
+        )?;
+        assert_eq!(
+            queries.values,
+            vec![
+                source.evaluate(challenges.w, inputs[0], inputs[1]),
+                source.evaluate(challenges.w, inputs[2], inputs[3]),
+                source.evaluate(challenges.w, inputs[0], challenges.y),
+                source.evaluate(challenges.w, inputs[2], challenges.y),
+                source.evaluate(challenges.w, challenges.x, challenges.y),
+            ]
+        );
+        assert_eq!(
+            ReferenceBackend::sparse_eval(&polynomials[mesh.outgoing], F::from(29)),
+            source.evaluate(F::from(29), challenges.x, challenges.y)
+        );
+        // A bad inherited obligation must remain bad, so the shared edge
+        // fails. Recomputing it from source would silently erase the fault.
+        for child in 0..2 {
+            let mut altered = inherited.clone();
+            altered[child] = sparse::Polynomial::new();
+            let carried = mesh.prepare(
+                layout,
+                &source,
+                PhaseWitness {
+                    phase: Phase::BeforeW,
+                    inputs: &inputs,
+                    challenges: PreparationChallenges::default(),
+                    inherited: Some([&altered[0], &altered[1]]),
+                    supplied: vec![],
+                },
+            )?;
+            assert_eq!(
+                ReferenceBackend::sparse_eval(&carried[child], challenges.w),
+                F::ZERO
+            );
+            let mut forged = polynomials.clone();
+            forged[..2].clone_from_slice(&carried);
+            assert!(
+                layout
+                    .query::<_, _, ReferenceBackend>(&forged, inputs.clone(), vec![], &challenges)
+                    .is_err()
+            );
+        }
+        assert!(prepare(Phase::BeforeW, PreparationChallenges::default(), None).is_err());
+        for phase in [Phase::BeforeY, Phase::BeforeX, Phase::BeforeAlpha] {
+            assert!(prepare(phase, PreparationChallenges::default(), None).is_err());
+        }
+        assert!(
+            mesh.prepare(
+                layout,
+                &source,
+                PhaseWitness {
+                    phase: Phase::BeforeW,
+                    inputs: &inputs,
+                    challenges: PreparationChallenges::default(),
+                    inherited: Some([&inherited[0], &inherited[1]]),
+                    supplied: vec![sparse::Polynomial::new()],
+                }
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+    check::<Fp>()?;
+    check::<Fq>()
+}

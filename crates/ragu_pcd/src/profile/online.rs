@@ -10,6 +10,7 @@ pub mod batch;
 pub mod circuit;
 pub(crate) mod extension;
 pub mod mesh;
+pub(crate) mod mesh_preparation;
 pub mod prepared;
 pub(crate) mod prover;
 pub mod source;

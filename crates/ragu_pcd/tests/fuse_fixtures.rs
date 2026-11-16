@@ -503,6 +503,8 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_private_sums,
         nested_private_commitments,
         native_private_commitments,
+        native_source_out,
+        nested_source_out,
         native_application_rx,
         native_application_stage_rx,
         native_preamble_rx,
@@ -619,6 +621,8 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.fields("right_header", right_header);
     assert!(nested_private_commitments.is_empty());
     assert!(native_private_commitments.is_empty());
+    assert!(native_source_out.is_empty());
+    assert!(nested_source_out.is_empty());
     assert!(native_private_sums.is_empty());
     if !nested_private_sums.is_empty() {
         lines.fields("nested_private_sums", nested_private_sums);
@@ -1355,8 +1359,10 @@ fn wire_lines<C: FixtureCycle>(
             .filter(|&name| name != "nested_private_sums" || !proof.nested_private_sums.is_empty())
             .filter(|&name| name != "native_private_sums" || !proof.native_private_sums.is_empty())
             .filter(|&name| {
-                (name != "native_private_commitments"
-                    || !proof.native_private_commitments.is_empty())
+                (name != "native_source_out" || !proof.native_source_out.is_empty())
+                    && (name != "nested_source_out" || !proof.nested_source_out.is_empty())
+                    && (name != "native_private_commitments"
+                        || !proof.native_private_commitments.is_empty())
                     && (name != "nested_private_commitments"
                         || !proof.nested_private_commitments.is_empty())
             })

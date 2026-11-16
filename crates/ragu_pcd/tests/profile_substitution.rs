@@ -69,6 +69,8 @@ fn copy_proof_payload<
             native_private_sums,
             nested_private_commitments,
             native_private_commitments,
+            native_source_out,
+            nested_source_out,
             native_application_rx,
             native_application_stage_rx,
             native_preamble_rx,

@@ -72,6 +72,10 @@ codec! {
     nested_private_commitments => wire::FixedSequence<crate::wire::CompletePoint, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Nested>>,
     native_private_commitments => wire::FixedSequence<crate::wire::CompletePoint, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Native>>,
 
+    native_source_out => wire::FixedSequence<wire::DefaultEncoding, crate::profile::online::stages::MeshPresent<C::Profile,crate::profile::online::stages::Native,1>>,
+
+    nested_source_out => wire::FixedSequence<wire::DefaultEncoding, crate::profile::online::stages::MeshPresent<C::Profile,crate::profile::online::stages::Nested,1>>,
+
     // Native rx polynomials (CircuitField, HostCurve commitment)
     native_application_rx => wire::DefaultEncoding,
     native_application_stage_rx => wire::DefaultEncoding,

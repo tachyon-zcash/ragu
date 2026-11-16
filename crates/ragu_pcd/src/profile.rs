@@ -367,7 +367,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// The default supplies no values and rejects a nonempty declaration.
+    /// The default supplies only inherited mesh coordinates. Other input
+    /// slots require this hook to supply the full input vector.
     fn native_online_inputs<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
     ) -> Result<Vec<Base::CircuitField>>
@@ -377,8 +378,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = context;
-        if Self::NATIVE_ONLINE.inputs == 0 {
-            Ok(Vec::new())
+        if Self::NATIVE_ONLINE.inputs == 0
+            || Self::NATIVE_MESH.is_some_and(|mesh| {
+                (0..Self::NATIVE_ONLINE.inputs).all(|i| mesh.inherited_coordinates().contains(&i))
+            })
+        {
+            Ok(alloc::vec![Base::CircuitField::ZERO;Self::NATIVE_ONLINE.inputs])
         } else {
             Err(Error::Initialization(
                 "the profile has no native private input prover".into(),
@@ -388,7 +393,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// Supplies private native polynomials at one commitment deadline.
     ///
-    /// Return only the slots declared for `phase`, in declaration order.
+    /// Return only the slots declared for `phase` that are not owned by the
+    /// source mesh, in declaration order. The protocol prepares mesh slots.
     /// `inputs` are the immutable pre-w values; `challenges` contains only
     /// challenges sampled before this phase. Prover hooks supply witnesses;
     /// the transcript and registered consumers enforce the relation.
@@ -408,7 +414,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = (context, inputs, challenges);
-        if Self::NATIVE_ONLINE.polynomials.contains(&phase) {
+        if Self::NATIVE_ONLINE
+            .phase_range(phase)
+            .any(|i| !Self::NATIVE_MESH.is_some_and(|mesh| mesh.owns(i)))
+        {
             Err(Error::Initialization(
                 "the profile has no native private polynomial prover".into(),
             ))
@@ -481,7 +490,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// The default supplies no values and rejects a nonempty declaration.
+    /// The default supplies only inherited mesh coordinates. Other input
+    /// slots require this hook to supply the full input vector.
     fn nested_online_inputs<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
     ) -> Result<Vec<Base::ScalarField>>
@@ -491,8 +501,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = context;
-        if Self::NESTED_ONLINE.inputs == 0 {
-            Ok(Vec::new())
+        if Self::NESTED_ONLINE.inputs == 0
+            || Self::NESTED_MESH.is_some_and(|mesh| {
+                (0..Self::NESTED_ONLINE.inputs).all(|i| mesh.inherited_coordinates().contains(&i))
+            })
+        {
+            Ok(alloc::vec![Base::ScalarField::ZERO;Self::NESTED_ONLINE.inputs])
         } else {
             Err(Error::Initialization(
                 "the profile has no nested private input prover".into(),
@@ -502,7 +516,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// Supplies private nested polynomials at one commitment deadline.
     ///
-    /// Return only the slots declared for `phase`, in declaration order.
+    /// Return only the slots declared for `phase` that are not owned by the
+    /// source mesh, in declaration order. The protocol prepares mesh slots.
     /// `inputs` are the immutable pre-w values; `challenges` contains only
     /// challenges sampled before this phase. Prover hooks supply witnesses;
     /// the transcript and registered consumers enforce the relation.
@@ -522,7 +537,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = (context, inputs, challenges);
-        if Self::NESTED_ONLINE.polynomials.contains(&phase) {
+        if Self::NESTED_ONLINE
+            .phase_range(phase)
+            .any(|i| !Self::NESTED_MESH.is_some_and(|mesh| mesh.owns(i)))
+        {
             Err(Error::Initialization(
                 "the profile has no nested private polynomial prover".into(),
             ))

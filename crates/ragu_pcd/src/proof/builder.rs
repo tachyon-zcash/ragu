@@ -275,6 +275,8 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     pub(crate) nested_private:
         Option<crate::profile::online::prover::State<C::NestedCurve, R, C::Profile, Nested>>,
 
+    pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) native_private_sums: Option<[C::CircuitField; 2]>,
     pub(crate) nested_private_sums: Option<[C::ScalarField; 2]>,
     // Explicit commitments for the synthetic bootstrap proof, which has no
@@ -578,6 +580,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: None,
             native_points_walk_rx: None,
             online_polynomials: None,
+            native_source_out: Vec::new(),
+            nested_source_out: Vec::new(),
             native_private_sums: None,
             nested_private_sums: None,
             dummy_nested_private_commitments: None,
@@ -1368,6 +1372,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         }
 
         Ok(Proof {
+            nested_source_out: self.nested_source_out,
+            native_source_out: self.native_source_out,
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),

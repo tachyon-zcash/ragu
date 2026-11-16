@@ -114,7 +114,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        self.prepare_private_inputs(rng, &mut builder)?;
+        self.prepare_private_inputs(rng, [&left, &right], &mut builder)?;
         let (preamble_witness, nested_preamble) =
             self.compute_preamble(rng, &left, &right, &mut builder)?;
         let bridge_preamble_commitment =

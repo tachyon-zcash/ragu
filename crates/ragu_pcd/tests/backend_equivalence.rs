@@ -1323,6 +1323,8 @@ mod proof_equivalence {
                 right_header: _,
                 nested_private_sums: _,
                 native_private_sums: _,
+                native_source_out: _,
+                nested_source_out: _,
                 nested_private_commitments: _,
                 native_private_commitments: _,
                 native_application_rx: _,
@@ -1436,6 +1438,11 @@ mod proof_equivalence {
                 bridge_eval_commitment: _,
             } = self;
 
+            if !extension_eq(&self.native_source_out, &other.native_source_out)
+                || !extension_eq(&self.nested_source_out, &other.nested_source_out)
+            {
+                return Some("retained source restrictions");
+            }
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");
             }

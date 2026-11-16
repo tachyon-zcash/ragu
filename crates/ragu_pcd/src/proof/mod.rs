@@ -220,6 +220,12 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// Common claim targets for the actual native private/auxiliary walk points.
     pub(crate) native_private_commitments: Vec<C::HostCurve>,
 
+    /// The retained source-registry restriction for the next parent, if declared.
+    pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
+
+    /// The retained source-registry restriction for the next parent, if declared.
+    pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
+
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
     /// The application stage, which the application claim adds to the
@@ -418,6 +424,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
 
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
+            && self.native_source_out.len() == usize::from(C::Profile::NATIVE_MESH.is_some())
+            && self.nested_source_out.len() == usize::from(C::Profile::NESTED_MESH.is_some())
             && self.native_private_commitments.len() == C::Profile::NATIVE_ONLINE.polynomials.len()
             && self.nested_private_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
             && self.native_private_sums.len()
@@ -1267,19 +1275,59 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             beta: beta_lift[0],
         };
 
+        let native_private_polynomials = if let Some(mesh) = C::Profile::NATIVE_MESH {
+            mesh.dummy_polynomials(
+                C::Profile::NATIVE_ONLINE,
+                self.native_source
+                    .as_ref()
+                    .expect("source captured at setup"),
+                C::CircuitField::ONE,
+            )
+            .expect("source rank checked at setup")
+        } else {
+            vec![
+                sparse::Polynomial::<C::CircuitField, R>::new();
+                C::Profile::NATIVE_ONLINE.polynomials.len()
+            ]
+        };
+        let native_private_points: Vec<_> = native_private_polynomials
+            .iter()
+            .map(|p| B::sparse_commit_to_affine(p, C::host_generators(self.params)))
+            .collect();
+        let nested_private_polynomials = if let Some(mesh) = C::Profile::NESTED_MESH {
+            mesh.dummy_polynomials(
+                C::Profile::NESTED_ONLINE,
+                self.nested_source
+                    .as_ref()
+                    .expect("source captured at setup"),
+                nested_one,
+            )
+            .expect("source rank checked at setup")
+        } else {
+            vec![
+                sparse::Polynomial::<C::ScalarField, R>::new();
+                C::Profile::NESTED_ONLINE.polynomials.len()
+            ]
+        };
+        let nested_private_points: Vec<_> = nested_private_polynomials
+            .iter()
+            .map(|p| B::sparse_commit_to_affine(p, C::nested_generators(self.params)))
+            .collect();
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
         // Bootstrap bypasses the synthetic child's circuit claims.
         if !C::Profile::NATIVE_ONLINE.is_empty() {
             builder.native_private_sums = Some([C::CircuitField::ZERO; 2]);
-            builder.dummy_native_private_commitments = Some(
-                alloc::vec![C::HostCurve::identity(); C::Profile::NATIVE_ONLINE.polynomials.len()],
-            );
+            builder.dummy_native_private_commitments = Some(native_private_points.clone());
+            if let Some(mesh) = C::Profile::NATIVE_MESH {
+                builder.native_source_out = vec![native_private_polynomials[mesh.outgoing].clone()];
+            }
         }
         if !C::Profile::NESTED_ONLINE.is_empty() {
             builder.nested_private_sums = Some([C::ScalarField::ZERO; 2]);
-            builder.dummy_nested_private_commitments = Some(
-                alloc::vec![C::NestedCurve::identity(); C::Profile::NESTED_ONLINE.polynomials.len()],
-            );
+            builder.dummy_nested_private_commitments = Some(nested_private_points.clone());
+            if let Some(mesh) = C::Profile::NESTED_MESH {
+                builder.nested_source_out = vec![nested_private_polynomials[mesh.outgoing].clone()];
+            }
         }
 
         builder.set_circuit_id(CircuitIndex::new(0));
@@ -1368,10 +1416,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
-            let private_polynomials = vec![
-                sparse::Polynomial::<C::ScalarField, R>::new();
-                C::Profile::NESTED_ONLINE.polynomials.len()
-            ];
+
             let mut points = Vec::with_capacity(native::NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> =
                 Vec::with_capacity(native::NumPoints::<C::Profile>::len());
@@ -1403,8 +1448,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             {
                 push(commitment, poly); // the step's own online Fq polynomial
             }
-            for poly in &private_polynomials {
-                push(C::NestedCurve::identity(), poly);
+            for (poly, &point) in nested_private_polynomials
+                .iter()
+                .zip(&nested_private_points)
+            {
+                push(point, poly);
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let inputs = Inputs::from_walk(
@@ -1536,7 +1584,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // polynomial this proof holds, p is their beta-fold, and P is the
         // walk's result, which is then p's commitment.
         let (p_poly, p_commitment) = {
-            let private_zero = sparse::Polynomial::<C::CircuitField, R>::new();
             let mut points = Vec::with_capacity(NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::CircuitField, R>> =
                 Vec::with_capacity(NumPoints::<C::Profile>::len());
@@ -1580,8 +1627,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 }
             }
 
-            for _ in C::Profile::NATIVE_ONLINE.polynomials {
-                push(C::HostCurve::identity(), &private_zero);
+            for (poly, &point) in native_private_polynomials
+                .iter()
+                .zip(&native_private_points)
+            {
+                push(point, poly);
             }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let (commitment, _) = self
