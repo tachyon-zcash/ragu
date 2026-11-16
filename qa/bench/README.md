@@ -1,8 +1,9 @@
-# Wallet benchmarks
+# Wallet and aggregator benchmarks
 
-This suite measures the wallet at rank 13 with AcceleratedBackend. It uses the
-WitnessLeaf and Hash2 test circuits, header size 4, inputs 42 and 7, and StdRng
-seed 0. The workload builds directly on main.
+This suite measures the wallet at rank 13 and the aggregator at rank 15 with
+AcceleratedBackend. It uses the WitnessLeaf and Hash2 test circuits, header size
+4, inputs 42 and 7, and StdRng seed 0. The workload is the one used for the
+optimized/decompression measurements.
 
 The Rust benchmark lives in
 [crates/ragu_pcd/benches/workflow.rs](../../crates/ragu_pcd/benches/workflow.rs).
@@ -64,14 +65,17 @@ commands, feature trees, and hashes of the exact measured executables.
 
 Wallet operations include application finalization and bootstrap, two separate
 leaf seeds, ordinary verification, compression, compressed verification, and one
-fuse of the two existing leaves.
+fuse of the two existing leaves. The aggregator decompresses those two wallet
+proofs, verifies them, fuses them, compresses the parent, and verifies that one
+aggregated compressed proof.
 
 Every timing row measures one API call. Startup rows include finalization and
-bootstrap once per application. Serialization and digest computation occur outside
+bootstrap once per application. Canonical decompression preparation is retained
+as a separate raw timing. Serialization and digest computation occur outside
 the timed calls. Ordinary proof verification and the final RNG checkpoint also
 check that single/multicore and ASM variants preserve behavior.
 
-The report contains wallet columns, with separate ASM-off and
+The report contains wallet and aggregator columns, with separate ASM-off and
 ASM-on tables. Sizes use decimal KB/MB and times use seconds. For operations
 performed on both children, the reported median pools the two samples from each
 measured process. The report also retains each process's median and the full

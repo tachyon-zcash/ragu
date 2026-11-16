@@ -35,12 +35,13 @@ def workload(config, seconds=1.0):
     rows += [{"kind": "proof", "label": label, "bytes": 123, "digest": "a" * 128}
              for label in sorted(bench.PROOFS)]
     for profile, label in sorted(bench.SHAPES):
+        wallet = profile == "wallet"
         rows.append({
             "kind": "shape", "profile": profile, "label": label,
-            "rank": 13, "polynomials": 92,
-            "points": 157, "scalars": 69,
-            "compressed_bytes": 7264,
-            "ordinary_bytes": 24120832,
+            "rank": 13 if wallet else 15, "polynomials": 92 if wallet else 152,
+            "points": 157 if wallet else 225, "scalars": 69,
+            "compressed_bytes": 7264 if wallet else 9440,
+            "ordinary_bytes": 24120832 if wallet else 159389056,
             "digest": "b" * 128,
         })
     return rows + [
@@ -229,11 +230,11 @@ class CampaignTests(unittest.TestCase):
         result = bench.read_json(self.out / "results.json")[self.cases[1]["id"]]
         self.assertEqual(result["wallet/seed"]["samples"], [3, 4, 4, 5])
         self.assertEqual(result["wallet/seed"]["process_medians"], [3.5, 4.5])
-        self.assertEqual(result["wallet/verify_compressed"]["median"], 4.0)
+        self.assertEqual(result["aggregator/verify_compressed"]["median"], 3.5)
         report = (self.out / "report.md").read_text()
         self.assertIn("4.500 → 3.500 s (-22.2%)", report)
-        self.assertIn("24.12 MB", report)
-        self.assertIn("7.26 KB", report)
+        self.assertIn("159.39 MB", report)
+        self.assertIn("9.44 KB", report)
         self.assertNotIn("Total, two-proof workflow", report)
         raw_hash = bench.tree_digest(self.out / "raw")
         self.run_campaign(execute=False)

@@ -30,8 +30,8 @@ type R = WalletRank;
 const HEADER_SIZE: usize = 4;
 /// The stage holds `x` and `x²`.
 const STAGE: usize = 2;
-type App = Application<'static, Pasta, R, HEADER_SIZE>;
-type Builder = ApplicationBuilder<'static, Pasta, R, HEADER_SIZE>;
+type App = Application<'static, Pasta, R, HEADER_SIZE, ReferenceBackend>;
+type Builder = ApplicationBuilder<'static, Pasta, R, HEADER_SIZE, ReferenceBackend>;
 
 /// Stages nothing.
 struct Unit;

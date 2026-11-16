@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build frozen revisions and measure the wallet workflow.
+"""Build frozen revisions and measure the wallet/aggregator workflow.
 
 Only the Python standard library is required. Measurements run one executable
 at a time; Cargo builds finish before warmups or measured processes start.
@@ -30,17 +30,21 @@ import tomllib
 
 SCHEMA = 1
 BENCH = Path("crates/ragu_pcd/benches/workflow.rs")
-FEATURES = ["std", "test-utils", "baked"]
+FEATURES = ["std", "test-utils", "baked-aggregator", "unstable-aggregator"]
 TIMINGS = {
     "wallet": {"finalize": 1, "seed": 2, "verify_uncompressed": 2,
                "compress": 2, "verify_compressed": 2, "fuse": 1},
-
+    "aggregator": {"canonical_preparation": 1, "finalize": 1, "decompress": 2,
+                   "verify_uncompressed": 2, "fuse": 1, "verify_fused_uncompressed": 1,
+                   "compress": 1, "verify_compressed": 1},
 }
-PROOFS = {"wallet_parent"}
-SHAPES = {("wallet", "leaf_0"), ("wallet", "leaf_1")}
+PROOFS = {"wallet_parent", "decompressed_0", "decompressed_1", "aggregator_parent"}
+SHAPES = {("wallet", "leaf_0"), ("wallet", "leaf_1"), ("aggregator", "parent")}
 OPERATIONS = [
     ("Finalize + bootstrap (one-time wallet startup cost)", "finalize", "wallet"),
+    ("Aggregator finalize + bootstrap (once)", "finalize", "aggregator"),
     ("Seed one leaf", "seed", "wallet"),
+    ("Decompress one wallet proof", "decompress", "aggregator"),
     ("Verify uncompressed", "verify_uncompressed", None),
     ("Fuse two children", "fuse", None),
     ("Compress", "compress", None),
@@ -239,7 +243,7 @@ def records(path, case=None):
     require(Counter((row["profile"], row["label"]) for row in shapes) == Counter(SHAPES),
             f"Missing or duplicate compressed proof: {path}")
     for row in shapes:
-        require(row["rank"] == 13,
+        require(row["rank"] == (13 if row["profile"] == "wallet" else 15),
                 f"Unexpected proof rank: {path}")
         require(row["compressed_bytes"] == 32 * (1 + row["points"] + row["scalars"])
                 and row["polynomials"] > 0 and row["ordinary_bytes"] > 0,
@@ -614,14 +618,14 @@ def summarize(out):
     def size(count):
         return f"{count / 1e6:.2f} MB" if count >= 1e6 else f"{count / 1e3:.2f} KB"
     modes = [mode for mode in ["single", "multi"] if any(c["mode"] == mode for c in manifest["cases"])]
-    columns = [(profile, mode) for profile in TIMINGS for mode in modes]
+    columns = [(profile, mode) for profile in ["wallet", "aggregator"] for mode in modes]
     roles = {c["role"] for c in manifest["cases"]}
     revision = next(c["revision"] for c in manifest["cases"] if c["role"] == "candidate")
-    text = ["# Wallet workflow", "", f"Candidate revision: {revision}.",
+    text = ["# Wallet and aggregator workflow", "", f"Candidate revision: {revision}.",
             f"Compiler: {manifest['environment']['rustc'].splitlines()[0]}.",
             f"{manifest['warmups']} warmup process(es) and {manifest['repetitions']} measured processes per configuration. "
             "Per-child rows pool two samples per process; sample ranges and process medians are retained below.", "",
-            "ASM selects the AArch64 feature; "
+            "Each aggregator verification checks one aggregated proof. ASM selects the AArch64 feature; "
             "other architectures use portable arithmetic under this feature selection.", ""]
     if "baseline" in roles:
         baseline = next(c["revision"] for c in manifest["cases"] if c["role"] == "baseline")
