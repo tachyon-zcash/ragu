@@ -545,7 +545,7 @@ The key distinction is between **opening a polynomial** and **identifying that p
 
 Points can be enclosing challenges, constants, circuit-domain points, early input wires or later query wires. Reusing a value index makes two openings share one claimed-value wire; reusing a polynomial index does not duplicate its commitment. The layout is checked at setup, rather than selected by the witness.
 
-Each active field has an independent `InputStage → QueryStage → EvalStage` chain and a folding helper. Consumers load the same input/query wires as the helper, with their declared stage masks. A value copied between unrelated stage chains needs an explicit equality or common-instance binding. Opposite-field pre-$w$ commitments are exposed as checked `CompletePoint` gadgets and bound to the points used by the walk.
+Each active field has an independent `InputStage → QueryStage → EvalStage` chain and a folding helper. Consumers load the same input/query wires as the helper, with their declared stage masks. A value copied between unrelated stage chains needs an explicit equality or common-instance binding. Opposite-field pre-$w$ commitments are read as checked points constrained to the staged coordinates, which are bound to the points used by the walk.
 
 For $M$ openings $(j_i,q_i,v_i)$ of $N$ polynomials $g_j$, the helper constrains
 
