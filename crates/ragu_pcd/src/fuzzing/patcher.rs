@@ -99,10 +99,7 @@ use crate::{
         nested::{EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
         transcript::Transcript,
     },
-    prover::{
-        fuse::claims::{NativeFuseProofSource, NestedFuseProofSource},
-        proof_builder::ProofBuilder,
-    },
+    prover::proof_builder::ProofBuilder,
     step::Step,
     verifier::recursive::{
         gadgets::endoscalar::EndoscalarStage, native::stages::points as native_points,
@@ -446,6 +443,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
         )?;
 
+        let fuser = FuseOrchestrator::new(self, &left, &right);
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
@@ -474,8 +472,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             rng,
             &native_registry,
             &nested_registry,
-            &left,
-            &right,
+            &fuser.native,
+            &fuser.nested,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -483,15 +481,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
         let y = transcript.challenge(&mut dr)?;
         let z = transcript.challenge(&mut dr)?;
-
-        let native_source = NativeFuseProofSource {
-            left: &left,
-            right: &right,
-        };
-        let nested_source = NestedFuseProofSource {
-            left: &left,
-            right: &right,
-        };
 
         let (
             native_inner_error_witness,
@@ -506,8 +495,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry,
             &y,
             &z,
-            &native_source,
-            &nested_source,
+            &fuser.native,
+            &fuser.nested,
             &mut builder,
         )?;
         let bridge_inner_error_commitment =
@@ -539,7 +528,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_claims,
             &nested_inner_error_witness,
             nested_claims,
-            &nested_source,
+            &fuser.native,
+            &fuser.nested,
             &nested_preamble,
             &y,
             &mu,
@@ -558,7 +548,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_a,
             nested_b,
             &nested_registry_wy,
-            &native_source,
+            &fuser.native,
+            &fuser.nested,
             &mu_prime,
             &mut builder,
         )?;
@@ -1373,3 +1364,5 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 }
+
+use crate::prover::fuse::orchestrator::FuseOrchestrator;

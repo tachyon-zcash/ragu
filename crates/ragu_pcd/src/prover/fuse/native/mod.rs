@@ -11,3 +11,5 @@ pub(crate) mod s_prime;
 
 pub(crate) mod endoscaling;
 pub(crate) mod points;
+
+pub(in crate::prover::fuse) mod side;

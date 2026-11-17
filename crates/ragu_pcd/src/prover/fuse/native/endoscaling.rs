@@ -21,7 +21,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     /// writes all of it onto `builder`. Returns $P_n$ (the last
     /// interstitial) with the walk stage's witness.
     ///
-    /// Shared by `compute_p` (in `fuse/_10_p.rs`) and
+    /// Shared by `compute_p` (in `prover/fuse/bridge/p.rs`) and
     /// [`dummy_proof`](Self::dummy_proof), like
     /// [`compute_endoscaling`](Self::compute_endoscaling) on the nested side.
     pub(crate) fn compute_native_endoscaling<RNG: rand::CryptoRng>(

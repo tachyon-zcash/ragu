@@ -13,9 +13,7 @@ use crate::{
         native, nested,
     },
     prover::{
-        fuse::claims::{
-            NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource,
-        },
+        fuse::claims::{NativeFuseBuilder, NestedFuseBuilder},
         proof_builder::ProofBuilder,
     },
 };
@@ -23,34 +21,34 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    pub(in crate::prover::fuse) fn inner_error_terms<'dr, 'rx, D, RNG: CryptoRng>(
+    pub(in crate::prover::fuse) fn inner_error_terms<'m, 'dr, 'rx, D, RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         y: &Element<'dr, D>,
         z: &Element<'dr, D>,
-        native_source: &NativeFuseProofSource<'rx, C, R>,
-        nested_source: &NestedFuseProofSource<'rx, C, R>,
+        native_fuser: &NativeSideFuse<'m, 'rx, C, R>,
+        nested_fuser: &NestedSideFuse<'m, 'rx, C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         crate::verifier::recursive::native::stages::inner_error::Witness<
             C,
             native::RevdotParameters<C::Profile>,
         >,
-        NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
+        NativeFuseBuilder<'m, 'rx, C::CircuitField, R, B>,
         RegistryWy<C, R>,
         crate::verifier::recursive::nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
-        NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
+        NestedFuseBuilder<'m, 'rx, C::ScalarField, R, B>,
         NestedRegistryWy<C, R>,
     )>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
         let (native_inner_error_witness, native_claims, registry_wy) =
-            self.compute_native_inner_error(rng, native_registry, y, z, native_source, builder)?;
+            self.compute_native_inner_error(rng, native_registry, y, z, native_fuser, builder)?;
         let (nested_inner_error_terms, nested_claims, nested_registry_wy) =
-            self.compute_nested_inner_error(nested_registry, y, z, nested_source)?;
+            self.compute_nested_inner_error(nested_registry, y, z, nested_fuser)?;
         let nested_inner_error_witness =
             self.compute_bridge_inner_error(rng, &registry_wy, nested_inner_error_terms, builder)?;
         Ok((
@@ -102,4 +100,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 }
 
-use crate::prover::fuse::{native::inner_error::RegistryWy, nested::inner_error::NestedRegistryWy};
+use crate::prover::fuse::{
+    native::inner_error::RegistryWy,
+    nested::inner_error::NestedRegistryWy,
+    side::{NativeSideFuse, NestedSideFuse},
+};

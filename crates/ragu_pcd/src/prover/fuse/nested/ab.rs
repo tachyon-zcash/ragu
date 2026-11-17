@@ -27,22 +27,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
+        nested_fuser: &NestedSideFuse<'_, '_, C, R>,
         native_mu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let nested_mu_prime = nested::challenge::<C>(*native_mu_prime.value().take())?;
-
-        let a_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            a,
-            nested_mu_prime,
-        );
-        let b_poly = fold_revdot::fold_outer::<_, _, nested::RevdotParameters<C::Profile>>(
-            b,
-            nested_mu_prime,
-        );
+        let (a_poly, b_poly) = nested_fuser.accumulate(a, b, *native_mu_prime.value().take())?;
 
         builder.set_nested_a_poly(a_poly);
         builder.set_nested_b_poly(b_poly);
@@ -50,3 +42,5 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 }
+
+use crate::prover::fuse::side::{CurveSideFuse, NestedSideFuse};

@@ -6,7 +6,7 @@ These are private implementation boundaries; the public API is unchanged.
 
 | Entry point | Implementation | Responsibility |
 | --- | --- | --- |
-| `Application::fuse` | `prover/fuse/mod.rs` | Construct one accumulator proof from two children and an application step. |
+| `Application::fuse` | `prover/fuse/mod.rs`, `prover/fuse/orchestrator.rs` | Prepare the application step, then construct one accumulator proof from both children. |
 | Recursive verification | `verifier/recursive/{native,nested}/` | Constrain the reduction of the children's claims into the parent's accumulated obligations. |
 | `Application::compress` | `prover/compress/` | Reduce accumulated obligations to polynomial openings and produce IPA proofs. |
 | `Application::verify_compressed` | `verifier/decider/compressed.rs` | Decide final acceptance, including admission, transcript, reductions, batching, and both IPA openings. |
@@ -15,10 +15,26 @@ These are private implementation boundaries; the public API is unchanged.
 
 ## Following a fuse
 
-`prover/fuse/mod.rs` owns the chronological transcript schedule. It constructs
+`prover/fuse/orchestrator.rs` owns the chronological transcript schedule. It constructs
 native and nested phase data, commits the bridge stages, absorbs their commitments,
 and derives the challenges used by the next phase. Neither curve side runs an
 independent complete fuse operation.
+
+`prover/fuse/side.rs` defines the private `CurveSideFuse` interface. The providers
+in `native/side.rs` and `nested/side.rs` select the field, commitment curve,
+registry, challenge conversion, and claim layout. Shared phases construct the
+registry restrictions and claims and perform both polynomial folding layers.
+The interface has no transcript or RNG: the coordinator fixes when each phase
+runs, and the concrete stage/bridge helpers commit its results before advancing
+the transcript. Dispatch is static; no public custom-fuser registration API is
+introduced.
+
+The native provider retains the tracked commitment decomposition of its folded
+`a` polynomial; the nested provider folds ordinary polynomials. Native
+commitment MSMs, nested direct commitments, stage layouts, and circuit tracing
+remain side-specific. The application step's preparation stays before `w`, and
+the coordinator executes its circuit after `w`, at the same point in the
+schedule.
 
 Native and nested name the arithmetic context: `CircuitField` and `ScalarField`.
 The commitment walks cross the cycle: a circuit operates on points whose base

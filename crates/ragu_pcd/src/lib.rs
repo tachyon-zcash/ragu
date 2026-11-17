@@ -67,10 +67,10 @@ mod proof;
 mod protocol;
 mod prover;
 pub mod step;
-mod test_support;
-mod verifier;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
+mod test_support;
+mod verifier;
 pub mod wire;
 
 #[cfg(test)]

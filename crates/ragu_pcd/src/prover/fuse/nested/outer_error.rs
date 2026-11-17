@@ -16,10 +16,7 @@ use crate::{
     Application,
     profile::{Profile, ProfiledCycle},
     protocol::{fold_revdot, fold_revdot::Parameters, ky, native, nested},
-    prover::{
-        fuse::claims::{NestedFuseBuilder, NestedFuseProofSource},
-        proof_builder::ProofBuilder,
-    },
+    prover::{fuse::claims::NestedFuseBuilder, proof_builder::ProofBuilder},
 };
 
 pub(in crate::prover::fuse) type NativeNumGroups<P> =
@@ -53,7 +50,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         nested_inner_error_witness: &crate::verifier::recursive::nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
-        nested_source: &NestedFuseProofSource<'_, C, R>,
+        nested_fuser: &NestedSideFuse<'_, '_, C, R>,
         nested_preamble: &crate::verifier::recursive::nested::stages::preamble::Witness<
             C::HostCurve,
             C::Profile,
@@ -67,26 +64,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
     )> {
         let nested_y = nested::challenge::<C>(native_y)?;
-        let nested_mu = nested::challenge::<C>(native_mu)?;
-
-        let a = fold_revdot::fold_inner::<
-            sparse::Polynomial<C::ScalarField, R>,
-            _,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.a, nested_mu);
-        let b = fold_revdot::fold_inner::<
-            sparse::Polynomial<C::ScalarField, R>,
-            _,
-            nested::RevdotParameters<C::Profile>,
-        >(&nested_claims.b, nested_mu);
-        drop(nested_claims);
+        let FoldedClaims {
+            a,
+            b,
+            mu: nested_mu,
+        } = nested_fuser.fold_claims::<B>(nested_claims, native_mu)?;
 
         let collapsed = NestedFuseEmulator::<C>::emulate_wireless(
             (
                 (&nested_inner_error_witness.error_terms, nested_y, nested_mu),
                 (
-                    nested_source.left.nested_c(),
-                    nested_source.right.nested_c(),
+                    nested_fuser.source.left.nested_c(),
+                    nested_fuser.source.right.nested_c(),
                 ),
                 nested_preamble,
             ),
@@ -159,12 +148,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
         )?;
 
-        let error_terms = fold_revdot::outer_error_terms_with_backend::<
-            B,
-            _,
-            R,
-            nested::RevdotParameters<C::Profile>,
-        >(&a, &b);
+        let error_terms = nested_fuser.outer_errors::<B>(&a, &b);
 
         let bridge = crate::verifier::recursive::nested::stages::outer_error::Witness {
             native_outer_error: builder.native_outer_error_commitment(),
@@ -186,3 +170,5 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok((bridge, a, b))
     }
 }
+
+use crate::prover::fuse::side::{CurveSideFuse, FoldedClaims, NestedSideFuse};

@@ -9,7 +9,7 @@ use crate::{
     profile::ProfiledCycle,
     prover::{
         fuse::{
-            claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
+            claims::{FoldKey, TrackedPoly},
             nested::inner_error::NestedRegistryWy,
         },
         proof_builder::ProofBuilder,
@@ -31,15 +31,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_a: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_b: FixedVec<sparse::Polynomial<C::ScalarField, R>, NestedNumGroups<C::Profile>>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
-        native_source: &NativeFuseProofSource<'_, C, R>,
+        native_fuser: &NativeSideFuse<'_, '_, C, R>,
+        nested_fuser: &NestedSideFuse<'_, '_, C, R>,
         mu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        self.compute_native_ab(native_a, native_b, native_source, mu_prime, builder)?;
-        self.compute_nested_ab(nested_a, nested_b, mu_prime, builder)?;
+        self.compute_native_ab(native_a, native_b, native_fuser, mu_prime, builder)?;
+        self.compute_nested_ab(nested_a, nested_b, nested_fuser, mu_prime, builder)?;
         self.commit_native_points_ab(
             rng,
             nested_registry_wy.commitment,
@@ -51,4 +52,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 }
 
-use crate::prover::fuse::{native::ab::NativeNumGroups, nested::ab::NestedNumGroups};
+use crate::prover::fuse::{
+    native::ab::NativeNumGroups,
+    nested::ab::NestedNumGroups,
+    side::{NativeSideFuse, NestedSideFuse},
+};

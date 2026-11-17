@@ -4,7 +4,7 @@ use ragu_core::Result;
 use rand::CryptoRng;
 use udon::field::Field;
 
-use crate::{Application, Proof, profile::ProfiledCycle, prover::proof_builder::ProofBuilder};
+use crate::{Application, profile::ProfiledCycle, prover::proof_builder::ProofBuilder};
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
@@ -14,12 +14,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
-        left: &Proof<C, R>,
-        right: &Proof<C, R>,
+        native: &NativeSideFuse<'_, '_, C, R>,
+        nested: &NestedSideFuse<'_, '_, C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
-        let native = self.compute_native_s_prime(native_registry, left, right)?;
-        let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
+        let native = native.s_prime::<B>(native_registry)?;
+        let nested = nested.s_prime::<B>(nested_registry)?;
         self.commit_native_points_registry_wx(
             rng,
             nested.registry_wx0_commitment,
@@ -55,4 +55,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 }
 
-use crate::prover::fuse::{native::s_prime::NativeSPrime, nested::s_prime::NestedSPrime};
+use crate::prover::fuse::{
+    native::s_prime::NativeSPrime,
+    nested::s_prime::NestedSPrime,
+    side::{CurveSideFuse, NativeSideFuse, NestedSideFuse},
+};

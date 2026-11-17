@@ -33,7 +33,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     /// `PointsStage` interstitial) together with the points witness the
     /// nested circuits load.
     ///
-    /// Shared by `compute_p` (in `fuse/_10_p.rs`) and by
+    /// Shared by `compute_p` (in `prover/fuse/bridge/p.rs`) and by
     /// [`dummy_proof`](Self::dummy_proof), so the nested
     /// endoscaling setup lives in one place.
     pub(crate) fn compute_endoscaling<RNG: rand::CryptoRng>(

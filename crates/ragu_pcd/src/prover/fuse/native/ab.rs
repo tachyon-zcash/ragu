@@ -11,7 +11,7 @@ use crate::{
     profile::ProfiledCycle,
     protocol::{fold_revdot, native},
     prover::{
-        fuse::claims::{FoldKey, NativeFuseProofSource, TrackedPoly},
+        fuse::claims::{FoldKey, TrackedPoly},
         proof_builder::ProofBuilder,
     },
 };
@@ -26,23 +26,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         a: FixedVec<TrackedPoly<'_, FoldKey, C::CircuitField, R>, NativeNumGroups<C::Profile>>,
         b: FixedVec<sparse::Polynomial<C::CircuitField, R>, NativeNumGroups<C::Profile>>,
-        native_source: &NativeFuseProofSource<'_, C, R>,
+        native_fuser: &NativeSideFuse<'_, '_, C, R>,
         mu_prime: &Element<'dr, D>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()>
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        let mu_prime = *mu_prime.value().take();
-
-        let TrackedPoly {
-            poly: a_poly,
-            decomp: a_decomp,
-        } = fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(a, mu_prime);
+        let (
+            TrackedPoly {
+                poly: a_poly,
+                decomp: a_decomp,
+            },
+            b_poly,
+        ) = native_fuser.accumulate(a, b, *mu_prime.value().take())?;
         let a_poly = a_poly.into_owned();
-
-        let b_poly =
-            fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
         let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known
@@ -63,7 +61,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
             let mut msm: Vec<(C::CircuitField, C::HostCurve)> = Vec::with_capacity(entries.len());
             for (key, coeff) in entries {
-                let commitment = native_source.get(key);
+                let commitment = native_fuser.source.get(key);
                 msm.push((coeff, commitment));
             }
 
@@ -83,3 +81,5 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok(())
     }
 }
+
+use crate::prover::fuse::side::{CurveSideFuse, NativeSideFuse};
