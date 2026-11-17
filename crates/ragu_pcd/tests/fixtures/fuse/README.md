@@ -110,8 +110,9 @@ Each scenario has two files in `random/`.
   challenge-stage and `ab` bridge commitments, rebuilt from the challenges,
   headers and native commitments with the stage builders the verifier uses
   and checked against its stage check, and the host reduction's `q(r)`,
-  solved from the two sides of the verifier's own reduction check. So the
-  verifier reads the string through to the host MSM, which rejects it.
+  solved from the reduction check's combined side, evaluated over a replay of
+  the verifier's host transcript up to `r`. So the verifier reads the string
+  through to the host MSM, which rejects it.
 - `<scenario>.fingerprint`: the verifier's run on the string, in the same
   format, ending at the host MSM with `verifier.msm.native.identity = false`.
   Nothing short of a forged host opening reaches the nested side, so these
@@ -132,8 +133,6 @@ The recorder lives in `src/ipa/fingerprint.rs`. Recording and event encoding
 compile only for tests; production observation helpers are inline no-ops.
 The helpers observe the cycle transcript's absorb, scalar and squeeze, and
 the IPA MSM's evaluation, so the fingerprint is of the verifier's own code path.
-They also observe each reduction check's two sides, which the fabricator reads
-and the fingerprints leave out.
 
 The fixture workflow is called by Backend CI. Its result feeds the existing
 required `backend-required` check, so a failed or cancelled fixture run blocks

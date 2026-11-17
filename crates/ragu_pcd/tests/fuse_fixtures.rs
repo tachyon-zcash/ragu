@@ -122,15 +122,20 @@ use crate::{
         Messages,
         batch::Batch,
         instance::{Child, Instance, NestedChild},
-        revdot::{Reduction, fold::Fold, nested_position},
+        revdot::{
+            Reduction, claims,
+            fold::{Derived, Fold, Layout},
+            nested_position,
+        },
     },
     header::{Header, Padding, Suffix},
     internal::{
+        ky,
         native::{self, online},
         nested::{self, stages as nested_stages},
     },
     ipa::{
-        CycleTranscript, IpaCycle, IpaProof,
+        CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript,
         fingerprint::{self, Event},
     },
     profile::{Aggregator, Profile, Profiled, ProfiledCycle},
@@ -1487,9 +1492,6 @@ fn fingerprint_lines(events: &[Event]) -> Lines {
                 bases,
                 identity,
             } => msms.push((scalars, bases, *identity)),
-            // For `fabricate` alone. The check's inputs are pinned already:
-            // its scalars reach the transcript, and its target the MSM.
-            Event::Reduction { .. } => {}
         }
     }
 
@@ -1576,12 +1578,9 @@ type Checker = <ReferenceBackend as SelectableBackend>::Verifier;
 /// before its host MSM, so that the verifier reads the string through to
 /// that MSM: the challenge-stage and `ab` bridge commitments, which
 /// [`stage_commitments`] rebuilds and [`Instance::stages_match`] then
-/// accepts, and the host reduction's $q(r)$, read off the verifier's own
-/// reduction check. That check's combined side does not depend on $q(r)$
-/// and its split side is linear in it, so two recorded runs solve for it.
-/// A draw whose challenges
-/// do not lift, or whose `pre_beta` falls outside the endoscalar range, is
-/// replaced by the next.
+/// accepts, and the host reduction's $q(r)$, which [`host_q_at_r`] solves
+/// for. A draw whose challenges do not lift, or whose `pre_beta` falls
+/// outside the endoscalar range, is replaced by the next.
 ///
 /// Every point is a multiple of the generator by a drawn scalar, so its
 /// discrete log is known to the fabricator. That is harmless: the strings
@@ -1635,26 +1634,12 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
         })
         .unwrap_or_else(|| panic!("{label}: no draw had usable challenges"));
 
-    let mut reduction = |q_at_r| {
-        proof.native.reduction.q_at_r = q_at_r;
-        let (_, events) = verifier_run::<C, H>(app, data.clone(), proof.clone());
-        events
-            .iter()
-            .find_map(|event| match event {
-                Event::Reduction { combined, split } => Some((
-                    Cursor::new(combined).field::<Fp>()?,
-                    Cursor::new(split).field::<Fp>()?,
-                )),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("{label}: the random proof did not reach the host reduction"))
-    };
-    let (combined, at_zero) = reduction(Fp::ZERO);
-    let (_, at_one) = reduction(Fp::ONE);
-    proof.native.reduction.q_at_r = (combined - at_zero)
-        * (at_one - at_zero)
-            .invert()
-            .expect("q(r) enters the split with a nonzero weight");
+    proof.native.reduction.q_at_r = host_q_at_r::<C, H>(app, &data, &proof);
+    let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof.clone());
+    assert!(
+        matches!(verdict, Ok(false)) && msm_verdicts(&events) == [false],
+        "{label}: the planted q(r) does not carry the random proof to the host MSM"
+    );
 
     let mut out = Writer::default();
     H::write(&data, &mut out);
@@ -1699,6 +1684,101 @@ fn stage_commitments<C: FixtureCycle>(
         Checker::sparse_commit_batch([&challenge_stage, &ab_bridge], generators)
             .map(C::NestedCurve::from),
     )
+}
+
+/// The $q(r)$ that satisfies `proof`'s host reduction check when it carries
+/// `data`. The check's combined side does not depend on $q(r)$ and its split
+/// side is linear in it, so this replays the verifier's host transcript up to
+/// $r$, evaluates the combined side as the verifier does, and solves.
+/// [`fabricate`] runs the verifier on the result, so this copy cannot drift
+/// from the check unnoticed.
+fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
+    app: &App<C>,
+    data: &H::Data,
+    proof: &CompressedProof<C>,
+) -> Fp {
+    let (instance, reduction) = (&proof.instance, &proof.native.reduction);
+    let registry = &app.native_registry;
+
+    let mut fuse = CycleTranscript::<C, Checker>::new(app.params, RAGU_TAG)
+        .expect("the fuse transcript starts");
+    let challenges = instance
+        .challenges(&mut fuse)
+        .expect("the challenges are derived")
+        .expect("the planted challenges lift");
+    let output_header =
+        ky::output_header::<C, H, HEADER_SIZE>(data.clone()).expect("the output header encodes");
+
+    // The statement, then each curve's sampled challenges, as the verifier
+    // absorbs and squeezes them: the nested ones advance the shared sponge.
+    let mut transcript =
+        CycleTranscript::<C, Checker>::new(app.params, IPA_TAG).expect("the transcript starts");
+    instance
+        .absorb(&mut transcript)
+        .expect("the instance is absorbed");
+    for &element in &output_header {
+        transcript
+            .host()
+            .write_scalar(element)
+            .expect("the header is absorbed");
+    }
+    let [_w, y, z, sigma] = squeeze(&mut transcript.host());
+    let [_, _, _, _] = squeeze(&mut transcript.nested());
+
+    let masked = instance
+        .native_bindings::<R, Checker, HEADER_SIZE>(&challenges, registry, sigma)
+        .expect("the bindings are computed");
+    let shapes = claims::native_shapes::<C::Profile, _>(instance.circuit_id, z, &masked)
+        .expect("the claims are shaped");
+    let mut host = transcript.host();
+    let weights = reduction.fold.replay(&mut host).expect("the fold replays");
+    let [rho] = squeeze(&mut host);
+    host.write_point(reduction.p).expect("p is absorbed");
+    host.write_point(reduction.q).expect("q is absorbed");
+    let [r] = squeeze(&mut host);
+
+    // Each claim's public parts of a and b at r, by kind, under its weights.
+    let restriction =
+        |circuit: CircuitIndex| Checker::registry_wxy(registry, circuit.omega_j(), r, y);
+    let (mut a_public, mut b_public) = (Fp::ZERO, Fp::ZERO);
+    for (i, shape) in shapes.iter().enumerate() {
+        let (a, b) = match shape.kind {
+            claims::Kind::Raw => (Fp::ZERO, Fp::ZERO),
+            claims::Kind::Circuit(circuit) => (Fp::ZERO, restriction(circuit) + R::tz(z).eval(r)),
+            claims::Kind::Bonding(circuit) => (Fp::ZERO, restriction(circuit)),
+            claims::Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<R>(r)),
+        };
+        a_public += weights.a(i) * a;
+        b_public += weights.b(i) * b;
+    }
+
+    let layout = Layout::new(shapes.len());
+    let opened = |which: Derived| reduction.openings[which as usize];
+    let evaluated = [
+        (
+            opened(Derived::A) + a_public,
+            opened(Derived::B) + opened(Derived::Dilated) + b_public,
+        ),
+        (opened(Derived::Inner), weights.inner::<R>(&layout).eval(r)),
+        (opened(Derived::Outer), weights.outer::<R>(&layout).eval(r)),
+    ];
+    let (mut combined, mut weight) = (Fp::ZERO, Fp::ONE);
+    for (a, b) in evaluated {
+        combined += weight * a * b;
+        weight *= rho;
+    }
+    let n = R::num_coeffs() as u64;
+    (combined - r.pow_u64(n - 1) * reduction.p_at_inverse_r)
+        * r.pow_u64(n).invert().expect("r is nonzero")
+}
+
+/// `N` challenges squeezed in order.
+fn squeeze<P: Affine, const N: usize>(transcript: &mut impl IpaTranscript<P>) -> [P::Scalar; N] {
+    core::array::from_fn(|_| {
+        transcript
+            .squeeze_challenge()
+            .expect("the challenge is squeezed")
+    })
 }
 
 /// A proof with `shape`'s circuit id and lengths and every other value drawn
