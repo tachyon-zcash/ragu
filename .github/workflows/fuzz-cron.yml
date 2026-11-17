@@ -53,16 +53,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
 
       - name: Cache source-lint build artifacts
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: qa/fuzz/target
           key: ${{ runner.os }}-fuzz-source-lint-target-${{ hashFiles('qa/fuzz/Cargo.lock', 'qa/fuzz/Cargo.toml') }}
@@ -141,16 +141,16 @@ jobs:
           - target: fuzz_internal_circuits
             duration: 14400
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
 
       - name: Cache fuzz build artifacts
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: qa/fuzz/target
           key: ${{ runner.os }}-fuzz-cron-target-${{ hashFiles('qa/fuzz/Cargo.toml') }}-${{ hashFiles('qa/fuzz/fuzz_targets/**/*.rs') }}-${{ hashFiles('qa/fuzz/bin/**/*.rs') }}
@@ -165,7 +165,7 @@ jobs:
       # crash-finding run is exactly the one whose corpus progress we
       # most want to keep.
       - name: Restore fuzz corpus
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: qa/fuzz/corpus/${{ matrix.target }}
           key: ${{ runner.os }}-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -253,7 +253,7 @@ jobs:
         # always() so the corpus extension survives crash-finding (failed)
         # runs; the combined cache action only saves on job success.
         if: always()
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: qa/fuzz/corpus/${{ matrix.target }}
           key: ${{ runner.os }}-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -298,7 +298,7 @@ jobs:
 
       - name: Upload minimized corpus
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: corpus-${{ matrix.target }}
           path: qa/fuzz/corpus/${{ matrix.target }}/
@@ -352,7 +352,7 @@ jobs:
 
       - name: Upload run stats
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: stats-${{ matrix.target }}
           # The full libFuzzer log rides along so a failure with no crash
@@ -367,7 +367,7 @@ jobs:
 
       - name: Upload crash artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: crashes-${{ matrix.target }}
           path: qa/fuzz/artifacts/${{ matrix.target }}/
@@ -471,13 +471,13 @@ jobs:
             timeout: 240
             input_timeout: 3600
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
         with:
           # `--careful` implies `--build-std`, which compiles the standard
           # library from source and therefore needs its sources present.
@@ -488,7 +488,7 @@ jobs:
       # and sharing a key with the campaign would evict the hot build it
       # depends on every Sunday.
       - name: Cache hardening build artifacts
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: qa/fuzz/target
           key: ${{ runner.os }}-fuzz-hardening-${{ matrix.flavor }}-target-${{ hashFiles('qa/fuzz/Cargo.toml') }}-${{ hashFiles('qa/fuzz/fuzz_targets/**/*.rs') }}-${{ hashFiles('qa/fuzz/bin/**/*.rs') }}
@@ -501,7 +501,7 @@ jobs:
       # so the campaign's corpus lineage stays single-writer and a
       # short hardening run can't dilute a five-hour campaign's cache entry.
       - name: Restore fuzz corpus
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: qa/fuzz/corpus/${{ matrix.target }}
           key: ${{ runner.os }}-fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -575,7 +575,7 @@ jobs:
 
       - name: Upload crash artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Distinct from the campaign's `crashes-<target>`: a hardening
           # reproducer only reproduces under its own flavor's build, so the

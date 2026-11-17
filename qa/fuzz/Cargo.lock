@@ -79,7 +79,7 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -177,7 +177,7 @@ checksum = "1b034bd7d5f032402a2479444dcc6f74e36a03f31854d41680fb240ef682a1ac"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -515,7 +515,7 @@ dependencies = [
  "ragu_testing",
  "rand",
  "rayon",
- "syn 3.0.3",
+ "syn 3.0.10",
  "zakura-udon",
 ]
 
