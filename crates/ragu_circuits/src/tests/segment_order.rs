@@ -171,11 +171,12 @@ impl Circuit<Fp> for TreeCircuit {
 proptest! {
     /// Cross-evaluator polynomial consistency: verifies that all three
     /// independent evaluators (sxy, sx, sy) agree on the polynomial value
-    /// for random routine trees.
+    /// for random routine trees, and that the polynomial written out as
+    /// monomials, which the registry hashes into its tag, agrees with them.
     ///
     /// Each evaluator computes the wiring polynomial via a different
     /// strategy (full-point Horner, partial-X coefficients, partial-Y
-    /// structured form). Agreement confirms that all three correctly
+    /// structured form). Agreement confirms that all of them correctly
     /// handle routine scope jumps, segment offsets, and Horner
     /// accumulation across arbitrary nesting topologies.
     #[test]

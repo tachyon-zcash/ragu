@@ -4,7 +4,7 @@ use alloc::{vec, vec::Vec};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::{R, Rank, sparse},
-    registry::{RegistryBuilder, Tag},
+    registry::RegistryBuilder,
 };
 use ragu_core::{
     Result,
@@ -514,11 +514,11 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     // nonzero tag, whose restrictions do not vanish.
     let wrong_native = RegistryBuilder::<Fp, R<13>>::new()
         .register_circuit(())?
-        .with_tag(Tag::new(Fp::ONE))
+        .with_tag(Fp::ONE)
         .finalize()?;
     let wrong_nested = RegistryBuilder::<Fq, R<13>>::new()
         .register_circuit(())?
-        .with_tag(Tag::new(Fq::ONE))
+        .with_tag(Fq::ONE)
         .finalize()?;
     for side in 0..2 {
         let receiving = ApplicationBuilder::<C, Rk, 2>::new()
@@ -596,10 +596,10 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
 #[test]
 fn a_source_registry_whose_restrictions_vanish_is_rejected_at_setup() -> Result<()> {
     let native = RegistryBuilder::<Fp, R<13>>::new()
-        .with_tag(Tag::new(Fp::ZERO))
+        .with_tag(Fp::ZERO)
         .finalize()?;
     let nested = RegistryBuilder::<Fq, R<13>>::new()
-        .with_tag(Tag::new(Fq::ZERO))
+        .with_tag(Fq::ZERO)
         .finalize()?;
     let result = ApplicationBuilder::<C, Rk, 2>::new()
         .register(UnitStep)?

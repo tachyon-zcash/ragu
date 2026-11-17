@@ -30,7 +30,7 @@ bench = false
 
 [dependencies]
 udon = { workspace = true }
-ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc", "insecure-test-registry-tag"] }
+ragu_circuits = { path = "../ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_core = { path = "../ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_pcd = { path = "../ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_primitives = { path = "../ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }

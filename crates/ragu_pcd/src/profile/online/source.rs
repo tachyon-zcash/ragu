@@ -146,7 +146,7 @@ mod tests {
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{
         polynomials::{R, TestRank},
-        registry::{RegistryBuilder, Tag},
+        registry::RegistryBuilder,
     };
     use ragu_core::pasta::{Fp, Fq};
 
@@ -154,7 +154,7 @@ mod tests {
 
     fn check<F: Field>() -> Result<()> {
         let registry = RegistryBuilder::<F, TestRank>::new()
-            .with_tag(Tag::new(F::from(7)))
+            .with_tag(F::from(7))
             .register_circuit(())?
             .finalize()?;
         let source = SourceRegistry::new::<_, ReferenceBackend>(&registry);
@@ -176,7 +176,7 @@ mod tests {
             expected
         );
         let substituted = RegistryBuilder::<F, TestRank>::new()
-            .with_tag(Tag::new(F::from(11)))
+            .with_tag(F::from(11))
             .register_circuit(())?
             .finalize()?;
         let other = SourceRegistry::new::<_, ReferenceBackend>(&substituted);

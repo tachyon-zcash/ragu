@@ -24,8 +24,6 @@ default = ["alloc"]
 multicore = ["maybe-rayon/threads", "ragu_core/multicore", "std"]
 std = ["ragu_core/std"]
 test-utils = []
-# Fixed fallback registry tag for tests, benchmarks, and fuzzing. Never enable in production.
-insecure-test-registry-tag = []
 
 [lib]
 bench = false

@@ -113,6 +113,14 @@ fn consistency_checks<R: Rank>(obj: &dyn WiringObject<Fp, R>) {
     assert_eq!(sx0_eval, sX0_poly.eval(x));
     assert_eq!(s00_eval, s0Y_poly.eval(Fp::ZERO));
     assert_eq!(s00_eval, sX0_poly.eval(Fp::ZERO));
+
+    // The polynomial written out, which the registry hashes into its tag,
+    // evaluates like its restrictions.
+    let monomials = obj.monomials(&plan);
+    assert_eq!(sxy_eval, monomials.eval(x, y));
+    assert_eq!(s0y_eval, monomials.eval(Fp::ZERO, y));
+    assert_eq!(sx0_eval, monomials.eval(x, Fp::ZERO));
+    assert_eq!(s00_eval, monomials.eval(Fp::ZERO, Fp::ZERO));
 }
 
 #[test]

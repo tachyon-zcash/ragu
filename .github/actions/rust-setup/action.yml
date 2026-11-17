@@ -82,7 +82,7 @@ runs:
         PY
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-23
+      uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master @ 2026-05-23
       with:
         toolchain: ${{ steps.toolchain-config.outputs.channel }}
         components: ${{ steps.toolchain-config.outputs.components }}
@@ -91,7 +91,7 @@ runs:
     # Cache cargo registry and git separately (shared across all jobs)
     - name: Cache cargo registry
       id: registry-cache
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index
@@ -104,7 +104,7 @@ runs:
     # Cache target directory (job-specific due to different build configurations)
     # Includes source file hash to avoid stale incremental compilation artifacts
     - name: Cache target directory
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: target
         key: ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('crates/**/src/**/*.rs') }}
@@ -130,7 +130,7 @@ runs:
 
     - name: Install cargo tools
       if: inputs.cargo-tools != ''
-      uses: taiki-e/install-action@6c1f7cf125e42770ff087ea443901b487cc5471a # v2.79.5
+      uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
       with:
         tool: ${{ inputs.cargo-tools }}
 

@@ -1133,7 +1133,7 @@ impl Profile for SourceMesh {
 fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{
-        registry::{CircuitIndex, RegistryBuilder, Tag},
+        registry::{CircuitIndex, RegistryBuilder},
         staging::StageExt,
     };
 
@@ -1180,7 +1180,7 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
             // polynomials: Simulator's reserved stage wires contain zeroes.
             let (trace, sums) = helper.trace(witness)?.into_parts();
             let registry = RegistryBuilder::<F, ProductionRank>::new()
-                .with_tag(Tag::new(F::ZERO))
+                .with_tag(F::ZERO)
                 .register_internal_circuit(MultiStage::<F, ProductionRank, _>::new(
                     circuit::Circuit::<F, SourceMesh, S>::with_source_tag(Some(F::from(23)))?,
                 ))?
@@ -1240,7 +1240,7 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
         }
         let registry = |tag| {
             RegistryBuilder::<F, ProductionRank>::new()
-                .with_tag(Tag::new(F::from(101)))
+                .with_tag(F::from(101))
                 .register_internal_circuit(MultiStage::<F, ProductionRank, _>::new(
                     circuit::Circuit::<F, SourceMesh, S>::with_source_tag(Some(F::from(tag)))?,
                 ))?
@@ -1259,14 +1259,11 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
 #[test]
 fn backend_selection_preserves_source_setup_and_undeclared_sources_reject() -> Result<()> {
     use ragu_backend::ReferenceBackend;
-    use ragu_circuits::{
-        polynomials::TestRank,
-        registry::{RegistryBuilder, Tag},
-    };
+    use ragu_circuits::{polynomials::TestRank, registry::RegistryBuilder};
     use ragu_core::pasta::Pasta;
 
     let registry = RegistryBuilder::<Fp, TestRank>::new()
-        .with_tag(Tag::new(Fp::from(23)))
+        .with_tag(Fp::from(23))
         .register_circuit(())?
         .finalize()?;
     let source = super::source::SourceRegistry::new::<_, ReferenceBackend>(&registry);
@@ -1285,7 +1282,7 @@ fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligation
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{
         polynomials::{TestRank, sparse},
-        registry::{RegistryBuilder, Tag},
+        registry::RegistryBuilder,
     };
 
     use super::{
@@ -1294,7 +1291,7 @@ fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligation
 
     fn check<F: Field>() -> Result<()> {
         let registry = RegistryBuilder::<F, TestRank>::new()
-            .with_tag(Tag::new(F::from(23)))
+            .with_tag(F::from(23))
             .register_circuit(())?
             .finalize()?;
         let source = SourceRegistry::new::<_, ReferenceBackend>(&registry);
@@ -1443,15 +1440,12 @@ fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligation
 #[test]
 fn terminal_mesh_opens_both_ends_and_counts_each_polynomial_once() -> Result<()> {
     use ragu_backend::{Backend, ReferenceBackend};
-    use ragu_circuits::{
-        polynomials::TestRank,
-        registry::{RegistryBuilder, Tag},
-    };
+    use ragu_circuits::{polynomials::TestRank, registry::RegistryBuilder};
 
     use super::{mesh_terminal::Coordinates, source::SourceRegistry};
     fn check<F: Field>() -> Result<()> {
         let registry = RegistryBuilder::<F, TestRank>::new()
-            .with_tag(Tag::new(F::from(23)))
+            .with_tag(F::from(23))
             .register_circuit(())?
             .finalize()?;
         let source = SourceRegistry::new::<_, ReferenceBackend>(&registry);

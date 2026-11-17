@@ -167,7 +167,7 @@ pub fn replace_driver_field_in_generic_param(
             bound.substitute(strategy);
         }
         if let Some(default_ty) = default {
-            default_ty.substitute(strategy);
+            default_ty.1.substitute(strategy);
         }
     }
 }

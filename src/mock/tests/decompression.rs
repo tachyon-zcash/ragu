@@ -104,12 +104,9 @@ fn decompression_rejects_a_different_application_or_rank() -> Result<()> {
     let app = test_builder_for::<ProductionRank>()
         .register(Seed::<0>)?
         .finalize(params)?;
-    let other = crate::ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-        .with_registry_tags(
-            crate::RegistryTags::from_beacon(b"other beacon", b"other setup"),
-            b"other setup",
-        )?
-        .register(Seed::<0>)?
+    // Another application: its step stages two values.
+    let other = test_builder_for::<ProductionRank>()
+        .register(Seed::<0, 2>)?
         .finalize(params)?;
     let larger = test_builder_for::<R<14>>()
         .register(Seed::<0>)?
