@@ -69,7 +69,11 @@ use super::super::{
     },
     unified::{self, OutputBuilder},
 };
-use crate::{internal::nested, profile::ProfiledCycle};
+use crate::{
+    internal::nested,
+    profile::{Profile, ProfiledCycle},
+    step::InternalStepIndex,
+};
 
 /// The number of binding circuits, with two challenges per circuit.
 pub const NUM_BINDERS: usize = nested::stages::challenges::NUM / 2;
@@ -224,6 +228,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, const K: usize>
             let negate = is_base_case.not(dr);
             let term = generator.conditional_negate(dr, &negate)?;
             acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
+            // The nested side cannot read these native circuit IDs. Bind
+            // its two activation signs to their actual predicates here.
+            if C::Profile::OPTIONAL_DECOMPRESSION {
+                let decompress = Element::constant(
+                    dr,
+                    InternalStepIndex::Decompress
+                        .circuit_index::<C::Profile>()?
+                        .omega_j(),
+                );
+                for (i, child) in [&preamble.left, &preamble.right].into_iter().enumerate() {
+                    let active = child.circuit_id.is_equal(dr, allocator, &decompress)?;
+                    let negate = active.not(dr);
+                    let generator = Point::constant(
+                        dr,
+                        generators.g()[native_eval::generator_index::<C, R>(
+                            nested::stages::challenges::EXTENSION_INDEX + i,
+                        )],
+                    )?;
+                    let term = generator.conditional_negate(dr, &negate)?;
+                    acc = NonzeroBank::scope(dr, |dr, bank| acc.add_incomplete(dr, &term, bank))?;
+                }
+            }
             let binding = unified_output
                 .nested_challenges_partial
                 .receive(dr, allocator)?;

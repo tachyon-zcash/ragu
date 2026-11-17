@@ -100,9 +100,13 @@ and authenticate the public commitment and beacon.
 
 Every new description names `setup.profile.name` and its `definition` in the
 frozen source. `standard` uses the existing labels `ragu_pcd native registry`
-and `ragu_pcd nested registry`. `aggregator` appends ` (aggregator)` to each.
+and `ragu_pcd nested registry`. The current Aggregator profile is
+`aggregator-optional-decompression-v1`; it appends
+` (aggregator-optional-decompression-v1)` to each label.
 The current QA tools support these two built-in profiles; other profiles need
 an application-specific derivation using their compiled `RegistryTags<C>` type.
+Records naming the retired `aggregator` relation are rejected by the current
+tools; they cannot be continued with the new relation's tag derivation.
 
 Record other setups whose keys, tags or parameters the profile fixes at setup
 in `setup.verified_setups`, using their profile, approved `manifest_sha256`
@@ -143,7 +147,8 @@ With `B` and `X` both expressed as hex, run from the repository root:
 cargo run -p ragu_ceremony --bin registry_tags -- --profile standard B X
 ```
 
-Select `--profile aggregator` for an Aggregator record. Omitting the flag
+Select `--profile aggregator-optional-decompression-v1` for a current Aggregator
+record; `--profile aggregator` is a CLI alias for that version. Omitting the flag
 retains the legacy Standard behavior. `continue.sh` reads the profile and labels
 from the frozen manifest, checks its Bitcoin/N+100 policy before external
 calls, and passes the profile to the derivation command. Old Standard v1 records
@@ -187,6 +192,8 @@ cargo test --release -p ragu_ceremony --bin registry_tags
 
 `fixtures/` contains canonical, explicitly test-only Standard and Aggregator
 descriptions, their SHA-256 digests, and independently computed tag vectors.
+The retired `aggregator.*` vectors remain unchanged; the current relation has
+separate `aggregator-optional-decompression-v1.*` vectors.
 These are not deployment records or completed ceremonies. Their tests exercise
 profile selection, canonicalization and changes to setup choices; they do not
 supply production parameters or establish beacon provenance.

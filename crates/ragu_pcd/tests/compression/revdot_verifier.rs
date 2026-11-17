@@ -74,9 +74,14 @@ fn run(
         &shapes(kinds),
         targets,
         |_| point,
-        |_, _| {
-            evaluated.fetch_add(1, Ordering::Relaxed);
-            (Fp::ZERO, Fp::ZERO)
+        |_| {
+            kinds
+                .iter()
+                .map(|_| {
+                    evaluated.fetch_add(1, Ordering::Relaxed);
+                    (Fp::ZERO, Fp::ZERO)
+                })
+                .collect()
         },
         &reduction,
         Fp::from(3),
@@ -170,6 +175,7 @@ fn claim_targets_match_positional_ky_values() {
         bind_endoscalar: None,
         statement: None,
         binding: None,
+        extension: 1u64.into(),
     };
     let masked = [Masked::new(
         native::RxComponent::AbA,
@@ -195,6 +201,7 @@ fn claim_targets_match_positional_ky_values() {
         unified: Fq::from(3),
         compute_v: None,
         binding: None,
+        extension: 1u64.into(),
     };
     let masked = [Masked::new(
         nested::RxComponent::AbA,

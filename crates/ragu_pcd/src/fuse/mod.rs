@@ -84,7 +84,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
     /// [`fuse`](Self::fuse) with `source`, the compressed proof the
     /// profile's extension decompresses when the step decompresses one;
-    /// without, the extension runs over the context's canonical proof.
+    /// without, an optional extension uses blinded empty traces.
     pub(crate) fn fuse_with_source<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,

@@ -8,7 +8,7 @@
 
 use alloc::{format, vec::Vec};
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::polynomials::R;
 use ragu_core::{
     Result,
@@ -94,7 +94,7 @@ fn the_vocabulary_follows_the_profile() {
 /// side, is classified `MustReject` and rejected by the verifier.
 fn check_extension_corruptions<P>() -> Result<()>
 where
-    P: Profile<Context<'static, Pasta, Rk, ReferenceBackend> = CrossingContext<'static, Pasta>>,
+    P: Profile<Context<'static, Pasta, Rk, AcceleratedBackend> = CrossingContext<'static, Pasta>>,
 {
     let params = crate::pasta::baked_aggregator();
     let bits = [true, false, true, true];

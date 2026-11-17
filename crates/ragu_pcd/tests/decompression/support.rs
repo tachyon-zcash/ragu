@@ -213,13 +213,18 @@ impl Setup {
     /// reduction starts.
     pub fn run_native(&self, t: &mut Transcript, sampled: &Sampled<Fp>, nested_y: Fq) {
         let openings = self.native_openings(t, sampled, nested_y);
+        let params = crate::ipa::Params::with_k(
+            Pasta::host_generators(crate::pasta::baked()),
+            *Pasta::host_u(crate::pasta::baked()),
+            <TestR as ragu_circuits::polynomials::Rank>::RANK,
+        );
         assert!(
-            batch::verify_openings::<_, TestR, ReferenceBackend>(
+            batch::verify_openings::<_, ReferenceBackend>(
                 &openings,
                 &self.proof.native.batch,
                 &self.proof.native.opening,
-                Pasta::host_generators(crate::pasta::baked()),
-                *Pasta::host_u(crate::pasta::baked()),
+                &params,
+                &mut ragu_core::MsmWorkspace::default(),
                 &mut Lifted(t.host()),
             )
             .unwrap(),

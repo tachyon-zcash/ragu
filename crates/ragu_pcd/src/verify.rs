@@ -67,7 +67,7 @@ use crate::{
         transcript::Transcript,
     },
     ipa::IpaCycle,
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
     proof::commitments_match,
 };
 
@@ -198,7 +198,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 |index| pcd.proof().native_rx_commitment(index),
                 |slot| pcd.proof().online_commitments()[slot],
             );
+            let extension = proof_check!(ky::extension_enabled::<C::ScalarField, C::Profile>(
+                pcd.proof().circuit_id()
+            ));
             let ky_source = ky::NestedKy {
+                extension,
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
                 // It remains meaningful inside the collapse circuit, where
@@ -223,7 +227,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     &native_bound,
                     &pcd.proof().online_fq_openings,
                     y_nested,
-                )),
+                ))
+                .map(|v| v * extension),
             };
             nested::ky_values::<C::Profile, _>(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
@@ -659,14 +664,31 @@ pub(crate) fn nested_challenges_match<C: ProfiledCycle, R: Rank, const HEADER_SI
     lifts: &[C::ScalarField; nested_challenges::NUM + 1],
 ) -> Result<bool> {
     let (challenge_lifts, beta_lift) = lifts.split_at(nested_challenges::NUM);
+    let mut witness = nested_challenges::Witness::new::<_, HEADER_SIZE>(
+        challenge_lifts.try_into().expect("NUM challenge lifts"),
+        proof.left_header(),
+        proof.right_header(),
+        beta_lift[0],
+    );
+    if C::Profile::OPTIONAL_DECOMPRESSION {
+        let indices = stage_wire_indices::<
+            C::CircuitField,
+            R,
+            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+        >(|out| {
+            let mut wires = wires_of(&out.left.circuit_id)?;
+            wires.extend(wires_of(&out.right.circuit_id)?);
+            Ok(wires)
+        })?;
+        let preamble = StageReader::new(&proof[native_internal::RxIndex::Preamble]);
+        witness.set_extension_signs::<C::Profile, _>([
+            preamble.read(indices[0]),
+            preamble.read(indices[1]),
+        ])?;
+    }
     let expected = nested_challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
         C::ScalarField::ZERO,
-        &nested_challenges::Witness::new::<_, HEADER_SIZE>(
-            challenge_lifts.try_into().expect("NUM challenge lifts"),
-            proof.left_header(),
-            proof.right_header(),
-            beta_lift[0],
-        ),
+        &witness,
     )?;
     Ok(proof
         .nested_challenges_rx()

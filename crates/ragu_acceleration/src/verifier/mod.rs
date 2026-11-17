@@ -10,7 +10,64 @@
 //! reached from the `Backend` impl in the crate root by delegation, so code
 //! that can influence an acceptance decision can be reviewed and tested here.
 
-use udon::curve::Affine;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::{CircuitIndex, Registry, RegistryAt},
+};
+use ragu_core::{MsmWorkspace, PreparedMsm};
+use udon::{curve::Affine, field::Field};
+
+pub(crate) fn registry_wxy_over_domain<F: Field, R: Rank>(
+    registry: &Registry<'_, F, R>,
+    x: F,
+    y: F,
+) -> alloc::vec::Vec<F> {
+    registry.wxy_over_domain_parallel(x, y)
+}
+
+pub(crate) fn registry_circuits_xy<F: Field, R: Rank>(
+    registry: &Registry<'_, F, R>,
+    circuits: &[CircuitIndex],
+    x: F,
+    y: F,
+) -> alloc::vec::Vec<F> {
+    registry.circuits_xy_parallel(circuits, x, y)
+}
+
+pub(crate) fn registry_at_x<F: Field, R: Rank>(
+    registry: &RegistryAt<'_, F, R>,
+    x: F,
+) -> sparse::Polynomial<F, R> {
+    registry.x_parallel(x)
+}
+
+pub(crate) fn registry_at_y<F: Field, R: Rank>(
+    registry: &RegistryAt<'_, F, R>,
+    y: F,
+) -> sparse::Polynomial<F, R> {
+    registry.y_parallel(y)
+}
+
+pub(crate) fn registry_wxy<F: Field, R: Rank>(
+    registry: &Registry<'_, F, R>,
+    w: F,
+    x: F,
+    y: F,
+) -> F {
+    registry.at(w).xy_parallel(x, y)
+}
+
+pub(crate) fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {
+    PreparedMsm::new(bases)
+}
+
+pub(crate) fn msm_prepared<C: Affine>(
+    coeffs: alloc::vec::Vec<C::Scalar>,
+    bases: &PreparedMsm<C>,
+    workspace: &mut MsmWorkspace,
+) -> C::Projective {
+    bases.evaluate_with_workspace(coeffs, workspace)
+}
 
 /// Computes independent MSMs, panicking before any of them if an input's
 /// operands differ in length.

@@ -13,7 +13,8 @@
 //! setup of both registries, as hex. Both inputs are decoded to raw bytes
 //! before deriving the tags.
 //! Omitting `--profile` retains Standard's existing labels and tag values.
-//! Select `aggregator` only for a description of that profile's own setup.
+//! `aggregator` aliases `aggregator-optional-decompression-v1`, the current
+//! Aggregator profile. Select it only for that version's own setup.
 //! The QA example uses SHA-256 of `setup.manifest`, whose artifact
 //! digests bind the actual code and parameter bytes. A Git commit ID, or a
 //! hash of that ID, is not a substitute. See `qa/ceremony/README.md`.
@@ -76,7 +77,7 @@ fn parse_args(args: &[String]) -> Result<Inputs<'_>, String> {
     };
     let profile = match name {
         "standard" => Profile::Standard,
-        "aggregator" => Profile::Aggregator,
+        "aggregator" | "aggregator-optional-decompression-v1" => Profile::Aggregator,
         _ => return Err(format!("unsupported profile: {name}")),
     };
     Ok(Inputs {
@@ -146,16 +147,13 @@ mod tests {
         ];
         assert_eq!(parse_args(&legacy).unwrap().profile, Profile::Standard);
         assert_eq!(parse_args(&explicit).unwrap().profile, Profile::Standard);
-        let aggregator = [
-            "--profile".into(),
-            "aggregator".into(),
-            "42".into(),
-            "24".into(),
-        ];
-        assert_eq!(
-            parse_args(&aggregator).unwrap().profile,
-            Profile::Aggregator
-        );
+        for name in ["aggregator", "aggregator-optional-decompression-v1"] {
+            let aggregator = ["--profile".into(), name.into(), "42".into(), "24".into()];
+            assert_eq!(
+                parse_args(&aggregator).unwrap().profile,
+                Profile::Aggregator
+            );
+        }
         let unknown = [
             "--profile".into(),
             "unknown".into(),
@@ -178,9 +176,9 @@ mod tests {
             ),
             (
                 Profile::Aggregator,
-                include_str!("fixtures/aggregator.manifest.sha256"),
-                include_str!("fixtures/aggregator.native.tag"),
-                include_str!("fixtures/aggregator.nested.tag"),
+                include_str!("fixtures/aggregator-optional-decompression-v1.manifest.sha256"),
+                include_str!("fixtures/aggregator-optional-decompression-v1.native.tag"),
+                include_str!("fixtures/aggregator-optional-decompression-v1.nested.tag"),
             ),
         ] {
             let digest = decode_hex(digest.trim()).unwrap();

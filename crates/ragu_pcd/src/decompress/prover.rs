@@ -1,14 +1,14 @@
 //! The decompression as a profile's prover: the extension's polynomials
 //! for a proof, from a compressed proof's prepared sides.
 //!
-//! Every proof of a profile carries every extension circuit's polynomial,
-//! so every fuse runs the chunks over some compressed proof. A step that
-//! decompresses a wallet's proof runs them over that one; any other runs
-//! them over a canonical one, the wallet application's bootstrap proof
-//! compressed, which [`Decompression`] prepares once and holds for the
-//! aggregator application's lifetime. The chunk circuits' traces then
-//! assemble against the aggregator's registry as the fuse's own circuits'
-//! do, and the stages' polynomials come from the prepared sides' values.
+//! A decompression step traces the verifier over its incoming wallet proof
+//! and assembles those traces against the aggregator's registry. Ordinary
+//! aggregator steps instead use empty extension traces with fresh SYSTEM
+//! blinding. The optional-extension relation derives activation from the
+//! application's bound circuit ID on both sides.
+//!
+//! Profiles with an always-active extension trace the canonical bootstrap
+//! proof when the step supplies no compressed proof.
 //!
 //! The context owns the wallet application: the aggregator application
 //! holds the standard application whose proofs it decompresses, and hands
@@ -207,7 +207,9 @@ where
     }
 
     /// The native extension's polynomials for profile `P` over `source`,
-    /// or over the canonical decompression without: every chunk circuit's
+    /// or a blinded empty witness for an inactive optional extension. An
+    /// always-active profile uses the canonical proof without a source:
+    /// every chunk circuit's
     /// trace, the statement circuit's and the binding circuit's assembled
     /// against `registry` at their index in `P`'s layout, and the six
     /// stages' polynomials, each blinded from `rng` but the digits
@@ -224,6 +226,9 @@ where
         registry: &Registry<'_, C::CircuitField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
+        if P::OPTIONAL_DECOMPRESSION && source.is_none() {
+            return Ok(empty_extension(&P::native_extension(), rng));
+        }
         let params = self.wallet.params;
         // The decompression step sets the step binding: its flag, the
         // opening of the slot it committed s(X) in and the digest it
@@ -299,6 +304,9 @@ where
         registry: &Registry<'_, C::ScalarField, R>,
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
+        if P::OPTIONAL_DECOMPRESSION && source.is_none() {
+            return Ok(empty_extension(&P::nested_extension(), rng));
+        }
         let params = self.wallet.params;
         let &[x, y] = online_fq_openings else {
             return Err(Error::Initialization(
@@ -414,6 +422,28 @@ where
                 .0
         }
     })
+}
+
+/// An inactive extension still has nonidentity commitments. The SYSTEM
+/// a-wire is unconstrained by circuit wiring and stage masks; b, c and d
+/// remain zero, so every extension revdot target is zero.
+fn empty_extension<F: Field, R: Rank>(
+    extension: &crate::profile::Extension,
+    rng: &mut impl CryptoRng,
+) -> ExtensionRxs<F, R> {
+    let mut empty = || {
+        let mut alpha = F::ZERO;
+        while alpha == F::ZERO {
+            alpha = blinding(rng);
+        }
+        let mut view = sparse::View::trace();
+        view.a.push(alpha);
+        view.build()
+    };
+    ExtensionRxs {
+        circuits: (0..extension.circuits.len()).map(|_| empty()).collect(),
+        stages: (0..extension.stages).map(|_| empty()).collect(),
+    }
 }
 
 /// A stage polynomial's blinding.

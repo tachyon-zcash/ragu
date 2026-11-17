@@ -2,7 +2,7 @@
 
 use alloc::string::ToString;
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::polynomials::{R, Rank, WalletRank};
 use ragu_core::{
     Error, Result,
@@ -109,7 +109,9 @@ fn identity_bridge_commitments_are_rejected() -> Result<()> {
 
 fn check_extension<P>() -> Result<()>
 where
-    P: Profile<Context<'static, Pasta, R<14>, ReferenceBackend> = CrossingContext<'static, Pasta>>,
+    P: Profile<
+        Context<'static, Pasta, R<14>, AcceleratedBackend> = CrossingContext<'static, Pasta>,
+    >,
 {
     let params = crate::pasta::baked_aggregator();
     let bits = [true, false, false, true];
