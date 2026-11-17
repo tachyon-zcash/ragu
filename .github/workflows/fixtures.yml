@@ -60,7 +60,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
         with:
           cache-suffix: fixtures
       - name: Check the fuse and verifier fixtures

@@ -23,6 +23,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
       - name: Run debug tests
         run: cargo test --all --locked --all-features --verbose

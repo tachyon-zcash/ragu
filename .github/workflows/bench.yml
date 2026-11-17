@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
         with:
           cache-suffix: bench
 
@@ -79,7 +79,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
         with:
           cache-suffix: bench
           cargo-tools: gungraun-runner@0.17.0

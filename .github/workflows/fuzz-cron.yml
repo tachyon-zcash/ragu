@@ -59,7 +59,7 @@ jobs:
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
 
       - name: Cache source-lint build artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -147,7 +147,7 @@ jobs:
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
 
       - name: Cache fuzz build artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -477,7 +477,7 @@ jobs:
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
         with:
           # `--careful` implies `--build-std`, which compiles the standard
           # library from source and therefore needs its sources present.

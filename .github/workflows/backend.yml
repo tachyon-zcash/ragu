@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: ./.github/workflows/fixtures.yml
+    uses: $/.github/workflows/fixtures.yml
 
   # Extend this shared matrix when another accelerated backend lands instead
   # of adding a feature-specific matrix (and three more PR status checks).
@@ -39,7 +39,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
         with:
           components: clippy
           cache-suffix: backend-equivalence
@@ -77,7 +77,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
         with:
           targets: thumbv7em-none-eabihf
           cache-suffix: backend-nostd

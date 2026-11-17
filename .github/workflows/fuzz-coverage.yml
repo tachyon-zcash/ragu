@@ -90,7 +90,7 @@ jobs:
 
       - name: Install pinned nightly toolchain
         id: nightly
-        uses: ./.github/actions/rust-nightly-setup
+        uses: $/.github/actions/rust-nightly-setup
         with:
           components: llvm-tools-preview
 

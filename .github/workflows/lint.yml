@@ -57,7 +57,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Rust
-        uses: ./.github/actions/rust-setup
+        uses: $/.github/actions/rust-setup
         with:
           cache-suffix: poseidon-provenance
       - name: Regenerate and compare
