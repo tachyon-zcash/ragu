@@ -135,7 +135,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut *rng,
         )?;
 
-        let extension = C::Profile::native_extension();
+        // The private batch's helper, traced first: compute-v takes its fold.
         let challenges = Challenges {
             w: builder.w(),
             y: builder.y(),
@@ -144,27 +144,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             u: builder.u(),
             beta: builder.pre_beta(),
         };
-        let private_helper = if let Some(state) = &builder.native_private {
-            let index =
-                native::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
-                    .circuit_index::<C::Profile>();
-            let (helper, sums) =
-                state.trace(challenges.clone(), &self.native_registry, index, rng)?;
-            builder.native_online_fold = Some(sums);
-            Some(helper)
-        } else {
-            None
-        };
+        let private_sums = builder.native_private_mut().trace(
+            challenges.clone(),
+            &self.native_registry,
+            |circuit| {
+                native::InternalCircuitIndex::ExtensionCircuit(circuit)
+                    .circuit_index::<C::Profile>()
+            },
+            rng,
+        )?;
 
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
                 .trace(native::circuits::compute_v::Witness {
-                    private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
-                        builder
-                            .native_online_fold
-                            .as_ref()
-                            .expect("private helper traced before compute-v")[i]
-                    }),
+                    private_sums,
                     binding: &native_points.binding,
                     unified,
                     preamble_witness,
@@ -251,33 +244,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
 
         // The profile's extension: its prover fills every circuit's and
-        // stage's polynomial over the context the application holds.
-        let online = builder
-            .native_private
-            .as_ref()
-            .map(|state| state.witness(challenges.clone()));
-        let mut rxs = C::Profile::native_extension_rxs_with_online::<
-            C::Base,
-            R,
-            HEADER_SIZE,
-            B,
-            RNG,
-        >(&self.context, &self.native_registry, online.as_ref(), rng)?;
+        // stage's polynomial over the context the application holds, and the
+        // private batch completes them with its helper's and stages'.
+        let extension = crate::profile::native_extension::<C::Profile>();
+        let online = builder.native_private().witness(challenges);
+        let rxs = C::Profile::native_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
+            &self.context,
+            &self.native_registry,
+            online.as_ref(),
+            rng,
+        )?;
+        let rxs = builder.native_private_mut().extension_rxs(rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its native extension".into(),
             ));
-        }
-        if let Some(helper) = private_helper {
-            rxs.circuits.push(helper);
-            rxs.stages.splice(
-                0..0,
-                builder
-                    .native_private
-                    .as_mut()
-                    .expect("active private helper")
-                    .take_stages(),
-            );
         }
         builder.set_native_extension_circuit_rxs(rxs.circuits);
         builder.set_native_extension_stage_rxs(rxs.stages);
@@ -335,7 +316,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ],
             coverage: Default::default(),
         };
-        let extension = C::Profile::nested_extension();
+        // The private batch's helper, traced first: compute-v takes its fold.
         let challenges = Challenges {
             w: nested::challenge::<C>(builder.w())?,
             y: nested::challenge::<C>(builder.y())?,
@@ -344,24 +325,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             u: nested::challenge::<C>(builder.u())?,
             beta: nested::challenge::<C>(builder.pre_beta())?,
         };
-        let private_helper = if let Some(state) = &mut builder.nested_private {
-            let index =
-                nested::InternalCircuitIndex::ExtensionCircuit(extension.circuits.len() as u32)
-                    .circuit_index::<C::Profile>();
-            let (helper, sums) =
-                state.trace(challenges.clone(), &self.nested_registry, index, rng)?;
-            builder.nested_online_fold = Some(sums);
-            Some(helper)
-        } else {
-            None
-        };
+        let private_sums = builder.nested_private_mut().trace(
+            challenges.clone(),
+            &self.nested_registry,
+            |circuit| {
+                nested::InternalCircuitIndex::ExtensionCircuit(circuit)
+                    .circuit_index::<C::Profile>()
+            },
+            rng,
+        )?;
         let witness = |instance| nested::circuits::common::Witness {
             instance,
-            private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
-                builder
-                    .nested_online_fold
-                    .expect("private helper traced before compute-v")[i]
-            }),
+            private_sums: private_sums.clone(),
             endoscalar: nested_endoscalar,
             bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
             points: nested_points,
@@ -408,32 +383,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 
-        let online = builder
-            .nested_private
-            .as_ref()
-            .map(|state| state.witness(challenges.clone()));
-        let mut rxs = C::Profile::nested_extension_rxs_with_online::<
-            C::Base,
-            R,
-            HEADER_SIZE,
-            B,
-            RNG,
-        >(&self.context, &self.nested_registry, online.as_ref(), rng)?;
+        // The profile's extension, as on the native side.
+        let extension = crate::profile::nested_extension::<C::Profile>();
+        let online = builder.nested_private().witness(challenges);
+        let rxs = C::Profile::nested_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
+            &self.context,
+            &self.nested_registry,
+            online.as_ref(),
+            rng,
+        )?;
+        let rxs = builder.nested_private_mut().extension_rxs(rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),
             ));
-        }
-        if let Some(helper) = private_helper {
-            rxs.circuits.push(helper);
-            rxs.stages.splice(
-                0..0,
-                builder
-                    .nested_private
-                    .as_mut()
-                    .expect("private helper has stages")
-                    .take_stages(),
-            );
         }
         builder.set_nested_extension_circuit_rxs(rxs.circuits);
         builder.set_nested_extension_stage_rxs(rxs.stages);

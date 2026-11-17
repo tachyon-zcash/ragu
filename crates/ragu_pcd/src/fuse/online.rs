@@ -1,20 +1,18 @@
 //! Calls profile preparation hooks at the private batch's commitment deadlines.
-
-use alloc::vec::Vec;
+//!
+//! Every call is made for every profile: the hooks' defaults supply nothing
+//! for a side without a batch, and the batch's state takes it from there.
 
 use ragu_circuits::polynomials::Rank;
-use ragu_core::{Error, Result};
+use ragu_core::Result;
 use rand::CryptoRng;
-use udon::{curve::Affine, field::Field};
 
 use crate::{
     Application, Proof,
     internal::nested,
     profile::{
         Profile, ProfiledCycle,
-        online::{
-            Phase, mesh_preparation::PhaseWitness, prepared::PreparationChallenges, prover::State,
-        },
+        online::{Phase, prepared::PreparationChallenges, prover::State},
     },
     proof::ProofBuilder,
 };
@@ -22,56 +20,38 @@ use crate::{
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    pub(crate) fn prepare_private_inputs<RNG: CryptoRng>(
+    /// Begins both sides' private batches from the profile's inputs, supplies
+    /// their polynomials fixed before $w$ and commits the two input stages.
+    pub(super) fn prepare_private_inputs<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         children: [&Proof<C, R>; 2],
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        if !C::Profile::NATIVE_ONLINE.is_empty() {
-            let inputs = C::Profile::native_online_inputs::<C::Base, R, B>(&self.context)?;
-            let inputs = if let Some(mesh) = C::Profile::NATIVE_MESH {
-                mesh.carry_inputs(
-                    C::Profile::NATIVE_ONLINE,
-                    inputs,
+        let native = State::begin(
+            C::Profile::native_online_inputs::<C::Base, R, B>(&self.context)?,
+            || Ok(children.map(|child| [child.x(), child.y()])),
+            self.native_source.as_ref(),
+        )?;
+        let nested = State::begin(
+            C::Profile::nested_online_inputs::<C::Base, R, B>(&self.context)?,
+            || {
+                let [left, right] = children;
+                Ok([
                     [
-                        [children[0].x(), children[0].y()],
-                        [children[1].x(), children[1].y()],
+                        nested::challenge::<C>(left.x())?,
+                        nested::challenge::<C>(left.y())?,
                     ],
-                )?
-            } else {
-                inputs
-            };
-            builder.native_private = Some(
-                State::new(inputs)?
-                    .with_source_tag(self.native_source.as_ref().map(|source| source.tag()))?,
-            );
-        }
-        if !C::Profile::NESTED_ONLINE.is_empty() {
-            let inputs = C::Profile::nested_online_inputs::<C::Base, R, B>(&self.context)?;
-            let inputs = if let Some(mesh) = C::Profile::NESTED_MESH {
-                mesh.carry_inputs(
-                    C::Profile::NESTED_ONLINE,
-                    inputs,
                     [
-                        [
-                            nested::challenge::<C>(children[0].x())?,
-                            nested::challenge::<C>(children[0].y())?,
-                        ],
-                        [
-                            nested::challenge::<C>(children[1].x())?,
-                            nested::challenge::<C>(children[1].y())?,
-                        ],
+                        nested::challenge::<C>(right.x())?,
+                        nested::challenge::<C>(right.y())?,
                     ],
-                )?
-            } else {
-                inputs
-            };
-            builder.nested_private = Some(
-                State::new(inputs)?
-                    .with_source_tag(self.nested_source.as_ref().map(|source| source.tag()))?,
-            );
-        }
+                ])
+            },
+            self.nested_source.as_ref(),
+        )?;
+        builder.set_native_private(native);
+        builder.set_nested_private(nested);
         self.prepare_private_phase_inner(
             Phase::BeforeW,
             PreparationChallenges::default(),
@@ -80,34 +60,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
         // Both fields' private polynomials exist before either input stage is
         // committed, so consumers get the actual opposite-field commitments.
-        let native_foreign = coordinates(
-            builder
-                .nested_private
-                .as_ref()
-                .map(|state| state.commitments())
-                .unwrap_or(&[]),
-        );
-        let nested_foreign = coordinates(
-            builder
-                .native_private
-                .as_ref()
-                .map(|state| state.commitments())
-                .unwrap_or(&[]),
-        );
-        if let Some(state) = &mut builder.native_private {
-            state.commit_inputs::<B, _, _>(native_foreign, C::host_generators(self.params), rng)?;
-        }
-        if let Some(state) = &mut builder.nested_private {
-            state.commit_inputs::<B, _, _>(
-                nested_foreign,
-                C::nested_generators(self.params),
-                rng,
-            )?;
-        }
+        let native_foreign = builder.nested_private().coordinates();
+        let nested_foreign = builder.native_private().coordinates();
+        builder.native_private_mut().commit_inputs::<B, _, _>(
+            native_foreign,
+            C::host_generators(self.params),
+            rng,
+        )?;
+        builder.nested_private_mut().commit_inputs::<B, _, _>(
+            nested_foreign,
+            C::nested_generators(self.params),
+            rng,
+        )?;
         Ok(())
     }
 
-    pub(crate) fn prepare_private_phase(
+    /// Supplies both sides' polynomials fixed at `phase`, a deadline after
+    /// $w$, under the challenges drawn before it.
+    pub(super) fn prepare_private_phase(
         &self,
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
@@ -123,143 +93,93 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
         children: Option<[&Proof<C, R>; 2]>,
     ) -> Result<()> {
-        if let Some(state) = &mut builder.native_private {
-            let polynomials = C::Profile::native_online_polynomials::<C::Base, R, B>(
-                &self.context,
-                phase,
-                state.early_values(),
-                challenges,
-            )?;
-            let polynomials = if let Some(mesh) = C::Profile::NATIVE_MESH {
-                let source = self.native_source.as_ref().ok_or_else(|| {
-                    Error::Initialization("missing captured source registry".into())
-                })?;
-                mesh.prepare(
-                    C::Profile::NATIVE_ONLINE,
-                    source,
-                    PhaseWitness {
-                        phase,
-                        inputs: state.early_values(),
-                        challenges,
-                        inherited: children.map(|[left, right]| {
-                            [&left.native_source_out[0], &right.native_source_out[0]]
-                        }),
-                        supplied: polynomials,
-                    },
-                )?
-            } else {
-                polynomials
-            };
-            state.supply::<B, _>(phase, polynomials, C::host_generators(self.params))?;
-            if phase == Phase::BeforeAlpha
-                && let Some(mesh) = C::Profile::NATIVE_MESH
-            {
-                builder.native_source_out = alloc::vec![state.polynomials()[mesh.outgoing].clone()];
-            }
-        }
-        if let Some(state) = &mut builder.nested_private {
-            let polynomials = C::Profile::nested_online_polynomials::<C::Base, R, B>(
-                &self.context,
-                phase,
-                state.early_values(),
-                nested_challenges::<C>(challenges)?,
-            )?;
-            let polynomials = if let Some(mesh) = C::Profile::NESTED_MESH {
-                let source = self.nested_source.as_ref().ok_or_else(|| {
-                    Error::Initialization("missing captured source registry".into())
-                })?;
-                mesh.prepare(
-                    C::Profile::NESTED_ONLINE,
-                    source,
-                    PhaseWitness {
-                        phase,
-                        inputs: state.early_values(),
-                        challenges: nested_challenges::<C>(challenges)?,
-                        inherited: children.map(|[left, right]| {
-                            [&left.nested_source_out[0], &right.nested_source_out[0]]
-                        }),
-                        supplied: polynomials,
-                    },
-                )?
-            } else {
-                polynomials
-            };
-            state.supply::<B, _>(phase, polynomials, C::nested_generators(self.params))?;
-            if phase == Phase::BeforeAlpha
-                && let Some(mesh) = C::Profile::NESTED_MESH
-            {
-                builder.nested_source_out = alloc::vec![state.polynomials()[mesh.outgoing].clone()];
-            }
-        }
+        let supplied = C::Profile::native_online_polynomials::<C::Base, R, B>(
+            &self.context,
+            phase,
+            builder.native_private().early_values(),
+            challenges,
+        )?;
+        builder.native_private_mut().prepare::<B, _>(
+            phase,
+            supplied,
+            challenges,
+            self.native_source.as_ref(),
+            children.map(|children| children.map(|child| &child.native_source_out[..])),
+            C::host_generators(self.params),
+        )?;
+
+        let challenges = nested_challenges::<C>(challenges)?;
+        let supplied = C::Profile::nested_online_polynomials::<C::Base, R, B>(
+            &self.context,
+            phase,
+            builder.nested_private().early_values(),
+            challenges,
+        )?;
+        builder.nested_private_mut().prepare::<B, _>(
+            phase,
+            supplied,
+            challenges,
+            self.nested_source.as_ref(),
+            children.map(|children| children.map(|child| &child.nested_source_out[..])),
+            C::nested_generators(self.params),
+        )?;
         Ok(())
     }
 
-    pub(crate) fn prepare_private_queries<RNG: CryptoRng>(
+    /// Takes the profile's witness query points and commits both sides' query
+    /// stages, after $x$ and before $\alpha$.
+    pub(super) fn prepare_private_queries<RNG: CryptoRng>(
         &self,
         challenges: PreparationChallenges<C::CircuitField>,
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        if let Some(state) = &mut builder.native_private {
-            let points = C::Profile::native_online_points::<C::Base, R, B>(
-                &self.context,
-                state.early_values(),
-                challenges,
-            )?;
-            state.commit_query::<B, _, _>(
-                points,
-                challenges,
-                C::host_generators(self.params),
-                rng,
-            )?;
-        }
-        if let Some(state) = &mut builder.nested_private {
-            let challenges = nested_challenges::<C>(challenges)?;
-            let points = C::Profile::nested_online_points::<C::Base, R, B>(
-                &self.context,
-                state.early_values(),
-                challenges,
-            )?;
-            state.commit_query::<B, _, _>(
-                points,
-                challenges,
-                C::nested_generators(self.params),
-                rng,
-            )?;
-        }
+        let points = C::Profile::native_online_points::<C::Base, R, B>(
+            &self.context,
+            builder.native_private().early_values(),
+            challenges,
+        )?;
+        builder.native_private_mut().commit_query::<B, _, _>(
+            points,
+            challenges,
+            C::host_generators(self.params),
+            rng,
+        )?;
+
+        let challenges = nested_challenges::<C>(challenges)?;
+        let points = C::Profile::nested_online_points::<C::Base, R, B>(
+            &self.context,
+            builder.nested_private().early_values(),
+            challenges,
+        )?;
+        builder.nested_private_mut().commit_query::<B, _, _>(
+            points,
+            challenges,
+            C::nested_generators(self.params),
+            rng,
+        )?;
         Ok(())
     }
 
-    pub(crate) fn prepare_private_evaluations<RNG: CryptoRng>(
+    /// Commits both sides' evaluation stages at `u`, before `pre_beta`.
+    pub(super) fn prepare_private_evaluations<RNG: CryptoRng>(
         &self,
         u: C::CircuitField,
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        if let Some(state) = &mut builder.native_private {
-            state.commit_eval::<B, _, _>(u, C::host_generators(self.params), rng)?;
-        }
-        if let Some(state) = &mut builder.nested_private {
-            state.commit_eval::<B, _, _>(
-                nested::challenge::<C>(u)?,
-                C::nested_generators(self.params),
-                rng,
-            )?;
-        }
+        builder.native_private_mut().commit_eval::<B, _, _>(
+            u,
+            C::host_generators(self.params),
+            rng,
+        )?;
+        builder.nested_private_mut().commit_eval::<B, _, _>(
+            nested::challenge::<C>(u)?,
+            C::nested_generators(self.params),
+            rng,
+        )?;
         Ok(())
     }
-}
-
-fn coordinates<C: Affine>(points: &[C]) -> Vec<C::Base> {
-    points
-        .iter()
-        .flat_map(|point| {
-            let (x, y) = point
-                .coordinates()
-                .unwrap_or((C::Base::ZERO, C::Base::ZERO));
-            [x, y]
-        })
-        .collect()
 }
 
 fn nested_challenges<C: ProfiledCycle>(

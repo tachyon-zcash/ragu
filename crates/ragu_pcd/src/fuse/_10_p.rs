@@ -106,12 +106,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
             .chain(batch.commitments(current, builder.online_fq_commitments()))
-            .chain(
-                builder
-                    .nested_private
-                    .iter()
-                    .flat_map(|state| state.commitments().iter().copied()),
-            )
+            .chain(builder.nested_private().commitments().iter().copied())
             .collect();
         assert_eq!(
             points.len(),
@@ -249,10 +244,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             }
             // Each distinct private polynomial enters the commitment fold
             // once, independently of how many openings the quotient checks.
-            if let Some(state) = &builder.native_private {
-                for (poly, &point) in state.polynomials().iter().zip(state.commitments()) {
-                    acc.acc(poly, point);
-                }
+            let private = builder.native_private();
+            for (poly, &point) in private.polynomials().iter().zip(private.commitments()) {
+                acc.acc(poly, point);
             }
         }
 
@@ -307,11 +301,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             poly.add_assign(evaluated);
         }
 
-        if let Some(state) = &builder.nested_private {
-            for evaluated in state.polynomials() {
-                poly.scale(beta);
-                poly.add_assign(evaluated);
-            }
+        for evaluated in builder.nested_private().polynomials() {
+            poly.scale(beta);
+            poly.add_assign(evaluated);
         }
         let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;

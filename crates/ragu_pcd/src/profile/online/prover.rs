@@ -1,4 +1,9 @@
 //! Ephemeral state shared by the fuse's private polynomial preparation phases.
+//!
+//! The fuse makes every call here for every profile. What a profile declares
+//! is decided on this side of the calls: a side without a batch supplies
+//! nothing, commits no stage and traces no helper, and a side without a mesh
+//! carries and prepares no source polynomial.
 
 use alloc::vec::Vec;
 
@@ -17,11 +22,20 @@ use udon::{curve::Affine, field::Field};
 use super::{
     Phase,
     batch::Challenges,
-    circuit,
+    circuit, extension,
+    mesh_preparation::PhaseWitness,
     prepared::{PreparationChallenges, Prepared},
-    stages::{EvalStage, InputStage, InputWitness, PolynomialsLen, QueryStage, QueryWitness, Side},
+    source::SourceRegistry,
+    stages::{
+        EvalStage, InputStage, InputWitness, PolynomialsLen, Present, QueryStage, QueryWitness,
+        Side,
+    },
 };
-use crate::profile::Profile;
+use crate::profile::{ExtensionRxs, Profile};
+
+/// A batch's fold, the helper's quotient and evaluation sums in that order:
+/// empty for a side without a batch.
+pub(crate) type Fold<F, P, S> = FixedVec<F, Present<P, S, 2>>;
 
 /// A step's private polynomials and stages. Only stage polynomials survive in
 /// the proof; the private polynomials are consumed by this step's PCS fold.
@@ -35,9 +49,34 @@ pub(crate) struct State<C: Affine, R: Rank, P: Profile, S: Side> {
     eval: Option<FixedVec<C::Scalar, PolynomialsLen<P, S>>>,
     stages: [Option<sparse::Polynomial<C::Scalar, R>>; 3],
     stage_commitments: [Option<C>; 3],
+    helper: Option<sparse::Polynomial<C::Scalar, R>>,
+    fold: Option<Fold<C::Scalar, P, S>>,
 }
 
 impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
+    /// Whether this side declares a batch, and so has stages and a helper.
+    fn active() -> bool {
+        !S::layout::<P>().is_empty()
+    }
+
+    /// Starts a step's batch from the inputs its profile supplied, with the
+    /// children's coordinates in the slots a mesh inherits them at and the
+    /// tag of the source registry setup captured.
+    ///
+    /// `children` is asked for the two children's $x$ and $y$ only when the
+    /// side declares a mesh.
+    pub(crate) fn begin(
+        inputs: Vec<C::Scalar>,
+        children: impl FnOnce() -> Result<[[C::Scalar; 2]; 2]>,
+        source: Option<&SourceRegistry<'_, C::Scalar>>,
+    ) -> Result<Self> {
+        let inputs = match S::mesh::<P>() {
+            Some(mesh) => mesh.carry_inputs(S::layout::<P>(), inputs, children()?)?,
+            None => inputs,
+        };
+        Self::new(inputs)?.with_source_tag(source.map(|source| source.tag()))
+    }
+
     pub(crate) fn new(inputs: Vec<C::Scalar>) -> Result<Self> {
         Ok(Self {
             source_tag: None,
@@ -49,6 +88,8 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             eval: None,
             stages: core::array::from_fn(|_| None),
             stage_commitments: [None; 3],
+            helper: None,
+            fold: None,
         })
     }
 
@@ -72,6 +113,37 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
                 .expect("preparation has not finished")
                 .inputs(),
         }
+    }
+
+    /// Supplies `phase` with the polynomials the profile supplied for it,
+    /// after a mesh fills the slots it owns from `source`, the challenges
+    /// drawn so far and, before $w$, the polynomials the children handed up.
+    pub(crate) fn prepare<B: Backend, G: FixedGenerators<C>>(
+        &mut self,
+        phase: Phase,
+        supplied: Vec<sparse::Polynomial<C::Scalar, R>>,
+        challenges: PreparationChallenges<C::Scalar>,
+        source: Option<&SourceRegistry<'_, C::Scalar>>,
+        inherited: Option<[&[sparse::Polynomial<C::Scalar, R>]; 2]>,
+        generators: &G,
+    ) -> Result<()> {
+        let polynomials = match S::mesh::<P>() {
+            Some(mesh) => mesh.prepare(
+                S::layout::<P>(),
+                source.ok_or_else(|| {
+                    Error::Initialization("missing captured source registry".into())
+                })?,
+                PhaseWitness {
+                    phase,
+                    inputs: self.early_values(),
+                    challenges,
+                    inherited: inherited.map(|[left, right]| [&left[0], &right[0]]),
+                    supplied,
+                },
+            )?,
+            None => supplied,
+        };
+        self.supply::<B, G>(phase, polynomials, generators)
     }
 
     /// Commits a phase once, preserving the profile's distinct-polynomial order.
@@ -114,6 +186,30 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         &self.polynomials
     }
 
+    /// The coordinates of the commitments so far, $x$ then $y$ in polynomial
+    /// order with the identity as two zeroes: what the other field's input
+    /// stage holds of them.
+    pub(crate) fn coordinates(&self) -> Vec<C::Base> {
+        self.commitments
+            .iter()
+            .flat_map(|point| {
+                let (x, y) = point
+                    .coordinates()
+                    .unwrap_or((C::Base::ZERO, C::Base::ZERO));
+                [x, y]
+            })
+            .collect()
+    }
+
+    /// The polynomial the step hands its parent: the mesh's outgoing
+    /// restriction, and nothing without a mesh.
+    pub(crate) fn source_out(&self) -> Vec<sparse::Polynomial<C::Scalar, R>> {
+        S::mesh::<P>()
+            .map(|mesh| self.polynomials[mesh.outgoing].clone())
+            .into_iter()
+            .collect()
+    }
+
     /// Commits the immutable user data and the opposite field's pre-w points.
     pub(crate) fn commit_inputs<B: Backend, G: FixedGenerators<C>, RNG: CryptoRng>(
         &mut self,
@@ -135,11 +231,16 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             values: FixedVec::new(self.early_values().to_vec())?,
             foreign: FixedVec::new(foreign)?,
         };
-        let rx = <InputStage<P, S> as StageExt<C::Scalar, R>>::rx(
-            C::Scalar::random(|bytes| rng.fill_bytes(bytes)),
-            &inputs,
+        self.set_stage::<B, G>(
+            0,
+            || {
+                <InputStage<P, S> as StageExt<C::Scalar, R>>::rx(
+                    C::Scalar::random(|bytes| rng.fill_bytes(bytes)),
+                    &inputs,
+                )
+            },
+            generators,
         )?;
-        self.set_stage::<B, G>(0, rx, generators);
         self.inputs = Some(inputs);
         Ok(())
     }
@@ -180,11 +281,16 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             points: FixedVec::new(queries.points)?,
             values: FixedVec::new(queries.values)?,
         };
-        let rx = <QueryStage<P, S> as StageExt<C::Scalar, R>>::rx(
-            C::Scalar::random(|bytes| rng.fill_bytes(bytes)),
-            &query,
+        self.set_stage::<B, G>(
+            1,
+            || {
+                <QueryStage<P, S> as StageExt<C::Scalar, R>>::rx(
+                    C::Scalar::random(|bytes| rng.fill_bytes(bytes)),
+                    &query,
+                )
+            },
+            generators,
         )?;
-        self.set_stage::<B, G>(1, rx, generators);
         self.query = Some(query);
         Ok(())
     }
@@ -202,23 +308,34 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             ));
         }
         let eval = FixedVec::try_from_fn(|i| Ok(B::sparse_eval(&self.polynomials[i], u)))?;
-        let rx = <EvalStage<P, S> as StageExt<C::Scalar, R>>::rx(
-            C::Scalar::random(|bytes| rng.fill_bytes(bytes)),
-            &eval,
+        self.set_stage::<B, G>(
+            2,
+            || {
+                <EvalStage<P, S> as StageExt<C::Scalar, R>>::rx(
+                    C::Scalar::random(|bytes| rng.fill_bytes(bytes)),
+                    &eval,
+                )
+            },
+            generators,
         )?;
-        self.set_stage::<B, G>(2, rx, generators);
         self.eval = Some(eval);
         Ok(())
     }
 
+    /// Commits stage `index` to the polynomial `rx` builds. A side without a
+    /// batch registers no stage, so it builds and commits none.
     fn set_stage<B: Backend, G: FixedGenerators<C>>(
         &mut self,
         index: usize,
-        rx: sparse::Polynomial<C::Scalar, R>,
+        rx: impl FnOnce() -> Result<sparse::Polynomial<C::Scalar, R>>,
         generators: &G,
-    ) {
-        self.stage_commitments[index] = Some(B::sparse_commit_to_affine(&rx, generators));
-        self.stages[index] = Some(rx);
+    ) -> Result<()> {
+        if Self::active() {
+            let rx = rx()?;
+            self.stage_commitments[index] = Some(B::sparse_commit_to_affine(&rx, generators));
+            self.stages[index] = Some(rx);
+        }
+        Ok(())
     }
 
     pub(crate) fn stage_commitment(&self, index: usize) -> C {
@@ -229,29 +346,107 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         self.query.as_ref().expect("private query committed")
     }
 
+    /// Appends the batch's quotient to the step's: `poly` moves up one power
+    /// of `alpha` per opening and the batch's quotients, in opening order,
+    /// take the powers below. A side without a batch returns `poly` as it is.
+    pub(crate) fn append_quotient(
+        &self,
+        mut poly: sparse::Polynomial<C::Scalar, R>,
+        alpha: C::Scalar,
+    ) -> Result<sparse::Polynomial<C::Scalar, R>> {
+        if !Self::active() {
+            return Ok(poly);
+        }
+        let layout = S::layout::<P>();
+        let query = self.query();
+        poly.scale(alpha.pow_u64(layout.openings.len() as u64));
+        // Opening descriptors can use w, y and x; u and beta are not sampled
+        // yet and are never read by quotient construction.
+        poly += &layout.quotient(
+            &self.polynomials,
+            self.early_values(),
+            &query.points,
+            &Challenges {
+                w: query.challenges[0],
+                y: query.challenges[1],
+                x: query.challenges[2],
+                alpha,
+                u: C::Scalar::ZERO,
+                beta: C::Scalar::ZERO,
+            },
+        )?;
+        Ok(poly)
+    }
+
+    /// The helper's witness over the stage witnesses already committed, which
+    /// the profile's consumers trace over too: `None` for a side without a
+    /// batch.
     pub(crate) fn witness(
         &self,
         challenges: Challenges<C::Scalar>,
-    ) -> circuit::Witness<'_, C::Scalar, P, S> {
-        circuit::Witness {
+    ) -> Option<circuit::Witness<'_, C::Scalar, P, S>> {
+        Self::active().then(|| circuit::Witness {
             inputs: self.inputs.as_ref().expect("private inputs committed"),
             query: self.query(),
             eval: self.eval.as_ref().expect("private evaluations committed"),
             challenges,
-        }
+        })
     }
 
-    /// Traces the shared helper with exactly the stage witnesses already committed.
+    /// Traces the helper with exactly the stage witnesses already committed
+    /// and assembles its polynomial at the registry index `index` gives the
+    /// helper's place among the extension's circuits, keeping the polynomial
+    /// for [`Self::extension_rxs`] and the fold for the proof. Returns the fold.
+    ///
+    /// A side without a batch traces nothing and its fold is empty.
     pub(crate) fn trace<RNG: CryptoRng>(
-        &self,
+        &mut self,
         challenges: Challenges<C::Scalar>,
         registry: &Registry<'_, C::Scalar, R>,
-        index: CircuitIndex,
+        index: impl FnOnce(u32) -> CircuitIndex,
         rng: &mut RNG,
-    ) -> Result<(sparse::Polynomial<C::Scalar, R>, [C::Scalar; 2])> {
-        let circuit = MultiStage::<C::Scalar, R, _>::new(self.circuit());
-        let (trace, sums) = circuit.trace(self.witness(challenges))?.into_parts();
-        Ok((registry.assemble(&trace, index, rng)?, sums))
+    ) -> Result<Fold<C::Scalar, P, S>> {
+        let sums = match (self.witness(challenges), extension::helper::<P, S>()) {
+            (Some(witness), Some(helper)) => {
+                let circuit = MultiStage::<C::Scalar, R, _>::new(self.circuit());
+                let (trace, sums) = circuit.trace(witness)?.into_parts();
+                let rx = registry.assemble(&trace, index(helper), rng)?;
+                self.helper = Some(rx);
+                sums.to_vec()
+            }
+            _ => Vec::new(),
+        };
+        self.set_fold(sums)
+    }
+
+    /// The fold alone, for the patcher's execution, which assembles no
+    /// polynomial.
+    #[cfg(feature = "unstable-fuzzing")]
+    pub(crate) fn trace_fold(
+        &mut self,
+        challenges: Challenges<C::Scalar>,
+    ) -> Result<Fold<C::Scalar, P, S>> {
+        let sums = match self.witness(challenges) {
+            Some(witness) => {
+                let circuit = MultiStage::<C::Scalar, R, _>::new(self.circuit());
+                circuit.trace(witness)?.into_aux().to_vec()
+            }
+            None => Vec::new(),
+        };
+        self.set_fold(sums)
+    }
+
+    fn set_fold(&mut self, sums: Vec<C::Scalar>) -> Result<Fold<C::Scalar, P, S>> {
+        let fold = Fold::<C::Scalar, P, S>::new(sums)?;
+        self.fold = Some(fold.clone());
+        Ok(fold)
+    }
+
+    /// The fold the helper's trace computed.
+    pub(crate) fn fold(&self) -> Result<&[C::Scalar]> {
+        self.fold
+            .as_deref()
+            .ok_or_else(|| Error::InvalidWitness("private helper has not been traced".into()))
     }
 
     /// Common targets read from the already committed stage witnesses.
@@ -262,10 +457,25 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         )
     }
 
-    pub(crate) fn take_stages(&mut self) -> Vec<sparse::Polynomial<C::Scalar, R>> {
-        self.stages
-            .iter_mut()
-            .map(|stage| stage.take().expect("all private stages committed"))
-            .collect()
+    /// Completes the polynomials the profile's prover filled its own
+    /// extension with into the registered extension's, in the order
+    /// [`extension::layout`] declares: the helper after the profile's
+    /// circuits, and the batch's stages before the profile's. A side without
+    /// a batch adds nothing.
+    pub(crate) fn extension_rxs(
+        &mut self,
+        mut rxs: ExtensionRxs<C::Scalar, R>,
+    ) -> Result<ExtensionRxs<C::Scalar, R>> {
+        if Self::active() {
+            let missing = || Error::InvalidWitness("private batch is out of phase".into());
+            rxs.circuits.push(self.helper.take().ok_or_else(missing)?);
+            let stages = self
+                .stages
+                .iter_mut()
+                .map(|stage| stage.take().ok_or_else(missing))
+                .collect::<Result<Vec<_>>>()?;
+            rxs.stages.splice(0..0, stages);
+        }
+        Ok(rxs)
     }
 }

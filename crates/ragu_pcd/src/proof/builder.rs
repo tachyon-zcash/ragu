@@ -15,8 +15,8 @@ use ragu_circuits::{
     registry::CircuitIndex,
     staging::StageExt,
 };
-use ragu_core::Result;
-use ragu_primitives::vec::FixedVec;
+use ragu_core::{Cycle, Result};
+use ragu_primitives::vec::{FixedVec, Len};
 use udon::{curve::Affine, field::Field};
 
 use super::{Cached, Proof};
@@ -25,7 +25,7 @@ use crate::{
     internal::{native::online, nested},
     profile::{
         Profile, ProfiledCycle,
-        online::stages::{Nested, Present},
+        online::stages::{Native, Nested, Present},
     },
 };
 
@@ -263,24 +263,17 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
     online_openings: Option<online::Queries<C::CircuitField>>,
 
-    /// Private polynomial preparation, discarded after this step's PCS fold.
-    pub(crate) native_private: Option<
-        crate::profile::online::prover::State<
-            C::HostCurve,
-            R,
-            C::Profile,
-            crate::profile::online::stages::Native,
-        >,
-    >,
-    pub(crate) nested_private:
-        Option<crate::profile::online::prover::State<C::NestedCurve, R, C::Profile, Nested>>,
+    // Private polynomial preparation, discarded after this step's PCS fold.
+    // The fuse begins both sides' for every profile; the synthetic bootstrap
+    // proof has neither.
+    native_private: Option<NativePrivate<C, R>>,
+    nested_private: Option<NestedPrivate<C, R>>,
 
+    // The synthetic bootstrap proof's outgoing source polynomials and
+    // explicit commitments, which it has no private prover state to take
+    // from. Ordinary proofs take theirs from their state.
     pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) native_online_fold: Option<[C::CircuitField; 2]>,
-    pub(crate) nested_online_fold: Option<[C::ScalarField; 2]>,
-    // Explicit commitments for the synthetic bootstrap proof, which has no
-    // private prover state. Ordinary proofs retain their state's actual points.
     pub(crate) dummy_native_online_commitments: Option<Vec<C::HostCurve>>,
     pub(crate) dummy_nested_online_commitments: Option<Vec<C::NestedCurve>>,
 
@@ -403,7 +396,43 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
 }
 
+/// A step's native private batch.
+pub(crate) type NativePrivate<C, R> = crate::profile::online::prover::State<
+    <C as Cycle>::HostCurve,
+    R,
+    <C as ProfiledCycle>::Profile,
+    Native,
+>;
+/// A step's nested private batch.
+pub(crate) type NestedPrivate<C, R> = crate::profile::online::prover::State<
+    <C as Cycle>::NestedCurve,
+    R,
+    <C as ProfiledCycle>::Profile,
+    Nested,
+>;
+
 impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
+    // A step's private batches. The fuse sets both for every profile; the
+    // bootstrap proof sets neither.
+    setter!(set_native_private, native_private, NativePrivate<C, R>);
+    setter!(set_nested_private, nested_private, NestedPrivate<C, R>);
+    ref_getter!(native_private, native_private, NativePrivate<C, R>);
+    ref_getter!(nested_private, nested_private, NestedPrivate<C, R>);
+
+    /// Mutably borrows the step's native private batch.
+    pub(crate) fn native_private_mut(&mut self) -> &mut NativePrivate<C, R> {
+        self.native_private
+            .as_mut()
+            .expect("native_private not set")
+    }
+
+    /// Mutably borrows the step's nested private batch.
+    pub(crate) fn nested_private_mut(&mut self) -> &mut NestedPrivate<C, R> {
+        self.nested_private
+            .as_mut()
+            .expect("nested_private not set")
+    }
+
     /// The two coordinates fixed in the native query or eval stage.
     pub(crate) fn nested_private_stage_coordinates(
         &self,
@@ -451,9 +480,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             PHASE,
         >,
     > {
-        if C::Profile::NATIVE_ONLINE.is_empty() {
-            return FixedVec::from_fn(|_| unreachable!("empty native declaration"));
-        }
         let points = if let Some(state) = &self.native_private {
             state.commitments()
         } else {
@@ -485,9 +511,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             PHASE,
         >,
     > {
-        if C::Profile::NESTED_ONLINE.is_empty() {
-            return FixedVec::from_fn(|_| unreachable!("empty nested declaration"));
-        }
         let points = if let Some(state) = &self.nested_private {
             state.commitments()
         } else {
@@ -582,8 +605,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             online_polynomials: None,
             native_source_out: Vec::new(),
             nested_source_out: Vec::new(),
-            native_online_fold: None,
-            nested_online_fold: None,
             dummy_nested_online_commitments: None,
             dummy_native_online_commitments: None,
             native_private: None,
@@ -1371,26 +1392,41 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             };
         }
 
+        // A step's private batches hold what the proof carries of them. The
+        // bootstrap proof has none: it carries the commitments and source
+        // polynomials it was given, a zero fold, and mesh claims that are one
+        // at the coordinates and zero at the shared values.
+        let native_online_fold = match &self.native_private {
+            Some(state) => state.fold()?.to_vec(),
+            None => alloc::vec![C::CircuitField::ZERO; Present::<C::Profile, Native, 2>::len()],
+        };
+        let nested_online_fold = match &self.nested_private {
+            Some(state) => state.fold()?.to_vec(),
+            None => alloc::vec![C::ScalarField::ZERO; Present::<C::Profile, Nested, 2>::len()],
+        };
+
         Ok(Proof {
-            nested_source_out: self.nested_source_out,
-            native_source_out: self.native_source_out,
+            nested_source_out: match &self.nested_private {
+                Some(state) => state.source_out(),
+                None => self.nested_source_out,
+            },
+            native_source_out: match &self.native_private {
+                Some(state) => state.source_out(),
+                None => self.native_source_out,
+            },
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),
             left_header: take!(left_header),
             right_header: take!(right_header),
-            native_online_commitments: if C::Profile::NATIVE_ONLINE.is_empty() {
-                Vec::new()
-            } else if let Some(state) = &self.native_private {
+            native_online_commitments: if let Some(state) = &self.native_private {
                 state.commitments().to_vec()
             } else {
                 self.dummy_native_online_commitments
                     .take()
                     .expect("bootstrap native private commitments must be set")
             },
-            nested_online_commitments: if C::Profile::NESTED_ONLINE.is_empty() {
-                Vec::new()
-            } else if let Some(state) = &self.nested_private {
+            nested_online_commitments: if let Some(state) = &self.nested_private {
                 state.commitments().to_vec()
             } else {
                 self.dummy_nested_online_commitments
@@ -1406,13 +1442,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             } else {
                 Vec::new()
             },
-            native_online_fold: if C::Profile::NATIVE_ONLINE.is_empty() {
-                Vec::new()
-            } else {
-                self.native_online_fold
-                    .expect("native private helper sums must be set")
-                    .to_vec()
-            },
+            native_online_fold,
             nested_mesh_claims: if let Some(state) = &self.nested_private {
                 state.mesh_claims()?
             } else if let Some(mesh) = C::Profile::NESTED_MESH {
@@ -1424,13 +1454,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             } else {
                 Vec::new()
             },
-            nested_online_fold: if C::Profile::NESTED_ONLINE.is_empty() {
-                Vec::new()
-            } else {
-                self.nested_online_fold
-                    .expect("private helper sums must be set")
-                    .to_vec()
-            },
+            nested_online_fold,
 
             native_application_rx: take!(native_application_rx),
             native_application_stage_rx: take!(native_application_stage_rx),

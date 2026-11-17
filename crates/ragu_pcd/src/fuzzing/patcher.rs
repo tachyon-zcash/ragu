@@ -73,7 +73,7 @@
 use alloc::{format, string::String, vec::Vec};
 
 use ragu_circuits::{
-    Circuit, CircuitExt,
+    Circuit,
     polynomials::Rank,
     staging::{MultiStage, Stage, StageExt, stage_wire_indices, wires_of},
 };
@@ -681,36 +681,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // Compute-v consumes the same helper sums as the real prover. Keep
         // the committed stages in state for capture; no extension rx needs
         // to be assembled for this visitor-only execution.
-        if let Some(state) = &builder.native_private {
-            let circuit = MultiStage::<C::CircuitField, R, _>::new(state.circuit());
-            builder.native_online_fold = Some(
-                circuit
-                    .trace(state.witness(Challenges {
-                        w: builder.w(),
-                        y: builder.y(),
-                        x: builder.x(),
-                        alpha: builder.alpha(),
-                        u: builder.u(),
-                        beta: builder.pre_beta(),
-                    }))?
-                    .into_aux(),
-            );
-        }
-        if let Some(state) = &builder.nested_private {
-            let circuit = MultiStage::<C::ScalarField, R, _>::new(state.circuit());
-            builder.nested_online_fold = Some(
-                circuit
-                    .trace(state.witness(Challenges {
-                        w: nested::challenge::<C>(builder.w())?,
-                        y: nested::challenge::<C>(builder.y())?,
-                        x: nested::challenge::<C>(builder.x())?,
-                        alpha: nested::challenge::<C>(builder.alpha())?,
-                        u: nested::challenge::<C>(builder.u())?,
-                        beta: nested::challenge::<C>(builder.pre_beta())?,
-                    }))?
-                    .into_aux(),
-            );
-        }
+        let challenges = Challenges {
+            w: builder.w(),
+            y: builder.y(),
+            x: builder.x(),
+            alpha: builder.alpha(),
+            u: builder.u(),
+            beta: builder.pre_beta(),
+        };
+        let native_private_sums = builder.native_private_mut().trace_fold(challenges)?;
+        let challenges = Challenges {
+            w: nested::challenge::<C>(builder.w())?,
+            y: nested::challenge::<C>(builder.y())?,
+            x: nested::challenge::<C>(builder.x())?,
+            alpha: nested::challenge::<C>(builder.alpha())?,
+            u: nested::challenge::<C>(builder.u())?,
+            beta: nested::challenge::<C>(builder.pre_beta())?,
+        };
+        let nested_private_sums = builder.nested_private_mut().trace_fold(challenges)?;
 
         // Rebuild the shared instance from the finished builder for each
         // circuit. Threading the accumulated coverage (as the prover does) is
@@ -956,12 +944,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new();
         let compute_v_witness = || {
             Ok(native::circuits::compute_v::Witness {
-                private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
-                    builder
-                        .native_online_fold
-                        .as_ref()
-                        .expect("private helper traced before compute-v")[i]
-                }),
+                private_sums: native_private_sums.clone(),
                 binding: &native_points.binding,
                 unified: make_unified(&builder)?,
                 preamble_witness: &preamble_witness,
@@ -1240,11 +1223,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         .concat();
         let nested_witness = || {
             Ok(nested::circuits::common::Witness {
-                private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
-                    builder
-                        .nested_online_fold
-                        .expect("private helper must be traced before capture")[i]
-                }),
+                private_sums: nested_private_sums.clone(),
                 instance: nested::unified::Instance {
                     c: builder.nested_c(),
                     v: builder.nested_v()?,

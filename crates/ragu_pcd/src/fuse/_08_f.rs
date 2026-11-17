@@ -39,7 +39,7 @@ use crate::{
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery, online},
         nested::{self, pcs},
     },
-    profile::{Profile, ProfiledCycle, online::batch::Challenges},
+    profile::ProfiledCycle,
     proof::ProofBuilder,
 };
 
@@ -244,25 +244,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
-        let mut poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
-        if let Some(state) = &builder.native_private {
-            let layout = C::Profile::NATIVE_ONLINE;
-            poly.scale(alpha.pow_u64(layout.openings.len() as u64));
-            let private = layout.quotient(
-                state.polynomials(),
-                state.early_values(),
-                &state.query().points,
-                &Challenges {
-                    w: state.query().challenges[0],
-                    y: state.query().challenges[1],
-                    x: state.query().challenges[2],
-                    alpha,
-                    u: C::CircuitField::ZERO,
-                    beta: C::CircuitField::ZERO,
-                },
-            )?;
-            poly += &private;
-        }
+        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = builder.native_private().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
@@ -284,27 +267,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
             .collect();
 
-        let mut poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
-        if let Some(state) = &builder.nested_private {
-            let layout = C::Profile::NESTED_ONLINE;
-            poly.scale(alpha.pow_u64(layout.openings.len() as u64));
-            // Opening descriptors can use w, y and x; u and beta are not
-            // sampled yet and are never read by quotient construction.
-            let private = layout.quotient(
-                state.polynomials(),
-                state.early_values(),
-                &state.query().points,
-                &Challenges {
-                    w: state.query().challenges[0],
-                    y: state.query().challenges[1],
-                    x: state.query().challenges[2],
-                    alpha,
-                    u: C::ScalarField::ZERO,
-                    beta: C::ScalarField::ZERO,
-                },
-            )?;
-            poly += &private;
-        }
+        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = builder.nested_private().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
         Ok(NestedF { poly, commitment })

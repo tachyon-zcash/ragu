@@ -323,11 +323,14 @@ fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()
         u: Fp::from(17),
         beta: Fp::from(3),
     };
-    let (_, sums) = state.trace(challenges, &registry, CircuitIndex::new(0), &mut rng)?;
-    assert_eq!(sums, [Fp::ZERO; 2]);
+    let sums = state.trace(challenges, &registry, |_| CircuitIndex::new(0), &mut rng)?;
+    assert_eq!(&*sums, &[Fp::ZERO; 2]);
+    assert_eq!(state.fold()?, &[Fp::ZERO; 2]);
     assert_eq!(state.polynomials().len(), 1);
     let commitments = core::array::from_fn::<_, 3, _>(|i| state.stage_commitment(i));
-    for (stage, commitment) in state.take_stages().iter().zip(commitments) {
+    let rxs = state.extension_rxs(crate::profile::ExtensionRxs::default())?;
+    assert_eq!(rxs.circuits.len(), 1);
+    for (stage, commitment) in rxs.stages.iter().zip(commitments) {
         assert_eq!(
             ReferenceBackend::sparse_commit_to_affine(stage, generators),
             commitment

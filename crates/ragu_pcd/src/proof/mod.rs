@@ -1326,20 +1326,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|p| B::sparse_commit_to_affine(p, C::nested_generators(self.params)))
             .collect();
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
-        // Bootstrap bypasses the synthetic child's circuit claims.
-        if !C::Profile::NATIVE_ONLINE.is_empty() {
-            builder.native_online_fold = Some([C::CircuitField::ZERO; 2]);
-            builder.dummy_native_online_commitments = Some(native_private_points.clone());
-            if let Some(mesh) = C::Profile::NATIVE_MESH {
-                builder.native_source_out = vec![native_private_polynomials[mesh.outgoing].clone()];
-            }
+        // Bootstrap bypasses the synthetic child's circuit claims, so it has
+        // no private batch: the builder takes its commitments and outgoing
+        // source polynomials from here.
+        builder.dummy_native_online_commitments = Some(native_private_points.clone());
+        if let Some(mesh) = C::Profile::NATIVE_MESH {
+            builder.native_source_out = vec![native_private_polynomials[mesh.outgoing].clone()];
         }
-        if !C::Profile::NESTED_ONLINE.is_empty() {
-            builder.nested_online_fold = Some([C::ScalarField::ZERO; 2]);
-            builder.dummy_nested_online_commitments = Some(nested_private_points.clone());
-            if let Some(mesh) = C::Profile::NESTED_MESH {
-                builder.nested_source_out = vec![nested_private_polynomials[mesh.outgoing].clone()];
-            }
+        builder.dummy_nested_online_commitments = Some(nested_private_points.clone());
+        if let Some(mesh) = C::Profile::NESTED_MESH {
+            builder.nested_source_out = vec![nested_private_polynomials[mesh.outgoing].clone()];
         }
 
         builder.set_circuit_id(CircuitIndex::new(0));
