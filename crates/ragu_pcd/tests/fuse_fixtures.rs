@@ -14,7 +14,8 @@
 //! shows even when its verdict does not. Tampered copies must be rejected,
 //! and at the check they should fail.
 //!
-//! Each scenario is one proof in a fixed tree of fuses, with four files:
+//! Each scenario is one proof in a fixed tree of fuses. Its honest proof has
+//! four files in `honest/`:
 //!
 //! - `<scenario>.rng-u64s-le`: the randomness the fuse drew, as little-endian
 //!   `u64` words. Checking replays it and fails if the prover asks for more
@@ -43,6 +44,23 @@
 //!   what its transcript absorbed and squeezed, with counts, and of each
 //!   curve's final IPA MSM, every scalar and proof-dependent base.
 //!
+//! Beside it, a random proof string has two files in `random/`:
+//!
+//! - `<scenario>.proof`: a string of the honest proof's shape and circuit
+//!   id, every other value drawn under a fixed seed (see [`fabricate`]), in
+//!   the same encoding. The verifier reads it through to the host curve's
+//!   MSM, which rejects it.
+//! - `<scenario>.fingerprint`: the verifier's run on it, as above, up to
+//!   that MSM. Nothing short of a forged host opening reaches the nested
+//!   side, so the random captures pin the host side alone.
+//!
+//! On an honest proof, every value the verifier recomputes from the
+//! headers, the challenges and the registry agrees with whatever the proof
+//! carries in its place, so a change in where the verifier sources one
+//! leaves the honest fingerprints unchanged. On a random string the two
+//! disagree, and the change mismatches. The random captures claim only
+//! that match and the rejection.
+//!
 //! After an intended change, regenerate with
 //!
 //! ```console
@@ -55,7 +73,8 @@
 //! Every scenario runs once per profile, the wallet's [`Standard`] and the
 //! [`Aggregator`]. Both currently produce identical proofs, so they check
 //! the same fixtures in `standard/`. Only the standard prover writes them
-//! when regenerating.
+//! when regenerating, the random strings fabricated over the honest proofs
+//! it has just written.
 //!
 //! [`Standard`]: crate::profile::Standard
 //!
@@ -74,10 +93,11 @@ use core::{convert::Infallible, marker::PhantomData};
 use std::{fs, path::PathBuf};
 
 use blake2b_simd::{Params, State};
-use ragu_backend::ReferenceBackend;
+use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     polynomials::{ProductionRank, Rank, sparse},
     registry::CircuitIndex,
+    staging::StageExt,
 };
 use ragu_core::{
     Cycle, Result,
@@ -94,19 +114,27 @@ use ragu_primitives::{
 use rand::{TryCryptoRng, TryRng};
 use udon::{curve::Affine, field::Field};
 
-use super::Proof;
+use super::{Proof, bridge_alpha_power};
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd,
+    Application, ApplicationBuilder, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
     compress::{
         Messages,
         batch::Batch,
         instance::{Child, Instance, NestedChild},
-        revdot::{Reduction, fold::Fold},
+        revdot::{
+            Reduction, claims,
+            fold::{Derived, Fold, Layout},
+            nested_position,
+        },
     },
     header::{Header, Padding, Suffix},
-    internal::native::online,
+    internal::{
+        ky,
+        native::{self, online},
+        nested::{self, stages as nested_stages},
+    },
     ipa::{
-        IpaCycle, IpaProof,
+        CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript,
         fingerprint::{self, Event},
     },
     profile::{Aggregator, Profile, Profiled, ProfiledCycle},
@@ -326,6 +354,31 @@ impl Tape {
             .collect()
     }
 
+    /// A field element, uniform up to the reduction of 64 bytes.
+    fn field<F: Field>(&mut self) -> F {
+        F::random(|bytes| self.fill(bytes))
+    }
+
+    /// A point, as a random multiple of the generator.
+    fn point<P: Affine>(&mut self) -> P {
+        P::from(P::generator() * self.field::<P::Scalar>())
+    }
+
+    fn fields<F: Field>(&mut self, len: usize) -> Vec<F> {
+        (0..len).map(|_| self.field()).collect()
+    }
+
+    fn points<P: Affine>(&mut self, len: usize) -> Vec<P> {
+        (0..len).map(|_| self.point()).collect()
+    }
+
+    fn fill(&mut self, dst: &mut [u8]) {
+        for chunk in dst.chunks_mut(8) {
+            let word = self.word().to_le_bytes();
+            chunk.copy_from_slice(&word[..chunk.len()]);
+        }
+    }
+
     fn word(&mut self) -> u64 {
         if self.cursor == self.words.len() {
             let state = self.generator.as_mut().unwrap_or_else(|| {
@@ -357,10 +410,7 @@ impl TryRng for Tape {
     }
 
     fn try_fill_bytes(&mut self, dst: &mut [u8]) -> core::result::Result<(), Infallible> {
-        for chunk in dst.chunks_mut(8) {
-            let word = self.word().to_le_bytes();
-            chunk.copy_from_slice(&word[..chunk.len()]);
-        }
+        self.fill(dst);
         Ok(())
     }
 }
@@ -685,10 +735,12 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.field("pre_beta", pre_beta);
 }
 
-/// Encoding of the header data a `.proof` file carries ahead of the proof.
+/// Encoding of the header data a `.proof` file carries ahead of the proof,
+/// and the random data a random string carries.
 trait FixtureHeader: Header<Fp> {
     fn write(data: &Self::Data, out: &mut Writer);
     fn read(cursor: &mut Cursor<'_>) -> Option<Self::Data>;
+    fn random(tape: &mut Tape) -> Self::Data;
 }
 
 impl FixtureHeader for () {
@@ -697,6 +749,8 @@ impl FixtureHeader for () {
     fn read(_: &mut Cursor<'_>) -> Option<()> {
         Some(())
     }
+
+    fn random(_: &mut Tape) {}
 }
 
 impl FixtureHeader for Value {
@@ -706,6 +760,10 @@ impl FixtureHeader for Value {
 
     fn read(cursor: &mut Cursor<'_>) -> Option<Fp> {
         cursor.field()
+    }
+
+    fn random(tape: &mut Tape) -> Fp {
+        tape.field()
     }
 }
 
@@ -1043,6 +1101,24 @@ fn writing() -> bool {
     std::env::var_os("RAGU_FIXTURES").is_some_and(|mode| mode == "write")
 }
 
+/// Which kind of proof a fixture file belongs to, and so its subdirectory.
+#[derive(Clone, Copy)]
+enum Family {
+    /// The proofs the prover reproduces and the verifier accepts.
+    Honest,
+    /// The random strings the verifier reads to its host MSM and rejects.
+    Random,
+}
+
+impl Family {
+    fn dir(self) -> &'static str {
+        match self {
+            Self::Honest => "honest",
+            Self::Random => "random",
+        }
+    }
+}
+
 /// The shared fixture directory and the profile label failures carry.
 struct Fixtures {
     dir: PathBuf,
@@ -1056,21 +1132,26 @@ impl Fixtures {
         // snapshots guards that agreement without storing duplicate files.
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fuse/standard");
         if writing() {
-            fs::create_dir_all(&dir).expect("the fixture directory can be created");
+            for family in [Family::Honest, Family::Random] {
+                fs::create_dir_all(dir.join(family.dir()))
+                    .expect("the fixture directory can be created");
+            }
         }
         Self { dir, profile }
     }
 
-    fn label(&self, name: &str) -> String {
-        format!("{}/{name}", self.profile)
+    fn label(&self, family: Family, name: &str) -> String {
+        format!("{}/{}/{name}", self.profile, family.dir())
     }
 
-    fn path(&self, name: &str, extension: &str) -> PathBuf {
-        self.dir.join(format!("{name}.{extension}"))
+    fn path(&self, family: Family, name: &str, extension: &str) -> PathBuf {
+        self.dir
+            .join(family.dir())
+            .join(format!("{name}.{extension}"))
     }
 
-    fn read(&self, name: &str, extension: &str) -> Vec<u8> {
-        let path = self.path(name, extension);
+    fn read(&self, family: Family, name: &str, extension: &str) -> Vec<u8> {
+        let path = self.path(family, name, extension);
         fs::read(&path).unwrap_or_else(|error| {
             panic!(
                 "cannot read fixture {}: {error}\nregenerate with\n    {REGENERATE}",
@@ -1079,8 +1160,9 @@ impl Fixtures {
         })
     }
 
-    fn write(&self, name: &str, extension: &str, bytes: &[u8]) {
-        fs::write(self.path(name, extension), bytes).expect("the fixture directory is writable");
+    fn write(&self, family: Family, name: &str, extension: &str, bytes: &[u8]) {
+        fs::write(self.path(family, name, extension), bytes)
+            .expect("the fixture directory is writable");
     }
 
     /// The tape a scenario replays, or a fresh one when regenerating.
@@ -1088,7 +1170,7 @@ impl Fixtures {
         if writing() {
             Tape::record(seed(tag))
         } else {
-            Tape::replay(&self.read(name, "rng-u64s-le"))
+            Tape::replay(&self.read(Family::Honest, name, "rng-u64s-le"))
         }
     }
 }
@@ -1117,7 +1199,8 @@ fn compare_lines(label: &str, actual: &Lines, committed: &Lines) -> Vec<String> 
 /// Checks one scenario after its fuse ran under `tape`: the tape is exactly
 /// consumed, the uncompressed verifier accepts the proof, compressing it
 /// under the fixed seed reproduces the committed `.proof` bytes, and the
-/// digests match. When regenerating, writes the three files instead.
+/// digests match. When regenerating, writes the honest files and the random
+/// string fabricated over the honest proof instead.
 fn check<C: FixtureCycle, H: FixtureHeader>(
     app: &App<C>,
     fixtures: &Fixtures,
@@ -1127,7 +1210,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     tape: &Tape,
     failures: &mut Vec<String>,
 ) {
-    let label = fixtures.label(name);
+    let label = fixtures.label(Family::Honest, name);
     let mut lines = Lines::default();
     proof_lines(pcd.proof(), &mut lines);
 
@@ -1154,11 +1237,18 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     wire_lines(pcd.proof(), compressed.proof(), &mut lines);
 
     if writing() {
-        fixtures.write(name, "rng-u64s-le", &tape.bytes());
-        fixtures.write(name, "proof", &proof.0);
-        fixtures.write(name, "digests", lines.render().as_bytes());
+        use Family::{Honest, Random};
+        fixtures.write(Honest, name, "rng-u64s-le", &tape.bytes());
+        fixtures.write(Honest, name, "proof", &proof.0);
+        fixtures.write(Honest, name, "digests", lines.render().as_bytes());
         let fingerprint = accepted_fingerprint::<C, H>(app, &label, &proof.0);
-        fixtures.write(name, "fingerprint", fingerprint.render().as_bytes());
+        fixtures.write(Honest, name, "fingerprint", fingerprint.render().as_bytes());
+
+        let label = fixtures.label(Random, name);
+        let random = fabricate::<C, H>(app, &label, &proof.0, tag);
+        fixtures.write(Random, name, "proof", &random);
+        let fingerprint = rejected_fingerprint::<C, H>(app, &label, &random);
+        fixtures.write(Random, name, "fingerprint", fingerprint.render().as_bytes());
         return;
     }
 
@@ -1168,10 +1258,11 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
             tape.unused()
         ));
     }
-    if fixtures.read(name, "proof") != proof.0 {
+    if fixtures.read(Family::Honest, name, "proof") != proof.0 {
         failures.push(format!("{label}: the compressed proof changed"));
     }
-    let committed = Lines::parse(&String::from_utf8(fixtures.read(name, "digests")).unwrap());
+    let committed =
+        Lines::parse(&String::from_utf8(fixtures.read(Family::Honest, name, "digests")).unwrap());
     failures.extend(compare_lines(&label, &lines, &committed));
 }
 
@@ -1454,6 +1545,392 @@ fn accepted_fingerprint<C: FixtureCycle, H: FixtureHeader>(
     fingerprint_lines(&events)
 }
 
+/// The fingerprint of the verifier rejecting a random `.proof` file at the
+/// host MSM, for writing it beside the string.
+fn rejected_fingerprint<C: FixtureCycle, H: FixtureHeader>(
+    app: &App<C>,
+    label: &str,
+    bytes: &[u8],
+) -> Lines {
+    let (data, proof) = decode_fixture::<C, H>(bytes).expect("the fabricated proof decodes");
+    let (verdict, events) = verifier_run::<C, H>(app, data, proof);
+    assert!(
+        matches!(verdict, Ok(false)),
+        "{label}: the verifier did not reject the random proof"
+    );
+    assert_eq!(
+        msm_verdicts(&events),
+        [false],
+        "{label}: the random proof was not rejected at the host MSM"
+    );
+    fingerprint_lines(&events)
+}
+
+/// The verifier the fabricator borrows the recomputations of.
+type Checker = <ReferenceBackend as SelectableBackend>::Verifier;
+
+/// The random proof string fabricated over the honest `.proof` file `bytes`.
+///
+/// Keeps the honest proof's shape and circuit id, and draws everything else,
+/// header data included, from the harness's generator under a seed fixed by
+/// `tag`. It then plants the values the verifier recomputes or solves for
+/// before its host MSM, so that the verifier reads the string through to
+/// that MSM: the challenge-stage and `ab` bridge commitments, which
+/// [`stage_commitments`] rebuilds and [`Instance::stages_match`] then
+/// accepts, and the host reduction's $q(r)$, which [`host_q_at_r`] solves
+/// for. A draw whose challenges do not lift, or whose `pre_beta` falls
+/// outside the endoscalar range, is replaced by the next.
+///
+/// Every point is a multiple of the generator by a drawn scalar, so its
+/// discrete log is known to the fabricator. That is harmless: the strings
+/// are points of the verifier's input space, not forgeries, and each is
+/// checked to be rejected.
+fn fabricate<C: FixtureCycle, H: FixtureHeader>(
+    app: &App<C>,
+    label: &str,
+    bytes: &[u8],
+    tag: u64,
+) -> Vec<u8> {
+    let (_, shape) = decode_fixture::<C, H>(bytes).expect("the honest proof decodes");
+    let mut tape = Tape::record(seed(0x200 | tag));
+    let stage = |index| nested_position::<C::Profile>(nested::RxComponent::Rx(index));
+    let (challenge_stage, ab_bridge) = (
+        stage(nested::RxIndex::ChallengeStage),
+        stage(nested::RxIndex::BridgeAB),
+    );
+
+    let (data, mut proof) = (0..16)
+        .find_map(|_| {
+            let data = H::random(&mut tape);
+            let mut proof = random_compressed(&shape, &mut tape);
+            // The `ab` bridge stage is independent of the challenges, which
+            // absorb its commitment; the challenge stage depends on them.
+            // Planting both twice settles them.
+            for _ in 0..3 {
+                let mut transcript = CycleTranscript::<C, Checker>::new(app.params, RAGU_TAG)
+                    .expect("the transcript starts");
+                let challenges = proof
+                    .instance
+                    .challenges(&mut transcript)
+                    .expect("the challenges are derived")?;
+                let generators = C::nested_generators(app.params);
+                let [challenge, ab] = stage_commitments(&proof.instance, &challenges, generators)?;
+                let nested = &mut proof.instance.nested;
+                if nested[challenge_stage] == challenge && nested[ab_bridge] == ab {
+                    assert!(
+                        proof
+                            .instance
+                            .stages_match::<R, Checker, HEADER_SIZE>(&challenges, generators)
+                            .expect("the stages are committed"),
+                        "{label}: the verifier rejects the rebuilt stages"
+                    );
+                    return Some((data, proof));
+                }
+                nested[challenge_stage] = challenge;
+                nested[ab_bridge] = ab;
+            }
+            panic!("{label}: the recomputed stages did not settle")
+        })
+        .unwrap_or_else(|| panic!("{label}: no draw had usable challenges"));
+
+    proof.native.reduction.q_at_r = host_q_at_r::<C, H>(app, &data, &proof);
+    let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof.clone());
+    assert!(
+        matches!(verdict, Ok(false)) && msm_verdicts(&events) == [false],
+        "{label}: the planted q(r) does not carry the random proof to the host MSM"
+    );
+
+    let mut out = Writer::default();
+    H::write(&data, &mut out);
+    encode_compressed(&proof, &mut out);
+    out.0
+}
+
+/// The challenge-stage and `ab` bridge commitments
+/// [`Instance::stages_match`] expects of `instance` under `challenges`,
+/// rebuilt from the stage builders it uses, or `None` if a challenge does not
+/// lift to the nested field. [`fabricate`] checks the planted values against
+/// `stages_match` itself, so this copy cannot drift from the verifier's
+/// check unnoticed.
+fn stage_commitments<C: FixtureCycle>(
+    instance: &Instance<C>,
+    challenges: &nested::Challenges<Fp>,
+    generators: &C::NestedGenerators,
+) -> Option<[C::NestedCurve; 2]> {
+    let lifts = challenges.lifts::<C>().ok()?;
+    let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
+    let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
+        C::ScalarField::ZERO,
+        &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
+            challenge_lifts.try_into().expect("NUM challenge lifts"),
+            &instance.left_header,
+            &instance.right_header,
+            beta_lift[0],
+        ),
+    )
+    .expect("the challenge stage is built");
+    let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
+        bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB),
+        &nested_stages::ab::Witness {
+            a: instance.native_commitment(native::RxComponent::AbA),
+            b: instance.native_commitment(native::RxComponent::AbB),
+            native_points_ab: instance
+                .native_commitment(native::RxComponent::Rx(native::RxIndex::PointsAb)),
+        },
+    )
+    .expect("the ab bridge stage is built");
+    Some(
+        Checker::sparse_commit_batch([&challenge_stage, &ab_bridge], generators)
+            .map(C::NestedCurve::from),
+    )
+}
+
+/// The $q(r)$ that satisfies `proof`'s host reduction check when it carries
+/// `data`. The check's combined side does not depend on $q(r)$ and its split
+/// side is linear in it, so this replays the verifier's host transcript up to
+/// $r$, evaluates the combined side as the verifier does, and solves.
+/// [`fabricate`] runs the verifier on the result, so this copy cannot drift
+/// from the check unnoticed.
+fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
+    app: &App<C>,
+    data: &H::Data,
+    proof: &CompressedProof<C>,
+) -> Fp {
+    let (instance, reduction) = (&proof.instance, &proof.native.reduction);
+    let registry = &app.native_registry;
+
+    let mut fuse = CycleTranscript::<C, Checker>::new(app.params, RAGU_TAG)
+        .expect("the fuse transcript starts");
+    let challenges = instance
+        .challenges(&mut fuse)
+        .expect("the challenges are derived")
+        .expect("the planted challenges lift");
+    let output_header =
+        ky::output_header::<C, H, HEADER_SIZE>(data.clone()).expect("the output header encodes");
+
+    // The statement, then each curve's sampled challenges, as the verifier
+    // absorbs and squeezes them: the nested ones advance the shared sponge.
+    let mut transcript =
+        CycleTranscript::<C, Checker>::new(app.params, IPA_TAG).expect("the transcript starts");
+    instance
+        .absorb(&mut transcript)
+        .expect("the instance is absorbed");
+    for &element in &output_header {
+        transcript
+            .host()
+            .write_scalar(element)
+            .expect("the header is absorbed");
+    }
+    let [_w, y, z, sigma] = squeeze(&mut transcript.host());
+    let [_, _, _, _] = squeeze(&mut transcript.nested());
+
+    let masked = instance
+        .native_bindings::<R, Checker, HEADER_SIZE>(&challenges, registry, sigma)
+        .expect("the bindings are computed");
+    let shapes = claims::native_shapes::<C::Profile, _>(instance.circuit_id, z, &masked)
+        .expect("the claims are shaped");
+    let mut host = transcript.host();
+    let weights = reduction.fold.replay(&mut host).expect("the fold replays");
+    let [rho] = squeeze(&mut host);
+    host.write_point(reduction.p).expect("p is absorbed");
+    host.write_point(reduction.q).expect("q is absorbed");
+    let [r] = squeeze(&mut host);
+
+    // Each claim's public parts of a and b at r, by kind, under its weights.
+    let restriction =
+        |circuit: CircuitIndex| Checker::registry_wxy(registry, circuit.omega_j(), r, y);
+    let (mut a_public, mut b_public) = (Fp::ZERO, Fp::ZERO);
+    for (i, shape) in shapes.iter().enumerate() {
+        let (a, b) = match shape.kind {
+            claims::Kind::Raw => (Fp::ZERO, Fp::ZERO),
+            claims::Kind::Circuit(circuit) => (Fp::ZERO, restriction(circuit) + R::tz(z).eval(r)),
+            claims::Kind::Bonding(circuit) => (Fp::ZERO, restriction(circuit)),
+            claims::Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<R>(r)),
+        };
+        a_public += weights.a(i) * a;
+        b_public += weights.b(i) * b;
+    }
+
+    let layout = Layout::new(shapes.len());
+    let opened = |which: Derived| reduction.openings[which as usize];
+    let evaluated = [
+        (
+            opened(Derived::A) + a_public,
+            opened(Derived::B) + opened(Derived::Dilated) + b_public,
+        ),
+        (opened(Derived::Inner), weights.inner::<R>(&layout).eval(r)),
+        (opened(Derived::Outer), weights.outer::<R>(&layout).eval(r)),
+    ];
+    let (mut combined, mut weight) = (Fp::ZERO, Fp::ONE);
+    for (a, b) in evaluated {
+        combined += weight * a * b;
+        weight *= rho;
+    }
+    let n = R::num_coeffs() as u64;
+    (combined - r.pow_u64(n - 1) * reduction.p_at_inverse_r)
+        * r.pow_u64(n).invert().expect("r is nonzero")
+}
+
+/// `N` challenges squeezed in order.
+fn squeeze<P: Affine, const N: usize>(transcript: &mut impl IpaTranscript<P>) -> [P::Scalar; N] {
+    core::array::from_fn(|_| {
+        transcript
+            .squeeze_challenge()
+            .expect("the challenge is squeezed")
+    })
+}
+
+/// A proof with `shape`'s circuit id and lengths and every other value drawn
+/// from `tape`. The struct literals are exhaustive, so a field added to the
+/// proof does not compile here until the fabricator draws it.
+fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> CompressedProof<C> {
+    let lengths = &shape.instance;
+    let instance = Instance {
+        circuit_id: lengths.circuit_id,
+        left_header: tape.fields(lengths.left_header.len()),
+        right_header: tape.fields(lengths.right_header.len()),
+        online: core::array::from_fn(|_| online::Query {
+            x: tape.field(),
+            y: tape.field(),
+        }),
+        native: tape.points(lengths.native.len()),
+        native_registry_xy: tape.point(),
+        native_p: tape.point(),
+        online_commitments: core::array::from_fn(|_| tape.point()),
+        nested: tape.points(lengths.nested.len()),
+        nested_registry_xy: tape.point(),
+        nested_p: tape.point(),
+        nested_challenges_partial: tape.point(),
+        bridge_alpha: tape.field(),
+        c: tape.field(),
+        v: tape.field(),
+        nested_c: tape.field(),
+        nested_v: tape.field(),
+        left: Child {
+            x: tape.field(),
+            y: tape.field(),
+            id: tape.field(),
+        },
+        right: Child {
+            x: tape.field(),
+            y: tape.field(),
+            id: tape.field(),
+        },
+        a_at_u: tape.field(),
+        b_at_u: tape.field(),
+        nested_left: NestedChild {
+            x: tape.field(),
+            y: tape.field(),
+        },
+        nested_right: NestedChild {
+            x: tape.field(),
+            y: tape.field(),
+        },
+        nested_a_at_u: tape.field(),
+        nested_b_at_u: tape.field(),
+    };
+    CompressedProof {
+        instance,
+        native: random_messages(&shape.native, tape),
+        nested: random_messages(&shape.nested, tape),
+    }
+}
+
+fn random_messages<P: Affine>(shape: &Messages<P>, tape: &mut Tape) -> Messages<P> {
+    Messages {
+        reduction: Reduction {
+            fold: Fold {
+                inner: tape.point(),
+                outer: tape.point(),
+                inner_epsilon: tape.field(),
+                outer_epsilon: tape.field(),
+            },
+            p: tape.point(),
+            q: tape.point(),
+            openings: tape.fields(shape.reduction.openings.len()),
+            p_at_inverse_r: tape.field(),
+            q_at_r: tape.field(),
+        },
+        batch: Batch {
+            f: tape.point(),
+            evaluations: tape.fields(shape.batch.evaluations.len()),
+        },
+        opening: IpaProof {
+            s_commitment: tape.point(),
+            rounds: (0..shape.opening.rounds.len())
+                .map(|_| (tape.point(), tape.point()))
+                .collect(),
+            c: tape.field(),
+        },
+    }
+}
+
+/// Decodes a committed `.proof` file, checking it re-encodes to the same
+/// bytes.
+fn committed_proof<C: FixtureCycle, H: FixtureHeader>(
+    fixtures: &Fixtures,
+    family: Family,
+    name: &str,
+    failures: &mut Vec<String>,
+) -> Option<(H::Data, CompressedProof<C>)> {
+    let label = fixtures.label(family, name);
+    let bytes = fixtures.read(family, name, "proof");
+    let Some((data, proof)) = decode_fixture::<C, H>(&bytes) else {
+        failures.push(format!("{label}: the committed proof does not decode"));
+        return None;
+    };
+    let mut again = Writer::default();
+    H::write(&data, &mut again);
+    encode_compressed(&proof, &mut again);
+    if again.0 != bytes {
+        failures.push(format!("{label}: re-encoding changed the bytes"));
+    }
+    Some((data, proof))
+}
+
+/// The committed fingerprint of `family`'s `name` against a run's events.
+fn compare_fingerprint(
+    fixtures: &Fixtures,
+    family: Family,
+    name: &str,
+    events: &[Event],
+) -> Vec<String> {
+    let committed =
+        Lines::parse(&String::from_utf8(fixtures.read(family, name, "fingerprint")).unwrap());
+    compare_lines(
+        &fixtures.label(family, name),
+        &fingerprint_lines(events),
+        &committed,
+    )
+}
+
+/// The committed random string decodes and re-encodes to the same bytes,
+/// the verifier rejects it at the host MSM, and its run matches the
+/// committed `.fingerprint`.
+fn verify_random<C: FixtureCycle, H: FixtureHeader>(
+    app: &App<C>,
+    fixtures: &Fixtures,
+    name: &str,
+    failures: &mut Vec<String>,
+) {
+    let label = fixtures.label(Family::Random, name);
+    let Some((data, proof)) = committed_proof::<C, H>(fixtures, Family::Random, name, failures)
+    else {
+        return;
+    };
+    let (verdict, events) = verifier_run::<C, H>(app, data, proof);
+    if !matches!(verdict, Ok(false)) {
+        failures.push(format!(
+            "{label}: the verifier did not reject the random proof"
+        ));
+    } else if msm_verdicts(&events) != [false] {
+        failures.push(format!(
+            "{label}: the random proof was not rejected at the host MSM"
+        ));
+    }
+    failures.extend(compare_fingerprint(fixtures, Family::Random, name, &events));
+}
+
 /// A committed `.proof` decodes and re-encodes to the same bytes; the
 /// verifier accepts it without re-proving, and its run matches the
 /// committed `.fingerprint`; and each tampered copy is rejected where it
@@ -1464,19 +1941,11 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
     name: &str,
     failures: &mut Vec<String>,
 ) {
-    let label = fixtures.label(name);
-    let bytes = fixtures.read(name, "proof");
-
-    let Some((data, proof)) = decode_fixture::<C, H>(&bytes) else {
-        failures.push(format!("{label}: the committed proof does not decode"));
+    let label = fixtures.label(Family::Honest, name);
+    let Some((data, proof)) = committed_proof::<C, H>(fixtures, Family::Honest, name, failures)
+    else {
         return;
     };
-    let mut again = Writer::default();
-    H::write(&data, &mut again);
-    encode_compressed(&proof, &mut again);
-    if again.0 != bytes {
-        failures.push(format!("{label}: re-encoding changed the bytes"));
-    }
 
     let (verdict, events) = verifier_run::<C, H>(app, data.clone(), proof.clone());
     if !matches!(verdict, Ok(true)) {
@@ -1484,12 +1953,7 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
             "{label}: the verifier rejected the committed compressed proof"
         ));
     }
-    let committed = Lines::parse(&String::from_utf8(fixtures.read(name, "fingerprint")).unwrap());
-    failures.extend(compare_lines(
-        &label,
-        &fingerprint_lines(&events),
-        &committed,
-    ));
+    failures.extend(compare_fingerprint(fixtures, Family::Honest, name, &events));
 
     // Tampered copies. Each is rejected, and those that reach the final
     // MSMs are rejected there: a wrong host-curve IPA scalar fails the host
@@ -1529,7 +1993,8 @@ fn verify_fixture<C: FixtureCycle, H: FixtureHeader>(
 }
 
 /// The verifier accepts every committed compressed proof of `C`'s profile,
-/// as its committed fingerprint records, and rejects tampered copies.
+/// as its committed fingerprint records, and rejects tampered copies and the
+/// random strings, the latter at the host MSM as theirs record.
 fn verifier_fixtures<C: FixtureCycle>() {
     if writing() {
         // The prover test is rewriting the files, fingerprints included.
@@ -1539,8 +2004,10 @@ fn verifier_fixtures<C: FixtureCycle>() {
     let app = C::app();
     let mut failures = Vec::new();
     verify_fixture::<C, ()>(&app, &fixtures, BOOTSTRAP, &mut failures);
+    verify_random::<C, ()>(&app, &fixtures, BOOTSTRAP, &mut failures);
     for name in [SEED_A, UNIT_LEFT, MERGE_AB, MERGE_ABCD, RERANDOMIZE] {
         verify_fixture::<C, Value>(&app, &fixtures, name, &mut failures);
+        verify_random::<C, Value>(&app, &fixtures, name, &mut failures);
     }
     assert!(
         failures.is_empty(),
