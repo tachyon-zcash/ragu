@@ -981,7 +981,7 @@ impl<'ast> Visit<'ast> for FunctionBodyPass<'_> {
                     }
                     Expr::Match(expression) => {
                         let witness_dependent_guard = expression.arms.iter().any(|arm| {
-                            arm.guard.as_ref().is_some_and(|(_, guard)| {
+                            arm_guard(arm).is_some_and(|guard| {
                                 is_witness_observable(
                                     guard,
                                     self.captured_mutations,
@@ -1141,7 +1141,7 @@ impl<'ast> Visit<'ast> for FunctionBodyPass<'_> {
 
     fn visit_expr_match(&mut self, expression: &'ast ExprMatch) {
         let witness_dependent_guard = expression.arms.iter().any(|arm| {
-            arm.guard.as_ref().is_some_and(|(_, guard)| {
+            arm_guard(arm).is_some_and(|guard| {
                 is_witness_observable(guard, self.captured_mutations, self.witness_variables)
             })
         });
@@ -1392,6 +1392,14 @@ fn driver_operation_shape_block(block: &Block, driver_variables: &BTreeSet<Strin
         block: block.clone(),
     });
     driver_operation_shape(&wrapper, driver_variables)
+}
+
+/// The `if` guard of a match arm, which syn 3 carries on the arm's pattern.
+fn arm_guard(arm: &syn::Arm) -> Option<&Expr> {
+    match &arm.pat {
+        Pat::Guard(guarded) => Some(&guarded.guard),
+        _ => None,
+    }
 }
 
 fn is_witness_observable(
