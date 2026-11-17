@@ -100,12 +100,12 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
 /// Witness data for the query stage.
 pub struct Witness<C: ProfiledCycle> {
     /// Coordinates of the nested auxiliaries fixed before alpha.
-    pub private_auxiliaries: ragu_primitives::vec::FixedVec<
+    pub online_auxiliaries: ragu_primitives::vec::FixedVec<
         C::CircuitField,
         crate::profile::online::stages::PhaseCoordinatesLen<C::Profile, Nested, 3>,
     >,
     /// Coordinates of the private nested query-stage commitment.
-    pub private_stage:
+    pub online_stage:
         ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>>,
     /// Pre-computed registry_xy evaluations at each internal circuit's omega^j.
     pub fixed_registry: InternalCircuitValues<C::CircuitField, C::Profile>,
@@ -294,13 +294,13 @@ impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
 pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
     /// Nested auxiliary coordinates fixed before alpha, bound to the walk.
     #[ragu(gadget)]
-    pub private_auxiliaries: ragu_primitives::vec::FixedVec<
+    pub online_auxiliaries: ragu_primitives::vec::FixedVec<
         Element<'dr, D>,
         crate::profile::online::stages::PhaseCoordinatesLen<P, Nested, 3>,
     >,
     /// The private query commitment fixed at this transcript boundary.
     #[ragu(gadget)]
-    pub private_stage: ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<P, Nested, 2>>,
+    pub online_stage: ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<P, Nested, 2>>,
     /// Fixed registry evaluations at each internal circuit's omega^j.
     #[ragu(gadget)]
     pub fixed_registry: InternalCircuitValues<Element<'dr, D>, P>,
@@ -362,15 +362,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
         let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
         let online = online::alloc_queries(dr, allocator, witness.as_ref().map(|w| &w.online))?;
         Ok(Output {
-            private_auxiliaries: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+            online_auxiliaries: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
                 Element::alloc(
                     dr,
                     allocator,
-                    witness.as_ref().map(|w| w.private_auxiliaries[i]),
+                    witness.as_ref().map(|w| w.online_auxiliaries[i]),
                 )
             })?,
-            private_stage: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
-                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_stage[i]))
+            online_stage: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.online_stage[i]))
             })?,
             fixed_registry,
             registry_wxy,

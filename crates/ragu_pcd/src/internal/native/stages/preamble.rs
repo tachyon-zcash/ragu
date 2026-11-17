@@ -112,7 +112,7 @@ pub struct ProofInputs<
         >,
     >,
     #[ragu(gadget)]
-    pub private_sums: FixedVec<
+    pub online_fold: FixedVec<
         Element<'dr, D>,
         crate::profile::online::stages::Present<
             C::Profile,
@@ -122,7 +122,7 @@ pub struct ProofInputs<
     >,
     /// The child's common targets for its actual nested private walk points.
     #[ragu(gadget)]
-    pub private_points: FixedVec<
+    pub online_points: FixedVec<
         ragu_primitives::CompletePoint<'dr, D, C::NestedCurve>,
         crate::profile::online::stages::PolynomialsLen<
             C::Profile,
@@ -197,17 +197,17 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         &self,
         dr: &mut D,
         y: &Element<'dr, D>,
-        private_stages: &[Point<'dr, D, C::NestedCurve>],
+        online_stages: &[Point<'dr, D, C::NestedCurve>],
     ) -> Result<Element<'dr, D>> {
         let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
         self.online.write(dr, &mut ky)?;
-        self.private_sums.write(dr, &mut ky)?;
-        for point in private_stages {
+        self.online_fold.write(dr, &mut ky)?;
+        for point in online_stages {
             point.write(dr, &mut ky)?;
         }
         for i in C::Profile::NESTED_ONLINE.phase_range(crate::profile::online::Phase::BeforeAlpha) {
-            self.private_points[i].write(dr, &mut ky)?;
+            self.online_points[i].write(dr, &mut ky)?;
         }
         if let Some(mesh) = C::Profile::NATIVE_MESH {
             for value in mesh.inherited_values(&self.mesh) {
@@ -216,7 +216,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         }
         if let Some(mesh) = C::Profile::NESTED_MESH {
             for inherited in mesh.inherited {
-                self.private_points[inherited.polynomial].write(dr, &mut ky)?;
+                self.online_points[inherited.polynomial].write(dr, &mut ky)?;
             }
         }
         Element::zero(dr).write(dr, &mut ky)?;
@@ -224,7 +224,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
     }
 
     /// The private helper shares the core's sums and the walk's point exports.
-    pub fn private_helper_ky(
+    pub fn online_helper_ky(
         &self,
         dr: &mut D,
         y: &Element<'dr, D>,
@@ -243,13 +243,13 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         ] {
             value.write(dr, &mut target)?;
         }
-        self.private_sums.write(dr, &mut target)?;
+        self.online_fold.write(dr, &mut target)?;
         let count = C::Profile::NESTED_ONLINE
             .polynomials
             .iter()
             .take_while(|&&phase| phase == crate::profile::online::Phase::BeforeW)
             .count();
-        for point in self.private_points.iter().take(count) {
+        for point in self.online_points.iter().take(count) {
             point.write(dr, &mut target)?;
         }
         self.mesh.write(dr, &mut target)?;
@@ -269,7 +269,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         }
         let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
-        self.private_points.write(dr, &mut ky)?;
+        self.online_points.write(dr, &mut ky)?;
         Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)
     }
@@ -378,10 +378,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             mesh: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.native_mesh_claims[i]))
             })?,
-            private_sums: FixedVec::try_from_fn(|i| {
+            online_fold: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.native_online_fold[i]))
             })?,
-            private_points: FixedVec::try_from_fn(|i| {
+            online_points: FixedVec::try_from_fn(|i| {
                 ragu_primitives::CompletePoint::alloc(
                     dr,
                     proof.as_ref().map(|p| p.nested_online_commitments[i]),
@@ -408,8 +408,8 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         online: DriverValue<D, &online::Queries<D::F>>,
         circuit_id: DriverValue<D, D::F>,
         unified: DriverValue<D, &unified::Instance<C>>,
-        private_points: DriverValue<D, &[C::NestedCurve]>,
-        private_sums: DriverValue<D, &[D::F]>,
+        online_points: DriverValue<D, &[C::NestedCurve]>,
+        online_fold: DriverValue<D, &[D::F]>,
         mesh: DriverValue<D, &[D::F]>,
     ) -> Result<Self> {
         fn alloc_header<'dr, D: Driver<'dr>, const N: usize>(
@@ -436,11 +436,11 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             },
             output_header: alloc_header(dr, output_header)?,
             online: online::alloc_queries(dr, &mut (), online)?,
-            private_points: FixedVec::try_from_fn(|i| {
-                ragu_primitives::CompletePoint::alloc(dr, private_points.as_ref().map(|p| p[i]))
+            online_points: FixedVec::try_from_fn(|i| {
+                ragu_primitives::CompletePoint::alloc(dr, online_points.as_ref().map(|p| p[i]))
             })?,
-            private_sums: FixedVec::try_from_fn(|i| {
-                Element::alloc(dr, &mut (), private_sums.as_ref().map(|s| s[i]))
+            online_fold: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), online_fold.as_ref().map(|s| s[i]))
             })?,
             mesh: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), mesh.as_ref().map(|p| p[i]))

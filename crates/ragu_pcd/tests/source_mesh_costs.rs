@@ -185,7 +185,7 @@ fn census<P: Profile, Rk: Rank>(label: &str) -> Result<()> {
         ]
     };
     std::println!(
-        "V6-CENSUS {label}: rank={} header=2 endos={}/{} rx={}/{} walks={}/{}:{}/{} shape_polynomials={} fold_claims={}/{} core={}/{}:{}/{} helpers={}/{}:{}/{} max_walk_gates={}/{} private_stages={:?}/{:?} nested_query_eval={}/{} proof_bytes={} compressed_bytes={} private_polys={}/{} private_queries={}/{} mesh_values={}/{}",
+        "V6-CENSUS {label}: rank={} header=2 endos={}/{} rx={}/{} walks={}/{}:{}/{} shape_polynomials={} fold_claims={}/{} core={}/{}:{}/{} helpers={}/{}:{}/{} max_walk_gates={}/{} online_stages={:?}/{:?} nested_query_eval={}/{} proof_bytes={} compressed_bytes={} private_polys={}/{} private_queries={}/{} mesh_values={}/{}",
         Rk::RANK,
         P::NATIVE_ENDOSCALINGS_PER_STEP,
         P::NESTED_ENDOSCALINGS_PER_STEP,

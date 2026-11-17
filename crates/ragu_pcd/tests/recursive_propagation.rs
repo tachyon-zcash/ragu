@@ -1269,7 +1269,7 @@ mod timing {
                     let bridge = ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
                         bridge_alpha_power(changed.bridge_alpha, nested::RxIndex::BridgeAB),
                         &ab::Witness {
-                            private_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                            online_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
                                 unreachable!("Standard has no private auxiliaries")
                             }),
                             a: changed.native_commitment(native::RxComponent::AbA),

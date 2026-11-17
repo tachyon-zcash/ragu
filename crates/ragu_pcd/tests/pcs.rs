@@ -389,7 +389,7 @@ mod folding {
         fn compute_v_ky(&self) -> impl Iterator<Item = Fq> {
             self.unified_ky()
         }
-        fn private_helper_ky(&self) -> impl Iterator<Item = Fq> {
+        fn online_helper_ky(&self) -> impl Iterator<Item = Fq> {
             core::iter::empty()
         }
 

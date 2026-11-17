@@ -37,7 +37,7 @@ use crate::{
 pub struct Witness<'a, C: Affine, P: Profile> {
     pub instance: unified::Instance<C>,
     /// The private helper's two sums, exported by compute-v to the same targets.
-    pub private_sums: FixedVec<C::Base, Present<P, Nested, 2>>,
+    pub online_fold: FixedVec<C::Base, Present<P, Nested, 2>>,
     pub endoscalar: Uendo,
     pub bridge_hash: C,
     pub points: &'a PointsWitness<C, P>,

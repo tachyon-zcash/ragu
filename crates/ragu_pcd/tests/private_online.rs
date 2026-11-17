@@ -38,8 +38,8 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct PrivateBatch;
-impl Profile for PrivateBatch {
+struct OnlineBatch;
+impl Profile for OnlineBatch {
     const NAME: &'static str = "private-nested-batch";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 1;
@@ -182,7 +182,7 @@ impl Profile for PrivateBatch {
     }
 }
 
-type C = Profiled<Pasta, PrivateBatch>;
+type C = Profiled<Pasta, OnlineBatch>;
 type Rk = R<14>;
 type App = Application<'static, C, Rk, 2>;
 
@@ -288,11 +288,11 @@ fn nested_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
 /// It checks the known formula at the authenticated w and at an early input.
 struct Consumer;
 impl<F: Field, Rk: Rank> MultiStageCircuit<F, Rk> for Consumer {
-    type Last = QueryStage<PrivateBatch, Nested>;
+    type Last = QueryStage<OnlineBatch, Nested>;
     type Instance<'source> = ();
     type Witness<'source> = (
-        &'source InputWitness<F, PrivateBatch, Nested>,
-        &'source QueryWitness<F, PrivateBatch, Nested>,
+        &'source InputWitness<F, OnlineBatch, Nested>,
+        &'source QueryWitness<F, OnlineBatch, Nested>,
     );
     type Output = Kind![F; ()];
     type Aux<'source> = ();
@@ -310,8 +310,8 @@ impl<F: Field, Rk: Rank> MultiStageCircuit<F, Rk> for Consumer {
         builder: StageBuilder<'a, 'dr, D, Rk, (), Self::Last>,
         witness: DriverValue<D, Self::Witness<'source>>,
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
-        let (inputs, builder) = builder.add_stage::<InputStage<PrivateBatch, Nested>>()?;
-        let (query, builder) = builder.add_stage::<QueryStage<PrivateBatch, Nested>>()?;
+        let (inputs, builder) = builder.add_stage::<InputStage<OnlineBatch, Nested>>()?;
+        let (query, builder) = builder.add_stage::<QueryStage<OnlineBatch, Nested>>()?;
         let dr = builder.finish();
         let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.0))?;
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.1))?;
@@ -374,7 +374,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
     const NESTED_EXTENSION: usize = 0;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
-    const NATIVE_ONLINE: Layout = PrivateBatch::NESTED_ONLINE;
+    const NATIVE_ONLINE: Layout = OnlineBatch::NESTED_ONLINE;
     const NESTED_ONLINE: Layout = if WITH_NESTED {
         Self::NATIVE_ONLINE
     } else {

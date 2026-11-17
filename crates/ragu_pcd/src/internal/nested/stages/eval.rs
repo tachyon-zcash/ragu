@@ -141,7 +141,7 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
     /// This boundary's native private stage commitment.
-    pub private_stage: FixedVec<
+    pub online_stage: FixedVec<
         C,
         crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
     >,
@@ -225,7 +225,7 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
-    pub private_stage: FixedVec<
+    pub online_stage: FixedVec<
         Point<'dr, D, C>,
         crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
     >,
@@ -279,8 +279,8 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         };
 
         Ok(Output {
-            private_stage: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.private_stage[i]))
+            online_stage: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))
             })?,
             native_eval,
             nested,

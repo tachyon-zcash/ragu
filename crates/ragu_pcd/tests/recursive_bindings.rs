@@ -821,7 +821,7 @@ mod claim_values {
         let bridge = nested::stages::ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
             crate::proof::bridge_alpha_power(proof.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested::stages::ab::Witness {
-                private_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                online_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
                     unreachable!("Standard has no private auxiliaries")
                 }),
                 a: proof.native_a_commitment.0,

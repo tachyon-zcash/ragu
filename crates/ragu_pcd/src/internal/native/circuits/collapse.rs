@@ -206,7 +206,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // The compute_v bridge k(y) values, over the same unified and online
         // wires: what ties the openings each child's batch verified to the
         // openings its application circuit's instance will be held to.
-        let (left_private, right_private) = if C::Profile::NESTED_ONLINE.is_empty() {
+        let (left_online, right_online) = if C::Profile::NESTED_ONLINE.is_empty() {
             (&[][..], &[][..])
         } else {
             let binding = binding
@@ -214,8 +214,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
                 .expect("private stage targets load binding");
             (&binding.left.extension[..3], &binding.right.extension[..3])
         };
-        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y, left_private)?;
-        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y, right_private)?;
+        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y, left_online)?;
+        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y, right_online)?;
         left_compute_v_ky.enforce_equal(dr, &outer_error.left.compute_v_bridge)?;
         right_compute_v_ky.enforce_equal(dr, &outer_error.right.compute_v_bridge)?;
 
@@ -261,8 +261,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             preamble
                 .right
                 .bind_endoscalar_ky(dr, &y, &outer_error.right.unified)?;
-        let left_private_helper = preamble.left.private_helper_ky(dr, &y)?;
-        let right_private_helper = preamble.right.private_helper_ky(dr, &y)?;
+        let left_online_helper = preamble.left.online_helper_ky(dr, &y)?;
+        let right_online_helper = preamble.right.online_helper_ky(dr, &y)?;
         let ky = TwoProofKySource::new(
             dr,
             preamble.left.unified.c.clone(),
@@ -275,8 +275,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             right_binding,
             left_bind_endoscalar,
             right_bind_endoscalar,
-            left_private_helper,
-            right_private_helper,
+            left_online_helper,
+            right_online_helper,
         );
         let mut ky = ky_values::<C::Profile, _>(&ky);
 

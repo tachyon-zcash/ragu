@@ -114,17 +114,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     preamble.right.unified_ky_values(dr, &y)?;
 
                 let stages = |proof: &crate::Proof<C, R>| {
-                    ky::nested_private_stages::<C::Profile, _>(|index| {
+                    ky::nested_online_stages::<C::Profile, _>(|index| {
                         proof.nested_rx_commitment(index)
                     })
                 };
                 let left_stages = preamble_witness.as_ref().map(|w| stages(w.left.proof));
                 let right_stages = preamble_witness.as_ref().map(|w| stages(w.right.proof));
-                let left_stages = ky::nested_private_stage_points::<_, _, C::Profile>(
+                let left_stages = ky::nested_online_stage_points::<_, _, C::Profile>(
                     dr,
                     left_stages.as_ref().map(|p| p.as_slice()),
                 )?;
-                let right_stages = ky::nested_private_stage_points::<_, _, C::Profile>(
+                let right_stages = ky::nested_online_stage_points::<_, _, C::Profile>(
                     dr,
                     right_stages.as_ref().map(|p| p.as_slice()),
                 )?;
@@ -169,8 +169,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     preamble
                         .right
                         .bind_endoscalar_ky(dr, &y, &right_ky.unified)?;
-                let left_private_helper = preamble.left.private_helper_ky(dr, &y)?;
-                let right_private_helper = preamble.right.private_helper_ky(dr, &y)?;
+                let left_online_helper = preamble.left.online_helper_ky(dr, &y)?;
+                let right_online_helper = preamble.right.online_helper_ky(dr, &y)?;
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
                     preamble.left.unified.c.clone(),
@@ -183,8 +183,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_binding,
                     left_bind_endoscalar,
                     right_bind_endoscalar,
-                    left_private_helper,
-                    right_private_helper,
+                    left_online_helper,
+                    right_online_helper,
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
@@ -375,30 +375,29 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 )?;
 
                 // Build k(y) values in nested claim order.
-                let (left_compute_v, left_private_helper) =
-                    ky::nested_private_ky::<_, _, C::Profile>(
-                        dr,
-                        &nested_y,
-                        &preamble.left.nested_instance(),
-                        &left_unified,
-                        &preamble.left.private,
-                        &ky::native_private_stages::<C::Profile, _>(|index| {
-                            preamble.left[index].clone()
-                        }),
-                        &preamble.left.private_points,
-                        &preamble.left.mesh,
-                    )?;
-                let (right_compute_v, right_private_helper) =
-                    ky::nested_private_ky::<_, _, C::Profile>(
+                let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, C::Profile>(
+                    dr,
+                    &nested_y,
+                    &preamble.left.nested_instance(),
+                    &left_unified,
+                    &preamble.left.online_values,
+                    &ky::native_online_stages::<C::Profile, _>(|index| {
+                        preamble.left[index].clone()
+                    }),
+                    &preamble.left.online_points,
+                    &preamble.left.mesh,
+                )?;
+                let (right_compute_v, right_online_helper) =
+                    ky::nested_online_ky::<_, _, C::Profile>(
                         dr,
                         &nested_y,
                         &preamble.right.nested_instance(),
                         &right_unified,
-                        &preamble.right.private,
-                        &ky::native_private_stages::<C::Profile, _>(|index| {
+                        &preamble.right.online_values,
+                        &ky::native_online_stages::<C::Profile, _>(|index| {
                             preamble.right[index].clone()
                         }),
-                        &preamble.right.private_points,
+                        &preamble.right.online_points,
                         &preamble.right.mesh,
                     )?;
                 let ky_source = nested::claims::TwoProofKySource::new(
@@ -409,8 +408,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_unified,
                     left_compute_v,
                     right_compute_v,
-                    left_private_helper,
-                    right_private_helper,
+                    left_online_helper,
+                    right_online_helper,
                     left_binding,
                     right_binding,
                 );

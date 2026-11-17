@@ -365,15 +365,15 @@ impl<C: ProfiledCycle> Instance<C> {
             let (x, y) = point
                 .coordinates()
                 .unwrap_or((C::ScalarField::ZERO, C::ScalarField::ZERO));
-            transcript.write_private_scalar(x)?;
-            transcript.write_private_scalar(y)?;
+            transcript.write_online_scalar(x)?;
+            transcript.write_online_scalar(y)?;
         }
         for &sum in self
             .nested_mesh_claims
             .iter()
             .chain(&self.nested_online_fold)
         {
-            transcript.write_private_scalar(sum)?;
+            transcript.write_online_scalar(sum)?;
         }
         Ok(())
     }
@@ -516,7 +516,7 @@ impl<C: ProfiledCycle> Instance<C> {
         let nested_bound = ky::native_bound::<C::Profile, _>(|index| {
             self.nested_commitment(nested::RxComponent::Rx(index))
         });
-        let nested_private_stages = ky::nested_private_stages::<C::Profile, _>(|index| {
+        let nested_online_stages = ky::nested_online_stages::<C::Profile, _>(|index| {
             self.nested_commitment(nested::RxComponent::Rx(index))
         });
         let native = NativeKy {
@@ -530,7 +530,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,
-                    nested_private_stages: &nested_private_stages,
+                    nested_online_stages: &nested_online_stages,
                     nested_online_commitments: &self.nested_online_commitments,
                     native_online_fold: &self.native_online_fold,
                     native_mesh_claims: &self.native_mesh_claims,
@@ -541,10 +541,10 @@ impl<C: ProfiledCycle> Instance<C> {
         let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
             self.native_commitment(native::RxComponent::Rx(index))
         });
-        let (compute_v, private_helper) = ky::nested_private_ky_of::<C>(
+        let (compute_v, online_helper) = ky::nested_online_ky_of::<C>(
             &self.nested_unified(challenges)?,
-            &ky::nested_private_values::<C>(challenges, &self.nested_online_fold)?,
-            &ky::native_private_stages::<C::Profile, _>(|index| {
+            &ky::nested_online_values::<C>(challenges, &self.nested_online_fold)?,
+            &ky::native_online_stages::<C::Profile, _>(|index| {
                 self.native_commitment(native::RxComponent::Rx(index))
             }),
             &self.native_online_commitments,
@@ -553,7 +553,7 @@ impl<C: ProfiledCycle> Instance<C> {
         )?;
         let nested = NestedKy {
             compute_v,
-            private_helper,
+            online_helper,
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
             binding: ky::binding_ky_of(&native_bound, nested_y)?,
@@ -586,7 +586,7 @@ impl<C: ProfiledCycle> Instance<C> {
         let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested_stages::ab::Witness {
-                private_points: crate::profile::online::stages::phase_points::<
+                online_points: crate::profile::online::stages::phase_points::<
                     C::Profile,
                     crate::profile::online::stages::Native,
                     2,

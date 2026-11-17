@@ -78,13 +78,13 @@ use crate::{
         Profile,
         online::{
             Phase,
-            stages::{Nested, Nested as PrivateNested, PhaseLen, Present, phase_points},
+            stages::{Nested, Nested as OnlineNested, PhaseLen, Present, phase_points},
         },
     },
 };
 
 /// Point representation selected by the nested private batch declaration.
-pub(crate) type PrivatePoint<'dr, D, C, P> = BatchPoint<'dr, D, C, P, PrivateNested>;
+pub(crate) type OnlinePoint<'dr, D, C, P> = BatchPoint<'dr, D, C, P, OnlineNested>;
 
 /// Length type for the walk's inputs, the initial point aside.
 pub type NumInputs<P> = InputsLen<NumPoints<P>>;
@@ -165,7 +165,7 @@ pub enum InputSource {
     /// The step's own online Fq commitment, by index, in [`PreambleStage`].
     OnlineFq(usize),
     /// A private auxiliary in its later commitment phase, at a phase-local index.
-    Private(Phase, usize),
+    Auxiliary(Phase, usize),
 }
 
 /// The source of the walk's `i`-th input (the initial $F_n$ aside), in the
@@ -245,7 +245,7 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
             } else {
                 let index = index - P::ONLINE_FQ_POLYS;
                 let phase = P::NESTED_ONLINE.polynomials[index];
-                InputSource::Private(phase, index - P::NESTED_ONLINE.phase_range(phase).start)
+                InputSource::Auxiliary(phase, index - P::NESTED_ONLINE.phase_range(phase).start)
             }
         }
         _ => panic!("input {i} is past the walk"),
@@ -271,7 +271,7 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct BindingWitness<C: Affine, P: Profile> {
     /// This step's private nested input stage, committed before w.
-    pub private_input: FixedVec<C, Present<P, Nested, 1>>,
+    pub online_input: FixedVec<C, Present<P, Nested, 1>>,
     pub left: ChildBindingWitness<C, P>,
     pub right: ChildBindingWitness<C, P>,
 }
@@ -288,7 +288,7 @@ pub struct PreambleWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct RegistryWxWitness<C: Affine, P: Profile> {
     /// Private nested auxiliaries fixed at this boundary.
-    pub private_points: FixedVec<C, PhaseLen<P, Nested, 1>>,
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 1>>,
     pub registry_wx0: C,
     pub registry_wx1: C,
 }
@@ -297,7 +297,7 @@ pub struct RegistryWxWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct AbWitness<C: Affine, P: Profile> {
     /// Private nested auxiliaries fixed at this boundary.
-    pub private_points: FixedVec<C, PhaseLen<P, Nested, 2>>,
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 2>>,
     pub registry_wy: C,
     pub a: C,
     pub b: C,
@@ -307,7 +307,7 @@ pub struct AbWitness<C: Affine, P: Profile> {
 #[derive(Clone)]
 pub struct FWitness<C: Affine, P: Profile> {
     /// Private nested auxiliaries fixed at this boundary.
-    pub private_points: FixedVec<C, PhaseLen<P, Nested, 3>>,
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 3>>,
     pub registry_xy: C,
     pub f: C,
 }
@@ -354,7 +354,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
     online_fq: &[C],
-    private_input: FixedVec<C, Present<P, Nested, 1>>,
+    online_input: FixedVec<C, Present<P, Nested, 1>>,
 ) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
@@ -383,7 +383,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     points.extend(rest(right));
     (
         BindingWitness {
-            private_input,
+            online_input,
             left: bound(left),
             right: bound(right),
         },
@@ -411,7 +411,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     /// # Panics
     ///
     /// Panics if `points.len() != NumPoints::<P>::len()`.
-    pub fn from_walk(points: &[C], private_input: FixedVec<C, Present<P, Nested, 1>>) -> Self {
+    pub fn from_walk(points: &[C], online_input: FixedVec<C, Present<P, Nested, 1>>) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         let current = &points[1 + 2 * num_child_points..];
@@ -419,20 +419,20 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
             &current[NUM_CURRENT_POINTS..NUM_CURRENT_POINTS + FqEarlyPointsLen::<P>::len()],
-            private_input,
+            online_input,
         );
         Self {
             binding,
             preamble,
             registry_wx: RegistryWxWitness {
-                private_points: phase_points::<P, Nested, 1, _>(
+                online_points: phase_points::<P, Nested, 1, _>(
                     &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
                 ),
                 registry_wx0: current[0],
                 registry_wx1: current[1],
             },
             ab: AbWitness {
-                private_points: phase_points::<P, Nested, 2, _>(
+                online_points: phase_points::<P, Nested, 2, _>(
                     &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
                 ),
                 registry_wy: current[2],
@@ -440,7 +440,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
                 b: current[4],
             },
             f: FWitness {
-                private_points: phase_points::<P, Nested, 3, _>(
+                online_points: phase_points::<P, Nested, 3, _>(
                     &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
                 ),
                 registry_xy: current[5],
@@ -471,11 +471,11 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::AbB => self.ab.b,
             InputSource::RegistryXy => self.f.registry_xy,
             InputSource::OnlineFq(j) => self.preamble.online_fq[j],
-            InputSource::Private(phase, j) => match phase {
+            InputSource::Auxiliary(phase, j) => match phase {
                 Phase::BeforeW => unreachable!("early points use OnlineFq"),
-                Phase::BeforeY => self.registry_wx.private_points[j],
-                Phase::BeforeX => self.ab.private_points[j],
-                Phase::BeforeAlpha => self.f.private_points[j],
+                Phase::BeforeY => self.registry_wx.online_points[j],
+                Phase::BeforeX => self.ab.online_points[j],
+                Phase::BeforeAlpha => self.f.online_points[j],
             },
         }
     }
@@ -533,7 +533,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
 pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// The nested private input-stage commitment absorbed before w.
     #[ragu(gadget)]
-    pub private_input: FixedVec<Point<'dr, D, C>, Present<P, Nested, 1>>,
+    pub online_input: FixedVec<Point<'dr, D, C>, Present<P, Nested, 1>>,
     #[ragu(gadget)]
     pub left: ChildBinding<'dr, D, C, P>,
     #[ragu(gadget)]
@@ -547,7 +547,7 @@ pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
     #[ragu(gadget)]
-    pub online_fq: FixedVec<PrivatePoint<'dr, D, C, P>, FqEarlyPointsLen<P>>,
+    pub online_fq: FixedVec<OnlinePoint<'dr, D, C, P>, FqEarlyPointsLen<P>>,
 }
 
 /// Output gadget of [`RegistryWxStage`].
@@ -555,7 +555,7 @@ pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Private nested auxiliaries fixed at this boundary.
     #[ragu(gadget)]
-    pub private_points: FixedVec<PrivatePoint<'dr, D, C, P>, PhaseLen<P, Nested, 1>>,
+    pub online_points: FixedVec<OnlinePoint<'dr, D, C, P>, PhaseLen<P, Nested, 1>>,
     #[ragu(gadget)]
     pub registry_wx0: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -567,7 +567,7 @@ pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Private nested auxiliaries fixed at this boundary.
     #[ragu(gadget)]
-    pub private_points: FixedVec<PrivatePoint<'dr, D, C, P>, PhaseLen<P, Nested, 2>>,
+    pub online_points: FixedVec<OnlinePoint<'dr, D, C, P>, PhaseLen<P, Nested, 2>>,
     #[ragu(gadget)]
     pub registry_wy: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -581,7 +581,7 @@ pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Private nested auxiliaries fixed at this boundary.
     #[ragu(gadget)]
-    pub private_points: FixedVec<PrivatePoint<'dr, D, C, P>, PhaseLen<P, Nested, 3>>,
+    pub online_points: FixedVec<OnlinePoint<'dr, D, C, P>, PhaseLen<P, Nested, 3>>,
     #[ragu(gadget)]
     pub registry_xy: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -594,12 +594,12 @@ pub struct Walk<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
     pub endoscalar: HoistedEndoscalar<'dr, D>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<PrivatePoint<'dr, D, C, P>, NumSteps<P>>,
+    pub interstitials: FixedVec<OnlinePoint<'dr, D, C, P>, NumSteps<P>>,
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P> {
     /// The walk's last interstitial: $P_n$.
-    pub fn p(&self) -> &PrivatePoint<'dr, D, C, P> {
+    pub fn p(&self) -> &OnlinePoint<'dr, D, C, P> {
         self.interstitials
             .last()
             .expect("every walk has at least one interstitial")
@@ -622,7 +622,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
     }
 
     /// The walk's `i`-th input.
-    pub fn input(&self, i: usize) -> PrivatePoint<'dr, D, C, P> {
+    pub fn input(&self, i: usize) -> OnlinePoint<'dr, D, C, P> {
         let child = |side| match side {
             Side::Left => &self.binding.left,
             Side::Right => &self.binding.right,
@@ -643,12 +643,12 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
             InputSource::OnlineFq(j) => return self.preamble.online_fq[j].clone(),
-            InputSource::Private(phase, j) => {
+            InputSource::Auxiliary(phase, j) => {
                 return match phase {
                     Phase::BeforeW => unreachable!("early points use OnlineFq"),
-                    Phase::BeforeY => self.registry_wx.private_points[j].clone(),
-                    Phase::BeforeX => self.ab.private_points[j].clone(),
-                    Phase::BeforeAlpha => self.f.private_points[j].clone(),
+                    Phase::BeforeY => self.registry_wx.online_points[j].clone(),
+                    Phase::BeforeX => self.ab.online_points[j].clone(),
+                    Phase::BeforeAlpha => self.f.online_points[j].clone(),
                 };
             }
         };
@@ -687,7 +687,7 @@ macro_rules! points_stage {
                 Self: 'dr,
             {
                 Ok($Output {
-                    private_points: FixedVec::try_from_fn(|i| BatchPoint::alloc(dr,witness.as_ref().map(|w|w.private_points[i])))?,
+                    online_points: FixedVec::try_from_fn(|i| BatchPoint::alloc(dr,witness.as_ref().map(|w|w.online_points[i])))?,
                     $( $field: Point::alloc(dr, witness.as_ref().map(|w| w.$field))?, )+
                 })
             }
@@ -719,8 +719,8 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
         Self: 'dr,
     {
         Ok(Binding {
-            private_input: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.private_input[i]))
+            online_input: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_input[i]))
             })?,
             left: ChildBinding::alloc(dr, witness.as_ref().map(|w| &w.left))?,
             right: ChildBinding::alloc(dr, witness.as_ref().map(|w| &w.right))?,

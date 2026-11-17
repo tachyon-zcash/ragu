@@ -43,7 +43,7 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
 
 use super::super::stages::points::{
-    AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, PreambleStage, PrivatePoint,
+    AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, OnlinePoint, PreambleStage,
     RegistryWxStage, WalkInputs, WalkStage, WalkWitness,
 };
 use crate::{
@@ -132,7 +132,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .step
             .checked_sub(1)
             .map(|i| interstitials[i].clone())
-            .unwrap_or_else(|| PrivatePoint::from_affine(walk.initial().clone()));
+            .unwrap_or_else(|| OnlinePoint::from_affine(walk.initial().clone()));
 
         let range = input_range(
             C::Profile::NATIVE_ENDOSCALINGS_PER_STEP,

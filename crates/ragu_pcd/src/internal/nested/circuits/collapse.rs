@@ -210,24 +210,24 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 stages.preamble.right.extension_stages[j as usize].clone()
             }),
         )?;
-        let (left_compute_v, left_private_helper) = ky::nested_private_ky::<_, _, P>(
+        let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, P>(
             dr,
             y,
             &stages.preamble.left.nested_instance(),
             &left_unified,
-            &stages.preamble.left.private,
-            &ky::native_private_stages::<P, _>(|index| stages.preamble.left[index].clone()),
-            &stages.preamble.left.private_points,
+            &stages.preamble.left.online_values,
+            &ky::native_online_stages::<P, _>(|index| stages.preamble.left[index].clone()),
+            &stages.preamble.left.online_points,
             &stages.preamble.left.mesh,
         )?;
-        let (right_compute_v, right_private_helper) = ky::nested_private_ky::<_, _, P>(
+        let (right_compute_v, right_online_helper) = ky::nested_online_ky::<_, _, P>(
             dr,
             y,
             &stages.preamble.right.nested_instance(),
             &right_unified,
-            &stages.preamble.right.private,
-            &ky::native_private_stages::<P, _>(|index| stages.preamble.right[index].clone()),
-            &stages.preamble.right.private_points,
+            &stages.preamble.right.online_values,
+            &ky::native_online_stages::<P, _>(|index| stages.preamble.right[index].clone()),
+            &stages.preamble.right.online_points,
             &stages.preamble.right.mesh,
         )?;
         let ky = TwoProofKySource::new(
@@ -238,8 +238,8 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             right_unified,
             left_compute_v,
             right_compute_v,
-            left_private_helper,
-            right_private_helper,
+            left_online_helper,
+            right_online_helper,
             left_binding,
             right_binding,
         );

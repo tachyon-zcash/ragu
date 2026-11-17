@@ -60,7 +60,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
     #[ragu(gadget)]
-    pub private_points:
+    pub online_points:
         FixedVec<CompletePoint<'dr, D, C::NestedCurve>, PolynomialsLen<C::Profile, Nested>>,
 }
 
@@ -160,13 +160,13 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .receive(dr, allocator)?;
         f.registry_xy.enforce_equal(dr, &registry_xy)?;
 
-        let private_points = preamble
+        let online_points = preamble
             .online_fq
             .iter()
             .skip(C::Profile::ONLINE_FQ_POLYS)
-            .chain(registry_wx.private_points.iter())
-            .chain(ab.private_points.iter())
-            .chain(f.private_points.iter())
+            .chain(registry_wx.online_points.iter())
+            .chain(ab.online_points.iter())
+            .chain(f.online_points.iter())
             .map(|point| point.complete().clone())
             .collect_fixed()?;
         let zero = Element::zero(dr);
@@ -175,7 +175,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             WithSuffix::new(
                 Output {
                     unified,
-                    private_points,
+                    online_points,
                 },
                 zero,
             ),

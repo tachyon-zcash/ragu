@@ -136,9 +136,9 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
     /// Native auxiliary commitments fixed before alpha.
-    pub private_points: FixedVec<C, PhaseLen<P, Native, 3>>,
+    pub online_points: FixedVec<C, PhaseLen<P, Native, 3>>,
     /// This boundary's native private stage commitment.
-    pub private_stage: FixedVec<C, Present<P, Native, 1>>,
+    pub online_stage: FixedVec<C, Present<P, Native, 1>>,
     pub native_query: C,
     pub registry_xy: C,
     /// The nested query values.
@@ -211,10 +211,10 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Native auxiliary points fixed before alpha and bound to the walk.
     #[ragu(gadget)]
-    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 3>>,
+    pub online_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 3>>,
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
-    pub private_stage: FixedVec<Point<'dr, D, C>, Present<P, Native, 1>>,
+    pub online_stage: FixedVec<Point<'dr, D, C>, Present<P, Native, 1>>,
     #[ragu(gadget)]
     pub native_query: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -280,11 +280,11 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         };
 
         Ok(Output {
-            private_points: FixedVec::try_from_fn(|i| {
-                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.private_points[i]))
+            online_points: FixedVec::try_from_fn(|i| {
+                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
-            private_stage: FixedVec::try_from_fn(|i| {
-                Point::alloc(dr, witness.as_ref().map(|w| w.private_stage[i]))
+            online_stage: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))
             })?,
             native_query,
             registry_xy,

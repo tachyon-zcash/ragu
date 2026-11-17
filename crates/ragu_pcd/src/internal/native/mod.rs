@@ -984,7 +984,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
                 use crate::profile::online::{extension, stages::Native};
                 let slot = BondingSlot::new(registry);
                 match extension::bonding::<_, R, C::Profile, Native>(j as usize)? {
-                    extension::Bonding::Private(mask) => slot.register(mask),
+                    extension::Bonding::Online(mask) => slot.register(mask),
                     extension::Bonding::User(index) => {
                         C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
                             index, slot, params,

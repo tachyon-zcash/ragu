@@ -245,7 +245,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         }
 
         let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
-        let poly = builder.native_private().append_quotient(poly, alpha)?;
+        let poly = builder.native_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
@@ -268,7 +268,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .collect();
 
         let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
-        let poly = builder.nested_private().append_quotient(poly, alpha)?;
+        let poly = builder.nested_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
         Ok(NestedF { poly, commitment })

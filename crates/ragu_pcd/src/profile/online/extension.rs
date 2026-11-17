@@ -122,7 +122,7 @@ pub fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
 /// A bonding belongs to the private batch or to the user's declaration.
 pub enum Bonding<'params, F: Field, R: Rank> {
     /// An automatically registered private stage mask or final mask.
-    Private(BondingObject<'params, F, R>),
+    Online(BondingObject<'params, F, R>),
     /// The original index passed to the profile's registration hook.
     User(usize),
 }
@@ -151,5 +151,5 @@ pub fn bonding<'params, F: Field, R: Rank, P: Profile, S: Side>(
         }
         _ => <QueryStage<P, S> as StageExt<F, R>>::final_mask()?,
     };
-    Ok(Bonding::Private(mask))
+    Ok(Bonding::Online(mask))
 }

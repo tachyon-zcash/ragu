@@ -748,7 +748,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 use crate::profile::online::{extension, stages::Nested};
                 let slot = BondingSlot::new(registry);
                 match extension::bonding::<_, R, C::Profile, Nested>(j as usize)? {
-                    extension::Bonding::Private(mask) => slot.register(mask),
+                    extension::Bonding::Online(mask) => slot.register(mask),
                     extension::Bonding::User(index) => {
                         C::Profile::register_nested_bonding::<C::Base, R>(index, slot, params)?
                     }

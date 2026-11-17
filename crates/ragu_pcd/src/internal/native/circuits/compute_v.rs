@@ -110,13 +110,13 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     pub online: online::QueriesOutput<'dr, D>,
     /// Quotient and evaluation sums shared with the independent private helper.
     #[ragu(gadget)]
-    pub private_sums: FixedVec<Element<'dr, D>, Present<C::Profile, Native, 2>>,
+    pub online_fold: FixedVec<Element<'dr, D>, Present<C::Profile, Native, 2>>,
     /// The nested private Input, Query and Eval commitments, in deadline order.
     #[ragu(gadget)]
-    pub private_stages: FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 6>>,
+    pub online_stages: FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 6>>,
     /// Nested auxiliary coordinates read from the query committed before alpha.
     #[ragu(gadget)]
-    pub private_auxiliaries: FixedVec<
+    pub online_auxiliaries: FixedVec<
         Element<'dr, D>,
         crate::profile::online::stages::PhaseCoordinatesLen<C::Profile, Nested, 3>,
     >,
@@ -165,7 +165,7 @@ pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
     /// Common sums supplied by the independent private helper.
-    pub private_sums: FixedVec<C::CircuitField, Present<C::Profile, Native, 2>>,
+    pub online_fold: FixedVec<C::CircuitField, Present<C::Profile, Native, 2>>,
     /// Holds the private nested input-stage commitment fixed before w.
     pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides child proof data).
@@ -235,27 +235,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
         // Export deadline-bound copies of the private helper chain. The
         // parent and terminal targets use its actual rx commitments.
-        let private_stages = FixedVec::from_fn(|i| match i {
+        let online_stages = FixedVec::from_fn(|i| match i {
             0 | 1 => {
                 let point = ragu_primitives::CompletePoint::from_affine(
                     binding
                         .as_ref()
                         .expect("active private batch loads binding")
-                        .private_input[0]
+                        .online_input[0]
                         .clone(),
                 );
                 let (x, y) = point.coordinates();
                 if i == 0 { x.clone() } else { y.clone() }
             }
-            2 | 3 => query.private_stage[i - 2].clone(),
-            _ => eval.private_stage[i - 4].clone(),
+            2 | 3 => query.online_stage[i - 2].clone(),
+            _ => eval.online_stage[i - 4].clone(),
         });
         // Neither binding partials nor commitment coordinates enter v.
         let eval = &eval.evaluations;
 
         let allocator = &mut Standard::new();
-        let private_sums = FixedVec::try_from_fn(|i| {
-            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_sums[i]))
+        let online_fold = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.online_fold[i]))
         })?;
         let mut unified_output = OutputBuilder::new(witness.map(|w| w.unified));
 
@@ -327,7 +327,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                         &alpha,
                         C::Profile::NATIVE_ONLINE.openings.len(),
                     )?
-                    .add(dr, &private_sums[0]);
+                    .add(dr, &online_fold[0]);
                 }
                 fu
             };
@@ -347,7 +347,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                         &effective_beta,
                         C::Profile::NATIVE_ONLINE.polynomials.len(),
                     )?
-                    .add(dr, &private_sums[1]);
+                    .add(dr, &online_fold[1]);
                 }
                 value
             };
@@ -364,9 +364,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let output = Output {
             unified,
             online: query.online,
-            private_sums,
-            private_stages,
-            private_auxiliaries: query.private_auxiliaries,
+            online_fold,
+            online_stages,
+            online_auxiliaries: query.online_auxiliaries,
             inherited_coordinates: FixedVec::from_fn(|i| {
                 [
                     &preamble.left.unified.x,
@@ -377,7 +377,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                     .clone()
             }),
             inherited_points: FixedVec::from_fn(|i| {
-                [&preamble.left, &preamble.right][i].private_points
+                [&preamble.left, &preamble.right][i].online_points
                     [C::Profile::NESTED_MESH.expect("mesh present").outgoing]
                     .clone()
             }),

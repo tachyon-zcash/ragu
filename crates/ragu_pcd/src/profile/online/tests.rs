@@ -128,7 +128,7 @@ fn private_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
         )?
         .into_registry();
         for j in 0..layout.bondings() {
-            let Bonding::Private(mask) = extension::bonding::<F, ProductionRank, Batched, S>(j)?
+            let Bonding::Online(mask) = extension::bonding::<F, ProductionRank, Batched, S>(j)?
             else {
                 panic!("batch-only profile has no user bonding");
             };
@@ -374,34 +374,34 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
         exported: [C::generator(); nested::unified::NUM_EXPORTED],
         coverage: Default::default(),
     };
-    let private = [13, 17, 19, 23, 29].map(Fq::from);
+    let online_values = [13, 17, 19, 23, 29].map(Fq::from);
     let helper = circuit::Instance::<_, NestedOnly, S> {
         mesh: FixedVec::new(vec![])?,
         challenges: Challenges {
-            w: private[0],
+            w: online_values[0],
             y: unified.y,
             x: unified.x,
-            alpha: private[1],
+            alpha: online_values[1],
             u: unified.u,
-            beta: private[2],
+            beta: online_values[2],
         },
-        sums: [private[3], private[4]],
+        sums: [online_values[3], online_values[4]],
         foreign: FixedVec::from_fn(|_| unreachable!()),
     };
-    Emulator::emulate_wireless((unified, helper, private), |dr, witness| {
-        let (unified, helper, private) = witness.cast();
+    Emulator::emulate_wireless((unified, helper, online_values), |dr, witness| {
+        let (unified, helper, online_values) = witness.cast();
         let y = Element::constant(dr, Fq::from(31));
         let unified = nested::unified::Output::<_, C>::alloc(dr, &mut (), unified.as_ref())?;
-        let private = FixedVec::<_, stages::Present<NestedOnly, S, 5>>::try_from_fn(|i| {
-            Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i]))
+        let online_values = FixedVec::<_, stages::Present<NestedOnly, S, 5>>::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), online_values.as_ref().map(|p| p[i]))
         })?;
         let unified_ky = unified.ky(dr, &y)?;
-        let (compute_target, helper_target) = ky::nested_private_ky::<_, _, NestedOnly>(
+        let (compute_target, helper_target) = ky::nested_online_ky::<_, _, NestedOnly>(
             dr,
             &y,
             &unified,
             &unified_ky,
-            &private,
+            &online_values,
             &[],
             &[],
             &[],
@@ -409,9 +409,9 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
         let output = nested::circuits::compute_v::Output::<_, C, NestedOnly> {
             inherited_coordinates: FixedVec::new(vec![])?,
             unified: unified.clone(),
-            private: private.clone(),
-            private_stages: FixedVec::from_fn(|_| unreachable!()),
-            private_points: FixedVec::from_fn(|_| unreachable!()),
+            online_values: online_values.clone(),
+            online_stages: FixedVec::from_fn(|_| unreachable!()),
+            online_points: FixedVec::from_fn(|_| unreachable!()),
         };
         let mut actual = Horner::new(&y);
         GadgetExt::write(&output, dr, &mut actual)?;
@@ -431,10 +431,10 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
         );
         // Every public challenge and sum is held by both claims. Changing a
         // helper value independently cannot retain either claim's target.
-        for i in 0..private.len() {
-            let mut corrupt = private.clone();
+        for i in 0..online_values.len() {
+            let mut corrupt = online_values.clone();
             corrupt[i] = corrupt[i].add(dr, &Element::one());
-            let (compute, helper) = ky::nested_private_ky::<_, _, NestedOnly>(
+            let (compute, helper) = ky::nested_online_ky::<_, _, NestedOnly>(
                 dr,
                 &y,
                 &unified,
@@ -456,7 +456,7 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
         c: Fq::from(2),
         unified: Fq::from(3),
         compute_v: Fq::from(5),
-        private_helper: Some(Fq::from(7)),
+        online_helper: Some(Fq::from(7)),
         binding: None,
     };
     let prefix: alloc::vec::Vec<_> = nested::claims::ky_prefix::<NestedOnly, _>(&targets).collect();
@@ -546,14 +546,14 @@ fn private_stage_bindings_are_in_the_native_claims() -> Result<()> {
     }
     use crate::internal::{ky, nested::RxIndex};
     assert_eq!(
-        ky::nested_private_stages::<NestedOnly, _>(|index| index),
+        ky::nested_online_stages::<NestedOnly, _>(|index| index),
         [
             RxIndex::ExtensionStage(0),
             RxIndex::ExtensionStage(1),
             RxIndex::ExtensionStage(2)
         ]
     );
-    assert!(ky::nested_private_stages::<Standard, _>(|index| index).is_empty());
+    assert!(ky::nested_online_stages::<Standard, _>(|index| index).is_empty());
     Ok(())
 }
 
@@ -651,19 +651,17 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                     CurvePoint::alloc(dr, stages.as_ref().map(|p| p[i]))
                 })?;
             let compute_target = inputs.compute_v_bridge_ky(dr, &y, &stages)?;
-            let helper_target = inputs.private_helper_ky(dr, &y)?.unwrap();
+            let helper_target = inputs.online_helper_ky(dr, &y)?.unwrap();
             let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
             let points_target = inputs.bind_endoscalar_ky(dr, &y, &unified_ky)?;
             let output = native::circuits::compute_v::Output::<_, C> {
                 inherited_coordinates: FixedVec::new(vec![])?,
                 inherited_points: FixedVec::new(vec![])?,
-                private_auxiliaries: FixedVec::from_fn(|_| {
-                    unreachable!("no later auxiliary phase")
-                }),
+                online_auxiliaries: FixedVec::from_fn(|_| unreachable!("no later auxiliary phase")),
                 unified: inputs.unified.clone(),
                 online: inputs.online.clone(),
-                private_sums: inputs.private_sums.clone(),
-                private_stages: FixedVec::from_fn(|i| {
+                online_fold: inputs.online_fold.clone(),
+                online_stages: FixedVec::from_fn(|i| {
                     let point = CompletePoint::from_affine(stages[i / 2].clone());
                     let (x, y) = point.coordinates();
                     if i % 2 == 0 { x.clone() } else { y.clone() }
@@ -689,7 +687,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
             );
             let output = native::circuits::bind_endoscalar::Output::<_, C> {
                 unified: inputs.unified.clone(),
-                private_points: inputs.private_points.clone(),
+                online_points: inputs.online_points.clone(),
             };
             let mut actual = Horner::new(&y);
             GadgetExt::write(&output, dr, &mut actual)?;
@@ -698,22 +696,22 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 ky::finish_extension_ky(actual, dr)?.value().take()
             );
             for i in 0..2 {
-                let original = inputs.private_sums[i].clone();
-                inputs.private_sums[i] = original.add(dr, &Element::one());
+                let original = inputs.online_fold[i].clone();
+                inputs.online_fold[i] = original.add(dr, &Element::one());
                 assert_ne!(
                     compute_target.value().take(),
                     inputs.compute_v_bridge_ky(dr, &y, &stages)?.value().take()
                 );
                 assert_ne!(
                     helper_target.value().take(),
-                    inputs.private_helper_ky(dr, &y)?.unwrap().value().take()
+                    inputs.online_helper_ky(dr, &y)?.unwrap().value().take()
                 );
-                inputs.private_sums[i] = original;
+                inputs.online_fold[i] = original;
             }
-            inputs.private_points[0] = CompletePoint::alloc(dr, points.as_ref().map(|p| -p[0]))?;
+            inputs.online_points[0] = CompletePoint::alloc(dr, points.as_ref().map(|p| -p[0]))?;
             assert_ne!(
                 helper_target.value().take(),
-                inputs.private_helper_ky(dr, &y)?.unwrap().value().take()
+                inputs.online_helper_ky(dr, &y)?.unwrap().value().take()
             );
             assert_ne!(
                 points_target.value().take(),
@@ -732,7 +730,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
         unified_bridge: Fp::from(7),
         compute_v_bridge: Fp::from(11),
         bind_endoscalar: Fp::from(13),
-        private_helper: Some(Fp::from(17)),
+        online_helper: Some(Fp::from(17)),
         statement: None,
         binding: None,
     };
@@ -783,12 +781,12 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
         P,
     >::default());
     assert_eq!(
-        ky::native_private_stages::<P, _>(|index| index),
+        ky::native_online_stages::<P, _>(|index| index),
         (0..3)
             .map(native::RxIndex::ExtensionStage)
             .collect::<alloc::vec::Vec<_>>()
     );
-    assert!(ky::native_private_stages::<NestedOnly, _>(|index| index).is_empty());
+    assert!(ky::native_online_stages::<NestedOnly, _>(|index| index).is_empty());
     let unified = nested::unified::Instance::<C> {
         c: Fq::from(2),
         v: Fq::from(3),
@@ -805,28 +803,28 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
         let stages = FixedVec::<_, stages::Present<P, stages::Native, 3>>::try_from_fn(|i| {
             CurvePoint::alloc(dr, points.as_ref().map(|p| p[i]))
         })?;
-        let private_points =
+        let online_points =
             FixedVec::<_, stages::PolynomialsLen<P, stages::Native>>::try_from_fn(|_| {
                 ragu_primitives::CompletePoint::alloc(dr, points.as_ref().map(|_| C::identity()))
             })?;
         let base = unified.ky(dr, &y)?;
-        let (target, helper) = ky::nested_private_ky::<_, _, P>(
+        let (target, helper) = ky::nested_online_ky::<_, _, P>(
             dr,
             &y,
             &unified,
             &base,
             &[],
             &stages,
-            &private_points,
+            &online_points,
             &[],
         )?;
         assert!(helper.is_none());
         let output = nested::circuits::compute_v::Output::<_, C, P> {
             inherited_coordinates: FixedVec::new(vec![])?,
             unified: unified.clone(),
-            private: FixedVec::from_fn(|_| unreachable!()),
-            private_stages: stages.clone(),
-            private_points: private_points.clone(),
+            online_values: FixedVec::from_fn(|_| unreachable!()),
+            online_stages: stages.clone(),
+            online_points: online_points.clone(),
         };
         let mut actual = Horner::new(&y);
         GadgetExt::write(&output, dr, &mut actual)?;
@@ -834,14 +832,14 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
         for i in 0..3 {
             let mut corrupt = stages.clone();
             corrupt[i] = CurvePoint::alloc(dr, points.as_ref().map(|p| -p[i]))?;
-            let (changed, helper) = ky::nested_private_ky::<_, _, P>(
+            let (changed, helper) = ky::nested_online_ky::<_, _, P>(
                 dr,
                 &y,
                 &unified,
                 &base,
                 &[],
                 &corrupt,
-                &private_points,
+                &online_points,
                 &[],
             )?;
             assert!(helper.is_none());
@@ -871,54 +869,60 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
         exported: [C::generator(); nested::unified::NUM_EXPORTED],
         coverage: Default::default(),
     };
-    let private = [13, 17, 19, 23, 29].map(Fq::from);
+    let online_values = [13, 17, 19, 23, 29].map(Fq::from);
     let helper = circuit::Instance::<_, P, S> {
         mesh: FixedVec::new(vec![])?,
         challenges: Challenges {
-            w: private[0],
+            w: online_values[0],
             y: unified.y,
             x: unified.x,
-            alpha: private[1],
+            alpha: online_values[1],
             u: unified.u,
-            beta: private[2],
+            beta: online_values[2],
         },
-        sums: [private[3], private[4]],
+        sums: [online_values[3], online_values[4]],
         foreign: FixedVec::new(vec![Fq::ZERO; 2])?,
     };
     Emulator::emulate_wireless(
-        (unified, helper, private, C::identity(), C::generator()),
+        (
+            unified,
+            helper,
+            online_values,
+            C::identity(),
+            C::generator(),
+        ),
         |dr, witness| {
-            let (unified, helper, private, identity, generator) = witness.cast();
+            let (unified, helper, online_values, identity, generator) = witness.cast();
             let y = Element::constant(dr, Fq::from(31));
             let unified = nested::unified::Output::<_, C>::alloc(dr, &mut (), unified.as_ref())?;
-            let private = FixedVec::<_, stages::Present<P, S, 5>>::try_from_fn(|i| {
-                Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i]))
+            let online_values = FixedVec::<_, stages::Present<P, S, 5>>::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), online_values.as_ref().map(|p| p[i]))
             })?;
             let points =
                 FixedVec::<_, stages::PolynomialsLen<P, stages::Native>>::try_from_fn(|_| {
                     CompletePoint::alloc(dr, identity.clone())
                 })?;
-            let private_stages =
+            let online_stages =
                 FixedVec::<_, stages::Present<P, stages::Native, 3>>::try_from_fn(|_| {
                     CurvePoint::alloc(dr, generator.clone())
                 })?;
             let base = unified.ky(dr, &y)?;
-            let (target, helper_target) = ky::nested_private_ky::<_, _, P>(
+            let (target, helper_target) = ky::nested_online_ky::<_, _, P>(
                 dr,
                 &y,
                 &unified,
                 &base,
-                &private,
-                &private_stages,
+                &online_values,
+                &online_stages,
                 &points,
                 &[],
             )?;
             let output = nested::circuits::compute_v::Output::<_, C, P> {
                 inherited_coordinates: FixedVec::new(vec![])?,
                 unified: unified.clone(),
-                private: private.clone(),
-                private_stages: private_stages.clone(),
-                private_points: points.clone(),
+                online_values: online_values.clone(),
+                online_stages: online_stages.clone(),
+                online_points: points.clone(),
             };
             let mut actual = Horner::new(&y);
             GadgetExt::write(&output, dr, &mut actual)?;
@@ -936,13 +940,13 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
                 ky::finish_extension_ky(actual, dr)?.value().take()
             );
             let changed = [CompletePoint::alloc(dr, generator)?];
-            let (corrupt, corrupt_helper) = ky::nested_private_ky::<_, _, P>(
+            let (corrupt, corrupt_helper) = ky::nested_online_ky::<_, _, P>(
                 dr,
                 &y,
                 &unified,
                 &base,
-                &private,
-                &private_stages,
+                &online_values,
+                &online_stages,
                 &changed,
                 &[],
             )?;

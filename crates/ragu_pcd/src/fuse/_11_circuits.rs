@@ -144,7 +144,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             u: builder.u(),
             beta: builder.pre_beta(),
         };
-        let private_sums = builder.native_private_mut().trace(
+        let online_fold = builder.native_online_mut().trace(
             challenges.clone(),
             &self.native_registry,
             |circuit| {
@@ -157,7 +157,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
                 .trace(native::circuits::compute_v::Witness {
-                    private_sums,
+                    online_fold,
                     binding: &native_points.binding,
                     unified,
                     preamble_witness,
@@ -247,14 +247,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // stage's polynomial over the context the application holds, and the
         // private batch completes them with its helper's and stages'.
         let extension = crate::profile::native_extension::<C::Profile>();
-        let online = builder.native_private().witness(challenges);
+        let online = builder.native_online().witness(challenges);
         let rxs = C::Profile::native_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             &self.native_registry,
             online.as_ref(),
             rng,
         )?;
-        let rxs = builder.native_private_mut().extension_rxs(rxs)?;
+        let rxs = builder.native_online_mut().extension_rxs(rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its native extension".into(),
@@ -325,7 +325,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             u: nested::challenge::<C>(builder.u())?,
             beta: nested::challenge::<C>(builder.pre_beta())?,
         };
-        let private_sums = builder.nested_private_mut().trace(
+        let online_fold = builder.nested_online_mut().trace(
             challenges.clone(),
             &self.nested_registry,
             |circuit| {
@@ -336,7 +336,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
         let witness = |instance| nested::circuits::common::Witness {
             instance,
-            private_sums: private_sums.clone(),
+            online_fold: online_fold.clone(),
             endoscalar: nested_endoscalar,
             bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
             points: nested_points,
@@ -385,14 +385,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The profile's extension, as on the native side.
         let extension = crate::profile::nested_extension::<C::Profile>();
-        let online = builder.nested_private().witness(challenges);
+        let online = builder.nested_online().witness(challenges);
         let rxs = C::Profile::nested_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             &self.nested_registry,
             online.as_ref(),
             rng,
         )?;
-        let rxs = builder.nested_private_mut().extension_rxs(rxs)?;
+        let rxs = builder.nested_online_mut().extension_rxs(rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),

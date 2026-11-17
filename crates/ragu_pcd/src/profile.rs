@@ -1194,7 +1194,7 @@ impl Shape {
     /// Panics under the same conditions as [`Self::solve`]. When used in
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
-        Self::solve_with_private(
+        Self::solve_with_online(
             P::NATIVE_EXTENSION
                 + if P::NATIVE_ONLINE.is_empty() {
                     0
@@ -1229,7 +1229,7 @@ impl Shape {
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
-        Self::solve_with_private(
+        Self::solve_with_online(
             native_extension,
             nested_extension,
             online_fq,
@@ -1239,11 +1239,11 @@ impl Shape {
         )
     }
 
-    const fn solve_with_private(
+    const fn solve_with_online(
         native_extension: usize,
         nested_extension: usize,
         online_fq: usize,
-        private_fp: usize,
+        online_fp: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
@@ -1255,7 +1255,7 @@ impl Shape {
                 native_extension,
                 nested_extension,
                 online_fq,
-                private_fp,
+                online_fp,
                 native_endoscalings,
                 nested_endoscalings,
             );
@@ -1275,12 +1275,12 @@ impl Shape {
         native_extension: usize,
         nested_extension: usize,
         online_fq: usize,
-        private_fp: usize,
+        online_fp: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
-        let nested_points = nested::num_endoscaling_points(native_rx) + private_fp;
+        let nested_points = nested::num_endoscaling_points(native_rx) + online_fp;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
         let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);

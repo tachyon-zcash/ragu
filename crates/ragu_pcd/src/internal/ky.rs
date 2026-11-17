@@ -63,7 +63,7 @@ pub struct NativeKy<F> {
     /// Bind-endoscalar exports the actual private nested commitment points.
     pub bind_endoscalar: F,
     /// Native private helper challenges, sums and foreign commitment points.
-    pub private_helper: Option<F>,
+    pub online_helper: Option<F>,
     /// The application circuit's $k(y)$.
     pub application: F,
     /// The statement circuit's $k(y)$, for a profile whose native extension
@@ -93,8 +93,8 @@ impl<F: Field> native::claims::KySource for NativeKy<F> {
         once(self.compute_v_bridge)
     }
 
-    fn private_helper_ky(&self) -> impl Iterator<Item = F> {
-        self.private_helper.into_iter()
+    fn online_helper_ky(&self) -> impl Iterator<Item = F> {
+        self.online_helper.into_iter()
     }
 
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = F> {
@@ -133,7 +133,7 @@ pub struct NestedKy<F> {
     /// Compute-v's unified instance followed by the private helper values.
     pub compute_v: F,
     /// The private helper's challenge and sum target, when active.
-    pub private_helper: Option<F>,
+    pub online_helper: Option<F>,
     /// The binding circuit's $k(y)$, for a profile whose nested extension
     /// has one; `None` for a profile without one.
     pub binding: Option<F>,
@@ -158,8 +158,8 @@ impl<F: Field> nested::claims::KySource for NestedKy<F> {
         once(self.compute_v)
     }
 
-    fn private_helper_ky(&self) -> impl Iterator<Item = F> {
-        self.private_helper.into_iter()
+    fn online_helper_ky(&self) -> impl Iterator<Item = F> {
+        self.online_helper.into_iter()
     }
 
     fn binding_ky(&self) -> impl Iterator<Item = F> + Clone {
@@ -201,20 +201,20 @@ pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) ->
 
 /// The actual nested private Input, Query and Eval stage commitments, in
 /// deadline order. These targets bind transcript copies to the walked rxs.
-pub fn nested_private_stages<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) -> Vec<T> {
+pub fn nested_online_stages<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) -> Vec<T> {
     (0..<crate::profile::online::stages::Present<P, crate::profile::online::stages::Nested, 3> as ragu_primitives::vec::Len>::len())
         .map(|i| commitment(nested::RxIndex::ExtensionStage(i as u32)))
         .collect()
 }
 
 /// The actual native private Input, Query and Eval commitments, in deadline order.
-pub fn native_private_stages<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) -> Vec<T> {
+pub fn native_online_stages<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) -> Vec<T> {
     (0..<crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 3> as ragu_primitives::vec::Len>::len())
         .map(|i| commitment(native::RxIndex::ExtensionStage(i as u32))).collect()
 }
 
 /// Allocates the profile-fixed private stage points for a native claim target.
-pub fn nested_private_stage_points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
+pub fn nested_online_stage_points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     dr: &mut D,
     points: DriverValue<D, &[C]>,
 ) -> Result<
@@ -322,15 +322,15 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let private_stages = proof.as_ref().map(|proof| {
-            nested_private_stages::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
+        let online_stages = proof.as_ref().map(|proof| {
+            nested_online_stages::<C::Profile, _>(|index| proof.nested_rx_commitment(index))
         });
-        let private_stages = nested_private_stage_points::<_, _, C::Profile>(
+        let online_stages = nested_online_stage_points::<_, _, C::Profile>(
             dr,
-            private_stages.as_ref().map(|p| p.as_slice()),
+            online_stages.as_ref().map(|p| p.as_slice()),
         )?;
-        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &private_stages)?;
-        let private_helper = proof_inputs.private_helper_ky(dr, &y)?;
+        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &online_stages)?;
+        let online_helper = proof_inputs.online_helper_ky(dr, &y)?;
         let bind_endoscalar = proof_inputs.bind_endoscalar_ky(dr, &y, &unified)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
@@ -342,7 +342,7 @@ pub fn native_ky_from_header<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             unified_bridge: *unified_bridge.value().take(),
             compute_v_bridge: *compute_v_bridge.value().take(),
             bind_endoscalar: *bind_endoscalar.value().take(),
-            private_helper: private_helper.map(|ky| *ky.value().take()),
+            online_helper: online_helper.map(|ky| *ky.value().take()),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
@@ -396,7 +396,7 @@ pub struct NativeParts<'a, C: Cycle> {
     /// recomputes, in its output order; none for a profile without one.
     pub nested_bound: &'a [C::NestedCurve],
     /// The actual nested private stages, for the compute-v transcript-copy target.
-    pub nested_private_stages: &'a [C::NestedCurve],
+    pub nested_online_stages: &'a [C::NestedCurve],
     /// Common targets for the private nested walk points.
     pub nested_online_commitments: &'a [C::NestedCurve],
     /// Native private helper sums.
@@ -428,12 +428,12 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
-        let private_stages = nested_private_stage_points::<_, _, C::Profile>(
+        let online_stages = nested_online_stage_points::<_, _, C::Profile>(
             dr,
-            parts.as_ref().map(|p| p.nested_private_stages),
+            parts.as_ref().map(|p| p.nested_online_stages),
         )?;
-        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &private_stages)?;
-        let private_helper = proof_inputs.private_helper_ky(dr, &y)?;
+        let compute_v_bridge = proof_inputs.compute_v_bridge_ky(dr, &y, &online_stages)?;
+        let online_helper = proof_inputs.online_helper_ky(dr, &y)?;
         let bind_endoscalar = proof_inputs.bind_endoscalar_ky(dr, &y, &unified)?;
         let application = proof_inputs.application_ky(dr, &y)?;
         let statement = proof_inputs.statement_ky::<C::Profile>(dr, &y)?;
@@ -445,7 +445,7 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             unified_bridge: *unified_bridge.value().take(),
             compute_v_bridge: *compute_v_bridge.value().take(),
             bind_endoscalar: *bind_endoscalar.value().take(),
-            private_helper: private_helper.map(|ky| *ky.value().take()),
+            online_helper: online_helper.map(|ky| *ky.value().take()),
             application: *application.value().take(),
             statement: statement.map(|ky| *ky.value().take()),
             binding: binding.map(|ky| *ky.value().take()),
@@ -469,7 +469,7 @@ pub fn nested_ky_of<C: Cycle>(
 
 /// Values shared by the nested compute-v and private helper targets. The
 /// transcript supplies the challenge lifts; only the two sums are carried.
-pub fn nested_private_values<C: ProfiledCycle>(
+pub fn nested_online_values<C: ProfiledCycle>(
     challenges: &nested::Challenges<C::CircuitField>,
     sums: &[C::ScalarField],
 ) -> Result<Vec<C::ScalarField>> {
@@ -496,14 +496,14 @@ pub fn nested_private_values<C: ProfiledCycle>(
 /// Compute-v also exports the native private stage commitments, even when
 /// this profile has no nested helper.
 #[allow(clippy::too_many_arguments)]
-pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
+pub fn nested_online_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     dr: &mut D,
     y: &Element<'dr, D>,
     unified: &nested_unified::Output<'dr, D, C>,
     unified_ky: &Element<'dr, D>,
-    private: &[Element<'dr, D>],
-    private_stages: &[Point<'dr, D, C>],
-    private_points: &[ragu_primitives::CompletePoint<'dr, D, C>],
+    online_values: &[Element<'dr, D>],
+    online_stages: &[Point<'dr, D, C>],
+    online_points: &[ragu_primitives::CompletePoint<'dr, D, C>],
     mesh_values: &[Element<'dr, D>],
 ) -> Result<(Element<'dr, D>, Option<Element<'dr, D>>)> {
     if P::NESTED_ONLINE.is_empty() && P::NATIVE_ONLINE.is_empty() {
@@ -511,13 +511,13 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     }
     let mut compute_v = Horner::new(y);
     GadgetExt::write(unified, dr, &mut compute_v)?;
-    for value in private {
+    for value in online_values {
         value.write(dr, &mut compute_v)?;
     }
-    for point in private_stages {
+    for point in online_stages {
         GadgetExt::write(point, dr, &mut compute_v)?;
     }
-    for point in private_points {
+    for point in online_points {
         GadgetExt::write(point, dr, &mut compute_v)?;
     }
     if let Some(mesh) = P::NESTED_MESH {
@@ -531,18 +531,18 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
     }
     let mut helper = Horner::new(y);
     for value in [
-        &private[0],
+        &online_values[0],
         &unified.y,
         &unified.x,
-        &private[1],
+        &online_values[1],
         &unified.u,
-        &private[2],
-        &private[3],
-        &private[4],
+        &online_values[2],
+        &online_values[3],
+        &online_values[4],
     ] {
         value.write(dr, &mut helper)?;
     }
-    for point in private_points.iter().take(
+    for point in online_points.iter().take(
         P::NATIVE_ONLINE
             .polynomials
             .iter()
@@ -558,36 +558,36 @@ pub fn nested_private_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile
 }
 
 /// Host evaluation of the same targets used by the parent's collapse circuit.
-pub fn nested_private_ky_of<C: ProfiledCycle>(
+pub fn nested_online_ky_of<C: ProfiledCycle>(
     instance: &nested_unified::Instance<C::HostCurve>,
-    private: &[C::ScalarField],
-    private_stages: &[C::HostCurve],
-    private_points: &[C::HostCurve],
+    online_values: &[C::ScalarField],
+    online_stages: &[C::HostCurve],
+    online_points: &[C::HostCurve],
     mesh_values: &[C::ScalarField],
     y: C::ScalarField,
 ) -> Result<(C::ScalarField, Option<C::ScalarField>)> {
     Emulator::emulate_wireless(
         (
             instance,
-            private,
-            private_stages,
-            private_points,
+            online_values,
+            online_stages,
+            online_points,
             mesh_values,
             y,
         ),
         |dr, witness| {
-            let (instance, private, private_stages, private_points, mesh_values, y) =
+            let (instance, online_values, online_stages, online_points, mesh_values, y) =
                 witness.cast();
             let y = Element::alloc(dr, &mut (), y)?;
             let output = nested_unified::Output::<_, C::HostCurve>::alloc(dr, &mut (), instance)?;
-            let private = (0..if C::Profile::NESTED_ONLINE.is_empty() {
+            let online_values = (0..if C::Profile::NESTED_ONLINE.is_empty() {
                 0
             } else {
                 5
             })
-                .map(|i| Element::alloc(dr, &mut (), private.as_ref().map(|p| p[i])))
+                .map(|i| Element::alloc(dr, &mut (), online_values.as_ref().map(|p| p[i])))
                 .collect::<Result<Vec<_>>>()?;
-            let private_stages = FixedVec::<
+            let online_stages = FixedVec::<
                 _,
                 crate::profile::online::stages::Present<
                     C::Profile,
@@ -595,29 +595,29 @@ pub fn nested_private_ky_of<C: ProfiledCycle>(
                     3,
                 >,
             >::try_from_fn(|i| {
-                Point::alloc(dr, private_stages.as_ref().map(|p| p[i]))
+                Point::alloc(dr, online_stages.as_ref().map(|p| p[i]))
             })?;
-            let private_points = FixedVec::<
+            let online_points = FixedVec::<
                 _,
                 crate::profile::online::stages::PolynomialsLen<
                     C::Profile,
                     crate::profile::online::stages::Native,
                 >,
             >::try_from_fn(|i| {
-                ragu_primitives::CompletePoint::alloc(dr, private_points.as_ref().map(|p| p[i]))
+                ragu_primitives::CompletePoint::alloc(dr, online_points.as_ref().map(|p| p[i]))
             })?;
             let mesh_values = (0..C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
                 .map(|i| Element::alloc(dr, &mut (), mesh_values.as_ref().map(|v| v[i])))
                 .collect::<Result<Vec<_>>>()?;
             let unified_ky = output.ky(dr, &y)?;
-            let (compute_v, helper) = nested_private_ky::<_, _, C::Profile>(
+            let (compute_v, helper) = nested_online_ky::<_, _, C::Profile>(
                 dr,
                 &y,
                 &output,
                 &unified_ky,
-                &private,
-                &private_stages,
-                &private_points,
+                &online_values,
+                &online_stages,
+                &online_points,
                 &mesh_values,
             )?;
             Ok((

@@ -137,7 +137,7 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
     /// coordinates and the nested mesh claims and helper sums. When the
     /// profile declares a nested mesh, [`Self::nested_mesh`] also routes
     /// every scalar of the nested-curve terminal IPA through it.
-    pub(crate) fn write_private_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
+    pub(crate) fn write_online_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
         let commitment = B::msm(&[scalar], &C::nested_generators(self.params).g()[..1]).to_affine();
         super::fingerprint::record_point(&commitment);
         CompletePoint::constant(&mut self.dr, commitment).write(&mut self.dr, &mut self.transcript)
@@ -198,7 +198,7 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSid
 
     fn write_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
         if self.1 {
-            self.0.write_private_scalar(scalar)
+            self.0.write_online_scalar(scalar)
         } else {
             self.0.bridge(&[scalar])
         }

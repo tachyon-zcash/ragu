@@ -106,7 +106,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
             .chain(batch.commitments(current, builder.online_fq_commitments()))
-            .chain(builder.nested_private().commitments().iter().copied())
+            .chain(builder.nested_online().commitments().iter().copied())
             .collect();
         assert_eq!(
             points.len(),
@@ -114,7 +114,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         Inputs::from_walk(
             &points,
-            FixedVec::from_fn(|_| builder.nested_private_stage_commitment(0)),
+            FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         )
     }
 
@@ -244,8 +244,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             }
             // Each distinct private polynomial enters the commitment fold
             // once, independently of how many openings the quotient checks.
-            let private = builder.native_private();
-            for (poly, &point) in private.polynomials().iter().zip(private.commitments()) {
+            let online = builder.native_online();
+            for (poly, &point) in online.polynomials().iter().zip(online.commitments()) {
                 acc.acc(poly, point);
             }
         }
@@ -301,7 +301,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             poly.add_assign(evaluated);
         }
 
-        for evaluated in builder.nested_private().polynomials() {
+        for evaluated in builder.nested_online().polynomials() {
             poly.scale(beta);
             poly.add_assign(evaluated);
         }

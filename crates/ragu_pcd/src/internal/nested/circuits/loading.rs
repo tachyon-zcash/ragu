@@ -157,11 +157,11 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         }
 
         for point in preamble
-            .private_points
+            .online_points
             .iter()
-            .chain(s_prime.private_points.iter())
-            .chain(ab.private_points.iter())
-            .chain(query.private_points.iter())
+            .chain(s_prime.online_points.iter())
+            .chain(ab.online_points.iter())
+            .chain(query.online_points.iter())
         {
             walker.points.inputs[walker.index]
                 .complete()

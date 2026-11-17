@@ -92,16 +92,16 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub unified: unified::Output<'dr, D, C>,
     /// Lifted w, alpha and beta, then the helper's quotient and evaluation sums.
     #[ragu(gadget)]
-    pub private: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
     /// The native private Input, Query and Eval commitments at their deadlines.
     #[ragu(gadget)]
-    pub private_stages: FixedVec<
+    pub online_stages: FixedVec<
         ragu_primitives::Point<'dr, D, C>,
         Present<P, crate::profile::online::stages::Native, 3>,
     >,
     /// Actual native private commitment points, also the helper's foreign exports.
     #[ragu(gadget)]
-    pub private_points: FixedVec<
+    pub online_points: FixedVec<
         ragu_primitives::CompletePoint<'dr, D, C>,
         crate::profile::online::stages::PolynomialsLen<P, crate::profile::online::stages::Native>,
     >,
@@ -152,15 +152,15 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 .iter()
                 .zip([&stages.preamble.left, &stages.preamble.right])
             {
-                let own = stages.preamble.private_points[restriction.polynomial].coordinates();
-                let inherited = child.private_points[mesh.outgoing].coordinates();
+                let own = stages.preamble.online_points[restriction.polynomial].coordinates();
+                let inherited = child.online_points[mesh.outgoing].coordinates();
                 own.0.enforce_equal(dr, inherited.0)?;
                 own.1.enforce_equal(dr, inherited.1)?;
             }
         }
         let allocator = &mut Standard::new();
-        let private_sums = FixedVec::<_, Present<P, Nested, 2>>::try_from_fn(|i| {
-            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_sums[i]))
+        let online_fold = FixedVec::<_, Present<P, Nested, 2>>::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.online_fold[i]))
         })?;
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
         let lift = |i: usize| &stages.challenges.pairs[i].lift;
@@ -233,7 +233,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 lift(challenges::ALPHA),
                 P::NESTED_ONLINE.openings.len(),
             )?
-            .add(dr, &private_sums[0])
+            .add(dr, &online_fold[0])
         };
 
         // The endoscalar the endoscaling steps walked P with lifts to the
@@ -258,16 +258,16 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 beta,
                 P::NESTED_ONLINE.polynomials.len(),
             )?
-            .add(dr, &private_sums[1])
+            .add(dr, &online_fold[1])
         };
         unified.v.provide(computed_v);
 
         let (output, instance) = unified.finish(dr, allocator)?;
-        let private = FixedVec::from_fn(|i| match i {
+        let online_values = FixedVec::from_fn(|i| match i {
             0 => lift(challenges::W).clone(),
             1 => lift(challenges::ALPHA).clone(),
             2 => beta.clone(),
-            _ => private_sums[i - 3].clone(),
+            _ => online_fold[i - 3].clone(),
         });
         Ok(WithAux::new(
             Output {
@@ -281,21 +281,21 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                         .clone()
                 }),
                 unified: output,
-                private,
-                private_points: stages
+                online_values,
+                online_points: stages
                     .preamble
-                    .private_points
+                    .online_points
                     .iter()
-                    .chain(stages.s_prime.private_points.iter())
-                    .chain(stages.ab.private_points.iter())
-                    .chain(stages.query.private_points.iter())
+                    .chain(stages.s_prime.online_points.iter())
+                    .chain(stages.ab.online_points.iter())
+                    .chain(stages.query.online_points.iter())
                     .cloned()
                     .collect::<Vec<_>>()
                     .try_into()?,
-                private_stages: FixedVec::from_fn(|i| match i {
-                    0 => stages.preamble.private_stage[0].clone(),
-                    1 => stages.query.private_stage[0].clone(),
-                    _ => stages.eval.private_stage[0].clone(),
+                online_stages: FixedVec::from_fn(|i| match i {
+                    0 => stages.preamble.online_stage[0].clone(),
+                    1 => stages.query.online_stage[0].clone(),
+                    _ => stages.eval.online_stage[0].clone(),
                 }),
             },
             instance,

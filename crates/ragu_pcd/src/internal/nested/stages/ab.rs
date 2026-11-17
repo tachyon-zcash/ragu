@@ -29,7 +29,7 @@ const NUM: usize = 3;
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
     /// Native auxiliary commitments fixed at this boundary.
-    pub private_points: FixedVec<C, PhaseLen<P, Native, 2>>,
+    pub online_points: FixedVec<C, PhaseLen<P, Native, 2>>,
     pub a: C,
     pub b: C,
     /// Commitment of the native points stage holding the nested
@@ -46,7 +46,7 @@ pub struct Witness<C: Affine, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Native auxiliary points bound to the walk and common claim target.
     #[ragu(gadget)]
-    pub private_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 2>>,
+    pub online_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 2>>,
     #[ragu(gadget)]
     pub a: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -78,8 +78,8 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         Ok(Output {
-            private_points: FixedVec::try_from_fn(|i| {
-                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.private_points[i]))
+            online_points: FixedVec::try_from_fn(|i| {
+                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
             a: Point::alloc(dr, witness.as_ref().map(|w| w.a))?,
             b: Point::alloc(dr, witness.as_ref().map(|w| w.b))?,

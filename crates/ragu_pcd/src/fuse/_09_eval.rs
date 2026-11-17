@@ -109,7 +109,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let native = native::stages::eval::Witness {
-            private_stage: builder.nested_private_stage_coordinates(2),
+            online_stage: builder.nested_online_stage_coordinates(2),
             left: left_witness,
             right: right_witness,
             current,
@@ -167,7 +167,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
-        private_stage: ragu_primitives::vec::FixedVec<
+        online_stage: ragu_primitives::vec::FixedVec<
             C::HostCurve,
             crate::profile::online::stages::Present<
                 C::Profile,
@@ -190,7 +190,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::eval::Witness {
-                private_stage,
+                online_stage,
                 native_eval: native_eval_commitment,
                 nested: nested_eval.clone(),
             },

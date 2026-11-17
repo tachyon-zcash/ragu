@@ -115,8 +115,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let query_witness = native::stages::query::Witness {
-            private_auxiliaries: builder.nested_private_auxiliary_coordinates(),
-            private_stage: builder.nested_private_stage_coordinates(1),
+            online_auxiliaries: builder.nested_online_auxiliary_coordinates(),
+            online_stage: builder.nested_online_stage_coordinates(1),
             fixed_registry,
             registry_wxy,
             left: left_witness,
@@ -218,9 +218,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::query::Witness {
-                private_points: builder.native_private_phase::<3>(),
-                private_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
-                    builder.native_private_stage_commitment(1)
+                online_points: builder.native_online_phase::<3>(),
+                online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                    builder.native_online_stage_commitment(1)
                 }),
                 native_query: builder.native_query_commitment(),
                 registry_xy: builder.native_registry_xy_commitment(),

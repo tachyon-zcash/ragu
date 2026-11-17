@@ -217,7 +217,7 @@ pub struct CurrentStepWitness<F> {
 /// Witness for the eval stage.
 pub struct Witness<C: ProfiledCycle> {
     /// Coordinates of the private nested eval-stage commitment.
-    pub private_stage:
+    pub online_stage:
         ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>>,
     /// Left proof's evaluations at $u$.
     pub left: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
@@ -245,7 +245,7 @@ impl<C: ProfiledCycle> Witness<C> {
             p_poly: C::CircuitField::ZERO,
         };
         Witness {
-            private_stage: FixedVec::from_fn(|_| C::CircuitField::ZERO),
+            online_stage: FixedVec::from_fn(|_| C::CircuitField::ZERO),
             left: child(),
             right: child(),
             current: CurrentStepWitness {
@@ -344,7 +344,7 @@ pub struct Evaluations<'dr, D: Driver<'dr>, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     /// The private eval commitment fixed at this transcript boundary.
     #[ragu(gadget)]
-    pub private_stage:
+    pub online_stage:
         ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 2>>,
     #[ragu(gadget)]
     pub evaluations: Evaluations<'dr, D, C::Profile>,
@@ -415,8 +415,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             Point::alloc(dr, witness.as_ref().map(|w| w.partials.partials[k]))
         })?;
         Ok(Output {
-            private_stage: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
-                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.private_stage[i]))
+            online_stage: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.online_stage[i]))
             })?,
             evaluations: Evaluations {
                 left,

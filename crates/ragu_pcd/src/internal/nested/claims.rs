@@ -292,7 +292,7 @@ pub trait KySource {
     fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// The private helper's target, one per proof when active.
-    fn private_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// One value per proof for the binding circuit of the profile's nested
     /// extension: the $k(y)$ of the native extension stage commitments it
@@ -337,13 +337,13 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 extension.binding.is_none() || binding.len() == ones.len(),
                 "a profile with a binding circuit takes one binding value per proof"
             );
-            let private: Vec<S::Ky> = source.private_helper_ky().collect();
+            let helper_ky: Vec<S::Ky> = source.online_helper_ky().collect();
             let helper = crate::profile::online::extension::helper::<
                 P,
                 crate::profile::online::stages::Nested,
             >();
             assert!(
-                helper.is_none() || private.len() == ones.len(),
+                helper.is_none() || helper_ky.len() == ones.len(),
                 "a private batch takes one helper target per proof"
             );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
@@ -351,7 +351,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 if bound == Some(circuit) {
                     binding.clone()
                 } else if helper == Some(circuit) {
-                    private.clone()
+                    helper_ky.clone()
                 } else {
                     ones.clone()
                 }
@@ -371,8 +371,8 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_unified: Element<'dr, D>,
     pub left_compute_v: Element<'dr, D>,
     pub right_compute_v: Element<'dr, D>,
-    pub left_private_helper: Option<Element<'dr, D>>,
-    pub right_private_helper: Option<Element<'dr, D>>,
+    pub left_online_helper: Option<Element<'dr, D>>,
+    pub right_online_helper: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
     pub right_binding: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
@@ -392,8 +392,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_unified: Element<'dr, D>,
         left_compute_v: Element<'dr, D>,
         right_compute_v: Element<'dr, D>,
-        left_private_helper: Option<Element<'dr, D>>,
-        right_private_helper: Option<Element<'dr, D>>,
+        left_online_helper: Option<Element<'dr, D>>,
+        right_online_helper: Option<Element<'dr, D>>,
         left_binding: Option<Element<'dr, D>>,
         right_binding: Option<Element<'dr, D>>,
     ) -> Self {
@@ -404,8 +404,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_unified,
             left_compute_v,
             right_compute_v,
-            left_private_helper,
-            right_private_helper,
+            left_online_helper,
+            right_online_helper,
             left_binding,
             right_binding,
             one: Element::one(),
@@ -433,10 +433,10 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
         [self.left_compute_v.clone(), self.right_compute_v.clone()].into_iter()
     }
 
-    fn private_helper_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
-        self.left_private_helper
+    fn online_helper_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        self.left_online_helper
             .iter()
-            .chain(self.right_private_helper.iter())
+            .chain(self.right_online_helper.iter())
             .cloned()
     }
 

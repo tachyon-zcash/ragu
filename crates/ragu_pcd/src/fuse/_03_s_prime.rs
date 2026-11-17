@@ -70,7 +70,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::s_prime::Witness {
-                private_points: builder.native_private_phase::<1>(),
+                online_points: builder.native_online_phase::<1>(),
                 registry_wx0: native.registry_wx0_commitment,
                 registry_wx1: native.registry_wx1_commitment,
                 native_points_registry_wx: builder.native_points_registry_wx_commitment(),

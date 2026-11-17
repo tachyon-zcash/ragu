@@ -22,7 +22,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 {
     /// Begins both sides' private batches from the profile's inputs, supplies
     /// their polynomials fixed before $w$ and commits the two input stages.
-    pub(super) fn prepare_private_inputs<RNG: CryptoRng>(
+    pub(super) fn prepare_online_inputs<RNG: CryptoRng>(
         &self,
         rng: &mut RNG,
         children: [&Proof<C, R>; 2],
@@ -50,9 +50,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             },
             self.nested_source.as_ref(),
         )?;
-        builder.set_native_private(native);
-        builder.set_nested_private(nested);
-        self.prepare_private_phase_inner(
+        builder.set_native_online(native);
+        builder.set_nested_online(nested);
+        self.prepare_online_phase_inner(
             Phase::BeforeW,
             PreparationChallenges::default(),
             builder,
@@ -60,14 +60,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
         // Both fields' private polynomials exist before either input stage is
         // committed, so consumers get the actual opposite-field commitments.
-        let native_foreign = builder.nested_private().coordinates();
-        let nested_foreign = builder.native_private().coordinates();
-        builder.native_private_mut().commit_inputs::<B, _, _>(
+        let native_foreign = builder.nested_online().coordinates();
+        let nested_foreign = builder.native_online().coordinates();
+        builder.native_online_mut().commit_inputs::<B, _, _>(
             native_foreign,
             C::host_generators(self.params),
             rng,
         )?;
-        builder.nested_private_mut().commit_inputs::<B, _, _>(
+        builder.nested_online_mut().commit_inputs::<B, _, _>(
             nested_foreign,
             C::nested_generators(self.params),
             rng,
@@ -77,16 +77,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
     /// Supplies both sides' polynomials fixed at `phase`, a deadline after
     /// $w$, under the challenges drawn before it.
-    pub(super) fn prepare_private_phase(
+    pub(super) fn prepare_online_phase(
         &self,
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        self.prepare_private_phase_inner(phase, challenges, builder, None)
+        self.prepare_online_phase_inner(phase, challenges, builder, None)
     }
 
-    fn prepare_private_phase_inner(
+    fn prepare_online_phase_inner(
         &self,
         phase: Phase,
         challenges: PreparationChallenges<C::CircuitField>,
@@ -96,10 +96,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let supplied = C::Profile::native_online_polynomials::<C::Base, R, B>(
             &self.context,
             phase,
-            builder.native_private().early_values(),
+            builder.native_online().early_values(),
             challenges,
         )?;
-        builder.native_private_mut().prepare::<B, _>(
+        builder.native_online_mut().prepare::<B, _>(
             phase,
             supplied,
             challenges,
@@ -112,10 +112,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let supplied = C::Profile::nested_online_polynomials::<C::Base, R, B>(
             &self.context,
             phase,
-            builder.nested_private().early_values(),
+            builder.nested_online().early_values(),
             challenges,
         )?;
-        builder.nested_private_mut().prepare::<B, _>(
+        builder.nested_online_mut().prepare::<B, _>(
             phase,
             supplied,
             challenges,
@@ -128,7 +128,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
     /// Takes the profile's witness query points and commits both sides' query
     /// stages, after $x$ and before $\alpha$.
-    pub(super) fn prepare_private_queries<RNG: CryptoRng>(
+    pub(super) fn prepare_online_queries<RNG: CryptoRng>(
         &self,
         challenges: PreparationChallenges<C::CircuitField>,
         rng: &mut RNG,
@@ -136,10 +136,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     ) -> Result<()> {
         let points = C::Profile::native_online_points::<C::Base, R, B>(
             &self.context,
-            builder.native_private().early_values(),
+            builder.native_online().early_values(),
             challenges,
         )?;
-        builder.native_private_mut().commit_query::<B, _, _>(
+        builder.native_online_mut().commit_query::<B, _, _>(
             points,
             challenges,
             C::host_generators(self.params),
@@ -149,10 +149,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let challenges = nested_challenges::<C>(challenges)?;
         let points = C::Profile::nested_online_points::<C::Base, R, B>(
             &self.context,
-            builder.nested_private().early_values(),
+            builder.nested_online().early_values(),
             challenges,
         )?;
-        builder.nested_private_mut().commit_query::<B, _, _>(
+        builder.nested_online_mut().commit_query::<B, _, _>(
             points,
             challenges,
             C::nested_generators(self.params),
@@ -162,18 +162,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 
     /// Commits both sides' evaluation stages at `u`, before `pre_beta`.
-    pub(super) fn prepare_private_evaluations<RNG: CryptoRng>(
+    pub(super) fn prepare_online_evaluations<RNG: CryptoRng>(
         &self,
         u: C::CircuitField,
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        builder.native_private_mut().commit_eval::<B, _, _>(
+        builder.native_online_mut().commit_eval::<B, _, _>(
             u,
             C::host_generators(self.params),
             rng,
         )?;
-        builder.nested_private_mut().commit_eval::<B, _, _>(
+        builder.nested_online_mut().commit_eval::<B, _, _>(
             nested::challenge::<C>(u)?,
             C::nested_generators(self.params),
             rng,

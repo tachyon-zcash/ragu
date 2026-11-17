@@ -167,7 +167,7 @@ fn claim_targets_match_positional_ky_values() {
         unified_bridge: Fp::from(5),
         compute_v_bridge: Fp::from(13),
         bind_endoscalar: Fp::from(17),
-        private_helper: None,
+        online_helper: None,
         application: Fp::from(7),
         statement: None,
         binding: None,
@@ -195,7 +195,7 @@ fn claim_targets_match_positional_ky_values() {
         c: Fq::from(2),
         unified: Fq::from(3),
         compute_v: Fq::from(3),
-        private_helper: None,
+        online_helper: None,
         binding: None,
     };
     let masked = [Masked::new(

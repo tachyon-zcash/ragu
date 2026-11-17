@@ -1212,7 +1212,7 @@ fn test_extension_claims_follow_the_declaration() {
             [50, 51].into_iter()
         }
 
-        fn private_helper_ky(&self) -> impl Iterator<Item = u32> {
+        fn online_helper_ky(&self) -> impl Iterator<Item = u32> {
             [90, 91].into_iter()
         }
 
@@ -1300,7 +1300,7 @@ fn test_extension_claims_follow_the_declaration() {
         fn compute_v_ky(&self) -> impl Iterator<Item = u32> {
             [50, 51].into_iter()
         }
-        fn private_helper_ky(&self) -> impl Iterator<Item = u32> {
+        fn online_helper_ky(&self) -> impl Iterator<Item = u32> {
             core::iter::empty()
         }
 
