@@ -615,6 +615,21 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Cycle<CircuitField = D::F>>
         let (output, instance) = self.finish_no_suffix(dr, allocator)?;
         Ok((WithSuffix::new(output, zero), instance))
     }
+
+    /// Finishes building as [`finish`](Self::finish) does, for a circuit
+    /// whose output carries more than the unified instance: `extend` places
+    /// the built [`Output`] in the circuit's own output, which the zero
+    /// suffix then follows.
+    pub fn finish_with<G: Gadget<'dr, D>>(
+        self,
+        dr: &mut D,
+        allocator: &mut A,
+        extend: impl FnOnce(Output<'dr, D, C>) -> G,
+    ) -> Result<(WithSuffix<'dr, D, G::Kind>, DriverValue<D, Instance<C>>)> {
+        let zero = Element::zero(dr);
+        let (output, instance) = self.finish_no_suffix(dr, allocator)?;
+        Ok((WithSuffix::new(extend(output), zero), instance))
+    }
 }
 
 #[cfg(test)]

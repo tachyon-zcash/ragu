@@ -35,8 +35,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    CompletePoint, Element, Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar,
-    WithSuffix,
+    CompletePoint, Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, WithSuffix,
     allocator::Standard,
     io::Write,
     vec::{CollectFixed, FixedVec},
@@ -169,17 +168,10 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .chain(f.online_points.iter())
             .map(|point| point.complete().clone())
             .collect_fixed()?;
-        let zero = Element::zero(dr);
-        let (unified, aux) = unified_output.finish_no_suffix(dr, allocator)?;
-        Ok(WithAux::new(
-            WithSuffix::new(
-                Output {
-                    unified,
-                    online_points,
-                },
-                zero,
-            ),
-            aux,
-        ))
+        let (output, aux) = unified_output.finish_with(dr, allocator, |unified| Output {
+            unified,
+            online_points,
+        })?;
+        Ok(WithAux::new(output, aux))
     }
 }
