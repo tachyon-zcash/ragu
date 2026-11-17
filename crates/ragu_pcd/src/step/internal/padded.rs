@@ -11,7 +11,7 @@ use ragu_primitives::{
 };
 use udon::field::Field;
 
-use crate::Header;
+use crate::header::Header;
 
 /// A header gadget padded to a fixed size with a suffix element appended.
 ///

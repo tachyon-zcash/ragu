@@ -21,7 +21,8 @@ use rand::CryptoRng;
 use udon::{curve::Affine as _, field::Field};
 
 use crate::{
-    Application, Header, Proof,
+    Application, Proof,
+    header::Header,
     profile::ProfiledCycle,
     protocol::{ky, native::online},
     prover::proof_builder::ProofBuilder,

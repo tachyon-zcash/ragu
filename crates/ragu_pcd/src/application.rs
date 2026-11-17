@@ -1,0 +1,589 @@
+//! The application: [`ApplicationBuilder`] registers the steps and
+//! finalizes into the [`Application`] in which proofs are made and checked.
+//!
+//! The application's operations are implemented by role: `fuse`, `seed`,
+//! `rerandomize` and `compress` in `prover`, `verify_compressed` in
+//! `verifier`, and the `verify_uncompressed` test oracle in `test_support`.
+
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
+use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+
+use ragu_backend::ReferenceBackend;
+use ragu_circuits::{
+    polynomials::Rank,
+    registry::{Registry, RegistryBuilder},
+    staging,
+};
+use ragu_core::{Cycle, Error, Result};
+use rand::{SeedableRng, rngs::StdRng};
+
+use crate::{
+    Pcd, Proof, SelectableBackend, header,
+    header::Header,
+    profile::{Profile, ProfiledCycle},
+    protocol, step,
+    step::{Step, internal::adapter::Adapter},
+    verifier,
+};
+
+/// A step circuit's registration, held until every step's
+/// [`NUM_STAGED`](Step::NUM_STAGED) is known, so that every step circuit
+/// reserves the same application stage.
+type ApplicationRegistration<'params, C, R> = Box<
+    dyn FnOnce(
+            RegistryBuilder<'params, <C as Cycle>::CircuitField, R>,
+            usize,
+        ) -> Result<RegistryBuilder<'params, <C as Cycle>::CircuitField, R>>
+        + Send
+        + Sync
+        + 'params,
+>;
+
+/// Builder for an [`Application`] for proof-carrying data.
+pub struct ApplicationBuilder<
+    'params,
+    C: Cycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    B: SelectableBackend = ReferenceBackend,
+> {
+    native_registry: RegistryBuilder<'params, C::CircuitField, R>,
+    nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    num_application_steps: usize,
+    /// The step circuits, registered by [`finalize`](Self::finalize) once
+    /// the stage size is known.
+    application_circuits: Vec<ApplicationRegistration<'params, C, R>>,
+    /// The application stage's size: the largest registered
+    /// [`NUM_STAGED`](Step::NUM_STAGED).
+    stage_size: usize,
+    header_map: BTreeMap<header::Suffix, TypeId>,
+    /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
+    /// which finalization installs instead of building one.
+    bootstrap: Option<Proof<C, R>>,
+    _marker: PhantomData<([(); HEADER_SIZE], B)>,
+}
+
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend> Default
+    for ApplicationBuilder<'_, C, R, HEADER_SIZE, B>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    ApplicationBuilder<'params, C, R, HEADER_SIZE, B>
+{
+    /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
+    pub fn new() -> Self {
+        ApplicationBuilder {
+            native_registry: RegistryBuilder::new(),
+            nested_registry: RegistryBuilder::new(),
+            num_application_steps: 0,
+            application_circuits: Vec::new(),
+            stage_size: 0,
+            header_map: BTreeMap::new(),
+            bootstrap: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Installs `tag` as the native registry's tag instead of the one
+    /// [`finalize`](Self::finalize) derives from the registered circuits.
+    ///
+    /// A test seam for adversarial tests, which use it to model another setup
+    /// over the same circuits or a tag collision between different ones; see
+    /// [`RegistryBuilder::with_tag`].
+    #[cfg(test)]
+    pub(crate) fn with_native_tag(mut self, tag: C::CircuitField) -> Self {
+        self.native_registry = self.native_registry.with_tag(tag);
+        self
+    }
+
+    /// Installs `tag` as the nested registry's tag; see
+    /// [`with_native_tag`](Self::with_native_tag).
+    #[cfg(test)]
+    pub(crate) fn with_nested_tag(mut self, tag: C::ScalarField) -> Self {
+        self.nested_registry = self.nested_registry.with_tag(tag);
+        self
+    }
+
+    /// Supplies the proof that bootstraps the recursion instead of building
+    /// it: one that [`Application::bootstrap_proof`] returned for an
+    /// application of the same configuration, stored by the caller, for
+    /// instance with [`Proof::to_bytes`]. Finalization installs it instead of
+    /// running the bootstrap fuse.
+    ///
+    /// The proof is checked for this profile's shape and for being a proof of
+    /// the bootstrap step, not for validity. No supplied proof can make
+    /// anything verify that otherwise would not, since every
+    /// [`seed`](Application::seed) enforces its children's claims, but one
+    /// that does not verify makes every proof built on it fail verification.
+    /// Key a stored proof by everything that fixes it (see
+    /// [`Application::bootstrap_proof`]) so that a changed application never
+    /// loads a stale one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an initialization error if the proof does not have this
+    /// profile's shape or is not a proof of the bootstrap step.
+    pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
+        let bootstrap = step::InternalStepIndex::Bootstrap.circuit_index::<C::Profile>()?;
+        if !proof.well_formed::<HEADER_SIZE>() || proof.circuit_id() != bootstrap {
+            return Err(Error::Initialization(
+                "the supplied proof is not a bootstrap proof of this profile's shape".into(),
+            ));
+        }
+        self.bootstrap = Some(proof);
+        Ok(self)
+    }
+
+    /// Selects a Ragu-owned computational backend.
+    ///
+    /// The selected backend is used for proving and native witness
+    /// computation; [`Application::verify_compressed`] consults the kernels
+    /// of its [`SelectableBackend::Verifier`], which the selection fixes (for
+    /// example `AcceleratedProver` accelerates proving only). Applications may
+    /// select a Ragu implementation but cannot provide one.
+    pub fn with_backend<SelectedBackend: SelectableBackend>(
+        self,
+    ) -> ApplicationBuilder<'params, C, R, HEADER_SIZE, SelectedBackend> {
+        ApplicationBuilder {
+            native_registry: self.native_registry,
+            nested_registry: self.nested_registry,
+            num_application_steps: self.num_application_steps,
+            application_circuits: self.application_circuits,
+            stage_size: self.stage_size,
+            header_map: self.header_map,
+            bootstrap: self.bootstrap,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Register a new application-defined [`Step`] in this context. The
+    /// provided [`Step`]'s [`INDEX`](Step::INDEX) must be the next sequential
+    /// index that has not been inserted yet.
+    ///
+    /// The step's [`NUM_STAGED`](Step::NUM_STAGED) sizes the proof's
+    /// application stage: every proof carries one stage of the largest
+    /// registered size, so the step circuits are constructed by
+    /// [`Self::finalize`] once every step is known.
+    ///
+    /// # Cost
+    ///
+    /// Every step circuit, including the internal steps, reserves
+    /// `ceil(n / 2)` gates for the stage, where `n` is the application's
+    /// largest `NUM_STAGED`, and a step adds one equality constraint per
+    /// value it stages. An application whose steps stage nothing reserves
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the step's index is not the next sequential index,
+    /// if a non-unit header uses a reserved internal suffix, if any of the
+    /// step's header suffixes conflict with an already-registered header type,
+    /// or if the stage does not fit the rank's gates. Circuit construction
+    /// errors are returned by [`Self::finalize`].
+    pub fn register<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
+        const {
+            assert!(
+                <S::Left as Header<C::CircuitField>>::SUFFIX.get()
+                    != <header::Dummy as Header<C::CircuitField>>::SUFFIX.get()
+                    && <S::Right as Header<C::CircuitField>>::SUFFIX.get()
+                        != <header::Dummy as Header<C::CircuitField>>::SUFFIX.get(),
+                "a Step cannot declare the Dummy header: only the internal Bootstrap step may, \
+                 and its fuse is the base case"
+            );
+        }
+
+        S::INDEX.assert_index(self.num_application_steps)?;
+
+        Self::require_unique_kinds::<S::Output>()?;
+        Self::require_unique_kinds::<S::Left>()?;
+        Self::require_unique_kinds::<S::Right>()?;
+        self.prevent_duplicate_suffixes::<S::Output>()?;
+        self.prevent_duplicate_suffixes::<S::Left>()?;
+        self.prevent_duplicate_suffixes::<S::Right>()?;
+
+        let stage_size = self.stage_size.max(S::NUM_STAGED);
+        // Leave room after the SYSTEM gate and the stage.
+        if 1usize
+            .checked_add(staging::stage_gates(stage_size))
+            .is_none_or(|end| end >= R::n())
+        {
+            return Err(Error::Initialization(
+                "the application stage does not fit the rank's gates".into(),
+            ));
+        }
+        self.stage_size = stage_size;
+        self.application_circuits
+            .push(Box::new(move |registry, stage_size| {
+                registry.register_circuit(Adapter::<C, S, R, HEADER_SIZE>::with_stage(
+                    step, stage_size,
+                )?)
+            }));
+        self.num_application_steps += 1;
+
+        Ok(self)
+    }
+
+    /// Register `count` trivial circuits to simulate application steps
+    /// registration.
+    ///
+    /// This is useful for testing internal circuit behavior with a non-zero
+    /// number of application steps, without needing real [`Step`]
+    /// implementations.
+    #[cfg(test)]
+    pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
+        for _ in 0..count {
+            self.application_circuits
+                .push(Box::new(|registry, _| registry.register_circuit(())));
+            self.num_application_steps += 1;
+        }
+        Ok(self)
+    }
+
+    /// Perform finalization and optimization steps to produce the
+    /// [`Application`].
+    ///
+    /// This derives each registry's [`Tag`](ragu_circuits::registry::Tag)
+    /// from the circuits it holds: the application's steps, and the profile's
+    /// internal circuits.
+    ///
+    /// This also bootstraps the recursion: it fuses two synthesized dummies
+    /// through an internal step — the only fuse treated as the base case — to
+    /// produce the bootstrap proof that [`seed`](Application::seed) consumes as
+    /// a child. This costs one fuse, once per application, unless the proof
+    /// was supplied with [`with_bootstrap`](Self::with_bootstrap).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if internal circuit registration, registry
+    /// finalization, or the bootstrap fuse fails.
+    pub fn finalize(
+        self,
+        params: &'params C::Params,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>>
+    where
+        <C::Profile as Profile>::Context<'params, C::Base, R, B>: Default,
+    {
+        self.finalize_with(params, Default::default())
+    }
+
+    /// Like [`finalize`](Self::finalize), with the profile's prover
+    /// context: what its prover holds across proofs beyond the proof under
+    /// construction (see [`Profile::Context`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`finalize`](Self::finalize).
+    pub fn finalize_with(
+        mut self,
+        params: &'params C::Params,
+        context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
+    ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
+        C::Profile::check()?;
+
+        // Build the native registry:
+        // 1. Application circuits (with the final stage size)
+        // 2. Internal circuits and masks
+        // 3. Internal steps
+        let (total_circuits, log2_circuits) =
+            protocol::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
+
+        for register in core::mem::take(&mut self.application_circuits) {
+            self.native_registry = register(self.native_registry, self.stage_size)?;
+        }
+
+        // Then, register internal circuits and masks.
+        self.native_registry = verifier::recursive::native::register::register_all::<
+            C,
+            R,
+            HEADER_SIZE,
+        >(
+            self.native_registry, params, log2_circuits, self.stage_size
+        )?;
+
+        // Then, register internal steps. `Bootstrap` is registered directly
+        // because it is the one step allowed to declare `Dummy` inputs;
+        // every other internal step goes through `register_internal_step`,
+        // which rejects them.
+        self = self.register_internal_step(step::internal::rerandomize::Rerandomize::<()>::new())?;
+        self.native_registry =
+            self.native_registry.register_internal_step(
+                Adapter::<C, _, R, HEADER_SIZE>::with_stage(
+                    step::internal::bootstrap::Bootstrap::new(),
+                    self.stage_size,
+                )?,
+            )?;
+        // The decompression step, for a profile whose extension verifies a
+        // compressed proof: the one step whose output header is that
+        // proof's statement (see `step::internal::decompress`).
+        if C::Profile::native_extension().statement.is_some() {
+            self =
+                self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
+        }
+
+        assert_eq!(
+            self.native_registry.log2_circuits(),
+            log2_circuits,
+            "log2_circuits mismatch"
+        );
+        assert_eq!(
+            self.native_registry.num_circuits(),
+            total_circuits,
+            "final circuit count mismatch"
+        );
+
+        // Register nested internal circuits (no application steps, no headers).
+        self.nested_registry = verifier::recursive::nested::register::register_all::<C, R>(
+            self.nested_registry,
+            params,
+        )?;
+
+        let mut app = Application {
+            native_registry: self.native_registry.finalize()?,
+            nested_registry: self.nested_registry.finalize()?,
+            params,
+            num_application_steps: self.num_application_steps,
+            stage_size: self.stage_size,
+            bootstrap: self.bootstrap,
+            seeded_trivial: OnceCell::new(),
+            context,
+            _marker: PhantomData,
+        };
+
+        // Bootstrap the recursion once, up front, so that `seed` never pays
+        // for it lazily, unless the application was given the proof. The proof
+        // carries no secrets — it attests nothing and is consumed as a public
+        // child by every seed — so a fixed seed is fine. Its bytes are stable
+        // for a given `rand` version but must not be relied on across versions
+        // (`StdRng` is not portable), so never pin them: a stored proof stays
+        // valid, but one built later need not match it.
+        if app.bootstrap.is_none() {
+            let mut rng = StdRng::seed_from_u64(0);
+            let (pcd, ()) = app.fuse(
+                &mut rng,
+                step::internal::bootstrap::Bootstrap::new(),
+                (),
+                app.dummy_pcd(),
+                app.dummy_pcd(),
+            )?;
+            app.bootstrap = Some(pcd.into_parts().0);
+        }
+
+        Ok(app)
+    }
+
+    /// Registers an internal [`Step`] other than the bootstrap step.
+    ///
+    /// Internal steps do not go through `prevent_duplicate_suffixes`, so this
+    /// is where the invariant that only
+    /// [`Bootstrap`](step::internal::bootstrap::Bootstrap) declares
+    /// [`Dummy`](header::Dummy) inputs is enforced: an internal step
+    /// with `Dummy` inputs would take the base case, and if it also carried
+    /// a data-bearing output it would let a prover attest arbitrary data without
+    /// verifying its children. The check is evaluated at compile time for each
+    /// step registered here.
+    ///
+    /// It covers *declared* (constant) suffixes only. An internal step whose
+    /// input suffix is a witness wire — today only `Rerandomize`, via uniform
+    /// encoding — must instead constrain that wire away from `Dummy`
+    /// itself, and from zero; see `ProofInputs::is_dummy_input` and
+    /// [`Encoded::new_uniform`](step::Encoded::new_uniform).
+    ///
+    /// No explicit allowed-suffix set is needed: application steps encode
+    /// suffixes as constants, [`Encoded::new_uniform`](step::Encoded::new_uniform)
+    /// excludes `Dummy` and zero, rerandomization preserves the input header,
+    /// internal circuits end in a zero suffix that no application header can use, and
+    /// only `Bootstrap` declares `Dummy` inputs. An internal step with a
+    /// witnessed suffix must preserve these restrictions.
+    fn register_internal_step<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
+        const {
+            assert!(
+                <S::Left as Header<C::CircuitField>>::SUFFIX.get()
+                    != header::Suffix::internal(2).get()
+                    && <S::Right as Header<C::CircuitField>>::SUFFIX.get()
+                        != header::Suffix::internal(2).get(),
+                "only the internal Bootstrap step may declare Dummy inputs"
+            );
+        }
+
+        self.native_registry =
+            self.native_registry.register_internal_step(
+                Adapter::<C, S, R, HEADER_SIZE>::with_stage(step, self.stage_size)?,
+            )?;
+
+        Ok(self)
+    }
+
+    /// Rejects a header whose
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) keeps the same kind
+    /// in two slots: no step could name that kind.
+    fn require_unique_kinds<H: Header<C::CircuitField>>() -> Result<()> {
+        if <H::OnlinePolyCommit as header::OnlinePolyCommit>::has_unique_kinds() {
+            Ok(())
+        } else {
+            Err(Error::Initialization(
+                "a Header cannot keep the same online polynomial kind in two slots".into(),
+            ))
+        }
+    }
+
+    fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        if H::SUFFIX.get() < header::NUM_INTERNAL_SUFFIXES as u64
+            && TypeId::of::<H>() != TypeId::of::<()>()
+        {
+            return Err(Error::Initialization(
+                "only the unit Header () may use a reserved internal suffix".into(),
+            ));
+        }
+
+        match self.header_map.get(&H::SUFFIX) {
+            Some(ty) => {
+                if *ty != TypeId::of::<H>() {
+                    return Err(Error::Initialization(
+                        "two different Header implementations using the same suffix".into(),
+                    ));
+                }
+            }
+            None => {
+                self.header_map.insert(H::SUFFIX, TypeId::of::<H>());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// The recursion context that is used to create and verify proof-carrying data.
+pub struct Application<
+    'params,
+    C: ProfiledCycle,
+    R: Rank,
+    const HEADER_SIZE: usize,
+    B: SelectableBackend = ReferenceBackend,
+> {
+    pub(crate) native_registry: Registry<'params, C::CircuitField, R>,
+    pub(crate) nested_registry: Registry<'params, C::ScalarField, R>,
+    pub(crate) params: &'params C::Params,
+    pub(crate) num_application_steps: usize,
+    /// The application stage's size, in values.
+    pub(crate) stage_size: usize,
+    /// The profile's prover context: what its prover holds across proofs
+    /// (see [`Profile::Context`]).
+    pub(crate) context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
+    /// The proof that bootstraps the recursion: a genuine, verifying
+    /// `Pcd<()>` consumed as a child by every [`seed`](Self::seed).
+    ///
+    /// Always `Some` once [`ApplicationBuilder::finalize`] returns, which
+    /// installs the proof given to [`ApplicationBuilder::with_bootstrap`] or
+    /// builds it. It is `None` only while `finalize` is building it, since
+    /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
+    /// `Application`.
+    pub(crate) bootstrap: Option<Proof<C, R>>,
+    /// A valid `Pcd<()>` used as the right child during rerandomization.
+    /// Lazily derived from the bootstrap proof and then reused.
+    pub(crate) seeded_trivial: OnceCell<Proof<C, R>>,
+    _marker: PhantomData<([(); HEADER_SIZE], B)>,
+}
+
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
+{
+    /// The profile's prover context, as given to
+    /// [`finalize_with`](ApplicationBuilder::finalize_with).
+    pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
+        &self.context
+    }
+
+    /// Returns the proof that bootstraps the recursion.
+    ///
+    /// [`ApplicationBuilder::finalize`] builds it once, unless it was given one
+    /// with [`ApplicationBuilder::with_bootstrap`]: two synthesized dummy
+    /// proofs, which cannot verify on their own, are fused through the
+    /// internal bootstrap step, the only step whose inputs are dummies and
+    /// hence the only fuse treated as the base case. The result verifies, so
+    /// [`seed`](Self::seed) consumes it as an ordinary child. It attests
+    /// nothing, and its own witness is empty: the bootstrap step skips its
+    /// children's claims and outputs the data-less unit header.
+    ///
+    /// The proof is fixed by the application's configuration: its registries
+    /// and public parameters, its profile, rank and header size, the circuits
+    /// of the Ragu version in use, and for a profile with an extension the
+    /// prover context at finalization. Store it, for instance with
+    /// [`Proof::to_bytes`], and supply it to later applications of the same
+    /// configuration with [`ApplicationBuilder::with_bootstrap`], so that
+    /// their finalization skips the bootstrap fuse.
+    ///
+    /// Like every uncompressed proof, this one is not zero-knowledge: for a
+    /// profile with an extension it holds the extension's polynomials,
+    /// computed over the prover context at finalization. Store or ship it
+    /// only if that context holds nothing confidential. The built-in profiles
+    /// have no extension, so their bootstrap proof reveals nothing.
+    pub fn bootstrap_proof(&self) -> &Proof<C, R> {
+        self.bootstrap
+            .as_ref()
+            .expect("finalize always sets the bootstrap proof")
+    }
+
+    /// The bootstrap proof as the `Pcd<()>` that [`seed`](Self::seed) and
+    /// rerandomization consume; see [`bootstrap_proof`](Self::bootstrap_proof).
+    pub(crate) fn bootstrap_pcd(&self) -> Pcd<C, R, ()> {
+        self.bootstrap_proof().clone().carry(())
+    }
+
+    /// Computes $H^{bridge}(P)$ from the unblinded stage polynomial the
+    /// honest prover constructs for `point`. When `point` is the step's own last
+    /// online commitment, this is the honest prover's value of
+    /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash). An application
+    /// that hashes a polynomial commitment, for instance into an anchor it
+    /// also recomputes outside the circuit, calls this.
+    ///
+    /// It is the commitment of the stage holding `point`'s coordinates
+    /// alone, so it depends on the rank and the nested generators; binding
+    /// rests on the commitment's.
+    ///
+    /// An accepted bridge digest binds the point but need not use this
+    /// canonical unblinded encoding or be fixed before the step's challenge.
+    /// Anchor applications must compare natively recomputed advancement
+    /// against canonical-chain anchors.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `point` is the identity, which the stage cannot hold.
+    pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
+        crate::verifier::recursive::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
+            point,
+            C::nested_generators(self.params),
+        )
+    }
+
+    /// The commitment of an online polynomial with coefficients `coeffs`, in
+    /// ascending degree. When [`Step::prepare`] prepares these coefficients,
+    /// Ragu stores this unblinded commitment in the output proof's slot.
+    /// An application that recomputes a commitment outside the circuit, for
+    /// instance to recompute a [`bridge_hash`](Self::bridge_hash), calls this.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the polynomial has more coefficients than the rank holds.
+    pub fn commit(&self, coeffs: &[C::CircuitField]) -> Result<C::HostCurve> {
+        if coeffs.len() > R::num_coeffs() {
+            return Err(Error::InvalidWitness(
+                "a polynomial has more coefficients than the rank holds".into(),
+            ));
+        }
+        let poly =
+            ragu_circuits::polynomials::sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec());
+        Ok(B::sparse_commit_to_affine(
+            &poly,
+            C::host_generators(self.params),
+        ))
+    }
+
+    /// Returns a reference to the native [`Registry`].
+    pub fn native_registry(&self) -> &Registry<'_, C::CircuitField, R> {
+        &self.native_registry
+    }
+}

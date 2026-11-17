@@ -3,7 +3,7 @@
 //! adapters.
 //!
 //! `malformed_proofs.rs` and `validation.rs` beside these edit a proof's
-//! private fields, so `proof/codec.rs` mounts them into the crate's own
+//! private fields, so `wire/uncompressed.rs` mounts them into the crate's own
 //! tests instead of this target.
 
 #[allow(dead_code)]

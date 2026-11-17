@@ -61,9 +61,6 @@ pub(crate) mod batch;
 pub(crate) mod instance;
 pub(crate) mod revdot;
 
-mod proof;
-pub(crate) use proof::Messages;
-pub use proof::{CompressedPcd, CompressedProof};
 /// The challenges the verifier samples on one curve once the statement is
 /// absorbed: $w$ for the registry restriction, $y$ and $z$ for the claims
 /// and $\sigma$ for the wire bindings.

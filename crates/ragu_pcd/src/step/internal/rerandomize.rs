@@ -37,8 +37,7 @@ use ragu_primitives::{GadgetExt, allocator::Standard};
 
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
 use crate::{
-    Header,
-    header::NUM_ONLINE_FP_POLYS,
+    header::{Header, NUM_ONLINE_FP_POLYS},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 

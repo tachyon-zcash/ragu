@@ -70,15 +70,15 @@ macro_rules! ipa_tests {
             }
 
             impl IpaTranscript<C> for ZeroRoundTranscript {
-                fn write_point(&mut self, _: C) -> crate::Result<()> {
+                fn write_point(&mut self, _: C) -> ragu_core::Result<()> {
                     Ok(())
                 }
 
-                fn write_scalar(&mut self, _: F) -> crate::Result<()> {
+                fn write_scalar(&mut self, _: F) -> ragu_core::Result<()> {
                     Ok(())
                 }
 
-                fn squeeze_challenge(&mut self) -> crate::Result<F> {
+                fn squeeze_challenge(&mut self) -> ragu_core::Result<F> {
                     // xi and z precede the round challenges.
                     let zero = self.drawn == self.round + 2;
                     self.drawn += 1;
@@ -148,7 +148,7 @@ macro_rules! ipa_tests {
                 x: F,
                 v: F,
                 proof: &IpaProof<C>,
-            ) -> crate::Result<Guard<'a, C>> {
+            ) -> ragu_core::Result<Guard<'a, C>> {
                 let mut transcript = transcript_for(commitment, x_seen, v);
                 let mut msm = MSM::new(params);
                 msm.append_term(F::ONE, commitment);

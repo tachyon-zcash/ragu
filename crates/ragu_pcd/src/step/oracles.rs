@@ -65,8 +65,7 @@ use ragu_primitives::{Element, GadgetExt, io::Write, vec::FixedVec};
 use udon::field::Field;
 
 use crate::{
-    Header,
-    header::{Has, slot},
+    header::{Has, Header, slot},
     protocol::native::{
         online,
         online::{NUM_ONLINE_FP_POLYS, Queries, QueriesOutput, QueryOutput},

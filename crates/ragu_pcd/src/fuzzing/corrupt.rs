@@ -106,18 +106,18 @@ use crate::{
 pub use crate::{header::NUM_ONLINE_FP_POLYS, protocol::native::online::NUM_ONLINE_FP_QUERIES};
 
 // The corruption vocabulary names proof components, and the names it uses are
-// the ones `internal` uses. Those enums are *not* re-exported here, and the
+// the ones `protocol` uses. Those enums are *not* re-exported here, and the
 // duplication below is deliberate.
 //
-// `internal` is a private module. Re-exporting its enums would make them
+// `protocol` is a private module. Re-exporting its enums would make them
 // public API of the crate whenever this feature is on, which drags
 // `#![deny(missing_docs)]` onto production files and, more to the point,
 // means a fuzzing feature decides what the crate publishes. Mirroring keeps
 // every fuzzing-driven change inside this module.
 //
 // Drift is a compile error, not a silent gap: the mappings in
-// `crate::proof::fuzz` match these exhaustively, so a variant added to
-// `internal` without a counterpart here fails to build.
+// `crate::proof::access` match these exhaustively, so a variant added to
+// `protocol` without a counterpart here fails to build.
 
 /// Identifies which of the two child proofs a component came from.
 ///

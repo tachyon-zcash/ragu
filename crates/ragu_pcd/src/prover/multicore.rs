@@ -1,3 +1,6 @@
+//! Coarse-grained parallelism for proof construction. Without the
+//! `multicore` feature, every task runs on the calling thread.
+
 /// N-way parallel join for coarse-grained task parallelism.
 ///
 /// Like [`maybe_rayon::join`] for more than two closures: nests internally and flattens

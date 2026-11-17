@@ -14,6 +14,7 @@ pub type R = ragu_circuits::polynomials::ProductionRank;
 
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
+    Error, Result,
     drivers::emulator::{Emulator, Wireless},
     gadgets::{Bound, Gadget},
     maybe::Empty,

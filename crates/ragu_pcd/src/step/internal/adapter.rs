@@ -15,7 +15,7 @@ use ragu_primitives::{
 };
 
 use crate::{
-    Header,
+    header::Header,
     protocol::native::online,
     step::{
         Prepared, Step, oracles,

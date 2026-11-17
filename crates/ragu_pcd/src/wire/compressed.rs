@@ -12,9 +12,9 @@ use udon::{curve::Affine, field::Field};
 
 use crate::{
     profile::{Profile, ProfiledCycle},
+    proof::{CompressedProof, Messages},
     protocol::{
         compress::{
-            CompressedProof, Messages,
             batch::Batch,
             instance::{Child, Instance, NestedChild, OPENED},
             revdot::{

@@ -1,9 +1,6 @@
 //! The wire codec of [`Proof`]: every field in declaration order, each with
 //! the codec it encodes under. Decoding builds the struct from this list, so a
 //! field missing from it is a build error.
-//!
-//! The commitment caches are private to `proof`, which is why this list
-//! lives beneath it rather than in `wire`.
 
 #[cfg(test)]
 #[path = "../../tests/wire/malformed_proofs.rs"]
@@ -32,7 +29,7 @@ macro_rules! codec {
     ($($field:ident => $codec:ty),* $(,)?) => {
         /// The fields in wire order, for the fixtures that pin the format.
         #[cfg(test)]
-        pub(super) const WIRE_FIELDS: &[&str] = &[$(stringify!($field)),*];
+        pub(crate) const WIRE_FIELDS: &[&str] = &[$(stringify!($field)),*];
 
         impl<C: ProfiledCycle, R: Rank> Encode for Proof<C, R> {
             fn encode(

@@ -27,9 +27,9 @@ use udon::{
 
 use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof, SelectableBackend,
+    proof::Messages,
     protocol::{
         compress::{
-            Messages,
             batch::Batch,
             instance::{Child, Instance, NestedChild},
             revdot::{Reduction, fold::Fold},

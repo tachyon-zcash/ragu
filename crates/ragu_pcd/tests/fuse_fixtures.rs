@@ -99,9 +99,9 @@ use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd,
     header::{Header, Padding, Suffix},
     profile::{Aggregator, Profile, Profiled, ProfiledCycle},
+    proof::Messages,
     protocol::{
         compress::{
-            Messages,
             batch::Batch,
             instance::{Child, Instance, NestedChild},
             revdot::{Reduction, fold::Fold},
@@ -1320,7 +1320,10 @@ fn wire_lines<C: FixtureCycle>(
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
 ) {
-    lines.push("wire.fields", super::codec::WIRE_FIELDS.join(","));
+    lines.push(
+        "wire.fields",
+        crate::wire::uncompressed::WIRE_FIELDS.join(","),
+    );
     let bytes = proof.to_bytes().unwrap();
     let payload = &bytes[crate::wire::ENVELOPE_SIZE..];
     lines.push("wire.proof.bytes", payload.len());

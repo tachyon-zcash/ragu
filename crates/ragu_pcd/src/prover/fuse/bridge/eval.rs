@@ -12,7 +12,6 @@ use udon::field::Field;
 
 use crate::{
     Application, Proof,
-    multicore::par_join,
     profile::ProfiledCycle,
     protocol::{native::online, nested},
     prover::{
@@ -20,6 +19,7 @@ use crate::{
             native::{inner_error::RegistryWy, s_prime::NativeSPrime},
             nested::{inner_error::NestedRegistryWy, s_prime::NestedSPrime},
         },
+        multicore::par_join,
         proof_builder::ProofBuilder,
     },
 };

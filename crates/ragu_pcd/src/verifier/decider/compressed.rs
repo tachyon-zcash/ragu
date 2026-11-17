@@ -4,11 +4,11 @@ use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
 
 use crate::{
-    Application, RAGU_TAG, SelectableBackend,
+    Application, CompressedPcd, RAGU_TAG, SelectableBackend,
     header::Header,
     profile::ProfiledCycle,
     protocol::{
-        compress::{CompressedPcd, Sampled, transcript},
+        compress::{Sampled, transcript},
         ipa::{CycleTranscript, IpaCycle},
         ky,
     },

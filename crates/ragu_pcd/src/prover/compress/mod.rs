@@ -11,12 +11,9 @@ use crate::{
     Application, Pcd, RAGU_TAG, SelectableBackend,
     header::Header,
     profile::ProfiledCycle,
-    proof::commitments_match,
+    proof::{CompressedPcd, CompressedProof, Messages, commitments_match},
     protocol::{
-        compress::{
-            CompressedPcd, CompressedProof, Messages, Sampled, batch::Batch, instance::Instance,
-            revdot::Openings, transcript,
-        },
+        compress::{Sampled, batch::Batch, instance::Instance, revdot::Openings, transcript},
         ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
         ky, native, nested,
     },

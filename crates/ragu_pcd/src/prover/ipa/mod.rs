@@ -14,8 +14,8 @@ use udon::{
 
 use crate::{
     SelectableBackend,
-    multicore::parallelize,
     protocol::ipa::{IpaProof, IpaTranscript, Params, msm::multiexp_batch},
+    prover::multicore::parallelize,
 };
 
 /// Creates an unblinded opening of `p_poly` at `x_3`.

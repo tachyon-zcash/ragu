@@ -88,7 +88,7 @@ nested IPA scalar must pass the host MSM and fail the nested one, identity
 stage commitments must be rejected before either MSM, and a wrong claimed
 `v` must be rejected. These are checked, not committed.
 
-The recorder lives in `src/ipa/fingerprint.rs`. Recording and event encoding
+The recorder lives in `src/test_support/fingerprint.rs`. Recording and event encoding
 compile only for tests; production observation helpers are inline no-ops.
 The helpers observe the cycle transcript's absorb, scalar and squeeze, and
 the IPA MSM's evaluation, so the fingerprint is of the verifier's own code path.

@@ -1,4 +1,6 @@
-//! Compressed proof messages and accompanying data.
+//! The compressed proof and proof-carrying data: the instance and the
+//! prover's messages on each curve.
+
 use ragu_circuits::polynomials::Rank;
 use ragu_core::Cycle;
 use udon::curve::Affine;
@@ -9,12 +11,13 @@ use crate::{
     protocol::{
         compress::{
             batch::Batch,
-            instance::Instance,
+            instance::{self, Instance},
             revdot::{Reduction, fold::Derived, native_components, nested_components},
         },
         ipa::IpaProof,
     },
 };
+
 /// The prover's messages of the compression on one curve.
 #[derive(Clone, Debug)]
 pub(crate) struct Messages<P: Affine> {
@@ -110,5 +113,3 @@ impl<C: Cycle, H: Header<C::CircuitField>> Clone for CompressedPcd<C, H> {
         }
     }
 }
-
-use crate::protocol::compress::instance;

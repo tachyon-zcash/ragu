@@ -6,6 +6,9 @@ These are private implementation boundaries; the public API is unchanged.
 
 | Entry point | Implementation | Responsibility |
 | --- | --- | --- |
+| `ApplicationBuilder::finalize` | `application.rs` | Register the steps and internal circuits, derive the registry tags, and build or install the bootstrap proof. |
+| `Application::seed` | `prover/seed.rs` | Fuse a leaf step against the bootstrap proof as both children. |
+| `Application::rerandomize` | `prover/rerandomize.rs` | Fuse a proof through the internal rerandomization step. |
 | `Application::fuse` | `prover/fuse/mod.rs`, `prover/fuse/orchestrator.rs` | Prepare the application step, then construct one accumulator proof from both children. |
 | Recursive verification | `verifier/recursive/{native,nested}/` | Constrain the reduction of the children's claims into the parent's accumulated obligations. |
 | `Application::compress` | `prover/compress/` | Reduce accumulated obligations to polynomial openings and produce IPA proofs. |
@@ -58,15 +61,21 @@ checks. `unified.assert_complete()` remains a prover-time coverage assertion.
 
 ## Shared definitions
 
-`protocol/` holds proof messages, instances, canonical component and claim orders,
+`proof/` holds both proof forms: `Proof` and `Pcd` in `uncompressed.rs`,
+`CompressedProof` and `CompressedPcd` in `compressed.rs`; `wire/` holds their byte
+encodings. `protocol/` holds instances, canonical component and claim orders,
 transcripts, and shared algebra. Prover extraction from a full proof and verifier
 acceptance checks are separate implementations of operations on those types.
 Stage gadgets are reused by tracing and constraint synthesis, so witness
 generation agrees with the circuit relation.
 
-The public `ipa` module is a compatibility facade. Its prover and verifier
-implementations are under their respective role directories; message, parameter,
-transcript, and MSM definitions remain shared.
+`profile/` declares the proof shapes: the `Profile` trait and the built-in profiles
+in `mod.rs`, extensions and the registry slots their hooks fill in `extension.rs`,
+and the walk sizes in `shape.rs`.
+
+The public `ipa` module (`ipa.rs`) names the argument's public API: the shared
+message, parameter, transcript, and MSM definitions from `protocol/ipa/`,
+`create_proof` from `prover/ipa/`, and `verify_proof` from `verifier/ipa/`.
 
 ## Compatibility checks
 

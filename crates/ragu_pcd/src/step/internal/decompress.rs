@@ -69,7 +69,7 @@ use ragu_primitives::allocator::Standard;
 
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
 use crate::{
-    Header,
+    header::Header,
     step::{Encoded, Index, Oracles, Step},
 };
 

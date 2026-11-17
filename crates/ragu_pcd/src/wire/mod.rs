@@ -84,6 +84,8 @@ mod registry;
 mod serde;
 #[cfg(test)]
 mod tests;
+// Crate-visible for the fuse fixtures, which pin its field order.
+pub(crate) mod uncompressed;
 
 #[cfg(any(test, feature = "serde"))]
 pub(crate) use crate::wire::format::ENVELOPE_SIZE;

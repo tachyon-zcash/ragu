@@ -9,10 +9,12 @@ use udon::{fft::bit_reverse, field::Field};
 
 use crate::{
     Application, Proof,
-    multicore::par_join,
     profile::ProfiledCycle,
     protocol::{nested, nested::online as online_fq},
-    prover::{fuse::nested::inner_error::NestedRegistryWy, proof_builder::ProofBuilder},
+    prover::{
+        fuse::nested::inner_error::NestedRegistryWy, multicore::par_join,
+        proof_builder::ProofBuilder,
+    },
 };
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>

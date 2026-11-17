@@ -34,8 +34,7 @@ use ragu_primitives::allocator::Standard;
 
 pub(crate) use crate::step::InternalStepIndex::Bootstrap as INTERNAL_ID;
 use crate::{
-    Header,
-    header::Dummy,
+    header::{Dummy, Header},
     step::{Encoded, Index, Oracles, Step},
 };
 

@@ -24,9 +24,8 @@ use ragu_primitives::{
 use rand::{SeedableRng, TryCryptoRng, TryRng, rngs::StdRng};
 use udon::field::Field;
 
-use super::{CompressedPcd, CompressedProof};
 use crate::{
-    Application, ApplicationBuilder, Pcd, Proof,
+    Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof,
     header::{Header, Padding, Suffix},
     proof::recursive_propagation_tests::{support, support::Cache},
     protocol::{

@@ -8,10 +8,11 @@ use udon::{fft::bit_reverse, field::Field};
 
 use crate::{
     Application, Proof,
-    multicore::par_join,
     profile::ProfiledCycle,
     protocol::native,
-    prover::{fuse::native::inner_error::RegistryWy, proof_builder::ProofBuilder},
+    prover::{
+        fuse::native::inner_error::RegistryWy, multicore::par_join, proof_builder::ProofBuilder,
+    },
 };
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
