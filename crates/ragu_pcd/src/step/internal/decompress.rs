@@ -52,10 +52,10 @@
 //! proves the step under a stand-in statement circuit and checks the
 //! binding both ways.
 //!
-//! [`Rerandomize`]: super::rerandomize::Rerandomize
+//! [`Rerandomize`]: crate::step::internal::rerandomize::Rerandomize
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 //! [`Dummy`]: crate::header::Dummy
-//! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+//! [`statement_ky`]: crate::verifier::recursive::native::stages::preamble::ProofInputs::statement_ky
 //! [`num_internal_steps`]: crate::step::num_internal_steps
 
 use core::marker::PhantomData;
@@ -67,9 +67,11 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Oracles, Step};
-use crate::Header;
 pub(crate) use crate::step::InternalStepIndex::Decompress as INTERNAL_ID;
+use crate::{
+    Header,
+    step::{Encoded, Index, Oracles, Step},
+};
 
 pub(crate) struct Decompress<H> {
     _marker: PhantomData<H>,

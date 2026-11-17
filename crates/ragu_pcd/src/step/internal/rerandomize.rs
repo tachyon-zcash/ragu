@@ -35,9 +35,12 @@ use ragu_core::{
 };
 use ragu_primitives::{GadgetExt, allocator::Standard};
 
-use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
-use crate::{Header, header::NUM_ONLINE_FP_POLYS};
+use crate::{
+    Header,
+    header::NUM_ONLINE_FP_POLYS,
+    step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+};
 
 pub(crate) struct Rerandomize<H> {
     _marker: PhantomData<H>,

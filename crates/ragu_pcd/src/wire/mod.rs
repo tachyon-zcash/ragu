@@ -86,8 +86,8 @@ mod serde;
 mod tests;
 
 #[cfg(any(test, feature = "serde"))]
-pub(crate) use format::ENVELOPE_SIZE;
-pub use format::{PayloadKind, read_payload_kind};
+pub(crate) use crate::wire::format::ENVELOPE_SIZE;
+pub use crate::wire::format::{PayloadKind, read_payload_kind};
 
 /// Largest compressed rank admitted by the byte formats.
 pub(crate) const MAX_RANK: u32 = 32;

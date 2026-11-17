@@ -10,7 +10,7 @@ use ragu_core::{
 use rand::{SeedableRng, rngs::StdRng};
 use udon::curve::{Affine, Projective};
 
-use crate::{ApplicationBuilder, ipa::IpaCycle};
+use crate::{ApplicationBuilder, protocol::ipa::IpaCycle};
 
 #[test]
 fn rejects_recompressed_blinded_trace_commitments() {

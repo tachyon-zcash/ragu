@@ -48,7 +48,7 @@ use core::any::TypeId;
 /// the compressed proof's own online commitments would be a change to the
 /// statement extension's contract.
 ///
-/// [`Header`]: super::Header
+/// [`Header`]: crate::header::Header
 pub const NUM_ONLINE_FP_POLYS: usize = 2;
 
 /// A kind of online polynomial, identified by a unit type.
@@ -71,7 +71,7 @@ pub const NUM_ONLINE_FP_POLYS: usize = 2;
 /// impl OnlinePoly for TachygramSet {}
 /// ```
 ///
-/// [`Header::OnlinePolyCommit`]: super::Header::OnlinePolyCommit
+/// [`Header::OnlinePolyCommit`]: crate::header::Header::OnlinePolyCommit
 pub trait OnlinePoly: Copy + Send + Sync + 'static {}
 
 /// A slot a header leaves unused.
@@ -81,7 +81,7 @@ pub trait OnlinePoly: Copy + Send + Sync + 'static {}
 /// slot, because `Padding` is not an [`OnlinePoly`]. See
 /// [`OnlinePolyCommit`] for where to put it.
 ///
-/// [`Header::OnlinePolyCommit`]: super::Header::OnlinePolyCommit
+/// [`Header::OnlinePolyCommit`]: crate::header::Header::OnlinePolyCommit
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Padding;
 
@@ -179,7 +179,7 @@ mod slot_sealed {
 /// A list that holds the same kind in two slots makes the lookup of that
 /// kind ambiguous, and application registration rejects it.
 ///
-/// [`Header::OnlinePolyCommit`]: super::Header::OnlinePolyCommit
+/// [`Header::OnlinePolyCommit`]: crate::header::Header::OnlinePolyCommit
 pub trait OnlinePolyCommit: sealed::Sealed + Send + Sync + 'static {
     /// Whether every non-padding kind occurs at most once.
     #[doc(hidden)]

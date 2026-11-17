@@ -7,9 +7,6 @@ mod prepared;
 
 use alloc::vec::Vec;
 
-pub use encoder::Encoded;
-pub use oracles::{BridgeHash, Oracle, Oracles};
-pub use prepared::Prepared;
 use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{
     Cycle, Result,
@@ -17,8 +14,16 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::header::{Has, Header, NUM_ONLINE_FP_POLYS};
-use crate::{internal::native::InternalCircuitIndex, profile::Profile};
+pub use crate::step::{
+    encoder::Encoded,
+    oracles::{BridgeHash, Oracle, Oracles},
+    prepared::Prepared,
+};
+use crate::{
+    header::{Has, Header, NUM_ONLINE_FP_POLYS},
+    profile::Profile,
+    protocol::native::InternalCircuitIndex,
+};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]

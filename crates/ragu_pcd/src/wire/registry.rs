@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use ragu_circuits::registry::CircuitIndex;
 
-use super::{Decode, Dimensions, Encode, Error, Reader};
+use crate::wire::{Decode, Dimensions, Encode, Error, Reader};
 impl Encode for CircuitIndex {
     fn encode(&self, output: &mut Vec<u8>, dims: Dimensions) -> Result<(), Error<'static>> {
         // A circuit index is a `u32`; `usize` is the only conversion out.

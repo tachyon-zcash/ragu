@@ -11,19 +11,21 @@ use ragu_primitives::vec::{ConstLen, Len};
 use udon::{curve::Affine, field::Field};
 
 use crate::{
-    compress::{
-        CompressedProof, Messages,
-        batch::Batch,
-        instance::{Child, Instance, NestedChild, OPENED},
-        revdot::{
-            Reduction,
-            fold::{Derived, Fold},
-            native_components, nested_components,
-        },
-    },
-    internal::native::online,
-    ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
+    protocol::{
+        compress::{
+            CompressedProof, Messages,
+            batch::Batch,
+            instance::{Child, Instance, NestedChild, OPENED},
+            revdot::{
+                Reduction,
+                fold::{Derived, Fold},
+                native_components, nested_components,
+            },
+        },
+        ipa::IpaProof,
+        native::online,
+    },
     wire::{
         Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, HeaderSize,
         Point, Reader, Rounds, Scalar, SizedSequence, field_len,

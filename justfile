@@ -50,7 +50,7 @@ test *ARGS:
 # Aggregator or extension profiles, recurse through several generations, or
 # compare backends. They are 62 tests but about 80% of the suite's test time,
 # each taking from half a minute to several minutes. What remains still proves end to end
-# (`nontrivial`, `wire`, `compress::tests`, the standard-profile `verify::tests`,
+# (`nontrivial`, `wire`, `compress::tests`, the uncompressed verifier oracle,
 # and others). `ci_test_all`, `backend_lane` and `ci_fixtures` run the skipped ones.
 _test_skip := (
   "--skip proof::profile_substitution_tests " +

@@ -5,8 +5,8 @@
 //! and from its own output proof, associated with the three headers. Their
 //! commitments are stored in [`Proof`](crate::Proof) and fixed before the
 //! step's challenge $\zeta$ is squeezed: the children's in their proofs,
-//! the step's own by its [`prepare`](super::Step::prepare) phase. In the
-//! step's [`witness`](super::Step::witness) phase, [`Oracles`] stands for
+//! the step's own by its [`prepare`](crate::step::Step::prepare) phase. In the
+//! step's [`witness`](crate::step::Step::witness) phase, [`Oracles`] stands for
 //! those six commitments. The step may open each of its headers'
 //! polynomials once, by kind, through [`left`](Oracles::left),
 //! [`right`](Oracles::right) and [`output`](Oracles::output), at any wire,
@@ -18,7 +18,7 @@
 //! output slot it does not query is opened at $\zeta$ and held to one, as
 //! padding (see below).
 //!
-//! [`Oracles`] also holds the step's [staged](super::Step::prepare) values,
+//! [`Oracles`] also holds the step's [staged](crate::step::Step::prepare) values,
 //! committed before $\zeta$ in the proof's application stage. A check at
 //! $\zeta$ is sound when it evaluates a residual polynomial whose
 //! coefficients were fixed before $\zeta$, whose degree is bounded, and
@@ -41,7 +41,7 @@
 //! header's fields.
 //!
 //! An output slot is constrained only through its openings. The step's
-//! [`prepare`](super::Step::prepare) phase is prover data, so a slot the
+//! [`prepare`](crate::step::Step::prepare) phase is prover data, so a slot the
 //! circuit opens without constraining the value holds whatever polynomial
 //! the prover committed. An output slot the step does not open is padding:
 //! after the step's circuit, Ragu opens it at $\zeta$ and holds the value
@@ -64,11 +64,14 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt, io::Write, vec::FixedVec};
 use udon::field::Field;
 
-use super::Step;
 use crate::{
     Header,
     header::{Has, slot},
-    internal::native::online::{self, NUM_ONLINE_FP_POLYS, Queries, QueriesOutput, QueryOutput},
+    protocol::native::{
+        online,
+        online::{NUM_ONLINE_FP_POLYS, Queries, QueriesOutput, QueryOutput},
+    },
+    step::Step,
 };
 
 /// Evaluates a step's online polynomials: `evaluate(slot, x)` is the value
@@ -164,7 +167,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
         &self.bridge_hash
     }
 
-    /// The step's [staged](super::Step::prepare) values, in order: wires
+    /// The step's [staged](crate::step::Step::prepare) values, in order: wires
     /// bound to the application stage, which the proof committed before
     /// $\zeta$ was drawn.
     pub fn staged(&self) -> &[Element<'dr, D>] {
@@ -196,7 +199,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     }
 
     /// Returns the oracle for the step's own output proof's polynomial of
-    /// `kind`, as [`prepare`](super::Step::prepare) prepared it.
+    /// `kind`, as [`prepare`](crate::step::Step::prepare) prepared it.
     pub fn output<P, I>(&mut self, kind: P) -> Oracle<'_, 'a, 'dr, D, C, S>
     where
         <S::Output as Header<C::CircuitField>>::OnlinePolyCommit: Has<P, I>,

@@ -1,0 +1,298 @@
+//! Eval stage for nested fuse operations.
+//!
+//! Alongside the host-curve commitment it bridges, this stage carries the
+//! nested evaluations at $u_n$ of every polynomial the nested batch folds
+//! into $p_n$, in the order [`Batch::evaluated`] fixes; the nested $v_n$ is
+//! the $\beta_n$-weighted sum of $f_n(u_n)$ and these values.
+//!
+//! The child evaluations have no individual opening constraints in this
+//! stage; [`compute_v`] accumulates them into $v_n$. The bridge commitment
+//! is absorbed before `pre_beta` is squeezed, so these values are committed
+//! before its nested counterpart $\beta_n$ is derived. Changing these
+//! values requires recomputing the commitment and challenge; a cancellation
+//! computed with $\beta_n$ held fixed does not by itself establish a valid
+//! change to the proof.
+//!
+//! At the decider, [`Proof::nested_v`] derives $v_n$ from the retained
+//! polynomial $p_n$. The nested revdot claims bind this value to the
+//! `compute_v` trace, and the commitment checks bind $p_n$ to $P_n$.
+//! Preserve this aggregate binding, the commitment's position before
+//! `pre_beta`, and the ordering shared with [`Batch::evaluated`].
+//!
+//! [`Batch::evaluated`]: crate::protocol::nested::pcs::Batch::evaluated
+//! [`compute_v`]: crate::verifier::recursive::nested::circuits::compute_v
+
+use core::marker::PhantomData;
+
+use ragu_circuits::polynomials::Rank;
+use ragu_core::{
+    Cycle, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe,
+};
+use ragu_primitives::{
+    Element, Point,
+    io::Write,
+    vec::{CollectFixed, FixedVec, Len},
+};
+use udon::{curve::EndomorphismAffine as Affine, field::Field};
+
+use crate::{
+    Proof,
+    profile::{Profile, ProfiledCycle},
+    protocol::nested::{RxComponent, RxIndex, online::FqPolysLen, pcs::OwnRxLen},
+};
+
+/// Number of curve points in this stage.
+const NUM: usize = 1;
+
+/// A child proof's nested polynomial evaluations at $u_n$.
+#[derive(Clone)]
+pub struct ChildEvaluationsWitness<F, P: Profile> {
+    /// The child's nested rx polynomials, in [`RxIndex::all`] order.
+    pub rx: FixedVec<F, OwnRxLen<P>>,
+    /// The child's nested $a$ polynomial.
+    pub a_poly: F,
+    /// The child's nested $b$ polynomial.
+    pub b_poly: F,
+    /// The child's `registry_xy` polynomial.
+    pub registry_xy_poly: F,
+    /// The child's nested $p$ polynomial.
+    pub p_poly: F,
+}
+
+impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
+    /// Evaluates a child proof's nested polynomials at $u_n$.
+    pub fn from_proof<
+        C: Cycle<ScalarField = F> + ProfiledCycle<Profile = P>,
+        R: Rank,
+        B: ragu_backend::Backend,
+    >(
+        proof: &Proof<C, R>,
+        u: F,
+    ) -> Self {
+        ChildEvaluationsWitness {
+            rx: B::map(
+                RxIndex::all::<P>().into_iter().map(|id| &proof[id]),
+                |poly| B::sparse_eval(poly, u),
+            )
+            .collect_fixed()
+            .expect("one evaluation per rx"),
+            a_poly: B::sparse_eval(&proof[RxComponent::AbA], u),
+            b_poly: B::sparse_eval(&proof[RxComponent::AbB], u),
+            registry_xy_poly: B::sparse_eval(proof.nested_registry_xy_poly(), u),
+            p_poly: B::sparse_eval(proof.nested_p_poly(), u),
+        }
+    }
+}
+
+/// The current step's nested polynomial evaluations at $u_n$.
+#[derive(Clone)]
+pub struct CurrentStepWitness<F> {
+    pub registry_wx0: F,
+    pub registry_wx1: F,
+    pub registry_wy: F,
+    pub a_poly: F,
+    pub b_poly: F,
+    pub registry_xy: F,
+}
+
+/// The nested evaluations carried by this stage.
+#[derive(Clone)]
+pub struct Evaluations<F, P: Profile> {
+    pub left: ChildEvaluationsWitness<F, P>,
+    pub right: ChildEvaluationsWitness<F, P>,
+    pub current: CurrentStepWitness<F>,
+    /// The step's own online Fq polynomials at $u_n$.
+    ///
+    /// No other check reads these values. They must be committed before
+    /// `pre_beta`, as this stage is: a value chosen after $\beta_n$ could
+    /// cancel a false evaluation in $v_n$.
+    pub online_fq: FixedVec<F, FqPolysLen<P>>,
+}
+
+impl<F: Field, P: Profile> Evaluations<F, P> {
+    /// All-zero values, for proofs that open nothing (the dummy proof).
+    pub fn zero() -> Self {
+        let child = || ChildEvaluationsWitness {
+            rx: FixedVec::from_fn(|_| F::ZERO),
+            a_poly: F::ZERO,
+            b_poly: F::ZERO,
+            registry_xy_poly: F::ZERO,
+            p_poly: F::ZERO,
+        };
+        Evaluations {
+            left: child(),
+            right: child(),
+            current: CurrentStepWitness {
+                registry_wx0: F::ZERO,
+                registry_wx1: F::ZERO,
+                registry_wy: F::ZERO,
+                a_poly: F::ZERO,
+                b_poly: F::ZERO,
+                registry_xy: F::ZERO,
+            },
+            online_fq: FixedVec::from_fn(|_| F::ZERO),
+        }
+    }
+}
+
+/// Witness data for this bridge stage.
+pub struct Witness<C: Affine, P: Profile> {
+    pub native_eval: C,
+    /// The nested evaluations at $u_n$.
+    pub nested: Evaluations<C::Base, P>,
+}
+
+/// Gadget for a child proof's nested evaluations at $u_n$.
+#[derive(Gadget, Write)]
+pub struct ChildEvaluations<'dr, D: Driver<'dr>, P: Profile> {
+    #[ragu(gadget)]
+    pub rx: FixedVec<Element<'dr, D>, OwnRxLen<P>>,
+    #[ragu(gadget)]
+    pub a_poly: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub b_poly: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub registry_xy_poly: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub p_poly: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
+    fn alloc(
+        dr: &mut D,
+        witness: DriverValue<D, &ChildEvaluationsWitness<D::F, P>>,
+    ) -> Result<Self> {
+        let allocator = &mut ();
+        Ok(ChildEvaluations {
+            rx: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.rx[i]))
+            })?,
+            a_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.a_poly))?,
+            b_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.b_poly))?,
+            registry_xy_poly: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|w| w.registry_xy_poly),
+            )?,
+            p_poly: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.p_poly))?,
+        })
+    }
+}
+
+/// Gadget for the nested evaluations at $u_n$.
+///
+/// The [`Write`] order is the order [`Batch::evaluated`] fixes, and so the
+/// order of the coefficients in the $\beta_n$-weighted sum that defines
+/// $v_n$.
+///
+/// [`Batch::evaluated`]: crate::protocol::nested::pcs::Batch::evaluated
+#[derive(Gadget, Write)]
+pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
+    #[ragu(gadget)]
+    pub left: ChildEvaluations<'dr, D, P>,
+    #[ragu(gadget)]
+    pub right: ChildEvaluations<'dr, D, P>,
+    #[ragu(gadget)]
+    pub registry_wx0: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub registry_wx1: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub registry_wy: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub a_poly: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub b_poly: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub registry_xy: Element<'dr, D>,
+    /// The step's own online Fq polynomials at $u_n$.
+    #[ragu(gadget)]
+    pub online_fq: FixedVec<Element<'dr, D>, FqPolysLen<P>>,
+}
+
+/// Prover-internal output gadget for this bridge stage.
+///
+/// This is stage communication data, not part of the circuit's
+/// public instance.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    #[ragu(gadget)]
+    pub native_eval: Point<'dr, D, C>,
+    /// The nested evaluations at $u_n$.
+    #[ragu(gadget)]
+    pub nested: EvaluationsOutput<'dr, D, P>,
+}
+
+#[derive(Default)]
+pub struct Stage<C: Affine, R, P> {
+    _marker: PhantomData<(C, R, P)>,
+}
+
+impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
+    type Parent = crate::verifier::recursive::nested::stages::f::Stage<C, R, P>;
+    type Witness<'source> = &'source Witness<C, P>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
+
+    fn values() -> usize {
+        // (x, y) per point + 2 children + current step elements (6)
+        // + the online Fq polynomials
+        NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 6 + P::ONLINE_FQ_POLYS
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        let native_eval = Point::alloc(dr, witness.as_ref().map(|w| w.native_eval))?;
+        let current = |dr: &mut D, f: fn(&CurrentStepWitness<D::F>) -> D::F| {
+            Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested.current)))
+        };
+        let nested = EvaluationsOutput {
+            left: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.left))?,
+            right: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.right))?,
+            registry_wx0: current(dr, |c| c.registry_wx0)?,
+            registry_wx1: current(dr, |c| c.registry_wx1)?,
+            registry_wy: current(dr, |c| c.registry_wy)?,
+            a_poly: current(dr, |c| c.a_poly)?,
+            b_poly: current(dr, |c| c.b_poly)?,
+            registry_xy: current(dr, |c| c.registry_xy)?,
+            online_fq: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.nested.online_fq[i]))
+            })?,
+        };
+
+        Ok(Output {
+            native_eval,
+            nested,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_core::pasta::EqAffine;
+
+    use super::*;
+    use crate::{
+        profile::{
+            Standard,
+            testing::{Opening, Proving},
+        },
+        test_support::internal::{R, assert_stage_values},
+    };
+
+    #[test]
+    fn stage_values_matches_wire_count() {
+        assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
+        // With the evaluation of the step's own online Fq polynomial, alone
+        // and beside an extension.
+        assert_stage_values(&Stage::<EqAffine, R, Opening>::default());
+        assert_stage_values(&Stage::<EqAffine, R, Proving>::default());
+    }
+}

@@ -11,8 +11,10 @@ use udon::{
     cycle::{Generators, Pasta},
 };
 
-use super::{DEFAULT_EP_K, DEFAULT_EQ_K, PastaParams};
-use crate::ipa::IpaCycle;
+use crate::{
+    pasta::{DEFAULT_EP_K, DEFAULT_EQ_K, PastaParams},
+    protocol::ipa::IpaCycle,
+};
 
 bento::embed_array! {
     static PALLAS: [PallasAffine; (1 << DEFAULT_EP_K) + 2] =

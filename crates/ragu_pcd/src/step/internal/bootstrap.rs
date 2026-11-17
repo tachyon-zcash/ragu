@@ -24,7 +24,7 @@
 //! [`dummy_pcd`]: crate::Application::dummy_pcd
 //! [`finalize`]: crate::ApplicationBuilder::finalize
 //! [`seed`]: crate::Application::seed
-//! [`collapse`]: crate::internal::native::circuits::collapse
+//! [`collapse`]: crate::verifier::recursive::native::circuits::collapse
 
 use ragu_core::{
     Cycle, Result,
@@ -32,9 +32,12 @@ use ragu_core::{
 };
 use ragu_primitives::allocator::Standard;
 
-use super::super::{Encoded, Index, Oracles, Step};
 pub(crate) use crate::step::InternalStepIndex::Bootstrap as INTERNAL_ID;
-use crate::{Header, header::Dummy};
+use crate::{
+    Header,
+    header::Dummy,
+    step::{Encoded, Index, Oracles, Step},
+};
 
 pub(crate) struct Bootstrap;
 

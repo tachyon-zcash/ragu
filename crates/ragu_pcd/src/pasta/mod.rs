@@ -32,12 +32,12 @@ pub const AGGREGATOR_EQ_K: usize = 14;
 #[cfg(feature = "baked")]
 mod baked;
 #[cfg(feature = "baked")]
-pub use baked::baked;
+pub use crate::pasta::baked::baked;
 
 #[cfg(feature = "baked-aggregator")]
 mod aggregator;
 #[cfg(feature = "baked-aggregator")]
-pub use aggregator::baked_aggregator;
+pub use crate::pasta::aggregator::baked_aggregator;
 
 #[cfg(all(test, feature = "baked"))]
 mod tests {
@@ -45,7 +45,7 @@ mod tests {
     use udon::curve::Affine;
 
     use super::*;
-    use crate::ipa::IpaCycle;
+    use crate::protocol::ipa::IpaCycle;
 
     #[test]
     fn baked_parameters_have_the_expected_shape() {

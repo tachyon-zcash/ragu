@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use ragu_circuits::polynomials::{Rank, sparse::Polynomial};
 use udon::field::Field;
 
-use super::{Decode, Dimensions, Encode, Error, Reader, Scalar};
+use crate::wire::{Decode, Dimensions, Encode, Error, Reader, Scalar};
 
 // The rank fixes the coefficient count, so the layout carries no counts and
 // does not depend on the in-memory block structure or its gap tolerance.

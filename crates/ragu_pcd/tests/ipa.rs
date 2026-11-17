@@ -27,24 +27,37 @@ fn fresh() -> CycleTranscript<'static, Pasta> {
 macro_rules! ipa_tests {
     ($name:ident, $curve:ty, $field:ty, $generators_ty:ident, $generators_fn:ident, $u_fn:ident, $side:ident) => {
         mod $name {
-            use alloc::{string::ToString, vec::Vec};
+            use alloc::string::ToString;
+            use alloc::vec::Vec;
 
             use proptest::prelude::*;
             use ragu_backend::ReferenceBackend;
-            use ragu_circuits::polynomials::{Rank, TestRank, sparse};
-            use ragu_core::{Cycle, Error, FixedGenerators, pasta::Pasta};
-            use rand::{Rng, SeedableRng, rngs::StdRng};
-            use udon::{
-                curve::{Affine, Projective},
-                field::Field,
-                polynomial::evaluate_iter,
-            };
+            use ragu_circuits::polynomials::Rank;
+            use ragu_circuits::polynomials::TestRank;
+            use ragu_circuits::polynomials::sparse;
+            use ragu_core::Cycle;
+            use ragu_core::Error;
+            use ragu_core::FixedGenerators;
+            use ragu_core::pasta::Pasta;
+            use rand::Rng;
+            use rand::SeedableRng;
+            use rand::rngs::StdRng;
+            use udon::curve::Affine;
+            use udon::curve::Projective;
+            use udon::field::Field;
+            use udon::polynomial::evaluate_iter;
 
-            use super::{K, fresh};
-            use crate::ipa::{
-                CycleTranscript, Guard, IpaCycle, IpaProof, IpaTranscript, MSM, Params, prover,
-                verifier,
-            };
+            use super::K;
+            use super::fresh;
+            use crate::protocol::ipa::CycleTranscript;
+            use crate::verifier::ipa::Guard;
+            use crate::protocol::ipa::IpaCycle;
+            use crate::protocol::ipa::IpaProof;
+            use crate::protocol::ipa::IpaTranscript;
+            use crate::protocol::ipa::MSM;
+            use crate::protocol::ipa::Params;
+            use crate::prover::ipa as prover;
+            use crate::verifier::ipa as verifier;
 
             type C = $curve;
             type F = $field;
@@ -486,7 +499,7 @@ macro_rules! ipa_tests {
 
             #[test]
             fn msm_matches_serial_adapter() {
-                use crate::ipa::msm::multiexp;
+                use crate::protocol::ipa::msm::multiexp;
 
                 let mut rng = StdRng::seed_from_u64(15);
                 let mut scalars = random_poly(8193, &mut rng);
@@ -556,7 +569,7 @@ macro_rules! ipa_tests {
             #[test]
             #[should_panic(expected = "msm operands must have equal length")]
             fn msm_rejects_mismatched_lengths() {
-                crate::ipa::msm::multiexp::<_, ReferenceBackend>(&[F::ONE; 256], &[u(); 255]);
+                crate::protocol::ipa::msm::multiexp::<_, ReferenceBackend>(&[F::ONE; 256], &[u(); 255]);
             }
 
             #[cfg(feature = "multicore")]
@@ -693,7 +706,7 @@ ipa_tests!(
 fn sides_share_one_transcript() {
     use ragu_core::{Cycle, FixedGenerators};
 
-    use crate::ipa::IpaTranscript;
+    use crate::protocol::ipa::IpaTranscript;
 
     let host_point = Pasta::host_generators(crate::pasta::baked()).g()[0];
     let nested_point = Pasta::nested_generators(crate::pasta::baked()).g()[0];

@@ -23,8 +23,8 @@ use udon::{
 use crate::{
     Application, ApplicationBuilder,
     header::{Header, NUM_ONLINE_FP_POLYS, OnlinePoly, Padding, Suffix},
-    internal::nested::stages::bridge_hash,
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
+    verifier::recursive::nested::stages::bridge_hash,
 };
 
 type R = ProductionRank;

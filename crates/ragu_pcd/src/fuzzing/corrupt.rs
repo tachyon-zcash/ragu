@@ -103,7 +103,7 @@ use crate::{
     Application, Proof,
     profile::{Profile, ProfiledCycle},
 };
-pub use crate::{header::NUM_ONLINE_FP_POLYS, internal::native::online::NUM_ONLINE_FP_QUERIES};
+pub use crate::{header::NUM_ONLINE_FP_POLYS, protocol::native::online::NUM_ONLINE_FP_QUERIES};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the
@@ -199,7 +199,7 @@ pub enum NativeRx {
 impl NativeRx {
     /// The number of native rx polynomial components in the standard
     /// profile.
-    pub const NUM: usize = crate::internal::native::RxIndex::NUM;
+    pub const NUM: usize = crate::protocol::native::RxIndex::NUM;
 
     /// All variants in the standard profile, in the canonical order
     /// `internal` defines.
@@ -217,14 +217,14 @@ impl NativeRx {
     /// Derived from `internal::native::RxIndex::all` as [`ALL`](Self::ALL)
     /// is from the constant list.
     pub fn all<P: Profile>() -> Vec<Self> {
-        crate::internal::native::RxIndex::all::<P>()
+        crate::protocol::native::RxIndex::all::<P>()
             .into_iter()
             .map(Self::from_internal)
             .collect()
     }
 
     const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::native::RxIndex::ALL;
+        let src = crate::protocol::native::RxIndex::ALL;
         let mut out = [Self::Application; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
@@ -234,8 +234,8 @@ impl NativeRx {
         out
     }
 
-    const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
-        use crate::internal::native::RxIndex as I;
+    const fn from_internal(v: crate::protocol::native::RxIndex) -> Self {
+        use crate::protocol::native::RxIndex as I;
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),
@@ -377,7 +377,7 @@ pub enum Challenge {
 
 impl Challenge {
     /// All variants, in the order the unified instance writes them.
-    pub const ALL: [Self; crate::internal::nested::stages::challenges::NUM + 1] = [
+    pub const ALL: [Self; crate::verifier::recursive::nested::stages::challenges::NUM + 1] = [
         Self::W,
         Self::Y,
         Self::Z,
@@ -1017,7 +1017,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
 impl NestedRx {
     /// The number of nested rx components in the standard profile.
-    pub const NUM: usize = crate::internal::nested::RxIndex::NUM;
+    pub const NUM: usize = crate::protocol::nested::RxIndex::NUM;
 
     /// Whether this is a bridge stage's rx, whose commitment
     /// [`BridgeCommitment`] addresses.
@@ -1049,14 +1049,14 @@ impl NestedRx {
     /// defines: [`ALL`](Self::ALL) with the walk resized to the profile's
     /// steps and the extension's circuits' and stages' polynomials appended.
     pub fn all<P: Profile>() -> Vec<Self> {
-        crate::internal::nested::RxIndex::all::<P>()
+        crate::protocol::nested::RxIndex::all::<P>()
             .into_iter()
             .map(Self::from_internal)
             .collect()
     }
 
     const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::nested::RxIndex::ALL;
+        let src = crate::protocol::nested::RxIndex::ALL;
         let mut out = [Self::EndoscalarStage; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
@@ -1066,8 +1066,8 @@ impl NestedRx {
         out
     }
 
-    const fn from_internal(v: crate::internal::nested::RxIndex) -> Self {
-        use crate::internal::nested::RxIndex as I;
+    const fn from_internal(v: crate::protocol::nested::RxIndex) -> Self {
+        use crate::protocol::nested::RxIndex as I;
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),

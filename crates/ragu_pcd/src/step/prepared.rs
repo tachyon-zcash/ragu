@@ -10,7 +10,7 @@ use crate::header::{Has, Header, NUM_ONLINE_FP_POLYS};
 /// A step's output before its challenge $\zeta$ is drawn.
 ///
 /// Holds the output proof's online polynomials, by kind, and the staged
-/// values. [`Step::prepare`](super::Step::prepare) builds one; Ragu commits
+/// values. [`Step::prepare`](crate::step::Step::prepare) builds one; Ragu commits
 /// its polynomials and stages its values before $\zeta$.
 ///
 /// `O` is the step's output header, whose
@@ -79,7 +79,7 @@ impl<F: Field, O: Header<F>> Prepared<F, O> {
     }
 
     /// Stages `values`, after those staged so far. A step stages exactly
-    /// [`NUM_STAGED`](super::Step::NUM_STAGED) values in all.
+    /// [`NUM_STAGED`](crate::step::Step::NUM_STAGED) values in all.
     #[must_use]
     pub fn stage(mut self, values: impl Into<Vec<F>>) -> Self {
         self.staged.extend(values.into());

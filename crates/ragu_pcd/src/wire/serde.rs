@@ -18,8 +18,8 @@ use core::{fmt, marker::PhantomData};
 
 use ragu_circuits::polynomials::Rank;
 use serde::{
-    Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer, de,
+    de::{SeqAccess, Visitor},
     ser,
 };
 

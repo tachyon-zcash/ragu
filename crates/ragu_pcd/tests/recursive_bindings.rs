@@ -27,14 +27,15 @@ use udon::{
     field::Field,
 };
 
-use super::recursive_propagation_tests::support::{self, C, HEADER_SIZE, R, Value};
+use super::recursive_propagation_tests::{
+    support,
+    support::{C, HEADER_SIZE, R, Value},
+};
 use crate::{
     Proof,
-    internal::{
-        Side,
-        endoscalar::PointsWitness,
-        native::{self, stages::points},
-        nested::{self, stages::challenges},
+    protocol::{Side, native, nested},
+    verifier::recursive::{
+        gadgets::endoscalar::PointsWitness, native::stages::points, nested::stages::challenges,
     },
 };
 
@@ -120,17 +121,20 @@ mod challenge_binding {
         proof: &mut Proof<C, R>,
         changed: &challenges::Witness<Fq>,
     ) -> Result<()> {
-        let partials = native::stages::eval::BindingPartials::compute::<C, R, ReferenceBackend>(
-            app.params, changed,
-        );
+        let partials = crate::verifier::recursive::native::stages::eval::BindingPartials::compute::<
+            C,
+            R,
+            ReferenceBackend,
+        >(app.params, changed);
         proof.nested_challenges_rx =
             challenges::Stage::<EqAffine, R, crate::profile::Standard>::rx(Fq::ZERO, changed)?;
         proof.nested_challenges_commitment.0 = nested_commit(app, &proof.nested_challenges_rx);
         proof.nested_challenges_partial = partials.binding;
-        let wires =
-            stage_wire_indices::<_, R, native::stages::eval::Stage<C, R, HEADER_SIZE>>(|stage| {
-                wires_of(&stage.partials)
-            })?;
+        let wires = stage_wire_indices::<
+            _,
+            R,
+            crate::verifier::recursive::native::stages::eval::Stage<C, R, HEADER_SIZE>,
+        >(|stage| wires_of(&stage.partials))?;
         let values: Vec<_> = partials
             .partials
             .iter()
@@ -141,7 +145,11 @@ mod challenge_binding {
         let copy = stage_wire_indices::<
             _,
             R,
-            nested::stages::eval::Stage<EqAffine, R, crate::profile::Standard>,
+            crate::verifier::recursive::nested::stages::eval::Stage<
+                EqAffine,
+                R,
+                crate::profile::Standard,
+            >,
         >(|stage| wires_of(&stage.native_eval))?;
         support::set_wires(
             Arc::make_mut(&mut proof.bridge_eval_rx),
@@ -156,7 +164,7 @@ mod challenge_binding {
     /// This is precisely the equality the parent completes with pre_beta.
     fn assert_complete_binding(app: &support::App, proof: &Proof<C, R>) -> Result<()> {
         let beta_generator = C::nested_generators(app.params).g()
-            [native::circuits::bind_beta::generator_index::<C, R>()];
+            [crate::verifier::recursive::native::circuits::bind_beta::generator_index::<C, R>()];
         assert_eq!(
             (proof.nested_challenges_partial.to_projective()
                 + beta_generator * nested::challenge::<C>(proof.pre_beta())?)
@@ -170,7 +178,7 @@ mod challenge_binding {
     /// The decider's check of a root: its challenge stage is the stage of its
     /// own lifts and headers.
     fn stage_matches(proof: &Proof<C, R>) -> Result<bool> {
-        crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
+        crate::test_support::decider_uncompressed::nested_challenges_match::<C, R, HEADER_SIZE>(
             proof,
             &proof.challenges().lifts::<C>()?,
         )
@@ -224,7 +232,7 @@ mod challenge_binding {
             proof.nested_challenges_commitment(),
             honest.proof().nested_challenges_commitment()
         );
-        assert!(crate::verify::nested_points_match(&proof)?);
+        assert!(crate::test_support::decider_uncompressed::nested_points_match(&proof)?);
         assert!(
             !stage_matches(&proof)?,
             "lift {slot}: the changed stage must break the root's equality"
@@ -261,7 +269,7 @@ mod challenge_binding {
             "honest",
         )?;
         let beta_generator = C::nested_generators(app.params).g()
-            [native::circuits::bind_beta::generator_index::<C, R>()];
+            [crate::verifier::recursive::native::circuits::bind_beta::generator_index::<C, R>()];
         let mut mutations = Vec::new();
         for case in ["partial", "pre_beta", "pre_beta_with_compensating_partial"] {
             let (mut proof, data) = honest.clone().into_parts();
@@ -465,7 +473,11 @@ fn install_walk(
     let binding_copy = stage_wire_indices::<
         _,
         R,
-        nested::stages::preamble::Stage<EqAffine, R, crate::profile::Standard>,
+        crate::verifier::recursive::nested::stages::preamble::Stage<
+            EqAffine,
+            R,
+            crate::profile::Standard,
+        >,
     >(|stage| wires_of(&stage.native_points_binding))?;
     support::set_wires(
         Arc::make_mut(&mut proof.bridge_preamble_rx),
@@ -476,7 +488,7 @@ fn install_walk(
     let f_copy = stage_wire_indices::<
         _,
         R,
-        nested::stages::f::Stage<EqAffine, R, crate::profile::Standard>,
+        crate::verifier::recursive::nested::stages::f::Stage<EqAffine, R, crate::profile::Standard>,
     >(|stage| wires_of(&stage.native_points_f))?;
     support::set_wires(
         Arc::make_mut(&mut proof.bridge_f_rx),
@@ -507,11 +519,16 @@ fn install_walk(
         )?;
     proof.native_points_walk_commitment.0 = native_commit(app, &proof.native_points_walk_rx);
     for step in 0..native::NUM_ENDOSCALING_STEPS {
-        let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
-            .trace(native::circuits::endoscaling_step::Witness {
-                inputs,
-                walk: &walk,
-            })?
+        let trace =
+            crate::verifier::recursive::native::circuits::endoscaling_step::Circuit::<C, R>::new(
+                step,
+            )
+            .trace(
+                crate::verifier::recursive::native::circuits::endoscaling_step::Witness {
+                    inputs,
+                    walk: &walk,
+                },
+            )?
             .into_output();
         proof.native_endoscaling_step_rxs[step] = app.native_registry.assemble(
             &trace,
@@ -522,13 +539,16 @@ fn install_walk(
         proof.native_endoscaling_step_commitments[step].0 =
             native_commit(app, &proof.native_endoscaling_step_rxs[step]);
     }
-    let trace = native::circuits::bind_endoscalar::Circuit::<C, R>::new()
-        .trace(native::circuits::bind_endoscalar::Witness {
-            unified: native_instance(proof),
-            inputs,
-            walk: &walk,
-        })?
-        .into_output();
+    let trace =
+        crate::verifier::recursive::native::circuits::bind_endoscalar::Circuit::<C, R>::new()
+            .trace(
+                crate::verifier::recursive::native::circuits::bind_endoscalar::Witness {
+                    unified: native_instance(proof),
+                    inputs,
+                    walk: &walk,
+                },
+            )?
+            .into_output();
     proof.native_bind_endoscalar_rx = app.native_registry.assemble(
         &trace,
         native::InternalCircuitIndex::BindEndoscalarCircuit
@@ -537,7 +557,7 @@ fn install_walk(
     )?;
     proof.native_bind_endoscalar_commitment.0 =
         native_commit(app, &proof.native_bind_endoscalar_rx);
-    assert!(crate::verify::nested_points_match(proof)?);
+    assert!(crate::test_support::decider_uncompressed::nested_points_match(proof)?);
     Ok(())
 }
 
@@ -803,9 +823,13 @@ mod claim_values {
         }
         // Repair the deterministic AB bridge too, so this is not a mismatch
         // between a newly committed A and an old cached AB bridge.
-        let bridge = nested::stages::ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
+        let bridge = crate::verifier::recursive::nested::stages::ab::Stage::<
+            EqAffine,
+            R,
+            crate::profile::Standard,
+        >::rx(
             crate::proof::bridge_alpha_power(proof.bridge_alpha, nested::RxIndex::BridgeAB),
-            &nested::stages::ab::Witness {
+            &crate::verifier::recursive::nested::stages::ab::Witness {
                 a: proof.native_a_commitment.0,
                 b: proof.native_b_commitment.0,
                 native_points_ab: proof.native_points_ab_commitment.0,
@@ -821,7 +845,7 @@ mod claim_values {
             proof.nested_c(),
             original.nested_c() + nested_delta.unwrap_or(Fq::ZERO)
         );
-        assert!(crate::verify::nested_points_match(&proof)?);
+        assert!(crate::test_support::decider_uncompressed::nested_points_match(&proof)?);
         Ok(proof)
     }
 

@@ -18,9 +18,8 @@ use udon::field::Field;
 use super::{Proof, recursive_propagation_tests::support::Value};
 use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd,
-    compress::instance::Instance,
-    ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
+    protocol::{compress::instance::Instance, ipa::IpaCycle},
     step::{Encoded, Index, Oracles, Step},
 };
 

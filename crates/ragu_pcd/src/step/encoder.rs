@@ -15,8 +15,10 @@ use ragu_primitives::{
     vec::{ConstLen, FixedVec},
 };
 
-use super::{Header, internal::padded};
-use crate::header::Suffix;
+use crate::{
+    header::Suffix,
+    step::{Header, internal::padded},
+};
 
 /// Headers can be encoded in two ways depending on the circuit requirements:
 ///
@@ -138,7 +140,7 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
     /// from the [`Dummy`](crate::header::Dummy) suffix**, so that no
     /// step consuming a uniform-encoded header can present the suffix that
     /// triggers the base case (see
-    /// [`is_dummy_input`](crate::internal::native::stages::preamble::ProofInputs::is_dummy_input)),
+    /// [`is_dummy_input`](crate::verifier::recursive::native::stages::preamble::ProofInputs::is_dummy_input)),
     /// **and from zero**, the linear coefficient of every non-step circuit's
     /// instance, so that no such circuit can satisfy the application claim of
     /// a child presenting it.

@@ -3,7 +3,7 @@
 use lazy_static::lazy_static;
 use udon::curve::{PallasAffine, VestaAffine};
 
-use super::{AGGREGATOR_EP_K, AGGREGATOR_EQ_K, PastaParams, baked::generators};
+use crate::pasta::{AGGREGATOR_EP_K, AGGREGATOR_EQ_K, PastaParams, baked::generators};
 
 bento::embed_array! {
     static PALLAS: [PallasAffine; (1 << AGGREGATOR_EP_K) + 2] =
@@ -26,7 +26,7 @@ lazy_static! {
 /// production Aggregator rank before its decompression circuits land.
 ///
 /// Requires the `baked-aggregator` feature. Only calling this function loads
-/// these larger tables; [`super::baked()`] always loads the original tables.
+/// these larger tables; [`crate::pasta::baked()`] always loads the original tables.
 pub fn baked_aggregator() -> &'static PastaParams {
     &PARAMETERS
 }

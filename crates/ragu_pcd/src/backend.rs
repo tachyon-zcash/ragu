@@ -10,7 +10,7 @@ mod sealed {
     use ragu_acceleration::{AcceleratedBackend, AcceleratedProver};
     use ragu_backend::ReferenceBackend;
 
-    use super::SelectableBackend;
+    use crate::SelectableBackend;
 
     pub trait Sealed {
         type Verifier: SelectableBackend;

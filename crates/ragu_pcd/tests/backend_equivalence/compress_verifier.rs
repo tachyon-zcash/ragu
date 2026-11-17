@@ -13,7 +13,7 @@ use ragu_core::pasta::{Fp, Fq};
 use udon::field::Field;
 
 use super::{public, public_parts};
-use crate::compress::revdot::claims::{Kind, Masked, Shape};
+use crate::protocol::compress::revdot::claims::{Kind, Masked, Shape};
 
 fn check_public_parts<F: Field, B: Backend>() {
     let (r, z) = (F::from(7), F::from(11));

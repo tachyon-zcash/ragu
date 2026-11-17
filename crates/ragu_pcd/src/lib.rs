@@ -32,6 +32,11 @@
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
 //! the envelope layout, version rules and input size limits, including the
 //! limits callers must apply to Serde backends before they allocate buffers.
+//!
+//! Internally, `prover` constructs proofs and witnesses; `verifier::recursive`
+//! defines recursive verification constraints; `verifier::decider` decides final
+//! acceptance using `verifier::ipa`. Shared representations and algebra live in
+//! `protocol`. The uncompressed decider is a test oracle in `test_support`.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -49,23 +54,23 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
-mod compress;
-mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
 // here.
 pub mod fuzzing;
 pub mod header;
-mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
 pub mod profile;
 mod proof;
+mod protocol;
+mod prover;
 pub mod step;
+mod test_support;
+mod verifier;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
-mod verify;
 pub mod wire;
 
 #[cfg(test)]
@@ -91,10 +96,6 @@ mod profile_corruption_tests;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
-pub use compress::{CompressedPcd, CompressedProof};
-use header::Header;
-use profile::{Profile, ProfiledCycle};
-pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
@@ -103,7 +104,16 @@ use ragu_circuits::{
 };
 use ragu_core::{Cycle, Error, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
-use step::{Step, internal::adapter::Adapter};
+
+use crate::{
+    header::Header,
+    profile::{Profile, ProfiledCycle},
+    step::{Step, internal::adapter::Adapter},
+};
+pub use crate::{
+    proof::{Pcd, Proof},
+    protocol::compress::{CompressedPcd, CompressedProof},
+};
 
 /// Domain separation tag for the Ragu PCD protocol.
 ///
@@ -119,7 +129,7 @@ use step::{Step, internal::adapter::Adapter};
 /// and checked by the verifiers; see [`profile`].
 pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
 
-pub use backend::SelectableBackend;
+pub use crate::backend::SelectableBackend;
 
 /// A step circuit's registration, held until every step's
 /// [`NUM_STAGED`](Step::NUM_STAGED) is known, so that every step circuit
@@ -384,18 +394,19 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // 2. Internal circuits and masks
         // 3. Internal steps
         let (total_circuits, log2_circuits) =
-            internal::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
+            protocol::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
 
         for register in core::mem::take(&mut self.application_circuits) {
             self.native_registry = register(self.native_registry, self.stage_size)?;
         }
 
         // Then, register internal circuits and masks.
-        self.native_registry = internal::native::register_all::<C, R, HEADER_SIZE>(
-            self.native_registry,
-            params,
-            log2_circuits,
-            self.stage_size,
+        self.native_registry = verifier::recursive::native::register::register_all::<
+            C,
+            R,
+            HEADER_SIZE,
+        >(
+            self.native_registry, params, log2_circuits, self.stage_size
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -430,8 +441,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry =
-            internal::nested::register_all::<C, R>(self.nested_registry, params)?;
+        self.nested_registry = verifier::recursive::nested::register::register_all::<C, R>(
+            self.nested_registry,
+            params,
+        )?;
 
         let mut app = Application {
             native_registry: self.native_registry.finalize()?,
@@ -727,7 +740,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Fails if `point` is the identity, which the stage cannot hold.
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
-        internal::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
+        crate::verifier::recursive::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
             point,
             C::nested_generators(self.params),
         )

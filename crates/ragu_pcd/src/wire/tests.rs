@@ -4,7 +4,7 @@ use proptest::prelude::*;
 use ragu_core::pasta::{EpAffine, EqAffine, Fp, Fq};
 use ragu_primitives::vec::ConstLen;
 
-use super::*;
+use crate::wire::*;
 
 // The values here have layouts their types fix alone.
 const DIMS: Dimensions = Dimensions {

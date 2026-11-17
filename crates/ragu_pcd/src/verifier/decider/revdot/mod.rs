@@ -1,0 +1,274 @@
+//! The verifier's side of the reduction.
+
+use alloc::vec::Vec;
+
+use ragu_backend::Backend;
+use ragu_circuits::{
+    polynomials::Rank,
+    registry::{CircuitIndex, Registry},
+};
+use ragu_core::{Error, Result};
+use udon::{curve::Affine, field::Field};
+
+use crate::{
+    profile::ProfiledCycle,
+    protocol::{
+        compress::revdot::{
+            Openings, Reduction, claims,
+            claims::{Kind, Masked, Shape},
+            fold,
+            fold::{Derived, Layout},
+            invert, openings,
+        },
+        ipa::IpaTranscript,
+        ky::{NativeKy, NestedKy},
+        native, nested,
+    },
+};
+
+/// One claim evaluated at $r$: $a(r)$, $b(r)$ and the target $k(y)$.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Evaluated<F> {
+    /// $a(r)$.
+    pub a: F,
+    /// $b(r)$.
+    pub b: F,
+    /// The target $k(y)$.
+    pub k: F,
+}
+
+/// The verifier's side on one curve: `shapes` are the claims' shapes and
+/// `targets` the $k(y)$ of the raw and circuit claims among them, exactly one
+/// per such claim in claim order (the other claims' $k(y)$ is zero);
+/// `commitment` gives each component's commitment and `public` each kind of
+/// claim's public parts of $a$ and $b$ at a point. Returns the opening claims
+/// the batch must prove, or `None` if the reduction does not hold.
+fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
+    shapes: &[Shape<Id, C::Scalar>],
+    targets: impl Iterator<Item = C::Scalar>,
+    commitment: impl Fn(Id) -> C,
+    public: impl Fn(Kind, C::Scalar) -> (C::Scalar, C::Scalar) + Sync,
+    reduction: &Reduction<C>,
+    z: C::Scalar,
+    transcript: &mut impl IpaTranscript<C>,
+) -> Result<Option<Openings<C>>> {
+    let n = R::num_coeffs();
+    if reduction.openings.len() != Derived::ALL.len() {
+        return Err(Error::InvalidWitness(
+            "one opening per derived polynomial".into(),
+        ));
+    }
+
+    // The fold: its messages, weights and the commitments it derives.
+    let layout = Layout::new(shapes.len());
+    let weights = reduction.fold.replay(transcript)?;
+    let commitments = fold::commitments::<_, B, _>(shapes, &weights, commitment, &reduction.fold);
+
+    let rho = transcript.squeeze_challenge()?;
+    transcript.write_point(reduction.p)?;
+    transcript.write_point(reduction.q)?;
+    let r = transcript.squeeze_challenge()?;
+    let inverse_r = invert(r)?;
+    for &opened in &reduction.openings {
+        transcript.write_scalar(opened)?;
+    }
+    transcript.write_scalar(reduction.p_at_inverse_r)?;
+    transcript.write_scalar(reduction.q_at_r)?;
+
+    // The folded claims at r: (A, B) from the derived openings and the
+    // public parts, and each layer's (E, W) from its opening, the weights
+    // and the sent epsilon.
+    let opened = |which: Derived| reduction.openings[which as usize];
+    let targets = claim_targets(shapes, targets)?;
+    let (mut a_public, mut b_public, mut target) =
+        (C::Scalar::ZERO, C::Scalar::ZERO, C::Scalar::ZERO);
+
+    // Each claim's public parts depend only on r and data fixed before it,
+    // so the backend may evaluate them concurrently. Each result keeps its
+    // claim's slot, where it meets that claim's weights and target.
+    for (i, (a, b)) in public_parts::<_, B, _>(shapes, r, public)
+        .into_iter()
+        .enumerate()
+    {
+        a_public += weights.a(i) * a;
+        b_public += weights.b(i) * b;
+        target += weights.a(i) * weights.b(i) * targets[i];
+    }
+    let messages = &reduction.fold;
+    let evaluated = [
+        Evaluated {
+            a: opened(Derived::A) + a_public,
+            b: opened(Derived::B) + opened(Derived::Dilated) + b_public,
+            k: target + messages.inner_epsilon + messages.outer_epsilon,
+        },
+        Evaluated {
+            a: opened(Derived::Inner),
+            b: weights.inner::<R>(&layout).eval(r),
+            k: messages.inner_epsilon,
+        },
+        Evaluated {
+            a: opened(Derived::Outer),
+            b: weights.outer::<R>(&layout).eval(r),
+            k: messages.outer_epsilon,
+        },
+    ];
+
+    // \sum_i \rho^i a_i(r) b_i(r) against the split, and the target p(0)
+    // must take.
+    let (mut combined, mut target, mut weight) = (C::Scalar::ZERO, C::Scalar::ZERO, C::Scalar::ONE);
+    for claim in &evaluated {
+        combined += weight * claim.a * claim.b;
+        target += weight * claim.k;
+        weight *= rho;
+    }
+    let split = r.pow_u64((n - 1) as u64) * reduction.p_at_inverse_r
+        + r.pow_u64(n as u64) * reduction.q_at_r;
+    if combined != split {
+        return Ok(None);
+    }
+
+    Ok(Some(openings(
+        commitments,
+        reduction,
+        r,
+        z,
+        inverse_r,
+        target,
+    )))
+}
+
+/// Each claim's $k(y)$, in claim order: the next of `targets` for a raw or
+/// circuit claim, zero for the others.
+///
+/// `targets` must hold exactly one value per raw and circuit claim: a short
+/// stream leaves a claim without its target, and a long one means `shapes`
+/// lacks a claim the targets were built for. Reading stops one value past
+/// the expected count, so an unbounded stream is rejected rather than read
+/// to the end.
+fn claim_targets<F: Field, Id>(
+    shapes: &[Shape<Id, F>],
+    targets: impl Iterator<Item = F>,
+) -> Result<Vec<F>> {
+    let expected = shapes
+        .iter()
+        .filter(|shape| shape.kind.takes_target())
+        .count();
+    let supplied: Vec<_> = targets.take(expected + 1).collect();
+    if supplied.len() != expected {
+        return Err(Error::VectorLengthMismatch {
+            expected,
+            actual: supplied.len(),
+        });
+    }
+    let mut supplied = supplied.into_iter();
+    Ok(shapes
+        .iter()
+        .map(|shape| {
+            if shape.kind.takes_target() {
+                supplied
+                    .next()
+                    .expect("one target per raw and circuit claim")
+            } else {
+                F::ZERO
+            }
+        })
+        .collect())
+}
+
+/// Evaluates the independent public parts into their original claim slots.
+///
+/// Every slot must be filled: a claim the backend left unevaluated would
+/// otherwise enter the reduction check with zero public parts.
+fn public_parts<F: Field, B: Backend, Id: Sync>(
+    shapes: &[Shape<Id, F>],
+    r: F,
+    public: impl Fn(Kind, F) -> (F, F) + Sync,
+) -> Vec<(F, F)> {
+    let mut values = alloc::vec![None; shapes.len()];
+    B::for_each_mut(&mut values, |index, value| {
+        *value = Some(public(shapes[index].kind, r));
+    });
+    values
+        .into_iter()
+        .map(|value| value.expect("the backend evaluates every claim's public parts"))
+        .collect()
+}
+
+/// A claim's public parts of $a$ and $b$ at `r`, by kind: a wire binding
+/// subtracts its expected values from $a$ and has its mask for $b$, a
+/// circuit claim's $b$ holds the restriction and $t(z, X)$, a bonding
+/// claim's the restriction alone.
+fn public<F: Field, R: Rank, Id>(
+    kind: Kind,
+    r: F,
+    z: F,
+    restriction: &impl Fn(CircuitIndex) -> F,
+    masked: &[Masked<Id, F>],
+) -> (F, F) {
+    match kind {
+        Kind::Raw => (F::ZERO, F::ZERO),
+        Kind::Circuit(circuit) => (F::ZERO, restriction(circuit) + R::tz(z).eval(r)),
+        Kind::Bonding(circuit) => (F::ZERO, restriction(circuit)),
+        Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<R>(r)),
+    }
+}
+
+/// The verifier's native side: `commitment` gives each component's
+/// commitment, `registry` the native registry, and `targets` the raw and
+/// circuit claims' $k(y)$ values; the registry is read through the backend
+/// `B`.
+pub(crate) fn verify_native<C: ProfiledCycle, R: Rank, B: Backend>(
+    circuit_id: CircuitIndex,
+    commitment: impl Fn(native::RxComponent) -> C::HostCurve,
+    registry: &Registry<'_, C::CircuitField, R>,
+    y: C::CircuitField,
+    z: C::CircuitField,
+    targets: &NativeKy<C::CircuitField>,
+    masked: &[Masked<native::RxComponent, C::CircuitField>],
+    reduction: &Reduction<C::HostCurve>,
+    transcript: &mut impl IpaTranscript<C::HostCurve>,
+) -> Result<Option<Openings<C::HostCurve>>> {
+    let shapes = claims::native_shapes::<C::Profile, _>(circuit_id, z, masked)?;
+    let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
+    verify::<_, R, B, _>(
+        &shapes,
+        native::claims::ky_prefix::<C::Profile, _>(targets),
+        commitment,
+        |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
+        reduction,
+        z,
+        transcript,
+    )
+}
+
+/// The verifier's nested side, as [`verify_native`] takes its inputs.
+pub(crate) fn verify_nested<C: ProfiledCycle, R: Rank, B: Backend>(
+    commitment: impl Fn(nested::RxComponent) -> C::NestedCurve,
+    registry: &Registry<'_, C::ScalarField, R>,
+    y: C::ScalarField,
+    z: C::ScalarField,
+    targets: &NestedKy<C::ScalarField>,
+    masked: &[Masked<nested::RxComponent, C::ScalarField>],
+    reduction: &Reduction<C::NestedCurve>,
+    transcript: &mut impl IpaTranscript<C::NestedCurve>,
+) -> Result<Option<Openings<C::NestedCurve>>> {
+    let shapes = claims::nested_shapes::<C::Profile, _>(z, masked)?;
+    let restriction = |circuit: CircuitIndex, r| B::registry_wxy(registry, circuit.omega_j(), r, y);
+    verify::<_, R, B, _>(
+        &shapes,
+        nested::claims::ky_prefix::<C::Profile, _>(targets),
+        commitment,
+        |kind, r| public::<_, R, _>(kind, r, z, &|circuit| restriction(circuit, r), masked),
+        reduction,
+        z,
+        transcript,
+    )
+}
+
+#[cfg(test)]
+#[path = "../../../../tests/compress_revdot_verifier.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "../../../../tests/backend_equivalence/compress_verifier.rs"]
+mod backend_equivalence;

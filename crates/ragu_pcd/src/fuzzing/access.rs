@@ -21,10 +21,12 @@ use alloc::sync::Arc;
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::Cycle;
 
-use super::Proof;
-use crate::fuzzing::corrupt::{
-    BridgeCommitment, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment, NestedRx,
-    RxComponent,
+use crate::{
+    Proof,
+    fuzzing::corrupt::{
+        BridgeCommitment, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment,
+        NestedRx, RxComponent,
+    },
 };
 
 impl<C: Cycle, R: Rank> Proof<C, R> {
@@ -161,7 +163,7 @@ impl<C: Cycle, R: Rank> Proof<C, R> {
     pub(crate) fn online_opening_mut(
         &mut self,
         slot: usize,
-    ) -> Option<&mut crate::internal::native::online::Query<C::CircuitField>> {
+    ) -> Option<&mut crate::protocol::native::online::Query<C::CircuitField>> {
         self.online_openings.get_mut(slot)
     }
 

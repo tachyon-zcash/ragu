@@ -31,10 +31,13 @@ mod registry {
     use ragu_primitives::{Element, allocator::Standard};
     use udon::field::Field;
 
-    use super::support::{self, C, HEADER_SIZE, R, Value};
+    use super::{
+        support,
+        support::{C, HEADER_SIZE, R, Value},
+    };
     use crate::{
         ApplicationBuilder,
-        internal::native::InternalCircuitIndex,
+        protocol::native::InternalCircuitIndex,
         step::{Encoded, Index, Oracles, Step},
     };
 
@@ -88,7 +91,7 @@ mod registry {
 
     /// Exercise the ordinary size and both sides of a registry-domain expansion.
     fn extra_steps() -> impl Strategy<Value = usize> {
-        let base = crate::internal::native::total_circuit_counts::<crate::profile::Standard>(3).0;
+        let base = crate::protocol::native::total_circuit_counts::<crate::profile::Standard>(3).0;
         let boundary = (base + 1).next_power_of_two();
         let gap = boundary - base;
         proptest::sample::select(vec![0, gap - 1, gap, gap + 1])
@@ -331,8 +334,16 @@ mod stages {
     use ragu_testing::strategies;
     use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
-    use super::support::{self, C, R, Value};
-    use crate::internal::{endoscalar::EndoscalarStage, native::stages::points::WalkStage, nested};
+    use super::{
+        support,
+        support::{C, R, Value},
+    };
+    use crate::{
+        protocol::nested,
+        verifier::recursive::{
+            gadgets::endoscalar::EndoscalarStage, native::stages::points::WalkStage,
+        },
+    };
 
     /// The unsigned value of a radix-3 digit with twist wires `e1`, `e2`:
     /// 1 + (lambda - 1) e1 + (lambda^2 - 1) e2 + (3 - lambda) e1 e2, which is
@@ -575,7 +586,7 @@ mod stages {
                 support::coordinates(honest.proof().native_p_commitment()),
                 "{mutation:?}: the nested walk must still end at the committed P"
             );
-            assert!(crate::verify::nested_points_match(&changed)?);
+            assert!(crate::test_support::decider_uncompressed::nested_points_match(&changed)?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(

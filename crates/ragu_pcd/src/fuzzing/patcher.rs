@@ -89,18 +89,24 @@ use ragu_primitives::{
 use rand::CryptoRng;
 use udon::field::Field;
 
-use super::claims::{NativeFuseProofSource, NestedFuseProofSource};
 use crate::{
     Application, Pcd, RAGU_TAG,
-    internal::{
-        endoscalar::EndoscalarStage,
-        native::{self, stages::points as native_points, total_circuit_counts},
-        nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
+    profile::ProfiledCycle,
+    protocol::{
+        native,
+        native::total_circuit_counts,
+        nested,
+        nested::{EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
         transcript::Transcript,
     },
-    profile::ProfiledCycle,
-    proof::ProofBuilder,
+    prover::{
+        fuse::claims::{NativeFuseProofSource, NestedFuseProofSource},
+        proof_builder::ProofBuilder,
+    },
     step::Step,
+    verifier::recursive::{
+        gadgets::endoscalar::EndoscalarStage, native::stages::points as native_points,
+    },
 };
 
 /// A wire an internal circuit is responsible for, named the way a capture
@@ -702,7 +708,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
 
         type OuterError<C, R, P, const HEADER_SIZE: usize> =
-            native::stages::outer_error::Stage<C, R, HEADER_SIZE, native::RevdotParameters<P>>;
+            crate::verifier::recursive::native::stages::outer_error::Stage<
+                C,
+                R,
+                HEADER_SIZE,
+                native::RevdotParameters<P>,
+            >;
 
         // The honest stage values, per stage, for the overlay: each circuit's
         // chain is the concatenation in `add_stage` order (a skipped stage is
@@ -714,9 +725,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             )?;
         let preamble_values = [
             binding_values.as_slice(),
-            &stage_values::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
-                &preamble_witness,
-            )?,
+            &stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            >(&preamble_witness)?,
         ]
         .concat();
         let outer_error_values = stage_values::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
@@ -725,24 +738,30 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let inner_error_values = stage_values::<
             _,
             R,
-            native::stages::inner_error::Stage<
+            crate::verifier::recursive::native::stages::inner_error::Stage<
                 C,
                 R,
                 HEADER_SIZE,
                 native::RevdotParameters<C::Profile>,
             >,
         >(&native_inner_error_witness)?;
-        let query_values =
-            stage_values::<_, R, native::stages::query::Stage<C, R, HEADER_SIZE>>(&query_witness)?;
-        let eval_values =
-            stage_values::<_, R, native::stages::eval::Stage<C, R, HEADER_SIZE>>(&eval_witness)?;
+        let query_values = stage_values::<
+            _,
+            R,
+            crate::verifier::recursive::native::stages::query::Stage<C, R, HEADER_SIZE>,
+        >(&query_witness)?;
+        let eval_values = stage_values::<
+            _,
+            R,
+            crate::verifier::recursive::native::stages::eval::Stage<C, R, HEADER_SIZE>,
+        >(&eval_witness)?;
         let chain = |stages: &[&[C::CircuitField]]| -> Vec<C::CircuitField> { stages.concat() };
         let preamble_outer_error = chain(&[&preamble_values, &outer_error_values]);
 
         // hashes_1 squeezes w, y, z and checks the sponge state the
         // outer_error stage carries over to hashes_2, and the children's
         // unified k(y) evaluations at the y it derived.
-        let hashes_1 = native::circuits::hashes_1::Circuit::<
+        let hashes_1 = crate::verifier::recursive::native::circuits::hashes_1::Circuit::<
             C,
             R,
             HEADER_SIZE,
@@ -752,11 +771,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             total_circuit_counts::<C::Profile>(self.num_application_steps).1,
         );
         let hashes_1_witness = || {
-            Ok(native::circuits::hashes_1::Witness {
-                unified: make_unified(&builder)?,
-                preamble_witness: &preamble_witness,
-                outer_error_witness: &native_outer_error_witness,
-            })
+            Ok(
+                crate::verifier::recursive::native::circuits::hashes_1::Witness {
+                    unified: make_unified(&builder)?,
+                    preamble_witness: &preamble_witness,
+                    outer_error_witness: &native_outer_error_witness,
+                },
+            )
         };
         let hashes_1_spec = CircuitSpec {
             name: "hashes_1".into(),
@@ -803,17 +824,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // hashes_2 resumes from that sponge state and squeezes the rest of
         // the challenges; the first-layer challenges are the resumed state and resolve
         // to stage wires, so `resolve` demotes them to inputs.
-        let hashes_2 = native::circuits::hashes_2::Circuit::<
+        let hashes_2 = crate::verifier::recursive::native::circuits::hashes_2::Circuit::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters<C::Profile>,
         >::new(self.params);
         let hashes_2_witness = || {
-            Ok(native::circuits::hashes_2::Witness {
-                unified: make_unified(&builder)?,
-                outer_error_witness: &native_outer_error_witness,
-            })
+            Ok(
+                crate::verifier::recursive::native::circuits::hashes_2::Witness {
+                    unified: make_unified(&builder)?,
+                    outer_error_witness: &native_outer_error_witness,
+                },
+            )
         };
         let hashes_2_spec = CircuitSpec {
             name: "hashes_2".into(),
@@ -842,20 +865,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // collapse checks both fold layers and the children's application
         // and compute_v bridge k(y) values. Only the final c comparison is
         // waived at bootstrap.
-        let collapse = native::circuits::collapse::Circuit::<
+        let collapse = crate::verifier::recursive::native::circuits::collapse::Circuit::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters<C::Profile>,
         >::new();
         let collapse_witness = || {
-            Ok(native::circuits::collapse::Witness {
-                binding: &native_points.binding,
-                preamble_witness: &preamble_witness,
-                unified: make_unified(&builder)?,
-                outer_error_witness: &native_outer_error_witness,
-                inner_error_witness: &native_inner_error_witness,
-            })
+            Ok(
+                crate::verifier::recursive::native::circuits::collapse::Witness {
+                    binding: &native_points.binding,
+                    preamble_witness: &preamble_witness,
+                    unified: make_unified(&builder)?,
+                    outer_error_witness: &native_outer_error_witness,
+                    inner_error_witness: &native_inner_error_witness,
+                },
+            )
         };
         // At the base case the covered slot, c, is left free by design, so
         // only the k(y) checks remain as outputs.
@@ -898,14 +923,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         // compute_v derives the expected evaluation v.
-        let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new();
+        let compute_v = crate::verifier::recursive::native::circuits::compute_v::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+        >::new();
         let compute_v_witness = || {
-            Ok(native::circuits::compute_v::Witness {
-                unified: make_unified(&builder)?,
-                preamble_witness: &preamble_witness,
-                query_witness: &query_witness,
-                eval_witness: &eval_witness,
-            })
+            Ok(
+                crate::verifier::recursive::native::circuits::compute_v::Witness {
+                    unified: make_unified(&builder)?,
+                    preamble_witness: &preamble_witness,
+                    query_witness: &query_witness,
+                    eval_witness: &eval_witness,
+                },
+            )
         };
         let compute_v_spec = CircuitSpec {
             name: "compute_v".into(),
@@ -925,15 +956,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // generators by two challenges and checks the running sum against
         // the k-th partial the eval stage witnessed, which is its output; the
         // last one checks it against the instance's partial binding instead.
-        type Eval<C, R, const HEADER_SIZE: usize> = native::stages::eval::Stage<C, R, HEADER_SIZE>;
+        type Eval<C, R, const HEADER_SIZE: usize> =
+            crate::verifier::recursive::native::stages::eval::Stage<C, R, HEADER_SIZE>;
         for k in 0..native::NUM_BINDERS {
             let bind_witness = || {
-                Ok(native::circuits::bind_challenges::Witness {
-                    unified: make_unified(&builder)?,
-                    preamble_witness: &preamble_witness,
-                    query_witness: &query_witness,
-                    eval_witness: &eval_witness,
-                })
+                Ok(
+                    crate::verifier::recursive::native::circuits::bind_challenges::Witness {
+                        unified: make_unified(&builder)?,
+                        preamble_witness: &preamble_witness,
+                        query_witness: &query_witness,
+                        eval_witness: &eval_witness,
+                    },
+                )
             };
             // The partial the circuit checks, for all but the last: that one
             // covers the instance's partial binding, which its coverage
@@ -971,13 +1005,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // stage commitment the binding stage witnessed. The other points
         // in that stage must match the child's transcript and persistent
         // commitment exports too: every binding-stage wire is an output.
-        let bind_beta = native::circuits::bind_beta::Circuit::<C, R, HEADER_SIZE>::new(self.params);
+        let bind_beta = crate::verifier::recursive::native::circuits::bind_beta::Circuit::<
+            C,
+            R,
+            HEADER_SIZE,
+        >::new(self.params);
         let bind_beta_witness = || {
-            Ok(native::circuits::bind_beta::Witness {
-                unified: make_unified(&builder)?,
-                binding: &native_points.binding,
-                preamble_witness: &preamble_witness,
-            })
+            Ok(
+                crate::verifier::recursive::native::circuits::bind_beta::Witness {
+                    unified: make_unified(&builder)?,
+                    binding: &native_points.binding,
+                    preamble_witness: &preamble_witness,
+                },
+            )
         };
         let bind_beta_spec = CircuitSpec {
             name: "bind_beta".into(),
@@ -1020,13 +1060,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         ]
         .concat();
 
-        let bind_endoscalar = native::circuits::bind_endoscalar::Circuit::<C, R>::new();
+        let bind_endoscalar =
+            crate::verifier::recursive::native::circuits::bind_endoscalar::Circuit::<C, R>::new();
         let bind_endoscalar_witness = || {
-            Ok(native::circuits::bind_endoscalar::Witness {
-                unified: make_unified(&builder)?,
-                inputs: &native_points,
-                walk: &native_walk,
-            })
+            Ok(
+                crate::verifier::recursive::native::circuits::bind_endoscalar::Witness {
+                    unified: make_unified(&builder)?,
+                    inputs: &native_points,
+                    walk: &native_walk,
+                },
+            )
         };
         let bind_endoscalar_spec = CircuitSpec {
             name: "bind_endoscalar".into(),
@@ -1052,7 +1095,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         for step in 0..native::NumSteps::<C::Profile>::len() {
-            let circuit = native::circuits::endoscaling_step::Circuit::<C, R>::new(step);
+            let circuit = crate::verifier::recursive::native::circuits::endoscaling_step::Circuit::<
+                C,
+                R,
+            >::new(step);
             let spec = CircuitSpec {
                 name: format!("native_endoscaling_step_{step}"),
                 outputs: stage_wire_indices::<
@@ -1065,10 +1111,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .collect(),
             };
             visitor.visit(&spec, &circuit, &native_walk_values, || {
-                Ok(native::circuits::endoscaling_step::Witness {
-                    inputs: &native_points,
-                    walk: &native_walk,
-                })
+                Ok(
+                    crate::verifier::recursive::native::circuits::endoscaling_step::Witness {
+                        inputs: &native_points,
+                        walk: &native_walk,
+                    },
+                )
             })?;
         }
 
@@ -1082,7 +1130,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let own_o1 = builder.online_commitments()[crate::header::NUM_ONLINE_FP_POLYS - 1];
         let endoscaling_values: Vec<C::ScalarField> = [
             stage_values::<C::ScalarField, R, EndoscalarStage>(beta_endo)?,
-            stage_values::<_, R, nested::stages::bridge_hash::Stage<C::HostCurve>>(own_o1)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::bridge_hash::Stage<C::HostCurve>,
+            >(own_o1)?,
             stage_values::<_, R, PointsStage<C::HostCurve, C::Profile>>(&points_witness)?,
         ]
         .concat();
@@ -1113,102 +1165,150 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // chain. Their stage witnesses are the ones the prover commits, and
         // the instance is rebuilt fresh per circuit as `make_unified` does
         // for the native one.
-        let nested_s_prime_witness = nested::stages::s_prime::Witness {
+        let nested_s_prime_witness = crate::verifier::recursive::nested::stages::s_prime::Witness {
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
-        let nested_ab_witness = nested::stages::ab::Witness {
+        let nested_ab_witness = crate::verifier::recursive::nested::stages::ab::Witness {
             a: builder.native_a_commitment(),
             b: builder.native_b_commitment(),
             native_points_ab: builder.native_points_ab_commitment(),
         };
-        let nested_query_witness = nested::stages::query::Witness {
+        let nested_query_witness = crate::verifier::recursive::nested::stages::query::Witness {
             native_query: builder.native_query_commitment(),
             registry_xy: builder.native_registry_xy_commitment(),
             nested: nested_query,
         };
-        let nested_f_witness = nested::stages::f::Witness {
+        let nested_f_witness = crate::verifier::recursive::nested::stages::f::Witness {
             native_f: native_f.commitment,
             native_points_f: builder.native_points_f_commitment(),
         };
-        let nested_eval_witness = nested::stages::eval::Witness {
+        let nested_eval_witness = crate::verifier::recursive::nested::stages::eval::Witness {
             native_eval: builder.native_eval_commitment(),
             nested: nested_eval,
         };
         let nested_values: Vec<C::ScalarField> = [
             endoscaling_values,
-            stage_values::<_, R, nested::stages::preamble::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_preamble,
-            )?,
-            stage_values::<_, R, nested::stages::s_prime::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_s_prime_witness,
-            )?,
-            stage_values::<_, R, nested::stages::inner_error::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_inner_error_witness,
-            )?,
-            stage_values::<_, R, nested::stages::outer_error::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_outer_error_witness,
-            )?,
-            stage_values::<_, R, nested::stages::ab::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_ab_witness,
-            )?,
-            stage_values::<_, R, nested::stages::query::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_query_witness,
-            )?,
-            stage_values::<_, R, nested::stages::f::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_f_witness,
-            )?,
-            stage_values::<_, R, nested::stages::eval::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_eval_witness,
-            )?,
-            stage_values::<_, R, nested::stages::challenges::Stage<C::HostCurve, R, C::Profile>>(
-                &nested_challenges,
-            )?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::preamble::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_preamble)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::s_prime::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_s_prime_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::inner_error::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_inner_error_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::outer_error::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_outer_error_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::ab::Stage<C::HostCurve, R, C::Profile>,
+            >(&nested_ab_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::query::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_query_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::f::Stage<C::HostCurve, R, C::Profile>,
+            >(&nested_f_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::eval::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_eval_witness)?,
+            stage_values::<
+                _,
+                R,
+                crate::verifier::recursive::nested::stages::challenges::Stage<
+                    C::HostCurve,
+                    R,
+                    C::Profile,
+                >,
+            >(&nested_challenges)?,
         ]
         .concat();
         let nested_witness = || {
-            Ok(nested::circuits::common::Witness {
-                instance: nested::unified::Instance {
-                    c: builder.nested_c(),
-                    v: builder.nested_v()?,
-                    x: nested::challenge::<C>(builder.x())?,
-                    y: nested::challenge::<C>(builder.y())?,
-                    u: nested::challenge::<C>(builder.u())?,
-                    exported: [
-                        builder.native_preamble_commitment(),
-                        builder.native_inner_error_commitment(),
-                        builder.native_outer_error_commitment(),
-                        builder.native_query_commitment(),
-                        builder.native_eval_commitment(),
-                        builder.native_a_commitment(),
-                        builder.native_b_commitment(),
-                        builder.native_registry_xy_commitment(),
-                        builder.native_p_commitment(),
-                        builder.native_points_binding_commitment(),
-                        builder.native_points_preamble_commitment(),
-                        builder.native_points_registry_wx_commitment(),
-                        builder.native_points_ab_commitment(),
-                        builder.native_points_f_commitment(),
-                        builder.online_commitments()[0],
-                        builder.online_commitments()[1],
-                        builder.native_application_stage_commitment(),
-                    ],
-                    coverage: Default::default(),
+            Ok(
+                crate::verifier::recursive::nested::circuits::common::Witness {
+                    instance: nested::unified::Instance {
+                        c: builder.nested_c(),
+                        v: builder.nested_v()?,
+                        x: nested::challenge::<C>(builder.x())?,
+                        y: nested::challenge::<C>(builder.y())?,
+                        u: nested::challenge::<C>(builder.u())?,
+                        exported: [
+                            builder.native_preamble_commitment(),
+                            builder.native_inner_error_commitment(),
+                            builder.native_outer_error_commitment(),
+                            builder.native_query_commitment(),
+                            builder.native_eval_commitment(),
+                            builder.native_a_commitment(),
+                            builder.native_b_commitment(),
+                            builder.native_registry_xy_commitment(),
+                            builder.native_p_commitment(),
+                            builder.native_points_binding_commitment(),
+                            builder.native_points_preamble_commitment(),
+                            builder.native_points_registry_wx_commitment(),
+                            builder.native_points_ab_commitment(),
+                            builder.native_points_f_commitment(),
+                            builder.online_commitments()[0],
+                            builder.online_commitments()[1],
+                            builder.native_application_stage_commitment(),
+                        ],
+                        coverage: Default::default(),
+                    },
+                    endoscalar: beta_endo,
+                    bridge_hash: own_o1,
+                    points: &points_witness,
+                    preamble: &nested_preamble,
+                    s_prime: &nested_s_prime_witness,
+                    inner_error: &nested_inner_error_witness,
+                    outer_error: &nested_outer_error_witness,
+                    ab: &nested_ab_witness,
+                    query: &nested_query_witness,
+                    f: &nested_f_witness,
+                    eval: &nested_eval_witness,
+                    challenges: &nested_challenges,
                 },
-                endoscalar: beta_endo,
-                bridge_hash: own_o1,
-                points: &points_witness,
-                preamble: &nested_preamble,
-                s_prime: &nested_s_prime_witness,
-                inner_error: &nested_inner_error_witness,
-                outer_error: &nested_outer_error_witness,
-                ab: &nested_ab_witness,
-                query: &nested_query_witness,
-                f: &nested_f_witness,
-                eval: &nested_eval_witness,
-                challenges: &nested_challenges,
-            })
+            )
         };
         let nested_coverage = |instance: nested::unified::Instance<C::HostCurve>| -> Vec<usize> {
             covered_positions(|f| instance.coverage.for_each_slot(f), &[])
@@ -1216,11 +1316,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // collapse also pins the exported challenges and commitments. These
         // remain outputs at bootstrap; only c_n is left free there.
-        let collapse = MultiStage::new(nested::circuits::collapse::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new());
+        let collapse = MultiStage::new(
+            crate::verifier::recursive::nested::circuits::collapse::Circuit::<
+                C::HostCurve,
+                R,
+                C::Profile,
+            >::new(),
+        );
         let collapse_covered = covered_outputs(&collapse, nested_witness()?, |instance| {
             covered_positions(
                 |f| instance.coverage.for_each_slot(f),
@@ -1236,7 +1338,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     stage_wire_indices::<
                         C::ScalarField,
                         R,
-                        nested::stages::outer_error::Stage<C::HostCurve, R, C::Profile>,
+                        crate::verifier::recursive::nested::stages::outer_error::Stage<
+                            C::HostCurve,
+                            R,
+                            C::Profile,
+                        >,
                     >(|stage| {
                         Ok(stage.collapsed.iter().map(|e| *e.wire()).collect())
                     })?
@@ -1248,11 +1354,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         visitor.visit_nested(&collapse_spec, &collapse, &nested_values, nested_witness)?;
 
         // compute_v derives v_n.
-        let compute_v = MultiStage::new(nested::circuits::compute_v::Circuit::<
-            C::HostCurve,
-            R,
-            C::Profile,
-        >::new());
+        let compute_v = MultiStage::new(
+            crate::verifier::recursive::nested::circuits::compute_v::Circuit::<
+                C::HostCurve,
+                R,
+                C::Profile,
+            >::new(),
+        );
         let compute_v_spec = CircuitSpec {
             name: "nested_compute_v".into(),
             outputs: covered_outputs(&compute_v, nested_witness()?, nested_coverage)?

@@ -16,13 +16,15 @@ use udon::{curve::Affine, field::Field};
 
 use crate::{
     Application, ApplicationBuilder,
-    compress::revdot::{native_position, nested_position},
     header::{Header, Padding, Suffix},
-    internal::{native, nested},
-    ipa::IpaCycle,
     profile::{
         Profile, Profiled, ProfiledCycle,
         testing::{Crossing, CrossingBack, CrossingContext},
+    },
+    protocol::{
+        compress::revdot::{native_position, nested_position},
+        ipa::IpaCycle,
+        native, nested,
     },
 };
 

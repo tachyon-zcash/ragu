@@ -25,9 +25,15 @@ use udon::field::Field;
 use crate::{
     Pcd,
     header::Header,
-    internal::nested::{self, InternalCircuitIndex, RxIndex, pcs},
     profile::ProfiledCycle,
-    proof::recursive_propagation_tests::support::{self, C, R},
+    proof::recursive_propagation_tests::{
+        support,
+        support::{C, R},
+    },
+    protocol::{
+        nested,
+        nested::{InternalCircuitIndex, RxIndex, pcs},
+    },
 };
 
 type Poly = sparse::Polynomial<Fq, R>;
@@ -249,7 +255,11 @@ fn check_batch<H: Header<Fp>>(
     // Check the production eval bridge's stored wires against direct
     // polynomial evaluations. The first two values hold native_eval.
     let values = stage_values::<
-        nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>,
+        crate::verifier::recursive::nested::stages::eval::Stage<
+            <C as Cycle>::HostCurve,
+            R,
+            <C as ProfiledCycle>::Profile,
+        >,
     >(&parent.bridge_eval_rx);
     assert_eq!(values.len(), 2 + evaluated.len());
     for (value, (tag, poly, _)) in values[2..].iter().zip(&evaluated) {
@@ -347,18 +357,12 @@ mod folding {
     use support::{C, R};
     use udon::field::Field;
 
-    use super::{
-        super::{_05_outer_error::NestedFuseEmulator, claims::NestedFuseProofSource},
-        stage_values, support,
-    };
+    use super::{super::claims::NestedFuseProofSource, stage_values, support};
     use crate::{
         Proof,
-        internal::{
-            claims,
-            fold_revdot::{self, ClaimFolder},
-            nested::{self, claims::KySource},
-        },
         profile::ProfiledCycle,
+        protocol::{fold_revdot, fold_revdot::ClaimFolder, nested, nested::claims::KySource},
+        prover::fuse::nested::outer_error::NestedFuseEmulator,
     };
 
     type P = nested::RevdotParameters<crate::profile::Standard>;
@@ -395,8 +399,14 @@ mod folding {
         }
     }
 
-    type Claims<'a> =
-        claims::Builder<'a, 'a, Cow<'a, sparse::Polynomial<Fq, R>>, Fq, R, ReferenceBackend>;
+    type Claims<'a> = crate::prover::claims::Builder<
+        'a,
+        'a,
+        Cow<'a, sparse::Polynomial<Fq, R>>,
+        Fq,
+        R,
+        ReferenceBackend,
+    >;
 
     /// The children's nested claims at `y` and `z`, in the order
     /// [`build`](nested::claims::build) emits them, with their $k(y)$ values.
@@ -407,7 +417,7 @@ mod folding {
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
-        let mut nested_claims = claims::Builder::new(&app.nested_registry, y, z);
+        let mut nested_claims = crate::prover::claims::Builder::new(&app.nested_registry, y, z);
         nested::claims::build::<crate::profile::Standard, _, _>(
             &NestedFuseProofSource { left, right },
             &mut nested_claims,
@@ -468,7 +478,7 @@ mod folding {
         // Two raw claims, one circuit claim per endoscaling step and per
         // instance circuit per child, and one bonding claim per bonding kind
         // folded across both children.
-        let steps = crate::internal::endoscalar::num_steps(
+        let steps = crate::verifier::recursive::gadgets::endoscalar::num_steps(
             nested::ENDOSCALINGS_PER_STEP,
             nested::NUM_ENDOSCALING_POINTS,
         );
@@ -520,7 +530,7 @@ mod folding {
         // The inner stage starts with two curve points (four coordinates),
         // followed by the error terms in group-major order.
         let inner_values = stage_values::<
-            nested::stages::inner_error::Stage<
+            crate::verifier::recursive::nested::stages::inner_error::Stage<
                 <C as Cycle>::HostCurve,
                 R,
                 <C as ProfiledCycle>::Profile,
@@ -536,7 +546,7 @@ mod folding {
         // The outer stage starts with one curve point, followed by the outer
         // error terms and then one collapsed value per group.
         let outer_values = stage_values::<
-            nested::stages::outer_error::Stage<
+            crate::verifier::recursive::nested::stages::outer_error::Stage<
                 <C as Cycle>::HostCurve,
                 R,
                 <C as ProfiledCycle>::Profile,
@@ -689,7 +699,7 @@ mod denominators {
     use ragu_testing::strategies;
     use udon::field::Field;
 
-    use crate::internal::inverter::Inverter;
+    use crate::verifier::recursive::gadgets::inverter::Inverter;
 
     #[derive(Clone, Copy)]
     enum Zero {
@@ -815,7 +825,10 @@ mod child_openings {
     use ragu_testing::strategies;
     use rand::{SeedableRng, rngs::StdRng};
 
-    use super::support::{self, C, ChildWire, R, Value, dummy_as_value};
+    use super::{
+        support,
+        support::{C, ChildWire, R, Value, dummy_as_value},
+    };
     use crate::Proof;
 
     fn check(app: &support::App, inputs: &support::Inputs, delta: Fp) -> Result<()> {
@@ -903,10 +916,10 @@ mod challenge_stage {
     use udon::field::Field;
 
     use super::{
-        folding,
-        support::{self, C, Cache, HEADER_SIZE, R, Value},
+        folding, support,
+        support::{C, Cache, HEADER_SIZE, R, Value},
     };
-    use crate::internal::nested::stages::challenges;
+    use crate::verifier::recursive::nested::stages::challenges;
 
     fn check(app: &support::App, inputs: &support::Inputs, delta: Fq, y: Fq, z: Fq) -> Result<()> {
         let (child, _, _) = support::fused(app, inputs)?;
@@ -938,10 +951,11 @@ mod challenge_stage {
                 "{case}: the edit must leave the child's nested claims true"
             );
             assert!(
-                !crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
-                    &forged,
-                    &forged.challenges().lifts::<C>()?,
-                )?,
+                !crate::test_support::decider_uncompressed::nested_challenges_match::<
+                    C,
+                    R,
+                    HEADER_SIZE,
+                >(&forged, &forged.challenges().lifts::<C>()?,)?,
                 "{case}: the edit must break the root's challenge-stage equality"
             );
             let forged = forged.carry::<Value>(*child.data());

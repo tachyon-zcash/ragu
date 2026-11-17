@@ -17,15 +17,18 @@ use udon::{curve::Affine, field::Field, polynomial::evaluate_iter};
 type EpAffine = <Pasta as Cycle>::NestedCurve;
 type EqAffine = <Pasta as Cycle>::HostCurve;
 
-use super::{Batch, Batched, batch, verifier::verify};
+use super::{Batch, Batched};
 use crate::{
     Application, ApplicationBuilder, Proof,
-    compress::revdot::{self, OpeningClaim, Openings, Reduction},
-    internal::{
-        ky::{self, NativeKy, NestedKy},
+    protocol::{
+        compress::revdot::{OpeningClaim, Openings, Reduction},
+        ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript, MSM, Params},
+        ky,
+        ky::{NativeKy, NestedKy},
         nested,
     },
-    ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, MSM, Params},
+    prover::compress::batch::batch,
+    verifier::decider::batch::verify,
 };
 
 type TestR = ProductionRank;
@@ -196,7 +199,7 @@ where
     .unwrap();
     assert_eq!(claim.point, witness.u);
     let params = Params::with_k(generators, u, R::RANK);
-    let opening = ipa::create_proof::<ReferenceBackend, _>(
+    let opening = crate::prover::ipa::create_proof::<ReferenceBackend, _>(
         &params, &mut *rng, transcript, &witness.p, witness.u,
     )
     .unwrap();
@@ -232,7 +235,7 @@ where
     let params = Params::with_k(generators, u, TestR::RANK);
     let mut msm = MSM::new(&params);
     msm.append_term(C::Scalar::ONE, claim.commitment);
-    ipa::verify_proof(&params, msm, transcript, opening, claim.point, claim.value)
+    crate::verifier::ipa::verify_proof(&params, msm, transcript, opening, claim.point, claim.value)
         .unwrap()
         .use_challenges()
         .eval::<ReferenceBackend>()
@@ -248,19 +251,20 @@ fn native_verifier(
     reduction: &Reduction<EqAffine>,
 ) -> (CycleTranscript<'static, Pasta>, Openings<EqAffine>) {
     let mut t = transcript();
-    let openings = revdot::verify_native::<Pasta, TestR, ReferenceBackend>(
-        proof.circuit_id(),
-        |component| proof.native_commitment(component),
-        &app.native_registry,
-        y,
-        z,
-        targets,
-        &[],
-        reduction,
-        &mut t.host(),
-    )
-    .unwrap()
-    .expect("the reduction holds");
+    let openings =
+        crate::verifier::decider::revdot::verify_native::<Pasta, TestR, ReferenceBackend>(
+            proof.circuit_id(),
+            |component| proof.native_commitment(component),
+            &app.native_registry,
+            y,
+            z,
+            targets,
+            &[],
+            reduction,
+            &mut t.host(),
+        )
+        .unwrap()
+        .expect("the reduction holds");
     (t, openings)
 }
 
@@ -282,16 +286,17 @@ fn native_batch_opens_through_the_ipa() {
 
     // The reduction, on the prover's and the verifier's transcripts.
     let mut prover = transcript();
-    let (reduction, witness) = revdot::reduce_native::<Pasta, TestR, ReferenceBackend>(
-        proof,
-        &app.native_registry,
-        generators,
-        y,
-        z,
-        &[],
-        &mut prover.host(),
-    )
-    .unwrap();
+    let (reduction, witness) =
+        crate::prover::compress::revdot::reduce_native::<Pasta, TestR, ReferenceBackend>(
+            proof,
+            &app.native_registry,
+            generators,
+            y,
+            z,
+            &[],
+            &mut prover.host(),
+        )
+        .unwrap();
     let (mut verifier, openings) = native_verifier(&app, proof, y, z, &targets, &reduction);
 
     // The batch and the IPA.
@@ -406,30 +411,32 @@ fn nested_batch_opens_through_the_ipa() {
     };
 
     let mut prover = transcript();
-    let (reduction, witness) = revdot::reduce_nested::<Pasta, TestR, ReferenceBackend>(
-        proof,
-        &app.nested_registry,
-        generators,
-        y,
-        z,
-        &[],
-        &mut prover.nested(),
-    )
-    .unwrap();
-    let nested_verifier = || {
-        let mut t = transcript();
-        let openings = revdot::verify_nested::<Pasta, TestR, ReferenceBackend>(
-            commitment,
+    let (reduction, witness) =
+        crate::prover::compress::revdot::reduce_nested::<Pasta, TestR, ReferenceBackend>(
+            proof,
             &app.nested_registry,
+            generators,
             y,
             z,
-            &targets,
             &[],
-            &reduction,
-            &mut t.nested(),
+            &mut prover.nested(),
         )
-        .unwrap()
-        .expect("the reduction holds");
+        .unwrap();
+    let nested_verifier = || {
+        let mut t = transcript();
+        let openings =
+            crate::verifier::decider::revdot::verify_nested::<Pasta, TestR, ReferenceBackend>(
+                commitment,
+                &app.nested_registry,
+                y,
+                z,
+                &targets,
+                &[],
+                &reduction,
+                &mut t.nested(),
+            )
+            .unwrap()
+            .expect("the reduction holds");
         (t, openings)
     };
     let (mut verifier, openings) = nested_verifier();

@@ -18,8 +18,8 @@ use udon::{
 
 use super::{
     claims::{Kind, Shape},
-    fold::{self, GROUP, Layout},
-    prover::errors,
+    fold,
+    fold::{GROUP, Layout},
 };
 
 /// Each derived commitment agrees with a sum of individual scalar
@@ -234,3 +234,5 @@ fn error_terms_reject_an_uncomputed_product() {
     let poly = sparse::Polynomial::<Fp, TestRank>::from_coeffs(vec![Fp::ONE]);
     errors::<_, TestRank, SkippingBackend>(|_| &poly, |_| &poly, [(0, 0), (0, 1)].into_iter());
 }
+
+use crate::prover::compress::revdot::errors;

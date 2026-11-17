@@ -26,17 +26,16 @@ use udon::{
     field::Field,
 };
 
-use super::recursive_propagation_tests::support::{
-    self, C, HEADER_SIZE, Merge, R, Seed, UnitLeft, UnitRight, Value,
+use super::recursive_propagation_tests::{
+    support,
+    support::{C, HEADER_SIZE, Merge, R, Seed, UnitLeft, UnitRight, Value},
 };
 use crate::{
     ApplicationBuilder, Proof,
     header::{Dummy, Header},
-    internal::{
-        Side, native,
-        nested::{self, stages::challenges},
-    },
+    protocol::{Side, native, nested},
     step::{Encoded, Index, Oracles, Step},
+    verifier::recursive::nested::stages::challenges,
 };
 
 /// Preserve ordinary unit headers through successive fuses.
@@ -526,7 +525,7 @@ fn check_proof_guards(
     native_trace.add_assign(&proof.native_inner_error_rx);
     assert_eq!(
         accepts_wrong_c(
-            native::circuits::collapse::Circuit::<
+            crate::verifier::recursive::native::circuits::collapse::Circuit::<
                 C,
                 R,
                 HEADER_SIZE,
@@ -543,11 +542,13 @@ fn check_proof_guards(
 
     assert_eq!(
         accepts_wrong_c(
-            MultiStage::new(nested::circuits::collapse::Circuit::<
-                EqAffine,
-                R,
-                crate::profile::Standard,
-            >::new()),
+            MultiStage::new(
+                crate::verifier::recursive::nested::circuits::collapse::Circuit::<
+                    EqAffine,
+                    R,
+                    crate::profile::Standard,
+                >::new()
+            ),
             &nested_collapse_trace(proof),
             0, // c_n is the first slot in the nested unified instance.
             proof.nested_c(),
@@ -594,11 +595,13 @@ fn nested_collapse_uses_challenge_stage_y_even_in_bootstrap() -> Result<()> {
                 gates: 1,
                 linear: Vec::new(),
             };
-            let circuit = MultiStage::new(nested::circuits::collapse::Circuit::<
-                EqAffine,
-                R,
-                crate::profile::Standard,
-            >::new());
+            let circuit = MultiStage::new(
+                crate::verifier::recursive::nested::circuits::collapse::Circuit::<
+                    EqAffine,
+                    R,
+                    crate::profile::Standard,
+                >::new(),
+            );
             let (output, _) = circuit.witness(&mut constraints, Empty)?.into_parts();
             let instance_y = output.y.wire();
             assert_eq!(instance_y.constant, Fq::ZERO);

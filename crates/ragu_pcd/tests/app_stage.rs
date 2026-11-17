@@ -22,7 +22,7 @@ use udon::field::Field;
 use crate::{
     Application, ApplicationBuilder, Pcd,
     header::{Header, Padding, Suffix},
-    internal::native::RxIndex,
+    protocol::native::RxIndex,
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 

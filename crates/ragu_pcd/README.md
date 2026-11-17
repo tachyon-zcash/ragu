@@ -6,6 +6,10 @@
 
 This crate contains internal implementation code for the [`ragu`](https://crates.io/crates/ragu) crate.
 
+See the [implementation map](ARCHITECTURE.md) for the prover, recursive verifier,
+terminal decider, and shared protocol modules, and the fixture checks that pin
+their behavior.
+
 The [`pasta`](src/pasta/) module owns Ragu's fixed generator derivation and
 loading. With the `baked` feature, `build.rs` derives the generators on the host
 using `pasta_curves` only for hash-to-curve, converts them to checked Udon points,

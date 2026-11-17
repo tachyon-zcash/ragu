@@ -17,16 +17,15 @@ type EqAffine = <Pasta as Cycle>::HostCurve;
 use super::{
     Openings, Reduction,
     fold::{Derived, GROUP, Layout},
-    prover::Witness,
-    reduce_native, reduce_nested, verify_native, verify_nested,
 };
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
-    internal::{
-        ky::{self, NativeKy, NestedKy},
+    protocol::{
+        ipa::CycleTranscript,
+        ky,
+        ky::{NativeKy, NestedKy},
         nested,
     },
-    ipa::CycleTranscript,
 };
 
 type TestR = ProductionRank;
@@ -303,7 +302,7 @@ fn point_restriction_matches_the_materialized_one() {
         registry::{CircuitIndex, Registry},
     };
 
-    use crate::internal::native;
+    use crate::protocol::native;
 
     fn check<F: Field, R: Rank>(
         registry: &Registry<'_, F, R>,
@@ -343,3 +342,8 @@ fn point_restriction_matches_the_materialized_one() {
         &mut rng,
     );
 }
+
+use crate::{
+    prover::compress::revdot::{Witness, reduce_native, reduce_nested},
+    verifier::decider::revdot::{verify_native, verify_nested},
+};

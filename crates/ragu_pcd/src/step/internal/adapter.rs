@@ -14,11 +14,14 @@ use ragu_primitives::{
     vec::{CollectFixed, ConstLen, FixedVec, Len},
 };
 
-use super::super::{
-    Prepared, Step,
-    oracles::{self, OnlineWitness, Oracles},
+use crate::{
+    Header,
+    protocol::native::online,
+    step::{
+        Prepared, Step, oracles,
+        oracles::{OnlineWitness, Oracles},
+    },
 };
-use crate::{Header, internal::native::online};
 
 /// The length of an application circuit's instance: $\zeta$, the online
 /// openings, the bridge hash's two coordinates and the three padded headers.

@@ -27,13 +27,15 @@ use udon::{
 
 use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof, SelectableBackend,
-    compress::{
-        Messages,
-        batch::Batch,
-        instance::{Child, Instance, NestedChild},
-        revdot::{Reduction, fold::Fold},
+    protocol::{
+        compress::{
+            Messages,
+            batch::Batch,
+            instance::{Child, Instance, NestedChild},
+            revdot::{Reduction, fold::Fold},
+        },
+        ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
     },
-    ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
     step::{Encoded, Index, Oracles, Step},
 };
 
@@ -1287,7 +1289,7 @@ mod proof_equivalence {
     use udon::field::Field;
 
     use super::Proof;
-    use crate::internal::{native, nested};
+    use crate::protocol::{native, nested};
 
     fn polynomial_eq<F: Field, R: Rank>(left: &Polynomial<F, R>, right: &Polynomial<F, R>) -> bool {
         left.iter_coeffs().eq(right.iter_coeffs())
@@ -1705,7 +1707,7 @@ mod independent_polynomials {
     /// `RxIndex::ALL` order.
     #[test]
     fn rx_values_fill_slots_in_all_order() {
-        use crate::internal::native::{RxIndex, RxValues};
+        use crate::protocol::native::{RxIndex, RxValues};
 
         let mut visited = Vec::new();
         let values = RxValues::<_, crate::profile::Standard>::from_fn(|id| {

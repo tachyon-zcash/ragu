@@ -9,7 +9,7 @@
 //! not the header exposed has a false claim, and so does a proof of any other
 //! step whose statement circuit exposes anything but the unit header.
 //!
-//! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+//! [`statement_ky`]: crate::verifier::recursive::native::stages::preamble::ProofInputs::statement_ky
 
 use alloc::vec::Vec;
 
@@ -27,12 +27,12 @@ use udon::field::Field;
 use crate::{
     Application, ApplicationBuilder, Pcd,
     header::{Header, NUM_ONLINE_FP_POLYS},
-    internal::ky,
     profile::{
         Profiled,
         testing::{Decompressing, StatementContext},
     },
     proof::recursive_propagation_tests::support::Value,
+    protocol::ky,
     step::{Encoded, Index, Oracles, Step, internal::decompress::Decompress},
 };
 

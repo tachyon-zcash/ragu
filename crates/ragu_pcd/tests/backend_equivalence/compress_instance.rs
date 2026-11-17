@@ -9,7 +9,7 @@ use ragu_core::{
 use udon::field::Field;
 
 use super::{HEADER_SIZE, Instance, TestR, replay, setup};
-use crate::internal::nested;
+use crate::protocol::nested;
 
 #[test]
 fn recomputed_stages_match_across_backends() {
@@ -44,7 +44,7 @@ fn recomputed_stages_match_across_backends() {
     // commitment without changing the already replayed challenges.
     for stage in [nested::RxIndex::ChallengeStage, nested::RxIndex::BridgeAB] {
         let mut tampered = instance.clone();
-        let index = super::super::nested_position::<crate::profile::Standard>(
+        let index = crate::protocol::compress::revdot::nested_position::<crate::profile::Standard>(
             nested::RxComponent::Rx(stage),
         );
         tampered.nested[index] = -tampered.nested[index];

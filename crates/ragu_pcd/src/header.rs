@@ -13,12 +13,12 @@ use udon::field::Field;
 
 mod online;
 
-pub(crate) use self::online::slot;
-pub use self::online::{
-    Has, NUM_ONLINE_FP_POLYS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding,
-};
 #[doc(hidden)]
-pub use self::online::{Slot0, Slot1};
+pub use crate::header::online::Slot0;
+pub(crate) use crate::header::online::slot;
+pub use crate::header::online::{
+    Has, NUM_ONLINE_FP_POLYS, OnlinePoly, OnlinePolyCommit, OnlinePolySlot, Padding, Slot1,
+};
 
 /// The number of suffixes used internally by Ragu.
 ///

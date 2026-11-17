@@ -9,7 +9,7 @@
 //!
 //! The verifier side follows zakura-common's Halo2 and Orchard verifier
 //! fingerprints: the verifier runs on each committed proof under a recorder
-//! (see [`crate::ipa::fingerprint`]), and its transcript schedule and final
+//! (see [`crate::test_support::fingerprint`]), and its transcript schedule and final
 //! MSMs must match the committed record, so a change to how it reads a proof
 //! shows even when its verdict does not. Tampered copies must be rejected,
 //! and at the check they should fail.
@@ -97,20 +97,20 @@ use udon::{curve::Affine, field::Field};
 use super::Proof;
 use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd,
-    compress::{
-        Messages,
-        batch::Batch,
-        instance::{Child, Instance, NestedChild},
-        revdot::{Reduction, fold::Fold},
-    },
     header::{Header, Padding, Suffix},
-    internal::native::online,
-    ipa::{
-        IpaCycle, IpaProof,
-        fingerprint::{self, Event},
-    },
     profile::{Aggregator, Profile, Profiled, ProfiledCycle},
+    protocol::{
+        compress::{
+            Messages,
+            batch::Batch,
+            instance::{Child, Instance, NestedChild},
+            revdot::{Reduction, fold::Fold},
+        },
+        ipa::{IpaCycle, IpaProof},
+        native::online,
+    },
     step::{Encoded, Index, Oracles, Step, internal::bootstrap::Bootstrap},
+    test_support::{fingerprint, fingerprint::Event},
 };
 
 type R = ProductionRank;

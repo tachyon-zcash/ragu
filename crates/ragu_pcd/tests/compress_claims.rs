@@ -14,13 +14,11 @@ use ragu_core::pasta::{Fp, Fq, Pasta};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
-use super::{
-    super::prover::{NativePolys, NestedPolys},
-    Kind, Masked, Shape,
-};
+use super::{Kind, Masked, Shape};
 use crate::{
     Application, ApplicationBuilder,
-    internal::{claims::Builder, native, nested},
+    protocol::{native, nested},
+    prover::claims::Builder,
 };
 
 type TestR = ProductionRank;
@@ -187,3 +185,5 @@ fn binding_rejects_a_repeated_degree() {
         Fp::ONE,
     );
 }
+
+use crate::prover::compress::revdot::{NativePolys, NestedPolys};
