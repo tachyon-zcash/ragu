@@ -68,8 +68,9 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     ///
     /// # Errors
     ///
-    /// Rejects out-of-order or repeated phases and incorrect polynomial counts.
-    /// A rejected call leaves the preparation unchanged.
+    /// Rejects out-of-order or repeated phases, incorrect polynomial counts,
+    /// and the zero polynomial, whose commitment the walk cannot take. A
+    /// rejected call leaves the preparation unchanged.
     pub(crate) fn supply(
         &mut self,
         phase: Phase,
@@ -84,6 +85,14 @@ impl<F: Field, R: Rank> Prepared<F, R> {
         if PHASES.get(self.next) != Some(&phase) || polynomials.len() != count {
             return Err(Error::InvalidWitness(
                 "private polynomial preparation does not match its phase".into(),
+            ));
+        }
+        if polynomials
+            .iter()
+            .any(|poly| poly.iter_coeffs().all(|c| c == F::ZERO))
+        {
+            return Err(Error::InvalidWitness(
+                "a private polynomial must not be zero".into(),
             ));
         }
         let mut polynomials = polynomials.into_iter();

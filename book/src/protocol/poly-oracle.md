@@ -519,7 +519,7 @@ A profile has at most `NUM_ONLINE_FQ_POLYS` (one) such slot. V6 shares its batch
   If the nested circuit already holds the correctly bound $\F_q$ challenges, no further conversion is needed.
 - **A hint until decompression.**
   Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; until a check constrains $y_q$, a prover may commit any polynomial.
-  The compatibility path uses finite points, so its placeholder must not be zero. V6's new private paths support identity commitments.
+  Every path uses finite points, so its placeholder must not be zero; the private paths reject the zero polynomial, whose commitment is the identity.
 - **A native consumer of $\cm_{f_q}$.**
   Decompression's native half uses $\cm_{f_q}$ as $G'$, but only the walk's circuits load `PointsPreamble`.
   V6 provides bound access to the new private slots' points through its early input stage, tied to the walk's common point metadata. A future decompression circuit must consume that bound point.
@@ -575,7 +575,7 @@ The last nested copy is bound to the early native query copy, so its later appea
 
 C3 applies to every random identity test. In particular, a future decompression consumer must commit the inner proof data, round challenges and restriction coordinates before outer $w$, then constrain transcript replay to those early wires. A separately witnessed late copy does not establish that binding. Inner compression's canonical-integer challenge conversion must also remain distinct from outer fuse endoscalar lifts. Using a private commitment as the IPA's folded generator requires the same ordered generator basis as that IPA.
 
-The new private paths support zero polynomials and identity commitments, including their walk, codec and scalar-bridge representations. A profile with zero private capacity adds none of these stages or helpers; Standard retains its existing shape and encoding.
+Like the online slots, the private paths take only finite points. A supplied zero polynomial is rejected, since its commitment is the identity, and setup rejects a source registry whose restrictions vanish at the bootstrap proof's challenges. The walk, the point codec and the scalar bridges are the existing finite ones. A profile with zero private capacity adds none of these stages or helpers; Standard retains its existing shape and encoding.
 
 #### Authenticate many restrictions with one outgoing obligation {#v6-registry}
 

@@ -224,14 +224,13 @@ fn consumer_prefixes_preserve_user_indices_and_cross_field_bindings() -> Result<
 
 #[cfg(feature = "baked")]
 #[test]
-fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()> {
+fn preparation_commits_each_phase_once_and_rejects_zero_polynomials() -> Result<()> {
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_circuits::{
         polynomials::sparse,
         registry::{CircuitIndex, RegistryBuilder},
     };
     use ragu_core::{Cycle, pasta::Pasta};
-    use udon::curve::Affine;
 
     use super::{prepared::PreparationChallenges, prover::State};
 
@@ -246,12 +245,24 @@ fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()
             .commit_eval::<ReferenceBackend, _, _>(Fp::from(17), generators, &mut rng)
             .is_err()
     );
-    state.supply::<ReferenceBackend, _>(
-        Phase::BeforeW,
-        vec![sparse::Polynomial::new()],
-        generators,
-    )?;
-    assert_eq!(state.commitments(), &[C::identity()]);
+    // The zero polynomial commits to the identity, which the walk cannot
+    // take; the rejected call leaves the phase open.
+    assert!(
+        state
+            .supply::<ReferenceBackend, _>(
+                Phase::BeforeW,
+                vec![sparse::Polynomial::new()],
+                generators,
+            )
+            .is_err()
+    );
+    // 1 + 2X, which `check` opens at 4, w = 5 and 6, and evaluates at u = 17.
+    let poly = sparse::Polynomial::from_coeffs(vec![Fp::ONE, Fp::from(2)]);
+    state.supply::<ReferenceBackend, _>(Phase::BeforeW, vec![poly.clone()], generators)?;
+    assert_eq!(
+        state.commitments(),
+        &[ReferenceBackend::sparse_commit_to_affine(&poly, generators)]
+    );
     assert!(
         state
             .supply::<ReferenceBackend, _>(Phase::BeforeY, vec![], generators)
@@ -298,7 +309,10 @@ fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()
         generators,
         &mut rng,
     )?;
-    assert_eq!(&*state.query().values, &[Fp::ZERO; 3]);
+    assert_eq!(
+        &*state.query().values,
+        &[Fp::from(9), Fp::from(11), Fp::from(13)]
+    );
     assert_eq!(state.stage_commitment(0), inputs_commitment);
     state.commit_eval::<ReferenceBackend, _, _>(Fp::from(17), generators, &mut rng)?;
     let eval_commitment = state.stage_commitment(2);
@@ -324,8 +338,8 @@ fn preparation_commits_each_phase_once_and_keeps_zero_polynomials() -> Result<()
         beta: Fp::from(3),
     };
     let sums = state.trace(challenges, &registry, |_| CircuitIndex::new(0), &mut rng)?;
-    assert_eq!(&*sums, &[Fp::ZERO; 2]);
-    assert_eq!(state.fold()?, &[Fp::ZERO; 2]);
+    assert_eq!(&*sums, &[Fp::from(366), Fp::from(35)]);
+    assert_eq!(state.fold()?, &*sums);
     assert_eq!(state.polynomials().len(), 1);
     let commitments = core::array::from_fn::<_, 3, _>(|i| state.stage_commitment(i));
     let rxs = state.extension_rxs(crate::profile::ExtensionRxs::default())?;
@@ -565,7 +579,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
         maybe::Maybe,
         pasta::{EpAffine, Pasta},
     };
-    use ragu_primitives::{CompletePoint, Element, GadgetExt, Point as CurvePoint};
+    use ragu_primitives::{Element, GadgetExt, Point as CurvePoint};
     use udon::curve::Affine;
 
     use crate::{
@@ -650,6 +664,10 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 FixedVec::<_, stages::Present<Batched, stages::Nested, 3>>::try_from_fn(|i| {
                     CurvePoint::alloc(dr, stages.as_ref().map(|p| p[i]))
                 })?;
+            let mut stage_coordinates = alloc::vec::Vec::new();
+            for point in stages.iter() {
+                point.write(dr, &mut stage_coordinates)?;
+            }
             let compute_target = inputs.compute_v_bridge_ky(dr, &y, &stages)?;
             let helper_target = inputs.online_helper_ky(dr, &y)?.unwrap();
             let (unified_ky, _) = inputs.unified_ky_values(dr, &y)?;
@@ -661,11 +679,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 unified: inputs.unified.clone(),
                 online: inputs.online.clone(),
                 online_fold: inputs.online_fold.clone(),
-                online_stages: FixedVec::from_fn(|i| {
-                    let point = CompletePoint::from_affine(stages[i / 2].clone());
-                    let (x, y) = point.coordinates();
-                    if i % 2 == 0 { x.clone() } else { y.clone() }
-                }),
+                online_stages: FixedVec::from_fn(|i| stage_coordinates[i].clone()),
             };
             let mut actual = Horner::new(&y);
             GadgetExt::write(&output, dr, &mut actual)?;
@@ -708,7 +722,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
                 );
                 inputs.online_fold[i] = original;
             }
-            inputs.online_points[0] = CompletePoint::alloc(dr, points.as_ref().map(|p| -p[0]))?;
+            inputs.online_points[0] = CurvePoint::alloc(dr, points.as_ref().map(|p| -p[0]))?;
             assert_ne!(
                 helper_target.value().take(),
                 inputs.online_helper_ky(dr, &y)?.unwrap().value().take()
@@ -805,7 +819,7 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
         })?;
         let online_points =
             FixedVec::<_, stages::PolynomialsLen<P, stages::Native>>::try_from_fn(|_| {
-                ragu_primitives::CompletePoint::alloc(dr, points.as_ref().map(|_| C::identity()))
+                CurvePoint::alloc(dr, points.as_ref().map(|p| p[0]))
             })?;
         let base = unified.ky(dr, &y)?;
         let (target, helper) = ky::nested_online_ky::<_, _, P>(
@@ -853,7 +867,7 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
 fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
     use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe, pasta::EqAffine};
-    use ragu_primitives::{CompletePoint, Element, GadgetExt, Point as CurvePoint};
+    use ragu_primitives::{Element, GadgetExt, Point as CurvePoint};
     use udon::curve::Affine;
 
     use crate::internal::{ky, nested};
@@ -870,6 +884,9 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
         coverage: Default::default(),
     };
     let online_values = [13, 17, 19, 23, 29].map(Fq::from);
+    let (gx, gy) = C::generator()
+        .coordinates()
+        .expect("the generator is finite");
     let helper = circuit::Instance::<_, P, S> {
         mesh: FixedVec::new(vec![])?,
         challenges: Challenges {
@@ -881,18 +898,18 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
             beta: online_values[2],
         },
         sums: [online_values[3], online_values[4]],
-        foreign: FixedVec::new(vec![Fq::ZERO; 2])?,
+        foreign: FixedVec::new(vec![gx, gy])?,
     };
     Emulator::emulate_wireless(
         (
             unified,
             helper,
             online_values,
-            C::identity(),
             C::generator(),
+            -C::generator(),
         ),
         |dr, witness| {
-            let (unified, helper, online_values, identity, generator) = witness.cast();
+            let (unified, helper, online_values, generator, negated) = witness.cast();
             let y = Element::constant(dr, Fq::from(31));
             let unified = nested::unified::Output::<_, C>::alloc(dr, &mut (), unified.as_ref())?;
             let online_values = FixedVec::<_, stages::Present<P, S, 5>>::try_from_fn(|i| {
@@ -900,7 +917,7 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
             })?;
             let points =
                 FixedVec::<_, stages::PolynomialsLen<P, stages::Native>>::try_from_fn(|_| {
-                    CompletePoint::alloc(dr, identity.clone())
+                    CurvePoint::alloc(dr, generator.clone())
                 })?;
             let online_stages =
                 FixedVec::<_, stages::Present<P, stages::Native, 3>>::try_from_fn(|_| {
@@ -939,7 +956,7 @@ fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
                 helper_target.as_ref().unwrap().value().take(),
                 ky::finish_extension_ky(actual, dr)?.value().take()
             );
-            let changed = [CompletePoint::alloc(dr, generator)?];
+            let changed = [CurvePoint::alloc(dr, negated)?];
             let (corrupt, corrupt_helper) = ky::nested_online_ky::<_, _, P>(
                 dr,
                 &y,
@@ -966,30 +983,36 @@ fn point_consumers_use_the_authenticated_foreign_wires() -> Result<()> {
         maybe::Maybe,
         pasta::{EpAffine, EqAffine},
     };
-    use ragu_primitives::{Element, Simulator};
+    use ragu_primitives::{Element, GadgetExt, Simulator};
     use udon::curve::EndomorphismAffine;
+    fn read<C: EndomorphismAffine, S: stages::Side>(coordinates: (C::Base, C::Base)) -> Result<C> {
+        let mut read = None;
+        Simulator::<C::Base>::simulate(coordinates, |dr, witness| {
+            let x = Element::alloc(dr, &mut (), witness.as_ref().map(|p| p.0))?;
+            let y = Element::alloc(dr, &mut (), witness.as_ref().map(|p| p.1))?;
+            let inputs = stages::InputOutput::<_, Batched, S> {
+                source_tag: FixedVec::new(vec![])?,
+                values: FixedVec::from_fn(|_| Element::one()),
+                foreign: FixedVec::new(vec![x.clone(), y.clone()])?,
+            };
+            let point = inputs.foreign_point::<C>(dr, 0)?;
+            let mut wires = alloc::vec::Vec::new();
+            point.write(dr, &mut wires)?;
+            assert_eq!(wires[0].value().take(), x.value().take());
+            assert_eq!(wires[1].value().take(), y.value().take());
+            read = Some(point.value().take());
+            Ok(())
+        })?;
+        Ok(read.expect("the simulation read the point"))
+    }
     fn check<C: EndomorphismAffine, S: stages::Side>() -> Result<()> {
-        for expected in [C::identity(), C::generator()] {
-            Simulator::<C::Base>::simulate(expected, |dr, witness| {
-                let coordinates = witness.map(|point| {
-                    point
-                        .coordinates()
-                        .unwrap_or((C::Base::ZERO, C::Base::ZERO))
-                });
-                let x = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.0))?;
-                let y = Element::alloc(dr, &mut (), coordinates.as_ref().map(|p| p.1))?;
-                let inputs = stages::InputOutput::<_, Batched, S> {
-                    source_tag: FixedVec::new(vec![])?,
-                    values: FixedVec::from_fn(|_| Element::one()),
-                    foreign: FixedVec::new(vec![x.clone(), y.clone()])?,
-                };
-                let point = inputs.foreign_point::<C>(dr, 0)?;
-                assert_eq!(point.value().take(), expected);
-                assert_eq!(point.coordinates().0.wire(), x.wire());
-                assert_eq!(point.coordinates().1.wire(), y.wire());
-                Ok(())
-            })?;
-        }
+        let generator = C::generator();
+        assert_eq!(
+            read::<C, S>(generator.coordinates().expect("finite"))?,
+            generator
+        );
+        // The identity has no affine coordinates, and (0, 0) is off the curve.
+        assert!(read::<C, S>((C::Base::ZERO, C::Base::ZERO)).is_err());
         Ok(())
     }
     check::<EpAffine, stages::Native>()?;

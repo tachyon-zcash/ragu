@@ -188,7 +188,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         rng: &mut RNG,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let foreign = builder.native_online().coordinates();
+        let foreign = builder.native_online().coordinates()?;
         builder.nested_online_mut().commit_inputs::<B, _, _>(
             foreign,
             C::nested_generators(self.params),

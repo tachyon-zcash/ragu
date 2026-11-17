@@ -216,7 +216,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &proof.nested.opening,
                 C::nested_generators(self.params),
                 *C::nested_u(self.params),
-                &mut transcript.nested_mesh(C::Profile::NESTED_MESH.is_some()),
+                &mut transcript.nested(),
             ))
         };
         Ok(nested)

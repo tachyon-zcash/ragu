@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    CompletePoint, Point,
+    Point,
     io::Write,
     vec::{FixedVec, Len},
 };
@@ -46,7 +46,7 @@ pub struct Witness<C: Affine, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Native auxiliary points bound to the walk and common claim target.
     #[ragu(gadget)]
-    pub online_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 2>>,
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 2>>,
     #[ragu(gadget)]
     pub a: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -79,7 +79,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     {
         Ok(Output {
             online_points: FixedVec::try_from_fn(|i| {
-                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
             a: Point::alloc(dr, witness.as_ref().map(|w| w.a))?,
             b: Point::alloc(dr, witness.as_ref().map(|w| w.b))?,

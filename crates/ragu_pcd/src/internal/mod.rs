@@ -62,7 +62,6 @@
 //! [`loading`]: nested::circuits::loading
 //! [`Oracles::bridge_hash`]: crate::step::Oracles::bridge_hash
 
-pub(crate) mod batch_point;
 pub mod claims;
 pub mod const_fns;
 pub mod endoscalar;

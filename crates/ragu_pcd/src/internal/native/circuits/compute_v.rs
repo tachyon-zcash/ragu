@@ -129,7 +129,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     /// Actual child outgoing points, bound to this step's inherited nested walk slots.
     #[ragu(gadget)]
     pub inherited_points: FixedVec<
-        ragu_primitives::CompletePoint<'dr, D, C::NestedCurve>,
+        ragu_primitives::Point<'dr, D, C::NestedCurve>,
         crate::profile::online::stages::MeshPresent<C::Profile, Nested, 2>,
     >,
 }
@@ -234,19 +234,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
         // Export deadline-bound copies of the private helper chain. The
-        // parent and terminal targets use its actual rx commitments.
+        // parent and terminal targets use its actual rx commitments. The
+        // input stage's commitment is a point in the binding stage, whose
+        // coordinates are read off its wires.
+        let mut input_coordinates = Vec::new();
+        if let Some(binding) = &binding {
+            binding.online_input[0].write(dr, &mut input_coordinates)?;
+        }
         let online_stages = FixedVec::from_fn(|i| match i {
-            0 | 1 => {
-                let point = ragu_primitives::CompletePoint::from_affine(
-                    binding
-                        .as_ref()
-                        .expect("active private batch loads binding")
-                        .online_input[0]
-                        .clone(),
-                );
-                let (x, y) = point.coordinates();
-                if i == 0 { x.clone() } else { y.clone() }
-            }
+            0 | 1 => input_coordinates[i].clone(),
             2 | 3 => query.online_stage[i - 2].clone(),
             _ => eval.online_stage[i - 4].clone(),
         });

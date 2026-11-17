@@ -292,7 +292,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 &openings,
                 generators,
                 u,
-                &mut transcript.nested_mesh(C::Profile::NESTED_MESH.is_some()),
+                &mut transcript.nested(),
                 rng,
             )?;
             Messages {

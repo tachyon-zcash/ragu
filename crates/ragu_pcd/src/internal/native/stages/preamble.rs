@@ -123,7 +123,7 @@ pub struct ProofInputs<
     /// The child's common targets for its actual nested private walk points.
     #[ragu(gadget)]
     pub online_points: FixedVec<
-        ragu_primitives::CompletePoint<'dr, D, C::NestedCurve>,
+        ragu_primitives::Point<'dr, D, C::NestedCurve>,
         crate::profile::online::stages::PolynomialsLen<
             C::Profile,
             crate::profile::online::stages::Nested,
@@ -382,7 +382,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
                 Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.native_online_fold[i]))
             })?,
             online_points: FixedVec::try_from_fn(|i| {
-                ragu_primitives::CompletePoint::alloc(
+                ragu_primitives::Point::alloc(
                     dr,
                     proof.as_ref().map(|p| p.nested_online_commitments[i]),
                 )
@@ -437,7 +437,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             output_header: alloc_header(dr, output_header)?,
             online: online::alloc_queries(dr, &mut (), online)?,
             online_points: FixedVec::try_from_fn(|i| {
-                ragu_primitives::CompletePoint::alloc(dr, online_points.as_ref().map(|p| p[i]))
+                ragu_primitives::Point::alloc(dr, online_points.as_ref().map(|p| p[i]))
             })?,
             online_fold: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), online_fold.as_ref().map(|s| s[i]))

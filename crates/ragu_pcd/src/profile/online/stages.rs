@@ -4,13 +4,13 @@ use core::marker::PhantomData;
 
 use ragu_circuits::{polynomials::Rank, staging::Stage};
 use ragu_core::{
-    Result,
+    Error, Result,
     drivers::{Driver, DriverValue},
     gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element,
+    Element, GadgetExt, Point,
     consistent::Consistent,
     io::Write,
     vec::{FixedVec, Len},
@@ -142,7 +142,7 @@ impl<P: Profile, S: Side, const PHASE: usize> Len for PhaseCoordinatesLen<P, S, 
     }
 }
 
-/// Selects a fixed phase from commitment-fold order, preserving identity points.
+/// Selects a fixed phase's commitments from commitment-fold order.
 pub(crate) fn phase_points<P: Profile, S: Side, const PHASE: usize, T: Clone>(
     points: &[T],
 ) -> FixedVec<T, PhaseLen<P, S, PHASE>> {
@@ -151,7 +151,7 @@ pub(crate) fn phase_points<P: Profile, S: Side, const PHASE: usize, T: Clone>(
 }
 
 /// Coordinates of the other field's private commitments fixed before w.
-/// Each point occupies two wires, with the identity encoded as two zeroes.
+/// Each point occupies two wires.
 pub struct ForeignLen<P: Profile, S: Side>(PhantomData<(P, S)>);
 impl<P: Profile, S: Side> Len for ForeignLen<P, S> {
     fn len() -> usize {
@@ -184,16 +184,22 @@ pub struct InputOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     #[ragu(gadget)]
     pub values: FixedVec<Element<'dr, D>, InputsLen<P, S>>,
     /// Coordinates authenticated against the commitment walk through the
-    /// helper's public target. Consumers reconstruct points from these wires.
+    /// helper's public target. [`Self::foreign_point`] reads a point off them.
     #[ragu(gadget)]
     pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
 }
 
 impl<'dr, D: Driver<'dr>, P: Profile, S: Side> InputOutput<'dr, D, P, S> {
-    /// Reads an authenticated opposite-field commitment from its staged wires.
+    /// Reads an authenticated opposite-field commitment from its staged
+    /// wires: a point on the curve whose coordinates are constrained equal to
+    /// them.
     ///
-    /// The index follows the other layout's BeforeW polynomial order. Zero
-    /// polynomials are represented by the identity.
+    /// The index follows the other layout's BeforeW polynomial order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] if the staged coordinates are not
+    /// those of a finite point.
     ///
     /// # Panics
     ///
@@ -202,16 +208,23 @@ impl<'dr, D: Driver<'dr>, P: Profile, S: Side> InputOutput<'dr, D, P, S> {
         &self,
         dr: &mut D,
         index: usize,
-    ) -> Result<ragu_primitives::CompletePoint<'dr, D, C>> {
+    ) -> Result<Point<'dr, D, C>> {
         assert!(
             index < self.foreign.len() / 2,
             "foreign commitment index outside layout"
         );
-        ragu_primitives::CompletePoint::from_coordinates(
-            dr,
-            self.foreign[2 * index].clone(),
-            self.foreign[2 * index + 1].clone(),
-        )
+        let (x, y) = (&self.foreign[2 * index], &self.foreign[2 * index + 1]);
+        let value = D::try_just(|| {
+            C::from_xy(*x.value().take(), *y.value().take()).ok_or_else(|| {
+                Error::InvalidWitness("a foreign commitment is not a finite point".into())
+            })
+        })?;
+        let point = Point::alloc(dr, value)?;
+        let mut coordinates = alloc::vec::Vec::new();
+        point.write(dr, &mut coordinates)?;
+        coordinates[0].enforce_equal(dr, x)?;
+        coordinates[1].enforce_equal(dr, y)?;
+        Ok(point)
     }
 }
 

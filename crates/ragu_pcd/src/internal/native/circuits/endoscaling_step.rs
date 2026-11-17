@@ -43,8 +43,8 @@ use ragu_core::{
 use ragu_primitives::{Element, GadgetExt, NonzeroBank, WithSuffix, vec::Len};
 
 use super::super::stages::points::{
-    AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, OnlinePoint, PreambleStage,
-    RegistryWxStage, WalkInputs, WalkStage, WalkWitness,
+    AbStage, BindingStage, FStage, Inputs, NumInputs, NumSteps, PreambleStage, RegistryWxStage,
+    WalkInputs, WalkStage, WalkWitness,
 };
 use crate::{
     internal::endoscalar::input_range,
@@ -131,8 +131,9 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let initial = self
             .step
             .checked_sub(1)
-            .map(|i| interstitials[i].clone())
-            .unwrap_or_else(|| OnlinePoint::from_affine(walk.initial().clone()));
+            .map(|i| &interstitials[i])
+            .unwrap_or(walk.initial())
+            .clone();
 
         let range = input_range(
             C::Profile::NATIVE_ENDOSCALINGS_PER_STEP,
@@ -141,24 +142,15 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         );
         assert!(!range.is_empty());
 
-        if C::Profile::NESTED_ONLINE.is_empty() {
-            let acc = NonzeroBank::scope(dr, |dr, bank| {
-                let mut acc = initial.finite();
-                for idx in range {
-                    let scaled = endoscalar.group_scale(dr, &acc)?;
-                    acc = scaled.add_incomplete(dr, &walk.input(idx).finite(), bank)?;
-                }
-                Ok(acc)
-            })?;
-            acc.enforce_equal(dr, &interstitials[self.step].finite())?;
-        } else {
-            let mut acc = initial.complete().clone();
+        let acc = NonzeroBank::scope(dr, |dr, bank| {
+            let mut acc = initial;
             for idx in range {
-                let scaled = acc.group_scale(dr, endoscalar)?;
-                acc = scaled.add(dr, walk.input(idx).complete())?;
+                let scaled = endoscalar.group_scale(dr, &acc)?;
+                acc = scaled.add_incomplete(dr, walk.input(idx), bank)?;
             }
-            acc.enforce_equal(dr, interstitials[self.step].complete())?;
-        }
+            Ok(acc)
+        })?;
+        acc.enforce_equal(dr, &interstitials[self.step])?;
 
         Ok(WithAux::new(
             WithSuffix::new((), Element::zero(dr)),

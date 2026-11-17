@@ -17,7 +17,7 @@
 //! step can afford beside the stages it reserves, so they are generic over
 //! the curve type, the number of points `N` and the endoscalings per step
 //! `E`, both as [`Len`] types: a profile sets the endoscalings per step to
-//! what its rank's budget fits (see [`Profile`]).
+//! what its rank's budget fits (see [`Profile`](crate::profile::Profile)).
 //! The step circuit here is the nested walk's, reading the endoscalar and
 //! points stages; the native walk reads its points from several stages and
 //! has its own step in [`native::circuits::endoscaling_step`].
@@ -38,34 +38,11 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, HoistedEndoscalar, NonzeroBank, Uendo,
+    ENDOSCALAR_BITS, ENDOSCALAR_PRODUCTS, GadgetExt, HoistedEndoscalar, NonzeroBank, Point, Uendo,
     consistent::Consistent,
     vec::{FixedVec, Len},
 };
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
-
-use crate::{
-    internal::batch_point::BatchPoint,
-    profile::{
-        Profile, Standard,
-        online::stages::{Native, Side},
-    },
-};
-
-/// A walk's point count also fixes which private batch its points belong to.
-pub(crate) trait WalkShape: Len {
-    type Profile: Profile;
-    type Side: Side;
-}
-
-impl<const N: usize> WalkShape for ragu_primitives::vec::ConstLen<N> {
-    type Profile = Standard;
-    type Side = Native;
-}
-
-/// A walk point, with identity support selected by the setup's private layout.
-type WalkPoint<'dr, D, C, N> =
-    BatchPoint<'dr, D, C, <N as WalkShape>::Profile, <N as WalkShape>::Side>;
 
 /// The range of input indices step `step` walks, out of `num_inputs`, at
 /// `endoscalings` per step.
@@ -230,28 +207,28 @@ impl<C: Affine, N: Len, E: Len> PointsWitness<C, N, E> {
 
 /// Output gadget containing initial, inputs, and interstitials. See [`PointsWitness`].
 #[derive(Gadget, Consistent)]
-pub struct Points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: WalkShape, E: Len> {
+pub struct Points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, N: Len, E: Len> {
     #[ragu(gadget)]
-    pub initial: WalkPoint<'dr, D, C, N>,
+    pub initial: Point<'dr, D, C>,
     #[ragu(gadget)]
-    pub inputs: FixedVec<WalkPoint<'dr, D, C, N>, InputsLen<N>>,
+    pub inputs: FixedVec<Point<'dr, D, C>, InputsLen<N>>,
     #[ragu(gadget)]
-    pub interstitials: FixedVec<WalkPoint<'dr, D, C, N>, NumStepsLen<N, E>>,
+    pub interstitials: FixedVec<Point<'dr, D, C>, NumStepsLen<N, E>>,
 }
 
 /// Stage for allocating all point witnesses (inputs and interstitials). It
 /// follows the gap stage `G`, which follows [`EndoscalarStage`].
-pub struct PointsStage<C: Affine, N: WalkShape, E: Len, G = NoGap>(
+pub struct PointsStage<C: Affine, N: Len, E: Len, G = NoGap>(
     core::marker::PhantomData<(C, N, E, G)>,
 );
 
-impl<C: Affine, N: WalkShape, E: Len, G> Default for PointsStage<C, N, E, G> {
+impl<C: Affine, N: Len, E: Len, G> Default for PointsStage<C, N, E, G> {
     fn default() -> Self {
         Self(core::marker::PhantomData)
     }
 }
 
-impl<C: Affine, R: Rank, N: WalkShape, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
+impl<C: Affine, R: Rank, N: Len, E: Len, G: Stage<C::Base, R>> Stage<C::Base, R>
     for PointsStage<C, N, E, G>
 {
     type Parent = G;
@@ -272,12 +249,11 @@ impl<C: Affine, R: Rank, N: WalkShape, E: Len, G: Stage<C::Base, R>> Stage<C::Ba
     where
         Self: 'dr,
     {
-        let initial = BatchPoint::alloc(dr, witness.as_ref().map(|w| w.initial))?;
-        let inputs = FixedVec::try_from_fn(|i| {
-            BatchPoint::alloc(dr, witness.as_ref().map(|w| w.inputs[i]))
-        })?;
+        let initial = Point::alloc(dr, witness.as_ref().map(|w| w.initial))?;
+        let inputs =
+            FixedVec::try_from_fn(|i| Point::alloc(dr, witness.as_ref().map(|w| w.inputs[i])))?;
         let interstitials = FixedVec::try_from_fn(|i| {
-            BatchPoint::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
+            Point::alloc(dr, witness.as_ref().map(|w| w.interstitials[i]))
         })?;
         Ok(Points {
             initial,
@@ -295,12 +271,12 @@ impl<C: Affine, R: Rank, N: WalkShape, E: Len, G: Stage<C::Base, R>> Stage<C::Ba
 ///   `inputs[N*E..(N+1)*E]` (clamped to bounds)
 ///
 /// The circuit constrains that `interstitials[step]` equals the Horner result.
-pub struct EndoscalingStep<C: Affine, R: Rank, N: WalkShape, E: Len, G = NoGap> {
+pub struct EndoscalingStep<C: Affine, R: Rank, N: Len, E: Len, G = NoGap> {
     step: usize,
     _marker: core::marker::PhantomData<(C, R, N, E, G)>,
 }
 
-impl<C: Affine, R: Rank, N: WalkShape, E: Len, G> Clone for EndoscalingStep<C, R, N, E, G> {
+impl<C: Affine, R: Rank, N: Len, E: Len, G> Clone for EndoscalingStep<C, R, N, E, G> {
     fn clone(&self) -> Self {
         Self {
             step: self.step,
@@ -309,7 +285,7 @@ impl<C: Affine, R: Rank, N: WalkShape, E: Len, G> Clone for EndoscalingStep<C, R
     }
 }
 
-impl<C: Affine, R: Rank, N: WalkShape, E: Len, G> EndoscalingStep<C, R, N, E, G> {
+impl<C: Affine, R: Rank, N: Len, E: Len, G> EndoscalingStep<C, R, N, E, G> {
     /// Creates a new endoscaling step.
     ///
     /// Panics if `step >= NumStepsLen::<N, E>::len()`.
@@ -341,7 +317,7 @@ pub struct EndoscalingStepWitness<'source, C: Affine, N: Len, E: Len> {
     pub points: &'source PointsWitness<C, N, E>,
 }
 
-impl<C: Affine, R: Rank, N: WalkShape, E: Len, G> MultiStageCircuit<C::Base, R>
+impl<C: Affine, R: Rank, N: Len, E: Len, G> MultiStageCircuit<C::Base, R>
     for EndoscalingStep<C, R, N, E, G>
 where
     G: Stage<C::Base, R, Parent = EndoscalarStage> + Default + Send + Sync + 'static,
@@ -390,24 +366,17 @@ where
 
         // Horner's rule: scale and add each input. With only the initial
         // point, the empty loop leaves it to be constrained to the output.
-        if N::Side::layout::<N::Profile>().is_empty() {
-            let acc = NonzeroBank::scope(dr, |dr, bank| {
-                let mut acc = initial.finite();
-                for idx in input_range {
-                    let scaled = endoscalar.group_scale(dr, &acc)?;
-                    acc = scaled.add_incomplete(dr, &points.inputs[idx].finite(), bank)?;
-                }
-                Ok(acc)
-            })?;
-            acc.enforce_equal(dr, &points.interstitials[self.step].finite())?;
-        } else {
-            let mut acc = initial.complete().clone();
+        let acc = NonzeroBank::scope(dr, |dr, bank| {
+            let mut acc = initial;
             for idx in input_range {
-                let scaled = acc.group_scale(dr, &endoscalar)?;
-                acc = scaled.add(dr, points.inputs[idx].complete())?;
+                let scaled = endoscalar.group_scale(dr, &acc)?;
+                acc = scaled.add_incomplete(dr, &points.inputs[idx], bank)?;
             }
-            acc.enforce_equal(dr, points.interstitials[self.step].complete())?;
-        }
+            Ok(acc)
+        })?;
+
+        // Constrain output
+        acc.enforce_equal(dr, &points.interstitials[self.step])?;
 
         Ok(WithAux::new((), D::unit()))
     }
@@ -444,7 +413,7 @@ mod tests {
 
     use super::{
         EndoscalarStage, EndoscalingStep, EndoscalingStepWitness, InputsLen, NumStepsLen,
-        PointsStage, PointsWitness, WalkShape,
+        PointsStage, PointsWitness,
     };
     use crate::{
         internal::{nested, tests::assert_stage_values},
@@ -704,106 +673,6 @@ mod tests {
             assert_eq!(rx.revdot(&sy) == ky, valid);
         }
 
-        Ok(())
-    }
-
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    struct CompleteProfile;
-    impl crate::profile::Profile for CompleteProfile {
-        const NAME: &'static str = "complete-walk-test";
-        const NATIVE_EXTENSION: usize = 0;
-        const NESTED_EXTENSION: usize = 0;
-        const NATIVE_ONLINE: crate::profile::online::Layout = crate::profile::online::Layout {
-            inputs: 1,
-            ..crate::profile::online::Layout::EMPTY
-        };
-        type Context<'params, Base, Rank, Backend>
-            = ()
-        where
-            Base: crate::ipa::IpaCycle
-                + crate::profile::ProfiledCycle<Profile = crate::profile::Standard>,
-            Rank: polynomials::Rank,
-            Backend: crate::SelectableBackend;
-    }
-
-    struct CompleteShape;
-    impl Len for CompleteShape {
-        fn len() -> usize {
-            7
-        }
-    }
-    impl WalkShape for CompleteShape {
-        type Profile = CompleteProfile;
-        type Side = crate::profile::online::stages::Native;
-    }
-
-    #[test]
-    fn complete_walk_accepts_zero_inputs_and_resumes_from_an_identity_interstitial() -> Result<()> {
-        check_complete_walk::<EpAffine>()?;
-        check_complete_walk::<EqAffine>()
-    }
-
-    fn check_complete_walk<C: udon::curve::EndomorphismAffine>() -> Result<()> {
-        type N = CompleteShape;
-        type CE = ConstLen<3>;
-        let endoscalar = ragu_primitives::extract_endoscalar(C::Base::from(3))?;
-        let beta: C::Scalar = ragu_primitives::lift_endoscalar(endoscalar);
-        let g = C::generator();
-        let neg_scaled = -(g.to_projective() * beta).to_affine();
-        let base = [g, neg_scaled, C::identity(), C::identity(), g, g, g];
-        let points = PointsWitness::<C, N, CE>::new(endoscalar, &base);
-        assert_eq!(points.interstitials[0], C::identity());
-        assert_ne!(points.interstitials[1], C::identity());
-        for step in 0..2 {
-            let circuit = EndoscalingStep::<C, R, N, CE>::new(step);
-            let mut builder = TestRegistryBuilder::<C::Base, R>::new();
-            let handle = builder.register_circuit(MultiStage::new(circuit.clone()))?;
-            let endo_mask =
-                builder.register_bonding(<EndoscalarStage as StageExt<C::Base, R>>::mask()?);
-            let points_mask =
-                builder.register_bonding(<PointsStage<C, N, CE> as StageExt<C::Base, R>>::mask()?);
-            let final_mask = builder
-                .register_bonding(<PointsStage<C, N, CE> as StageExt<C::Base, R>>::final_mask()?);
-            let registry = builder.finalize()?;
-            let staged = MultiStage::new(circuit);
-            let y = C::Base::from(19);
-            let endo_rx = <EndoscalarStage as StageExt<C::Base, R>>::rx(C::Base::ZERO, endoscalar)?;
-            let points_rx =
-                <PointsStage<C, N, CE> as StageExt<C::Base, R>>::rx(C::Base::ZERO, &points)?;
-            let trace = staged
-                .trace(EndoscalingStepWitness {
-                    endoscalar,
-                    points: &points,
-                })?
-                .into_output();
-            let trace_rx = registry.assemble(&trace, handle, C::Base::ZERO)?;
-            for (rx, mask) in [
-                (&endo_rx, endo_mask),
-                (&points_rx, points_mask),
-                (&trace_rx, final_mask),
-            ] {
-                assert_eq!(rx.revdot(&registry.y(mask, y)), C::Base::ZERO);
-            }
-            let mut rx = trace_rx;
-            rx += &endo_rx;
-            rx += &points_rx;
-            let expected = staged.ky((), y)?;
-            assert_eq!(rx.revdot(&registry.y(handle, y)), expected);
-
-            let mut altered = PointsWitness::<C, N, CE>::new(endoscalar, &base);
-            altered.interstitials[step] =
-                (altered.interstitials[step].to_projective() + g.to_projective()).to_affine();
-            let trace = staged
-                .trace(EndoscalingStepWitness {
-                    endoscalar,
-                    points: &altered,
-                })?
-                .into_output();
-            let mut rx = registry.assemble(&trace, handle, C::Base::ZERO)?;
-            rx += &endo_rx;
-            rx += &<PointsStage<C, N, CE> as StageExt<C::Base, R>>::rx(C::Base::ZERO, &altered)?;
-            assert_ne!(rx.revdot(&registry.y(handle, y)), expected);
-        }
         Ok(())
     }
 

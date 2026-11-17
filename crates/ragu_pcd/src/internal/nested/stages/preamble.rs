@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    CompletePoint, Element, Point,
+    Element, Point,
     io::Write,
     vec::{ConstLen, FixedVec},
 };
@@ -344,7 +344,7 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     pub mesh: FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
     /// Common targets for the child's private native commitments.
     #[ragu(gadget)]
-    pub online_points: FixedVec<CompletePoint<'dr, D, C>, PolynomialsLen<P, Native>>,
+    pub online_points: FixedVec<Point<'dr, D, C>, PolynomialsLen<P, Native>>,
 }
 
 /// Gadget for the scalar half of a child's nested unified instance.
@@ -435,7 +435,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
     fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, P>>) -> Result<Self> {
         Ok(ChildOutput {
             online_points: FixedVec::try_from_fn(|i| {
-                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
@@ -519,7 +519,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// The private native commitments fixed by this bridge and bound to the walk.
     #[ragu(gadget)]
-    pub online_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 0>>,
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 0>>,
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub online_stage: FixedVec<
@@ -578,7 +578,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     {
         Ok(Output {
             online_points: FixedVec::try_from_fn(|i| {
-                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
             online_stage: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))

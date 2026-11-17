@@ -222,22 +222,3 @@ proptest! {
         );
     }
 }
-
-#[test]
-fn private_point_codec_accepts_identity_and_rejects_noncanonical_points() {
-    fn check<G: Affine>() {
-        for value in [G::identity(), G::generator(), -G::generator()] {
-            let bytes = <G as Encode<CompletePoint>>::to_bytes(&value, DIMS);
-            assert_eq!(
-                <G as Decode<CompletePoint>>::from_bytes(&bytes, DIMS).unwrap(),
-                value
-            );
-            assert!(
-                <G as Decode<CompletePoint>>::from_bytes(&bytes[..bytes.len() - 1], DIMS).is_err()
-            );
-        }
-        assert!(<G as Decode<CompletePoint>>::from_bytes(&[0xff; 32], DIMS).is_err());
-    }
-    check::<EpAffine>();
-    check::<EqAffine>();
-}

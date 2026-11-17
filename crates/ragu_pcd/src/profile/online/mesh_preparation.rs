@@ -125,7 +125,8 @@ impl Mesh {
 
 impl Mesh {
     /// Valid setup-defined mesh restrictions for a synthetic base child.
-    /// Unrelated private slots are zero, as for other inactive witnesses.
+    /// Unrelated private slots hold the padding polynomial, the constant one,
+    /// as a synthetic child's online slots do.
     pub(crate) fn dummy_polynomials<F: Field, R: Rank>(
         &self,
         layout: Layout,
@@ -144,7 +145,7 @@ impl Mesh {
             let supplied = layout
                 .phase_range(phase)
                 .filter(|&i| !self.owns(i))
-                .map(|_| sparse::Polynomial::new())
+                .map(|_| crate::internal::native::online::padding())
                 .collect();
             result.extend(self.prepare(
                 layout,
@@ -159,5 +160,35 @@ impl Mesh {
             )?);
         }
         Ok(result)
+    }
+
+    /// Checks that `source`'s restrictions at the synthetic base child's
+    /// challenges are nonzero.
+    ///
+    /// The mesh's restrictions are the setup's polynomials, not the prover's,
+    /// so a source registry whose restrictions vanish is rejected here: their
+    /// commitments would be the identity, which the walk cannot take.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a restriction is the zero polynomial, and propagates
+    /// [`Self::dummy_polynomials`]'s errors.
+    pub(crate) fn check_source<F: Field, R: Rank>(
+        &self,
+        layout: Layout,
+        source: &SourceRegistry<'_, F>,
+        one: F,
+    ) -> Result<()> {
+        let vanishes = self
+            .dummy_polynomials::<F, R>(layout, source, one)?
+            .iter()
+            .any(|poly| poly.iter_coeffs().all(|c| c == F::ZERO));
+        if vanishes {
+            return Err(Error::Initialization(
+                "the source registry's restrictions vanish, so their commitments are the identity"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 }

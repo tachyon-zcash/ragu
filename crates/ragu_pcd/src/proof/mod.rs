@@ -1284,6 +1284,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             beta: beta_lift[0],
         };
 
+        // Every private slot the mesh leaves holds the padding polynomial, the
+        // constant one, as the online slots do, so no commitment is the
+        // identity.
         let native_online_polynomials = if let Some(mesh) = C::Profile::NATIVE_MESH {
             mesh.dummy_polynomials(
                 C::Profile::NATIVE_ONLINE,
@@ -1295,7 +1298,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .expect("source rank checked at setup")
         } else {
             vec![
-                sparse::Polynomial::<C::CircuitField, R>::new();
+                online::padding::<C::CircuitField, R>();
                 C::Profile::NATIVE_ONLINE.polynomials.len()
             ]
         };
@@ -1314,7 +1317,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .expect("source rank checked at setup")
         } else {
             vec![
-                sparse::Polynomial::<C::ScalarField, R>::new();
+                online::padding::<C::ScalarField, R>();
                 C::Profile::NESTED_ONLINE.polynomials.len()
             ]
         };

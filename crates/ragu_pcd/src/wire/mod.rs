@@ -120,12 +120,10 @@ pub(crate) struct DefaultEncoding;
 /// The canonical [`Field`] representation.
 pub(crate) struct Scalar;
 /// The checked, compressed [`Affine`] representation of a point other than
-/// the identity. Existing finite point slots reject its canonical bytes.
-/// Private polynomial commitment slots use [`CompletePoint`] instead.
+/// the identity. No proof slot admits the identity: the verifier allocates
+/// every point by its affine coordinates. Encoding it fails, and decoding
+/// its canonical bytes is rejected.
 pub(crate) struct Point;
-/// Canonical compressed group encoding, including the identity, for private
-/// polynomial commitments. These use complete affine gadgets in circuit.
-pub(crate) struct CompletePoint;
 /// A vector of exactly [`Len::len`] elements using codec `C`, with no count on
 /// the wire.
 pub(crate) struct FixedSequence<C, L>(PhantomData<(C, L)>);
@@ -381,29 +379,6 @@ impl<G: Affine> Decode<Point> for G {
             });
         }
         Ok(value)
-    }
-}
-
-impl<G: Affine> Encode<CompletePoint> for G {
-    fn encode(&self, output: &mut Vec<u8>, _: Dimensions) -> Result<(), Error<'static>> {
-        output.extend_from_slice(self.to_bytes().as_ref());
-        Ok(())
-    }
-}
-impl<G: Affine> Decode<CompletePoint> for G {
-    fn encoded_len(_: Dimensions) -> usize {
-        G::identity().to_bytes().as_ref().len()
-    }
-    fn decode<'a>(reader: &mut Reader<'a>, _: Dimensions) -> Result<Self, Error<'a>> {
-        let offset = reader.offset();
-        let mut repr = G::identity().to_bytes();
-        let bytes = reader.take(repr.as_ref().len())?;
-        repr.as_mut().copy_from_slice(bytes);
-        G::from_bytes(repr).ok_or(Error::Invalid {
-            offset,
-            bytes,
-            reason: "invalid compressed private point",
-        })
     }
 }
 

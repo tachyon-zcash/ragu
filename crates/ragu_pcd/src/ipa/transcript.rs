@@ -20,7 +20,7 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::{Always, Maybe},
 };
-use ragu_primitives::{CompletePoint, Element, GadgetExt, Point};
+use ragu_primitives::{Element, GadgetExt, Point};
 use udon::{
     curve::{Affine, Projective},
     field::Field,
@@ -100,12 +100,7 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
 
     /// The transcript as the nested-curve IPA sees it.
     pub fn nested(&mut self) -> NestedSide<'_, 'dr, C, B> {
-        NestedSide(self, false)
-    }
-
-    /// Selects complete scalar bridges for the fixed source-mesh batch.
-    pub(crate) fn nested_mesh(&mut self, mesh: bool) -> NestedSide<'_, 'dr, C, B> {
-        NestedSide(self, mesh)
+        NestedSide(self)
     }
 
     /// Absorbs a nested-curve point through the [`Point`] gadget, which
@@ -126,21 +121,6 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
         let g = C::nested_generators(self.params).g();
         let commitment: C::NestedCurve = B::msm(values, &g[..values.len()]).to_affine();
         self.absorb(commitment)
-    }
-
-    /// Absorbs a scalar-field value through a complete bridge encoding.
-    ///
-    /// Unlike legacy transcript messages, private helper sums and commitment
-    /// coordinates may be zero. Their bridge then has coordinates (0, 0).
-    /// Nonzero values retain the same encoding as the ordinary scalar bridge.
-    /// The compression instance uses it for the native private commitments'
-    /// coordinates and the nested mesh claims and helper sums. When the
-    /// profile declares a nested mesh, [`Self::nested_mesh`] also routes
-    /// every scalar of the nested-curve terminal IPA through it.
-    pub(crate) fn write_online_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
-        let commitment = B::msm(&[scalar], &C::nested_generators(self.params).g()[..1]).to_affine();
-        super::fingerprint::record_point(&commitment);
-        CompletePoint::constant(&mut self.dr, commitment).write(&mut self.dr, &mut self.transcript)
     }
 
     /// Squeezes a circuit-field challenge.
@@ -188,7 +168,6 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::HostCurve> for HostSide<'_
 /// these fresh compression challenges must reproduce this conversion.
 pub struct NestedSide<'a, 'dr, C: Cycle, B: SelectableBackend = ReferenceBackend>(
     &'a mut CycleTranscript<'dr, C, B>,
-    bool,
 );
 
 impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSide<'_, '_, C, B> {
@@ -197,11 +176,7 @@ impl<C: Cycle, B: SelectableBackend> IpaTranscript<C::NestedCurve> for NestedSid
     }
 
     fn write_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
-        if self.1 {
-            self.0.write_online_scalar(scalar)
-        } else {
-            self.0.bridge(&[scalar])
-        }
+        self.0.bridge(&[scalar])
     }
 
     fn squeeze_challenge(&mut self) -> Result<C::ScalarField> {

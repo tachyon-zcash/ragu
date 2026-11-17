@@ -71,8 +71,8 @@ codec! {
     nested_online_fold => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Nested, 2>>,
     native_mesh_claims => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::MeshClaimsLen<C::Profile, crate::profile::online::stages::Native>>,
     native_online_fold => wire::FixedSequence<wire::Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Native, 2>>,
-    nested_online_commitments => wire::FixedSequence<crate::wire::CompletePoint, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Nested>>,
-    native_online_commitments => wire::FixedSequence<crate::wire::CompletePoint, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Native>>,
+    nested_online_commitments => wire::FixedSequence<crate::wire::Point, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Nested>>,
+    native_online_commitments => wire::FixedSequence<crate::wire::Point, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Native>>,
 
     native_source_out => wire::FixedSequence<wire::DefaultEncoding, crate::profile::online::stages::MeshPresent<C::Profile,crate::profile::online::stages::Native,1>>,
 

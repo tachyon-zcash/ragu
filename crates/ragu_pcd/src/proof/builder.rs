@@ -545,7 +545,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             let point = crate::private_online_tests::mutate_nested_auxiliary_query(point);
             let (x, y) = point
                 .coordinates()
-                .unwrap_or((C::CircuitField::ZERO, C::CircuitField::ZERO));
+                .expect("a nonzero private polynomial commits to a finite point");
             [x, y][i % 2]
         })
     }

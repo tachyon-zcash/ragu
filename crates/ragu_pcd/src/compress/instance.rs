@@ -328,14 +328,11 @@ impl<C: ProfiledCycle> Instance<C> {
             host.write_scalar(scalar)?;
         }
 
-        // Private commitments admit the identity, encoded as (0, 0). These
-        // coordinates are also the bind_endoscalar common claim target.
-        for point in &self.nested_online_commitments {
-            let (x, y) = point
-                .coordinates()
-                .unwrap_or((C::CircuitField::ZERO, C::CircuitField::ZERO));
-            host.write_scalar(x)?;
-            host.write_scalar(y)?;
+        // These coordinates are also the bind_endoscalar common claim target.
+        for &point in &self.nested_online_commitments {
+            for coordinate in coordinates(point)? {
+                host.write_scalar(coordinate)?;
+            }
         }
         let mut nested = transcript.nested();
         for &point in self.nested.iter().chain([
@@ -359,21 +356,19 @@ impl<C: ProfiledCycle> Instance<C> {
         ] {
             nested.write_scalar(scalar)?;
         }
-        // The same complete point coordinates form the nested compute-v
-        // target and the nested helper's foreign commitment exports.
-        for point in &self.native_online_commitments {
-            let (x, y) = point
-                .coordinates()
-                .unwrap_or((C::ScalarField::ZERO, C::ScalarField::ZERO));
-            transcript.write_online_scalar(x)?;
-            transcript.write_online_scalar(y)?;
+        // The same coordinates form the nested compute-v target and the
+        // nested helper's foreign commitment exports.
+        for &point in &self.native_online_commitments {
+            for coordinate in coordinates(point)? {
+                nested.write_scalar(coordinate)?;
+            }
         }
         for &sum in self
             .nested_mesh_claims
             .iter()
             .chain(&self.nested_online_fold)
         {
-            transcript.write_online_scalar(sum)?;
+            nested.write_scalar(sum)?;
         }
         Ok(())
     }

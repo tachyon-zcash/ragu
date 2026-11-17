@@ -551,6 +551,22 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         if let Some(source) = &self.nested_source {
             source.check_rank::<R>()?;
         }
+        // The bootstrap proof commits the mesh's restrictions at its all-one
+        // challenges, the nested ones at their lift.
+        if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &self.native_source) {
+            mesh.check_source::<_, R>(
+                C::Profile::NATIVE_ONLINE,
+                source,
+                <C::CircuitField as udon::field::Field>::ONE,
+            )?;
+        }
+        if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &self.nested_source) {
+            mesh.check_source::<_, R>(
+                C::Profile::NESTED_ONLINE,
+                source,
+                internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
+            )?;
+        }
 
         // Build the native registry:
         // 1. Application circuits (with the final stage size)

@@ -503,7 +503,7 @@ pub fn nested_online_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>
     unified_ky: &Element<'dr, D>,
     online_values: &[Element<'dr, D>],
     online_stages: &[Point<'dr, D, C>],
-    online_points: &[ragu_primitives::CompletePoint<'dr, D, C>],
+    online_points: &[Point<'dr, D, C>],
     mesh_values: &[Element<'dr, D>],
 ) -> Result<(Element<'dr, D>, Option<Element<'dr, D>>)> {
     if P::NESTED_ONLINE.is_empty() && P::NATIVE_ONLINE.is_empty() {
@@ -604,7 +604,7 @@ pub fn nested_online_ky_of<C: ProfiledCycle>(
                     crate::profile::online::stages::Native,
                 >,
             >::try_from_fn(|i| {
-                ragu_primitives::CompletePoint::alloc(dr, online_points.as_ref().map(|p| p[i]))
+                Point::alloc(dr, online_points.as_ref().map(|p| p[i]))
             })?;
             let mesh_values = (0..C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
                 .map(|i| Element::alloc(dr, &mut (), mesh_values.as_ref().map(|v| v[i])))

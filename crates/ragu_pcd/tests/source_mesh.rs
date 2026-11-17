@@ -448,11 +448,7 @@ impl Profile for SourceCapacity {
 type C = Profiled<Pasta, SourceCapacity>;
 type Rk = R<14>;
 fn altered_point<P: Affine>(point: P) -> P {
-    if point.is_identity() {
-        P::generator()
-    } else {
-        -point
-    }
+    -point
 }
 fn verify<P: Profile>(
     app: &Application<'_, Profiled<Pasta, P>, Rk, 2>,
@@ -496,6 +492,15 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
     let (grandparent, ()) = app.fuse(&mut rng, UnitStep, (), parent.clone(), child.clone())?;
     verify(&app, &grandparent, &mut rng, true)?;
+    // A restriction, a helper and the outgoing restriction on each field.
+    let outgoing = SourceCapacity::NATIVE_MESH.expect("mesh declared").outgoing;
+    crate::private_online_tests::check_identity_online_commitments(
+        &app,
+        &child,
+        &mut rng,
+        &[0, 12, outgoing],
+        &[0, 12, outgoing],
+    )?;
     let decoded = Proof::<C, Rk>::from_bytes(
         &parent
             .proof()
@@ -505,11 +510,15 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     .expect("decode retained source polynomials")
     .carry::<()>(());
     verify(&app, &decoded, &mut rng, true)?;
+    // A valid registry other than the source: one trivial circuit under a
+    // nonzero tag, whose restrictions do not vanish.
     let wrong_native = RegistryBuilder::<Fp, R<13>>::new()
-        .with_tag(Tag::new(Fp::ZERO))
+        .register_circuit(())?
+        .with_tag(Tag::new(Fp::ONE))
         .finalize()?;
     let wrong_nested = RegistryBuilder::<Fq, R<13>>::new()
-        .with_tag(Tag::new(Fq::ZERO))
+        .register_circuit(())?
+        .with_tag(Tag::new(Fq::ONE))
         .finalize()?;
     for side in 0..2 {
         let receiving = ApplicationBuilder::<C, Rk, 2>::new()
@@ -581,30 +590,29 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     }
     Ok(())
 }
+/// An empty source registry with a zero tag restricts to the zero
+/// polynomial, whose commitment the walk cannot take, so setup rejects it
+/// rather than the first proof failing.
 #[test]
-fn zero_source_restrictions_keep_identity_commitments_through_compression() -> Result<()> {
+fn a_source_registry_whose_restrictions_vanish_is_rejected_at_setup() -> Result<()> {
     let native = RegistryBuilder::<Fp, R<13>>::new()
         .with_tag(Tag::new(Fp::ZERO))
         .finalize()?;
     let nested = RegistryBuilder::<Fq, R<13>>::new()
         .with_tag(Tag::new(Fq::ZERO))
         .finalize()?;
-    let app = ApplicationBuilder::<C, Rk, 2>::new()
+    let result = ApplicationBuilder::<C, Rk, 2>::new()
         .register(UnitStep)?
         .with_source_registries(
             Some(SourceRegistry::new::<_, ReferenceBackend>(&native)),
             Some(SourceRegistry::new::<_, ReferenceBackend>(&nested)),
         )
-        .finalize(crate::pasta::baked_aggregator())?;
-    let mut rng = StdRng::seed_from_u64(0x606061);
-    let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
-    for slot in SourceCapacity::NATIVE_MESH.unwrap().polynomial_indices() {
-        assert!(child.proof().native_online_commitments[slot].is_identity());
-        assert!(child.proof().nested_online_commitments[slot].is_identity());
-    }
-    verify(&app, &child, &mut rng, true)?;
-    let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child)?;
-    verify(&app, &parent, &mut rng, true)
+        .finalize(crate::pasta::baked_aggregator());
+    assert!(matches!(
+        result,
+        Err(ragu_core::Error::Initialization(message)) if alloc::format!("{message}").contains("vanish")
+    ));
+    Ok(())
 }
 
 /// The smallest mesh: the two inherited restrictions, their helpers, U and

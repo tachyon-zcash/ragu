@@ -35,7 +35,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    CompletePoint, Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, WithSuffix,
+    Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, Point, WithSuffix,
     allocator::Standard,
     io::Write,
     vec::{CollectFixed, FixedVec},
@@ -59,8 +59,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
     #[ragu(gadget)]
-    pub online_points:
-        FixedVec<CompletePoint<'dr, D, C::NestedCurve>, PolynomialsLen<C::Profile, Nested>>,
+    pub online_points: FixedVec<Point<'dr, D, C::NestedCurve>, PolynomialsLen<C::Profile, Nested>>,
 }
 
 /// Circuit binding the walk stage's endoscalar bits to `pre_beta`, the
@@ -148,7 +147,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         // The walk's last interstitial is P_n: pin it to the instance, where
         // a parent reads it.
         let p = unified_output.nested_p_commitment.receive(dr, allocator)?;
-        walk.p().enforce_equal_affine(dr, &p)?;
+        walk.p().enforce_equal(dr, &p)?;
 
         let a = unified_output.nested_a_commitment.receive(dr, allocator)?;
         ab.a.enforce_equal(dr, &a)?;
@@ -166,7 +165,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
             .chain(registry_wx.online_points.iter())
             .chain(ab.online_points.iter())
             .chain(f.online_points.iter())
-            .map(|point| point.complete().clone())
+            .cloned()
             .collect_fixed()?;
         let (output, aux) = unified_output.finish_with(dr, allocator, |unified| Output {
             unified,

@@ -152,8 +152,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .points
             .interstitials
             .last()
-            .expect("every walk has at least one interstitial")
-            .endpoint(dr)?;
+            .expect("every walk has at least one interstitial");
         let held = [
             &stages.preamble.native_preamble,
             &stages.inner_error.native_inner_error,
@@ -163,7 +162,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.ab.a,
             &stages.ab.b,
             &stages.query.registry_xy,
-            &last_interstitial,
+            last_interstitial,
             &stages.preamble.native_points_binding,
             &stages.preamble.native_points_preamble,
             &stages.s_prime.native_points_registry_wx,

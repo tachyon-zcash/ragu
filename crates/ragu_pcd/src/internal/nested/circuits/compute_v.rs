@@ -102,7 +102,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Actual native private commitment points, also the helper's foreign exports.
     #[ragu(gadget)]
     pub online_points: FixedVec<
-        ragu_primitives::CompletePoint<'dr, D, C>,
+        ragu_primitives::Point<'dr, D, C>,
         crate::profile::online::stages::PolynomialsLen<P, crate::profile::online::stages::Native>,
     >,
     /// Actual child coordinates, bound to this step's inherited nested mesh inputs.
@@ -152,10 +152,8 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 .iter()
                 .zip([&stages.preamble.left, &stages.preamble.right])
             {
-                let own = stages.preamble.online_points[restriction.polynomial].coordinates();
-                let inherited = child.online_points[mesh.outgoing].coordinates();
-                own.0.enforce_equal(dr, inherited.0)?;
-                own.1.enforce_equal(dr, inherited.1)?;
+                stages.preamble.online_points[restriction.polynomial]
+                    .enforce_equal(dr, &child.online_points[mesh.outgoing])?;
             }
         }
         let allocator = &mut Standard::new();

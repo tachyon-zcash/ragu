@@ -22,7 +22,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt, Point};
+use ragu_primitives::{GadgetExt as _, Point};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
@@ -48,7 +48,7 @@ impl<'pts, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walker<'pts,
 
     /// Enforce that the current [`PointsStage`] input equals `point`.
     fn enforce_equal(&mut self, dr: &mut D, point: &Point<'dr, D, C>) -> Result<()> {
-        self.points.inputs[self.index].enforce_equal_affine(dr, point)?;
+        self.points.inputs[self.index].enforce_equal(dr, point)?;
         self.index += 1;
         Ok(())
     }
@@ -163,15 +163,12 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .chain(ab.online_points.iter())
             .chain(query.online_points.iter())
         {
-            walker.points.inputs[walker.index]
-                .complete()
-                .enforce_equal(dr, point)?;
-            walker.index += 1;
+            walker.enforce_equal(dr, point)?;
         }
         walker.finish();
 
         // The initial point (f.commitment) must match BridgeF.native_f.
-        points.initial.enforce_equal_affine(dr, &f_stage.native_f)?;
+        points.initial.enforce_equal(dr, &f_stage.native_f)?;
 
         Ok(WithAux::new((), D::unit()))
     }

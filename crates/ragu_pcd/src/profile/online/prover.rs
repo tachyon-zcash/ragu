@@ -187,18 +187,16 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     }
 
     /// The coordinates of the commitments so far, $x$ then $y$ in polynomial
-    /// order with the identity as two zeroes: what the other field's input
-    /// stage holds of them.
-    pub(crate) fn coordinates(&self) -> Vec<C::Base> {
-        self.commitments
-            .iter()
-            .flat_map(|point| {
-                let (x, y) = point
-                    .coordinates()
-                    .unwrap_or((C::Base::ZERO, C::Base::ZERO));
-                [x, y]
-            })
-            .collect()
+    /// order: what the other field's input stage holds of them.
+    pub(crate) fn coordinates(&self) -> Result<Vec<C::Base>> {
+        let mut coordinates = Vec::with_capacity(2 * self.commitments.len());
+        for point in &self.commitments {
+            let (x, y) = point.coordinates().ok_or_else(|| {
+                Error::InvalidWitness("a private polynomial commits to the identity".into())
+            })?;
+            coordinates.extend([x, y]);
+        }
+        Ok(coordinates)
     }
 
     /// The polynomial the step hands its parent: the mesh's outgoing

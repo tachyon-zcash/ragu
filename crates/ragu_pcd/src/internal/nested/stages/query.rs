@@ -21,7 +21,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    CompletePoint, Element, Point,
+    Element, Point,
     io::Write,
     vec::{CollectFixed, FixedVec, Len},
 };
@@ -211,7 +211,7 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Native auxiliary points fixed before alpha and bound to the walk.
     #[ragu(gadget)]
-    pub online_points: FixedVec<CompletePoint<'dr, D, C>, PhaseLen<P, Native, 3>>,
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 3>>,
     /// The native private stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub online_stage: FixedVec<Point<'dr, D, C>, Present<P, Native, 1>>,
@@ -281,7 +281,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
 
         Ok(Output {
             online_points: FixedVec::try_from_fn(|i| {
-                CompletePoint::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
             })?,
             online_stage: FixedVec::try_from_fn(|i| {
                 Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))

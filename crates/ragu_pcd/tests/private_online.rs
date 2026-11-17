@@ -1,4 +1,5 @@
-//! Private nested batches, including zero commitments and transcript-copy attacks.
+//! Private batches, the identity commitments they reject, and transcript-copy
+//! attacks.
 
 use alloc::{vec, vec::Vec};
 use core::cell::Cell;
@@ -16,7 +17,7 @@ use ragu_core::{
     maybe::Maybe,
     pasta::{Fq, Pasta},
 };
-use ragu_primitives::GadgetExt;
+use ragu_primitives::{Element, GadgetExt};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use udon::{curve::Affine, field::Field};
 
@@ -170,11 +171,11 @@ impl Profile for OnlineBatch {
         Ok(if phase == Phase::BeforeW {
             vec![
                 sparse::Polynomial::from_coeffs(vec![
-                    Base::ScalarField::ZERO,
+                    Base::ScalarField::ONE,
                     -Base::ScalarField::ONE,
                     Base::ScalarField::ONE,
                 ]),
-                sparse::Polynomial::new(),
+                sparse::Polynomial::from_coeffs(vec![Base::ScalarField::ONE]),
             ]
         } else {
             Vec::new()
@@ -236,6 +237,7 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(0x6060);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     verify(&app, &child, &mut rng, true)?;
+    check_identity_online_commitments(&app, &child, &mut rng, &[], &[0, 1])?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
     let bytes = parent
         .proof()
@@ -246,7 +248,6 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
         .carry::<()>(());
     verify(&app, &decoded, &mut rng, true)?;
 
-    assert!(child.proof().nested_online_commitments[1].is_identity());
     for i in 0..2 {
         let mut proof = child.proof().clone();
         proof.nested_online_commitments[i] = if i == 0 {
@@ -285,7 +286,8 @@ fn nested_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
 }
 
 /// A scalar consumer reserves only the independent private input/query prefix.
-/// It checks the known formula at the authenticated w and at an early input.
+/// It checks the known formula $q(X) = X^2 - X + 1$ at the authenticated w and
+/// at an early input.
 struct Consumer;
 impl<F: Field, Rk: Rank> MultiStageCircuit<F, Rk> for Consumer {
     type Last = QueryStage<OnlineBatch, Nested>;
@@ -322,6 +324,7 @@ impl<F: Field, Rk: Rank> MultiStageCircuit<F, Rk> for Consumer {
             point
                 .mul(dr, point)?
                 .sub(dr, point)
+                .add(dr, &Element::one())
                 .enforce_equal(dr, value)?;
         }
         Ok(WithAux::new((), D::just(|| ())))
@@ -423,11 +426,11 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
         Ok(if phase == Phase::BeforeW {
             vec![
                 sparse::Polynomial::from_coeffs(vec![
-                    Base::CircuitField::ZERO,
+                    Base::CircuitField::ONE,
                     -Base::CircuitField::ONE,
                     Base::CircuitField::ONE,
                 ]),
-                sparse::Polynomial::new(),
+                sparse::Polynomial::from_coeffs(vec![Base::CircuitField::ONE]),
             ]
         } else {
             Vec::new()
@@ -477,11 +480,11 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
         Ok(if WITH_NESTED && phase == Phase::BeforeW {
             vec![
                 sparse::Polynomial::from_coeffs(vec![
-                    Base::ScalarField::ZERO,
+                    Base::ScalarField::ONE,
                     -Base::ScalarField::ONE,
                     Base::ScalarField::ONE,
                 ]),
-                sparse::Polynomial::new(),
+                sparse::Polynomial::from_coeffs(vec![Base::ScalarField::ONE]),
             ]
         } else {
             Vec::new()
@@ -505,6 +508,56 @@ fn verify_profile<P: Profile>(
     Ok(())
 }
 
+/// A private commitment is never the identity. For each listed slot, a proof
+/// holding the identity there cannot be encoded, both verifiers reject it,
+/// and no parent can be fused over it.
+pub(crate) fn check_identity_online_commitments<P: Profile>(
+    app: &Application<'_, Profiled<Pasta, P>, Rk, 2>,
+    pcd: &Pcd<Profiled<Pasta, P>, Rk, ()>,
+    rng: &mut StdRng,
+    native: &[usize],
+    nested: &[usize],
+) -> Result<()> {
+    type Host<P> = <Profiled<Pasta, P> as ragu_core::Cycle>::HostCurve;
+    type Nest<P> = <Profiled<Pasta, P> as ragu_core::Cycle>::NestedCurve;
+    let compressed = app.compress(pcd, &mut *rng)?;
+    for (field, slots) in [("native", native), ("nested", nested)] {
+        for &slot in slots {
+            let mut proof = pcd.proof().clone();
+            let mut instance = compressed.proof().clone();
+            if field == "native" {
+                proof.native_online_commitments[slot] = Host::<P>::identity();
+                instance.instance.native_online_commitments[slot] = Host::<P>::identity();
+            } else {
+                proof.nested_online_commitments[slot] = Nest::<P>::identity();
+                instance.instance.nested_online_commitments[slot] = Nest::<P>::identity();
+            }
+            assert!(
+                proof.to_bytes().is_err(),
+                "encoded an identity {field} commitment at {slot}"
+            );
+            let bad = proof.carry::<()>(());
+            assert!(
+                !app.verify_uncompressed(&bad, &mut *rng)?,
+                "accepted an identity {field} commitment at {slot}"
+            );
+            assert!(
+                app.fuse(&mut *rng, UnitStep, (), pcd.clone(), bad).is_err(),
+                "fused over an identity {field} commitment at {slot}"
+            );
+            assert!(
+                instance.to_bytes().is_err(),
+                "encoded a compressed identity {field} commitment at {slot}"
+            );
+            assert!(
+                !app.verify_compressed(&instance.carry::<()>(()))?,
+                "accepted a compressed identity {field} commitment at {slot}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
     type Cycle<const N: bool> = Profiled<Pasta, NativeBatch<N>>;
     let app = ApplicationBuilder::<Cycle<WITH_NESTED>, Rk, 2>::new()
@@ -513,6 +566,8 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(0x6160 + u64::from(WITH_NESTED));
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     verify_profile(&app, &child, &mut rng, true)?;
+    let nested: &[usize] = if WITH_NESTED { &[0, 1] } else { &[] };
+    check_identity_online_commitments(&app, &child, &mut rng, &[0, 1], nested)?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
     let bytes = parent
         .proof()
@@ -522,7 +577,6 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
         .expect("decode native private proof")
         .carry::<()>(());
     verify_profile(&app, &decoded, &mut rng, true)?;
-    assert!(child.proof().native_online_commitments[1].is_identity());
     // Both foreign helper exports and the actual walk use these common points.
     for i in 0..2 {
         let mut proof = child.proof().clone();
