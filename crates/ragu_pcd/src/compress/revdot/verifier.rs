@@ -21,7 +21,7 @@ use crate::{
         ky::{NativeKy, NestedKy},
         native, nested,
     },
-    ipa::IpaTranscript,
+    ipa::{IpaTranscript, fingerprint},
     profile::ProfiledCycle,
 };
 
@@ -122,6 +122,7 @@ fn verify<C: Affine, R: Rank, B: Backend, Id: Copy + Sync>(
     }
     let split = r.pow_u64((n - 1) as u64) * reduction.p_at_inverse_r
         + r.pow_u64(n as u64) * reduction.q_at_r;
+    fingerprint::record_reduction(&combined, &split);
     if combined != split {
         return Ok(None);
     }

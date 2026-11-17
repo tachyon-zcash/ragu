@@ -5,7 +5,9 @@
 //! scalar it absorbs and every challenge it squeezes, and each IPA [`MSM`]
 //! the verifier evaluates records its terms and whether it was the identity.
 //! The fuse fixtures pin these, so a change to how the verifier reads a proof
-//! shows even when its verdict does not.
+//! shows even when its verdict does not. Each reduction check also records
+//! its two sides, which the fixtures do not pin: the random-proof fabricator
+//! reads them to solve for the one scalar that check forces.
 //!
 //! Recording is per thread. The recorder and event encoding compile only
 //! for tests; production observation helpers are inline no-ops.
@@ -14,7 +16,9 @@
 
 #[cfg(test)]
 pub(crate) use recorder::{Event, capture};
-pub(crate) use recorder::{record_challenge, record_msm, record_point, record_scalar};
+pub(crate) use recorder::{
+    record_challenge, record_msm, record_point, record_reduction, record_scalar,
+};
 
 #[cfg(not(test))]
 mod recorder {
@@ -37,6 +41,9 @@ mod recorder {
         _identity: bool,
     ) {
     }
+
+    #[inline]
+    pub(crate) fn record_reduction<F: Field>(_combined: &F, _split: &F) {}
 }
 
 #[cfg(test)]
@@ -64,6 +71,9 @@ mod recorder {
             bases: Vec<Vec<u8>>,
             identity: bool,
         },
+        /// A revdot reduction check: the combined claims at $r$ and the split
+        /// of $p$ and $q$ they must equal.
+        Reduction { combined: Vec<u8>, split: Vec<u8> },
     }
 
     std::thread_local! {
@@ -110,6 +120,13 @@ mod recorder {
             scalars: scalars.iter().map(field).collect(),
             bases: bases[..proof_dependent_bases].iter().map(point).collect(),
             identity,
+        });
+    }
+
+    pub(crate) fn record_reduction<F: Field>(combined: &F, split: &F) {
+        record(|| Event::Reduction {
+            combined: field(combined),
+            split: field(split),
         });
     }
 

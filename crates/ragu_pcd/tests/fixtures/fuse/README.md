@@ -13,13 +13,23 @@ follows zakura-common's Halo2 and Orchard verifier fingerprints: the verifier
 runs on each committed proof under a recorder, and its transcript schedule and
 final MSMs must match the committed record.
 
+Each profile's fixtures come in two families, after ironwood's honest and
+match-only captures:
+
+- `honest/`: the proofs the prover reproduces and the verifier accepts, with
+  the verifier's run on each.
+- `random/`: random proof strings of each honest proof's shape, which the
+  verifier reads through to the host curve's MSM and rejects, with the
+  verifier's run on each.
+
 ## Profiles
 
 The wallet's standard profile and the aggregator profile both check the same
 fixtures in `standard/`. Until the aggregator's decompression circuits land,
 the profile declares nothing and produces identical proofs, so storing a
 second copy adds no coverage. Both profiles independently reproduce the
-snapshots and check the verifier fingerprints and tampered proofs. When the
+snapshots and check the verifier fingerprints, tampered proofs and random
+strings. When the
 profiles diverge, the aggregator will need its own expected outputs.
 
 ## Scenarios
@@ -49,9 +59,9 @@ every seed fuses it as both children. The `rerandomize` tape also covers the
 seeded trivial proof the step fuses against, which the application proves on
 first use.
 
-## Files
+## Honest files
 
-Each scenario has four files.
+Each scenario has four files in `honest/`.
 
 - `<scenario>.rng-u64s-le`: the randomness the fuse drew, as little-endian
   `u64` words. Checking replays it and fails if the prover asks for more or
@@ -88,10 +98,42 @@ nested IPA scalar must pass the host MSM and fail the nested one, identity
 stage commitments must be rejected before either MSM, and a wrong claimed
 `v` must be rejected. These are checked, not committed.
 
+## Random files
+
+Each scenario has two files in `random/`.
+
+- `<scenario>.proof`: a random proof string in the same encoding. It keeps
+  the honest proof's shape and circuit id; everything else, header data
+  included, is drawn from the harness's SplitMix64 generator under a fixed
+  seed, points as random multiples of the generator. The values the verifier
+  recomputes or solves for before its host MSM are then planted, using the
+  verifier's own computations: the challenge-stage and `ab` bridge
+  commitments it recomputes from the challenges, headers and native
+  commitments, and the host reduction's `q(r)`, solved from the two sides of
+  the reduction check. So the verifier reads the string through to the host
+  MSM, which rejects it.
+- `<scenario>.fingerprint`: the verifier's run on the string, in the same
+  format, ending at the host MSM with `verifier.msm.native.identity = false`.
+  Nothing short of a forged host opening reaches the nested side, so these
+  pin the host side alone.
+
+On an honest proof, every value the verifier recomputes from the headers,
+the challenges and the registry agrees with whatever the proof carries in its
+place, so a change in where the verifier sources one leaves the honest
+fingerprints unchanged. On a random string the two disagree, so the change
+mismatches instead of hiding behind honest structure. The random captures
+claim only that the verifier's run matches and that the host MSM rejects.
+
+The fabricator knows the discrete log of every point it draws. That is
+harmless here: the strings are inputs the verifier must reject, not
+forgeries, and the test checks that it does.
+
 The recorder lives in `src/ipa/fingerprint.rs`. Recording and event encoding
 compile only for tests; production observation helpers are inline no-ops.
 The helpers observe the cycle transcript's absorb, scalar and squeeze, and
 the IPA MSM's evaluation, so the fingerprint is of the verifier's own code path.
+They also observe each reduction check's two sides, which the fabricator reads
+and the fingerprints leave out.
 
 The fixture workflow is called by Backend CI. Its result feeds the existing
 required `backend-required` check, so a failed or cancelled fixture run blocks
@@ -109,11 +151,13 @@ RAGU_FIXTURES=write cargo test --release -p ragu_pcd --all-features --lib proof:
 and review the diff before committing it. The `.digests` diff should name
 exactly the stages a prover change was meant to touch, and the
 `.fingerprint` diff the part of the verifier a verifier change was; a change
-to `rng.fuse.words` means the randomness schedule moved. Only the standard
-prover test writes the shared files, fingerprints included, since the verifier
+to `rng.fuse.words` means the randomness schedule moved. A random string
+changes whenever the values planted in it move, which a change to the
+verifier's recomputations does. Only the standard prover test writes the
+shared files, fingerprints and random strings included, since the verifier
 test cannot read a proof that is still being written. Run the same command
-without `RAGU_FIXTURES=write` afterwards to check both profiles. Fresh tapes and
-sibling inputs come from the harness's SplitMix64 generator, which is not
+without `RAGU_FIXTURES=write` afterwards to check both profiles. Fresh tapes,
+sibling inputs and random strings come from the harness's SplitMix64 generator, which is not
 cryptographically secure and exists only to make synthetic test data
 reproducible; it must never produce a real proof.
 
