@@ -137,7 +137,7 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 pub struct Witness<C: Affine, P: Profile> {
     /// Native auxiliary commitments fixed before alpha.
     pub online_points: FixedVec<C, PhaseLen<P, Native, 3>>,
-    /// This boundary's native private stage commitment.
+    /// This boundary's native online stage commitment.
     pub online_stage: FixedVec<C, Present<P, Native, 1>>,
     pub native_query: C,
     pub registry_xy: C,
@@ -212,7 +212,7 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Native auxiliary points fixed before alpha and bound to the walk.
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 3>>,
-    /// The native private stage fixed by this bridge's transcript commitment.
+    /// The native online stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub online_stage: FixedVec<Point<'dr, D, C>, Present<P, Native, 1>>,
     #[ragu(gadget)]

@@ -1,4 +1,4 @@
-//! The independent private opening fold, with explicit public challenge inputs.
+//! The independent online opening fold, with explicit public challenge inputs.
 
 use core::marker::PhantomData;
 
@@ -52,7 +52,7 @@ pub(crate) struct Output<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     /// The quotient and evaluation sums.
     #[ragu(gadget)]
     pub sums: FixedVec<Element<'dr, D>, ConstLen<2>>,
-    /// The same commitment coordinates that private consumers read before w.
+    /// The same commitment coordinates that online consumers read before w.
     #[ragu(gadget)]
     pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
     /// The same early coordinates and intersection wires used by consumers.
@@ -72,7 +72,7 @@ pub struct Witness<'a, F: Field, P: Profile, S: Side> {
     pub challenges: Challenges<F>,
 }
 
-/// Computes the two private-batch sums without loading the fuse preamble.
+/// Computes the two online-batch sums without loading the fuse preamble.
 pub(crate) struct Circuit<F: Field, P: Profile, S: Side> {
     source_tag: Option<F>,
     marker: PhantomData<(P, S)>,
@@ -146,7 +146,7 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
         let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.inputs))?;
         if self.source_tag.is_some() != S::mesh::<P>().is_some() {
             return Err(Error::Initialization(
-                "private helper is missing its captured source".into(),
+                "online helper is missing its captured source".into(),
             ));
         }
         if let Some(tag) = self.source_tag {

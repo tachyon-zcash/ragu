@@ -31,7 +31,7 @@
 //! the openings and `compute_v` folds them into the batch and exports them
 //! in its bridge instance for the parent.
 //!
-//! The profile's private batch, [`Profile::NATIVE_ONLINE`], adds online
+//! The profile's online batch, [`Profile::NATIVE_ONLINE`], adds online
 //! polynomials of the step's own on this field. The fuse begins it from the
 //! profile's inputs before $w$, supplies its polynomials at each declared
 //! deadline, and commits its input, query and evaluation stages. A profile
@@ -172,7 +172,7 @@ pub(crate) fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Begins the step's native private batch from the profile's inputs,
+    /// Begins the step's native online batch from the profile's inputs,
     /// with the children's $x$ and $y$ in the slots a mesh inherits them at,
     /// and supplies its polynomials fixed before $w$.
     pub(crate) fn begin_native_online(

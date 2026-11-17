@@ -1,4 +1,4 @@
-//! Setup-fixed declarations for a profile's private polynomial openings.
+//! Setup-fixed declarations for a profile's online polynomial openings.
 //!
 //! Polynomial order determines the commitment fold; opening order determines
 //! the quotient fold. Repeated openings refer to the same polynomial index and
@@ -23,7 +23,7 @@ mod tests;
 /// The last transcript boundary before a polynomial must be committed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
-    /// Private online polynomials, fixed before the step's first challenge.
+    /// Online polynomials, fixed before the step's first challenge.
     BeforeW,
     /// Auxiliary polynomials prepared from `w`, before `y`.
     BeforeY,
@@ -49,7 +49,7 @@ impl Phase {
 /// `u` is deliberately absent: queries must be committed before `alpha`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Challenge {
-    /// The challenge testing the private polynomials.
+    /// The challenge testing the online polynomials.
     W,
     /// The second registry coordinate challenge.
     Y,
@@ -90,7 +90,7 @@ pub struct Opening {
     pub value: usize,
 }
 
-/// The private and auxiliary batch on one field, fixed for a profile type.
+/// The online and auxiliary batch on one field, fixed for a profile type.
 ///
 /// The empty layout adds no stages or circuits. Nonempty layouts have one
 /// evaluation at `u` per polynomial, independent of the number of openings.
@@ -110,7 +110,7 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// No private or auxiliary batch.
+    /// No online polynomials.
     pub const EMPTY: Self = Self {
         polynomials: &[],
         openings: &[],
@@ -162,7 +162,7 @@ impl Layout {
             Ok(())
         } else {
             Err(Error::Initialization(
-                "the profile's private opening layout is not well formed".into(),
+                "the profile's online opening layout is not well formed".into(),
             ))
         }
     }
@@ -194,8 +194,8 @@ pub(crate) mod defaults {
             Ok(alloc::vec![F::ZERO; layout.inputs])
         } else {
             Err(side::<S>(
-                "the profile has no native private input prover",
-                "the profile has no nested private input prover",
+                "the profile has no native online input prover",
+                "the profile has no nested online input prover",
             ))
         }
     }
@@ -209,8 +209,8 @@ pub(crate) mod defaults {
             .any(|i| !mesh.is_some_and(|mesh| mesh.owns(i)))
         {
             Err(side::<S>(
-                "the profile has no native private polynomial prover",
-                "the profile has no nested private polynomial prover",
+                "the profile has no native online polynomial prover",
+                "the profile has no nested online polynomial prover",
             ))
         } else {
             Ok(Vec::new())
@@ -223,8 +223,8 @@ pub(crate) mod defaults {
             Ok(Vec::new())
         } else {
             Err(side::<S>(
-                "the profile has no native private query prover",
-                "the profile has no nested private query prover",
+                "the profile has no native online query prover",
+                "the profile has no nested online query prover",
             ))
         }
     }

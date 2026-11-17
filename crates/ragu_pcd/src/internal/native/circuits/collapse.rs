@@ -11,7 +11,7 @@
 //!
 //! A profile's statement targets come from its headers; its binding targets
 //! come from the extension commitments in the points binding stage. That
-//! stage is loaded when a native binding or private nested batch needs it.
+//! stage is loaded when a native binding or nested online batch needs it.
 //! Its point contracts remain the responsibility of [`super::bind_endoscalar`].
 //!
 //! The inner quotient is fixed before mu is derived, and the outer quotient
@@ -159,7 +159,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     {
         type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
         // The binding stage is loaded, and so in the circuit's claim, only
-        // when the profile needs extension targets: user bindings or private
+        // when the profile needs extension targets: user bindings or online
         // stage copies. Both use the actual walked child commitments.
         let extension = crate::profile::native_extension::<C::Profile>();
         let (binding, builder) = if extension.binding.is_some()
@@ -209,9 +209,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let (left_online, right_online) = if C::Profile::NESTED_ONLINE.is_empty() {
             (&[][..], &[][..])
         } else {
-            let binding = binding
-                .as_ref()
-                .expect("private stage targets load binding");
+            let binding = binding.as_ref().expect("online stage targets load binding");
             (&binding.left.extension[..3], &binding.right.extension[..3])
         };
         let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y, left_online)?;

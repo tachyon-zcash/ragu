@@ -140,7 +140,7 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
-    /// This boundary's native private stage commitment.
+    /// This boundary's native online stage commitment.
     pub online_stage: FixedVec<
         C,
         crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
@@ -223,7 +223,7 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 /// public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// The native private stage fixed by this bridge's transcript commitment.
+    /// The native online stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub online_stage: FixedVec<
         Point<'dr, D, C>,

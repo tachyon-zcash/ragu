@@ -242,7 +242,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             for (poly, commitment) in polys.into_iter().zip(commitments) {
                 acc.acc(poly, commitment);
             }
-            // Each distinct private polynomial enters the commitment fold
+            // Each distinct online polynomial enters the commitment fold
             // once, independently of how many openings the quotient checks.
             let online = builder.native_online();
             for (poly, &point) in online.polynomials().iter().zip(online.commitments()) {

@@ -135,7 +135,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut *rng,
         )?;
 
-        // The private batch's helper, traced first: compute-v takes its fold.
+        // The online batch's helper, traced first: compute-v takes its fold.
         let challenges = Challenges {
             w: builder.w(),
             y: builder.y(),
@@ -245,7 +245,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The profile's extension: its prover fills every circuit's and
         // stage's polynomial over the context the application holds, and the
-        // private batch completes them with its helper's and stages'.
+        // online batch completes them with its helper's and stages'.
         let extension = crate::profile::native_extension::<C::Profile>();
         let online = builder.native_online().witness(challenges);
         let rxs = C::Profile::native_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
@@ -316,7 +316,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             ],
             coverage: Default::default(),
         };
-        // The private batch's helper, traced first: compute-v takes its fold.
+        // The online batch's helper, traced first: compute-v takes its fold.
         let challenges = Challenges {
             w: nested::challenge::<C>(builder.w())?,
             y: nested::challenge::<C>(builder.y())?,

@@ -106,7 +106,7 @@ fn helper_uses_the_independent_stage_chain_on_both_fields() -> Result<()> {
 }
 
 #[test]
-fn private_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
+fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
     use ragu_circuits::registry::RegistryBuilder;
 
     use super::extension::{self, Bonding};
@@ -356,7 +356,7 @@ fn preparation_commits_each_phase_once_and_rejects_zero_polynomials() -> Result<
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct NestedOnly;
 impl Profile for NestedOnly {
-    const NAME: &'static str = "nested-private-targets";
+    const NAME: &'static str = "nested-online-targets";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const NESTED_ONLINE: Layout = Batched::NESTED_ONLINE;
@@ -369,7 +369,7 @@ impl Profile for NestedOnly {
 }
 
 #[test]
-fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Result<()> {
+fn nested_online_targets_bind_the_actual_helper_output_and_claim_order() -> Result<()> {
     use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
     use ragu_core::{Cycle, drivers::emulator::Emulator, maybe::Maybe, pasta::Pasta};
     use ragu_primitives::{Element, GadgetExt, vec::Len};
@@ -483,7 +483,7 @@ fn nested_private_targets_bind_the_actual_helper_output_and_claim_order() -> Res
 }
 
 #[test]
-fn private_stage_bindings_are_in_the_native_claims() -> Result<()> {
+fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
     use alloc::vec::Vec;
 
     use ragu_circuits::registry::CircuitIndex;
@@ -572,7 +572,7 @@ fn private_stage_bindings_are_in_the_native_claims() -> Result<()> {
 }
 
 #[test]
-fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
+fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
     use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
     use ragu_core::{
         drivers::emulator::Emulator,
@@ -757,7 +757,7 @@ fn native_private_targets_share_sums_and_actual_foreign_points() -> Result<()> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct NativeOnly;
 impl Profile for NativeOnly {
-    const NAME: &'static str = "native-private-targets";
+    const NAME: &'static str = "native-online-targets";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const NATIVE_ONLINE: Layout = Batched::NATIVE_ONLINE;
@@ -770,7 +770,7 @@ impl Profile for NativeOnly {
 }
 
 #[test]
-fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()> {
+fn native_online_stage_targets_use_actual_extension_commitments() -> Result<()> {
     use ragu_circuits::horner::Horner;
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe, pasta::EqAffine};
     use ragu_primitives::{Element, GadgetExt, Point as CurvePoint};
@@ -864,7 +864,7 @@ fn native_private_stage_targets_use_actual_extension_commitments() -> Result<()>
 }
 
 #[test]
-fn nested_private_targets_share_the_actual_foreign_commitments() -> Result<()> {
+fn nested_online_targets_share_the_actual_foreign_commitments() -> Result<()> {
     use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
     use ragu_core::{drivers::emulator::Emulator, maybe::Maybe, pasta::EqAffine};
     use ragu_primitives::{Element, GadgetExt, Point as CurvePoint};

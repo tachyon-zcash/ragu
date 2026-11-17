@@ -108,10 +108,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     /// The online openings, in slot order, as the `query` stage holds them.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
-    /// Quotient and evaluation sums shared with the independent private helper.
+    /// Quotient and evaluation sums shared with the independent online helper.
     #[ragu(gadget)]
     pub online_fold: FixedVec<Element<'dr, D>, Present<C::Profile, Native, 2>>,
-    /// The nested private Input, Query and Eval commitments, in deadline order.
+    /// The nested online Input, Query and Eval commitments, in deadline order.
     #[ragu(gadget)]
     pub online_stages: FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 6>>,
     /// Nested auxiliary coordinates read from the query committed before alpha.
@@ -164,9 +164,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> Circuit<C, R, HEADER_S
 pub struct Witness<'a, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> {
     /// The unified instance containing challenges and accumulated coverage.
     pub unified: unified::Instance<C>,
-    /// Common sums supplied by the independent private helper.
+    /// Common sums supplied by the independent online helper.
     pub online_fold: FixedVec<C::CircuitField, Present<C::Profile, Native, 2>>,
-    /// Holds the private nested input-stage commitment fixed before w.
+    /// Holds the nested online input-stage commitment fixed before w.
     pub binding: &'a super::super::stages::points::BindingWitness<C::NestedCurve, C::Profile>,
     /// Witness for the preamble stage (provides child proof data).
     pub preamble_witness: &'a native_preamble::Witness<'a, C, R, HEADER_SIZE>,
@@ -233,7 +233,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
 
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query_witness))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval_witness))?;
-        // Export deadline-bound copies of the private helper chain. The
+        // Export deadline-bound copies of the online helper chain. The
         // parent and terminal targets use its actual rx commitments. The
         // input stage's commitment is a point in the binding stage, whose
         // coordinates are read off its wires.

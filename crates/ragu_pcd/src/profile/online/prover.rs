@@ -1,4 +1,4 @@
-//! Ephemeral state shared by the fuse's private polynomial preparation phases.
+//! Ephemeral state shared by the fuse's online polynomial preparation phases.
 //!
 //! The fuse makes every call here for every profile. What a profile declares
 //! is decided on this side of the calls: a side without a batch supplies
@@ -37,8 +37,8 @@ use crate::profile::{ExtensionRxs, Profile};
 /// empty for a side without a batch.
 pub(crate) type Fold<F, P, S> = FixedVec<F, Present<P, S, 2>>;
 
-/// A step's private polynomials and stages. Only stage polynomials survive in
-/// the proof; the private polynomials are consumed by this step's PCS fold.
+/// A step's online polynomials and stages. Only stage polynomials survive in
+/// the proof; the online polynomials are consumed by this step's PCS fold.
 pub(crate) struct State<C: Affine, R: Rank, P: Profile, S: Side> {
     source_tag: Option<C::Scalar>,
     prepared: Option<Prepared<C::Scalar, R>>,
@@ -155,11 +155,11 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     ) -> Result<()> {
         if phase != Phase::BeforeW && self.inputs.is_none() {
             return Err(Error::InvalidWitness(
-                "private inputs must be committed before the next phase".into(),
+                "online inputs must be committed before the next phase".into(),
             ));
         }
         let prepared = self.prepared.as_mut().ok_or_else(|| {
-            Error::InvalidWitness("private polynomial preparation already finished".into())
+            Error::InvalidWitness("online polynomial preparation already finished".into())
         })?;
         prepared.supply(phase, polynomials)?;
         self.commitments.extend(
@@ -192,7 +192,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         let mut coordinates = Vec::with_capacity(2 * self.commitments.len());
         for point in &self.commitments {
             let (x, y) = point.coordinates().ok_or_else(|| {
-                Error::InvalidWitness("a private polynomial commits to the identity".into())
+                Error::InvalidWitness("an online polynomial commits to the identity".into())
             })?;
             coordinates.extend([x, y]);
         }
@@ -217,12 +217,12 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     ) -> Result<()> {
         if self.inputs.is_some() {
             return Err(Error::InvalidWitness(
-                "private inputs already committed".into(),
+                "online inputs already committed".into(),
             ));
         }
         self.prepared
             .as_ref()
-            .ok_or_else(|| Error::InvalidWitness("private preparation already finished".into()))?
+            .ok_or_else(|| Error::InvalidWitness("online preparation already finished".into()))?
             .phase(Phase::BeforeW)?;
         let inputs = InputWitness {
             source_tag: FixedVec::new(self.source_tag.into_iter().collect())?,
@@ -252,11 +252,9 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         rng: &mut RNG,
     ) -> Result<()> {
         if self.prepared.is_some() || self.inputs.is_none() || self.query.is_some() {
-            return Err(Error::InvalidWitness(
-                "private query is out of phase".into(),
-            ));
+            return Err(Error::InvalidWitness("online query is out of phase".into()));
         }
-        let missing = || Error::InvalidWitness("private query is missing a challenge".into());
+        let missing = || Error::InvalidWitness("online query is missing a challenge".into());
         // Query points use only w, y and x. Later challenges are not sampled yet.
         let challenges = Challenges {
             w: challenges.w.ok_or_else(missing)?,
@@ -267,7 +265,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             beta: C::Scalar::ZERO,
         };
         #[cfg(test)]
-        let challenges = crate::private_online_tests::mutate_query_challenges(challenges);
+        let challenges = crate::online_batch_tests::mutate_query_challenges(challenges);
         let queries = S::layout::<P>().query::<_, R, B>(
             &self.polynomials,
             self.early_values().to_vec(),
@@ -302,7 +300,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     ) -> Result<()> {
         if self.query.is_none() || self.eval.is_some() {
             return Err(Error::InvalidWitness(
-                "private evaluation is out of phase".into(),
+                "online evaluation is out of phase".into(),
             ));
         }
         let eval = FixedVec::try_from_fn(|i| Ok(B::sparse_eval(&self.polynomials[i], u)))?;
@@ -337,11 +335,11 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     }
 
     pub(crate) fn stage_commitment(&self, index: usize) -> C {
-        self.stage_commitments[index].expect("private stage committed at its deadline")
+        self.stage_commitments[index].expect("online stage committed at its deadline")
     }
 
     pub(crate) fn query(&self) -> &QueryWitness<C::Scalar, P, S> {
-        self.query.as_ref().expect("private query committed")
+        self.query.as_ref().expect("online query committed")
     }
 
     /// Appends the batch's quotient to the step's: `poly` moves up one power
@@ -384,9 +382,9 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         challenges: Challenges<C::Scalar>,
     ) -> Option<circuit::Witness<'_, C::Scalar, P, S>> {
         Self::active().then(|| circuit::Witness {
-            inputs: self.inputs.as_ref().expect("private inputs committed"),
+            inputs: self.inputs.as_ref().expect("online inputs committed"),
             query: self.query(),
-            eval: self.eval.as_ref().expect("private evaluations committed"),
+            eval: self.eval.as_ref().expect("online evaluations committed"),
             challenges,
         })
     }
@@ -444,7 +442,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     pub(crate) fn fold(&self) -> Result<&[C::Scalar]> {
         self.fold
             .as_deref()
-            .ok_or_else(|| Error::InvalidWitness("private helper has not been traced".into()))
+            .ok_or_else(|| Error::InvalidWitness("online helper has not been traced".into()))
     }
 
     /// Common targets read from the already committed stage witnesses.
@@ -465,7 +463,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         mut rxs: ExtensionRxs<C::Scalar, R>,
     ) -> Result<ExtensionRxs<C::Scalar, R>> {
         if Self::active() {
-            let missing = || Error::InvalidWitness("private batch is out of phase".into());
+            let missing = || Error::InvalidWitness("online batch is out of phase".into());
             rxs.circuits.push(self.helper.take().ok_or_else(missing)?);
             let stages = self
                 .stages

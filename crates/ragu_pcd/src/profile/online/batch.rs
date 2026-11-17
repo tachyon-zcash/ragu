@@ -1,4 +1,4 @@
-//! Arithmetic shared by private batches on either field.
+//! Arithmetic shared by online batches on either field.
 
 use alloc::vec::Vec;
 
@@ -22,7 +22,7 @@ use super::{Challenge, Layout, Point};
 /// circuit lifts, and the lift itself on the nested side.
 #[derive(Clone, Debug)]
 pub struct Challenges<T> {
-    /// Challenge sampled after the private commitments.
+    /// Challenge sampled after the online commitments.
     pub w: T,
     /// Challenge sampled after the first auxiliary commitments.
     pub y: T,
@@ -65,11 +65,11 @@ impl Point {
             Self::Input(index) => inputs
                 .get(index)
                 .copied()
-                .ok_or_else(|| Error::InvalidWitness("missing private input point".into())),
+                .ok_or_else(|| Error::InvalidWitness("missing online input point".into())),
             Self::Witness(index) => points
                 .get(index)
                 .copied()
-                .ok_or_else(|| Error::InvalidWitness("missing private opening point".into())),
+                .ok_or_else(|| Error::InvalidWitness("missing online opening point".into())),
         }
     }
 }
@@ -84,7 +84,7 @@ fn in_domain(index: u32, two_adicity: u32) -> bool {
 fn circuit_point<F: Field>(index: u32) -> Result<F> {
     if !in_domain(index, F::TWO_ADICITY) {
         return Err(Error::Initialization(
-            "private opening circuit index exceeds the field domain".into(),
+            "online opening circuit index exceeds the field domain".into(),
         ));
     }
     Ok(CircuitIndex::from_u32(index).omega_j())
@@ -139,7 +139,7 @@ impl Layout {
             || points.len() != self.points
         {
             return Err(Error::InvalidWitness(
-                "private batch has the wrong witness lengths".into(),
+                "online batch has the wrong witness lengths".into(),
             ));
         }
         let mut values = alloc::vec![None; self.values];
@@ -148,7 +148,7 @@ impl Layout {
             let value = B::sparse_eval(&polynomials[opening.polynomial], point);
             if values[opening.value].is_some_and(|prior| prior != value) {
                 return Err(Error::InvalidWitness(
-                    "private openings disagree on a shared value".into(),
+                    "online openings disagree on a shared value".into(),
                 ));
             }
             values[opening.value] = Some(value);
@@ -183,7 +183,7 @@ impl Layout {
             || points.len() != self.points
         {
             return Err(Error::InvalidWitness(
-                "private batch has the wrong witness lengths".into(),
+                "online batch has the wrong witness lengths".into(),
             ));
         }
         let quotients = self
@@ -200,7 +200,7 @@ impl Layout {
         Ok(quotient_sum(quotients, challenges.alpha))
     }
 
-    /// Constrains the private quotient and evaluation sums.
+    /// Constrains the online quotient and evaluation sums.
     ///
     /// `queries` must be the shared `OnlineQuery` wires, `evaluations` the
     /// `OnlineEval` wires, and `challenges` authenticated by the containing
@@ -224,7 +224,7 @@ impl Layout {
             || evaluations.len() != self.polynomials.len()
         {
             return Err(Error::Initialization(
-                "private batch wires do not match the layout".into(),
+                "online batch wires do not match the layout".into(),
             ));
         }
         let mut inverter = crate::internal::inverter::Inverter::with_base(challenges.u.clone());
@@ -288,7 +288,7 @@ pub(crate) fn quotient_sum<F: Field, R: Rank>(
 ///
 /// Square-and-multiply costs about $\log_2$ of the exponent in
 /// multiplications, rather than one per power. `compute_v` uses it to shift
-/// its existing folds below the private batch's terms.
+/// its existing folds below the online batch's terms.
 pub(crate) fn mul_pow<'dr, D: Driver<'dr>>(
     dr: &mut D,
     value: &Element<'dr, D>,
@@ -309,7 +309,7 @@ pub(crate) fn mul_pow<'dr, D: Driver<'dr>>(
 }
 
 /// Appends opening terms to a quotient fold in descriptor order.
-/// Used by both private helpers and the compatibility placement in compute-v.
+/// Used by both online helpers and the compatibility placement in compute-v.
 pub(crate) fn append_quotients<'a, 'dr: 'a, D: Driver<'dr> + 'a>(
     dr: &mut D,
     horner: &mut Horner<'_, 'dr, D>,

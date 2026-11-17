@@ -384,7 +384,7 @@ fn walk_inputs(
     let inputs = points::Inputs::from_walk(
         &points,
         ragu_primitives::vec::FixedVec::from_fn(|_| {
-            unreachable!("Standard has no private input stage")
+            unreachable!("Standard has no online input stage")
         }),
     );
     assert_eq!(
@@ -608,7 +608,7 @@ mod walk_binding {
             let changed_inputs = points::Inputs::from_walk(
                 &points,
                 ragu_primitives::vec::FixedVec::from_fn(|_| {
-                    unreachable!("Standard has no private input stage")
+                    unreachable!("Standard has no online input stage")
                 }),
             );
             let (mut proof, data) = honest.clone().into_parts();
@@ -705,7 +705,7 @@ mod walk_binding {
             &points::Inputs::from_walk(
                 &points,
                 ragu_primitives::vec::FixedVec::from_fn(|_| {
-                    unreachable!("Standard has no private input stage")
+                    unreachable!("Standard has no online input stage")
                 }),
             ),
             &mut rng,
@@ -822,7 +822,7 @@ mod claim_values {
             crate::proof::bridge_alpha_power(proof.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested::stages::ab::Witness {
                 online_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
-                    unreachable!("Standard has no private auxiliaries")
+                    unreachable!("Standard has no online auxiliaries")
                 }),
                 a: proof.native_a_commitment.0,
                 b: proof.native_b_commitment.0,

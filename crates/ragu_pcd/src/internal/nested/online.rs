@@ -15,7 +15,7 @@
 //! stage holds a point. Every nested circuit that loads the `query` and
 //! challenge stages reads the same $y_q$ and $\zeta_q$.
 //!
-//! The profile's private batch, [`Profile::NESTED_ONLINE`], adds online
+//! The profile's online batch, [`Profile::NESTED_ONLINE`], adds online
 //! polynomials of the step's own on this field, prepared as the native
 //! side's are (see [`online`](crate::internal::native::online)) at the
 //! nested lifts of the fuse's challenges.
@@ -51,7 +51,7 @@ pub const NUM_ONLINE_FQ_POLYS: usize = 1;
 
 /// Compatibility descriptors for pre-w slots opened at the lifted w.
 /// Their stage placement is retained for existing profiles; their opening
-/// algebra is shared with the general private batch.
+/// algebra is shared with the general online batch.
 pub(crate) fn openings(count: usize) -> impl Iterator<Item = crate::profile::online::Opening> {
     (0..count).map(|i| crate::profile::online::Opening {
         polynomial: i,
@@ -70,7 +70,7 @@ impl<P: Profile> Len for FqPolysLen<P> {
     }
 }
 
-/// The walked commitments: legacy slots followed by distinct private polynomials.
+/// The walked commitments: legacy slots followed by distinct online polynomials.
 pub struct FqPointsLen<P: Profile>(PhantomData<P>);
 impl<P: Profile> Len for FqPointsLen<P> {
     fn len() -> usize {
@@ -78,7 +78,7 @@ impl<P: Profile> Len for FqPointsLen<P> {
     }
 }
 
-/// Legacy and private points fixed before w; later auxiliaries live in later stages.
+/// Legacy and online points fixed before w; later auxiliaries live in later stages.
 pub struct FqEarlyPointsLen<P: Profile>(PhantomData<P>);
 impl<P: Profile> Len for FqEarlyPointsLen<P> {
     fn len() -> usize {
@@ -109,7 +109,7 @@ pub fn point<F: Field>(w: F) -> F {
 /// on $\zeta_q$.
 ///
 /// This witness is retained for compatibility profiles. New consumers supply
-/// their own polynomials through the private-batch preparation hooks.
+/// their own polynomials through the online-batch preparation hooks.
 pub fn placeholder<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(alloc::vec![F::from(1), F::from(2), F::from(3)])
 }
@@ -117,7 +117,7 @@ pub fn placeholder<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Begins the step's nested private batch from the profile's inputs,
+    /// Begins the step's nested online batch from the profile's inputs,
     /// with the lifts of the children's $x$ and $y$ in the slots a mesh
     /// inherits them at, and supplies its polynomials fixed before $w$.
     pub(crate) fn begin_nested_online(

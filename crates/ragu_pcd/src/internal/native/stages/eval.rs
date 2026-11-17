@@ -216,7 +216,7 @@ pub struct CurrentStepWitness<F> {
 
 /// Witness for the eval stage.
 pub struct Witness<C: ProfiledCycle> {
-    /// Coordinates of the private nested eval-stage commitment.
+    /// Coordinates of the nested online eval-stage commitment.
     pub online_stage:
         ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>>,
     /// Left proof's evaluations at $u$.
@@ -342,7 +342,7 @@ pub struct Evaluations<'dr, D: Driver<'dr>, P: Profile> {
 /// the evaluations into the $v$ Horner sum never includes them.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
-    /// The private eval commitment fixed at this transcript boundary.
+    /// The online eval commitment fixed at this transcript boundary.
     #[ragu(gadget)]
     pub online_stage:
         ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<C::Profile, Nested, 2>>,

@@ -1270,7 +1270,7 @@ mod timing {
                         bridge_alpha_power(changed.bridge_alpha, nested::RxIndex::BridgeAB),
                         &ab::Witness {
                             online_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
-                                unreachable!("Standard has no private auxiliaries")
+                                unreachable!("Standard has no online auxiliaries")
                             }),
                             a: changed.native_commitment(native::RxComponent::AbA),
                             b: changed.native_commitment(native::RxComponent::AbB),

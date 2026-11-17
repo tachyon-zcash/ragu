@@ -53,7 +53,7 @@ use crate::profile::{
     online::stages::{Nested, PolynomialsLen},
 };
 
-/// The unified instance followed by the actual nested private walk points.
+/// The unified instance followed by the actual nested online walk points.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     #[ragu(gadget)]

@@ -81,8 +81,8 @@ mod profile_layout_tests;
 mod online_fq_oracles_tests;
 
 #[cfg(test)]
-#[path = "../tests/private_online.rs"]
-mod private_online_tests;
+#[path = "../tests/online_batch.rs"]
+mod online_batch_tests;
 #[cfg(test)]
 #[path = "../tests/source_mesh.rs"]
 mod source_mesh_tests;

@@ -215,17 +215,17 @@ pub struct Proof<C: Cycle, R: Rank> {
     /// empty without a nested mesh.
     pub(crate) nested_mesh_claims: Vec<C::ScalarField>,
     /// The nested helper's quotient and evaluation sums, empty when the
-    /// nested private batch is inactive.
+    /// nested online batch is inactive.
     pub(crate) nested_online_fold: Vec<C::ScalarField>,
     /// The native source mesh's coordinates and shared intersection values,
     /// empty without a native mesh.
     pub(crate) native_mesh_claims: Vec<C::CircuitField>,
     /// The native helper's quotient and evaluation sums, empty when the
-    /// native private batch is inactive.
+    /// native online batch is inactive.
     pub(crate) native_online_fold: Vec<C::CircuitField>,
-    /// Common claim targets for the actual nested private/auxiliary walk points.
+    /// Common claim targets for the actual nested online walk points.
     pub(crate) nested_online_commitments: Vec<C::NestedCurve>,
-    /// Common claim targets for the actual native private/auxiliary walk points.
+    /// Common claim targets for the actual native online walk points.
     pub(crate) native_online_commitments: Vec<C::HostCurve>,
 
     /// The retained source-registry restriction for the next parent, if declared.
@@ -1284,7 +1284,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             beta: beta_lift[0],
         };
 
-        // Every private slot the mesh leaves holds the padding polynomial, the
+        // Every online slot the mesh leaves holds the padding polynomial, the
         // constant one, as the online slots do, so no commitment is the
         // identity.
         let native_online_polynomials = if let Some(mesh) = C::Profile::NATIVE_MESH {
@@ -1327,7 +1327,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .collect();
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
         // Bootstrap bypasses the synthetic child's circuit claims, so it has
-        // no private batch: the builder takes its commitments and outgoing
+        // no online batch: the builder takes its commitments and outgoing
         // source polynomials from here.
         builder.dummy_native_online_commitments = Some(native_online_commitments.clone());
         if let Some(mesh) = C::Profile::NATIVE_MESH {

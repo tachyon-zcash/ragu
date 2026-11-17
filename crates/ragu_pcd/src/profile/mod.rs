@@ -153,16 +153,16 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
 
-    /// Private native polynomial and opening declarations. The application
+    /// Native online polynomial and opening declarations. The application
     /// slots are separate from this layout.
     ///
-    /// Commitments follow their declared private or auxiliary phases.
+    /// Commitments follow their declared initial or auxiliary phases.
     const NATIVE_ONLINE: online::Layout = online::Layout::EMPTY;
 
-    /// Private nested polynomial and opening declarations, independent of
+    /// Nested online polynomial and opening declarations, independent of
     /// the native layout and of the legacy V5 slot.
     ///
-    /// Commitments follow their declared private or auxiliary phases.
+    /// Commitments follow their declared initial or auxiliary phases.
     const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
 
     /// A setup-fixed native source-registry mesh over declared online slots.
@@ -172,7 +172,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Nested counterpart of [`Self::NATIVE_MESH`].
     const NESTED_MESH: Option<online::mesh::Mesh> = None;
 
-    /// Native extension circuits that reserve the private input and query
+    /// Native extension circuits that reserve the online input and query
     /// stages before their own stages, indexed in `native_extension`.
     /// A consumer's first own stage must have `online::stages::QueryStage`
     /// as its parent. Circuits with no own stage end at that query stage.
@@ -353,7 +353,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
-    /// Supplies this step's private native inputs before any fuse challenge.
+    /// Supplies this step's native online inputs before any fuse challenge.
     ///
     /// The returned values are committed once in `online::stages::InputStage`.
     /// Consumers must use those stage wires for data that defines a random test.
@@ -374,7 +374,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::inputs::<Self, online::stages::Native, _>()
     }
 
-    /// Supplies private native polynomials at one commitment deadline.
+    /// Supplies native online polynomials at one commitment deadline.
     ///
     /// Return only the slots declared for `phase` that are not owned by the
     /// source mesh, in declaration order. The protocol prepares mesh slots.
@@ -423,12 +423,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::points::<Self, online::stages::Native, _>()
     }
 
-    /// Traces the user extension with the private batch's immutable stage data.
+    /// Traces the user extension with the online batch's immutable stage data.
     ///
-    /// Consumer circuits reserve the declared private prefix. Their witnesses
+    /// Consumer circuits reserve the declared online prefix. Their witnesses
     /// must use `online`'s input and query values, including the opposite
     /// field's pre-w polynomial commitment coordinates. The protocol supplies
-    /// the helper trace and private stage polynomials separately.
+    /// the helper trace and online stage polynomials separately.
     ///
     /// # Errors
     ///
@@ -451,7 +451,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         Self::native_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
     }
 
-    /// Supplies this step's private nested inputs before any fuse challenge.
+    /// Supplies this step's nested online inputs before any fuse challenge.
     ///
     /// The returned values are committed once in `online::stages::InputStage`.
     /// Consumers must use those stage wires for data that defines a random test.
@@ -472,7 +472,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::inputs::<Self, online::stages::Nested, _>()
     }
 
-    /// Supplies private nested polynomials at one commitment deadline.
+    /// Supplies nested online polynomials at one commitment deadline.
     ///
     /// Return only the slots declared for `phase` that are not owned by the
     /// source mesh, in declaration order. The protocol prepares mesh slots.
@@ -521,12 +521,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::points::<Self, online::stages::Nested, _>()
     }
 
-    /// Traces the user extension with the private batch's immutable stage data.
+    /// Traces the user extension with the online batch's immutable stage data.
     ///
-    /// Consumer circuits reserve the declared private prefix. Their witnesses
+    /// Consumer circuits reserve the declared online prefix. Their witnesses
     /// must use `online`'s input and query values, including the opposite
     /// field's pre-w polynomial commitment coordinates. The protocol supplies
-    /// the helper trace and private stage polynomials separately.
+    /// the helper trace and online stage polynomials separately.
     ///
     /// # Errors
     ///
@@ -649,12 +649,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 }
 
-/// The registered native extension, including the private batch helper.
+/// The registered native extension, including the online batch helper.
 pub(crate) fn native_extension<P: Profile>() -> Extension {
     online::extension::layout::<P, online::stages::Native>()
 }
 
-/// The registered nested extension, including the private batch helper.
+/// The registered nested extension, including the online batch helper.
 pub(crate) fn nested_extension<P: Profile>() -> Extension {
     online::extension::layout::<P, online::stages::Nested>()
 }
@@ -1154,7 +1154,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
-    /// profile's extension, with the native private batch's helper circuit
+    /// profile's extension, with the native online batch's helper circuit
     /// and stages when [`Profile::NATIVE_ONLINE`] is nonempty.
     pub native_rx: usize,
     /// The nested-curve points the nested walk folds: the native batch, with
@@ -1162,7 +1162,7 @@ pub struct Shape {
     pub nested_points: usize,
     /// The nested walk's steps.
     pub nested_steps: usize,
-    /// The nested rx polynomials, with the nested private batch's helper
+    /// The nested rx polynomials, with the nested online batch's helper
     /// circuit and stages when [`Profile::NESTED_ONLINE`] is nonempty.
     pub nested_rx: usize,
     /// The step's own polynomials over the scalar field: the

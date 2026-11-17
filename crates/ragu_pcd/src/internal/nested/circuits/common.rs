@@ -36,7 +36,7 @@ use crate::{
 /// unified instance the circuit outputs.
 pub struct Witness<'a, C: Affine, P: Profile> {
     pub instance: unified::Instance<C>,
-    /// The private helper's two sums, exported by compute-v to the same targets.
+    /// The online helper's two sums, exported by compute-v to the same targets.
     pub online_fold: FixedVec<C::Base, Present<P, Nested, 2>>,
     pub endoscalar: Uendo,
     pub bridge_hash: C,

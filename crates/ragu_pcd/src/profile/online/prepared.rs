@@ -1,4 +1,4 @@
-//! Prover state for the private batch's commitment deadlines.
+//! Prover state for the online batch's commitment deadlines.
 
 use alloc::{vec, vec::Vec};
 
@@ -13,7 +13,7 @@ use super::{Layout, Phase};
 /// The quotient and evaluation challenges are not available during preparation.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PreparationChallenges<F> {
-    /// Available after the private input commitments.
+    /// Available after the online input commitments.
     pub w: Option<F>,
     /// Available after the `BeforeY` auxiliary commitments.
     pub y: Option<F>,
@@ -21,7 +21,7 @@ pub struct PreparationChallenges<F> {
     pub x: Option<F>,
 }
 
-/// A private batch under construction, with one assignment per polynomial.
+/// An online batch under construction, with one assignment per polynomial.
 ///
 /// This enforces the honest prover's lifecycle. The transcript absorption and
 /// circuit bindings independently enforce these deadlines against a malicious
@@ -45,7 +45,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
         layout.check()?;
         if inputs.len() != layout.inputs {
             return Err(Error::InvalidWitness(
-                "private input length does not match its declaration".into(),
+                "online input length does not match its declaration".into(),
             ));
         }
         Ok(Self {
@@ -84,7 +84,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
             .count();
         if PHASES.get(self.next) != Some(&phase) || polynomials.len() != count {
             return Err(Error::InvalidWitness(
-                "private polynomial preparation does not match its phase".into(),
+                "online polynomial preparation does not match its phase".into(),
             ));
         }
         if polynomials
@@ -92,7 +92,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
             .any(|poly| poly.iter_coeffs().all(|c| c == F::ZERO))
         {
             return Err(Error::InvalidWitness(
-                "a private polynomial must not be zero".into(),
+                "an online polynomial must not be zero".into(),
             ));
         }
         let mut polynomials = polynomials.into_iter();
@@ -113,7 +113,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     pub(crate) fn phase(&self, phase: Phase) -> Result<Vec<&sparse::Polynomial<F, R>>> {
         if !PHASES[..self.next].contains(&phase) {
             return Err(Error::InvalidWitness(
-                "private polynomial phase has not been prepared".into(),
+                "online polynomial phase has not been prepared".into(),
             ));
         }
         Ok(self
@@ -133,7 +133,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     pub(crate) fn finish(self) -> Result<Vec<sparse::Polynomial<F, R>>> {
         if self.next != PHASES.len() {
             return Err(Error::InvalidWitness(
-                "private polynomial preparation is incomplete".into(),
+                "online polynomial preparation is incomplete".into(),
             ));
         }
         Ok(self

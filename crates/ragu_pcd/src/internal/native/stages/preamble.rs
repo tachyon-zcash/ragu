@@ -102,7 +102,7 @@ pub struct ProofInputs<
     /// k(y) targets, binding the application's queries to the proved openings.
     #[ragu(gadget)]
     pub online: online::QueriesOutput<'dr, D>,
-    /// Common quotient and evaluation sums for the native private helper.
+    /// Common quotient and evaluation sums for the native online helper.
     #[ragu(gadget)]
     pub mesh: FixedVec<
         Element<'dr, D>,
@@ -120,7 +120,7 @@ pub struct ProofInputs<
             2,
         >,
     >,
-    /// The child's common targets for its actual nested private walk points.
+    /// The child's common targets for its actual nested online walk points.
     #[ragu(gadget)]
     pub online_points: FixedVec<
         ragu_primitives::Point<'dr, D, C::NestedCurve>,
@@ -223,7 +223,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         ky.finish_ky(dr)
     }
 
-    /// The private helper shares the core's sums and the walk's point exports.
+    /// The online helper shares the core's sums and the walk's point exports.
     pub fn online_helper_ky(
         &self,
         dr: &mut D,
@@ -256,7 +256,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         ky::finish_extension_ky(target, dr).map(Some)
     }
 
-    /// The actual nested private commitments exported by bind_endoscalar.
+    /// The actual nested online commitments exported by bind_endoscalar.
     pub fn bind_endoscalar_ky(
         &self,
         dr: &mut D,

@@ -1,4 +1,4 @@
-//! Places the private batch's stages and helper inside the extension layout.
+//! Places the online batch's stages and helper inside the extension layout.
 
 use alloc::{vec, vec::Vec};
 
@@ -30,7 +30,7 @@ pub fn stage_offset<P: Profile, S: Side>() -> usize {
     }
 }
 
-/// User circuits that share the private input and query stage prefix.
+/// User circuits that share the online input and query stage prefix.
 pub fn consumers<P: Profile, S: Side>() -> &'static [u32] {
     if S::NATIVE {
         P::NATIVE_ONLINE_CONSUMERS
@@ -39,7 +39,7 @@ pub fn consumers<P: Profile, S: Side>() -> &'static [u32] {
     }
 }
 
-/// The profile's own declaration, before adding the private batch.
+/// The profile's own declaration, before adding the online batch.
 pub fn declared<P: Profile, S: Side>() -> Extension {
     if S::NATIVE {
         P::native_extension()
@@ -48,7 +48,7 @@ pub fn declared<P: Profile, S: Side>() -> Extension {
     }
 }
 
-/// The built-in helper's index, if this field has a private batch.
+/// The built-in helper's index, if this field has an online batch.
 pub fn helper<P: Profile, S: Side>() -> Option<u32> {
     (!S::layout::<P>().is_empty()).then(|| declared::<P, S>().circuits.len() as u32)
 }
@@ -103,13 +103,13 @@ pub fn check<P: Profile, S: Side>() -> Result<()> {
         || !layout::<P, S>().is_consistent()
     {
         return Err(Error::Initialization(
-            "the private batch's extension consumers are not well formed".into(),
+            "the online batch's extension consumers are not well formed".into(),
         ));
     }
     Ok(())
 }
 
-/// Registers the private helper at its automatically assigned circuit index.
+/// Registers the online helper at its automatically assigned circuit index.
 pub fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
     slot: CircuitSlot<'params, F, R>,
     source_tag: Option<F>,
@@ -119,15 +119,15 @@ pub fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
     ))
 }
 
-/// A bonding belongs to the private batch or to the user's declaration.
+/// A bonding belongs to the online batch or to the user's declaration.
 pub enum Bonding<'params, F: Field, R: Rank> {
-    /// An automatically registered private stage mask or final mask.
+    /// An automatically registered online stage mask or final mask.
     Online(BondingObject<'params, F, R>),
     /// The original index passed to the profile's registration hook.
     User(usize),
 }
 
-/// Resolves a merged bonding index to its private mask or original user index.
+/// Resolves a merged bonding index to its online mask or original user index.
 pub fn bonding<'params, F: Field, R: Rank, P: Profile, S: Side>(
     index: usize,
 ) -> Result<Bonding<'params, F, R>> {
@@ -135,7 +135,7 @@ pub fn bonding<'params, F: Field, R: Rank, P: Profile, S: Side>(
     let declared = declared::<P, S>();
     if index >= layout::<P, S>().bondings() {
         return Err(Error::Initialization(
-            "private batch bonding index is out of range".into(),
+            "online batch bonding index is out of range".into(),
         ));
     }
     if offset == 0 {

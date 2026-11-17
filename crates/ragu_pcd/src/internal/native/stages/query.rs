@@ -104,7 +104,7 @@ pub struct Witness<C: ProfiledCycle> {
         C::CircuitField,
         crate::profile::online::stages::PhaseCoordinatesLen<C::Profile, Nested, 3>,
     >,
-    /// Coordinates of the private nested query-stage commitment.
+    /// Coordinates of the nested online query-stage commitment.
     pub online_stage:
         ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>>,
     /// Pre-computed registry_xy evaluations at each internal circuit's omega^j.
@@ -298,7 +298,7 @@ pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
         Element<'dr, D>,
         crate::profile::online::stages::PhaseCoordinatesLen<P, Nested, 3>,
     >,
-    /// The private query commitment fixed at this transcript boundary.
+    /// The online query commitment fixed at this transcript boundary.
     #[ragu(gadget)]
     pub online_stage: ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<P, Nested, 2>>,
     /// Fixed registry evaluations at each internal circuit's omega^j.

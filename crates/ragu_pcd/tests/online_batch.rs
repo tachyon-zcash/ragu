@@ -1,4 +1,4 @@
-//! Private batches, the identity commitments they reject, and transcript-copy
+//! Online batches, the identity commitments they reject, and transcript-copy
 //! attacks.
 
 use alloc::{vec, vec::Vec};
@@ -41,7 +41,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct OnlineBatch;
 impl Profile for OnlineBatch {
-    const NAME: &'static str = "private-nested-batch";
+    const NAME: &'static str = "online-nested-batch";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 1;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
@@ -79,7 +79,7 @@ impl Profile for OnlineBatch {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let online = online.expect("declared consumer has private stages");
+        let online = online.expect("declared consumer has online stages");
         let circuit = MultiStage::<Base::ScalarField, Rk, _>::new(Consumer);
         let trace = circuit.trace((online.inputs, online.query))?.into_parts().0;
         let index = crate::internal::nested::InternalCircuitIndex::ExtensionCircuit(0)
@@ -220,19 +220,16 @@ fn application() -> Result<App> {
 fn verify(app: &App, pcd: &Pcd<C, Rk, ()>, rng: &mut StdRng, expected: bool) -> Result<()> {
     assert_eq!(app.verify_uncompressed(pcd, &mut *rng)?, expected);
     let compressed = app.compress(pcd, rng)?;
-    let bytes = compressed
-        .proof()
-        .to_bytes()
-        .expect("encode private points");
+    let bytes = compressed.proof().to_bytes().expect("encode online points");
     let compressed = crate::CompressedProof::<C>::from_bytes(&bytes)
-        .expect("decode private points")
+        .expect("decode online points")
         .carry::<()>(());
     assert_eq!(app.verify_compressed(&compressed)?, expected);
     Ok(())
 }
 
 #[test]
-fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
+fn nested_online_batch_round_trip_and_sum_binding() -> Result<()> {
     let app = application()?;
     let mut rng = StdRng::seed_from_u64(0x6060);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
@@ -242,9 +239,9 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
     let bytes = parent
         .proof()
         .to_bytes()
-        .expect("encode active private batch");
+        .expect("encode active online batch");
     let decoded = Proof::<C, Rk>::from_bytes(&bytes)
-        .expect("decode active private batch")
+        .expect("decode active online batch")
         .carry::<()>(());
     verify(&app, &decoded, &mut rng, true)?;
 
@@ -272,7 +269,7 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
 }
 
 #[test]
-fn nested_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
+fn nested_online_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
     let app = application()?;
     let mut rng = StdRng::seed_from_u64(0x6061);
     let (sibling, ()) = app.seed(&mut rng, UnitStep, ())?;
@@ -285,7 +282,7 @@ fn nested_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
     Ok(())
 }
 
-/// A scalar consumer reserves only the independent private input/query prefix.
+/// A scalar consumer reserves only the independent online input/query prefix.
 /// It checks the known formula $q(X) = X^2 - X + 1$ at the authenticated w and
 /// at an early input.
 struct Consumer;
@@ -343,7 +340,7 @@ pub(crate) fn mutate_query_challenges<F: Field>(mut challenges: Challenges<F>) -
 }
 
 #[test]
-fn private_consumer_challenges_are_bound_to_the_enclosing_step() -> Result<()> {
+fn online_consumer_challenges_are_bound_to_the_enclosing_step() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -369,9 +366,9 @@ fn private_consumer_challenges_are_bound_to_the_enclosing_step() -> Result<()> {
 struct NativeBatch<const WITH_NESTED: bool>;
 impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
     const NAME: &'static str = if WITH_NESTED {
-        "private-both-batches"
+        "online-both-batches"
     } else {
-        "private-native-batch"
+        "online-native-batch"
     };
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
@@ -500,15 +497,15 @@ fn verify_profile<P: Profile>(
 ) -> Result<()> {
     assert_eq!(app.verify_uncompressed(pcd, &mut *rng)?, expected);
     let compressed = app.compress(pcd, rng)?;
-    let bytes = compressed.proof().to_bytes().expect("encode private batch");
+    let bytes = compressed.proof().to_bytes().expect("encode online batch");
     let decoded = crate::CompressedProof::<Profiled<Pasta, P>>::from_bytes(&bytes)
-        .expect("decode private batch")
+        .expect("decode online batch")
         .carry::<()>(());
     assert_eq!(app.verify_compressed(&decoded)?, expected);
     Ok(())
 }
 
-/// A private commitment is never the identity. For each listed slot, a proof
+/// An online commitment is never the identity. For each listed slot, a proof
 /// holding the identity there cannot be encoded, both verifiers reject it,
 /// and no parent can be fused over it.
 pub(crate) fn check_identity_online_commitments<P: Profile>(
@@ -572,9 +569,9 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
     let bytes = parent
         .proof()
         .to_bytes()
-        .expect("encode native private proof");
+        .expect("encode native online proof");
     let decoded = Proof::<Cycle<WITH_NESTED>, Rk>::from_bytes(&bytes)
-        .expect("decode native private proof")
+        .expect("decode native online proof")
         .carry::<()>(());
     verify_profile(&app, &decoded, &mut rng, true)?;
     // Both foreign helper exports and the actual walk use these common points.
@@ -602,12 +599,12 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
 }
 
 #[test]
-fn native_private_batches_round_trip_without_a_nested_helper() -> Result<()> {
+fn native_online_batches_round_trip_without_a_nested_helper() -> Result<()> {
     native_round_trip::<false>()
 }
 
 #[test]
-fn both_private_batches_round_trip_and_bind_points_and_sums() -> Result<()> {
+fn both_online_batches_round_trip_and_bind_points_and_sums() -> Result<()> {
     native_round_trip::<true>()
 }
 
@@ -621,7 +618,7 @@ pub(crate) fn mutate_native_stage_commitment<P: Affine>(index: usize, point: P) 
 }
 
 #[test]
-fn native_private_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
+fn native_online_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -696,7 +693,7 @@ mod capture {
         }
     }
     #[test]
-    fn both_private_compute_v_circuits_capture_and_replay() -> Result<()> {
+    fn both_online_compute_v_circuits_capture_and_replay() -> Result<()> {
         let app = ApplicationBuilder::<Profiled<Pasta, NativeBatch<true>>, Rk, 2>::new()
             .register(UnitStep)?
             .finalize(crate::pasta::baked_aggregator())?;
@@ -724,7 +721,7 @@ mod capture {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct NativePhases;
 impl Profile for NativePhases {
-    const NAME: &'static str = "native-private-phases";
+    const NAME: &'static str = "native-online-phases";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
@@ -885,7 +882,7 @@ fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<(
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct NestedPhases;
 impl Profile for NestedPhases {
-    const NAME: &'static str = "nested-private-phases";
+    const NAME: &'static str = "nested-online-phases";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;

@@ -160,7 +160,7 @@ pub enum InputSource {
     RegistryXy,
     /// The step's own online Fq commitment, by index, in [`PreambleStage`].
     OnlineFq(usize),
-    /// A private auxiliary in its later commitment phase, at a phase-local index.
+    /// An online auxiliary in its later commitment phase, at a phase-local index.
     Auxiliary(Phase, usize),
 }
 
@@ -266,7 +266,7 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
 /// and binding circuit.
 #[derive(Clone)]
 pub struct BindingWitness<C: Affine, P: Profile> {
-    /// This step's private nested input stage, committed before w.
+    /// This step's nested online input stage, committed before w.
     pub online_input: FixedVec<C, Present<P, Nested, 1>>,
     pub left: ChildBindingWitness<C, P>,
     pub right: ChildBindingWitness<C, P>,
@@ -283,7 +283,7 @@ pub struct PreambleWitness<C: Affine, P: Profile> {
 /// Witness of [`RegistryWxStage`].
 #[derive(Clone)]
 pub struct RegistryWxWitness<C: Affine, P: Profile> {
-    /// Private nested auxiliaries fixed at this boundary.
+    /// Nested online auxiliaries fixed at this boundary.
     pub online_points: FixedVec<C, PhaseLen<P, Nested, 1>>,
     pub registry_wx0: C,
     pub registry_wx1: C,
@@ -292,7 +292,7 @@ pub struct RegistryWxWitness<C: Affine, P: Profile> {
 /// Witness of [`AbStage`].
 #[derive(Clone)]
 pub struct AbWitness<C: Affine, P: Profile> {
-    /// Private nested auxiliaries fixed at this boundary.
+    /// Nested online auxiliaries fixed at this boundary.
     pub online_points: FixedVec<C, PhaseLen<P, Nested, 2>>,
     pub registry_wy: C,
     pub a: C,
@@ -302,7 +302,7 @@ pub struct AbWitness<C: Affine, P: Profile> {
 /// Witness of [`FStage`].
 #[derive(Clone)]
 pub struct FWitness<C: Affine, P: Profile> {
-    /// Private nested auxiliaries fixed at this boundary.
+    /// Nested online auxiliaries fixed at this boundary.
     pub online_points: FixedVec<C, PhaseLen<P, Nested, 3>>,
     pub registry_xy: C,
     pub f: C,
@@ -527,7 +527,7 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
 /// Output gadget of [`BindingStage`].
 #[derive(Gadget, Consistent)]
 pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// The nested private input-stage commitment absorbed before w.
+    /// The nested online input-stage commitment absorbed before w.
     #[ragu(gadget)]
     pub online_input: FixedVec<Point<'dr, D, C>, Present<P, Nested, 1>>,
     #[ragu(gadget)]
@@ -549,7 +549,7 @@ pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 /// Output gadget of [`RegistryWxStage`].
 #[derive(Gadget, Consistent)]
 pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// Private nested auxiliaries fixed at this boundary.
+    /// Nested online auxiliaries fixed at this boundary.
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 1>>,
     #[ragu(gadget)]
@@ -561,7 +561,7 @@ pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 /// Output gadget of [`AbStage`].
 #[derive(Gadget, Consistent)]
 pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// Private nested auxiliaries fixed at this boundary.
+    /// Nested online auxiliaries fixed at this boundary.
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 2>>,
     #[ragu(gadget)]
@@ -575,7 +575,7 @@ pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
 /// Output gadget of [`FStage`].
 #[derive(Gadget, Consistent)]
 pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// Private nested auxiliaries fixed at this boundary.
+    /// Nested online auxiliaries fixed at this boundary.
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 3>>,
     #[ragu(gadget)]

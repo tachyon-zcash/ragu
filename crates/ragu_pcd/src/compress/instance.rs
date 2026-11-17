@@ -100,17 +100,17 @@ pub(crate) struct Instance<C: Cycle> {
     /// empty without a nested mesh.
     pub nested_mesh_claims: Vec<C::ScalarField>,
     /// The nested helper's quotient and evaluation sums, empty when the
-    /// nested private batch is inactive.
+    /// nested online batch is inactive.
     pub nested_online_fold: Vec<C::ScalarField>,
     /// The native source mesh's coordinates and shared intersection values,
     /// empty without a native mesh.
     pub native_mesh_claims: Vec<C::CircuitField>,
     /// The native helper's quotient and evaluation sums, empty when the
-    /// native private batch is inactive.
+    /// native online batch is inactive.
     pub native_online_fold: Vec<C::CircuitField>,
-    /// The private/auxiliary points exported by bind_endoscalar.
+    /// The online points, initial and auxiliary, exported by bind_endoscalar.
     pub nested_online_commitments: Vec<C::NestedCurve>,
-    /// Common claim targets for the actual native private/auxiliary walk points.
+    /// Common claim targets for the actual native online walk points.
     pub native_online_commitments: Vec<C::HostCurve>,
 
     /// The wires the decider reads off the preamble and eval stages.

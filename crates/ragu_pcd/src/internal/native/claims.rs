@@ -235,7 +235,7 @@ where
             }
 
             // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
-            // when it exports the nested private input-stage commitment.
+            // when it exports the nested online input-stage commitment.
             ComputeVCircuit => {
                 for ((((cv, pb), pre), q), e) in source
                     .rx(Rx(ComputeV))
@@ -455,10 +455,10 @@ pub trait KySource {
     /// instance followed by the step's online openings.
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// Native private helper target, when the profile has a private batch.
+    /// Native online helper target, when the profile has an online batch.
     fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// The unified instance followed by actual nested private walk points.
+    /// The unified instance followed by actual nested online walk points.
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Base iterator over unified $k(y)$ values.
@@ -533,7 +533,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
             let helper_ky: Vec<S::Ky> = source.online_helper_ky().collect();
             assert!(
                 helper.is_none() || helper_ky.len() == ones.len(),
-                "a private helper takes one target per proof"
+                "an online helper takes one target per proof"
             );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {

@@ -125,7 +125,7 @@ impl Mesh {
 
 impl Mesh {
     /// Valid setup-defined mesh restrictions for a synthetic base child.
-    /// Unrelated private slots hold the padding polynomial, the constant one,
+    /// Unrelated online slots hold the padding polynomial, the constant one,
     /// as a synthetic child's online slots do.
     pub(crate) fn dummy_polynomials<F: Field, R: Rank>(
         &self,

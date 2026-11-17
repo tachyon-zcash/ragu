@@ -494,7 +494,7 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     verify(&app, &grandparent, &mut rng, true)?;
     // A restriction, a helper and the outgoing restriction on each field.
     let outgoing = SourceCapacity::NATIVE_MESH.expect("mesh declared").outgoing;
-    crate::private_online_tests::check_identity_online_commitments(
+    crate::online_batch_tests::check_identity_online_commitments(
         &app,
         &child,
         &mut rng,

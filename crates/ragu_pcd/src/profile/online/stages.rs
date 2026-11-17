@@ -1,4 +1,4 @@
-//! Independent input, query and evaluation stages for private batches.
+//! Independent input, query and evaluation stages for online batches.
 
 use core::marker::PhantomData;
 
@@ -92,7 +92,7 @@ count!(
     "The number of shared claimed query values."
 );
 
-/// A fixed number of values when this side has a private batch, otherwise none.
+/// A fixed number of values when this side has an online batch, otherwise none.
 pub struct Present<P: Profile, S: Side, const N: usize>(PhantomData<(P, S)>);
 impl<P: Profile, S: Side, const N: usize> Len for Present<P, S, N> {
     fn len() -> usize {
@@ -150,7 +150,7 @@ pub(crate) fn phase_points<P: Profile, S: Side, const PHASE: usize, T: Clone>(
     FixedVec::from_fn(|i| points[start + i].clone())
 }
 
-/// Coordinates of the other field's private commitments fixed before w.
+/// Coordinates of the other field's online commitments fixed before w.
 /// Each point occupies two wires.
 pub struct ForeignLen<P: Profile, S: Side>(PhantomData<(P, S)>);
 impl<P: Profile, S: Side> Len for ForeignLen<P, S> {
@@ -163,7 +163,7 @@ impl<P: Profile, S: Side> Len for ForeignLen<P, S> {
     }
 }
 
-/// User inputs and the opposite field's private commitment coordinates.
+/// User inputs and the opposite field's online commitment coordinates.
 #[derive(Clone)]
 pub struct InputWitness<F, P: Profile, S: Side> {
     /// The source tag, constrained to the registry captured by setup.
@@ -174,7 +174,7 @@ pub struct InputWitness<F, P: Profile, S: Side> {
     pub foreign: FixedVec<F, ForeignLen<P, S>>,
 }
 
-/// Early wires shared by all declared private consumers.
+/// Early wires shared by all declared online consumers.
 #[derive(Gadget, Write, Consistent)]
 pub struct InputOutput<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     /// The source tag, authenticated by the batch helper's circuit constant.

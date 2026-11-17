@@ -85,7 +85,7 @@ use crate::{
     },
 };
 
-/// The batch instance and the private helper's authenticated challenges and sums.
+/// The batch instance and the online helper's authenticated challenges and sums.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     #[ragu(gadget)]
@@ -93,13 +93,13 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Lifted w, alpha and beta, then the helper's quotient and evaluation sums.
     #[ragu(gadget)]
     pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
-    /// The native private Input, Query and Eval commitments at their deadlines.
+    /// The native online Input, Query and Eval commitments at their deadlines.
     #[ragu(gadget)]
     pub online_stages: FixedVec<
         ragu_primitives::Point<'dr, D, C>,
         Present<P, crate::profile::online::stages::Native, 3>,
     >,
-    /// Actual native private commitment points, also the helper's foreign exports.
+    /// Actual native online commitment points, also the helper's foreign exports.
     #[ragu(gadget)]
     pub online_points: FixedVec<
         ragu_primitives::Point<'dr, D, C>,

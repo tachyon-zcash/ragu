@@ -263,14 +263,14 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
     online_openings: Option<online::Queries<C::CircuitField>>,
 
-    // Private polynomial preparation, discarded after this step's PCS fold.
+    // Online polynomial preparation, discarded after this step's PCS fold.
     // The fuse begins both sides' for every profile; the synthetic bootstrap
     // proof has neither.
     native_online: Option<NativeOnline<C, R>>,
     nested_online: Option<NestedOnline<C, R>>,
 
     // The synthetic bootstrap proof's outgoing source polynomials and
-    // explicit commitments, which it has no private prover state to take
+    // explicit commitments, which it has no online prover state to take
     // from. Ordinary proofs take theirs from their state.
     pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
@@ -396,14 +396,14 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
 }
 
-/// A step's native private batch.
+/// A step's native online batch.
 pub(crate) type NativeOnline<C, R> = crate::profile::online::prover::State<
     <C as Cycle>::HostCurve,
     R,
     <C as ProfiledCycle>::Profile,
     Native,
 >;
-/// A step's nested private batch.
+/// A step's nested online batch.
 pub(crate) type NestedOnline<C, R> = crate::profile::online::prover::State<
     <C as Cycle>::NestedCurve,
     R,
@@ -412,19 +412,19 @@ pub(crate) type NestedOnline<C, R> = crate::profile::online::prover::State<
 >;
 
 impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
-    // A step's private batches. The fuse sets both for every profile; the
+    // A step's online batches. The fuse sets both for every profile; the
     // bootstrap proof sets neither.
     setter!(set_native_online, native_online, NativeOnline<C, R>);
     setter!(set_nested_online, nested_online, NestedOnline<C, R>);
     ref_getter!(native_online, native_online, NativeOnline<C, R>);
     ref_getter!(nested_online, nested_online, NestedOnline<C, R>);
 
-    /// Mutably borrows the step's native private batch.
+    /// Mutably borrows the step's native online batch.
     pub(crate) fn native_online_mut(&mut self) -> &mut NativeOnline<C, R> {
         self.native_online.as_mut().expect("native_online not set")
     }
 
-    /// Mutably borrows the step's nested private batch.
+    /// Mutably borrows the step's nested online batch.
     pub(crate) fn nested_online_mut(&mut self) -> &mut NestedOnline<C, R> {
         self.nested_online.as_mut().expect("nested_online not set")
     }
@@ -438,34 +438,34 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             let (x, y) = self
                 .nested_online_stage_commitment(index)
                 .coordinates()
-                .expect("private stage commitment is finite");
+                .expect("online stage commitment is finite");
             [x, y][i]
         })
     }
 
-    /// The actual private stage commitment, or the synthetic dummy's stored stage.
+    /// The actual online stage commitment, or the synthetic dummy's stored stage.
     pub(crate) fn nested_online_stage_commitment(&self, index: usize) -> C::NestedCurve {
         let point = self.nested_online.as_ref().map_or_else(
             || self.nested_extension_stage_commitments()[index],
             |state| state.stage_commitment(index),
         );
         #[cfg(test)]
-        let point = crate::private_online_tests::mutate_stage_commitment(index, point);
+        let point = crate::online_batch_tests::mutate_stage_commitment(index, point);
         point
     }
 
-    /// The actual private native polynomial commitment in fold order.
+    /// The actual native online polynomial commitment in fold order.
     pub(crate) fn native_online_commitment(&self, index: usize) -> C::HostCurve {
         if let Some(state) = &self.native_online {
             state.commitments()[index]
         } else {
             self.dummy_native_online_commitments
                 .as_ref()
-                .expect("bootstrap native private commitments must be set")[index]
+                .expect("bootstrap native online commitments must be set")[index]
         }
     }
 
-    /// Private native commitment copies fixed at one transcript deadline.
+    /// Native online commitment copies fixed at one transcript deadline.
     pub(crate) fn native_online_phase<const PHASE: usize>(
         &self,
     ) -> FixedVec<
@@ -481,7 +481,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         } else {
             self.dummy_native_online_commitments
                 .as_deref()
-                .expect("bootstrap native private commitments")
+                .expect("bootstrap native online commitments")
         };
         let points = crate::profile::online::stages::phase_points::<
             C::Profile,
@@ -490,13 +490,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             _,
         >(points);
         #[cfg(test)]
-        let points = FixedVec::from_fn(|i| {
-            crate::private_online_tests::mutate_native_phase(PHASE, points[i])
-        });
+        let points =
+            FixedVec::from_fn(|i| crate::online_batch_tests::mutate_native_phase(PHASE, points[i]));
         points
     }
 
-    /// Private nested commitment copies fixed at one transcript deadline.
+    /// Nested online commitment copies fixed at one transcript deadline.
     pub(crate) fn nested_online_phase<const PHASE: usize>(
         &self,
     ) -> FixedVec<
@@ -512,7 +511,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         } else {
             self.dummy_nested_online_commitments
                 .as_deref()
-                .expect("bootstrap nested private commitments")
+                .expect("bootstrap nested online commitments")
         };
         let points = crate::profile::online::stages::phase_points::<
             C::Profile,
@@ -521,9 +520,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             _,
         >(points);
         #[cfg(test)]
-        let points = FixedVec::from_fn(|i| {
-            crate::private_online_tests::mutate_nested_phase(PHASE, points[i])
-        });
+        let points =
+            FixedVec::from_fn(|i| crate::online_batch_tests::mutate_nested_phase(PHASE, points[i]));
         points
     }
 
@@ -542,22 +540,22 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         FixedVec::from_fn(|i| {
             let point = points[i / 2];
             #[cfg(test)]
-            let point = crate::private_online_tests::mutate_nested_auxiliary_query(point);
+            let point = crate::online_batch_tests::mutate_nested_auxiliary_query(point);
             let (x, y) = point
                 .coordinates()
-                .expect("a nonzero private polynomial commits to a finite point");
+                .expect("a nonzero online polynomial commits to a finite point");
             [x, y][i % 2]
         })
     }
 
-    /// Native private stage commitment fixed at its transcript deadline.
+    /// Native online stage commitment fixed at its transcript deadline.
     pub(crate) fn native_online_stage_commitment(&self, index: usize) -> C::HostCurve {
         let point = self.native_online.as_ref().map_or_else(
             || self.native_extension_stage_commitments()[index],
             |state| state.stage_commitment(index),
         );
         #[cfg(test)]
-        let point = crate::private_online_tests::mutate_native_stage_commitment(index, point);
+        let point = crate::online_batch_tests::mutate_native_stage_commitment(index, point);
         point
     }
 
@@ -1388,7 +1386,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             };
         }
 
-        // A step's private batches hold what the proof carries of them. The
+        // A step's online batches hold what the proof carries of them. The
         // bootstrap proof has none: it carries the commitments and source
         // polynomials it was given, a zero fold, and mesh claims that are one
         // at the coordinates and zero at the shared values.
@@ -1420,14 +1418,14 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             } else {
                 self.dummy_native_online_commitments
                     .take()
-                    .expect("bootstrap native private commitments must be set")
+                    .expect("bootstrap native online commitments must be set")
             },
             nested_online_commitments: if let Some(state) = &self.nested_online {
                 state.commitments().to_vec()
             } else {
                 self.dummy_nested_online_commitments
                     .take()
-                    .expect("bootstrap private commitments must be set")
+                    .expect("bootstrap online commitments must be set")
             },
             native_mesh_claims: if let Some(state) = &self.native_online {
                 state.mesh_claims()?

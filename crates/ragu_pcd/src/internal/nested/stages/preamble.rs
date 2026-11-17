@@ -125,11 +125,11 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     /// and $u$. With the stashed commitments above these make up the child's
     /// nested instance.
     pub nested: NestedValues<C::Base>,
-    /// Lifted w, alpha, beta and the two private helper sums of this child.
+    /// Lifted w, alpha, beta and the two online helper sums of this child.
     pub online_values: FixedVec<C::Base, Present<P, Nested, 5>>,
     /// Common source-mesh coordinates and intersection values.
     pub mesh: FixedVec<C::Base, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
-    /// Common targets for the child's actual private native walk points.
+    /// Common targets for the child's actual native online walk points.
     pub online_points: FixedVec<C, PolynomialsLen<P, Native>>,
 }
 
@@ -212,9 +212,9 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
 
 /// Witness data for the preamble bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
-    /// This step's private native commitments, fixed before w.
+    /// This step's native online commitments, fixed before w.
     pub online_points: FixedVec<C, PhaseLen<P, Native, 0>>,
-    /// This boundary's native private stage commitment.
+    /// This boundary's native online stage commitment.
     pub online_stage: FixedVec<
         C,
         crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
@@ -336,13 +336,13 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// The scalars of the child's nested unified instance.
     #[ragu(gadget)]
     pub nested: NestedValuesOutput<'dr, D>,
-    /// Public values shared by the child's compute-v and private helper claims.
+    /// Public values shared by the child's compute-v and online helper claims.
     #[ragu(gadget)]
     pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
     /// Common source-mesh coordinates and intersection values.
     #[ragu(gadget)]
     pub mesh: FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
-    /// Common targets for the child's private native commitments.
+    /// Common targets for the child's native online commitments.
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C>, PolynomialsLen<P, Native>>,
 }
@@ -517,10 +517,10 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
-    /// The private native commitments fixed by this bridge and bound to the walk.
+    /// The native online commitments fixed by this bridge and bound to the walk.
     #[ragu(gadget)]
     pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 0>>,
-    /// The native private stage fixed by this bridge's transcript commitment.
+    /// The native online stage fixed by this bridge's transcript commitment.
     #[ragu(gadget)]
     pub online_stage: FixedVec<
         Point<'dr, D, C>,

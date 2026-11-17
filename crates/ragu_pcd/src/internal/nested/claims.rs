@@ -288,10 +288,10 @@ pub trait KySource {
     /// The nested unified instance's $k(y)$, one per proof, for collapse.
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
-    /// Compute-v's target, including the private helper's public values.
+    /// Compute-v's target, including the online helper's public values.
     fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// The private helper's target, one per proof when active.
+    /// The online helper's target, one per proof when active.
     fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// One value per proof for the binding circuit of the profile's nested
@@ -320,7 +320,7 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
 ///   checks, interleaved across proofs exactly as [`build`] emits them)
 /// - The per-proof collapse targets, then the compute-v targets
 /// - One copy of the per-proof ones per extension circuit of profile `P`,
-///   except the binding and private helper circuits, which use their targets
+///   except the binding and online helper circuits, which use their targets
 pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NumSteps::<P>::len();
 
@@ -344,7 +344,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
             >();
             assert!(
                 helper.is_none() || helper_ky.len() == ones.len(),
-                "a private batch takes one helper target per proof"
+                "an online batch takes one helper target per proof"
             );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {

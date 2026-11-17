@@ -60,9 +60,9 @@ pub struct NativeKy<F> {
     /// The `compute_v` circuit's $k(y)$, over the unified instance and the
     /// online openings.
     pub compute_v_bridge: F,
-    /// Bind-endoscalar exports the actual private nested commitment points.
+    /// Bind-endoscalar exports the actual nested online commitment points.
     pub bind_endoscalar: F,
-    /// Native private helper challenges, sums and foreign commitment points.
+    /// Native online helper challenges, sums and foreign commitment points.
     pub online_helper: Option<F>,
     /// The application circuit's $k(y)$.
     pub application: F,
@@ -130,9 +130,9 @@ pub struct NestedKy<F> {
     pub c: F,
     /// The nested unified instance's $k(y)$.
     pub unified: F,
-    /// Compute-v's unified instance followed by the private helper values.
+    /// Compute-v's unified instance followed by the online helper values.
     pub compute_v: F,
-    /// The private helper's challenge and sum target, when active.
+    /// The online helper's challenge and sum target, when active.
     pub online_helper: Option<F>,
     /// The binding circuit's $k(y)$, for a profile whose nested extension
     /// has one; `None` for a profile without one.
@@ -199,7 +199,7 @@ pub fn nested_bound<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) ->
     )
 }
 
-/// The actual nested private Input, Query and Eval stage commitments, in
+/// The actual nested online Input, Query and Eval stage commitments, in
 /// deadline order. These targets bind transcript copies to the walked rxs.
 pub fn nested_online_stages<P: Profile, T>(commitment: impl Fn(nested::RxIndex) -> T) -> Vec<T> {
     (0..<crate::profile::online::stages::Present<P, crate::profile::online::stages::Nested, 3> as ragu_primitives::vec::Len>::len())
@@ -207,13 +207,13 @@ pub fn nested_online_stages<P: Profile, T>(commitment: impl Fn(nested::RxIndex) 
         .collect()
 }
 
-/// The actual native private Input, Query and Eval commitments, in deadline order.
+/// The actual native online Input, Query and Eval commitments, in deadline order.
 pub fn native_online_stages<P: Profile, T>(commitment: impl Fn(native::RxIndex) -> T) -> Vec<T> {
     (0..<crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 3> as ragu_primitives::vec::Len>::len())
         .map(|i| commitment(native::RxIndex::ExtensionStage(i as u32))).collect()
 }
 
-/// Allocates the profile-fixed private stage points for a native claim target.
+/// Allocates the profile-fixed online stage points for a native claim target.
 pub fn nested_online_stage_points<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
     dr: &mut D,
     points: DriverValue<D, &[C]>,
@@ -395,11 +395,11 @@ pub struct NativeParts<'a, C: Cycle> {
     /// The nested extension stage commitments the native binding circuit
     /// recomputes, in its output order; none for a profile without one.
     pub nested_bound: &'a [C::NestedCurve],
-    /// The actual nested private stages, for the compute-v transcript-copy target.
+    /// The actual nested online stages, for the compute-v transcript-copy target.
     pub nested_online_stages: &'a [C::NestedCurve],
-    /// Common targets for the private nested walk points.
+    /// Common targets for the nested online walk points.
     pub nested_online_commitments: &'a [C::NestedCurve],
-    /// Native private helper sums.
+    /// Native online helper sums.
     pub native_online_fold: &'a [C::CircuitField],
     pub native_mesh_claims: &'a [C::CircuitField],
 }
@@ -467,7 +467,7 @@ pub fn nested_ky_of<C: Cycle>(
     })
 }
 
-/// Values shared by the nested compute-v and private helper targets. The
+/// Values shared by the nested compute-v and online helper targets. The
 /// transcript supplies the challenge lifts; only the two sums are carried.
 pub fn nested_online_values<C: ProfiledCycle>(
     challenges: &nested::Challenges<C::CircuitField>,
@@ -478,7 +478,7 @@ pub fn nested_online_values<C: ProfiledCycle>(
     }
     if sums.len() != 2 {
         return Err(ragu_core::Error::InvalidWitness(
-            "private batch requires two sums".into(),
+            "online batch requires two sums".into(),
         ));
     }
     Ok(alloc::vec![
@@ -490,10 +490,10 @@ pub fn nested_online_values<C: ProfiledCycle>(
     ])
 }
 
-/// The nested compute-v and private helper claims use the same five values.
+/// The nested compute-v and online helper claims use the same five values.
 /// Compute-v exports the authenticated lifts of w, alpha and beta. The
 /// helper exports those, the unified x, y and u, and the same two sums.
-/// Compute-v also exports the native private stage commitments, even when
+/// Compute-v also exports the native online stage commitments, even when
 /// this profile has no nested helper.
 #[allow(clippy::too_many_arguments)]
 pub fn nested_online_ky<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
