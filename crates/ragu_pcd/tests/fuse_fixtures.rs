@@ -94,10 +94,11 @@ use core::{convert::Infallible, marker::PhantomData};
 use std::{fs, path::PathBuf};
 
 use blake2b_simd::{Params, State};
-use ragu_backend::ReferenceBackend;
+use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
     polynomials::{ProductionRank, Rank, sparse},
     registry::CircuitIndex,
+    staging::StageExt,
 };
 use ragu_core::{
     Cycle, Result,
@@ -114,7 +115,7 @@ use ragu_primitives::{
 use rand::{TryCryptoRng, TryRng};
 use udon::{curve::Affine, field::Field};
 
-use super::Proof;
+use super::{Proof, bridge_alpha_power};
 use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
     compress::{
@@ -124,7 +125,10 @@ use crate::{
         revdot::{Reduction, fold::Fold, nested_position},
     },
     header::{Header, Padding, Suffix},
-    internal::{native::online, nested},
+    internal::{
+        native::{self, online},
+        nested::{self, stages as nested_stages},
+    },
     ipa::{
         CycleTranscript, IpaCycle, IpaProof,
         fingerprint::{self, Event},
@@ -1570,11 +1574,12 @@ type Checker = <ReferenceBackend as SelectableBackend>::Verifier;
 /// header data included, from the harness's generator under a seed fixed by
 /// `tag`. It then plants the values the verifier recomputes or solves for
 /// before its host MSM, so that the verifier reads the string through to
-/// that MSM, using the verifier's own computations rather than a copy of
-/// them: the challenge-stage and `ab` bridge commitments
-/// [`Instance::recomputed_stages`] expects, and the host reduction's $q(r)$.
-/// Its check's combined side does not depend on $q(r)$ and its split side is
-/// linear in it, so two recorded runs solve for it. A draw whose challenges
+/// that MSM: the challenge-stage and `ab` bridge commitments, which
+/// [`stage_commitments`] rebuilds and [`Instance::stages_match`] then
+/// accepts, and the host reduction's $q(r)$, read off the verifier's own
+/// reduction check. That check's combined side does not depend on $q(r)$
+/// and its split side is linear in it, so two recorded runs solve for it.
+/// A draw whose challenges
 /// do not lift, or whose `pre_beta` falls outside the endoscalar range, is
 /// replaced by the next.
 ///
@@ -1610,15 +1615,17 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
                     .instance
                     .challenges(&mut transcript)
                     .expect("the challenges are derived")?;
-                let [challenge, ab] = proof
-                    .instance
-                    .recomputed_stages::<R, Checker, HEADER_SIZE>(
-                        &challenges,
-                        C::nested_generators(app.params),
-                    )
-                    .expect("the stages are committed")?;
+                let generators = C::nested_generators(app.params);
+                let [challenge, ab] = stage_commitments(&proof.instance, &challenges, generators)?;
                 let nested = &mut proof.instance.nested;
                 if nested[challenge_stage] == challenge && nested[ab_bridge] == ab {
+                    assert!(
+                        proof
+                            .instance
+                            .stages_match::<R, Checker, HEADER_SIZE>(&challenges, generators)
+                            .expect("the stages are committed"),
+                        "{label}: the verifier rejects the rebuilt stages"
+                    );
                     return Some((data, proof));
                 }
                 nested[challenge_stage] = challenge;
@@ -1653,6 +1660,45 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
     H::write(&data, &mut out);
     encode_compressed(&proof, &mut out);
     out.0
+}
+
+/// The challenge-stage and `ab` bridge commitments
+/// [`Instance::stages_match`] expects of `instance` under `challenges`,
+/// rebuilt from the stage builders it uses, or `None` if a challenge does not
+/// lift to the nested field. [`fabricate`] checks the planted values against
+/// `stages_match` itself, so this copy cannot drift from the verifier's
+/// check unnoticed.
+fn stage_commitments<C: FixtureCycle>(
+    instance: &Instance<C>,
+    challenges: &nested::Challenges<Fp>,
+    generators: &C::NestedGenerators,
+) -> Option<[C::NestedCurve; 2]> {
+    let lifts = challenges.lifts::<C>().ok()?;
+    let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
+    let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
+        C::ScalarField::ZERO,
+        &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
+            challenge_lifts.try_into().expect("NUM challenge lifts"),
+            &instance.left_header,
+            &instance.right_header,
+            beta_lift[0],
+        ),
+    )
+    .expect("the challenge stage is built");
+    let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
+        bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB),
+        &nested_stages::ab::Witness {
+            a: instance.native_commitment(native::RxComponent::AbA),
+            b: instance.native_commitment(native::RxComponent::AbB),
+            native_points_ab: instance
+                .native_commitment(native::RxComponent::Rx(native::RxIndex::PointsAb)),
+        },
+    )
+    .expect("the ab bridge stage is built");
+    Some(
+        Checker::sparse_commit_batch([&challenge_stage, &ab_bridge], generators)
+            .map(C::NestedCurve::from),
+    )
 }
 
 /// A proof with `shape`'s circuit id and lengths and every other value drawn

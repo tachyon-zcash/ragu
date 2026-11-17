@@ -106,12 +106,12 @@ Each scenario has two files in `random/`.
   the honest proof's shape and circuit id; everything else, header data
   included, is drawn from the harness's SplitMix64 generator under a fixed
   seed, points as random multiples of the generator. The values the verifier
-  recomputes or solves for before its host MSM are then planted, using the
-  verifier's own computations: the challenge-stage and `ab` bridge
-  commitments it recomputes from the challenges, headers and native
-  commitments, and the host reduction's `q(r)`, solved from the two sides of
-  the reduction check. So the verifier reads the string through to the host
-  MSM, which rejects it.
+  recomputes or solves for before its host MSM are then planted: the
+  challenge-stage and `ab` bridge commitments, rebuilt from the challenges,
+  headers and native commitments with the stage builders the verifier uses
+  and checked against its stage check, and the host reduction's `q(r)`,
+  solved from the two sides of the verifier's own reduction check. So the
+  verifier reads the string through to the host MSM, which rejects it.
 - `<scenario>.fingerprint`: the verifier's run on the string, in the same
   format, ending at the host MSM with `verifier.msm.native.identity = false`.
   Nothing short of a forged host opening reaches the nested side, so these

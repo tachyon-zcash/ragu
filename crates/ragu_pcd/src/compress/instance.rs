@@ -497,27 +497,8 @@ impl<C: ProfiledCycle> Instance<C> {
         challenges: &nested::Challenges<C::CircuitField>,
         generators: &C::NestedGenerators,
     ) -> Result<bool> {
-        let Some([challenge_commitment, ab_commitment]) =
-            self.recomputed_stages::<R, B, HEADER_SIZE>(challenges, generators)?
-        else {
-            return Ok(false);
-        };
-        Ok(
-            challenge_commitment == self.bridge(nested::RxIndex::ChallengeStage)
-                && ab_commitment == self.bridge(nested::RxIndex::BridgeAB),
-        )
-    }
-
-    /// The commitments [`stages_match`](Self::stages_match) expects of the
-    /// challenge stage and the `ab` bridge stage, in that order, or `None` if
-    /// a challenge does not lift to the nested field.
-    pub(crate) fn recomputed_stages<R: Rank, B: Backend, const HEADER_SIZE: usize>(
-        &self,
-        challenges: &nested::Challenges<C::CircuitField>,
-        generators: &C::NestedGenerators,
-    ) -> Result<Option<[C::NestedCurve; 2]>> {
         let Ok(lifts) = challenges.lifts::<C>() else {
-            return Ok(None);
+            return Ok(false);
         };
         let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
         let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
@@ -540,12 +521,15 @@ impl<C: ProfiledCycle> Instance<C> {
         )?;
 
         // Both stage polynomials are fixed before either commitment is
-        // checked, so commit to them together; the caller keeps the two
-        // equality checks separate.
-        Ok(Some(
+        // checked. Commit to them together, keeping the two equality checks
+        // separate.
+        let [challenge_commitment, ab_commitment] =
             B::sparse_commit_batch([&challenge_stage, &ab_bridge], generators)
-                .map(C::NestedCurve::from),
-        ))
+                .map(C::NestedCurve::from);
+        Ok(
+            challenge_commitment == self.bridge(nested::RxIndex::ChallengeStage)
+                && ab_commitment == self.bridge(nested::RxIndex::BridgeAB),
+        )
     }
 
     /// The native wire claims under `sigma`: the preamble stage holds the
