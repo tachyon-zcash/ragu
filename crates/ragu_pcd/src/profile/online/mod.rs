@@ -168,8 +168,9 @@ impl Layout {
     }
 }
 
-/// The default bodies of the per-side preparation hooks on [`Profile`], shared
-/// by the native and nested hooks so that the two sides cannot drift apart.
+/// The default bodies of the per-side preparation hooks on
+/// [`Profile`](crate::profile::Profile), shared by the native and nested hooks
+/// so that the two sides cannot drift apart.
 pub(crate) mod defaults {
     use alloc::vec::Vec;
 
