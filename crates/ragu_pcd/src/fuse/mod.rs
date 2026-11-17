@@ -15,7 +15,6 @@ mod _09_eval;
 mod _10_p;
 mod _11_circuits;
 pub(crate) mod claims;
-mod online;
 // PCS and folding properties use private fuse internals. The proof-binding
 // properties live under `proof` for direct access to cached fields.
 #[cfg(test)]
@@ -114,7 +113,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
-        self.prepare_online_inputs(rng, [&left, &right], &mut builder)?;
+        // Each field's input stage holds the other field's commitments fixed
+        // before w, so both batches supply theirs before either commits.
+        self.begin_native_online([&left, &right], &mut builder)?;
+        self.begin_nested_online([&left, &right], &mut builder)?;
+        self.commit_native_online_inputs(rng, &mut builder)?;
+        self.commit_nested_online_inputs(rng, &mut builder)?;
         let (preamble_witness, nested_preamble) =
             self.compute_preamble(rng, &left, &right, &mut builder)?;
         let bridge_preamble_commitment =
@@ -144,7 +148,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             y: None,
             x: None,
         };
-        self.prepare_online_phase(Phase::BeforeY, preparation, &mut builder)?;
+        self.prepare_native_online(Phase::BeforeY, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeY, preparation, &mut builder)?;
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
@@ -229,7 +234,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mu_prime = transcript.challenge(&mut dr)?;
 
         preparation.y = Some(*y.value().take());
-        self.prepare_online_phase(Phase::BeforeX, preparation, &mut builder)?;
+        self.prepare_native_online(Phase::BeforeX, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeX, preparation, &mut builder)?;
         self.compute_ab(
             rng,
             native_a,
@@ -246,8 +252,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let x = transcript.challenge(&mut dr)?;
 
         preparation.x = Some(*x.value().take());
-        self.prepare_online_phase(Phase::BeforeAlpha, preparation, &mut builder)?;
-        self.prepare_online_queries(preparation, rng, &mut builder)?;
+        self.prepare_native_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.commit_native_online_query(preparation, rng, &mut builder)?;
+        self.commit_nested_online_query(preparation, rng, &mut builder)?;
         let (query_witness, nested_query) = self.compute_query(
             rng,
             &w,
@@ -283,7 +291,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
-        self.prepare_online_evaluations(*u.value().take(), rng, &mut builder)?;
+        self.commit_native_online_eval(*u.value().take(), rng, &mut builder)?;
+        self.commit_nested_online_eval(*u.value().take(), rng, &mut builder)?;
         let bound_challenges =
             [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
