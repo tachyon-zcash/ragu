@@ -376,19 +376,15 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
                 proof.as_ref().map(|p| p.online_openings()),
             )?,
             mesh: FixedVec::try_from_fn(|i| {
-                Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.native_mesh[i]))
+                Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.native_mesh_claims[i]))
             })?,
             private_sums: FixedVec::try_from_fn(|i| {
-                Element::alloc(
-                    dr,
-                    &mut (),
-                    proof.as_ref().map(|p| p.native_private_sums[i]),
-                )
+                Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.native_online_fold[i]))
             })?,
             private_points: FixedVec::try_from_fn(|i| {
                 ragu_primitives::CompletePoint::alloc(
                     dr,
-                    proof.as_ref().map(|p| p.nested_private_commitments[i]),
+                    proof.as_ref().map(|p| p.nested_online_commitments[i]),
                 )
             })?,
             circuit_id: Element::alloc(

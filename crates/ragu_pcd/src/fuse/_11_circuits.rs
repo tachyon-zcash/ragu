@@ -150,7 +150,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     .circuit_index::<C::Profile>();
             let (helper, sums) =
                 state.trace(challenges.clone(), &self.native_registry, index, rng)?;
-            builder.native_private_sums = Some(sums);
+            builder.native_online_fold = Some(sums);
             Some(helper)
         } else {
             None
@@ -161,7 +161,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .trace(native::circuits::compute_v::Witness {
                     private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
                         builder
-                            .native_private_sums
+                            .native_online_fold
                             .as_ref()
                             .expect("private helper traced before compute-v")[i]
                     }),
@@ -350,7 +350,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     .circuit_index::<C::Profile>();
             let (helper, sums) =
                 state.trace(challenges.clone(), &self.nested_registry, index, rng)?;
-            builder.nested_private_sums = Some(sums);
+            builder.nested_online_fold = Some(sums);
             Some(helper)
         } else {
             None
@@ -359,7 +359,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             instance,
             private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
                 builder
-                    .nested_private_sums
+                    .nested_online_fold
                     .expect("private helper traced before compute-v")[i]
             }),
             endoscalar: nested_endoscalar,

@@ -499,12 +499,12 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         circuit_id,
         left_header,
         right_header,
-        nested_private_sums,
-        native_mesh,
-        nested_mesh,
-        native_private_sums,
-        nested_private_commitments,
-        native_private_commitments,
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
         native_source_out,
         nested_source_out,
         native_application_rx,
@@ -621,15 +621,15 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.push("circuit_id", usize::from(*circuit_id));
     lines.fields("left_header", left_header);
     lines.fields("right_header", right_header);
-    assert!(nested_private_commitments.is_empty());
-    assert!(native_private_commitments.is_empty());
+    assert!(nested_online_commitments.is_empty());
+    assert!(native_online_commitments.is_empty());
     assert!(native_source_out.is_empty());
     assert!(nested_source_out.is_empty());
-    assert!(native_mesh.is_empty());
-    assert!(nested_mesh.is_empty());
-    assert!(native_private_sums.is_empty());
-    if !nested_private_sums.is_empty() {
-        lines.fields("nested_private_sums", nested_private_sums);
+    assert!(native_mesh_claims.is_empty());
+    assert!(nested_mesh_claims.is_empty());
+    assert!(native_online_fold.is_empty());
+    if !nested_online_fold.is_empty() {
+        lines.fields("nested_online_fold", nested_online_fold);
     }
     lines.field("bridge_alpha", bridge_alpha);
 
@@ -826,12 +826,12 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         circuit_id,
         left_header,
         right_header,
-        nested_private_sums,
-        native_mesh,
-        nested_mesh,
-        native_private_sums,
-        nested_private_commitments,
-        native_private_commitments,
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
         online,
         native: native_commitments,
         native_registry_xy,
@@ -876,12 +876,12 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(nested_c);
     out.field(nested_v);
     // These fixtures pin the zero-capability encoding.
-    assert!(nested_private_sums.is_empty());
-    assert!(native_mesh.is_empty());
-    assert!(nested_mesh.is_empty());
-    assert!(native_private_sums.is_empty());
-    assert!(nested_private_commitments.is_empty());
-    assert!(native_private_commitments.is_empty());
+    assert!(nested_online_fold.is_empty());
+    assert!(native_mesh_claims.is_empty());
+    assert!(nested_mesh_claims.is_empty());
+    assert!(native_online_fold.is_empty());
+    assert!(nested_online_commitments.is_empty());
+    assert!(native_online_commitments.is_empty());
     for Child { x, y, id } in [left, right] {
         out.field(x);
         out.field(y);
@@ -999,22 +999,22 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_right = nested_child()?;
     let nested_a_at_u = cursor.field()?;
     let nested_b_at_u = cursor.field()?;
-    let nested_private_sums = Vec::new();
-    let native_mesh = Vec::new();
-    let nested_mesh = Vec::new();
-    let native_private_sums = Vec::new();
-    let nested_private_commitments = Vec::new();
-    let native_private_commitments = Vec::new();
+    let nested_online_fold = Vec::new();
+    let native_mesh_claims = Vec::new();
+    let nested_mesh_claims = Vec::new();
+    let native_online_fold = Vec::new();
+    let nested_online_commitments = Vec::new();
+    let native_online_commitments = Vec::new();
     let instance = Instance {
         circuit_id,
         left_header,
         right_header,
-        nested_private_sums,
-        native_mesh,
-        nested_mesh,
-        native_private_sums,
-        nested_private_commitments,
-        native_private_commitments,
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
         online,
         native: native_commitments,
         native_registry_xy,
@@ -1368,17 +1368,17 @@ fn wire_lines<C: FixtureCycle>(
         super::codec::WIRE_FIELDS
             .iter()
             .copied()
-            .filter(|&name| name != "nested_private_sums" || !proof.nested_private_sums.is_empty())
-            .filter(|&name| name != "native_mesh" || !proof.native_mesh.is_empty())
-            .filter(|&name| name != "nested_mesh" || !proof.nested_mesh.is_empty())
-            .filter(|&name| name != "native_private_sums" || !proof.native_private_sums.is_empty())
+            .filter(|&name| name != "nested_online_fold" || !proof.nested_online_fold.is_empty())
+            .filter(|&name| name != "native_mesh_claims" || !proof.native_mesh_claims.is_empty())
+            .filter(|&name| name != "nested_mesh_claims" || !proof.nested_mesh_claims.is_empty())
+            .filter(|&name| name != "native_online_fold" || !proof.native_online_fold.is_empty())
             .filter(|&name| {
                 (name != "native_source_out" || !proof.native_source_out.is_empty())
                     && (name != "nested_source_out" || !proof.nested_source_out.is_empty())
-                    && (name != "native_private_commitments"
-                        || !proof.native_private_commitments.is_empty())
-                    && (name != "nested_private_commitments"
-                        || !proof.nested_private_commitments.is_empty())
+                    && (name != "native_online_commitments"
+                        || !proof.native_online_commitments.is_empty())
+                    && (name != "nested_online_commitments"
+                        || !proof.nested_online_commitments.is_empty())
             })
             .collect::<Vec<_>>()
             .join(","),

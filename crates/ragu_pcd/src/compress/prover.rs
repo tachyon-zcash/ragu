@@ -119,7 +119,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         if let Some(mesh) = C::Profile::NATIVE_MESH
             && !commitments_match::<<B as SelectableBackend>::Verifier, _, _, R, _>(
                 &[&proof.native_source_out[0]],
-                &[proof.native_private_commitments[mesh.outgoing]],
+                &[proof.native_online_commitments[mesh.outgoing]],
                 C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
                 C::host_generators(self.params),
             )
@@ -131,7 +131,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         if let Some(mesh) = C::Profile::NESTED_MESH
             && !commitments_match::<<B as SelectableBackend>::Verifier, _, _, R, _>(
                 &[&proof.nested_source_out[0]],
-                &[proof.nested_private_commitments[mesh.outgoing]],
+                &[proof.nested_online_commitments[mesh.outgoing]],
                 C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
                 C::nested_generators(self.params),
             )
@@ -187,7 +187,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 };
                 openings.claims.extend(mesh.terminal_claims(
                     C::Profile::NATIVE_ONLINE,
-                    &instance.native_mesh,
+                    &instance.native_mesh_claims,
                     coordinates,
                     w,
                     source.evaluate(w, coordinates.x, coordinates.y),
@@ -196,12 +196,16 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 openings.commitments.extend(
                     mesh.polynomial_indices()
                         .into_iter()
-                        .map(|i| instance.native_private_commitments[i]),
+                        .map(|i| instance.native_online_commitments[i]),
                 );
                 polys.extend(
-                    mesh.terminal_polynomials::<_, R>(source, &instance.native_mesh, coordinates)?
-                        .into_iter()
-                        .map(Cow::Owned),
+                    mesh.terminal_polynomials::<_, R>(
+                        source,
+                        &instance.native_mesh_claims,
+                        coordinates,
+                    )?
+                    .into_iter()
+                    .map(Cow::Owned),
                 );
             }
             let u = *C::host_u(self.params);
@@ -261,7 +265,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 };
                 openings.claims.extend(mesh.terminal_claims(
                     C::Profile::NESTED_ONLINE,
-                    &instance.nested_mesh,
+                    &instance.nested_mesh_claims,
                     coordinates,
                     w,
                     source.evaluate(w, coordinates.x, coordinates.y),
@@ -270,12 +274,16 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 openings.commitments.extend(
                     mesh.polynomial_indices()
                         .into_iter()
-                        .map(|i| instance.nested_private_commitments[i]),
+                        .map(|i| instance.nested_online_commitments[i]),
                 );
                 polys.extend(
-                    mesh.terminal_polynomials::<_, R>(source, &instance.nested_mesh, coordinates)?
-                        .into_iter()
-                        .map(Cow::Owned),
+                    mesh.terminal_polynomials::<_, R>(
+                        source,
+                        &instance.nested_mesh_claims,
+                        coordinates,
+                    )?
+                    .into_iter()
+                    .map(Cow::Owned),
                 );
             }
             let u = *C::nested_u(self.params);

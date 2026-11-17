@@ -213,20 +213,20 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) right_header: Vec<C::CircuitField>,
     /// The nested source mesh's coordinates and shared intersection values,
     /// empty without a nested mesh.
-    pub(crate) nested_mesh: Vec<C::ScalarField>,
+    pub(crate) nested_mesh_claims: Vec<C::ScalarField>,
     /// The nested helper's quotient and evaluation sums, empty when the
     /// nested private batch is inactive.
-    pub(crate) nested_private_sums: Vec<C::ScalarField>,
+    pub(crate) nested_online_fold: Vec<C::ScalarField>,
     /// The native source mesh's coordinates and shared intersection values,
     /// empty without a native mesh.
-    pub(crate) native_mesh: Vec<C::CircuitField>,
+    pub(crate) native_mesh_claims: Vec<C::CircuitField>,
     /// The native helper's quotient and evaluation sums, empty when the
     /// native private batch is inactive.
-    pub(crate) native_private_sums: Vec<C::CircuitField>,
+    pub(crate) native_online_fold: Vec<C::CircuitField>,
     /// Common claim targets for the actual nested private/auxiliary walk points.
-    pub(crate) nested_private_commitments: Vec<C::NestedCurve>,
+    pub(crate) nested_online_commitments: Vec<C::NestedCurve>,
     /// Common claim targets for the actual native private/auxiliary walk points.
-    pub(crate) native_private_commitments: Vec<C::HostCurve>,
+    pub(crate) native_online_commitments: Vec<C::HostCurve>,
 
     /// The retained source-registry restriction for the next parent, if declared.
     pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
@@ -416,7 +416,7 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     pub(crate) fn nested_private_values(&self) -> Result<Vec<C::ScalarField>> {
         crate::internal::ky::nested_private_values::<C>(
             &self.challenges(),
-            &self.nested_private_sums,
+            &self.nested_online_fold,
         )
     }
 
@@ -434,17 +434,19 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
             && self.right_header.len() == HEADER_SIZE
             && self.native_source_out.len() == usize::from(C::Profile::NATIVE_MESH.is_some())
             && self.nested_source_out.len() == usize::from(C::Profile::NESTED_MESH.is_some())
-            && self.native_mesh.len() == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
-            && self.nested_mesh.len() == C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len())
-            && self.native_private_commitments.len() == C::Profile::NATIVE_ONLINE.polynomials.len()
-            && self.nested_private_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
-            && self.native_private_sums.len()
+            && self.native_mesh_claims.len()
+                == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.nested_mesh_claims.len()
+                == C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.native_online_commitments.len() == C::Profile::NATIVE_ONLINE.polynomials.len()
+            && self.nested_online_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
+            && self.native_online_fold.len()
                 == <crate::profile::online::stages::Present<
                     C::Profile,
                     crate::profile::online::stages::Native,
                     2,
                 > as ragu_primitives::vec::Len>::len()
-            && self.nested_private_sums.len()
+            && self.nested_online_fold.len()
                 == crate::profile::online::stages::Present::<
                     C::Profile,
                     crate::profile::online::stages::Nested,
@@ -1326,15 +1328,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
         // Bootstrap bypasses the synthetic child's circuit claims.
         if !C::Profile::NATIVE_ONLINE.is_empty() {
-            builder.native_private_sums = Some([C::CircuitField::ZERO; 2]);
-            builder.dummy_native_private_commitments = Some(native_private_points.clone());
+            builder.native_online_fold = Some([C::CircuitField::ZERO; 2]);
+            builder.dummy_native_online_commitments = Some(native_private_points.clone());
             if let Some(mesh) = C::Profile::NATIVE_MESH {
                 builder.native_source_out = vec![native_private_polynomials[mesh.outgoing].clone()];
             }
         }
         if !C::Profile::NESTED_ONLINE.is_empty() {
-            builder.nested_private_sums = Some([C::ScalarField::ZERO; 2]);
-            builder.dummy_nested_private_commitments = Some(nested_private_points.clone());
+            builder.nested_online_fold = Some([C::ScalarField::ZERO; 2]);
+            builder.dummy_nested_online_commitments = Some(nested_private_points.clone());
             if let Some(mesh) = C::Profile::NESTED_MESH {
                 builder.nested_source_out = vec![nested_private_polynomials[mesh.outgoing].clone()];
             }

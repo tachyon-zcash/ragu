@@ -616,12 +616,12 @@ fn check_compressed_proofs_match(
         v: _,
         nested_c: _,
         nested_v: _,
-        nested_private_sums: _,
-        native_private_sums: _,
-        native_mesh: _,
-        nested_mesh: _,
-        nested_private_commitments: _,
-        native_private_commitments: _,
+        nested_online_fold: _,
+        native_online_fold: _,
+        native_mesh_claims: _,
+        nested_mesh_claims: _,
+        nested_online_commitments: _,
+        native_online_commitments: _,
         left: Child { x: _, y: _, id: _ },
         right: Child { x: _, y: _, id: _ },
         a_at_u: _,
@@ -1323,14 +1323,14 @@ mod proof_equivalence {
                 circuit_id: _,
                 left_header: _,
                 right_header: _,
-                nested_private_sums: _,
-                native_private_sums: _,
-                native_mesh: _,
-                nested_mesh: _,
+                nested_online_fold: _,
+                native_online_fold: _,
+                native_mesh_claims: _,
+                nested_mesh_claims: _,
                 native_source_out: _,
                 nested_source_out: _,
-                nested_private_commitments: _,
-                native_private_commitments: _,
+                nested_online_commitments: _,
+                native_online_commitments: _,
                 native_application_rx: _,
                 native_application_stage_rx: _,
                 native_preamble_rx: _,
@@ -1447,7 +1447,9 @@ mod proof_equivalence {
             {
                 return Some("retained source restrictions");
             }
-            if self.native_mesh != other.native_mesh || self.nested_mesh != other.nested_mesh {
+            if self.native_mesh_claims != other.native_mesh_claims
+                || self.nested_mesh_claims != other.nested_mesh_claims
+            {
                 return Some("source mesh metadata");
             }
             if self.bridge_alpha != other.bridge_alpha {

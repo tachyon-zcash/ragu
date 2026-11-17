@@ -132,7 +132,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let tau = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
             let (x, y) = (pcd.proof().x(), pcd.proof().y());
             if Verifier::<B>::sparse_commit_to_affine(outgoing, C::host_generators(self.params))
-                != pcd.proof().native_private_commitments[mesh.outgoing]
+                != pcd.proof().native_online_commitments[mesh.outgoing]
                 || Verifier::<B>::sparse_eval(outgoing, tau) != source.evaluate(tau, x, y)
             {
                 return Ok(false);
@@ -150,7 +150,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 proof_check!(nested_challenge::<C>(pcd.proof().y())),
             );
             if Verifier::<B>::sparse_commit_to_affine(outgoing, C::nested_generators(self.params))
-                != pcd.proof().nested_private_commitments[mesh.outgoing]
+                != pcd.proof().nested_online_commitments[mesh.outgoing]
                 || Verifier::<B>::sparse_eval(outgoing, tau) != source.evaluate(tau, x, y)
             {
                 return Ok(false);
@@ -235,8 +235,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 &ky::native_private_stages::<C::Profile, _>(|index| pcd
                     .proof()
                     .native_rx_commitment(index)),
-                &pcd.proof().native_private_commitments,
-                &pcd.proof().nested_mesh,
+                &pcd.proof().native_online_commitments,
+                &pcd.proof().nested_mesh_claims,
                 y_nested,
             ));
             let ky_source = ky::NestedKy {
@@ -426,7 +426,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                         crate::profile::online::stages::Native,
                         2,
                         _,
-                    >(&proof.native_private_commitments),
+                    >(&proof.native_online_commitments),
                     a: proof.native_commitment(RxComponent::AbA),
                     b: proof.native_commitment(RxComponent::AbB),
                     native_points_ab: proof

@@ -196,9 +196,9 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
             stashed_online_commitments: proof.online_commitments(),
             stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
-            mesh: proof.nested_mesh.clone().try_into()?,
+            mesh: proof.nested_mesh_claims.clone().try_into()?,
             private: proof.nested_private_values()?.try_into()?,
-            private_points: proof.native_private_commitments.clone().try_into()?,
+            private_points: proof.native_online_commitments.clone().try_into()?,
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,

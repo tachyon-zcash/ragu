@@ -98,20 +98,20 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_v: C::ScalarField,
     /// The nested source mesh's coordinates and shared intersection values,
     /// empty without a nested mesh.
-    pub nested_mesh: Vec<C::ScalarField>,
+    pub nested_mesh_claims: Vec<C::ScalarField>,
     /// The nested helper's quotient and evaluation sums, empty when the
     /// nested private batch is inactive.
-    pub nested_private_sums: Vec<C::ScalarField>,
+    pub nested_online_fold: Vec<C::ScalarField>,
     /// The native source mesh's coordinates and shared intersection values,
     /// empty without a native mesh.
-    pub native_mesh: Vec<C::CircuitField>,
+    pub native_mesh_claims: Vec<C::CircuitField>,
     /// The native helper's quotient and evaluation sums, empty when the
     /// native private batch is inactive.
-    pub native_private_sums: Vec<C::CircuitField>,
+    pub native_online_fold: Vec<C::CircuitField>,
     /// The private/auxiliary points exported by bind_endoscalar.
-    pub nested_private_commitments: Vec<C::NestedCurve>,
+    pub nested_online_commitments: Vec<C::NestedCurve>,
     /// Common claim targets for the actual native private/auxiliary walk points.
-    pub native_private_commitments: Vec<C::HostCurve>,
+    pub native_online_commitments: Vec<C::HostCurve>,
 
     /// The wires the decider reads off the preamble and eval stages.
     pub left: Child<C::CircuitField>,
@@ -234,12 +234,12 @@ impl<C: ProfiledCycle> Instance<C> {
             v: proof.v(),
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
-            nested_mesh: proof.nested_mesh.clone(),
-            nested_private_sums: proof.nested_private_sums.clone(),
-            native_mesh: proof.native_mesh.clone(),
-            native_private_sums: proof.native_private_sums.clone(),
-            nested_private_commitments: proof.nested_private_commitments.clone(),
-            native_private_commitments: proof.native_private_commitments.clone(),
+            nested_mesh_claims: proof.nested_mesh_claims.clone(),
+            nested_online_fold: proof.nested_online_fold.clone(),
+            native_mesh_claims: proof.native_mesh_claims.clone(),
+            native_online_fold: proof.native_online_fold.clone(),
+            nested_online_commitments: proof.nested_online_commitments.clone(),
+            native_online_commitments: proof.native_online_commitments.clone(),
             left: Child {
                 x: lx,
                 y: ly,
@@ -289,7 +289,11 @@ impl<C: ProfiledCycle> Instance<C> {
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
         let mut host = transcript.host();
-        for &sum in self.native_mesh.iter().chain(&self.native_private_sums) {
+        for &sum in self
+            .native_mesh_claims
+            .iter()
+            .chain(&self.native_online_fold)
+        {
             host.write_scalar(sum)?;
         }
         host.write_scalar(self.circuit_id.omega_j())?;
@@ -326,7 +330,7 @@ impl<C: ProfiledCycle> Instance<C> {
 
         // Private commitments admit the identity, encoded as (0, 0). These
         // coordinates are also the bind_endoscalar common claim target.
-        for point in &self.nested_private_commitments {
+        for point in &self.nested_online_commitments {
             let (x, y) = point
                 .coordinates()
                 .unwrap_or((C::CircuitField::ZERO, C::CircuitField::ZERO));
@@ -357,14 +361,18 @@ impl<C: ProfiledCycle> Instance<C> {
         }
         // The same complete point coordinates form the nested compute-v
         // target and the nested helper's foreign commitment exports.
-        for point in &self.native_private_commitments {
+        for point in &self.native_online_commitments {
             let (x, y) = point
                 .coordinates()
                 .unwrap_or((C::ScalarField::ZERO, C::ScalarField::ZERO));
             transcript.write_private_scalar(x)?;
             transcript.write_private_scalar(y)?;
         }
-        for &sum in self.nested_mesh.iter().chain(&self.nested_private_sums) {
+        for &sum in self
+            .nested_mesh_claims
+            .iter()
+            .chain(&self.nested_online_fold)
+        {
             transcript.write_private_scalar(sum)?;
         }
         Ok(())
@@ -523,9 +531,9 @@ impl<C: ProfiledCycle> Instance<C> {
                     unified: &unified,
                     nested_bound: &nested_bound,
                     nested_private_stages: &nested_private_stages,
-                    nested_private_commitments: &self.nested_private_commitments,
-                    native_private_sums: &self.native_private_sums,
-                    native_mesh: &self.native_mesh,
+                    nested_online_commitments: &self.nested_online_commitments,
+                    native_online_fold: &self.native_online_fold,
+                    native_mesh_claims: &self.native_mesh_claims,
                 },
                 y,
             )?
@@ -535,12 +543,12 @@ impl<C: ProfiledCycle> Instance<C> {
         });
         let (compute_v, private_helper) = ky::nested_private_ky_of::<C>(
             &self.nested_unified(challenges)?,
-            &ky::nested_private_values::<C>(challenges, &self.nested_private_sums)?,
+            &ky::nested_private_values::<C>(challenges, &self.nested_online_fold)?,
             &ky::native_private_stages::<C::Profile, _>(|index| {
                 self.native_commitment(native::RxComponent::Rx(index))
             }),
-            &self.native_private_commitments,
-            &self.nested_mesh,
+            &self.native_online_commitments,
+            &self.nested_mesh_claims,
             nested_y,
         )?;
         let nested = NestedKy {
@@ -583,7 +591,7 @@ impl<C: ProfiledCycle> Instance<C> {
                     crate::profile::online::stages::Native,
                     2,
                     _,
-                >(&self.native_private_commitments),
+                >(&self.native_online_commitments),
                 a: self.native_commitment(native::RxComponent::AbA),
                 b: self.native_commitment(native::RxComponent::AbB),
                 native_points_ab: self

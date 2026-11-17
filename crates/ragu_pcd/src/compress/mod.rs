@@ -119,21 +119,21 @@ impl<C: ProfiledCycle> CompressedProof<C> {
         }
         self.instance.native.len() == native_components::<C::Profile>().count()
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
-            && self.instance.native_mesh.len()
+            && self.instance.native_mesh_claims.len()
                 == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
-            && self.instance.nested_mesh.len()
+            && self.instance.nested_mesh_claims.len()
                 == C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len())
-            && self.instance.native_private_commitments.len()
+            && self.instance.native_online_commitments.len()
                 == C::Profile::NATIVE_ONLINE.polynomials.len()
-            && self.instance.nested_private_commitments.len()
+            && self.instance.nested_online_commitments.len()
                 == C::Profile::NESTED_ONLINE.polynomials.len()
-            && self.instance.native_private_sums.len()
+            && self.instance.native_online_fold.len()
                 == <crate::profile::online::stages::Present<
                     C::Profile,
                     crate::profile::online::stages::Native,
                     2,
                 > as ragu_primitives::vec::Len>::len()
-            && self.instance.nested_private_sums.len()
+            && self.instance.nested_online_fold.len()
                 == <crate::profile::online::stages::Present<
                     C::Profile,
                     crate::profile::online::stages::Nested,

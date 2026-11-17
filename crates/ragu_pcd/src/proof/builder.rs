@@ -277,12 +277,12 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
 
     pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
     pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
-    pub(crate) native_private_sums: Option<[C::CircuitField; 2]>,
-    pub(crate) nested_private_sums: Option<[C::ScalarField; 2]>,
+    pub(crate) native_online_fold: Option<[C::CircuitField; 2]>,
+    pub(crate) nested_online_fold: Option<[C::ScalarField; 2]>,
     // Explicit commitments for the synthetic bootstrap proof, which has no
     // private prover state. Ordinary proofs retain their state's actual points.
-    pub(crate) dummy_native_private_commitments: Option<Vec<C::HostCurve>>,
-    pub(crate) dummy_nested_private_commitments: Option<Vec<C::NestedCurve>>,
+    pub(crate) dummy_native_online_commitments: Option<Vec<C::HostCurve>>,
+    pub(crate) dummy_nested_online_commitments: Option<Vec<C::NestedCurve>>,
 
     // The step's own online Fq polynomials, with their commitments cached.
     // The proof does not carry them: only this step's nested batch opens
@@ -434,7 +434,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         if let Some(state) = &self.native_private {
             state.commitments()[index]
         } else {
-            self.dummy_native_private_commitments
+            self.dummy_native_online_commitments
                 .as_ref()
                 .expect("bootstrap native private commitments must be set")[index]
         }
@@ -457,7 +457,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         let points = if let Some(state) = &self.native_private {
             state.commitments()
         } else {
-            self.dummy_native_private_commitments
+            self.dummy_native_online_commitments
                 .as_deref()
                 .expect("bootstrap native private commitments")
         };
@@ -491,7 +491,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         let points = if let Some(state) = &self.nested_private {
             state.commitments()
         } else {
-            self.dummy_nested_private_commitments
+            self.dummy_nested_online_commitments
                 .as_deref()
                 .expect("bootstrap nested private commitments")
         };
@@ -582,10 +582,10 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             online_polynomials: None,
             native_source_out: Vec::new(),
             nested_source_out: Vec::new(),
-            native_private_sums: None,
-            nested_private_sums: None,
-            dummy_nested_private_commitments: None,
-            dummy_native_private_commitments: None,
+            native_online_fold: None,
+            nested_online_fold: None,
+            dummy_nested_online_commitments: None,
+            dummy_native_online_commitments: None,
             native_private: None,
             nested_private: None,
             online_fq_polynomials: None,
@@ -1379,25 +1379,25 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             circuit_id: take!(circuit_id),
             left_header: take!(left_header),
             right_header: take!(right_header),
-            native_private_commitments: if C::Profile::NATIVE_ONLINE.is_empty() {
+            native_online_commitments: if C::Profile::NATIVE_ONLINE.is_empty() {
                 Vec::new()
             } else if let Some(state) = &self.native_private {
                 state.commitments().to_vec()
             } else {
-                self.dummy_native_private_commitments
+                self.dummy_native_online_commitments
                     .take()
                     .expect("bootstrap native private commitments must be set")
             },
-            nested_private_commitments: if C::Profile::NESTED_ONLINE.is_empty() {
+            nested_online_commitments: if C::Profile::NESTED_ONLINE.is_empty() {
                 Vec::new()
             } else if let Some(state) = &self.nested_private {
                 state.commitments().to_vec()
             } else {
-                self.dummy_nested_private_commitments
+                self.dummy_nested_online_commitments
                     .take()
                     .expect("bootstrap private commitments must be set")
             },
-            native_mesh: if let Some(state) = &self.native_private {
+            native_mesh_claims: if let Some(state) = &self.native_private {
                 state.mesh_claims()?
             } else if let Some(mesh) = C::Profile::NATIVE_MESH {
                 let mut values = alloc::vec![C::CircuitField::ZERO;mesh.claims_len()];
@@ -1406,14 +1406,14 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             } else {
                 Vec::new()
             },
-            native_private_sums: if C::Profile::NATIVE_ONLINE.is_empty() {
+            native_online_fold: if C::Profile::NATIVE_ONLINE.is_empty() {
                 Vec::new()
             } else {
-                self.native_private_sums
+                self.native_online_fold
                     .expect("native private helper sums must be set")
                     .to_vec()
             },
-            nested_mesh: if let Some(state) = &self.nested_private {
+            nested_mesh_claims: if let Some(state) = &self.nested_private {
                 state.mesh_claims()?
             } else if let Some(mesh) = C::Profile::NESTED_MESH {
                 let mut values = alloc::vec![C::ScalarField::ZERO;mesh.claims_len()];
@@ -1424,10 +1424,10 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             } else {
                 Vec::new()
             },
-            nested_private_sums: if C::Profile::NESTED_ONLINE.is_empty() {
+            nested_online_fold: if C::Profile::NESTED_ONLINE.is_empty() {
                 Vec::new()
             } else {
-                self.nested_private_sums
+                self.nested_online_fold
                     .expect("private helper sums must be set")
                     .to_vec()
             },

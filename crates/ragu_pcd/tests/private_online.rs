@@ -246,13 +246,13 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
         .carry::<()>(());
     verify(&app, &decoded, &mut rng, true)?;
 
-    assert!(child.proof().nested_private_commitments[1].is_identity());
+    assert!(child.proof().nested_online_commitments[1].is_identity());
     for i in 0..2 {
         let mut proof = child.proof().clone();
-        proof.nested_private_commitments[i] = if i == 0 {
-            -proof.nested_private_commitments[0]
+        proof.nested_online_commitments[i] = if i == 0 {
+            -proof.nested_online_commitments[0]
         } else {
-            proof.nested_private_commitments[0]
+            proof.nested_online_commitments[0]
         };
         let bad = proof.carry::<()>(());
         verify(&app, &bad, &mut rng, false)?;
@@ -261,7 +261,7 @@ fn nested_private_batch_round_trip_and_sum_binding() -> Result<()> {
     }
     for i in 0..2 {
         let mut proof = child.proof().clone();
-        proof.nested_private_sums[i] += Fq::ONE;
+        proof.nested_online_fold[i] += Fq::ONE;
         let bad = proof.carry::<()>(());
         verify(&app, &bad, &mut rng, false)?;
         let (parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
@@ -522,14 +522,14 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
         .expect("decode native private proof")
         .carry::<()>(());
     verify_profile(&app, &decoded, &mut rng, true)?;
-    assert!(child.proof().native_private_commitments[1].is_identity());
+    assert!(child.proof().native_online_commitments[1].is_identity());
     // Both foreign helper exports and the actual walk use these common points.
     for i in 0..2 {
         let mut proof = child.proof().clone();
-        proof.native_private_commitments[i] = if i == 0 {
-            -proof.native_private_commitments[0]
+        proof.native_online_commitments[i] = if i == 0 {
+            -proof.native_online_commitments[0]
         } else {
-            proof.native_private_commitments[0]
+            proof.native_online_commitments[0]
         };
         let bad = proof.carry::<()>(());
         verify_profile(&app, &bad, &mut rng, false)?;
@@ -538,7 +538,7 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
     }
     for i in 0..2 {
         let mut proof = child.proof().clone();
-        proof.native_private_sums[i] += ragu_core::pasta::Fp::ONE;
+        proof.native_online_fold[i] += ragu_core::pasta::Fp::ONE;
         let bad = proof.carry::<()>(());
         verify_profile(&app, &bad, &mut rng, false)?;
         let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
@@ -816,7 +816,7 @@ fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<(
         let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
         verify_profile(&app, &bad_parent, &mut rng, false)?;
         let mut proof = child.proof().clone();
-        proof.native_private_commitments[phase] = -proof.native_private_commitments[phase];
+        proof.native_online_commitments[phase] = -proof.native_online_commitments[phase];
         let bad = proof.carry::<()>(());
         verify_profile(&app, &bad, &mut rng, false)?;
         let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
@@ -974,7 +974,7 @@ fn nested_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<(
         let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
         verify_profile(&app, &bad_parent, &mut rng, false)?;
         let mut proof = child.proof().clone();
-        proof.nested_private_commitments[phase] = -proof.nested_private_commitments[phase];
+        proof.nested_online_commitments[phase] = -proof.nested_online_commitments[phase];
         let bad = proof.carry::<()>(());
         verify_profile(&app, &bad, &mut rng, false)?;
         let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
@@ -1075,7 +1075,7 @@ fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitme
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
     for proof in [child, parent] {
-        assert_eq!(proof.proof().nested_private_commitments.len(), 1);
+        assert_eq!(proof.proof().nested_online_commitments.len(), 1);
         assert!(app.verify_uncompressed(&proof, &mut rng)?);
         let compressed = app.compress(&proof, &mut rng)?;
         assert!(app.verify_compressed(&compressed)?);

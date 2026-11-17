@@ -683,7 +683,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // to be assembled for this visitor-only execution.
         if let Some(state) = &builder.native_private {
             let circuit = MultiStage::<C::CircuitField, R, _>::new(state.circuit());
-            builder.native_private_sums = Some(
+            builder.native_online_fold = Some(
                 circuit
                     .trace(state.witness(Challenges {
                         w: builder.w(),
@@ -698,7 +698,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         }
         if let Some(state) = &builder.nested_private {
             let circuit = MultiStage::<C::ScalarField, R, _>::new(state.circuit());
-            builder.nested_private_sums = Some(
+            builder.nested_online_fold = Some(
                 circuit
                     .trace(state.witness(Challenges {
                         w: nested::challenge::<C>(builder.w())?,
@@ -958,7 +958,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Ok(native::circuits::compute_v::Witness {
                 private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
                     builder
-                        .native_private_sums
+                        .native_online_fold
                         .as_ref()
                         .expect("private helper traced before compute-v")[i]
                 }),
@@ -1242,7 +1242,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             Ok(nested::circuits::common::Witness {
                 private_sums: ragu_primitives::vec::FixedVec::from_fn(|i| {
                     builder
-                        .nested_private_sums
+                        .nested_online_fold
                         .expect("private helper must be traced before capture")[i]
                 }),
                 instance: nested::unified::Instance {

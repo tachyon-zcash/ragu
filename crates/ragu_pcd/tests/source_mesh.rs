@@ -532,15 +532,15 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     // The only source-polynomial witnesses retained for a parent are the two outgoing restrictions.
     assert_eq!(child.proof().native_source_out.len(), 1);
     assert_eq!(child.proof().nested_source_out.len(), 1);
-    assert_eq!(child.proof().native_private_commitments.len(), 21);
-    assert_eq!(child.proof().nested_private_commitments.len(), 21);
+    assert_eq!(child.proof().native_online_commitments.len(), 21);
+    assert_eq!(child.proof().nested_online_commitments.len(), 21);
     for side in 0..2 {
         for coordinate_or_edge in [0, 4, 16, 34] {
             let mut proof = child.proof().clone();
             if side == 0 {
-                proof.native_mesh[coordinate_or_edge] += Fp::ONE;
+                proof.native_mesh_claims[coordinate_or_edge] += Fp::ONE;
             } else {
-                proof.nested_mesh[coordinate_or_edge] += Fq::ONE;
+                proof.nested_mesh_claims[coordinate_or_edge] += Fq::ONE;
             }
             let bad = proof.carry::<()>(());
             verify(&app, &bad, &mut rng, false)?;
@@ -552,11 +552,11 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
         for slot in [0, 12, 19, 20] {
             let mut proof = child.proof().clone();
             if side == 0 {
-                proof.native_private_commitments[slot] =
-                    altered_point(proof.native_private_commitments[slot]);
+                proof.native_online_commitments[slot] =
+                    altered_point(proof.native_online_commitments[slot]);
             } else {
-                proof.nested_private_commitments[slot] =
-                    altered_point(proof.nested_private_commitments[slot]);
+                proof.nested_online_commitments[slot] =
+                    altered_point(proof.nested_online_commitments[slot]);
             }
             let bad = proof.carry::<()>(());
             verify(&app, &bad, &mut rng, false)?;
@@ -599,8 +599,8 @@ fn zero_source_restrictions_keep_identity_commitments_through_compression() -> R
     let mut rng = StdRng::seed_from_u64(0x606061);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     for slot in SourceCapacity::NATIVE_MESH.unwrap().polynomial_indices() {
-        assert!(child.proof().native_private_commitments[slot].is_identity());
-        assert!(child.proof().nested_private_commitments[slot].is_identity());
+        assert!(child.proof().native_online_commitments[slot].is_identity());
+        assert!(child.proof().nested_online_commitments[slot].is_identity());
     }
     verify(&app, &child, &mut rng, true)?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child)?;
@@ -831,17 +831,17 @@ where
     let proof = child.proof();
     let (inactive_empty, mesh_len) = if native {
         (
-            proof.nested_mesh.is_empty()
-                && proof.nested_private_commitments.is_empty()
+            proof.nested_mesh_claims.is_empty()
+                && proof.nested_online_commitments.is_empty()
                 && proof.nested_source_out.is_empty(),
-            proof.native_mesh.len(),
+            proof.native_mesh_claims.len(),
         )
     } else {
         (
-            proof.native_mesh.is_empty()
-                && proof.native_private_commitments.is_empty()
+            proof.native_mesh_claims.is_empty()
+                && proof.native_online_commitments.is_empty()
                 && proof.native_source_out.is_empty(),
-            proof.nested_mesh.len(),
+            proof.nested_mesh_claims.len(),
         )
     };
     assert!(inactive_empty, "the side without a mesh carries mesh data");
@@ -857,19 +857,19 @@ where
     for index in [0, mesh_len - 1] {
         let mut proof = child.proof().clone();
         if native {
-            proof.native_mesh[index] += Fp::ONE;
+            proof.native_mesh_claims[index] += Fp::ONE;
         } else {
-            proof.nested_mesh[index] += Fq::ONE;
+            proof.nested_mesh_claims[index] += Fq::ONE;
         }
         verify(&app, &proof.carry::<()>(()), &mut rng, false)?;
     }
     let mut proof = child.proof().clone();
     if native {
-        proof.native_private_commitments[mesh.outgoing] =
-            altered_point(proof.native_private_commitments[mesh.outgoing]);
+        proof.native_online_commitments[mesh.outgoing] =
+            altered_point(proof.native_online_commitments[mesh.outgoing]);
     } else {
-        proof.nested_private_commitments[mesh.outgoing] =
-            altered_point(proof.nested_private_commitments[mesh.outgoing]);
+        proof.nested_online_commitments[mesh.outgoing] =
+            altered_point(proof.nested_online_commitments[mesh.outgoing]);
     }
     verify(&app, &proof.carry::<()>(()), &mut rng, false)
 }

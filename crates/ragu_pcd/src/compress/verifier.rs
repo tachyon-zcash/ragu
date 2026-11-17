@@ -136,7 +136,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 };
                 openings.claims.extend(proof_check!(mesh.terminal_claims(
                     C::Profile::NATIVE_ONLINE,
-                    &instance.native_mesh,
+                    &instance.native_mesh_claims,
                     coordinates,
                     w,
                     source.evaluate(w, coordinates.x, coordinates.y),
@@ -145,7 +145,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 openings.commitments.extend(
                     mesh.polynomial_indices()
                         .into_iter()
-                        .map(|i| instance.native_private_commitments[i]),
+                        .map(|i| instance.native_online_commitments[i]),
                 );
             }
             proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
@@ -198,7 +198,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 };
                 openings.claims.extend(proof_check!(mesh.terminal_claims(
                     C::Profile::NESTED_ONLINE,
-                    &instance.nested_mesh,
+                    &instance.nested_mesh_claims,
                     coordinates,
                     w,
                     source.evaluate(w, coordinates.x, coordinates.y),
@@ -207,7 +207,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 openings.commitments.extend(
                     mesh.polynomial_indices()
                         .into_iter()
-                        .map(|i| instance.nested_private_commitments[i]),
+                        .map(|i| instance.nested_online_commitments[i]),
                 );
             }
             proof_check!(batch::verify_openings::<_, R, Verifier<B>>(

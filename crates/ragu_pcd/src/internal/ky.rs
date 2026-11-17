@@ -398,10 +398,10 @@ pub struct NativeParts<'a, C: Cycle> {
     /// The actual nested private stages, for the compute-v transcript-copy target.
     pub nested_private_stages: &'a [C::NestedCurve],
     /// Common targets for the private nested walk points.
-    pub nested_private_commitments: &'a [C::NestedCurve],
+    pub nested_online_commitments: &'a [C::NestedCurve],
     /// Native private helper sums.
-    pub native_private_sums: &'a [C::CircuitField],
-    pub native_mesh: &'a [C::CircuitField],
+    pub native_online_fold: &'a [C::CircuitField],
+    pub native_mesh_claims: &'a [C::CircuitField],
 }
 
 /// The native $k(y)$ values at `y` from an instance's parts, as
@@ -422,9 +422,9 @@ pub fn native_ky_of<C: ProfiledCycle, const HEADER_SIZE: usize>(
             parts.as_ref().map(|p| p.online),
             parts.as_ref().map(|p| p.circuit_id.omega_j()),
             parts.as_ref().map(|p| p.unified),
-            parts.as_ref().map(|p| p.nested_private_commitments),
-            parts.as_ref().map(|p| p.native_private_sums),
-            parts.as_ref().map(|p| p.native_mesh),
+            parts.as_ref().map(|p| p.nested_online_commitments),
+            parts.as_ref().map(|p| p.native_online_fold),
+            parts.as_ref().map(|p| p.native_mesh_claims),
         )?;
 
         let (unified, unified_bridge) = proof_inputs.unified_ky_values(dr, &y)?;
