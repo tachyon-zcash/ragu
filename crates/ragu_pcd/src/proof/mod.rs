@@ -211,13 +211,17 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
-    /// Private nested quotient and evaluation sums, empty for an inactive layout.
-    /// Common source-mesh coordinates and shared intersection values.
+    /// The nested source mesh's coordinates and shared intersection values,
+    /// empty without a nested mesh.
     pub(crate) nested_mesh: Vec<C::ScalarField>,
+    /// The nested helper's quotient and evaluation sums, empty when the
+    /// nested private batch is inactive.
     pub(crate) nested_private_sums: Vec<C::ScalarField>,
-    /// Private native quotient and evaluation sums, empty for an inactive layout.
-    /// Common source-mesh coordinates and shared intersection values.
+    /// The native source mesh's coordinates and shared intersection values,
+    /// empty without a native mesh.
     pub(crate) native_mesh: Vec<C::CircuitField>,
+    /// The native helper's quotient and evaluation sums, empty when the
+    /// native private batch is inactive.
     pub(crate) native_private_sums: Vec<C::CircuitField>,
     /// Common claim targets for the actual nested private/auxiliary walk points.
     pub(crate) nested_private_commitments: Vec<C::NestedCurve>,

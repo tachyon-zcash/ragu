@@ -26,7 +26,7 @@ pub struct PreparationChallenges<F> {
 /// This enforces the honest prover's lifecycle. The transcript absorption and
 /// circuit bindings independently enforce these deadlines against a malicious
 /// prover; a prover-side state machine is not a soundness boundary.
-pub struct Prepared<F: Field, R: Rank> {
+pub(crate) struct Prepared<F: Field, R: Rank> {
     layout: Layout,
     inputs: Vec<F>,
     polynomials: Vec<Option<sparse::Polynomial<F, R>>>,
@@ -41,7 +41,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     /// # Errors
     ///
     /// Rejects a malformed layout or an incorrect number of input values.
-    pub fn new(layout: Layout, inputs: Vec<F>) -> Result<Self> {
+    pub(crate) fn new(layout: Layout, inputs: Vec<F>) -> Result<Self> {
         layout.check()?;
         if inputs.len() != layout.inputs {
             return Err(Error::InvalidWitness(
@@ -57,7 +57,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     }
 
     /// The immutable input values prepared before the first challenge.
-    pub fn inputs(&self) -> &[F] {
+    pub(crate) fn inputs(&self) -> &[F] {
         &self.inputs
     }
 
@@ -70,7 +70,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     ///
     /// Rejects out-of-order or repeated phases and incorrect polynomial counts.
     /// A rejected call leaves the preparation unchanged.
-    pub fn supply(
+    pub(crate) fn supply(
         &mut self,
         phase: Phase,
         polynomials: Vec<sparse::Polynomial<F, R>>,
@@ -101,7 +101,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     /// # Errors
     ///
     /// Rejects access before that phase has been supplied.
-    pub fn phase(&self, phase: Phase) -> Result<Vec<&sparse::Polynomial<F, R>>> {
+    pub(crate) fn phase(&self, phase: Phase) -> Result<Vec<&sparse::Polynomial<F, R>>> {
         if !PHASES[..self.next].contains(&phase) {
             return Err(Error::InvalidWitness(
                 "private polynomial phase has not been prepared".into(),
@@ -121,7 +121,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     /// # Errors
     ///
     /// Rejects an incomplete preparation, including missing empty phases.
-    pub fn finish(self) -> Result<Vec<sparse::Polynomial<F, R>>> {
+    pub(crate) fn finish(self) -> Result<Vec<sparse::Polynomial<F, R>>> {
         if self.next != PHASES.len() {
             return Err(Error::InvalidWitness(
                 "private polynomial preparation is incomplete".into(),

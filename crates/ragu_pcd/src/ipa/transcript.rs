@@ -128,12 +128,15 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
         self.absorb(commitment)
     }
 
-    /// Absorbs a new private-batch scalar through a complete bridge encoding.
+    /// Absorbs a scalar-field value through a complete bridge encoding.
     ///
     /// Unlike legacy transcript messages, private helper sums and commitment
     /// coordinates may be zero. Their bridge then has coordinates (0, 0).
-    /// Nonzero values retain the same encoding as the ordinary scalar bridge;
-    /// callers use this only for the profile's new, fixed private fields.
+    /// Nonzero values retain the same encoding as the ordinary scalar bridge.
+    /// The compression instance uses it for the native private commitments'
+    /// coordinates and the nested mesh claims and helper sums. When the
+    /// profile declares a nested mesh, [`Self::nested_mesh`] also routes
+    /// every scalar of the nested-curve terminal IPA through it.
     pub(crate) fn write_private_scalar(&mut self, scalar: C::ScalarField) -> Result<()> {
         let commitment = B::msm(&[scalar], &C::nested_generators(self.params).g()[..1]).to_affine();
         super::fingerprint::record_point(&commitment);

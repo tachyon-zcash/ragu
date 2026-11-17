@@ -527,6 +527,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
+        C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
+        C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
         for (declared, present) in [
             (
                 C::Profile::NATIVE_MESH.is_some(),

@@ -168,6 +168,67 @@ impl Layout {
     }
 }
 
+/// The default bodies of the per-side preparation hooks on [`Profile`], shared
+/// by the native and nested hooks so that the two sides cannot drift apart.
+pub(crate) mod defaults {
+    use alloc::vec::Vec;
+
+    use ragu_core::{Error, Result};
+    use udon::field::Field;
+
+    use super::{Phase, stages::Side};
+    use crate::profile::Profile;
+
+    fn side<S: Side>(native: &'static str, nested: &'static str) -> Error {
+        Error::Initialization(if S::NATIVE { native } else { nested }.into())
+    }
+
+    /// Supplies only inherited mesh coordinates, which the protocol fills in.
+    pub(crate) fn inputs<P: Profile, S: Side, F: Field>() -> Result<Vec<F>> {
+        let layout = S::layout::<P>();
+        let inherited_only = S::mesh::<P>().is_some_and(|mesh| {
+            (0..layout.inputs).all(|i| mesh.inherited_coordinates().contains(&i))
+        });
+        if layout.inputs == 0 || inherited_only {
+            Ok(alloc::vec![F::ZERO; layout.inputs])
+        } else {
+            Err(side::<S>(
+                "the profile has no native private input prover",
+                "the profile has no nested private input prover",
+            ))
+        }
+    }
+
+    /// Supplies nothing, which suffices when the mesh owns every slot of
+    /// the phase.
+    pub(crate) fn polynomials<P: Profile, S: Side, T>(phase: Phase) -> Result<Vec<T>> {
+        let mesh = S::mesh::<P>();
+        if S::layout::<P>()
+            .phase_range(phase)
+            .any(|i| !mesh.is_some_and(|mesh| mesh.owns(i)))
+        {
+            Err(side::<S>(
+                "the profile has no native private polynomial prover",
+                "the profile has no nested private polynomial prover",
+            ))
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Supplies no witness points, which suffices when none are declared.
+    pub(crate) fn points<P: Profile, S: Side, F>() -> Result<Vec<F>> {
+        if S::layout::<P>().points == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(side::<S>(
+                "the profile has no native private query prover",
+                "the profile has no nested private query prover",
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod layout_tests {
     use super::*;

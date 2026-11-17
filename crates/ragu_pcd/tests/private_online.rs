@@ -1014,7 +1014,7 @@ impl Profile for LegacyMixed {
     const NAME: &'static str = "legacy-and-multipoint-batch";
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
-    const ONLINE_FQ_POLYS: usize = 2;
+    const ONLINE_FQ_POLYS: usize = 1;
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = 3;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = 3;
     const NESTED_ONLINE: Layout = Layout {
@@ -1070,7 +1070,7 @@ fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitme
     let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
         .register(UnitStep)?
         .finalize(crate::pasta::baked_aggregator())?;
-    assert_eq!(crate::profile::Shape::of::<LegacyMixed>().online_fq, 3);
+    assert_eq!(crate::profile::Shape::of::<LegacyMixed>().online_fq, 2);
     let mut rng = StdRng::seed_from_u64(0x606050);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;

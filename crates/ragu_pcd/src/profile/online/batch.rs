@@ -16,7 +16,10 @@ use super::{Challenge, Layout, Point};
 
 /// The enclosing step's authenticated challenges on one field.
 ///
-/// `beta` is the effective endoscalar lift used by the commitment walk.
+/// What `beta` holds depends on the side. The batch fold takes the
+/// effective endoscalar lift that the commitment walk uses. The helper
+/// circuit's witness carries raw `pre_beta` on the native side, which the
+/// circuit lifts, and the lift itself on the nested side.
 #[derive(Clone, Debug)]
 pub struct Challenges<T> {
     /// Challenge sampled after the private commitments.
@@ -29,7 +32,7 @@ pub struct Challenges<T> {
     pub alpha: T,
     /// Fresh evaluation point for the quotient and all polynomials.
     pub u: T,
-    /// Effective commitment-fold scalar, rather than raw `pre_beta`.
+    /// The commitment-fold scalar, raw or lifted by side (see above).
     pub beta: T,
 }
 
@@ -49,7 +52,7 @@ impl Point {
     /// # Errors
     ///
     /// Rejects an out-of-range witness or circuit domain index.
-    pub fn resolve<F: Field>(
+    pub(crate) fn resolve<F: Field>(
         &self,
         challenges: &Challenges<F>,
         inputs: &[F],
@@ -71,9 +74,15 @@ impl Point {
     }
 }
 
+/// Whether a registry index lies in a $2^{\text{two-adicity}}$ domain, so its
+/// bit-reversed root of unity does not alias another index's.
+fn in_domain(index: u32, two_adicity: u32) -> bool {
+    u64::from(index) < 1u64.checked_shl(two_adicity).unwrap_or(u64::MAX)
+}
+
 /// Resolves a setup-fixed registry index without allowing bit-reversal aliases.
 fn circuit_point<F: Field>(index: u32) -> Result<F> {
-    if u64::from(index) >= 1u64.checked_shl(F::TWO_ADICITY).unwrap_or(u64::MAX) {
+    if !in_domain(index, F::TWO_ADICITY) {
         return Err(Error::Initialization(
             "private opening circuit index exceeds the field domain".into(),
         ));
@@ -83,7 +92,7 @@ fn circuit_point<F: Field>(index: u32) -> Result<F> {
 
 /// Claimed query wires, committed before `alpha`.
 #[derive(Clone, Debug)]
-pub struct Queries<F> {
+pub(crate) struct Queries<F> {
     /// Input values from the stage committed before `w`.
     pub inputs: Vec<F>,
     /// Arbitrary points, indexed by [`Point::Witness`].
@@ -93,6 +102,23 @@ pub struct Queries<F> {
 }
 
 impl Layout {
+    /// Checks that every [`Point::Circuit`] index lies in field `F`'s domain.
+    ///
+    /// [`Self::check`] does not know the field; setup runs this for each side
+    /// so that an out-of-domain index fails before any proof is made.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a circuit index whose root of unity would alias another's.
+    pub(crate) fn check_circuit_points<F: Field>(&self) -> Result<()> {
+        for opening in self.openings {
+            if let Point::Circuit(index) = opening.point {
+                circuit_point::<F>(index)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Evaluates every opening and fills its shared claimed-value slot.
     ///
     /// # Errors
@@ -100,7 +126,7 @@ impl Layout {
     /// Rejects malformed declarations, wrong witness lengths, and shared
     /// values that disagree. This is a prover helper; circuit binding still
     /// comes from opening every claim in [`Self::fold`].
-    pub fn query<F: Field, R: Rank, B: Backend>(
+    pub(crate) fn query<F: Field, R: Rank, B: Backend>(
         &self,
         polynomials: &[sparse::Polynomial<F, R>],
         inputs: Vec<F>,
@@ -144,7 +170,7 @@ impl Layout {
     /// # Errors
     ///
     /// Rejects malformed layouts, witness lengths or point indices.
-    pub fn quotient<F: Field, R: Rank>(
+    pub(crate) fn quotient<F: Field, R: Rank>(
         &self,
         polynomials: &[sparse::Polynomial<F, R>],
         inputs: &[F],
@@ -184,7 +210,7 @@ impl Layout {
     ///
     /// Rejects wrong lengths and enforces every denominator nonzero, including
     /// when the opening's numerator is zero.
-    pub fn fold<'dr, D: Driver<'dr>>(
+    pub(crate) fn fold<'dr, D: Driver<'dr>>(
         &self,
         dr: &mut D,
         queries: &Queries<Element<'dr, D>>,
@@ -258,6 +284,30 @@ pub(crate) fn quotient_sum<F: Field, R: Rank>(
     sparse::Polynomial::from_coeffs(coeffs)
 }
 
+/// Multiplies `value` by `base` raised to a setup-fixed `exponent`.
+///
+/// Square-and-multiply costs about $\log_2$ of the exponent in
+/// multiplications, rather than one per power. `compute_v` uses it to shift
+/// its existing folds below the private batch's terms.
+pub(crate) fn mul_pow<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    value: &Element<'dr, D>,
+    base: &Element<'dr, D>,
+    exponent: usize,
+) -> Result<Element<'dr, D>> {
+    if exponent == 0 {
+        return Ok(value.clone());
+    }
+    let mut power = base.clone();
+    for bit in (0..usize::BITS - 1 - exponent.leading_zeros()).rev() {
+        power = power.square(dr)?;
+        if (exponent >> bit) & 1 == 1 {
+            power = power.mul(dr, base)?;
+        }
+    }
+    value.mul(dr, &power)
+}
+
 /// Appends opening terms to a quotient fold in descriptor order.
 /// Used by both private helpers and the compatibility placement in compute-v.
 pub(crate) fn append_quotients<'a, 'dr: 'a, D: Driver<'dr> + 'a>(
@@ -318,10 +368,15 @@ mod tests {
                 point: Point::Constant(0),
                 value: 2,
             },
+            Opening {
+                polynomial: 1,
+                point: Point::Circuit(3),
+                value: 3,
+            },
         ],
         inputs: 0,
         points: 1,
-        values: 3,
+        values: 4,
     };
 
     fn check<F: Field>() -> Result<()> {
@@ -343,22 +398,33 @@ mod tests {
             vec![F::from(7)],
             &challenges,
         )?;
-        assert_eq!(queries.values, vec![F::from(17), F::from(162), F::ONE]);
+        let omega = CircuitIndex::from_u32(3).omega_j::<F>();
+        assert_eq!(
+            queries.values,
+            vec![
+                F::from(17),
+                F::from(162),
+                F::ONE,
+                F::ONE + F::from(5) * omega
+            ]
+        );
         let quotient =
             LAYOUT.quotient(&polynomials, &queries.inputs, &queries.points, &challenges)?;
         let u = challenges.u;
         let a = challenges.alpha;
-        let expected_f = a.pow_u64(3) * (F::from(2) + F::from(3) * (u + F::from(2)))
-            + a.square() * (F::from(2) + F::from(3) * (u + F::from(7)))
-            + a * F::from(5)
-            + F::from(2)
-            + F::from(3) * u;
+        // The circuit-point opening of 1 + 5X is last, so it takes alpha^0
+        // and its quotient is the constant 5.
+        let expected_f = a.pow_u64(4) * (F::from(2) + F::from(3) * (u + F::from(2)))
+            + a.pow_u64(3) * (F::from(2) + F::from(3) * (u + F::from(7)))
+            + a.square() * F::from(5)
+            + a * (F::from(2) + F::from(3) * u)
+            + F::from(5);
         let expected_e = challenges.beta * (F::ONE + F::from(2) * u + F::from(3) * u.square())
             + F::ONE
             + F::from(5) * u;
         assert_eq!(quotient.eval(u), expected_f);
         let evaluations = polynomials.iter().map(|p| p.eval(u)).collect::<Vec<_>>();
-        for mutation in 0..5 {
+        for mutation in 0..6 {
             let result =
                 Simulator::<F>::simulate((queries.clone(), evaluations.clone()), |dr, witness| {
                     let mut query = witness.as_ref().map(|w| w.0.clone()).take();
@@ -369,6 +435,7 @@ mod tests {
                         2 => query.points[0] += F::ONE,
                         3 => evaluations[0] += F::ONE,
                         4 => challenges.u = challenges.w,
+                        5 => query.values[3] += F::ONE,
                         _ => {}
                     }
                     let query = Queries {
@@ -411,6 +478,29 @@ mod tests {
     fn repeated_openings_match_direct_polynomial_algebra() -> Result<()> {
         check::<Fp>()?;
         check::<Fq>()
+    }
+
+    #[test]
+    fn mul_pow_matches_repeated_multiplication() -> Result<()> {
+        let (value, base) = (Fp::from(3), Fp::from(7));
+        for exponent in 0..=41 {
+            Simulator::<Fp>::simulate((), |dr, _| {
+                let v = Element::constant(dr, value);
+                let b = Element::constant(dr, base);
+                let expected = Element::constant(dr, value * base.pow_u64(exponent as u64));
+                mul_pow(dr, &v, &b, exponent)?.enforce_equal(dr, &expected)
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn circuit_points_outside_the_field_domain_reject() {
+        assert!(in_domain(15, 4));
+        assert!(!in_domain(16, 4));
+        assert!(in_domain(u32::MAX, 32));
+        assert!(LAYOUT.check_circuit_points::<Fp>().is_ok());
+        assert!(LAYOUT.check_circuit_points::<Fq>().is_ok());
     }
 
     #[test]

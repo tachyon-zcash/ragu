@@ -75,7 +75,7 @@ internal circuits.
   - public instance $k(Y)$ of the app circuit changes from `[L/R/O header fields]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O header fields]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
   - the special hash only commits the step's own `O1` slot, so if the app circuit wants to compute
   $\anchor' = H(\anchor \| e \| \acc^\tg)$ then $\acc^\tg$ must occupy the output polynomial slot `O1`
-- C5: V5's compatibility API gives a profile private online $\F_q$ slots, committed before $w$ and opened at $\zeta_q=\mathsf{lift}(w)$ by its nested internal circuits (see [V5](#v5)). No header carries them. The original one-slot limit is removed in V6; new consumers use the general batch API.
+- C5: V5's compatibility API gives a profile private online $\F_q$ slots, committed before $w$ and opened at $\zeta_q=\mathsf{lift}(w)$ by its nested internal circuits (see [V5](#v5)). No header carries them. A profile has at most one such slot; new consumers use the general batch API.
 - C6: a profile may give its internal circuits private polynomial batches over both $\F_p$ and $\F_q$ (see [V6](#v6))
   - the profile fixes distinct polynomial slots, their commitment phases and the opening list; each polynomial may be opened at several points
   - consumers read authenticated staged inputs, opening wires and opposite-field commitment points; the public application API is unchanged
@@ -465,7 +465,7 @@ Swapping the fields swaps every role of the $\F_p$ slots:
 | claimant | application circuit | nested `compute_v` |
 | opening folded by | native `Query`, `Eval`, `compute_v` | nested `Query`, `Eval`, `compute_v` |
 | commitment folded by | nested walk into $P$ | native walk into $P_n$ |
-| slots per step | 6, `[L0, L1, R0, R1, O0, O1]` | `ONLINE_FQ_POLYS` private slots (originally 1) |
+| slots per step | 6, `[L0, L1, R0, R1, O0, O1]` | `ONLINE_FQ_POLYS` private slots, at most 1 |
 
 The difference that matters is the claimant.
 In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through a public instance: the application's $k(y)$, matched against `compute_v`'s export in the parent.
@@ -491,7 +491,7 @@ And since no header carries $f_q$, there is no header-carry check.
 ```
 
 A profile sets the compatibility count with `Profile::ONLINE_FQ_POLYS`, zero by default, so Standard does not change.
-V5 originally allowed one slot; V6 removes that cap and shares its batch algebra while retaining this stage placement. Compatibility test profiles use a fixed placeholder polynomial. Future decompression consumers use the general V6 hooks; production `Aggregator` decompression remains disabled.
+A profile has at most `NUM_ONLINE_FQ_POLYS` (one) such slot. V6 shares its batch algebra while retaining this stage placement. Compatibility test profiles use a fixed placeholder polynomial. Future decompression consumers use the general V6 hooks; production `Aggregator` decompression remains disabled.
 
 #### Details and soundness notes {#v5-soundness}
 
@@ -558,7 +558,7 @@ $$
 It exports these two sums through the common instance. The core circuit shifts the existing quotient fold by $\alpha^M$, and the existing commitment/evaluation fold by $\beta^N$, before appending the respective sums. Thus another opening adds a quotient term, while each polynomial contributes just one evaluation at $u$ and one commitment. Denominator inverses constrain $u\ne q_i$; collisions cannot be skipped.
 Here $\beta$ is the effective endoscalar used by the walk, not its raw transcript input. The helper's challenges and sums are bound by both recursive and terminal claim targets.
 
-V5's `ONLINE_FQ_POLYS` remains a compatibility placement for pre-$w$ polynomials opened at the lifted $w$. It uses the shared opening descriptors, quotient construction and circuit fold, and its historical one-slot limit is removed. Its existing stages and placeholder behavior are retained. New consumers use `NESTED_ONLINE`; a compatibility slot and a new private slot are separate entries and are each counted once.
+V5's `ONLINE_FQ_POLYS` remains a compatibility placement for pre-$w$ polynomials opened at the lifted $w$. It uses the shared opening descriptors, quotient construction and circuit fold, and keeps its one-slot limit. Its existing stages and placeholder behavior are retained. New consumers use `NESTED_ONLINE`; a compatibility slot and a new private slot are separate entries and are each counted once.
 
 #### Commitments at four deadlines {#v6-soundness}
 
@@ -619,28 +619,23 @@ During compression the prover reconstructs the public source restrictions needed
 
 #### Capacity and cost {#v6-cost}
 
-The API permits setup-fixed layouts within the enclosing rank and circuit budgets. The source-mesh fixture exercises the following **per field**:
+The API permits setup-fixed layouts within the enclosing rank and circuit budgets. Each count follows from a field's declaration: $r$ restrictions (the two inherited and those introduced), $h$ helpers $T_a$, and $p$ polynomials outside the mesh opened $q$ times in total. The source-mesh fixture has $r=11$, $h=7$, $p=1$ and $q=2$ **per field**:
 
-| Item | Count |
-|---|---:|
-| Pre-$w$ slots: two inherited, nine introduced restrictions, one unrelated polynomial | 12 |
-| Later auxiliaries: seven $T_a$, one $U$, one $R_{\rm out}$ | 9 |
-| Distinct private polynomial slots / opening claims | 21 / 40 |
-| Mesh polynomials / edges | 20 / 19 |
-| Extra terminal claims: both ends of each edge, plus outgoing check | 39 |
-| Retained source polynomials | 1 |
+| Item | Count | Fixture |
+|---|---|---:|
+| Pre-$w$ slots: restrictions and polynomials outside the mesh | $r+p$ | 12 |
+| Later auxiliaries: the $T_a$, $U$ and $R_{\rm out}$ | $h+2$ | 9 |
+| Mesh polynomials / edges | $r+h+2$ / $r+h+1$ | 20 / 19 |
+| Distinct private polynomial slots / opening claims | $r+h+2+p$ / $2(r+h+1)+q$ | 21 / 40 |
+| Extra terminal claims: both ends of each edge, plus outgoing check | $2(r+h+1)+1$ | 39 |
+| Retained source polynomials | $1$ | 1 |
 
 This is an oracle-capacity fixture at rank 14, header size 2 and four endoscalings per walk step. It is not a measured decompression circuit. The unrelated polynomial is opened twice; future consumers must add their own checks and required queries. More openings need not add commitments, but more commitments lengthen both coupled walks, and stages reserve gates in every circuit that loads them.
 
-`crates/ragu_pcd/tests/source_mesh_costs.rs` emits the reproducible shape, circuit and encoded-size census during `just test`. It includes Standard at ranks 13 and 14, with the same walk settings as the fixture, so configuration cost can be distinguished from oracle cost.
+The `source_oracle_cost_census` test in `crates/ragu_pcd/tests/source_mesh_costs.rs` checks that every fixed circuit, helper and walk step fits the rank, and asserts the fixture counts above against the declaration. Run `just test source_oracle_cost_census --nocapture` to print the census: shape, circuit sizes and encoded proof sizes. It includes Standard at ranks 13 and 14, with the same walk settings as the fixture, so configuration cost can be distinguished from oracle cost.
 
-#### Temporary engineering map for review {#v6-plan}
+Source-mesh preparation adds prover work that the census does not time. Each fuse computes one full restriction of the source registry per mesh slot it does not inherit: $m(W,a_j,b_j)$ per introduced restriction before $w$, $m(w,a,Y)$ per helper before $y$, $m(w,X,y)$ for $U$ before $x$, and $m(W,x,y)$ for $R_{\rm out}$ before $\alpha$. Inherited slots reuse the children's retained polynomials. Preparation therefore grows with the number of introduced restrictions and helpers, not with the depth of the proof tree, and each proof retains one full-rank outgoing polynomial per active field for its parent.
 
-Remove this subsection before merge. The implementation can be reviewed in the following groups:
-
-1. **Declarations and algebra:** `profile/online` layouts, phases, preparation, shared quotient fold and helper circuits; V5 compatibility descriptors.
-2. **Bindings and recursion:** stage registration/masks, phase point copies, common helper/core targets, both commitment walks and both-child source carry.
-3. **Terminal closure:** captured source registry, compression claims and transcript, retained-cache checks and profile-sized codecs.
-4. **Evidence:** private-batch consumer/phase attacks, source substitution and mesh corruption, multi-generation carry, zero-source commitments, codec round trips and the cost census.
+#### Remaining work {#v6-remaining}
 
 Future decompression work must supply and authenticate its inner transcript data, implement the scalar and point verifier relations, connect the output statement, and measure the complete circuit partition before enabling the production Aggregator. Compression-format optimization is separate work.

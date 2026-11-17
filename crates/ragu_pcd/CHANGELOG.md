@@ -54,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `Pcd::commitments` and `Application::commit`: a proof's polynomial slot
   commitments, and the commitment of given coefficients, so that an
   application can recompute `Application::bridge_hash` outside the circuit.
+- Added private polynomial batches through `profile::online`. A profile
+  declares each field's batch as a `Layout` of polynomials, their commitment
+  `Phase`s and their `Opening`s (`Profile::NATIVE_ONLINE`, `NESTED_ONLINE`),
+  supplies its witnesses through `Profile::{native,nested}_online_inputs`,
+  `_online_polynomials` and `_online_points`, and reads its wires from
+  extension circuits listed in `Profile::{NATIVE,NESTED}_ONLINE_CONSUMERS`,
+  traced through `Profile::{native,nested}_extension_rxs_with_online`.
+- Added source-registry meshes: `Profile::{NATIVE,NESTED}_MESH` declare a
+  `profile::online::mesh::Mesh` over a batch's slots, and
+  `ApplicationBuilder::with_source_registries` captures the registries it
+  restricts as `profile::online::source::SourceRegistry`s. Each step carries
+  both children's outgoing restrictions, and compression closes the root's.
+- Added `Application::nested_registry`, beside `native_registry`.
 
 ### Changed
 

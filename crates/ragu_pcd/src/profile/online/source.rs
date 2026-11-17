@@ -90,7 +90,7 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     /// # Errors
     ///
     /// Rejects a source rank or registry domain larger than the enclosing rank.
-    pub fn check_rank<R: Rank>(&self) -> Result<()> {
+    pub(crate) fn check_rank<R: Rank>(&self) -> Result<()> {
         if self.inner.source_capacity() > R::num_coeffs()
             || 1usize
                 .checked_shl(self.inner.domain_log2())
@@ -116,7 +116,7 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     /// # Errors
     ///
     /// Rejects restrictions that cannot fit the enclosing rank without truncation.
-    pub fn xy<R: Rank>(&self, x: F, y: F) -> Result<sparse::Polynomial<F, R>> {
+    pub(crate) fn xy<R: Rank>(&self, x: F, y: F) -> Result<sparse::Polynomial<F, R>> {
         self.polynomial(self.inner.xy(x, y))
     }
     /// The auxiliary restriction m(w,x,Y), fixed before y.
@@ -124,7 +124,7 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     /// # Errors
     ///
     /// Rejects restrictions that cannot fit the enclosing rank without truncation.
-    pub fn wx<R: Rank>(&self, w: F, x: F) -> Result<sparse::Polynomial<F, R>> {
+    pub(crate) fn wx<R: Rank>(&self, w: F, x: F) -> Result<sparse::Polynomial<F, R>> {
         self.polynomial(self.inner.wx(w, x))
     }
     /// The auxiliary restriction m(w,X,y), fixed before x.
@@ -132,11 +132,11 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     /// # Errors
     ///
     /// Rejects restrictions that cannot fit the enclosing rank without truncation.
-    pub fn wy<R: Rank>(&self, w: F, y: F) -> Result<sparse::Polynomial<F, R>> {
+    pub(crate) fn wy<R: Rank>(&self, w: F, y: F) -> Result<sparse::Polynomial<F, R>> {
         self.polynomial(self.inner.wy(w, y))
     }
     /// Evaluates the captured source with the sealed verifier backend.
-    pub fn evaluate(&self, w: F, x: F, y: F) -> F {
+    pub(crate) fn evaluate(&self, w: F, x: F, y: F) -> F {
         self.inner.evaluate(w, x, y)
     }
 }

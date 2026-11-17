@@ -1,4 +1,5 @@
-//! Reproducible shape, circuit and wire costs; emitted by `just test`.
+//! Reproducible shape, circuit and wire costs. Print them with
+//! `just test source_oracle_cost_census --nocapture`.
 
 use ragu_circuits::{
     polynomials::{R, Rank},
@@ -222,8 +223,37 @@ fn census<P: Profile, Rk: Rank>(label: &str) -> Result<()> {
     );
     Ok(())
 }
+/// Holds the fixture counts the book's V6 cost table derives, per field.
+fn assert_fixture_counts(
+    layout: crate::profile::online::Layout,
+    mesh: crate::profile::online::mesh::Mesh,
+) -> Result<()> {
+    use crate::profile::online::Phase;
+    let (r, h) = (mesh.restrictions().count(), mesh.helpers.len());
+    let p = layout.polynomials.len() - mesh.polynomial_indices().len();
+    let q = layout
+        .openings
+        .iter()
+        .filter(|o| !mesh.polynomial_indices().contains(&o.polynomial))
+        .count();
+    assert_eq!((r, h, p, q), (11, 7, 1, 2));
+    assert_eq!(layout.phase_range(Phase::BeforeW).len(), r + p);
+    assert_eq!(layout.polynomials.len() - (r + p), h + 2);
+    assert_eq!(mesh.polynomial_indices().len(), r + h + 2);
+    assert_eq!(mesh.edges(layout)?.len(), r + h + 1);
+    assert_eq!(layout.polynomials.len(), r + h + 2 + p);
+    assert_eq!(layout.openings.len(), 2 * (r + h + 1) + q);
+    Ok(())
+}
+
 #[test]
 fn source_oracle_cost_census() -> Result<()> {
+    for (layout, mesh) in [
+        (SourceCapacity::NATIVE_ONLINE, SourceCapacity::NATIVE_MESH),
+        (SourceCapacity::NESTED_ONLINE, SourceCapacity::NESTED_MESH),
+    ] {
+        assert_fixture_counts(layout, mesh.expect("fixture mesh"))?;
+    }
     census::<Standard, R<13>>("main-standard")?;
     census::<Standard, R<14>>("main-matched")?;
     census::<SourceCapacity, R<14>>("v6-source-capacity")

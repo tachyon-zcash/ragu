@@ -54,7 +54,7 @@ impl Mesh {
     /// # Errors
     ///
     /// Rejects an invalid layout or a witness with the wrong fixed lengths.
-    pub fn claim_values<T: Clone>(
+    pub(crate) fn claim_values<T: Clone>(
         &self,
         layout: Layout,
         inputs: &[T],

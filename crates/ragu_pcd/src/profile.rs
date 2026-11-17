@@ -74,6 +74,7 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
+pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     internal::{endoscalar, native, nested},
@@ -140,10 +141,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The nested rx polynomials the profile adds: its nested extension's.
     const NESTED_EXTENSION: usize;
 
-    /// Compatibility slots over the scalar field, each opened at the lift of w.
-    /// The count is bounded by the enclosing rank and circuit budgets.
-    /// New consumers should use [`Self::NESTED_ONLINE`] for explicit points,
-    /// preparation hooks and authenticated staged access.
+    /// The number of online polynomials over the scalar field that each
+    /// step of the profile commits, at most [`NUM_ONLINE_FQ_POLYS`]. Each is
+    /// opened at the lift of w. New consumers should use
+    /// [`Self::NESTED_ONLINE`] for explicit points, preparation hooks and
+    /// authenticated staged access.
     ///
     /// A step commits such a polynomial natively, before its challenge
     /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
@@ -377,17 +379,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = context;
-        if Self::NATIVE_ONLINE.inputs == 0
-            || Self::NATIVE_MESH.is_some_and(|mesh| {
-                (0..Self::NATIVE_ONLINE.inputs).all(|i| mesh.inherited_coordinates().contains(&i))
-            })
-        {
-            Ok(alloc::vec![Base::CircuitField::ZERO;Self::NATIVE_ONLINE.inputs])
-        } else {
-            Err(Error::Initialization(
-                "the profile has no native private input prover".into(),
-            ))
-        }
+        online::defaults::inputs::<Self, online::stages::Native, _>()
     }
 
     /// Supplies private native polynomials at one commitment deadline.
@@ -413,16 +405,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = (context, inputs, challenges);
-        if Self::NATIVE_ONLINE
-            .phase_range(phase)
-            .any(|i| !Self::NATIVE_MESH.is_some_and(|mesh| mesh.owns(i)))
-        {
-            Err(Error::Initialization(
-                "the profile has no native private polynomial prover".into(),
-            ))
-        } else {
-            Ok(Vec::new())
-        }
+        online::defaults::polynomials::<Self, online::stages::Native, _>(phase)
     }
 
     /// Supplies the native witness query points after x and before alpha.
@@ -445,13 +428,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = (context, inputs, challenges);
-        if Self::NATIVE_ONLINE.points == 0 {
-            Ok(Vec::new())
-        } else {
-            Err(Error::Initialization(
-                "the profile has no native private query prover".into(),
-            ))
-        }
+        online::defaults::points::<Self, online::stages::Native, _>()
     }
 
     /// Traces the user extension with the private batch's immutable stage data.
@@ -500,17 +477,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = context;
-        if Self::NESTED_ONLINE.inputs == 0
-            || Self::NESTED_MESH.is_some_and(|mesh| {
-                (0..Self::NESTED_ONLINE.inputs).all(|i| mesh.inherited_coordinates().contains(&i))
-            })
-        {
-            Ok(alloc::vec![Base::ScalarField::ZERO;Self::NESTED_ONLINE.inputs])
-        } else {
-            Err(Error::Initialization(
-                "the profile has no nested private input prover".into(),
-            ))
-        }
+        online::defaults::inputs::<Self, online::stages::Nested, _>()
     }
 
     /// Supplies private nested polynomials at one commitment deadline.
@@ -536,16 +503,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = (context, inputs, challenges);
-        if Self::NESTED_ONLINE
-            .phase_range(phase)
-            .any(|i| !Self::NESTED_MESH.is_some_and(|mesh| mesh.owns(i)))
-        {
-            Err(Error::Initialization(
-                "the profile has no nested private polynomial prover".into(),
-            ))
-        } else {
-            Ok(Vec::new())
-        }
+        online::defaults::polynomials::<Self, online::stages::Nested, _>(phase)
     }
 
     /// Supplies the nested witness query points after x and before alpha.
@@ -568,13 +526,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
     {
         let _ = (context, inputs, challenges);
-        if Self::NESTED_ONLINE.points == 0 {
-            Ok(Vec::new())
-        } else {
-            Err(Error::Initialization(
-                "the profile has no nested private query prover".into(),
-            ))
-        }
+        online::defaults::points::<Self, online::stages::Nested, _>()
     }
 
     /// Traces the user extension with the private batch's immutable stage data.
@@ -619,7 +571,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [consistent](Extension::is_consistent); if the nested extension names
     /// a statement circuit, which only the native side carries; or if an
     /// extension's binding names a stage the other extension does not have;
-    /// if the product of the two endoscaling counts is at most four.
+    /// if the product of the two endoscaling counts is at most four; or if
+    /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
+    /// [`NUM_ONLINE_FQ_POLYS`].
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
@@ -643,6 +597,11 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
         if Self::NAME.is_empty() {
             return Err(Error::Initialization("the profile has no name".into()));
+        }
+        if Self::ONLINE_FQ_POLYS > NUM_ONLINE_FQ_POLYS {
+            return Err(Error::Initialization(
+                "the profile commits more online Fq polynomials than a step can open".into(),
+            ));
         }
         for (name, profile) in [
             (Standard::NAME, TypeId::of::<Standard>()),
@@ -1204,20 +1163,23 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
-    /// profile's extension.
+    /// profile's extension, with the native private batch's helper circuit
+    /// and stages when [`Profile::NATIVE_ONLINE`] is nonempty.
     pub native_rx: usize,
-    /// The nested-curve points the nested walk folds: the native batch.
+    /// The nested-curve points the nested walk folds: the native batch, with
+    /// the commitments of the [`Profile::NATIVE_ONLINE`] polynomials.
     pub nested_points: usize,
     /// The nested walk's steps.
     pub nested_steps: usize,
-    /// The nested rx polynomials.
+    /// The nested rx polynomials, with the nested private batch's helper
+    /// circuit and stages when [`Profile::NESTED_ONLINE`] is nonempty.
     pub nested_rx: usize,
-    /// The step's own online polynomials over the scalar field (see
-    /// [`Profile::ONLINE_FQ_POLYS`]).
+    /// The step's own polynomials over the scalar field: the
+    /// [`Profile::ONLINE_FQ_POLYS`] slots followed by the
+    /// [`Profile::NESTED_ONLINE`] polynomials.
     pub online_fq: usize,
-    /// The nested-curve points the native walk folds: the nested batch,
-    /// with the commitments of the step's own online polynomials over the
-    /// scalar field.
+    /// The host-curve points the native walk folds: the nested batch, with
+    /// the commitments of the [`online_fq`](Self::online_fq) polynomials.
     pub native_points: usize,
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
@@ -2809,14 +2771,14 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_slots_are_not_limited_to_the_historical_one_slot() {
+    fn check_refuses_more_online_fq_polynomials_than_a_step_opens() {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-        struct MultipleSlots;
-        impl Profile for MultipleSlots {
+        struct TooMany;
+        impl Profile for TooMany {
             const NAME: &'static str = "too-many";
             const NATIVE_EXTENSION: usize = 0;
             const NESTED_EXTENSION: usize = 0;
-            const ONLINE_FQ_POLYS: usize = 2;
+            const ONLINE_FQ_POLYS: usize = crate::profile::NUM_ONLINE_FQ_POLYS + 1;
 
             type Context<'params, Base, R, B>
                 = ()
@@ -2825,7 +2787,7 @@ mod tests {
                 R: Rank,
                 B: SelectableBackend;
         }
-        assert!(MultipleSlots::check().is_ok());
+        assert!(TooMany::check().is_err());
     }
 
     #[test]

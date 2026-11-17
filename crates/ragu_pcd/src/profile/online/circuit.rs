@@ -31,7 +31,7 @@ use crate::profile::Profile;
 
 /// Public values shared by the batch helper and the fuse's `compute_v` target.
 #[derive(Clone)]
-pub struct Instance<F, P: Profile, S: Side> {
+pub(crate) struct Instance<F, P: Profile, S: Side> {
     /// The authenticated enclosing-step challenges. On the native side `beta`
     /// carries raw `pre_beta`; on the nested side it is the effective lift.
     pub challenges: Challenges<F>,
@@ -45,7 +45,7 @@ pub struct Instance<F, P: Profile, S: Side> {
 
 /// The helper's public output, before the extension's zero suffix.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, P: Profile, S: Side> {
+pub(crate) struct Output<'dr, D: Driver<'dr>, P: Profile, S: Side> {
     /// `w`, `y`, `x`, `alpha`, `u`, and the side's `beta` input, in order.
     #[ragu(gadget)]
     pub challenges: FixedVec<Element<'dr, D>, ConstLen<6>>,
@@ -73,7 +73,7 @@ pub struct Witness<'a, F: Field, P: Profile, S: Side> {
 }
 
 /// Computes the two private-batch sums without loading the fuse preamble.
-pub struct Circuit<F: Field, P: Profile, S: Side> {
+pub(crate) struct Circuit<F: Field, P: Profile, S: Side> {
     source_tag: Option<F>,
     marker: PhantomData<(P, S)>,
 }
@@ -91,7 +91,7 @@ impl<F: Field, P: Profile, S: Side> Circuit<F, P, S> {
     /// # Errors
     ///
     /// Rejects a missing or undeclared source identity.
-    pub fn with_source_tag(source_tag: Option<F>) -> Result<Self> {
+    pub(crate) fn with_source_tag(source_tag: Option<F>) -> Result<Self> {
         if source_tag.is_some() != S::mesh::<P>().is_some() {
             return Err(Error::Initialization(
                 "source registry does not match the mesh declaration".into(),

@@ -247,9 +247,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
         if let Some(state) = &builder.native_private {
             let layout = C::Profile::NATIVE_ONLINE;
-            for _ in layout.openings {
-                poly.scale(alpha);
-            }
+            poly.scale(alpha.pow_u64(layout.openings.len() as u64));
             let private = layout.quotient(
                 state.polynomials(),
                 state.early_values(),
@@ -289,9 +287,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
         if let Some(state) = &builder.nested_private {
             let layout = C::Profile::NESTED_ONLINE;
-            for _ in layout.openings {
-                poly.scale(alpha);
-            }
+            poly.scale(alpha.pow_u64(layout.openings.len() as u64));
             // Opening descriptors can use w, y and x; u and beta are not
             // sampled yet and are never read by quotient construction.
             let private = layout.quotient(

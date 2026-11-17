@@ -96,13 +96,17 @@ pub(crate) struct Instance<C: Cycle> {
     pub v: C::CircuitField,
     pub nested_c: C::ScalarField,
     pub nested_v: C::ScalarField,
-    /// The private nested helper's two sums, absent for an inactive layout.
-    /// Common source-mesh coordinates and shared intersection values.
+    /// The nested source mesh's coordinates and shared intersection values,
+    /// empty without a nested mesh.
     pub nested_mesh: Vec<C::ScalarField>,
+    /// The nested helper's quotient and evaluation sums, empty when the
+    /// nested private batch is inactive.
     pub nested_private_sums: Vec<C::ScalarField>,
-    /// Native helper quotient and evaluation sums, absent when inactive.
-    /// Common source-mesh coordinates and shared intersection values.
+    /// The native source mesh's coordinates and shared intersection values,
+    /// empty without a native mesh.
     pub native_mesh: Vec<C::CircuitField>,
+    /// The native helper's quotient and evaluation sums, empty when the
+    /// native private batch is inactive.
     pub native_private_sums: Vec<C::CircuitField>,
     /// The private/auxiliary points exported by bind_endoscalar.
     pub nested_private_commitments: Vec<C::NestedCurve>,

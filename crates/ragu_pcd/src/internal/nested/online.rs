@@ -23,6 +23,17 @@ use udon::field::Field;
 
 use crate::profile::Profile;
 
+/// The maximum number of online polynomials over the scalar field that a
+/// step commits.
+///
+/// Such a polynomial belongs to the step that commits it. The step commits
+/// it before its challenge is drawn, and the step's nested batch opens it.
+/// The step does not export it, so a parent never opens it. Only a profile
+/// that asks for the slot has it; see [`Profile::ONLINE_FQ_POLYS`]. A
+/// profile that needs more pre-w polynomials over the scalar field declares
+/// them in [`Profile::NESTED_ONLINE`] instead.
+pub const NUM_ONLINE_FQ_POLYS: usize = 1;
+
 /// Compatibility descriptors for pre-w slots opened at the lifted w.
 /// Their stage placement is retained for existing profiles; their opening
 /// algebra is shared with the general private batch.

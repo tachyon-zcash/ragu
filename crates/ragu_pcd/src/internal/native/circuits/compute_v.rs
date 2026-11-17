@@ -321,10 +321,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 )?;
                 let mut fu = horner.finish(dr);
                 if !C::Profile::NATIVE_ONLINE.is_empty() {
-                    for _ in C::Profile::NATIVE_ONLINE.openings {
-                        fu = fu.mul(dr, &alpha)?;
-                    }
-                    fu = fu.add(dr, &private_sums[0]);
+                    fu = crate::profile::online::batch::mul_pow(
+                        dr,
+                        &fu,
+                        &alpha,
+                        C::Profile::NATIVE_ONLINE.openings.len(),
+                    )?
+                    .add(dr, &private_sums[0]);
                 }
                 fu
             };
@@ -338,10 +341,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> MultiStageCircuit<C::C
                 eval.write(dr, &mut horner)?;
                 let mut value = horner.finish(dr);
                 if !C::Profile::NATIVE_ONLINE.is_empty() {
-                    for _ in C::Profile::NATIVE_ONLINE.polynomials {
-                        value = value.mul(dr, &effective_beta)?;
-                    }
-                    value = value.add(dr, &private_sums[1]);
+                    value = crate::profile::online::batch::mul_pow(
+                        dr,
+                        &value,
+                        &effective_beta,
+                        C::Profile::NATIVE_ONLINE.polynomials.len(),
+                    )?
+                    .add(dr, &private_sums[1]);
                 }
                 value
             };
