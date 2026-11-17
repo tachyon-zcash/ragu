@@ -44,8 +44,7 @@
 //!   what its transcript absorbed and squeezed, with counts, and of each
 //!   curve's final IPA MSM, every scalar and proof-dependent base.
 //!
-//! Beside it, after ironwood's match-only captures, a random proof string has
-//! two files in `random/`:
+//! Beside it, a random proof string has two files in `random/`:
 //!
 //! - `<scenario>.proof`: a string of the honest proof's shape and circuit
 //!   id, every other value drawn under a fixed seed (see [`fabricate`]), in

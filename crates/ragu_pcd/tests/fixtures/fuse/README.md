@@ -13,8 +13,7 @@ follows zakura-common's Halo2 and Orchard verifier fingerprints: the verifier
 runs on each committed proof under a recorder, and its transcript schedule and
 final MSMs must match the committed record.
 
-Each profile's fixtures come in two families, after ironwood's honest and
-match-only captures:
+Each profile's fixtures come in two families:
 
 - `honest/`: the proofs the prover reproduces and the verifier accepts, with
   the verifier's run on each.
