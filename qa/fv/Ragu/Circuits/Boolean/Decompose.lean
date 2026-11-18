@@ -28,20 +28,18 @@ def recomposeExpr : {n : ℕ} → Vector (Expression (F p)) n → Expression (F 
       bits[0]
 
 /-- `boolean.rs::decompose`: the canonical `n`-bit little-endian decomposition
-of a field element — `multipack`'s inverse. In Rust `n` is the field's
-`CAPACITY`; the reimpl is polymorphic in it. One `Boolean::alloc` per bit, with
+of a field element — `multipack`'s inverse. In Rust, `decompose` uses `CAPACITY`
+and `decompose_n` takes a const `N`. One `Boolean::alloc` per bit, with
 honest witness `bit i = elem.to_le_bits()[i]`, then a single linear constraint
 binding the weighted sum of the bits to the element. Mirrored here as
 `Circuit.mapFinRange` over `Alloc.circuit` (the hint reads bit `i` of the
 input's canonical representative) and one `assertZero` on `recomposeExpr`.
 
 `n` bits with `2ⁿ < p` represent exactly `[0, 2ⁿ)`, with no wrapped alias, so
-the decomposition is canonical without a range check; an element at or above
-`2ⁿ` has no decomposition and the constraints are unsatisfiable.
+the decomposition is canonical; an element at or above `2ⁿ` has no
+decomposition and the constraints are unsatisfiable.
 
-The `0` branch keeps the reimpl total in `n` and emits what the Rust loop
-would (an empty accumulator, i.e. `0 - input`); no field has capacity `0`, so
-it is unreachable in practice.
+The `0` arm matches `decompose_n::<_, 0>`, constraining `0 - input = 0`.
 
 Sub-gadget: `decompose` is `pub(crate)` and reaches the constraint system only
 through `Endoscalar::extract_element`, so it has no extraction instance of its

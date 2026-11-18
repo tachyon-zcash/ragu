@@ -21,6 +21,7 @@ use crate::{
     io::{Buffer, Write},
     promotion::{Demoted, Promotion},
     util::InternalMaybe,
+    vec::{ConstLen, FixedVec},
 };
 
 /// Represents a wire constrained to be zero or one, along with its
@@ -330,8 +331,43 @@ pub fn decompose<'dr, D: Driver<'dr>>(
     allocator: &mut impl Allocator<'dr, D>,
     elem: &Element<'dr, D>,
 ) -> Result<Vec<Boolean<'dr, D>>> {
+    decompose_bits(dr, allocator, elem, D::F::CAPACITY as usize)
+}
+
+/// Decomposes `elem` into `N` little-endian booleans.
+///
+/// Unlike [`decompose`], this returns a [`FixedVec`] at the caller's chosen
+/// width. This costs `N` gates and $2N + 1$ linear constraints.
+///
+/// # Soundness
+///
+/// Any satisfying assignment places `elem` below $2^N$ and makes the returned
+/// bits its unique little-endian decomposition. `N <= D::F::CAPACITY` is
+/// checked at compile time, so the weighted sum cannot wrap.
+///
+/// # Completeness
+///
+/// Every `elem` below $2^N$ satisfies the recomposition constraint with its
+/// honest bits. Drivers that do not check constraints during witness generation
+/// can return `Ok` for a larger `elem`; callers requiring early rejection must
+/// check the witness separately.
+pub fn decompose_n<'dr, D: Driver<'dr>, const N: usize>(
+    dr: &mut D,
+    allocator: &mut impl Allocator<'dr, D>,
+    elem: &Element<'dr, D>,
+) -> Result<FixedVec<Boolean<'dr, D>, ConstLen<N>>> {
+    const { assert!(N <= D::F::CAPACITY as usize) };
+    Ok(FixedVec::try_from(decompose_bits(dr, allocator, elem, N)?).expect("length is N"))
+}
+
+fn decompose_bits<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    allocator: &mut impl Allocator<'dr, D>,
+    elem: &Element<'dr, D>,
+    width: usize,
+) -> Result<Vec<Boolean<'dr, D>>> {
     let le_bits = elem.value().map(|value| value.to_le_bits());
-    let bits = (0..D::F::CAPACITY as usize)
+    let bits = (0..width)
         .map(|i| {
             let bit = le_bits.as_ref().map(move |le_bits| le_bits.as_ref()[i]);
             Boolean::alloc(dr, allocator, bit)
@@ -589,6 +625,29 @@ mod tests {
         });
         assert!(too_large.is_err());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_decompose_n() -> Result<()> {
+        let check = |x: u64| {
+            Simulator::simulate(F::from(x), |dr, x| {
+                let allocator = &mut Standard::new();
+                let elem = Element::alloc(dr, allocator, x)?;
+                dr.reset();
+                let bits = decompose_n::<_, 5>(dr, allocator, &elem)?;
+                assert_eq!(*multipack(dr, &bits)?[0].wire(), *elem.wire());
+                assert_eq!(dr.num_gates(), 5);
+                assert_eq!(dr.num_constraints(), 11);
+                Ok(())
+            })
+        };
+        check(22)?;
+        check(31)?;
+        assert!(matches!(
+            check(32),
+            Err(ragu_core::Error::InvalidWitness(_))
+        ));
         Ok(())
     }
 
