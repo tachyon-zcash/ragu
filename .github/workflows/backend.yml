@@ -59,9 +59,10 @@ jobs:
           # Each case builds three applications and exercises both proof formats.
           PROPTEST_CASES: "4"
         run: >-
+          ${{ runner.os == 'macOS' && 'env -u CARGO_INCREMENTAL' || '' }}
           cargo test --release -p ragu_pcd --no-default-features
           --config .github/actions/rust-setup/ci-release.toml
-          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml --config profile.release.package.ragu_pcd.incremental=true' || '' }}
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
           --lib backend_equivalence:: -- --test-threads=1
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'

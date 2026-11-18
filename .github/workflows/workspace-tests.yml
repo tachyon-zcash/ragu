@@ -25,11 +25,14 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: ${{ inputs.features == 'all' && 'release' || 'release-default-feature' }}
+          cache-pcd-incremental: ${{ runner.os == 'macOS' }}
       - name: Run workspace tests and collect PCD unit-test binary
         shell: bash
         env:
           PCD_TEST_FEATURES: ${{ inputs.features }}
-        run: python3 qa/ci/pcd_test_shards.py workspace "$RUNNER_TEMP/pcd-unit-tests" "$PCD_TEST_FEATURES"
+        run: >-
+          ${{ runner.os == 'macOS' && 'env -u CARGO_INCREMENTAL' || '' }}
+          python3 qa/ci/pcd_test_shards.py workspace "$RUNNER_TEMP/pcd-unit-tests" "$PCD_TEST_FEATURES"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pcd-unit-tests-${{ inputs.os }}-${{ inputs.features }}

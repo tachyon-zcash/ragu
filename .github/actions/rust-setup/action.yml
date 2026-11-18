@@ -134,13 +134,14 @@ runs:
           cargo clean -p "$p" 2>/dev/null || true
         done
 
-    # Restore only rustc's incremental state after cleaning workspace outputs.
+    # Restore the PCD library and unit test compiler state after cleaning.
+    # Callers unset CARGO_INCREMENTAL for the build to use the package profile.
     # Keep one cache per configuration and ref since the archive is large.
     - name: Cache PCD incremental compiler state
       if: inputs.cache-pcd-incremental == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: target/release/incremental
+        path: target/release/incremental/ragu_pcd-*
         key: pcd-incremental-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', '.github/actions/rust-setup/ci-release*.toml') }}
 
     - name: Install cargo tools
