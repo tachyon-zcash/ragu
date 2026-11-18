@@ -136,10 +136,18 @@ jobs:
           PROPTEST_CASES: "64"
 
   test-corruption:
-    name: corruption (exhaustive)
+    name: ${{ matrix.name }}
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: corruption
+            name: corruption (exhaustive)
+          - suite: recursive-seeds
+            name: recursive regression seeds
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -147,19 +155,22 @@ jobs:
       - name: Setup Rust
         uses: $/.github/actions/rust-setup
         with:
-          cache-suffix: release-corruption
+          cache-suffix: release-${{ matrix.suite }}
       # The entire corruption suite is ignored in the platform matrix and
       # runs here, including the rejection sweeps and controls.
       - name: Run exhaustive corruption coverage
+        if: matrix.suite == 'corruption'
         run: cargo test --release -p ragu_pcd --locked --all-features --test corruption -- --include-ignored
       # The online Fp oracle suite proves at the production rank, so it is
       # ignored in the platform matrix and runs here.
       - name: Run the online Fp oracle suite
+        if: matrix.suite == 'corruption'
         run: cargo test --release -p ragu_pcd --locked --all-features --test online_fp_oracles -- --include-ignored
       # Replay the saved recursion failures on PRs as well as in heavy-tests.
       # One fresh case follows the committed seeds in each property. Backend
       # equivalence runs its properties in backend.yml.
       - name: Replay recursive regression seeds
+        if: matrix.suite == 'recursive-seeds'
         env:
           PROPTEST_CASES: "1"
         run: >-
@@ -224,7 +235,13 @@ jobs:
         with:
           cache-suffix: release
       - name: Run tests (all features)
+        if: matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request'
         run: cargo test --release --all --locked --all-features
+      # Backend CI runs the native PCD proof smoke tests on PRs. The full
+      # PCD test suite still runs on Linux and on all platforms on main.
+      - name: Run workspace tests outside ragu_pcd (all features)
+        if: matrix.os != 'ubuntu-latest' && github.event_name == 'pull_request'
+        run: cargo test --release --workspace --exclude ragu_pcd --locked --all-features
 
   # Ensure the mock API stays `no_std`-buildable on a bare-metal target. This is
   # the configuration downstream consumers (e.g. `zcash_tachyon`) compile for

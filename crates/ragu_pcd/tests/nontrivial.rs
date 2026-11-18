@@ -1,16 +1,28 @@
+use ragu_acceleration::AcceleratedBackend;
+use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::ProductionRank;
 use ragu_core::{
     Cycle, Result,
     pasta::{Fp, Pasta},
 };
-use ragu_pcd::ApplicationBuilder;
+use ragu_pcd::{ApplicationBuilder, SelectableBackend};
 use ragu_testing::pcd::nontrivial::{Hash2, Merge2, WitnessLeaf};
 use rand::{SeedableRng, rngs::StdRng};
 
 #[test]
 fn various_merging_operations() -> Result<()> {
+    check_merging_operations::<ReferenceBackend>()
+}
+
+#[test]
+fn accelerated_merging_operations() -> Result<()> {
+    check_merging_operations::<AcceleratedBackend>()
+}
+
+fn check_merging_operations<B: SelectableBackend>() -> Result<()> {
     let pasta = ragu_pcd::pasta::baked();
     let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        .with_backend::<B>()
         .register(WitnessLeaf {
             poseidon_params: Pasta::circuit_poseidon(pasta),
         })?
