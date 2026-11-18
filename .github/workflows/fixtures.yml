@@ -66,6 +66,12 @@ jobs:
       - name: Check the fuse and verifier fixtures
         env:
           RAGU_FIXTURES: check
+          # The PCD unit-test target is one large crate. Without local
+          # ThinLTO each smaller codegen unit is optimized and freed on its
+          # own, which keeps the compiler within the runner's memory. The
+          # proofs do not depend on the optimization level.
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "64"
         # Release profiles can enable debug assertions, marking these tests ignored.
         run: >-
           cargo test --release -p ragu_pcd --locked --all-features
