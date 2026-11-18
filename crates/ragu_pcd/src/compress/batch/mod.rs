@@ -25,6 +25,9 @@ mod verifier;
 pub(crate) use prover::batch;
 pub(crate) use verifier::verify_openings;
 
+#[cfg(test)]
+pub(super) use verifier::verify as derive_claim;
+
 /// The prover's messages of the batch on one curve.
 #[derive(Clone, Debug)]
 pub(crate) struct Batch<C: Affine> {

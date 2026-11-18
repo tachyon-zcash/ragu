@@ -497,3 +497,6 @@ fn rejects_tampered_messages() {
         p.native.opening.s_commitment = p.native.opening.rounds[0].0
     });
 }
+
+#[path = "hiding_compression/mod.rs"]
+mod hiding_compression;

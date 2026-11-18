@@ -280,15 +280,34 @@ impl<C: ProfiledCycle> Instance<C> {
         self.nested_commitment(nested::RxComponent::Rx(index))
     }
 
-    /// Absorbs the instance into `transcript`: the circuit id, the headers
-    /// and the online openings, then every commitment and scalar of each
-    /// curve, so that every challenge squeezed afterwards depends on all of
-    /// it.
+    /// Absorbs the instance into `transcript` so that every challenge
+    /// squeezed afterwards depends on all of it.
     pub(crate) fn absorb<B: SelectableBackend>(
         &self,
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
-        let mut host = transcript.host();
+        self.absorb_native(&mut transcript.host())?;
+        self.absorb_nested(&mut transcript.nested())?;
+
+        // The same coordinates form the nested compute-v target and the
+        // nested helper's foreign commitment exports.
+        for &point in &self.native_online_commitments {
+            for coordinate in coordinates(point)? {
+                transcript.write_scalar_limbs(coordinate)?;
+            }
+        }
+        for &scalar in self
+            .nested_mesh_claims
+            .iter()
+            .chain(&self.nested_online_fold)
+        {
+            transcript.write_scalar_limbs(scalar)?;
+        }
+        Ok(())
+    }
+
+    /// Writes the host-curve points and circuit-field scalars of the instance.
+    pub(crate) fn absorb_native(&self, host: &mut impl IpaTranscript<C::HostCurve>) -> Result<()> {
         for &sum in self
             .native_mesh_claims
             .iter()
@@ -334,7 +353,14 @@ impl<C: ProfiledCycle> Instance<C> {
                 host.write_scalar(coordinate)?;
             }
         }
-        let mut nested = transcript.nested();
+        Ok(())
+    }
+
+    /// Writes the nested-curve points and bridge and accumulator scalars.
+    pub(crate) fn absorb_nested(
+        &self,
+        nested: &mut impl IpaTranscript<C::NestedCurve>,
+    ) -> Result<()> {
         for &point in self.nested.iter().chain([
             &self.nested_registry_xy,
             &self.nested_p,
@@ -355,20 +381,6 @@ impl<C: ProfiledCycle> Instance<C> {
             self.nested_b_at_u,
         ] {
             nested.write_scalar(scalar)?;
-        }
-        // The same coordinates form the nested compute-v target and the
-        // nested helper's foreign commitment exports.
-        for &point in &self.native_online_commitments {
-            for coordinate in coordinates(point)? {
-                transcript.write_scalar_limbs(coordinate)?;
-            }
-        }
-        for &scalar in self
-            .nested_mesh_claims
-            .iter()
-            .chain(&self.nested_online_fold)
-        {
-            transcript.write_scalar_limbs(scalar)?;
         }
         Ok(())
     }

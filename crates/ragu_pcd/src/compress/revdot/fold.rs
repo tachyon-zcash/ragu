@@ -231,19 +231,13 @@ fn mirrored<F: Field, R: Rank>(weights: impl Iterator<Item = F>) -> sparse::Poly
     sparse::Polynomial::from_coeffs(coeffs)
 }
 
-/// The commitments to the [`Derived`] polynomials, in order, from the
-/// claims' `shapes`, each component's `commitment` and the fold's
-/// messages: $\[A\]$ sums every claim's $a$ under its $A$ weight, the dilated
-/// polynomial the circuit claims' $a$ under their $B$ weights, and the raw
-/// polynomial the raw claims' $b$ likewise.
-pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
-    shapes: &[Shape<Id, C::Scalar>],
-    weights: &Weights<C::Scalar>,
-    commitment: impl Fn(Id) -> C,
-    fold: &Fold<C>,
-) -> Vec<C> {
-    let weighted = |side: fn(&Shape<Id, C::Scalar>) -> &[(C::Scalar, Id)],
-                    weight: fn(&Weights<C::Scalar>, usize) -> C::Scalar,
+/// The component coefficients of A, Dilated and B, in Derived order.
+pub(crate) fn component_terms<Id: Copy, F: Field>(
+    shapes: &[Shape<Id, F>],
+    weights: &Weights<F>,
+) -> [Vec<(F, Id)>; 3] {
+    let weighted = |side: fn(&Shape<Id, F>) -> &[(F, Id)],
+                    weight: fn(&Weights<F>, usize) -> F,
                     kinds: fn(Kind) -> bool| {
         shapes
             .iter()
@@ -257,9 +251,7 @@ pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
             .collect::<Vec<_>>()
     };
 
-    // All three commitments depend only on the replayed weights. Keep their
-    // jobs and results in Derived order, including an empty raw polynomial.
-    let inputs = [
+    [
         weighted(|shape| &shape.a, Weights::a, |_| true),
         weighted(
             |shape| &shape.a,
@@ -272,7 +264,22 @@ pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
             |kind| matches!(kind, Kind::Raw),
         ),
     ]
-    .map(|terms| {
+}
+
+/// The commitments to the [`Derived`] polynomials, in order, from the
+/// claims' `shapes`, each component's `commitment` and the fold's
+/// messages: $\[A\]$ sums every claim's $a$ under its $A$ weight, the dilated
+/// polynomial the circuit claims' $a$ under their $B$ weights, and the raw
+/// polynomial the raw claims' $b$ likewise.
+pub(crate) fn commitments<C: Affine, B: Backend, Id: Copy>(
+    shapes: &[Shape<Id, C::Scalar>],
+    weights: &Weights<C::Scalar>,
+    commitment: impl Fn(Id) -> C,
+    fold: &Fold<C>,
+) -> Vec<C> {
+    // All three commitments depend only on the replayed weights. Keep their
+    // jobs and results in Derived order, including an empty raw polynomial.
+    let inputs = component_terms(shapes, weights).map(|terms| {
         let (scalars, points): (Vec<_>, Vec<_>) = terms
             .into_iter()
             .map(|(weight, id)| (weight, commitment(id)))

@@ -81,6 +81,9 @@ pub(crate) struct Witness<C: Affine, R: Rank> {
     pub derived: Vec<sparse::Polynomial<C::Scalar, R>>,
     /// Their commitments, as the verifier derives them.
     pub commitments: Vec<C>,
+    /// Inputs to the split identity from the actual reduction.
+    #[cfg(test)]
+    pub(crate) split: (C::Scalar, [(C::Scalar, C::Scalar); 3]),
 }
 
 impl<C: Affine, R: Rank> Witness<C, R> {
@@ -380,6 +383,14 @@ fn reduce<C: Affine, R: Rank, B: Backend, Id: Copy>(
             q,
             derived,
             commitments,
+            #[cfg(test)]
+            split: (
+                rho,
+                core::array::from_fn(|i| {
+                    let (a, b) = &folded[i];
+                    (a.eval(r), b.eval(r))
+                }),
+            ),
         },
     ))
 }
