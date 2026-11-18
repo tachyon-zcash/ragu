@@ -1,0 +1,61 @@
+name: Workspace tests
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        type: string
+        required: true
+      features:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  workspace:
+    name: build and workspace tests
+    runs-on: ${{ inputs.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: $/.github/actions/rust-setup
+        with:
+          cache-suffix: ${{ inputs.features == 'all' && 'release' || 'release-default-feature' }}
+      - name: Run workspace tests and collect PCD unit-test binary
+        shell: bash
+        env:
+          PCD_TEST_FEATURES: ${{ inputs.features }}
+        run: python3 qa/ci/pcd_test_shards.py workspace "$RUNNER_TEMP/pcd-unit-tests" "$PCD_TEST_FEATURES"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pcd-unit-tests-${{ inputs.os }}-${{ inputs.features }}
+          path: ${{ runner.temp }}/pcd-unit-tests
+          if-no-files-found: error
+          overwrite: true
+
+  pcd:
+    name: PCD unit tests (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
+    needs: workspace
+    runs-on: ${{ inputs.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pcd-unit-tests-${{ inputs.os }}-${{ inputs.features }}
+          path: ${{ runner.temp }}/pcd-unit-tests
+      - name: Run PCD unit-test shard
+        shell: bash
+        env:
+          PCD_SHARD: ${{ strategy.job-index }}
+          PCD_SHARDS: ${{ strategy.job-total }}
+        run: python3 qa/ci/pcd_test_shards.py shard "$RUNNER_TEMP/pcd-unit-tests" "$PCD_SHARD" "$PCD_SHARDS"

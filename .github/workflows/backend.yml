@@ -59,6 +59,7 @@ jobs:
           PROPTEST_CASES: "4"
         run: >-
           cargo test --release -p ragu_pcd --no-default-features
+          --config .github/actions/rust-setup/ci-release.toml
           --lib backend_equivalence:: -- --test-threads=1
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'
