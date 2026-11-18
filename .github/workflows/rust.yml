@@ -235,13 +235,7 @@ jobs:
         with:
           cache-suffix: release
       - name: Run tests (all features)
-        if: matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request'
         run: cargo test --release --all --locked --all-features
-      # Backend CI runs the native PCD proof smoke tests on PRs. The full
-      # PCD test suite still runs on Linux and on all platforms on main.
-      - name: Run workspace tests outside ragu_pcd (all features)
-        if: matrix.os != 'ubuntu-latest' && github.event_name == 'pull_request'
-        run: cargo test --release --workspace --exclude ragu_pcd --locked --all-features
 
   # Ensure the mock API stays `no_std`-buildable on a bare-metal target. This is
   # the configuration downstream consumers (e.g. `zcash_tachyon`) compile for

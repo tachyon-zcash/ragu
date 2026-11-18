@@ -23,11 +23,12 @@ jobs:
       pull-requests: read
     uses: $/.github/workflows/fixtures.yml
 
-  # Run full equivalence on Linux for every PR and on every platform on main.
-  # For PRs, macOS and Windows exercise recursive proofs in the small nontrivial
-  # integration target. This avoids building the full PCD unit-test binary.
+  # Extend this shared matrix when another accelerated backend lands instead
+  # of adding a feature-specific matrix (and three more PR status checks).
+  # The general Rust jobs exercise all features together; this checks each
+  # backend's distinct feature configuration and end-to-end boundary.
   backend-equivalence:
-    name: ${{ github.event_name == 'pull_request' && matrix.os != 'ubuntu-latest' && 'backend proof smoke' || 'backend equivalence' }} (${{ matrix.os }})
+    name: backend equivalence (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -53,16 +54,12 @@ jobs:
           cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features
           -- -D warnings
       - name: Run native PCD backend equivalence
-        if: matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request'
         env:
           # Each case builds three applications and exercises both proof formats.
           PROPTEST_CASES: "4"
         run: >-
           cargo test --release -p ragu_pcd --no-default-features
           --lib backend_equivalence:: -- --test-threads=1
-      - name: Run native PCD proof smoke tests
-        if: matrix.os != 'ubuntu-latest' && github.event_name == 'pull_request'
-        run: cargo test --release --locked -p ragu_pcd --no-default-features --test nontrivial
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'
         env:
@@ -112,14 +109,14 @@ jobs:
       - name: Validate required backend jobs
         env:
           FIXTURES_RESULT: ${{ needs.fixtures.result }}
-          BACKEND_RESULT: ${{ needs.backend-equivalence.result }}
+          EQUIVALENCE_RESULT: ${{ needs.backend-equivalence.result }}
           NOSTD_RESULT: ${{ needs.backend-nostd.result }}
         run: |
           if [[ "$FIXTURES_RESULT" != "success" ||
-                "$BACKEND_RESULT" != "success" ||
+                "$EQUIVALENCE_RESULT" != "success" ||
                 "$NOSTD_RESULT" != "success" ]]; then
             echo "Fuse fixtures: $FIXTURES_RESULT"
-            echo "Backend tests: $BACKEND_RESULT"
+            echo "Backend equivalence: $EQUIVALENCE_RESULT"
             echo "Backend no_std: $NOSTD_RESULT"
             exit 1
           fi
