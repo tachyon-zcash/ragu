@@ -418,26 +418,8 @@ impl<F: Field> Tag<F> {
         }
         state.update(&(R::n() as u64).to_le_bytes());
         state.update(&(circuits.len() as u64).to_le_bytes());
-
-        // Writing a circuit's monomials down costs more than hashing them and
-        // depends on no other circuit, while the hash absorbs the circuits in
-        // registration order. So each chunk of circuits is encoded as
-        // independent work while the previous chunk is hashed, which holds
-        // the encodings of at most two chunks at once.
-        let chunks = (0..circuits.len()).step_by(ENCODED_CHUNK);
-        let mut encoded = Vec::new();
-        for start in chunks {
-            let end = (start + ENCODED_CHUNK).min(circuits.len());
-            let ((), next) = maybe_rayon::join(
-                || encoded.iter().for_each(|bytes: &Vec<u8>| {
-                    state.update(bytes);
-                }),
-                || encode(&circuits[start..end], &floor_plans[start..end]),
-            );
-            encoded = next;
-        }
-        for bytes in &encoded {
-            state.update(bytes);
+        for (circuit, floor_plan) in circuits.iter().zip(floor_plans) {
+            circuit.monomials(floor_plan).hash_into(&mut state);
         }
         Self(F::from_uniform_bytes(state.finalize().as_array()))
     }
