@@ -1,5 +1,6 @@
 //! Source-registry identities on both fields, including recursive and terminal closure.
 use alloc::{vec, vec::Vec};
+use core::cell::Cell;
 
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
@@ -920,6 +921,329 @@ fn a_native_mesh_alone_closes_and_rejects_corruption() -> Result<()> {
 #[test]
 fn a_nested_mesh_alone_at_other_slots_closes_and_rejects_corruption() -> Result<()> {
     one_sided_mesh::<NestedMeshOnly>(false, 0x606071)
+}
+
+/// What a prover whose source registry is not the verifier's tries.
+#[derive(Clone, Copy)]
+enum Substitution {
+    /// It presents its own proof, then a parent of it, as the root.
+    Root,
+    /// It hands its proof to an honest parent, with the source's true
+    /// restriction in place of the outgoing restriction it retained.
+    Replaced,
+}
+
+/// A prover over the verifier's own circuits whose source registry is another
+/// one: a single trivial circuit, installed under the source's tag. The
+/// helper circuit fixes only the tag, so the two applications register the
+/// same circuits, and a proof of one differs from a proof of the other only
+/// in the registry its mesh restricts. Every circuit of such a proof is
+/// satisfied.
+///
+/// As a root, only the closure's evaluation rejects it: the verifier
+/// evaluates its own source against the outgoing restriction. With the true
+/// restriction in place of the one it retained, the evaluation agrees, and
+/// only the closure's commitment comparison rejects it. Handed to an honest
+/// parent that way, the parent's mesh is valid and the parent's own closure
+/// passes; only the equality of the parent's inherited slot with the
+/// commitment the child exported rejects the parent.
+fn substituted_source<P>(native: bool, attempt: Substitution, seed: u64) -> Result<()>
+where
+    P: for<'params> Profile<Context<'params, Pasta, Rk, ReferenceBackend> = ()>,
+{
+    let wallet = ApplicationBuilder::<Pasta, R<13>, 2>::new()
+        .register(UnitStep)?
+        .finalize(crate::pasta::baked())?;
+    let (real_native, real_nested) = (wallet.native_registry(), wallet.nested_registry());
+    let other_native = RegistryBuilder::<Fp, R<13>>::new()
+        .register_circuit(())?
+        .with_tag(real_native.tag())
+        .finalize()?;
+    let other_nested = RegistryBuilder::<Fq, R<13>>::new()
+        .register_circuit(())?
+        .with_tag(real_nested.tag())
+        .finalize()?;
+    // The registries are different polynomials under one tag.
+    assert_ne!(
+        real_native.wxy(Fp::from(2), Fp::from(3), Fp::from(5)),
+        other_native.wxy(Fp::from(2), Fp::from(3), Fp::from(5)),
+    );
+    assert_ne!(
+        real_nested.wxy(Fq::from(2), Fq::from(3), Fq::from(5)),
+        other_nested.wxy(Fq::from(2), Fq::from(3), Fq::from(5)),
+    );
+    let build = |substituted: bool| {
+        ApplicationBuilder::<Profiled<Pasta, P>, Rk, 2>::new()
+            .register(UnitStep)?
+            .with_source_registries(
+                native.then(|| {
+                    SourceRegistry::new::<_, ReferenceBackend>(if substituted {
+                        &other_native
+                    } else {
+                        real_native
+                    })
+                }),
+                (!native).then(|| {
+                    SourceRegistry::new::<_, ReferenceBackend>(if substituted {
+                        &other_nested
+                    } else {
+                        real_nested
+                    })
+                }),
+            )
+            .finalize(crate::pasta::baked_aggregator())
+    };
+    let honest = build(false)?;
+    let substituted = build(true)?;
+    // The two applications register the same circuits: a registry's tag is
+    // derived from its circuits.
+    assert_eq!(
+        honest.native_registry().tag(),
+        substituted.native_registry().tag()
+    );
+    assert_eq!(
+        honest.nested_registry().tag(),
+        substituted.nested_registry().tag()
+    );
+
+    let mesh = if native {
+        P::NATIVE_MESH
+    } else {
+        P::NESTED_MESH
+    }
+    .expect("one mesh");
+    let lift = crate::internal::nested::challenge::<Profiled<Pasta, P>>;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let (forged, ()) = substituted.seed(&mut rng, UnitStep, ())?;
+    match attempt {
+        Substitution::Root => {
+            // One step up, every restriction is still the other registry's.
+            let (parent, ()) =
+                substituted.fuse(&mut rng, UnitStep, (), forged.clone(), forged.clone())?;
+            for root in [&forged, &parent] {
+                let compressed = substituted.compress(root, &mut rng)?;
+                assert!(
+                    substituted.verify_uncompressed(root, &mut rng)?
+                        && substituted.verify_compressed(&compressed)?,
+                    "the substituted application rejects its own proof"
+                );
+                assert!(
+                    !honest.verify_uncompressed(root, &mut rng)?,
+                    "accepted a root restricting another registry"
+                );
+                assert!(
+                    !honest.verify_compressed(&compressed)?,
+                    "accepted a compressed root restricting another registry"
+                );
+            }
+        }
+        Substitution::Replaced => {
+            assert!(substituted.verify_uncompressed(&forged, &mut rng)?);
+            assert!(!honest.verify_uncompressed(&forged, &mut rng)?);
+            let mut proof = forged.proof().clone();
+            if native {
+                proof.native_source_out[0] =
+                    SourceRegistry::new::<_, ReferenceBackend>(real_native)
+                        .xy::<Rk>(proof.x(), proof.y())?;
+            } else {
+                proof.nested_source_out[0] =
+                    SourceRegistry::new::<_, ReferenceBackend>(real_nested)
+                        .xy::<Rk>(lift(proof.x())?, lift(proof.y())?)?;
+            }
+            let replaced = proof.carry::<()>(());
+            // As a root, the restriction now evaluates as the source does,
+            // and is not the committed one.
+            assert!(
+                !honest.verify_uncompressed(&replaced, &mut rng)?,
+                "accepted the true restriction in place of the committed one"
+            );
+            let (sibling, ()) = honest.seed(&mut rng, UnitStep, ())?;
+            for side in 0..2 {
+                let (left, right) = if side == 0 {
+                    (replaced.clone(), sibling.clone())
+                } else {
+                    (sibling.clone(), replaced.clone())
+                };
+                let (parent, ()) = honest.fuse(&mut rng, UnitStep, (), left, right)?;
+                // The parent's own outgoing restriction is the source's, so
+                // its closure passes; its inherited slot is not the
+                // commitment the child exported.
+                let (p, c) = (parent.proof(), forged.proof());
+                let inherited = mesh.inherited[side].polynomial;
+                if native {
+                    assert_eq!(
+                        p.native_source_out[0].eval(Fp::from(29)),
+                        real_native.wxy(Fp::from(29), p.x(), p.y())
+                    );
+                    assert_ne!(
+                        p.native_online_commitments[inherited],
+                        c.native_online_commitments[mesh.outgoing]
+                    );
+                } else {
+                    assert_eq!(
+                        p.nested_source_out[0].eval(Fq::from(29)),
+                        real_nested.wxy(Fq::from(29), lift(p.x())?, lift(p.y())?)
+                    );
+                    assert_ne!(
+                        p.nested_online_commitments[inherited],
+                        c.nested_online_commitments[mesh.outgoing]
+                    );
+                }
+                verify(&honest, &parent, &mut rng, false)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_native_root_restricting_another_registry_is_rejected() -> Result<()> {
+    substituted_source::<NativeMeshOnly>(true, Substitution::Root, 0x606080)
+}
+
+#[test]
+fn a_nested_root_restricting_another_registry_is_rejected() -> Result<()> {
+    substituted_source::<NestedMeshOnly>(false, Substitution::Root, 0x606081)
+}
+
+#[test]
+fn a_false_native_obligation_cannot_be_replaced_by_the_true_restriction() -> Result<()> {
+    substituted_source::<NativeMeshOnly>(true, Substitution::Replaced, 0x606082)
+}
+
+#[test]
+fn a_false_nested_obligation_cannot_be_replaced_by_the_true_restriction() -> Result<()> {
+    substituted_source::<NestedMeshOnly>(false, Substitution::Replaced, 0x606083)
+}
+
+std::thread_local! { static ALTER_INHERITED: Cell<Option<usize>> = const { Cell::new(None) }; }
+
+/// Replaces one child's coordinates $(x, y)$ by $(2x, y / 2)$ in the inputs
+/// a mesh inherits them at. Their product is unchanged, so a source whose
+/// restrictions depend on the product alone keeps the mesh valid.
+pub(crate) fn mutate_inherited_coordinates<F: Field>(mut children: [[F; 2]; 2]) -> [[F; 2]; 2] {
+    if let Some(child) = ALTER_INHERITED.get() {
+        let two = F::from(2);
+        let [x, y] = children[child];
+        children[child] = [x * two, y * two.invert().expect("two is invertible")];
+    }
+    children
+}
+
+/// A parent cannot inherit a child's outgoing restriction at coordinates
+/// other than the child's own $x$ and $y$.
+///
+/// The source here is an empty registry under a nonzero tag $k$, whose
+/// polynomial is $k (XY)^{4n-1}$: its restrictions depend on the product of
+/// the coordinates alone. Replacing a child's $(x, y)$ by $(2x, y/2)$
+/// therefore leaves the parent's mesh valid: the inherited slot still holds
+/// the child's outgoing commitment, every intersection still agrees, and the
+/// parent's own outgoing restriction is the source's, so its closure passes.
+/// Only the binding of the inherited coordinates to the child's instance
+/// rejects the parent.
+fn inherited_coordinates_are_the_childs_own<P>(native: bool, seed: u64) -> Result<()>
+where
+    P: for<'params> Profile<Context<'params, Pasta, Rk, ReferenceBackend> = ()>,
+{
+    let empty_native = RegistryBuilder::<Fp, R<13>>::new()
+        .with_tag(Fp::from(7))
+        .finalize()?;
+    let empty_nested = RegistryBuilder::<Fq, R<13>>::new()
+        .with_tag(Fq::from(7))
+        .finalize()?;
+    let source_native = SourceRegistry::new::<_, ReferenceBackend>(&empty_native);
+    let source_nested = SourceRegistry::new::<_, ReferenceBackend>(&empty_nested);
+    // The restriction is the same polynomial wherever the product agrees.
+    assert_eq!(
+        source_native
+            .xy::<Rk>(Fp::from(6), Fp::from(5))?
+            .iter_coeffs()
+            .collect::<Vec<_>>(),
+        source_native
+            .xy::<Rk>(Fp::from(3), Fp::from(10))?
+            .iter_coeffs()
+            .collect::<Vec<_>>(),
+    );
+    let app = ApplicationBuilder::<Profiled<Pasta, P>, Rk, 2>::new()
+        .register(UnitStep)?
+        .with_source_registries(
+            native.then(|| source_native.clone()),
+            (!native).then(|| source_nested.clone()),
+        )
+        .finalize(crate::pasta::baked_aggregator())?;
+    let mesh = if native {
+        P::NATIVE_MESH
+    } else {
+        P::NESTED_MESH
+    }
+    .expect("one mesh");
+    let lift = crate::internal::nested::challenge::<Profiled<Pasta, P>>;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
+    let (right, ()) = app.seed(&mut rng, UnitStep, ())?;
+    let (control, ()) = app.fuse(&mut rng, UnitStep, (), left.clone(), right.clone())?;
+    verify(&app, &control, &mut rng, true)?;
+
+    for side in 0..2 {
+        let (parent, ()) = {
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    ALTER_INHERITED.set(None);
+                }
+            }
+            assert!(ALTER_INHERITED.replace(Some(side)).is_none());
+            let _reset = Reset;
+            app.fuse(&mut rng, UnitStep, (), left.clone(), right.clone())?
+        };
+        let position = |input: usize| {
+            mesh.coordinate_indices()
+                .iter()
+                .position(|&index| index == input)
+                .expect("an inherited coordinate is a mesh coordinate")
+        };
+        let (x, y) = (
+            position(mesh.inherited[side].x),
+            position(mesh.inherited[side].y),
+        );
+        let inherited = mesh.inherited[side].polynomial;
+        let (p, c) = (parent.proof(), [&left, &right][side].proof());
+        if native {
+            assert_eq!(
+                p.native_online_commitments[inherited],
+                c.native_online_commitments[mesh.outgoing]
+            );
+            assert_eq!(
+                p.native_source_out[0].eval(Fp::from(29)),
+                empty_native.wxy(Fp::from(29), p.x(), p.y())
+            );
+            assert_eq!(p.native_mesh_claims[x], c.x() * Fp::from(2));
+            assert_eq!(p.native_mesh_claims[y] * Fp::from(2), c.y());
+        } else {
+            assert_eq!(
+                p.nested_online_commitments[inherited],
+                c.nested_online_commitments[mesh.outgoing]
+            );
+            assert_eq!(
+                p.nested_source_out[0].eval(Fq::from(29)),
+                empty_nested.wxy(Fq::from(29), lift(p.x())?, lift(p.y())?)
+            );
+            assert_eq!(p.nested_mesh_claims[x], lift(c.x())? * Fq::from(2));
+            assert_eq!(p.nested_mesh_claims[y] * Fq::from(2), lift(c.y())?);
+        }
+        verify(&app, &parent, &mut rng, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn native_inherited_coordinates_are_the_childs_own() -> Result<()> {
+    inherited_coordinates_are_the_childs_own::<NativeMeshOnly>(true, 0x606084)
+}
+
+#[test]
+fn nested_inherited_coordinates_are_the_childs_own() -> Result<()> {
+    inherited_coordinates_are_the_childs_own::<NestedMeshOnly>(false, 0x606085)
 }
 
 #[path = "source_mesh_costs.rs"]

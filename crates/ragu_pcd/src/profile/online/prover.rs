@@ -71,7 +71,14 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         source: Option<&SourceRegistry<'_, C::Scalar>>,
     ) -> Result<Self> {
         let inputs = match S::mesh::<P>() {
-            Some(mesh) => mesh.carry_inputs(S::layout::<P>(), inputs, children()?)?,
+            Some(mesh) => {
+                let children = children()?;
+                // This runs on the thread that calls `fuse`, outside its
+                // parallel jobs, as the hook's thread-local requires.
+                #[cfg(test)]
+                let children = crate::source_mesh_tests::mutate_inherited_coordinates(children);
+                mesh.carry_inputs(S::layout::<P>(), inputs, children)?
+            }
             None => inputs,
         };
         Self::new(inputs)?.with_source_tag(source.map(|source| source.tag()))
