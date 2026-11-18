@@ -1173,7 +1173,10 @@ impl Fixtures {
         let profile = <C::Profile as Profile>::NAME;
         // Aggregator currently has the standard layout. Checking the same
         // snapshots guards that agreement without storing duplicate files.
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fuse/standard");
+        // A CI shard can run an executable compiled in another checkout.
+        let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+            .unwrap_or_else(|| env!("CARGO_MANIFEST_DIR").into());
+        let dir = PathBuf::from(manifest_dir).join("tests/fixtures/fuse/standard");
         if writing() {
             for family in [Family::Honest, Family::Random] {
                 fs::create_dir_all(dir.join(family.dir()))

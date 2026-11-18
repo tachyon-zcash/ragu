@@ -1,6 +1,7 @@
 """Run the workspace suite and split the PCD unit tests across CI runners."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -62,7 +63,12 @@ def shard(artifact, index, count):
         raise SystemExit("Invalid shard or libtest inventory")
     selected = names[index::count]
     print(f"Shard {index + 1}/{count} selects {len(selected)} of {len(names)} entries", flush=True)
-    subprocess.run([executable, "--exact", *selected], cwd=PCD, check=True)
+    subprocess.run(
+        [executable, "--exact", *selected],
+        cwd=PCD,
+        env={**os.environ, "CARGO_MANIFEST_DIR": str(PCD)},
+        check=True,
+    )
 
 
 if __name__ == "__main__":
