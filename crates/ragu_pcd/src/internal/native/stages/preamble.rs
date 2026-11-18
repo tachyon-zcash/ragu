@@ -546,8 +546,11 @@ pub struct Output<
 impl<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, const HEADER_SIZE: usize>
     Output<'dr, D, C, HEADER_SIZE>
 {
-    /// Returns true when the current step declared [`Dummy`] for both of its
-    /// inputs, i.e. this fuse is the base case that bootstraps the recursion.
+    /// Returns true when both children's output headers in this stage
+    /// carry the [`Dummy`] suffix, which is what takes the base case. The
+    /// prover witnesses those headers, so this alone does not make the fuse
+    /// the one that bootstraps the recursion (see
+    /// [`is_dummy_input`](ProofInputs::is_dummy_input)).
     ///
     /// [`Dummy`]: crate::header::Dummy
     pub fn is_base_case(

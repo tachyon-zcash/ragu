@@ -1217,8 +1217,11 @@ fn data_other_than_the_exported_header_is_rejected() {
 }
 
 /// A proof of the bootstrap step with a non-unit output header passes
-/// `with_bootstrap`'s shape check, but the base-case pin rejects it, so no
-/// seed built on it verifies.
+/// `with_bootstrap`'s shape check, but no seed built on it verifies. A seed
+/// reads the installed proof as a unit input, and the proof's `hashes_1`
+/// exported another header, so the seed's fold rejects it whether or not
+/// the proof itself verifies. The base-case pin is what rejects the proof
+/// itself, which `forged_base_case_must_be_a_bootstrap_proof` checks.
 #[test]
 fn installed_non_unit_bootstrap_proof_is_rejected() {
     let bootstrap = InternalStepIndex::Bootstrap
@@ -1295,5 +1298,255 @@ fn rerandomize_forging_dummy_inputs_is_rejected() {
             !verifies(app, &parent, &mut rng),
             "the parent of such a rerandomization must not verify"
         );
+    });
+}
+
+/// The base case pins the step's circuit id to the bootstrap step's. A unit
+/// step that forges `Dummy` inputs already has the unit output header and
+/// padding output slots, so under its own circuit id only the id pin can
+/// reject it through a parent. Under the bootstrap step's id the same proof
+/// is the bootstrap proof any prover can mint, and its parent verifies.
+#[test]
+fn forged_base_case_under_another_circuit_id_is_rejected() {
+    let bootstrap = InternalStepIndex::Bootstrap
+        .circuit_index::<<C as crate::profile::ProfiledCycle>::Profile>()
+        .expect("the bootstrap step is registered in every profile");
+    let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
+        .register(UnitStep)
+        .expect("register unit step")
+        .finalize(crate::pasta::baked())
+        .expect("build unit application");
+    let mut rng = StdRng::seed_from_u64(9466);
+    let unit = app.bootstrap_pcd();
+
+    for (case, circuit_id, accepted) in [
+        ("bootstrap circuit id", Some(bootstrap), true),
+        ("own circuit id", None, false),
+    ] {
+        let (forged, ()) = app
+            .fuse_forging_dummy_inputs(
+                &mut rng,
+                UnitStep,
+                (),
+                unit.clone(),
+                unit.clone(),
+                circuit_id,
+            )
+            .expect("the forging prover assembles a proof");
+        assert_eq!(
+            verifies(&app, &forged, &mut rng),
+            accepted,
+            "{case}: the forged base case"
+        );
+        let (parent, ()) = app
+            .fuse(&mut rng, UnitStep, (), forged, unit.clone())
+            .expect("fuse assembles a parent regardless of satisfiability");
+        assert_eq!(
+            verifies(&app, &parent, &mut rng),
+            accepted,
+            "{case}: the parent of the forged base case"
+        );
+    }
+}
+
+/// The `s_prime` bridge carries the commitment of the step's own
+/// application trace, so the trace is fixed before the $y$ its claim is
+/// folded at. A prover that swaps in the same trace under another blinding
+/// after $y$ is squeezed is rejected. The swapped trace satisfies the
+/// step's circuit as the committed one does, which the same edit made
+/// before the trace is committed shows, so only the `loading` circuit's
+/// hold of the walked commitment to the bridge's copy can reject it.
+#[test]
+fn application_trace_swapped_after_y_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9467);
+        let unit = app.bootstrap_pcd();
+        let (honest, ()) = app
+            .fuse(
+                &mut rng,
+                Seed::new(),
+                Fp::from(8),
+                unit.clone(),
+                unit.clone(),
+            )
+            .expect("honest seed");
+
+        // The blinding of a trace sits at the `a` wire of its SYSTEM gate,
+        // which no constraint reads.
+        let blind = ragu_circuits::staging::stage_rx::<_, R>(Fp::from(5), 1, 1, &[])
+            .expect("a blinding-only polynomial");
+        let reblind = |application: &mut crate::fuse::NativeApplication<C, R>| {
+            application.rx.add_assign(&blind);
+            application.commitment = ReferenceBackend::sparse_commit_to_affine(
+                &application.rx,
+                C::host_generators(app.params),
+            );
+        };
+
+        let (control, ()) = app
+            .fuse_editing_application(
+                &mut rng,
+                Seed::new(),
+                Fp::from(7),
+                unit.clone(),
+                unit.clone(),
+                reblind,
+            )
+            .expect("the control assembles a proof");
+        assert!(
+            verifies(app, &control, &mut rng),
+            "the same blinding committed before y verifies"
+        );
+
+        let (swapped, ()) = app
+            .fuse_swapping_after_y(
+                &mut rng,
+                Seed::new(),
+                Fp::from(7),
+                unit.clone(),
+                unit,
+                |_, application| reblind(application),
+            )
+            .expect("the swapping prover assembles a proof");
+        assert!(
+            !verifies(app, &swapped, &mut rng),
+            "an application trace swapped in after y must not verify"
+        );
+        let (parent, ()) = app
+            .fuse(&mut rng, Merge::new(), Fp::from(9), swapped, honest)
+            .expect("fuse assembles a parent regardless of satisfiability");
+        assert!(
+            !verifies(app, &parent, &mut rng),
+            "the parent of such a proof must not verify"
+        );
+    });
+}
+
+/// The `s_prime` bridge carries the native preamble's commitment too: the
+/// stage is committed after $w$, but it is fixed before the $y$ the
+/// children's claims are folded at over its wires. A prover that swaps in
+/// the same stage under another blinding after $y$ is squeezed changes no
+/// value a circuit reads, so only the nested `collapse` circuit's hold of
+/// the exported commitment to the bridge's copy can reject it.
+#[test]
+fn native_preamble_swapped_after_y_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9468);
+        let unit = app.bootstrap_pcd();
+        let (honest, ()) = app
+            .fuse(
+                &mut rng,
+                Seed::new(),
+                Fp::from(8),
+                unit.clone(),
+                unit.clone(),
+            )
+            .expect("honest seed");
+        assert!(
+            verifies(app, &honest, &mut rng),
+            "the honest control verifies"
+        );
+
+        // The blinding of a stage sits at the `a` wire of the SYSTEM gate,
+        // outside the stage's values.
+        let blind = ragu_circuits::staging::stage_rx::<_, R>(Fp::from(5), 1, 1, &[])
+            .expect("a blinding-only polynomial");
+        let (swapped, ()) = app
+            .fuse_swapping_after_y(
+                &mut rng,
+                Seed::new(),
+                Fp::from(7),
+                unit.clone(),
+                unit,
+                |builder, _| builder.reblind_native_preamble(&blind),
+            )
+            .expect("the swapping prover assembles a proof");
+        assert!(
+            !verifies(app, &swapped, &mut rng),
+            "a native preamble swapped in after y must not verify"
+        );
+        let (parent, ()) = app
+            .fuse(&mut rng, Merge::new(), Fp::from(9), swapped, honest)
+            .expect("fuse assembles a parent regardless of satisfiability");
+        assert!(
+            !verifies(app, &parent, &mut rng),
+            "the parent of such a proof must not verify"
+        );
+    });
+}
+
+/// A step's input headers are its children's exported ones. A prover that
+/// lies about a child's data runs its own circuit on the lie, so its own
+/// application claim holds over the header its preamble witnesses, and the
+/// child's `hashes_1` claim, which exported another header, rejects it. A
+/// prover that also stages that claim's true target has a fold that agrees
+/// with the child's committed traces. It is rejected by `hashes_1`'s
+/// equality between the staged target and the one over the preamble's
+/// copy, the one check then left.
+#[test]
+fn input_header_the_child_did_not_export_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(9469);
+        let unit = app.bootstrap_pcd();
+        let seed = |rng: &mut StdRng, value: u64| {
+            app.fuse(
+                rng,
+                Seed::new(),
+                Fp::from(value),
+                unit.clone(),
+                unit.clone(),
+            )
+            .expect("honest seed")
+            .0
+        };
+        let (left, right) = (seed(&mut rng, 7), seed(&mut rng, 8));
+        let (honest, ()) = app
+            .fuse(
+                &mut rng,
+                Merge::new(),
+                Fp::from(9),
+                left.clone(),
+                right.clone(),
+            )
+            .expect("honest merge");
+        assert!(
+            verifies(app, &honest, &mut rng),
+            "the honest control verifies"
+        );
+
+        let exported = crate::internal::ky::output_header::<C, Value, HEADER_SIZE>(*left.data())
+            .expect("the left child's exported header");
+        let (proof, data) = left.into_parts();
+        let lying = || proof.clone().carry::<Value>(data + Fp::ONE);
+
+        let (lied, ()) = app
+            .fuse(&mut rng, Merge::new(), Fp::from(9), lying(), right.clone())
+            .expect("the lying prover assembles a proof");
+        let (staged, ()) = app
+            .fuse_staging_left_bridge(
+                &mut rng,
+                Merge::new(),
+                Fp::from(9),
+                lying(),
+                right,
+                exported,
+            )
+            .expect("the lying prover assembles a proof");
+        for (case, forged) in [
+            ("the preamble's bridge target", lied),
+            ("the child's true bridge target", staged),
+        ] {
+            assert!(
+                !verifies(app, &forged, &mut rng),
+                "{case}: a step run on other data than its child's must not verify"
+            );
+            let (parent, ()) = app
+                .fuse(&mut rng, Merge::new(), Fp::from(10), forged, honest.clone())
+                .expect("fuse assembles a parent regardless of satisfiability");
+            assert!(
+                !verifies(app, &parent, &mut rng),
+                "{case}: the parent of such a proof must not verify"
+            );
+        }
     });
 }

@@ -230,6 +230,11 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     left_header: Option<Vec<C::CircuitField>>,
     right_header: Option<Vec<C::CircuitField>>,
     output_header: Option<Vec<C::CircuitField>>,
+    /// The header a test's prover stages its left child's bridge $k(y)$
+    /// over, in place of its preamble's copy (see
+    /// [`forge_left_bridge_header`](Self::forge_left_bridge_header)).
+    #[cfg(test)]
+    forged_left_bridge_header: Option<Vec<C::CircuitField>>,
 
     // Native rx polynomials
     native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -568,6 +573,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             left_header: None,
             right_header: None,
             output_header: None,
+            #[cfg(test)]
+            forged_left_bridge_header: None,
             native_preamble_rx: None,
             native_inner_error_rx: None,
             native_outer_error_rx: None,
@@ -722,6 +729,38 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     #[cfg(test)]
     pub(crate) fn forge_circuit_id(&mut self, circuit_id: CircuitIndex) {
         self.circuit_id = Some(circuit_id);
+    }
+
+    /// Sets the header the prover stages its left child's bridge $k(y)$
+    /// over, for a test playing a prover whose fold targets another output
+    /// header for that child than its preamble witnesses.
+    #[cfg(test)]
+    pub(crate) fn forge_left_bridge_header(&mut self, header: Vec<C::CircuitField>) {
+        self.forged_left_bridge_header = Some(header);
+    }
+
+    /// The header set by
+    /// [`forge_left_bridge_header`](Self::forge_left_bridge_header), if any.
+    #[cfg(test)]
+    pub(crate) fn forged_left_bridge_header(&self) -> Option<&[C::CircuitField]> {
+        self.forged_left_bridge_header.as_deref()
+    }
+
+    /// Adds `blind` to the native preamble polynomial and drops its cached
+    /// commitment, for a test playing a prover that swaps the stage after
+    /// the `s_prime` bridge absorbed its commitment. A `blind` supported on
+    /// the blinding coefficient leaves every value the stage holds as it
+    /// was.
+    #[cfg(test)]
+    pub(crate) fn reblind_native_preamble(
+        &mut self,
+        blind: &sparse::Polynomial<C::CircuitField, R>,
+    ) {
+        self.native_preamble_rx
+            .as_mut()
+            .expect("native_preamble_rx not set")
+            .add_assign(blind);
+        self.native_preamble_commitment = OnceCell::new();
     }
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
     setter!(set_right_header, right_header, Vec<C::CircuitField>);

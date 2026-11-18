@@ -84,7 +84,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        self.fuse_with(rng, step, witness, left, right, |_, _| {})
+        self.fuse_with(rng, step, witness, left, right, |_, _| {}, |_, _| {})
     }
 
     /// [`fuse`](Self::fuse) as a prover that edits its own application
@@ -102,9 +102,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         right: Pcd<C, R, S::Right>,
         edit: impl FnOnce(&mut _01_application::NativeApplication<C, R>),
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        self.fuse_with(rng, step, witness, left, right, |_, application| {
-            edit(application)
-        })
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |_, application| edit(application),
+            |_, _| {},
+        )
     }
 
     /// [`fuse`](Self::fuse) as a prover that witnesses its own application
@@ -124,13 +130,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         right: Pcd<C, R, S::Right>,
         circuit_id: Option<ragu_circuits::registry::CircuitIndex>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        self.fuse_with(rng, step, witness, left, right, |builder, application| {
-            builder.forge_dummy_inputs();
-            if let Some(circuit_id) = circuit_id {
-                builder.forge_circuit_id(circuit_id);
-                application.circuit_id = circuit_id;
-            }
-        })
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |builder, application| {
+                builder.forge_dummy_inputs();
+                if let Some(circuit_id) = circuit_id {
+                    builder.forge_circuit_id(circuit_id);
+                    application.circuit_id = circuit_id;
+                }
+            },
+            |_, _| {},
+        )
     }
 
     /// [`fuse`](Self::fuse) as a prover that, after $w$ is squeezed, witnesses
@@ -147,14 +161,67 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         right: Pcd<C, R, S::Right>,
         delta: C::CircuitField,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        self.fuse_with(rng, step, witness, left, right, |builder, _| {
-            builder.forge_left_header_field(delta)
-        })
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |builder, _| builder.forge_left_header_field(delta),
+            |_, _| {},
+        )
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that stages, as the target of its
+    /// left child's `hashes_1` claim, the bridge $k(y)$ over `header` in
+    /// place of the one over its preamble's copy of the child's output
+    /// header. With the header the child exported, the prover's fold agrees
+    /// with the child's committed traces whatever its preamble witnesses, so
+    /// only `hashes_1`'s equality between the two can reject it.
+    #[cfg(test)]
+    pub(crate) fn fuse_staging_left_bridge<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        header: alloc::vec::Vec<C::CircuitField>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |builder, _| builder.forge_left_bridge_header(header),
+            |_, _| {},
+        )
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that swaps in other polynomials of
+    /// its own after $y$ is squeezed: `swap` runs on the builder and the
+    /// application polynomials once the `s_prime` bridge has absorbed the
+    /// commitments of the native preamble and of the application trace.
+    #[cfg(test)]
+    pub(crate) fn fuse_swapping_after_y<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        swap: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |_, _| {}, swap)
     }
 
     /// [`fuse`](Self::fuse), with `edit` applied to the step's application
-    /// data after its circuit ran and before anything commits to it. Only
-    /// tests edit anything: `fuse` passes an edit that does nothing.
+    /// data after its circuit ran and before anything commits to it, and
+    /// `swap` applied after $y$ is squeezed, once the `s_prime` bridge has
+    /// absorbed the native preamble's and the application trace's
+    /// commitments. Only tests edit or swap anything: `fuse` passes closures
+    /// that do nothing.
     fn fuse_with<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -163,6 +230,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
         edit: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
+        swap: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier
@@ -251,6 +319,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
         let y = transcript.challenge(&mut dr)?;
         let z = transcript.challenge(&mut dr)?;
+        swap(&mut builder, &mut application);
 
         let native_source = NativeFuseProofSource {
             left: &left,

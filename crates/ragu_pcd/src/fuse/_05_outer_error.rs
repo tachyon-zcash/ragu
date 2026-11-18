@@ -41,6 +41,31 @@ use crate::{
     proof::ProofBuilder,
 };
 
+/// The bridge $k(y)$ a test's prover stages for its left child: over
+/// `header` in place of the preamble's copy of the child's output header
+/// when a test forged one (see
+/// [`ProofBuilder::forge_left_bridge_header`]), and `honest`, the one over
+/// the preamble's copy, otherwise.
+#[cfg(test)]
+fn staged_left_bridge_ky<'dr, D, C, const HEADER_SIZE: usize>(
+    dr: &mut D,
+    y: &Element<'dr, D>,
+    left: &native::stages::preamble::ProofInputs<'dr, D, C, HEADER_SIZE>,
+    header: Option<&[C::CircuitField]>,
+    honest: Element<'dr, D>,
+) -> Result<Element<'dr, D>>
+where
+    D: Driver<'dr, F = C::CircuitField>,
+    C: ProfiledCycle,
+{
+    let Some(header) = header else {
+        return Ok(honest);
+    };
+    let mut child = left.clone();
+    child.output_header = FixedVec::try_from_fn(|i| Ok(Element::constant(dr, header[i])))?;
+    Ok(child.unified_ky_values(dr, y)?.1)
+}
+
 type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;
 type NestedNumGroups<P> = <nested::RevdotParameters<P> as Parameters>::NumGroups;
 
@@ -86,6 +111,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let y = *y.value().take();
         let mu = *mu.value().take();
         let bridge_hash = builder.bridge_hash_commitment();
+        // A test's prover may stage its left child's bridge k(y) over
+        // another header than its preamble's copy.
+        #[cfg(test)]
+        let forged_left_bridge_header = builder.forged_left_bridge_header().map(<[_]>::to_vec);
         let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
             &native_claims.a,
             mu,
@@ -115,6 +144,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let y = Element::alloc(dr, allocator, y)?;
                 let (left_unified_ky, left_unified_bridge_ky) =
                     preamble.left.unified_ky_values(dr, &y)?;
+                #[cfg(test)]
+                let left_unified_bridge_ky = staged_left_bridge_ky(
+                    dr,
+                    &y,
+                    &preamble.left,
+                    forged_left_bridge_header.as_deref(),
+                    left_unified_bridge_ky,
+                )?;
                 let (right_unified_ky, right_unified_bridge_ky) =
                     preamble.right.unified_ky_values(dr, &y)?;
 
