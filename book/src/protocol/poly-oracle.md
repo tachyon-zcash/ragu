@@ -575,7 +575,7 @@ The last nested copy is bound to the early native query copy, so its later appea
 
 C3 applies to every random identity test. In particular, a future decompression consumer must commit the inner proof data, round challenges and restriction coordinates before outer $w$, then constrain transcript replay to those early wires. A separately witnessed late copy does not establish that binding. Inner compression's canonical-integer challenge conversion must also remain distinct from outer fuse endoscalar lifts. Using an online commitment as the IPA's folded generator requires the same ordered generator basis as that IPA.
 
-Like the application's slots, V6's batches take only finite points. A supplied zero polynomial is rejected, since its commitment is the identity, and setup rejects a source registry whose restrictions vanish at the bootstrap proof's challenges. The walk, the point codec and the scalar bridges are the existing finite ones. A profile with zero online capacity adds none of these stages or helpers; Standard retains its existing shape and encoding.
+Like the application's slots, V6's batches take only finite points. A supplied zero polynomial is rejected, since its commitment is the identity, and setup rejects a source registry whose restrictions vanish at the bootstrap proof's challenges. In the compression transcript, each native online commitment coordinate, nested mesh claim, and nested fold value in the scalar field is absorbed as fixed-width, little-endian 128-bit limbs of its canonical encoding, so these values can be zero. A profile with zero online capacity adds none of these stages or helpers; Standard retains its existing shape and encoding.
 
 #### Authenticate many restrictions with one outgoing obligation {#v6-registry}
 

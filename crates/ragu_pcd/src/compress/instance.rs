@@ -360,15 +360,15 @@ impl<C: ProfiledCycle> Instance<C> {
         // nested helper's foreign commitment exports.
         for &point in &self.native_online_commitments {
             for coordinate in coordinates(point)? {
-                nested.write_scalar(coordinate)?;
+                transcript.write_scalar_limbs(coordinate)?;
             }
         }
-        for &sum in self
+        for &scalar in self
             .nested_mesh_claims
             .iter()
             .chain(&self.nested_online_fold)
         {
-            nested.write_scalar(sum)?;
+            transcript.write_scalar_limbs(scalar)?;
         }
         Ok(())
     }

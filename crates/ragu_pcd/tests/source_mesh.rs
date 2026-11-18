@@ -488,7 +488,13 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
         .finalize(crate::pasta::baked_aggregator())?;
     let mut rng = StdRng::seed_from_u64(0x606060);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
-    verify(&app, &child, &mut rng, true)?;
+    assert!(app.verify_uncompressed(&child, &mut rng)?);
+    let compressed = app.compress(&child, &mut rng)?;
+    let bytes = compressed.proof().to_bytes().expect("encode source mesh");
+    let compressed = crate::CompressedProof::<C>::from_bytes(&bytes)
+        .expect("decode source mesh")
+        .carry::<()>(());
+    assert!(app.verify_compressed(&compressed)?);
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
     let (grandparent, ()) = app.fuse(&mut rng, UnitStep, (), parent.clone(), child.clone())?;
     verify(&app, &grandparent, &mut rng, true)?;
@@ -536,7 +542,11 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
                 })),
             )
             .finalize(crate::pasta::baked_aggregator())?;
-        verify(&receiving, &child, &mut rng, false)?;
+        assert!(!receiving.verify_uncompressed(&child, &mut rng)?);
+        assert!(
+            !receiving.verify_compressed(&compressed)?,
+            "accepted the sender's compressed proof with source substitution on side {side}"
+        );
     }
     // The only source-polynomial witnesses retained for a parent are the two outgoing restrictions.
     assert_eq!(child.proof().native_source_out.len(), 1);

@@ -1087,13 +1087,13 @@ impl Profile for LegacyMixed {
         values: 2,
     };
     type Context<'params, Base, Rk, B>
-        = ()
+        = u64
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         Rk: Rank,
         B: SelectableBackend;
     fn nested_online_polynomials<'params, Base, Rk, B>(
-        _: &Self::Context<'params, Base, Rk, B>,
+        slope: &Self::Context<'params, Base, Rk, B>,
         phase: Phase,
         _: &[Base::ScalarField],
         _: PreparationChallenges<Base::ScalarField>,
@@ -1106,7 +1106,7 @@ impl Profile for LegacyMixed {
         Ok(if phase == Phase::BeforeW {
             vec![sparse::Polynomial::from_coeffs(vec![
                 Base::ScalarField::ONE,
-                Base::ScalarField::from(2),
+                Base::ScalarField::from(*slope),
             ])]
         } else {
             vec![]
@@ -1120,7 +1120,7 @@ fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitme
     type Mixed = Profiled<Pasta, LegacyMixed>;
     let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
         .register(UnitStep)?
-        .finalize(crate::pasta::baked_aggregator())?;
+        .finalize_with(crate::pasta::baked_aggregator(), 2)?;
     assert_eq!(crate::profile::Shape::of::<LegacyMixed>().online_fq, 2);
     let mut rng = StdRng::seed_from_u64(0x606050);
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
@@ -1132,4 +1132,16 @@ fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitme
         assert!(app.verify_compressed(&compressed)?);
     }
     Ok(())
+}
+
+#[test]
+fn a_nonzero_constant_nested_polynomial_compresses_with_a_zero_quotient_fold() -> Result<()> {
+    type Mixed = Profiled<Pasta, LegacyMixed>;
+    let app = ApplicationBuilder::<Mixed, Rk, 2>::new()
+        .register(UnitStep)?
+        .finalize_with(crate::pasta::baked_aggregator(), 0)?;
+    let mut rng = StdRng::seed_from_u64(0x606051);
+    let (pcd, ()) = app.seed(&mut rng, UnitStep, ())?;
+    assert_eq!(pcd.proof().nested_online_fold, [Fq::ZERO, Fq::ONE]);
+    verify_profile(&app, &pcd, &mut rng, true)
 }
