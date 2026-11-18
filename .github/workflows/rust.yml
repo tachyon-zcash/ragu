@@ -140,6 +140,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    # The PCD unit-test target is one large crate. Without local ThinLTO each
+    # smaller codegen unit is optimized and freed on its own, which keeps the
+    # compiler within the runner's memory.
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "64"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

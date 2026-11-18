@@ -30,6 +30,12 @@ jobs:
   backend-equivalence:
     name: backend equivalence (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # The PCD unit-test target is one large crate. Without local ThinLTO each
+    # smaller codegen unit is optimized and freed on its own, which keeps the
+    # compiler within the runner's memory.
+    env:
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "64"
     strategy:
       fail-fast: false
       matrix:
