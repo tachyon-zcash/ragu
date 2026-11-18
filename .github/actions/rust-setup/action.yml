@@ -21,6 +21,10 @@ inputs:
     description: Optional suffix to differentiate cache keys between jobs
     required: false
     default: ""
+  cache-pcd-incremental:
+    description: Cache PCD compiler state for a native release build
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -102,11 +106,13 @@ runs:
           ${{ runner.os }}-cargo-registry-
 
     # Cache target directory (job-specific due to different build configurations)
-    # Includes source file hash to avoid stale incremental compilation artifacts
+    # An incremental PCD build stores compiler state in its own cache.
     - name: Cache target directory
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: target
+        path: |
+          ${{ inputs.cache-pcd-incremental == 'true' && 'target/release/*' || 'target' }}
+          ${{ inputs.cache-pcd-incremental == 'true' && '!target/release/incremental' || '' }}
         key: ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('crates/**/src/**/*.rs') }}
         restore-keys: |
           ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-
@@ -127,6 +133,15 @@ runs:
           cargo clean -p "$p" --release 2>/dev/null || true
           cargo clean -p "$p" 2>/dev/null || true
         done
+
+    # Restore only rustc's incremental state after cleaning workspace outputs.
+    # Keep one cache per configuration and ref since the archive is large.
+    - name: Cache PCD incremental compiler state
+      if: inputs.cache-pcd-incremental == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/release/incremental
+        key: pcd-incremental-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', '.github/actions/rust-setup/ci-release*.toml') }}
 
     - name: Install cargo tools
       if: inputs.cargo-tools != ''

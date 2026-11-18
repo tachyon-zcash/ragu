@@ -43,6 +43,7 @@ jobs:
         with:
           components: clippy
           cache-suffix: backend-equivalence
+          cache-pcd-incremental: ${{ runner.os == 'macOS' }}
       - name: Run acceleration backend clippy
         if: matrix.os == 'ubuntu-latest'
         run: >-
@@ -60,6 +61,7 @@ jobs:
         run: >-
           cargo test --release -p ragu_pcd --no-default-features
           --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml --config profile.release.package.ragu_pcd.incremental=true' || '' }}
           --lib backend_equivalence:: -- --test-threads=1
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'

@@ -17,10 +17,13 @@ def workspace(artifact, features):
     artifact.mkdir(parents=True, exist_ok=True)
     runner = [sys.executable, str(Path(__file__).resolve()), "capture", str(artifact)]
     feature_flags = {"default": [], "all": ["--all-features"]}[features]
+    profiles = ["--config", ".github/actions/rust-setup/ci-release.toml"]
+    if sys.platform == "darwin":
+        profiles += ["--config", ".github/actions/rust-setup/ci-release-macos.toml"]
     subprocess.run(
         [
             "cargo", "test", "--release", "--workspace", "--locked", *feature_flags,
-            "--config", ".github/actions/rust-setup/ci-release.toml",
+            *profiles,
             "--config", f'target."cfg(all())".runner={json.dumps(runner)}',
         ],
         cwd=ROOT,
