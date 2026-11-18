@@ -226,10 +226,10 @@ fn transcript<'params, C: ProfiledCycle, B: SelectableBackend>(
     Ok(transcript)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/compress.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/compress_regressions.rs"]
 mod regression_tests;

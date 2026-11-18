@@ -807,6 +807,6 @@ mod nested {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../tests/verify_uncompressed.rs"]
 mod tests;

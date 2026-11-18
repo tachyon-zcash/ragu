@@ -5,10 +5,10 @@
 //! The commitment caches are private to `proof`, which is why this list
 //! lives beneath it rather than in `wire`.
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/wire/malformed_proofs.rs"]
 mod malformed_proof_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/wire/validation.rs"]
 mod wire_validation_tests;
 

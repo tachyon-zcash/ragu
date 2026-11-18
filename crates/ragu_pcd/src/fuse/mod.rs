@@ -17,7 +17,7 @@ mod _11_circuits;
 pub(crate) mod claims;
 // PCS and folding properties use private fuse internals. The proof-binding
 // properties live under `proof` for direct access to cached fields.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/pcs.rs"]
 mod pcs_tests;
 // The patcher seam (see `crate::fuzzing`). Its source lives with the rest of

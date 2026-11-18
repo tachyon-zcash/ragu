@@ -249,7 +249,7 @@ fn errors<B: ragu_backend::Backend, F: Field, R: Rank, Outer: Len, Inner: Len>(
 }
 
 /// Computes each first-layer quotient before its folding challenge.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 pub fn inner_error_terms<F: Field, R: Rank, P: Parameters>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],
@@ -271,7 +271,7 @@ pub fn inner_error_terms_with_backend<
 }
 
 /// Computes the second-layer quotient before its folding challenge.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 pub fn outer_error_terms<F: Field, R: Rank, P: Parameters>(
     a: &[impl Borrow<sparse::Polynomial<F, R>>],
     b: &[impl Borrow<sparse::Polynomial<F, R>>],

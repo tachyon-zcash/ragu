@@ -69,6 +69,7 @@ jobs:
         # Release profiles can enable debug assertions, marking these tests ignored.
         run: >-
           cargo test --release -p ragu_pcd --locked --all-features
+          --config .github/actions/rust-setup/ci-release-pcd-proofs.toml
           --lib proof::fuse_fixture_tests -- --include-ignored
 
   result:

@@ -264,10 +264,10 @@ pub(crate) fn verify_nested<C: ProfiledCycle, R: Rank, B: Backend>(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../../tests/compress_revdot_verifier.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../../tests/backend_equivalence/compress_verifier.rs"]
 mod backend_equivalence;

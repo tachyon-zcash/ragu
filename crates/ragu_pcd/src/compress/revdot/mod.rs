@@ -175,10 +175,10 @@ fn invert<F: Field>(value: F) -> Result<F> {
         .ok_or_else(|| Error::InvalidWitness("a zero challenge cannot be inverted".into()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../../tests/compress_revdot.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../../tests/backend_equivalence/compress_revdot.rs"]
 mod backend_equivalence;

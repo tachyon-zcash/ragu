@@ -840,6 +840,7 @@ pub(crate) mod support {
     }
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 mod accumulator {
     //! Rejection must propagate through parent and grandparent proofs.
 
@@ -981,6 +982,7 @@ mod accumulator {
     }
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 mod endpoints {
     //! Substituted batch polynomials must fail even when their evaluations,
     //! commitment caches, walk endpoints, and copied instances agree.
@@ -1134,6 +1136,7 @@ mod endpoints {
     }
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 mod timing {
     //! A later witness cannot replace a point already fixed by the transcript.
     //! The nested registry's late commitment must also remain bound in descendants.
@@ -1410,6 +1413,7 @@ mod timing {
     }
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 mod commitments {
     //! The challenge-stage and walked commitments must match the proof's values.
 

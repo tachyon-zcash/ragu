@@ -178,6 +178,7 @@ jobs:
         run: >-
           cargo test --release -p ragu_pcd --locked --all-features --lib
           --config .github/actions/rust-setup/ci-release.toml
+          --config .github/actions/rust-setup/ci-release-pcd-regular.toml
           -- --ignored --test-threads=1
           proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations
           proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations
@@ -224,7 +225,9 @@ jobs:
           - os: ubuntu-latest
             pcd-suite: full
           - os: windows-latest
-            pcd-suite: full
+            pcd-suite: regular
+          - os: windows-latest
+            pcd-suite: proofs
           - os: macos-latest
             pcd-suite: regular
           - os: macos-latest
