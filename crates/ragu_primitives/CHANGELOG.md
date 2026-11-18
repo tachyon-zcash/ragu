@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `FixedBase` for radix-8 scalar multiplication from `Boolean` bits.
+
 ## [0.0.0] - 2025-07-30
 
 ### Added
