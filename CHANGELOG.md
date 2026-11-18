@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reachable as the `primitives`, `circuits`, `pcd` and `acceleration` modules.
   Its `baked`, `std`, `multicore` and `test-utils` features forward to the
   member crates.
+- `ragu_pcd::bridge_hash`, with `digest` and `rx`: the bridge hash of a
+  host-curve point computed outside the circuit, without an `Application`.
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.

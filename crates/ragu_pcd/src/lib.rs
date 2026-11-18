@@ -17,6 +17,8 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`bridge_hash`] — the bridge hash of a commitment, computed outside the
+//!   circuit.
 //! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs.
@@ -49,6 +51,7 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
+pub mod bridge_hash;
 mod compress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
@@ -727,10 +730,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Fails if `point` is the identity, which the stage cannot hold.
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
-        internal::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
-            point,
-            C::nested_generators(self.params),
-        )
+        bridge_hash::digest::<B, _, _, R, _>(point, C::nested_generators(self.params))
     }
 
     /// The commitment of an online polynomial with coefficients `coeffs`, in
