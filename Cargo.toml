@@ -20,16 +20,30 @@ all-features = true
 
 [features]
 default = ["multicore"]
+# Embeds the Pasta generators derived at build time; see `pasta`.
+baked = ["ragu_pcd/baked"]
 multicore = [
+  "ragu_acceleration/multicore",
   "ragu_circuits/multicore",
+  "ragu_core/multicore",
   "ragu_pcd/multicore",
 ]
-std = []
+std = [
+  "ragu_acceleration/std",
+  "ragu_circuits/std",
+  "ragu_core/std",
+  "ragu_pcd/std",
+  "ragu_primitives/std",
+]
+# Exposes `Application::verify_uncompressed` as a test oracle. Production
+# verification goes through `Application::verify_compressed`.
+test-utils = ["ragu_pcd/test-utils"]
 
 [lib]
 bench = false
 
 [dependencies]
+ragu_acceleration = { path = "crates/ragu_acceleration", version = "0.0.0", default-features = false }
 ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
 ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }

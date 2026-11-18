@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The root `ragu` crate is the single entry point to Ragu: it re-exports
+  `ragu_core` at its root, where the derive macros already resolve, and
+  `ragu_primitives`, `ragu_circuits`, `ragu_pcd` and `ragu_acceleration` as
+  the `primitives`, `circuits`, `pcd` and `acceleration` modules. Its `baked`,
+  `std`, `multicore` and `test-utils` features forward to the member crates.
 - Proof compression: `Application::compress`, `Application::verify_compressed`,
   `CompressedProof`, `CompressedPcd`, and the public `ragu_pcd::ipa` module.
 - `Pcd::{data, proof, into_parts}` accessors.
