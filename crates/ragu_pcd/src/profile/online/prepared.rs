@@ -144,7 +144,7 @@ impl<F: Field, R: Rank> Prepared<F, R> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::TestRank;
     use ragu_core::pasta::Fp;

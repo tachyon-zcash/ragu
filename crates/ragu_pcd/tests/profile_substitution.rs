@@ -3,6 +3,13 @@
 //! and compression messages. Exhaustive destructuring keeps those copies
 //! complete when either proof representation changes.
 
+use std::{
+    env,
+    fs::{self, OpenOptions},
+    io::ErrorKind,
+    path::PathBuf,
+};
+
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::{ProductionRank, R, Rank};
 use ragu_core::{
@@ -17,7 +24,7 @@ use udon::field::Field;
 
 use super::{Proof, recursive_propagation_tests::support::Value};
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd,
+    Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd,
     compress::instance::Instance,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
@@ -407,25 +414,20 @@ fn check_both_verifiers<P: Profile, Rk: Rank>(
     Ok(())
 }
 
-/// Submits the sender's payload to receivers of profile `T`: first one with
-/// the tags its registries derive, which accepts the payload exactly when
-/// `share_registries` says the two profiles register the same circuits; then
-/// ones whose tags differ from the sender's in either registry or both,
-/// standing in for another setup, which must reject it however it is reused.
-fn check_same_shape<S: Profile, T: Profile>(
+struct SenderFixture<P: Profile> {
+    tags: (Fp, Fq),
+    source: TestPcd<P>,
+    compressed: CompressedPcd<C<P>, Value>,
+}
+
+fn sender_fixture<P: Profile>(
     sender_constraint: Option<Fp>,
-    receiver_constraint: Option<Fp>,
     foreign_value: Fp,
-    local_value: Fp,
-    share_registries: bool,
-) -> Result<()>
+) -> Result<SenderFixture<P>>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
-    assert_eq!(Shape::of::<S>(), Shape::of::<T>());
-    let sender = application::<S, ProductionRank>((None, None), sender_constraint)?;
-    let (native_tag, nested_tag) = (sender.native_registry.tag(), sender.nested_registry.tag());
+    let sender = application::<P, ProductionRank>((None, None), sender_constraint)?;
     let mut rng = StdRng::seed_from_u64(0x908_1501);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -435,8 +437,96 @@ where
         foreign_value,
     )?;
     assert!(sender.verify_uncompressed(&source, &mut rng)?);
-    let compressed_source = sender.compress(&source, &mut rng)?;
-    assert!(sender.verify_compressed(&compressed_source)?);
+    let compressed = sender.compress(&source, &mut rng)?;
+    assert!(sender.verify_compressed(&compressed)?);
+    Ok(SenderFixture {
+        tags: (sender.native_registry.tag(), sender.nested_registry.tag()),
+        source,
+        compressed,
+    })
+}
+
+fn standard_sender() -> Result<SenderFixture<Standard>> {
+    let value = Fp::from(7);
+    let Some(path) = env::var_os("RAGU_PCD_STANDARD_SENDER") else {
+        return sender_fixture(Some(value), value);
+    };
+    let path = PathBuf::from(path);
+
+    // The two Nextest processes can share a verified fixture at this fresh
+    // shard path. During a concurrent cold start, each can proceed on its own.
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_extension("lock"))
+        .expect("open the Standard sender fixture lock");
+    if lock.try_lock().is_err() {
+        return sender_fixture(Some(value), value);
+    }
+    match fs::read(&path) {
+        Ok(bytes) => {
+            let (native_tag, bytes) = bytes.split_first_chunk().expect("read the native tag");
+            let (nested_tag, bytes) = bytes.split_first_chunk().expect("read the nested tag");
+            let proof_len = Proof::<C<Standard>, ProductionRank>::encoded_len::<HEADER_SIZE>();
+            let (proof, compressed) = bytes.split_at(proof_len);
+            Ok(SenderFixture {
+                tags: (
+                    Fp::from_bytes(*native_tag).expect("decode the native tag"),
+                    Fq::from_bytes(*nested_tag).expect("decode the nested tag"),
+                ),
+                source: Proof::from_bytes(proof)
+                    .expect("decode the Standard sender proof")
+                    .carry::<Value>(value),
+                compressed: CompressedProof::from_bytes(compressed)
+                    .expect("decode the compressed Standard sender proof")
+                    .carry::<Value>(value),
+            })
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let fixture = sender_fixture::<Standard>(Some(value), value)?;
+            let (Ok(proof), Ok(compressed)) = (
+                fixture.source.proof().to_bytes(),
+                fixture.compressed.proof().to_bytes(),
+            ) else {
+                return Ok(fixture);
+            };
+            let mut bytes = fixture.tags.0.to_bytes().to_vec();
+            bytes.extend_from_slice(&fixture.tags.1.to_bytes());
+            bytes.extend_from_slice(&proof);
+            bytes.extend_from_slice(&compressed);
+            let temporary = path.with_extension("tmp");
+            fs::write(&temporary, bytes).expect("write the Standard sender fixture");
+            fs::rename(temporary, path).expect("publish the Standard sender fixture");
+            Ok(fixture)
+        }
+        Err(error) => panic!("read the Standard sender fixture: {error}"),
+    }
+}
+
+/// Submits the sender's payload to receivers of profile `T`: first one with
+/// the tags its registries derive, which accepts the payload exactly when
+/// `share_registries` says the two profiles register the same circuits; then
+/// ones whose tags differ from the sender's in either registry or both,
+/// standing in for another setup, which must reject it however it is reused.
+fn check_same_shape<S: Profile, T: Profile>(
+    sender: SenderFixture<S>,
+    receiver_constraint: Option<Fp>,
+    local_value: Fp,
+    share_registries: bool,
+) -> Result<()>
+where
+    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+{
+    assert_eq!(Shape::of::<S>(), Shape::of::<T>());
+    let (native_tag, nested_tag) = sender.tags;
+    let (source, foreign_value) = sender.source.into_parts();
+    let foreign =
+        copy_proof_payload::<C<S>, C<T>, ProductionRank>(source).carry::<Value>(foreign_value);
+    let compressed = copy_compressed_payload::<C<S>, C<T>>(sender.compressed.into_parts().0)
+        .carry::<Value>(foreign_value);
+    let mut rng = StdRng::seed_from_u64(0x908_1503);
 
     // Tags are derived from the registered circuits, so a receiver with its
     // own derived tags holds the sender's registries exactly when the two
@@ -447,11 +537,7 @@ where
         share_registries,
         "the profiles' registries"
     );
-    let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
-        .carry::<Value>(foreign_value);
     check_both_verifiers(&derived, &foreign, share_registries, &mut rng)?;
-    let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
-        .carry::<Value>(foreign_value);
     assert_eq!(derived.verify_compressed(&compressed)?, share_registries);
 
     for changed in [
@@ -486,14 +572,10 @@ where
         )?;
         check_both_verifiers(&receiver, &local, true, &mut rng)?;
 
-        let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
-            .carry::<Value>(foreign_value);
         assert!(
             foreign.proof().well_formed::<HEADER_SIZE>(),
             "same-shape substitution must reach the claim checks"
         );
-        let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
-            .carry::<Value>(foreign_value);
         assert!(
             !receiver.verify_compressed(&compressed)?,
             "foreign compressed payload: {changed:?}"
@@ -536,9 +618,8 @@ where
 #[test]
 fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Result<()> {
     check_same_shape::<Standard, Aggregator>(
+        standard_sender()?,
         Some(Fp::from(7)),
-        Some(Fp::from(7)),
-        Fp::from(7),
         Fp::from(7),
         true,
     )
@@ -549,9 +630,8 @@ fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Resul
 #[test]
 fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Result<()> {
     check_same_shape::<Aggregator, Standard>(
+        sender_fixture(Some(Fp::from(7)), Fp::from(7))?,
         Some(Fp::from(7)),
-        Some(Fp::from(7)),
-        Fp::from(7),
         Fp::from(7),
         true,
     )
@@ -563,9 +643,8 @@ fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
     // so rejection here also protects an independently false statement.
     assert_ne!(Fp::from(9), Fp::from(7));
     check_same_shape::<Permissive, Standard>(
-        None,
+        sender_fixture(None, Fp::from(9))?,
         Some(Fp::from(7)),
-        Fp::from(9),
         Fp::from(7),
         false,
     )
@@ -573,13 +652,7 @@ fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
 
 #[test]
 fn standard_cannot_substitute_for_a_weaker_profile() -> Result<()> {
-    check_same_shape::<Standard, Permissive>(
-        Some(Fp::from(7)),
-        None,
-        Fp::from(7),
-        Fp::from(9),
-        false,
-    )
+    check_same_shape::<Standard, Permissive>(standard_sender()?, None, Fp::from(9), false)
 }
 
 fn check_different_shapes<S: Profile, T: Profile>() -> Result<()>

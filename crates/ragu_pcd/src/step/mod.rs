@@ -283,7 +283,7 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
         Self: 'dr;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
 

@@ -130,7 +130,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
 

@@ -112,7 +112,7 @@ impl<F: Field, O: Header<F>> Prepared<F, O> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_core::{
         Result,

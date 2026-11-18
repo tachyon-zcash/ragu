@@ -39,7 +39,7 @@ mod aggregator;
 #[cfg(feature = "baked-aggregator")]
 pub use aggregator::baked_aggregator;
 
-#[cfg(all(test, feature = "baked"))]
+#[cfg(all(test, feature = "baked", not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_core::{Cycle, FixedGenerators};
     use udon::curve::Affine;

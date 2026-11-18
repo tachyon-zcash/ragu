@@ -632,7 +632,7 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Cycle<CircuitField = D::F>>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::ProductionRank;
     use ragu_core::{drivers::emulator::Emulator, maybe::Empty, pasta::Pasta};

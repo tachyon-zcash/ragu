@@ -245,7 +245,7 @@ fn lifts<C: ProfiledCycle>(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::TestRank;
     use ragu_core::pasta::Fq;

@@ -82,7 +82,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_core::pasta::Pasta;
 

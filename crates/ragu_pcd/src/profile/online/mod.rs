@@ -230,7 +230,7 @@ pub(crate) mod defaults {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod layout_tests {
     use super::*;
 

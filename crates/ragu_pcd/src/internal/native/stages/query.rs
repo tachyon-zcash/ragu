@@ -381,7 +381,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_core::pasta::Pasta;
 

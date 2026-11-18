@@ -60,7 +60,7 @@ pub(crate) fn parallelize<T: Send, F: Fn(&mut [T], usize) + Send + Sync + Clone>
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     #[test]
     fn flattens_to_tuple() {

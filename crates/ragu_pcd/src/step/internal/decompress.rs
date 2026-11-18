@@ -121,7 +121,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
 

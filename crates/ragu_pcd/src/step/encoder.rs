@@ -188,7 +188,7 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use alloc::vec;
 

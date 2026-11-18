@@ -68,7 +68,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_core::pasta::EqAffine;
 

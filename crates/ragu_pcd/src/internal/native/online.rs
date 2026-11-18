@@ -278,7 +278,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::TestRank;
     use ragu_core::pasta::Fp;

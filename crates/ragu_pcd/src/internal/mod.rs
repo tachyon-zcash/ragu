@@ -79,5 +79,5 @@ pub enum Side {
     Right,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 pub mod tests;

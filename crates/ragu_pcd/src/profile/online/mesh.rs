@@ -255,7 +255,7 @@ impl Mesh {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
     use crate::profile::online::Opening;

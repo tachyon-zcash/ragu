@@ -1324,6 +1324,7 @@ const _: () = {
 #[cfg(test)]
 pub(crate) mod testing {
     use alloc::vec;
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     use std::sync::Mutex;
 
     use ragu_circuits::{
@@ -1344,10 +1345,9 @@ pub(crate) mod testing {
     use udon::curve::EndomorphismAffine as Affine;
 
     use super::*;
-    use crate::{
-        internal::ky,
-        step::{Encoded, Index, Oracles, Step},
-    };
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
+    use crate::internal::ky;
+    use crate::step::{Encoded, Index, Oracles, Step};
 
     /// A step with unit headers and no witness.
     pub(crate) struct UnitStep;
@@ -1395,9 +1395,11 @@ pub(crate) mod testing {
     /// Two native circuits over two stages, each under its last stage's
     /// final mask, and one nested circuit over one stage under one final
     /// mask, declared but without hooks.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Wider;
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl Profile for Wider {
         const NAME: &'static str = "wider";
         const NATIVE_EXTENSION: usize = 4;
@@ -1433,9 +1435,11 @@ pub(crate) mod testing {
 
     /// [`Wider`]'s native side with its second circuit declared the
     /// statement circuit, so that the profile registers the statement step.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Stated;
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl Profile for Stated {
         const NAME: &'static str = "stated";
         const NATIVE_EXTENSION: usize = 4;
@@ -1480,9 +1484,11 @@ pub(crate) mod testing {
 
     /// One online Fq polynomial per step and no extension: the standard
     /// layout with the slot on, which proves at the production rank.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Opening;
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl Profile for Opening {
         const NAME: &'static str = "opening";
         const NATIVE_EXTENSION: usize = 0;
@@ -1500,9 +1506,11 @@ pub(crate) mod testing {
     /// `CIRCUITS` native circuits and one nested circuit, each side's over
     /// one stage under one final mask, with hooks that register the fuse's
     /// own circuits and stages as stand-ins.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Hooked<const CIRCUITS: usize = 1>;
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         const NAME: &'static str = "hooked";
         const NATIVE_EXTENSION: usize = CIRCUITS + 1;
@@ -1651,14 +1659,17 @@ pub(crate) mod testing {
     /// public output is the header it is given, `HEADER_SIZE` elements
     /// whose suffix it holds nonzero, standing in for the output header of
     /// the compressed proof a decompression extension verifies.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     pub(crate) struct StatementCircuit<F, const HEADER_SIZE: usize>(PhantomData<fn() -> F>);
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl<F, const HEADER_SIZE: usize> StatementCircuit<F, HEADER_SIZE> {
         pub(crate) const fn new() -> Self {
             StatementCircuit(PhantomData)
         }
     }
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl<F: Field, const HEADER_SIZE: usize> Circuit<F> for StatementCircuit<F, HEADER_SIZE> {
         type Instance<'source> = &'source [F];
         type Witness<'source> = &'source [F];
@@ -1700,10 +1711,12 @@ pub(crate) mod testing {
     /// proof to verify.
     ///
     /// [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     pub(crate) struct StatementContext<F> {
         header: Mutex<Option<Vec<F>>>,
     }
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl<F> Default for StatementContext<F> {
         fn default() -> Self {
             StatementContext {
@@ -1712,9 +1725,9 @@ pub(crate) mod testing {
         }
     }
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl<F: Field> StatementContext<F> {
         /// Exposes `header` from now on, or the unit header for `None`.
-        #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
         pub(crate) fn expose(&self, header: Option<Vec<F>>) {
             *self.header.lock().unwrap() = header;
         }
@@ -1735,9 +1748,11 @@ pub(crate) mod testing {
     /// binding of its output header prove and verify without decompression
     /// circuits. Proves at a rank above the production one, as [`Proving`]
     /// does.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Decompressing;
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl Profile for Decompressing {
         const NAME: &'static str = "decompressing";
         const NATIVE_EXTENSION: usize = 1;

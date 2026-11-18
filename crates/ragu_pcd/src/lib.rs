@@ -356,7 +356,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// This is useful for testing internal circuit behavior with a non-zero
     /// number of application steps, without needing real [`Step`]
     /// implementations.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
     pub(crate) fn register_dummy_circuits(mut self, count: usize) -> Result<Self> {
         for _ in 0..count {
             self.application_circuits

@@ -190,7 +190,7 @@ impl<F: Field> Header<F> for Dummy {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
 

@@ -277,7 +277,7 @@ impl<'dr, D: Driver<'dr>, A: Allocator<'dr, D>, C: Affine<Base = D::F>>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
 

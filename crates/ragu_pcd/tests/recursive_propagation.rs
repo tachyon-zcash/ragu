@@ -232,6 +232,7 @@ pub(crate) mod support {
         })
     }
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[test]
     #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
     fn reused_application_preserves_proofs_and_rng_consumption() {

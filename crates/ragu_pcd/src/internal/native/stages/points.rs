@@ -809,7 +809,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for WalkStage<C,
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_core::pasta::{EpAffine, Pasta};
 

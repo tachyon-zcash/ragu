@@ -154,7 +154,7 @@ impl<'de, C: ProfiledCycle> Deserialize<'de> for CompressedProof<C> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use alloc::string::ToString;
 

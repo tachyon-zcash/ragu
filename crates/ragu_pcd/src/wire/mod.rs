@@ -82,7 +82,7 @@ mod polynomial;
 mod registry;
 #[cfg(feature = "serde")]
 mod serde;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests;
 
 #[cfg(any(test, feature = "serde"))]
@@ -174,7 +174,7 @@ pub(crate) trait Encode<C = DefaultEncoding> {
     /// # Panics
     ///
     /// Panics if the value has no encoding.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
     fn to_bytes(&self, dims: Dimensions) -> Vec<u8> {
         let mut output = Vec::new();
         self.encode(&mut output, dims)
@@ -215,7 +215,7 @@ pub(crate) trait Decode<C = DefaultEncoding>: Sized {
     fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>>;
 
     /// Decodes a complete value of `dims` and exactly the expected length.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
     fn from_bytes(input: &[u8], dims: Dimensions) -> Result<Self, Error<'_>> {
         let expected = Self::encoded_len(dims);
         if input.len() != expected {

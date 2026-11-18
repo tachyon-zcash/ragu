@@ -39,7 +39,7 @@ impl<F: Field, R: Rank> Decode for Polynomial<F, R> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use alloc::vec;
 

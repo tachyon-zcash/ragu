@@ -32,7 +32,7 @@ mod sealed {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 pub(crate) use sealed::Sealed as TestSealed;
 
 /// A Ragu-owned computational backend.

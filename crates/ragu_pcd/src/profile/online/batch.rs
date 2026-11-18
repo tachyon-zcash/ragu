@@ -330,7 +330,7 @@ pub(crate) fn append_quotients<'a, 'dr: 'a, D: Driver<'dr> + 'a>(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use alloc::vec;
 

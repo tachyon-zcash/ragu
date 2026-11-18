@@ -41,7 +41,7 @@ pub(crate) mod recursive_propagation_tests;
 
 // Keep this beneath `proof` so the shared test helper can inspect private
 // `Proof` fields.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/backend_equivalence.rs"]
 mod backend_equivalence;
 #[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]

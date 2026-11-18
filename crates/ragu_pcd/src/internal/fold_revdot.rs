@@ -449,7 +449,7 @@ impl<'dr, D: Driver<'dr>, P: Parameters> EvaluationFolder<'dr, D, P> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_backend::ReferenceBackend;
     use ragu_circuits::polynomials::TestRank;
@@ -543,6 +543,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/backend_equivalence/fold_revdot.rs"]
 mod backend_equivalence;

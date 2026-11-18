@@ -248,7 +248,7 @@ pub(crate) fn slot<L: Has<P, I>, P, I>(_kind: P) -> usize {
     L::INDEX
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use super::*;
 

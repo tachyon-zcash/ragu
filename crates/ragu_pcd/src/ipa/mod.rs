@@ -128,6 +128,6 @@ impl<C: Affine> Params<C> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/ipa.rs"]
 mod tests;

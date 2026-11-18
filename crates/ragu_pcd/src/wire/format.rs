@@ -300,7 +300,7 @@ fn open<'a>(
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::{ProductionRank, TestRank};
     use ragu_core::pasta::{Fp, Pasta};

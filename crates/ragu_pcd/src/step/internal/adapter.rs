@@ -55,7 +55,7 @@ pub(crate) struct Adapter<C, S, R, const HEADER_SIZE: usize> {
 impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Adapter<C, S, R, HEADER_SIZE> {
     /// The circuit of `step` over a stage of exactly its own
     /// [`NUM_STAGED`](Step::NUM_STAGED) values.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
     pub fn new(step: S) -> Self {
         Adapter {
             step,
@@ -218,7 +218,7 @@ impl<C: Cycle, S: Step<C>, R: Rank, const HEADER_SIZE: usize> Circuit<C::Circuit
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::{TestRank, sparse};
     use ragu_core::{

@@ -148,7 +148,10 @@ jobs:
           filter="$PCD_UNIT_FILTER"
           case "$PCD_TEST_SUITE" in
             regular) filter="$filter & !$proof_tests" ;;
-            proofs) filter="$filter & $proof_tests" ;;
+            proofs)
+              filter="$filter & $proof_tests"
+              export RAGU_PCD_STANDARD_SENDER="$RUNNER_TEMP/ragu-standard-sender.bin"
+              ;;
           esac
           cargo-nextest nextest run --archive-file "$RUNNER_TEMP/pcd-unit-tests.tar.zst" \
             --workspace-remap "$GITHUB_WORKSPACE" --filterset="$filter" \
