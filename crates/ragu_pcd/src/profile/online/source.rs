@@ -82,6 +82,11 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     pub fn tag(&self) -> F {
         self.inner.tag()
     }
+    /// The base-two logarithm of the size of the domain the source
+    /// interpolates its circuits over.
+    pub(crate) fn domain_log2(&self) -> u32 {
+        self.inner.domain_log2()
+    }
     /// Checks all source-axis degree bounds against the enclosing rank.
     ///
     /// # Errors

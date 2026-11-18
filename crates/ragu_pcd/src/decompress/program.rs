@@ -69,6 +69,7 @@ use udon::field::Field;
 
 use super::{
     circuit::AbValue,
+    online::{Values, input},
     side::{Native, Nested, Side},
     stages::{
         AB_TERMS, Layout, MESSAGE_SCALARS, Sizes, StageShape, digits_degrees, lifts_degrees,
@@ -290,6 +291,19 @@ pub(crate) enum Chunk {
         right: PointSrc,
         bind: Bind,
     },
+    /// Holds what the side takes from the aggregator's online stages to
+    /// their wires: each of `values`, a registry evaluation the work stage
+    /// carries for the chunks, to the query stage's value wire it names
+    /// ([`online::Values`](super::online::Values)), which the step's fuse
+    /// proves is the wallet registry's; and each of `inputs`, a
+    /// coordinate or point of the proof the chunks derive or load, to the
+    /// input stage's wire it names
+    /// ([`online::input`](super::online::input)), which the step committed
+    /// before its challenge and the evaluations are taken at.
+    Online {
+        values: Vec<(ElementSrc, usize)>,
+        inputs: Vec<(ElementSrc, usize)>,
+    },
     /// Holds each of `points` to the side's curve: the points the prover
     /// supplies, the instance's and the messages' commitments and the work
     /// points it fills, which the stages load unenforced. A chunk's own
@@ -375,7 +389,7 @@ pub(crate) struct Regions {
     /// reduction this side checks, in [`squeezed`] order: lifts stage
     /// slots.
     pub lifts: Vec<usize>,
-    /// Scalar-field side: the lifts of the fuse's $x$, $y$ and $u$, after
+    /// Scalar-field side: the lifts of the fuse's $x$, $y$, $u$ and $w$, after
     /// [`lifts`](Self::lifts) in the lifts stage.
     pub fuse_lifts: Vec<usize>,
     /// Scalar-field side: the lifts of the host curve's compression
@@ -491,9 +505,13 @@ pub(crate) struct Schedule {
     /// lands on, in the side's foreign scalars' order after $v$, $c$ and
     /// $c b z$.
     pub ab_terms: Vec<(usize, AbValue)>,
-    /// The gates of the side's front stages, which every circuit loads
-    /// first (see [`Front`](super::stages::Front)).
+    /// The gates of the online stages and of the side's front stages,
+    /// which every circuit loads first (see
+    /// [`Front`](super::stages::Front)).
     pub front_gates: usize,
+    /// The side's online value wires, which its [`Chunk::Online`] holds
+    /// the registry's evaluations to.
+    pub online: Values,
 }
 
 impl Schedule {
@@ -629,7 +647,8 @@ pub(crate) fn gates(chunk: &Chunk) -> usize {
             .sum(),
         Chunk::Scale { digits, .. } => SCALE_DIGIT * (digits.1 - digits.0),
         Chunk::Curve { points } => CURVE * points.len(),
-        Chunk::Sign { .. } | Chunk::Equal { .. } => 0,
+        // Equalities of wires the circuit holds already take no gate.
+        Chunk::Sign { .. } | Chunk::Equal { .. } | Chunk::Online { .. } => 0,
         Chunk::EqualIf { .. } => EQUAL_IF,
     }
 }
@@ -824,10 +843,14 @@ pub(crate) mod squeezed {
 
 /// Positions within [`Regions::fuse`].
 pub(crate) mod fuse {
+    pub const W: usize = 0;
     pub const Y: usize = 1;
     pub const X: usize = 5;
     pub const U: usize = 7;
     pub const PRE_BETA: usize = 8;
+    /// The challenges the scalar-field side lifts, in the order its lifts
+    /// stage holds them ([`Regions::fuse_lifts`](super::Regions::fuse_lifts)).
+    pub const LIFTED: [usize; 4] = [X, Y, U, W];
 }
 
 /// The tag a transcript absorbs, as the constants [`Transcript::new`]
@@ -1587,6 +1610,7 @@ impl Builder {
         claims: Vec<ClaimPlan>,
         bindings: Vec<BindingPlan>,
         ab_terms: Vec<(usize, AbValue)>,
+        online: Values,
         front: &[StageShape],
     ) -> Schedule {
         assert_eq!(
@@ -1608,7 +1632,9 @@ impl Builder {
             bindings,
             regions: self.regions,
             ab_terms,
-            front_gates: front.iter().map(|shape| shape.gates()).sum(),
+            front_gates: online.prefix_gates()
+                + front.iter().map(|shape| shape.gates()).sum::<usize>(),
+            online,
         };
         schedule.circuits = pack(&schedule.chunks, self.limits.fill, |last| {
             schedule.stage_gates(last)
@@ -1637,6 +1663,11 @@ struct Body<'a> {
     components: usize,
     /// The positions of that curve's $A$ and $B$ commitments.
     ab: [usize; 2],
+    /// The side's online value wires.
+    online: Values,
+    /// The proof's online inputs as the side holds them, each with the
+    /// input stage's wire it is held to.
+    inputs: Vec<(ElementSrc, usize)>,
 }
 
 /// The chunks both sides share: the targets, the reduction, the batch and
@@ -1675,6 +1706,50 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
         .collect();
     b.regions.restriction_at_w = b.slots.element();
     let bindings = b.bindings(body.bindings);
+    // The registry's evaluations, which the prover supplies in the work
+    // stage, held to the query stage's wires that the step's fuse proves:
+    // each named circuit's restriction, the instance's opening, then the
+    // wire bindings' values in the order the verifier lists them, the
+    // query's and the eval's.
+    {
+        let online = body.online;
+        let mut values: Vec<(ElementSrc, usize)> = named
+            .iter()
+            .map(|&(circuit, slot)| {
+                let wire = if circuit == APPLICATION {
+                    online.own_claim()
+                } else {
+                    online.claim(usize::from(circuit))
+                };
+                (ElementSrc::Work(slot), wire)
+            })
+            .collect();
+        values.push((
+            ElementSrc::Work(b.regions.restriction_at_w),
+            online.at_w_c(),
+        ));
+        let wires: Vec<usize> = online
+            .query_binding()
+            .into_iter()
+            .chain(online.eval_binding().into_iter().flatten())
+            .collect();
+        assert_eq!(
+            b.regions.registry_values.len(),
+            wires.len(),
+            "one value wire per registry value the wire bindings expect"
+        );
+        values.extend(
+            b.regions
+                .registry_values
+                .iter()
+                .map(|&slot| ElementSrc::Work(slot))
+                .zip(wires),
+        );
+        b.chunks.push(Chunk::Online {
+            values,
+            inputs: body.inputs,
+        });
+    }
     b.regions.revdot = [
         b.slots.element(),
         b.slots.element(),
@@ -2207,6 +2282,26 @@ fn native_schedule_with<
     };
 
     let other_squeezed = b.regions.other_squeezed.clone();
+    // The compression's challenges as the transcript lifts them,
+    // the fuse's as it squeezes them, the children's values and the
+    // proof's own circuit's domain point as the instance holds
+    // them.
+    let online_inputs = vec![
+        (ElementSrc::Lift(b.regions.lifts[squeezed::R]), input::R),
+        (ElementSrc::Lift(b.regions.lifts[squeezed::Y]), input::Y_C),
+        (ElementSrc::Work(b.regions.fuse[fuse::X]), input::X),
+        (ElementSrc::Work(b.regions.fuse[fuse::Y]), input::Y),
+        (scalar(native_scalars::LEFT_X), input::LEFT_X),
+        (scalar(native_scalars::LEFT_Y), input::LEFT_Y),
+        (scalar(native_scalars::RIGHT_X), input::RIGHT_X),
+        (scalar(native_scalars::RIGHT_Y), input::RIGHT_Y),
+        (ElementSrc::Work(b.regions.fuse[fuse::U]), input::U),
+        (ElementSrc::Work(b.regions.fuse[fuse::W]), input::W),
+        (ElementSrc::Lift(b.regions.lifts[squeezed::W]), input::W_C),
+        (scalar(native_scalars::LEFT_ID), input::LEFT_ID),
+        (scalar(native_scalars::RIGHT_ID), input::RIGHT_ID),
+        (scalar(native_scalars::OMEGA_J), input::CIRCUIT),
+    ];
     let (bindings, digits) = body::<K>(
         &mut b,
         Body {
@@ -2221,6 +2316,8 @@ fn native_schedule_with<
                 nested_position::<Standard>(nested::RxComponent::AbA),
                 nested_position::<Standard>(nested::RxComponent::AbB),
             ],
+            online: Values::NATIVE,
+            inputs: online_inputs,
         },
     );
 
@@ -2297,7 +2394,7 @@ fn native_schedule_with<
 
     // The scalar-field side's lifts stage: each lift's generator scaled
     // by the challenge's bits, in the stage's order, the nested curve's
-    // compression challenges, the fuse's x, y and u, then the host
+    // compression challenges, the fuse's x, y, u and w, then the host
     // curve's.
     b.regions.lifts_sum = b.slots.point();
     {
@@ -2307,7 +2404,7 @@ fn native_schedule_with<
             .other_squeezed
             .clone()
             .into_iter()
-            .chain([fuse::X, fuse::Y, fuse::U].map(|i| b.regions.fuse[i]))
+            .chain(fuse::LIFTED.map(|i| b.regions.fuse[i]))
             .chain(b.regions.squeezed.clone())
             .collect();
         assert_eq!(generators.len(), raw.len(), "one lift per challenge");
@@ -2357,7 +2454,7 @@ fn native_schedule_with<
     );
 
     let front = <Native as Side<C>>::front_shapes::<K, HEADER_SIZE>();
-    Ok(b.finish(claims, bindings, ab_terms, &front))
+    Ok(b.finish(claims, bindings, ab_terms, Values::NATIVE, &front))
 }
 
 /// The scalar-field side's schedule for a proof at rank `K`, cut for
@@ -2416,7 +2513,7 @@ fn nested_schedule_with<
     // the other side, from their bits, into the lifts stage in that order,
     // which the other side recomputes.
     b.regions.lifts = b.slots.lifts(per_curve);
-    b.regions.fuse_lifts = b.slots.lifts(3);
+    b.regions.fuse_lifts = b.slots.lifts(fuse::LIFTED.len());
     b.regions.point_lifts = b.slots.lifts(per_curve);
     b.regions.bits_lifts = [
         b.regions.lifts.clone(),
@@ -2427,10 +2524,13 @@ fn nested_schedule_with<
     {
         let pairs: Vec<(ChallengeRef, usize)> = (0..per_curve)
             .map(|i| (ChallengeRef::Bits(i), b.regions.lifts[i]))
-            .chain((0..3).map(|i| (ChallengeRef::Bits(per_curve + i), b.regions.fuse_lifts[i])))
+            .chain(
+                (0..fuse::LIFTED.len())
+                    .map(|i| (ChallengeRef::Bits(per_curve + i), b.regions.fuse_lifts[i])),
+            )
             .chain((0..per_curve).map(|i| {
                 (
-                    ChallengeRef::Bits(per_curve + 3 + i),
+                    ChallengeRef::Bits(per_curve + fuse::LIFTED.len() + i),
                     b.regions.point_lifts[i],
                 )
             }))
@@ -2497,6 +2597,22 @@ fn nested_schedule_with<
             .collect()
     };
 
+    // The lifts the lifts stage holds, in `fuse::LIFTED` order for
+    // the fuse's, and the children's values as the instance holds
+    // them.
+    let online_inputs = vec![
+        (ElementSrc::Lift(b.regions.lifts[squeezed::R]), input::R),
+        (ElementSrc::Lift(b.regions.lifts[squeezed::Y]), input::Y_C),
+        (ElementSrc::Lift(b.regions.fuse_lifts[0]), input::X),
+        (ElementSrc::Lift(b.regions.fuse_lifts[1]), input::Y),
+        (scalar(nested_scalars::LEFT_X), input::LEFT_X),
+        (scalar(nested_scalars::LEFT_Y), input::LEFT_Y),
+        (scalar(nested_scalars::RIGHT_X), input::RIGHT_X),
+        (scalar(nested_scalars::RIGHT_Y), input::RIGHT_Y),
+        (ElementSrc::Lift(b.regions.fuse_lifts[2]), input::U),
+        (ElementSrc::Lift(b.regions.fuse_lifts[3]), input::W),
+        (ElementSrc::Lift(b.regions.lifts[squeezed::W]), input::W_C),
+    ];
     let (bindings, digits) = body::<K>(
         &mut b,
         Body {
@@ -2505,12 +2621,14 @@ fn nested_schedule_with<
             bindings,
             extra_digits,
             point_claims: &native_plans,
-            point_challenge: &|i| ChallengeRef::Bits(per_curve + 3 + i),
+            point_challenge: &|i| ChallengeRef::Bits(per_curve + fuse::LIFTED.len() + i),
             components: native_components::<Standard>().count(),
             ab: [
                 native_position::<Standard>(native::RxComponent::AbA),
                 native_position::<Standard>(native::RxComponent::AbB),
             ],
+            online: Values::NESTED,
+            inputs: online_inputs,
         },
     );
 
@@ -2547,7 +2665,7 @@ fn nested_schedule_with<
     b.digits(digits, Vec::new());
 
     let front = <Nested as Side<C>>::front_shapes::<K, HEADER_SIZE>();
-    Ok(b.finish(claims, bindings, ab_terms, &front))
+    Ok(b.finish(claims, bindings, ab_terms, Values::NESTED, &front))
 }
 
 /// The values a schedule is the pure function of its types for, built once

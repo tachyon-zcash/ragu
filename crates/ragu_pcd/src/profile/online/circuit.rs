@@ -75,30 +75,55 @@ pub struct Witness<'a, F: Field, P: Profile, S: Side> {
 /// Computes the two online-batch sums without loading the fuse preamble.
 pub(crate) struct Circuit<F: Field, P: Profile, S: Side> {
     source_tag: Option<F>,
+    /// The base-two logarithm of the source registry's domain, for a
+    /// profile that holds inputs to it.
+    source_domain: Option<u32>,
     marker: PhantomData<(P, S)>,
 }
 impl<F: Field, P: Profile, S: Side> Default for Circuit<F, P, S> {
     fn default() -> Self {
         Self {
             source_tag: None,
+            source_domain: None,
             marker: PhantomData,
         }
     }
 }
 impl<F: Field, P: Profile, S: Side> Circuit<F, P, S> {
-    /// Uses the source tag captured when the enclosing application was set up.
+    /// Uses a source tag alone, for a profile that holds no input to the
+    /// source registry's domain.
     ///
     /// # Errors
     ///
     /// Rejects a missing or undeclared source identity.
+    #[cfg(test)]
     pub(crate) fn with_source_tag(source_tag: Option<F>) -> Result<Self> {
+        Self::with_source(source_tag, None)
+    }
+
+    /// Uses the tag and the domain of the source registry captured when
+    /// the enclosing application was set up: `source_domain` is the
+    /// base-two logarithm of the domain's size, which the helper holds the
+    /// profile's domain inputs to.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a missing or undeclared source identity, and a profile with
+    /// domain inputs given no domain.
+    pub(crate) fn with_source(source_tag: Option<F>, source_domain: Option<u32>) -> Result<Self> {
         if source_tag.is_some() != S::mesh::<P>().is_some() {
             return Err(Error::Initialization(
                 "source registry does not match the mesh declaration".into(),
             ));
         }
+        if source_domain.is_none() && !S::domain_inputs::<P>().is_empty() {
+            return Err(Error::Initialization(
+                "the profile holds inputs to a source registry's domain it was not given".into(),
+            ));
+        }
         Ok(Self {
             source_tag,
+            source_domain,
             marker: PhantomData,
         })
     }
@@ -152,6 +177,19 @@ impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit
         if let Some(tag) = self.source_tag {
             let expected = Element::constant(dr, tag);
             inputs.source_tag[0].enforce_equal(dr, &expected)?;
+        }
+        // A domain input is a point of the source registry's domain: a
+        // root of unity of the domain's order, which is a power of two.
+        for &input in S::domain_inputs::<P>() {
+            let log2 = self.source_domain.ok_or_else(|| {
+                Error::Initialization("online helper is missing its source's domain".into())
+            })?;
+            let mut power = inputs.values[input].clone();
+            for _ in 0..log2 {
+                power = power.square(dr)?;
+            }
+            let one = Element::constant(dr, F::ONE);
+            power.enforce_equal(dr, &one)?;
         }
         let query = query.unenforced(dr, witness.as_ref().map(|w| w.query))?;
         let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval))?;

@@ -109,6 +109,8 @@ fn check(schedule: &Schedule) {
         points[slot] = true;
     };
     let mut on_curve: Vec<PointSrc> = Vec::new();
+    let schedule_online = schedule.online;
+    let mut online_chunks = 0;
     for chunk in &schedule.chunks {
         match chunk {
             Chunk::Transcript {
@@ -235,6 +237,49 @@ fn check(schedule: &Schedule) {
                 read_point(left, &points);
                 read_point(right, &points);
             }
+            Chunk::Online { values, inputs } => {
+                // Every evaluation the prover supplies is held to a value
+                // wire, each wire once, and every input is held to its own.
+                for (src, wire) in values {
+                    read_element(src, &elements, &points, &lifts);
+                    assert!(*wire < schedule_online.len(), "a value wire of the side");
+                }
+                for (src, index) in inputs {
+                    read_element(src, &elements, &points, &lifts);
+                    assert!(*index < schedule_online.inputs(), "an input of the side");
+                }
+                let mut wires: Vec<usize> = values.iter().map(|&(_, wire)| wire).collect();
+                wires.sort_unstable();
+                wires.dedup();
+                assert_eq!(wires.len(), values.len(), "one evaluation per value wire");
+                let supplied = regions
+                    .restrictions
+                    .iter()
+                    .flatten()
+                    .chain(&regions.registry_values)
+                    .chain([&regions.restriction_at_w])
+                    .copied()
+                    .collect::<alloc::collections::BTreeSet<_>>();
+                let held = values
+                    .iter()
+                    .map(|&(src, _)| match src {
+                        ElementSrc::Work(slot) => slot,
+                        other => panic!("an evaluation is a work slot, not {other:?}"),
+                    })
+                    .collect::<alloc::collections::BTreeSet<_>>();
+                assert_eq!(held, supplied, "every supplied evaluation is held");
+                let mut indices: Vec<usize> = inputs.iter().map(|&(_, index)| index).collect();
+                indices.sort_unstable();
+                let own = crate::decompress::online::MESH
+                    .inherited_coordinates()
+                    .len();
+                assert_eq!(
+                    indices,
+                    (own..schedule_online.inputs()).collect::<Vec<_>>(),
+                    "every input past the inherited coordinates is held"
+                );
+                online_chunks += 1;
+            }
             Chunk::EqualIf {
                 left, right, bind, ..
             } => {
@@ -252,6 +297,10 @@ fn check(schedule: &Schedule) {
             }
         }
     }
+    assert_eq!(
+        online_chunks, 1,
+        "one chunk holds the side to the online stages"
+    );
     // Every point the prover supplies is held to the curve: the instance's
     // and the messages' points, and the work points the prover fills.
     for p in 0..layout.instance.points {
@@ -322,6 +371,7 @@ fn schedules_are_consistent<R: Rank>() {
                 Chunk::Sign { .. } => "sign",
                 Chunk::Equal { .. } => "equal",
                 Chunk::EqualIf { .. } => "equal under a flag",
+                Chunk::Online { .. } => "online",
                 Chunk::Curve { .. } => "curve",
             };
             match counts.iter_mut().find(|(n, _)| *n == name) {

@@ -32,6 +32,8 @@ pub trait Side: sealed::Sealed + Copy + Default + Send + Sync + 'static {
     fn other_layout<P: Profile>() -> Layout;
     /// Selects the source identity accumulator on this field.
     fn mesh<P: Profile>() -> Option<super::mesh::Mesh>;
+    /// Selects the inputs held to the source registry's domain.
+    fn domain_inputs<P: Profile>() -> &'static [usize];
     /// Whether the helper must lift the native `pre_beta` endoscalar.
     const NATIVE: bool;
 }
@@ -54,6 +56,9 @@ impl Side for Native {
     fn mesh<P: Profile>() -> Option<super::mesh::Mesh> {
         P::NATIVE_MESH
     }
+    fn domain_inputs<P: Profile>() -> &'static [usize] {
+        P::NATIVE_DOMAIN_INPUTS
+    }
     const NATIVE: bool = true;
 }
 impl Side for Nested {
@@ -65,6 +70,9 @@ impl Side for Nested {
     }
     fn mesh<P: Profile>() -> Option<super::mesh::Mesh> {
         P::NESTED_MESH
+    }
+    fn domain_inputs<P: Profile>() -> &'static [usize] {
+        P::NESTED_DOMAIN_INPUTS
     }
     const NATIVE: bool = false;
 }

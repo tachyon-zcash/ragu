@@ -454,7 +454,7 @@ impl Layout {
         Layout {
             instance,
             messages: Self::messages::<K>(),
-            lifts: 2 * challenges_per_curve::<K>() + 3,
+            lifts: 2 * challenges_per_curve::<K>() + super::program::fuse::LIFTED.len(),
             digits: (3 + AB_TERMS) * digit_width::<F>(),
             flags: 0,
         }
@@ -718,13 +718,55 @@ len!(
 type SideStage<C, S, R, Parent, LP, LE> =
     ValuesStage<<S as Side<C>>::F, <S as Side<C>>::P, R, Parent, LP, LE>;
 
-/// The instance stage of side `S`: the first stage of the circuit-field
-/// side's front, and of the statement circuit, which loads it alone.
+/// Length type for side `S`'s online input stage: its values as the fuse
+/// lays them out.
+pub(crate) struct OnlineInputLen<C, S>(PhantomData<fn() -> (C, S)>);
+
+impl<C: Cycle, S: Side<C>> Len for OnlineInputLen<C, S> {
+    fn len() -> usize {
+        S::ONLINE.input_stage()
+    }
+}
+
+/// Length type for side `S`'s online query stage, likewise.
+pub(crate) struct OnlineQueryLen<C, S>(PhantomData<fn() -> (C, S)>);
+
+impl<C: Cycle, S: Side<C>> Len for OnlineQueryLen<C, S> {
+    fn len() -> usize {
+        S::ONLINE.query_stage()
+    }
+}
+
+/// The aggregator's online input stage of side `S`'s field, as the
+/// side's chunk circuits load it: the first stage of every circuit of the
+/// side. The fuse commits the stage, before its challenge, and its batch
+/// helper loads it too
+/// ([`InputStage`](crate::profile::online::stages::InputStage)); this is
+/// the same stage, the same values at the same wires, read as elements:
+/// the source registry's tag, the inputs
+/// ([`online::input`](super::online::input)), then the other side's
+/// commitments' coordinates.
+pub(crate) type OnlineInputStage<C, S, R> =
+    SideStage<C, S, R, (), ConstLen<0>, OnlineInputLen<C, S>>;
+
+/// The aggregator's online query stage of side `S`'s field, after its
+/// input stage, likewise
+/// ([`QueryStage`](crate::profile::online::stages::QueryStage)): the
+/// step's challenges, then the claimed values, among them the wallet
+/// registry's evaluations the chunks read
+/// ([`online::Values`](super::online::Values)), which the step's fuse
+/// proves are its restrictions' values.
+pub(crate) type OnlineQueryStage<C, S, R> =
+    SideStage<C, S, R, OnlineInputStage<C, S, R>, ConstLen<0>, OnlineQueryLen<C, S>>;
+
+/// The instance stage of side `S`, after the online stages: the first
+/// stage of the circuit-field side's front, and the last of the statement
+/// circuit.
 pub(crate) type InstanceStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
     R,
-    (),
+    OnlineQueryStage<C, S, R>,
     InstancePoints<C, S, K, R, HEADER_SIZE>,
     InstanceElements<C, S, K, R, HEADER_SIZE>,
 >;
@@ -785,12 +827,14 @@ pub(crate) type DigitsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     DigitsElements<C, S, K, R, HEADER_SIZE>,
 >;
 
-/// The gates side `S`'s lifts stage skips: the SYSTEM gate and its front.
+/// The gates side `S`'s lifts stage skips: the SYSTEM gate, the online
+/// stages and its front.
 fn lifts_skip<C: Cycle, S: Side<C>, K: Rank, const HEADER_SIZE: usize>() -> usize {
-    1 + S::front_shapes::<K, HEADER_SIZE>()
-        .iter()
-        .map(|shape| shape.gates())
-        .sum::<usize>()
+    1 + S::ONLINE.prefix_gates()
+        + S::front_shapes::<K, HEADER_SIZE>()
+            .iter()
+            .map(|shape| shape.gates())
+            .sum::<usize>()
 }
 
 /// The generator of side `S`'s curve each lift of its lifts stage lands
@@ -967,7 +1011,7 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     ///
     /// Fails as [`StageBuilder::add_stage`] does.
     fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, (), T>,
+        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Self, R>, T>,
     ) -> Result<(
         Self::Guards<'dr, D>,
         StageBuilder<'a, 'dr, D, R, Self::Last, T>,
@@ -1046,7 +1090,7 @@ where
     }
 
     fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, (), T>,
+        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Native, R>, T>,
     ) -> Result<(
         Self::Guards<'dr, D>,
         StageBuilder<'a, 'dr, D, R, Self::Last, T>,
@@ -1132,7 +1176,7 @@ where
     }
 
     fn add<'a, 'dr, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, (), T>,
+        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
     ) -> Result<(
         Self::Guards<'dr, D>,
         StageBuilder<'a, 'dr, D, R, Self::Last, T>,
@@ -1380,7 +1424,7 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
 
     /// Adds every run stage up to and including this one.
     fn add<'a, 'dr, C, K, R, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, (), T>,
+        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
     ) -> Result<(
         Self::Guards<'dr, C, K, R, D>,
         StageBuilder<'a, 'dr, D, R, RunStage<C, K, R, Self>, T>,
@@ -1485,7 +1529,7 @@ impl RunIndex for Z {
     const INDEX: usize = 0;
 
     type Before<C, K, R>
-        = ()
+        = OnlineQueryStage<C, Nested, R>
     where
         C: IpaCycle + ProfiledCycle<Profile = Standard>,
         K: Rank,
@@ -1500,7 +1544,7 @@ impl RunIndex for Z {
         D: Driver<'dr, F = C::ScalarField>;
 
     fn add<'a, 'dr, C, K, R, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, (), T>,
+        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
     ) -> Result<(
         Self::Guards<'dr, C, K, R, D>,
         StageBuilder<'a, 'dr, D, R, RunStage<C, K, R, Self>, T>,
@@ -1613,7 +1657,7 @@ impl<N: RunIndex> RunIndex for Succ<N> {
         D: Driver<'dr, F = C::ScalarField>;
 
     fn add<'a, 'dr, C, K, R, D, T>(
-        dr: StageBuilder<'a, 'dr, D, R, (), T>,
+        dr: StageBuilder<'a, 'dr, D, R, OnlineQueryStage<C, Nested, R>, T>,
     ) -> Result<(
         Self::Guards<'dr, C, K, R, D>,
         StageBuilder<'a, 'dr, D, R, RunStage<C, K, R, Self>, T>,

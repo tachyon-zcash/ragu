@@ -82,6 +82,10 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     #[cfg(test)]
     const NAME: &'static str;
 
+    /// The wires of the aggregator's online stages of the side's field,
+    /// which every circuit of the side loads first: the wallet registry's
+    /// evaluations the side's chunks read are their query stage's values.
+    const ONLINE: super::online::Values;
     /// How many flags the side takes from the other side, whose digits
     /// follow the foreign scalars' in that side's digits stage.
     const FLAGS: usize;
@@ -96,6 +100,13 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// The shapes of the side's front stages, in chain order (see
     /// [`Front`](super::stages::Front)).
     fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape>;
+    /// The side's online inputs for the proof `witness` was prepared from
+    /// ([`online::input`](super::online::input)).
+    ///
+    /// # Errors
+    ///
+    /// Fails if a challenge has no lift, which the preparation refuses.
+    fn online_inputs(witness: &Witness<C>) -> Result<Vec<Self::F>>;
     /// The transcript's run commitments the side's work stage carries,
     /// prover-supplied, in [`Regions::runs`](program::Regions::runs)
     /// order: the circuit-field side's; none on the scalar-field side.
@@ -193,6 +204,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     const NAME: &'static str = "circuit-field";
 
     /// The scalar-field side has no flag for this side to take.
+    const ONLINE: super::online::Values = super::online::Values::NATIVE;
     const FLAGS: usize = 0;
     const EXPOSED_ELEMENTS: usize = 0;
 
@@ -206,6 +218,10 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
         let layout = <Self as Side<C>>::layout::<K, HEADER_SIZE>();
         alloc::vec![layout.instance_shape(), layout.messages_shape()]
+    }
+
+    fn online_inputs(witness: &Witness<C>) -> Result<Vec<Self::F>> {
+        super::online::native_inputs(witness)
     }
 
     fn runs(witness: &Witness<C>) -> Vec<Self::P> {
@@ -474,6 +490,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
 
     /// The decompression flag, which the circuit-field side's statement
     /// circuit binds.
+    const ONLINE: super::online::Values = super::online::Values::NESTED;
     const FLAGS: usize = 1;
     /// The point and the value of the opening of the online Fq polynomial
     /// of the step that proves the chunks.
@@ -491,6 +508,10 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
             .iter()
             .map(|source| source.shape())
             .collect()
+    }
+
+    fn online_inputs(witness: &Witness<C>) -> Result<Vec<Self::F>> {
+        super::online::nested_inputs(witness)
     }
 
     fn runs(_: &Witness<C>) -> Vec<Self::P> {

@@ -11,10 +11,11 @@ accumulates like any proof. V's checks are the chunk circuits' constraints,
 which the accumulation enforces, and three claims the proof's consumer
 checks at the fuse's $k(y)$.
 
-Decompression samples no challenge of its own. Every challenge it uses is
+The chunks sample no challenge of their own. Every challenge they use is
 the compression's, re-derived from the transcript on one side and taken as
 bits on the other; the fuse that consumes the proof supplies the randomness
-its claims are checked under.
+its claims are checked under, and the step's own fuse the randomness the
+registry's evaluations are opened under.
 
 **Shared inputs:** the wallet application's registry and header types, its
 rank $K$ and the aggregator rank $R > K$, and generators of both curves at
@@ -109,8 +110,10 @@ folds $[H]$ through the IPA's rounds to a final multi-scalar multiplication
 that must equal the identity. Every point a side took from P is held to its
 curve before a chain uses it. The native side also recomputes Fuse's
 challenge and AB-bridge stages and holds them to the instance's commitments.
-One input is still taken from P unchecked, the registry's evaluations (see
-*What remains*); each curve's $G'$ is held to a commitment the step made
+Two inputs are not arithmetic over $\pi$, and the step that proves the
+chunks binds them (see *Registry evaluations and $G'$*): the registry's
+evaluations are values its fuse opens on restrictions of the wallet
+registry, and each curve's $G'$ is held to a commitment the step made
 before its challenge, over round challenges a digest the step committed
 with it fixes.
 
@@ -146,17 +149,42 @@ aggregator profile, so every proof of the profile carries their polynomials:
 a step that decompresses nothing runs them over the application's canonical
 compressed proof.
 
-## What remains
+## Registry evaluations and $G'$
 
-One of `verify_compressed`'s checks is not yet enforced in circuit, so the
-decompression is sound for an honest prover and not yet against a dishonest
-one:
+`verify_compressed` evaluates the wallet registry $m(W, X, Y)$ itself: at
+the circuits' domain points for the claims' wiring restrictions, at the
+instance's opening point, and at $\pi$'s and its children's points for the
+values the wire bindings expect. The chunks read these evaluations from
+[work], where P writes them, and hold each to a value of the step's
+[online batch](../poly-oracle.md#v6) of its field:
 
-- **Registry evaluations** are prover-supplied wires. The fix is the online
-  polynomial oracle's: the chunks claim each evaluation as a query on the
-  wallet registry's polynomial, the decompressing step's own fuse batches
-  the queries into its opening accumulator as it does an application's,
-  and the decider checks the openings against the wallet registry it holds.
+- **Nine restrictions.** Every evaluation is a value of one of nine
+  restrictions $m(W, a, b)$ of the registry, on each field. The step
+  commits the nine before its challenge $w$, with their coordinates and the
+  points they are read at in its online input stage, and claims each
+  evaluation as an opening whose value is a wire of its online query stage.
+  Every chunk circuit loads the two stages first, as the fuse's helper
+  does, so the chunks read the wires the fuse committed.
+- **The coordinates.** The chunks hold the input stage's coordinates and
+  points to the values they derive from $\pi$: the lifts of its
+  compression's challenges, its fuse's challenges, its children's values
+  and its circuits' domain points. The stage is committed before $w$, so
+  the restrictions are fixed before the challenges that test them.
+- **The registry.** The step's fuse batches the openings into its
+  accumulator, as it does an application's, and its
+  [source-registry mesh](../poly-oracle.md#v6-registry) holds each
+  committed polynomial to the wallet registry's restriction at its
+  coordinates, through the outgoing restriction its parent inherits.
+  [Compression closes the root's](../poly-oracle.md#v6-terminal): the
+  verifier of an aggregator's compressed proof evaluates the wallet
+  registry it holds, once per field.
+- **The domain.** The helper holds $\pi$'s own circuit's domain point to
+  the wallet registry's domain, as `verify_compressed` holds the circuit
+  id.
+
+The wallet application is so part of what V builds: the helper circuits fix
+the wallet registries' tags, and the terminal checks evaluate the wallet
+registries themselves.
 
 Each IPA's $G' = \langle s, G \rangle$ is the commitment to
 $s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the same generators, and is

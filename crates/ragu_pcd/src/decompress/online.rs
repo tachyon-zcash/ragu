@@ -1,0 +1,886 @@
+//! The decompression's registry queries, as the aggregator profile's
+//! online batches and source-registry meshes.
+//!
+//! The native verifier of a compressed proof evaluates the wallet
+//! registry $m(W, X, Y)$ itself. Every evaluation it takes is a value of
+//! one of nine restrictions $m(W, a, b)$ at some $W$, on each field:
+//!
+//! | Restriction | Opened at | The verifier's use |
+//! |---|---|---|
+//! | $(r, y_c)$ | each internal circuit's $\omega_j$, the proof's own circuit's | the claims' wiring restrictions |
+//! | $(x, y)$ | each internal circuit's $\omega_j$, $w$, the children's ids, $u$, $w_c$ | the query stage's fixed registry, $m(w, x, y)$, the children's circuits, the eval stage's, the instance's opening |
+//! | $(x_l, y_l)$, $(x_r, y_r)$ | $w$ | the children's registries at the proof's $w$ |
+//! | $(x_l, y)$, $(x_r, y)$ | $w$ | the proof's registry at the children's $x$ |
+//! | $(x_l, u)$, $(x_r, u)$, $(u, y)$ | $w$ | the eval stage's registry values |
+//!
+//! Here $w$, $x$, $y$ and $u$ are the decompressed proof's fuse
+//! challenges, $x_l$, $y_l$, $x_r$ and $y_r$ its children's, and $r$,
+//! $y_c$ and $w_c$ its compression's. The nested side has no child ids
+//! and no circuit of its own.
+//!
+//! [`MESH`] declares the nine as the restrictions a step introduces, with
+//! the two it inherits from its children, and [`NATIVE`] and [`NESTED`]
+//! the openings: the mesh's own intersections, then one opening per value
+//! above, whose claimed-value wire of the query stage is the evaluation.
+//! The step's fuse proves each wire is the committed polynomial's value at
+//! its point, and the mesh that the polynomial is the wallet registry's
+//! restriction at the coordinates the input stage holds, which the step
+//! commits before its challenge. [`Values`] names the wires.
+
+use alloc::vec::Vec;
+
+use ragu_circuits::registry::CircuitIndex;
+use ragu_core::{Cycle, Result};
+use ragu_primitives::{extract_endoscalar, lift_endoscalar};
+use udon::{curve::EndomorphismAffine as Affine, field::Field};
+
+use super::circuit::{SideWitness, Witness as Prepared};
+use crate::{
+    internal::{native, nested},
+    profile::{
+        Profile,
+        online::{
+            Challenge, Layout, Opening, Phase, Point,
+            circuit::Witness,
+            mesh::{Helper, Mesh, Restriction},
+            stages::Side,
+        },
+    },
+};
+
+/// The input stage's wires: the two children's inherited coordinates,
+/// which the fuse fills, then the decompressed proof's coordinates and
+/// opening points.
+pub(crate) mod input {
+    /// The compression's $r$.
+    pub const R: usize = 4;
+    /// The compression's $y$.
+    pub const Y_C: usize = 5;
+    /// The fuse's $x$.
+    pub const X: usize = 6;
+    /// The fuse's $y$.
+    pub const Y: usize = 7;
+    /// The left child's $x$.
+    pub const LEFT_X: usize = 8;
+    /// The left child's $y$.
+    pub const LEFT_Y: usize = 9;
+    /// The right child's $x$.
+    pub const RIGHT_X: usize = 10;
+    /// The right child's $y$.
+    pub const RIGHT_Y: usize = 11;
+    /// The fuse's $u$.
+    pub const U: usize = 12;
+    /// The fuse's $w$.
+    pub const W: usize = 13;
+    /// The compression's $w$.
+    pub const W_C: usize = 14;
+    /// The nested side's wires.
+    pub const NESTED: usize = 15;
+    /// Native side: the left child's circuit id.
+    pub const LEFT_ID: usize = 15;
+    /// Native side: the right child's circuit id.
+    pub const RIGHT_ID: usize = 16;
+    /// Native side: the proof's own circuit's domain point.
+    pub const CIRCUIT: usize = 17;
+    /// The native side's wires.
+    pub const NATIVE: usize = 18;
+}
+
+/// The polynomial slots: the restrictions fixed before $w$, the two
+/// inherited first, their helpers, then $U$ and the outgoing restriction.
+pub(crate) mod slot {
+    /// $m(W, r, y_c)$.
+    pub const CLAIMS: usize = 2;
+    /// $m(W, x, y)$.
+    pub const XY: usize = 3;
+    /// $m(W, x_l, y_l)$.
+    pub const LEFT: usize = 4;
+    /// $m(W, x_r, y_r)$.
+    pub const RIGHT: usize = 5;
+    /// $m(W, u, y)$.
+    pub const U_Y: usize = 6;
+    /// $m(W, x_l, y)$.
+    pub const LEFT_Y: usize = 7;
+    /// $m(W, x_r, y)$.
+    pub const RIGHT_Y: usize = 8;
+    /// $m(W, x_l, u)$.
+    pub const LEFT_U: usize = 9;
+    /// $m(W, x_r, u)$.
+    pub const RIGHT_U: usize = 10;
+    /// The first helper $T_a(Y) = m(w, a, Y)$.
+    pub const HELPERS: usize = 11;
+    /// $U(X) = m(w, X, y)$.
+    pub const U: usize = 18;
+    /// The outgoing restriction.
+    pub const OUTGOING: usize = 19;
+}
+
+const POLYNOMIALS: [Phase; slot::OUTGOING + 1] = {
+    let mut phases = [Phase::BeforeW; slot::OUTGOING + 1];
+    let mut i = slot::HELPERS;
+    while i < slot::U {
+        phases[i] = Phase::BeforeY;
+        i += 1;
+    }
+    phases[slot::U] = Phase::BeforeX;
+    phases[slot::OUTGOING] = Phase::BeforeAlpha;
+    phases
+};
+
+const fn restriction(polynomial: usize, x: usize, y: usize, helper: usize) -> Restriction {
+    Restriction {
+        polynomial,
+        x,
+        y,
+        helper: slot::HELPERS + helper,
+    }
+}
+
+/// The helpers' coordinates: the children's inherited $x$, then $r$, $x$,
+/// the decompressed proof's children's $x$ and $u$.
+const HELPERS: [Helper; slot::U - slot::HELPERS] = {
+    let coordinates = [
+        0,
+        2,
+        input::R,
+        input::X,
+        input::LEFT_X,
+        input::RIGHT_X,
+        input::U,
+    ];
+    let mut helpers = [Helper {
+        polynomial: 0,
+        x: 0,
+    }; slot::U - slot::HELPERS];
+    let mut i = 0;
+    while i < helpers.len() {
+        helpers[i] = Helper {
+            polynomial: slot::HELPERS + i,
+            x: coordinates[i],
+        };
+        i += 1;
+    }
+    helpers
+};
+
+const INTRODUCED: [Restriction; 9] = [
+    restriction(slot::CLAIMS, input::R, input::Y_C, 2),
+    restriction(slot::XY, input::X, input::Y, 3),
+    restriction(slot::LEFT, input::LEFT_X, input::LEFT_Y, 4),
+    restriction(slot::RIGHT, input::RIGHT_X, input::RIGHT_Y, 5),
+    restriction(slot::U_Y, input::U, input::Y, 6),
+    restriction(slot::LEFT_Y, input::LEFT_X, input::Y, 4),
+    restriction(slot::RIGHT_Y, input::RIGHT_X, input::Y, 5),
+    restriction(slot::LEFT_U, input::LEFT_X, input::U, 4),
+    restriction(slot::RIGHT_U, input::RIGHT_X, input::U, 5),
+];
+
+/// The mesh of either side: the children's outgoing restrictions, the
+/// nine a step introduces for the proof its chunks run over, the helper
+/// of each distinct first coordinate, $U$ and the outgoing restriction.
+pub(crate) const MESH: Mesh = Mesh {
+    inherited: [restriction(0, 0, 1, 0), restriction(1, 2, 3, 1)],
+    introduced: &INTRODUCED,
+    helpers: &HELPERS,
+    u: slot::U,
+    outgoing: slot::OUTGOING,
+};
+
+/// The mesh's intersections, each one shared value wire: a restriction
+/// with its helper, a helper with $U$, and $U$ with the outgoing
+/// restriction.
+const EDGES: usize = 2 + INTRODUCED.len() + HELPERS.len() + 1;
+
+/// The query stage's value wires that hold the registry's evaluations, on
+/// a side whose standard profile registers `circuits` internal circuits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Values {
+    /// The internal circuits of the standard profile on this side.
+    circuits: usize,
+    /// Whether this is the native side, which has the proof's own circuit
+    /// and its children's.
+    native: bool,
+}
+
+impl Values {
+    /// The native side's.
+    pub(crate) const NATIVE: Self = Values {
+        circuits: native::InternalCircuitIndex::NUM,
+        native: true,
+    };
+
+    /// The nested side's.
+    pub(crate) const NESTED: Self = Values {
+        circuits: nested::InternalCircuitIndex::NUM,
+        native: false,
+    };
+
+    /// $m(\omega_j, r, y_c)$ for internal circuit `j`: a claim's wiring
+    /// restriction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `j` is not an internal circuit of the side.
+    pub(crate) const fn claim(self, j: usize) -> usize {
+        assert!(j < self.circuits, "an internal circuit of the side");
+        EDGES + j
+    }
+
+    /// Native side: $m(\omega, r, y_c)$ at the proof's own circuit.
+    pub(crate) const fn own_claim(self) -> usize {
+        assert!(self.native, "the native side has the proof's own circuit");
+        EDGES + self.circuits
+    }
+
+    const fn fixed_base(self) -> usize {
+        EDGES + self.circuits + self.native as usize
+    }
+
+    /// $m(\omega_j, x, y)$ for internal circuit `j`: the query stage's
+    /// fixed registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `j` is not an internal circuit of the side.
+    pub(crate) const fn fixed(self, j: usize) -> usize {
+        assert!(j < self.circuits, "an internal circuit of the side");
+        self.fixed_base() + j
+    }
+
+    /// $m(w, x, y)$.
+    pub(crate) const fn at_w(self) -> usize {
+        self.fixed_base() + self.circuits
+    }
+
+    /// Native side: $m(\omega_l, x, y)$ and $m(\omega_r, x, y)$ at the
+    /// children's circuits.
+    pub(crate) const fn at_children(self) -> [usize; 2] {
+        assert!(self.native, "the native side has the children's circuits");
+        [self.at_w() + 1, self.at_w() + 2]
+    }
+
+    /// $m(u, x, y)$.
+    pub(crate) const fn at_u(self) -> usize {
+        self.at_w() + 1 + 2 * self.native as usize
+    }
+
+    /// $m(w_c, x, y)$: the instance's opening of the registry restriction.
+    pub(crate) const fn at_w_c(self) -> usize {
+        self.at_u() + 1
+    }
+
+    /// $m(w, x_l, y_l)$ and $m(w, x_r, y_r)$.
+    pub(crate) const fn children(self) -> [usize; 2] {
+        [self.at_w_c() + 1, self.at_w_c() + 2]
+    }
+
+    /// $m(w, x_l, y)$ and $m(w, x_r, y)$.
+    pub(crate) const fn children_y(self) -> [usize; 2] {
+        [self.at_w_c() + 3, self.at_w_c() + 4]
+    }
+
+    /// $m(w, x_l, u)$ and $m(w, x_r, u)$.
+    pub(crate) const fn children_u(self) -> [usize; 2] {
+        [self.at_w_c() + 5, self.at_w_c() + 6]
+    }
+
+    /// $m(w, u, y)$.
+    pub(crate) const fn u_y(self) -> usize {
+        self.at_w_c() + 7
+    }
+
+    /// The value wires: the mesh's intersections, then the evaluations.
+    pub(crate) const fn len(self) -> usize {
+        self.u_y() + 1
+    }
+
+    /// The wires the query stage's wire binding expects, in the order the
+    /// native verifier lists its values: the fixed registry, $m(w, x, y)$,
+    /// then each child's registry at $w$, on the native side its circuit's
+    /// restriction, and the proof's registry at its $x$.
+    pub(crate) fn query_binding(self) -> Vec<usize> {
+        let mut wires: Vec<usize> = (0..self.circuits).map(|j| self.fixed(j)).collect();
+        wires.push(self.at_w());
+        for child in 0..2 {
+            wires.push(self.children()[child]);
+            if self.native {
+                wires.push(self.at_children()[child]);
+            }
+            wires.push(self.children_y()[child]);
+        }
+        wires
+    }
+
+    /// The wires the eval stage's wire binding expects, by position: the
+    /// children's registries at $u$, $m(w, u, y)$, nothing for the
+    /// accumulator's $a(u)$ and $b(u)$, which the instance holds, and
+    /// $m(u, x, y)$.
+    pub(crate) const fn eval_binding(self) -> [Option<usize>; 6] {
+        let [left, right] = self.children_u();
+        [
+            Some(left),
+            Some(right),
+            Some(self.u_y()),
+            None,
+            None,
+            Some(self.at_u()),
+        ]
+    }
+
+    /// The input stage's wires on this side.
+    pub(crate) const fn inputs(self) -> usize {
+        if self.native {
+            input::NATIVE
+        } else {
+            input::NESTED
+        }
+    }
+
+    /// The input stage's values, as the fuse lays the stage out: the
+    /// source registry's tag, the inputs, then the other side's
+    /// commitments fixed before $w$, two coordinates each.
+    pub(crate) const fn input_stage(self) -> usize {
+        1 + self.inputs() + 2 * slot::HELPERS
+    }
+
+    /// The query stage's values: the step's $w$, $y$ and $x$, then the
+    /// claimed values.
+    pub(crate) const fn query_stage(self) -> usize {
+        3 + self.len()
+    }
+
+    /// Where input `index` sits among the input stage's values.
+    pub(crate) const fn input_at(index: usize) -> usize {
+        1 + index
+    }
+
+    /// Where value wire `value` sits among the query stage's values.
+    pub(crate) const fn value_at(value: usize) -> usize {
+        3 + value
+    }
+
+    /// The gates the two stages take at the front of the side's chunk
+    /// circuits, after the SYSTEM gate.
+    pub(crate) const fn prefix_gates(self) -> usize {
+        self.input_stage().div_ceil(2) + self.query_stage().div_ceil(2)
+    }
+
+    /// The query stage's values a side's chunks read, as the native
+    /// verifier computed them for the proof `own` was prepared from, whose
+    /// own circuit is `circuit_id`: the claims' restrictions, the
+    /// instance's opening and the wire bindings' registry values. The
+    /// step's challenges and the mesh's intersections, which only its fuse
+    /// knows, are left zero.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `own` does not hold the verifier's bindings in its order:
+    /// the preamble's, the query's, then the eval's.
+    pub(crate) fn evaluations<P: Affine>(
+        self,
+        own: &SideWitness<P>,
+        circuit_id: CircuitIndex,
+    ) -> Vec<P::Scalar> {
+        let mut stage = alloc::vec![P::Scalar::ZERO; self.query_stage()];
+        for &(circuit, value) in &own.restrictions {
+            let index = usize::from(circuit);
+            let wire = if index < self.circuits {
+                self.claim(index)
+            } else {
+                assert!(
+                    self.native && circuit == circuit_id,
+                    "a claim names an internal circuit or the proof's own"
+                );
+                self.own_claim()
+            };
+            stage[Self::value_at(wire)] = value;
+        }
+        stage[Self::value_at(self.at_w_c())] = own.restriction_at_w;
+        let (query, eval) = (&own.masked[1].2, &own.masked[2].2);
+        let wires = self.query_binding();
+        assert_eq!(query.len(), wires.len(), "the query binding's values");
+        for (wire, &value) in wires.into_iter().zip(query) {
+            stage[Self::value_at(wire)] = value;
+        }
+        assert_eq!(eval.len(), 6, "the eval binding's values");
+        for (wire, &value) in self.eval_binding().into_iter().zip(eval) {
+            if let Some(wire) = wire {
+                stage[Self::value_at(wire)] = value;
+            }
+        }
+        stage
+    }
+
+    /// The openings: both ends of each intersection, then one per
+    /// evaluation.
+    const fn openings(self) -> usize {
+        self.len() + EDGES
+    }
+}
+
+/// The openings of a side in quotient-fold order, `LEN` of them: the mesh's
+/// intersections in the order [`Mesh::edges`] lists them, then the
+/// evaluations in [`Values`] order.
+const fn openings<const LEN: usize>(values: Values) -> [Opening; LEN] {
+    assert!(LEN == values.openings(), "one opening per declared end");
+    let mut out = [Opening {
+        polynomial: 0,
+        point: Point::Constant(0),
+        value: 0,
+    }; LEN];
+    let mut next = 0;
+    let mut value = 0;
+
+    // A restriction at the step's w meets its helper at the restriction's
+    // second coordinate.
+    let mut i = 0;
+    while i < 2 + INTRODUCED.len() {
+        let restriction = if i < 2 {
+            MESH.inherited[i]
+        } else {
+            INTRODUCED[i - 2]
+        };
+        out[next] = Opening {
+            polynomial: restriction.polynomial,
+            point: Point::Challenge(Challenge::W),
+            value,
+        };
+        out[next + 1] = Opening {
+            polynomial: restriction.helper,
+            point: Point::Input(restriction.y),
+            value,
+        };
+        next += 2;
+        value += 1;
+        i += 1;
+    }
+    // A helper at the step's y meets U at the helper's coordinate.
+    let mut i = 0;
+    while i < HELPERS.len() {
+        out[next] = Opening {
+            polynomial: HELPERS[i].polynomial,
+            point: Point::Challenge(Challenge::Y),
+            value,
+        };
+        out[next + 1] = Opening {
+            polynomial: slot::U,
+            point: Point::Input(HELPERS[i].x),
+            value,
+        };
+        next += 2;
+        value += 1;
+        i += 1;
+    }
+    // U at the step's x meets the outgoing restriction at its w.
+    out[next] = Opening {
+        polynomial: slot::U,
+        point: Point::Challenge(Challenge::X),
+        value,
+    };
+    out[next + 1] = Opening {
+        polynomial: slot::OUTGOING,
+        point: Point::Challenge(Challenge::W),
+        value,
+    };
+    next += 2;
+    value += 1;
+    assert!(value == EDGES, "one value per intersection");
+
+    // The claims' restrictions: m(W, r, y_c) at each internal circuit and,
+    // on the native side, at the proof's own.
+    let mut j = 0;
+    while j < values.circuits {
+        out[next] = Opening {
+            polynomial: slot::CLAIMS,
+            point: Point::Circuit(j as u32),
+            value,
+        };
+        next += 1;
+        value += 1;
+        j += 1;
+    }
+    if values.native {
+        out[next] = Opening {
+            polynomial: slot::CLAIMS,
+            point: Point::Input(input::CIRCUIT),
+            value,
+        };
+        next += 1;
+        value += 1;
+    }
+    // m(W, x, y): at each internal circuit, at w, on the native side at the
+    // children's circuits, at u and at the compression's w.
+    let mut j = 0;
+    while j < values.circuits {
+        out[next] = Opening {
+            polynomial: slot::XY,
+            point: Point::Circuit(j as u32),
+            value,
+        };
+        next += 1;
+        value += 1;
+        j += 1;
+    }
+    let points = [
+        input::W,
+        input::LEFT_ID,
+        input::RIGHT_ID,
+        input::U,
+        input::W_C,
+    ];
+    let mut i = 0;
+    while i < points.len() {
+        let child = i == 1 || i == 2;
+        if values.native || !child {
+            out[next] = Opening {
+                polynomial: slot::XY,
+                point: Point::Input(points[i]),
+                value,
+            };
+            next += 1;
+            value += 1;
+        }
+        i += 1;
+    }
+    // The seven restrictions the verifier takes one value of, at w.
+    let singles = [
+        slot::LEFT,
+        slot::RIGHT,
+        slot::LEFT_Y,
+        slot::RIGHT_Y,
+        slot::LEFT_U,
+        slot::RIGHT_U,
+        slot::U_Y,
+    ];
+    let mut i = 0;
+    while i < singles.len() {
+        out[next] = Opening {
+            polynomial: singles[i],
+            point: Point::Input(input::W),
+            value,
+        };
+        next += 1;
+        value += 1;
+        i += 1;
+    }
+    assert!(next == LEN, "every opening is listed");
+    assert!(value == values.len(), "every value has an opening");
+    out
+}
+
+// The compression lays a proof's runs out after the scalar field's online
+// stages by a count it keeps for builds without the aggregator.
+const _: () = assert!(
+    Values::NESTED.prefix_gates() == crate::compress::runs::ONLINE_PREFIX_GATES,
+    "the compression's runs follow the scalar field's online stages"
+);
+
+const NATIVE_OPENINGS: [Opening; Values::NATIVE.openings()] = openings(Values::NATIVE);
+const NESTED_OPENINGS: [Opening; Values::NESTED.openings()] = openings(Values::NESTED);
+
+/// The native side's batch: the mesh's polynomials and the openings of
+/// the registry evaluations the circuit-field side's chunks read.
+pub(crate) const NATIVE: Layout = Layout {
+    polynomials: &POLYNOMIALS,
+    openings: &NATIVE_OPENINGS,
+    inputs: input::NATIVE,
+    points: 0,
+    values: Values::NATIVE.len(),
+};
+
+/// The nested side's batch, as [`NATIVE`].
+pub(crate) const NESTED: Layout = Layout {
+    polynomials: &POLYNOMIALS,
+    openings: &NESTED_OPENINGS,
+    inputs: input::NESTED,
+    points: 0,
+    values: Values::NESTED.len(),
+};
+
+const INDICES: &[u32; 128] = &{
+    let mut indices = [0; 128];
+    let mut i = 0;
+    while i < indices.len() {
+        indices[i] = i as u32;
+        i += 1;
+    }
+    indices
+};
+
+/// The first `circuits` extension circuits, as a profile names its online
+/// consumers: every circuit of a side's extension loads the online stages
+/// first.
+///
+/// # Panics
+///
+/// Panics, in constant evaluation, past the table's length.
+pub(crate) const fn consumers(circuits: usize) -> &'static [u32] {
+    INDICES.split_at(circuits).0
+}
+
+/// The online input and query stages a step's fuse committed, each
+/// stage's values in the order the fuse lays them out, as the side's
+/// chunk circuits load them.
+pub(crate) fn stages<F: Field, P: Profile, S: Side>(
+    witness: &Witness<'_, F, P, S>,
+) -> (Vec<F>, Vec<F>) {
+    let input = witness
+        .inputs
+        .source_tag
+        .iter()
+        .chain(witness.inputs.values.iter())
+        .chain(witness.inputs.foreign.iter())
+        .copied()
+        .collect();
+    let query = witness
+        .query
+        .challenges
+        .iter()
+        .chain(witness.query.points.iter())
+        .chain(witness.query.values.iter())
+        .copied()
+        .collect();
+    (input, query)
+}
+
+/// A raw compression challenge's lift, as the verifier's transcript
+/// squeezes it.
+fn lift<F: Field>(raw: F) -> Result<F> {
+    Ok(lift_endoscalar(extract_endoscalar(raw)?))
+}
+
+/// The coordinates and points both sides share, after the inherited
+/// wires, which the fuse fills: the compression's $r$ and $y$ of this
+/// side's curve, the fuse's $x$ and $y$, the children's, the fuse's $u$
+/// and $w$ and the compression's $w$.
+fn shared<P: Affine>(
+    own: &SideWitness<P>,
+    [w, x, y, u]: [P::Scalar; 4],
+    children: [[P::Scalar; 2]; 2],
+) -> Result<Vec<P::Scalar>> {
+    let mut inputs = alloc::vec![P::Scalar::ZERO; input::NESTED];
+    inputs[input::R] = lift(own.raw.r)?;
+    inputs[input::Y_C] = lift(own.raw.sampled.y)?;
+    inputs[input::X] = x;
+    inputs[input::Y] = y;
+    [inputs[input::LEFT_X], inputs[input::LEFT_Y]] = children[0];
+    [inputs[input::RIGHT_X], inputs[input::RIGHT_Y]] = children[1];
+    inputs[input::U] = u;
+    inputs[input::W] = w;
+    inputs[input::W_C] = lift(own.raw.sampled.w)?;
+    Ok(inputs)
+}
+
+/// The input stage's values as a side's chunks view them outside a fuse:
+/// `inputs` at their wires, the tag, the inherited coordinates and the
+/// other side's commitments, which only the step's fuse knows, left zero.
+pub(crate) fn input_stage<F: Field>(values: Values, inputs: &[F]) -> Vec<F> {
+    let mut stage = alloc::vec![F::ZERO; values.input_stage()];
+    stage[Values::input_at(0)..Values::input_at(inputs.len())].copy_from_slice(inputs);
+    stage
+}
+
+/// The native input stage's values for the compressed proof `witness`
+/// was prepared from, the inherited coordinates left for the fuse.
+///
+/// # Errors
+///
+/// Fails if a compression challenge is outside the endoscalar range,
+/// which the proof's preparation has already refused.
+pub(crate) fn native_inputs<C: Cycle>(witness: &Prepared<C>) -> Result<Vec<C::CircuitField>> {
+    let instance = &witness.proof.instance;
+    let fuse = &witness.fuse;
+    let (left, right) = (instance.left, instance.right);
+    let mut inputs = shared(
+        &witness.native,
+        [fuse.w, fuse.x, fuse.y, fuse.u],
+        [[left.x, left.y], [right.x, right.y]],
+    )?;
+    inputs.extend([left.id, right.id, instance.circuit_id.omega_j()]);
+    debug_assert_eq!(inputs.len(), input::NATIVE);
+    Ok(inputs)
+}
+
+/// The nested input stage's values, as [`native_inputs`], at the nested
+/// counterparts of the fuse's challenges.
+///
+/// # Errors
+///
+/// As [`native_inputs`], and if a fuse challenge has no nested
+/// counterpart, which the preparation has refused too.
+pub(crate) fn nested_inputs<C: Cycle>(witness: &Prepared<C>) -> Result<Vec<C::ScalarField>> {
+    let instance = &witness.proof.instance;
+    let fuse = &witness.fuse;
+    let (left, right) = (instance.nested_left, instance.nested_right);
+    shared(
+        &witness.nested,
+        [
+            nested::challenge::<C>(fuse.w)?,
+            nested::challenge::<C>(fuse.x)?,
+            nested::challenge::<C>(fuse.y)?,
+            nested::challenge::<C>(fuse.u)?,
+        ],
+        [[left.x, left.y], [right.x, right.y]],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_circuits::{
+        polynomials::AggregatorRank,
+        staging::{Stage, StageExt},
+    };
+    use ragu_core::pasta::{Fp, Fq, Pasta};
+
+    use super::*;
+    use crate::{
+        decompress::{
+            side,
+            stages::{OnlineInputStage, OnlineQueryStage},
+        },
+        profile::{
+            Aggregator,
+            online::stages::{InputStage, Native, Nested, QueryStage},
+        },
+    };
+
+    /// The chunk circuits load the online stages as plain element stages.
+    /// They are the fuse's own stages only if they take the same gates at
+    /// the same place, for any header size the aggregator is declared at.
+    #[test]
+    fn the_chunks_load_the_online_stages_the_fuse_commits() {
+        type P = Aggregator<4>;
+        type R = AggregatorRank;
+        macro_rules! same {
+            ($f:ty, $ours:ty, $fuse:ty, $values:expr) => {
+                assert_eq!(<$ours as Stage<$f, R>>::values(), $values);
+                assert_eq!(<$fuse as Stage<$f, R>>::values(), $values);
+                assert_eq!(
+                    <$ours as Stage<$f, R>>::skip_gates(),
+                    <$fuse as Stage<$f, R>>::skip_gates()
+                );
+                assert_eq!(
+                    <$ours as StageExt<$f, R>>::num_gates(),
+                    <$fuse as StageExt<$f, R>>::num_gates()
+                );
+            };
+        }
+        same!(
+            Fp,
+            OnlineInputStage<Pasta, side::Native, R>,
+            InputStage<P, Native>,
+            Values::NATIVE.input_stage()
+        );
+        same!(
+            Fp,
+            OnlineQueryStage<Pasta, side::Native, R>,
+            QueryStage<P, Native>,
+            Values::NATIVE.query_stage()
+        );
+        same!(
+            Fq,
+            OnlineInputStage<Pasta, side::Nested, R>,
+            InputStage<P, Nested>,
+            Values::NESTED.input_stage()
+        );
+        same!(
+            Fq,
+            OnlineQueryStage<Pasta, side::Nested, R>,
+            QueryStage<P, Nested>,
+            Values::NESTED.query_stage()
+        );
+        for (values, query_end) in [
+            (
+                Values::NATIVE,
+                <OnlineQueryStage<Pasta, side::Native, R> as Stage<Fp, R>>::skip_gates()
+                    + <OnlineQueryStage<Pasta, side::Native, R> as StageExt<Fp, R>>::num_gates(),
+            ),
+            (
+                Values::NESTED,
+                <OnlineQueryStage<Pasta, side::Nested, R> as Stage<Fq, R>>::skip_gates()
+                    + <OnlineQueryStage<Pasta, side::Nested, R> as StageExt<Fq, R>>::num_gates(),
+            ),
+        ] {
+            // After the SYSTEM gate.
+            assert_eq!(query_end, 1 + values.prefix_gates());
+        }
+    }
+
+    #[test]
+    fn the_layouts_and_the_mesh_are_well_formed() -> Result<()> {
+        for layout in [NATIVE, NESTED] {
+            MESH.check(layout)?;
+            assert_eq!(MESH.edges(layout)?.len(), EDGES);
+            // The intersections come first, each on its own value wire.
+            for (index, edge) in MESH.edges(layout)?.iter().enumerate() {
+                assert_eq!(edge, &layout.openings[2 * index..2 * index + 2]);
+                assert_eq!(edge[0].value, index);
+            }
+        }
+        NATIVE.check_circuit_points::<ragu_core::pasta::Fp>()?;
+        NESTED.check_circuit_points::<ragu_core::pasta::Fq>()?;
+        Ok(())
+    }
+
+    #[test]
+    fn every_value_is_one_opening_of_its_restriction() {
+        for (layout, values) in [(NATIVE, Values::NATIVE), (NESTED, Values::NESTED)] {
+            let opening = |value: usize| {
+                let mut found = layout.openings.iter().filter(|o| o.value == value);
+                let opening = found.next().expect("the value has an opening");
+                assert!(found.next().is_none(), "an evaluation is one opening");
+                (opening.polynomial, opening.point)
+            };
+            let at = Point::Input;
+            for j in 0..values.circuits {
+                let circuit = Point::Circuit(j as u32);
+                assert_eq!(opening(values.claim(j)), (slot::CLAIMS, circuit));
+                assert_eq!(opening(values.fixed(j)), (slot::XY, circuit));
+            }
+            assert_eq!(opening(values.at_w()), (slot::XY, at(input::W)));
+            assert_eq!(opening(values.at_u()), (slot::XY, at(input::U)));
+            assert_eq!(opening(values.at_w_c()), (slot::XY, at(input::W_C)));
+            for (wires, slots) in [
+                (values.children(), [slot::LEFT, slot::RIGHT]),
+                (values.children_y(), [slot::LEFT_Y, slot::RIGHT_Y]),
+                (values.children_u(), [slot::LEFT_U, slot::RIGHT_U]),
+            ] {
+                for (wire, slot) in wires.into_iter().zip(slots) {
+                    assert_eq!(opening(wire), (slot, at(input::W)));
+                }
+            }
+            assert_eq!(opening(values.u_y()), (slot::U_Y, at(input::W)));
+            if values.native {
+                assert_eq!(
+                    opening(values.own_claim()),
+                    (slot::CLAIMS, at(input::CIRCUIT))
+                );
+                let [left, right] = values.at_children();
+                assert_eq!(opening(left), (slot::XY, at(input::LEFT_ID)));
+                assert_eq!(opening(right), (slot::XY, at(input::RIGHT_ID)));
+            }
+            assert_eq!(layout.values, values.len());
+        }
+    }
+
+    #[test]
+    fn each_restriction_holds_the_coordinates_the_verifier_evaluates_at() {
+        let coordinates = |polynomial: usize| {
+            let restriction = MESH
+                .introduced
+                .iter()
+                .find(|r| r.polynomial == polynomial)
+                .expect("an introduced restriction");
+            (restriction.x, restriction.y)
+        };
+        assert_eq!(coordinates(slot::CLAIMS), (input::R, input::Y_C));
+        assert_eq!(coordinates(slot::XY), (input::X, input::Y));
+        assert_eq!(coordinates(slot::LEFT), (input::LEFT_X, input::LEFT_Y));
+        assert_eq!(coordinates(slot::RIGHT), (input::RIGHT_X, input::RIGHT_Y));
+        assert_eq!(coordinates(slot::U_Y), (input::U, input::Y));
+        assert_eq!(coordinates(slot::LEFT_Y), (input::LEFT_X, input::Y));
+        assert_eq!(coordinates(slot::RIGHT_Y), (input::RIGHT_X, input::Y));
+        assert_eq!(coordinates(slot::LEFT_U), (input::LEFT_X, input::U));
+        assert_eq!(coordinates(slot::RIGHT_U), (input::RIGHT_X, input::U));
+    }
+}

@@ -243,9 +243,15 @@ fn hooks_register_every_chunk_and_stage() {
 fn the_fuse_fits_at_the_aggregator_rank() {
     let standard = Shape::of::<Standard>();
     let shape = Shape::of::<P>();
+    // The extension's polynomials, the online batch's three stages and its
+    // helper's, and the walk's.
     assert_eq!(
         shape.native_rx,
-        standard.native_rx + P::NATIVE_EXTENSION + shape.native_steps - standard.native_steps
+        standard.native_rx
+            + P::NATIVE_EXTENSION
+            + crate::profile::online::extension::RXS
+            + shape.native_steps
+            - standard.native_steps
     );
     // The walks fold more points at fewer steps per the profile's
     // endoscalings per step.

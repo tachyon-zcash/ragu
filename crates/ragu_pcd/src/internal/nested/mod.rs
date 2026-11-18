@@ -649,6 +649,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
     params: &'params C::Params,
     source_tag: Option<C::ScalarField>,
+    source_domain: Option<u32>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
@@ -737,7 +738,11 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 let slot = CircuitSlot::new(registry);
                 let (registry, registration) =
                     if Some(k) == extension::helper::<C::Profile, Nested>() {
-                        extension::register_circuit::<_, R, C::Profile, Nested>(slot, source_tag)?
+                        extension::register_circuit::<_, R, C::Profile, Nested>(
+                            slot,
+                            source_tag,
+                            source_domain,
+                        )?
                     } else {
                         C::Profile::register_nested_circuit::<C::Base, R>(k as usize, slot, params)?
                     }

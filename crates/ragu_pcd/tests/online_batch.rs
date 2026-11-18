@@ -25,8 +25,8 @@ use crate::{
     Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
     ipa::IpaCycle,
     profile::{
-        CircuitSlot, Extension, ExtensionRxs, Profile, Profiled, ProfiledCycle, Registered,
-        Standard,
+        CircuitSlot, Extension, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext,
+        Registered, Standard,
         online::{
             Challenge, Layout, Opening, Phase, Point,
             batch::Challenges,
@@ -140,6 +140,7 @@ impl Profile for OnlineBatch {
 
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -392,6 +393,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
 
     fn native_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -438,6 +440,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
     }
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -780,6 +783,7 @@ impl Profile for NativePhases {
         B: SelectableBackend;
     fn native_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -941,6 +945,7 @@ impl Profile for NestedPhases {
         B: SelectableBackend;
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,

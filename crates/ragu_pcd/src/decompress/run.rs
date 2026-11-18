@@ -32,7 +32,7 @@ use super::{
     batch,
     circuit::{SideWitness, Witness},
     derive::{self, Digits},
-    ipa,
+    ipa, online,
     program::{
         APPLICATION, Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, Op, PointSrc, ScalarRef,
         Schedule, Step, squeezed,
@@ -106,6 +106,10 @@ pub(crate) struct Loaded<'a, 'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
     pub work: View<'a, 'dr, D, P>,
     pub transcript: View<'a, 'dr, D, P>,
     pub digits: View<'a, 'dr, D, P>,
+    /// The online input stage's values, as the fuse lays them out.
+    pub online_input: View<'a, 'dr, D, P>,
+    /// The online query stage's values, likewise.
+    pub online_query: View<'a, 'dr, D, P>,
 }
 
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Clone for Loaded<'_, 'dr, D, P> {
@@ -123,7 +127,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Copy for Loaded<'_, 'dr, D, P>
 pub(crate) struct Aux<G> {
     /// Every compression challenge the side did not squeeze, in the order
     /// the schedule's [`ChallengeRef::Bits`] indexes them: the reduction
-    /// it checks in its field, the fuse's $x$, $y$ and $u$, then the
+    /// it checks in its field, the fuse's $x$, $y$, $u$ and $w$, then the
     /// reduction whose points it checks.
     pub challenge_bits: Vec<Uendo>,
     /// The other field's values, in [`ScalarRef::Bits`] order: $v$, $c$
@@ -146,6 +150,15 @@ pub(crate) struct Prepared<C: Cycle, S: Side<C>> {
     pub work: Values<S::F, S::P>,
     pub transcript: Values<S::F, S::P>,
     pub digits: Values<S::F, S::P>,
+    /// The aggregator's online input stage of the side's field, elements
+    /// alone, in the order the fuse lays the stage out. Prepared with the
+    /// proof's inputs; the step that proves the chunks sets the rest, the
+    /// stage its fuse committed
+    /// ([`with_online`](Self::with_online)).
+    pub online_input: Values<S::F, S::P>,
+    /// The online query stage, likewise: prepared with the evaluations the
+    /// chunks read, as the native verifier computed them.
+    pub online_query: Values<S::F, S::P>,
     pub aux: Aux<S::Other>,
     pub extra: Arc<S::Extra>,
 }
@@ -160,6 +173,8 @@ impl<C: Cycle, S: Side<C>> Clone for Prepared<C, S> {
             work: self.work.clone(),
             transcript: self.transcript.clone(),
             digits: self.digits.clone(),
+            online_input: self.online_input.clone(),
+            online_query: self.online_query.clone(),
             aux: self.aux.clone(),
             extra: self.extra.clone(),
         }
@@ -768,6 +783,16 @@ where
             let right = ctx.point(dr, *right)?;
             left.enforce_equal(dr, &right)?;
         }
+        Chunk::Online { values, inputs } => {
+            for &(src, wire) in values {
+                let wire = &ctx.loaded.online_query.elements[online::Values::value_at(wire)];
+                ctx.element(dr, src)?.enforce_equal(dr, wire)?;
+            }
+            for &(src, index) in inputs {
+                let wire = &ctx.loaded.online_input.elements[online::Values::input_at(index)];
+                ctx.element(dr, src)?.enforce_equal(dr, wire)?;
+            }
+        }
         Chunk::EqualIf {
             flag,
             left,
@@ -831,12 +856,12 @@ pub(crate) fn enforce<'dr, D: Driver<'dr>, P: Affine<Base = D::F>>(
 /// The stages allocated as witnesses under a driver, for the prover's
 /// native run.
 struct Allocated<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> {
-    stages: [(Vec<Point<'dr, D, P>>, Vec<Element<'dr, D>>); 6],
+    stages: [(Vec<Point<'dr, D, P>>, Vec<Element<'dr, D>>); 8],
 }
 
 impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
-    fn alloc(dr: &mut D, values: [&Values<D::F, P>; 6]) -> Result<Self> {
-        let mut stages = Vec::with_capacity(6);
+    fn alloc(dr: &mut D, values: [&Values<D::F, P>; 8]) -> Result<Self> {
+        let mut stages = Vec::with_capacity(8);
         for values in values {
             let points = values
                 .points
@@ -853,7 +878,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
         Ok(Allocated {
             stages: stages
                 .try_into()
-                .map_err(|_| Error::InvalidWitness("six stages".into()))?,
+                .map_err(|_| Error::InvalidWitness("eight stages".into()))?,
         })
     }
 
@@ -869,6 +894,8 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
             work: view(3),
             transcript: view(4),
             digits: view(5),
+            online_input: view(6),
+            online_query: view(7),
         }
     }
 }
@@ -962,7 +989,13 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         let mut transcript = S::transcript();
         transcript.elements = alloc::vec![S::F::ZERO; schedule.states];
         let mut challenge_bits = bits(&S::own(witness).raw.in_order())?;
-        challenge_bits.extend(bits(&[witness.fuse.x, witness.fuse.y, witness.fuse.u])?);
+        // In `fuse::LIFTED` order.
+        challenge_bits.extend(bits(&[
+            witness.fuse.x,
+            witness.fuse.y,
+            witness.fuse.u,
+            witness.fuse.w,
+        ])?);
         challenge_bits.extend(bits(&S::other(witness).raw.in_order())?);
         let aux = Aux {
             challenge_bits,
@@ -972,6 +1005,14 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         let mut prepared = Prepared {
             instance: S::instance(params, instance, &witness.header),
             messages: S::messages(params, &witness.proof),
+            online_input: Values {
+                points: Vec::new(),
+                elements: online::input_stage(S::ONLINE, &S::online_inputs(witness)?),
+            },
+            online_query: Values {
+                points: Vec::new(),
+                elements: S::ONLINE.evaluations(S::own(witness), instance.circuit_id),
+            },
             extra: Arc::new(S::extra(witness)?),
             schedule,
             lifts,
@@ -1014,6 +1055,8 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
                     &self.work,
                     &self.transcript,
                     &self.digits,
+                    &self.online_input,
+                    &self.online_query,
                 ],
             )?;
             let writes = {
@@ -1048,6 +1091,36 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             }
         }
         Ok(())
+    }
+}
+
+impl<C: Cycle, S: Side<C>> Prepared<C, S> {
+    /// The proof's online inputs: the coordinates of the wallet registry's
+    /// restrictions its verification reads and the points it reads them
+    /// at, which the step that proves the chunks commits in its online
+    /// input stage before its challenge.
+    pub(crate) fn online_inputs(&self) -> &[S::F] {
+        &self.online_input.elements[online::Values::input_at(0)..][..S::ONLINE.inputs()]
+    }
+
+    /// The side as the step proves it, with the online stages its fuse
+    /// committed, `input` and `query`, each stage's values in order. The
+    /// chunks hold the proof's inputs and the evaluations they read to
+    /// these stages' wires, so a stage that does not hold what the side was
+    /// prepared with leaves a chunk unsatisfied.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a stage is not the side's size.
+    pub(crate) fn with_online(mut self, input: Vec<S::F>, query: Vec<S::F>) -> Result<Self> {
+        if input.len() != S::ONLINE.input_stage() || query.len() != S::ONLINE.query_stage() {
+            return Err(Error::InvalidWitness(
+                "the step's online stages are not the side's size".into(),
+            ));
+        }
+        self.online_input.elements = input;
+        self.online_query.elements = query;
+        Ok(self)
     }
 }
 

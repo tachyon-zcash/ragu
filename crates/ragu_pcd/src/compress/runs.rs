@@ -21,7 +21,7 @@ use ragu_core::{Error, Result};
 
 use super::{instance::OPENED, revdot::fold::Derived};
 use crate::{
-    internal::native,
+    internal::{native, nested},
     ipa::IpaCycle,
     profile::{Profile, ProfiledCycle},
 };
@@ -175,10 +175,11 @@ pub(crate) fn shape_degrees<R: Rank>(
     (points, elements)
 }
 
-/// The gates each stage of a chain of `shapes` skips: the SYSTEM gate,
-/// then every earlier stage's.
-pub(crate) fn chain_skips(shapes: &[StageShape]) -> Vec<usize> {
-    let mut skip = 1;
+/// The gates each stage of a chain of `shapes` skips, the chain starting
+/// `before` gates after the SYSTEM gate: those, then every earlier
+/// stage's.
+pub(crate) fn chain_skips(before: usize, shapes: &[StageShape]) -> Vec<usize> {
+    let mut skip = 1 + before;
     shapes
         .iter()
         .map(|shape| {
@@ -189,16 +190,27 @@ pub(crate) fn chain_skips(shapes: &[StageShape]) -> Vec<usize> {
         .collect()
 }
 
+/// The gates the aggregator's online stages of the scalar field take at
+/// the front of every circuit of that side of a proof's decompression,
+/// which the run stages follow: the online input stage's 19, then the
+/// online query stage's, which holds two evaluations of the wallet registry
+/// per internal circuit of the Standard profile's scalar-field side and 32
+/// values besides. The decompression holds its layout to this count where
+/// the aggregator is compiled (`decompress::online`). Like the runs'
+/// shapes, it is part of the Standard profile's wire format.
+pub(crate) const ONLINE_PREFIX_GATES: usize = 19 + 16 + nested::InternalCircuitIndex::NUM;
+
 /// The generators each run's stage of the scalar-field side lands its
 /// values on at rank `R`, for a proof of profile `P` at rank `K`, by run,
 /// in the run's absorption order: each point's $x$ and $y$, then each
-/// element. The run stages open that side's stage chain. What the
+/// element. The run stages follow the aggregator's online stages in that
+/// side's stage chain ([`ONLINE_PREFIX_GATES`]). What the
 /// compression's transcript commits a run at ([`run_bases`]) and the
 /// circuit-field side holds the absorbed point to through the run stage's
 /// commitment.
 pub(crate) fn run_degrees<P: Profile, K: Rank, R: Rank>() -> Vec<Vec<usize>> {
     let shapes: Vec<StageShape> = runs::<K>().into_iter().map(Run::shape::<P>).collect();
-    chain_skips(&shapes)
+    chain_skips(ONLINE_PREFIX_GATES, &shapes)
         .into_iter()
         .zip(shapes)
         .map(|(skip, shape)| {

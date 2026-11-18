@@ -448,44 +448,58 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
         C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
         C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
-        for (declared, present) in [
-            (
-                C::Profile::NATIVE_MESH.is_some(),
-                self.native_source.is_some(),
-            ),
-            (
-                C::Profile::NESTED_MESH.is_some(),
-                self.nested_source.is_some(),
-            ),
-        ] {
-            if declared != present {
-                return Err(Error::Initialization(
-                    "source registries do not match the profile meshes".into(),
-                ));
+        // The sources the meshes certify: the builder's, or without them the
+        // profile's own, which borrow the context and so are read off it
+        // again after setup (see `Application::native_source`). Setup checks
+        // them and fixes their tags in the helper circuits here.
+        let ((native_tag, native_domain), (nested_tag, nested_domain)) = {
+            let (profile_native, profile_nested) =
+                C::Profile::source_registries::<C::Base, R, B>(&context);
+            let native_source = self.native_source.clone().or(profile_native);
+            let nested_source = self.nested_source.clone().or(profile_nested);
+            for (declared, present) in [
+                (C::Profile::NATIVE_MESH.is_some(), native_source.is_some()),
+                (C::Profile::NESTED_MESH.is_some(), nested_source.is_some()),
+            ] {
+                if declared != present {
+                    return Err(Error::Initialization(
+                        "source registries do not match the profile meshes".into(),
+                    ));
+                }
             }
-        }
-        if let Some(source) = &self.native_source {
-            source.check_rank::<R>()?;
-        }
-        if let Some(source) = &self.nested_source {
-            source.check_rank::<R>()?;
-        }
-        // The bootstrap proof commits the mesh's restrictions at its all-one
-        // challenges, the nested ones at their lift.
-        if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &self.native_source) {
-            mesh.check_source::<_, R>(
-                C::Profile::NATIVE_ONLINE,
-                source,
-                <C::CircuitField as udon::field::Field>::ONE,
-            )?;
-        }
-        if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &self.nested_source) {
-            mesh.check_source::<_, R>(
-                C::Profile::NESTED_ONLINE,
-                source,
-                internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
-            )?;
-        }
+            if let Some(source) = &native_source {
+                source.check_rank::<R>()?;
+            }
+            if let Some(source) = &nested_source {
+                source.check_rank::<R>()?;
+            }
+            // The bootstrap proof commits the mesh's restrictions at its
+            // all-one challenges, the nested ones at their lift.
+            if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &native_source) {
+                mesh.check_source::<_, R>(
+                    C::Profile::NATIVE_ONLINE,
+                    source,
+                    <C::CircuitField as udon::field::Field>::ONE,
+                )?;
+            }
+            if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &nested_source) {
+                mesh.check_source::<_, R>(
+                    C::Profile::NESTED_ONLINE,
+                    source,
+                    internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
+                )?;
+            }
+            (
+                native_source
+                    .as_ref()
+                    .map(|source| (source.tag(), source.domain_log2()))
+                    .unzip(),
+                nested_source
+                    .as_ref()
+                    .map(|source| (source.tag(), source.domain_log2()))
+                    .unzip(),
+            )
+        };
 
         // Build the native registry:
         // 1. Application circuits (with the final stage size)
@@ -504,7 +518,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             log2_circuits,
             self.stage_size,
-            self.native_source.as_ref().map(|source| source.tag()),
+            native_tag,
+            native_domain,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -542,7 +557,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.nested_registry = internal::nested::register_all::<C, R>(
             self.nested_registry,
             params,
-            self.nested_source.as_ref().map(|source| source.tag()),
+            nested_tag,
+            nested_domain,
         )?;
 
         let mut app = Application {
@@ -886,6 +902,27 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             &poly,
             C::host_generators(self.params),
         ))
+    }
+
+    /// The native source registry the profile's mesh certifies: the one
+    /// the builder captured, or without one the profile's own, read off the
+    /// prover context the application holds (see
+    /// [`Profile::source_registries`]).
+    pub(crate) fn native_source(
+        &self,
+    ) -> Option<profile::online::source::SourceRegistry<'_, C::CircuitField>> {
+        self.native_source
+            .clone()
+            .or_else(|| C::Profile::source_registries::<C::Base, R, B>(&self.context).0)
+    }
+
+    /// The nested source registry, as [`native_source`](Self::native_source).
+    pub(crate) fn nested_source(
+        &self,
+    ) -> Option<profile::online::source::SourceRegistry<'_, C::ScalarField>> {
+        self.nested_source
+            .clone()
+            .or_else(|| C::Profile::source_registries::<C::Base, R, B>(&self.context).1)
     }
 
     /// Returns a reference to the nested [`Registry`].

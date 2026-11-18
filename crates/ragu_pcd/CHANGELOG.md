@@ -15,12 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prover context (`ProverContext`) whose `Source` a decompression step supplies
   in place of the context's proof. The `Aggregator` profile, its
   `Decompression` context and `Application::decompress` sit behind the
-  `unstable-aggregator` feature: they are not yet sound against a dishonest
-  prover, since the decompression takes the wallet registry's evaluations
-  from the prover. Both IPAs' final generators are bound, over round
-  challenges fixed before the step's challenge: the decompression step
-  stages the compression transcript's last squeeze, and the extension holds
-  it to the squeeze it computes, through the step binding. The host curve's:
+  `unstable-aggregator` feature: the construction is unaudited. The
+  decompression takes the wallet registry's evaluations as claimed values of
+  the profile's online batches, on restrictions its source meshes hold to
+  the wallet application's registries, and holds the proof's circuit to the
+  wallet registry's domain; a verifier of aggregator proofs so builds the
+  aggregator over the wallet application. Both IPAs' final generators are
+  bound, over round challenges fixed before the step's challenge: the
+  decompression step stages the compression transcript's last squeeze, and
+  the extension holds it to the squeeze it computes, through the step
+  binding. The host curve's:
   the decompression step commits that IPA's challenge polynomial in its
   first output slot, and the extension holds its opening and commitment
   through the statement circuit's step binding (`profile::STEP_BINDING`) and
@@ -94,8 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added source-registry meshes: `Profile::{NATIVE,NESTED}_MESH` declare a
   `profile::online::mesh::Mesh` over a batch's slots, and
   `ApplicationBuilder::with_source_registries` captures the registries it
-  restricts as `profile::online::source::SourceRegistry`s. Each step carries
-  both children's outgoing restrictions, and compression closes the root's.
+  restricts as `profile::online::source::SourceRegistry`s, or, without them,
+  `Profile::source_registries` reads them off the profile's prover context.
+  Each step carries both children's outgoing restrictions, and compression
+  closes the root's. `Profile::{NATIVE,NESTED}_DOMAIN_INPUTS` name inputs the
+  helper holds to the source registry's domain, and
+  `Profile::{native,nested}_online_inputs` are handed the step's source.
 - Added `Application::nested_registry`, beside `native_registry`.
 
 ### Changed

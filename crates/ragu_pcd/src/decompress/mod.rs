@@ -24,11 +24,11 @@
 //!   of the folded claims, the split identity, the batch's $f(u)$ and $v$
 //!   and the IPA's $b$ are arithmetic in one field: [`Element`] arithmetic
 //!   in the circuit over that field, with inverses as advised witnesses.
-//! - **Registry evaluations.** The native verifier evaluates the registry
-//!   at $(w, r, y)$ and at the circuits' $\omega_c$. The circuit takes
-//!   these as stage wires, for the new proof's decider to check against
-//!   the registry as the fuse's query stage holds its own; that check is
-//!   not yet made (see *What remains*).
+//! - **Registry evaluations.** The native verifier evaluates the wallet
+//!   registry at $(w, r, y)$, at the circuits' $\omega_c$ and at the
+//!   children's points. The chunks take these as stage wires and hold each
+//!   to a claimed value of the aggregator's online batch, which the step's
+//!   fuse proves is the wallet registry's (see *Registry evaluations*).
 //! - **Derived commitments.** $\[A\]$, the dilated and raw polynomials'
 //!   commitments, the batched $\[H\]$ and the IPA's folded commitment are
 //!   multi-scalar multiplications of the instance's points. Those live on
@@ -233,61 +233,65 @@
 //! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
 //! [`Decompress`]: crate::step::internal::decompress
 //!
+//! # Registry evaluations
+//!
+//! The native verifier evaluates the wallet registry $m(W, X, Y)$ itself:
+//! at the circuits' $\omega_c$ for the claims' wiring restrictions, at
+//! the instance's opening point, and at the proof's and its children's
+//! points for the values the wire bindings expect. The chunks read these
+//! evaluations from the work stage, where the prover writes them
+//! ([`Regions::restrictions`](program::Regions::restrictions),
+//! [`Regions::restriction_at_w`](program::Regions::restriction_at_w) and
+//! [`Regions::registry_values`](program::Regions::registry_values)), and
+//! one chunk ([`Chunk::Online`](program::Chunk::Online)) holds every one of
+//! them to the aggregator's online batch of its field, which [`online`]
+//! declares:
+//!
+//! - Each evaluation is a value of one of nine restrictions $m(W, a, b)$
+//!   of the registry, on each field. A step commits the nine before its
+//!   challenge $w$, with their coordinates and the points they are read
+//!   at in its online input stage, and claims each evaluation as an
+//!   opening whose value is a wire of its online query stage. Its fuse
+//!   batches the openings into its accumulator, as it does an
+//!   application's.
+//! - The source-registry mesh holds each committed polynomial to the
+//!   wallet registry's restriction at its coordinates, through the
+//!   outgoing restriction the step's parent inherits. Compression closes
+//!   the root's: the verifier of an aggregator's compressed proof
+//!   evaluates the wallet registry it holds, once per field.
+//! - Every circuit of the extension loads the two online stages first, as
+//!   the fuse's helper does, so the wires the chunks read are the ones
+//!   the fuse committed. The chunks hold the input stage's coordinates
+//!   and points to the values they derive from the compressed proof: the
+//!   lifts of its compression's challenges, its fuse's challenges, its
+//!   children's values and its circuits' domain points. The step commits
+//!   that stage before its $w$, so the restrictions are fixed before the
+//!   challenges that test them.
+//! - The helper holds the proof's own circuit's domain point to the
+//!   wallet registry's domain, as the native verifier holds the circuit
+//!   id.
+//!
+//! The wallet application is so part of what a verifier of aggregator
+//! proofs builds. The helper circuits fix the wallet registries' tags,
+//! which makes them part of the aggregator's registry, and the terminal
+//! checks evaluate the wallet registries themselves: an aggregator built
+//! over another wallet application is another application, and a prover
+//! who writes values of another registry, or of none, leaves a chunk or
+//! the batch unsatisfied.
+//!
 //! # What remains
 //!
-//! The decompression proof is sound for an honest prover, which is what
-//! the end-to-end tests and the measurements cover, and not yet against a
-//! dishonest one: one of the native verifier's checks is not enforced on
-//! it, and a prover who skips it has the aggregator accept a compressed
-//! proof the wallet's verifier would reject:
-//!
-//! - **The registry's evaluations are unchecked.** The native verifier
-//!   evaluates the wallet registry at $(w, r, y)$ and at the circuits'
-//!   $\omega_c$ itself, and at the children's points for the values the
-//!   wire bindings expect; the chunks read these evaluations from the
-//!   work stage ([`Regions::restrictions`](program::Regions::restrictions),
-//!   [`Regions::restriction_at_w`](program::Regions::restriction_at_w) and
-//!   [`Regions::registry_values`](program::Regions::registry_values)) and
-//!   take the values a prover writes there. The fix is the online
-//!   polynomial oracle's ([#944](https://github.com/tachyon-zcash/ragu/pull/944), V4):
-//!   the chunks claim each evaluation as a query on the wallet
-//!   registry's polynomial, the decompressing step's own fuse batches
-//!   the queries into its opening accumulator through its query and
-//!   eval stages, as it does an application's, and the decider checks
-//!   the openings against the wallet registry it holds; that check
-//!   also holds the proof's circuit id to the
-//!   registry's domain, which the native verifier checks and the chunks
-//!   do not. The oracle has merged and the registry's queries are not
-//!   yet built on it. Until they are, nothing ties a proof to
-//!   the canonical wallet application either: an aggregator that builds
-//!   its [`Decompression`](crate::profile::Decompression) over a different
-//!   wallet application, or writes values of no registry at all, has its
-//!   proofs accepted. The check pins it once it exists, since the decider
-//!   recomputes the evaluations from the wallet registry it holds, which
-//!   makes the wallet application part of what a verifier of aggregator
-//!   proofs builds. Pinning a digest of the wallet registry in the
-//!   aggregator's registry tag is the alternative, still to decide.
-//!
-//! One cost, not a gap, remains beside it. Every proof of the profile
-//! carries the chunk circuits' polynomials, so an aggregator step that
-//! decompresses nothing still runs every chunk, over the wallet
-//! application's canonical compressed proof: in a tree over $n$ wallet
-//! proofs, $n - 1$ of its $2n - 1$ steps. Letting such a step carry an
-//! empty extension needs the fuse to accept trivial claims for the
-//! extension's circuits under a flag bound in the instance, so that a
-//! decompression step cannot claim it; until then the cost is fixed per
-//! step.
+//! One cost remains. Every proof of the profile carries the chunk
+//! circuits' polynomials, so an aggregator step that decompresses nothing
+//! still runs every chunk, over the wallet application's canonical
+//! compressed proof: in a tree over $n$ wallet proofs, $n - 1$ of its
+//! $2n - 1$ steps. Letting such a step carry an empty extension needs the
+//! fuse to accept trivial claims for the extension's circuits under a
+//! flag bound in the instance, so that a decompression step cannot claim
+//! it; until then the cost is fixed per step.
 //!
 //! TODO: let a step that decompresses nothing carry an empty extension,
 //! as above.
-//!
-//! TODO: pin the decompressed proof to the approved Standard setup through
-//! the online polynomial oracle's queries, the registry evaluations
-//! above, so that a Standard proof of another wallet application, or of
-//! no registry at all, is refused in the inner role. The outer role's
-//! substitutions are tested, the inner role's is Standard by type alone,
-//! and `finalize` holds the aggregator's header types to the wallet's;
-//! setup identity does not replace that check.
 //!
 //! The controls with the real circuits cover a wallet proof's
 //! decompression, a relabelled one, mixed sides, swapped chunk circuits,
@@ -309,6 +313,7 @@ pub(crate) mod circuit;
 pub(crate) mod derive;
 pub(crate) mod extension;
 pub(crate) mod ipa;
+pub(crate) mod online;
 pub(crate) mod program;
 pub(crate) mod prover;
 pub(crate) mod revdot;

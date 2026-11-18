@@ -705,13 +705,32 @@ fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     lines.push("circuit_id", usize::from(*circuit_id));
     lines.fields("left_header", left_header);
     lines.fields("right_header", right_header);
-    assert!(nested_online_commitments.is_empty());
-    assert!(native_online_commitments.is_empty());
-    assert!(native_source_out.is_empty());
-    assert!(nested_source_out.is_empty());
-    assert!(native_mesh_claims.is_empty());
-    assert!(nested_mesh_claims.is_empty());
-    assert!(native_online_fold.is_empty());
+    // The online batches': their polynomials' commitments, the outgoing
+    // source restrictions, the meshes' claims and the folds. A profile
+    // that declares no batch carries none, and has no line for them.
+    for (i, commitment) in nested_online_commitments.iter().enumerate() {
+        lines.point(
+            &alloc::format!("nested_online_commitments[{i}]"),
+            commitment,
+        );
+    }
+    for (i, commitment) in native_online_commitments.iter().enumerate() {
+        lines.point(
+            &alloc::format!("native_online_commitments[{i}]"),
+            commitment,
+        );
+    }
+    lines.polys("native_source_out", native_source_out);
+    lines.polys("nested_source_out", nested_source_out);
+    if !native_mesh_claims.is_empty() {
+        lines.fields("native_mesh_claims", native_mesh_claims);
+    }
+    if !nested_mesh_claims.is_empty() {
+        lines.fields("nested_mesh_claims", nested_mesh_claims);
+    }
+    if !native_online_fold.is_empty() {
+        lines.fields("native_online_fold", native_online_fold);
+    }
     if !nested_online_fold.is_empty() {
         lines.fields("nested_online_fold", nested_online_fold);
     }
@@ -977,13 +996,6 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(v);
     out.field(nested_c);
     out.field(nested_v);
-    // These fixtures pin the zero-capability encoding.
-    assert!(nested_online_fold.is_empty());
-    assert!(native_mesh_claims.is_empty());
-    assert!(nested_mesh_claims.is_empty());
-    assert!(native_online_fold.is_empty());
-    assert!(nested_online_commitments.is_empty());
-    assert!(native_online_commitments.is_empty());
     for Child { x, y, id } in [left, right] {
         out.field(x);
         out.field(y);
@@ -1001,12 +1013,27 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     encode_messages(native, out);
     encode_messages(nested, out);
 
-    // What the step exports of its online Fq polynomials, last and only
-    // for a profile whose bindings name any, so that the encoding of a
-    // proof that exports nothing is what it was.
-    if !(online_fq_commitments.is_empty() && online_fq_openings.is_empty()) {
+    // What the step exports of its online Fq polynomials, then its online
+    // batches' fields, last and only for a profile that has any, so that
+    // the encoding of a proof that carries neither is what it was. A
+    // profile with batches writes its exports first, even if it has none.
+    let batches = !(nested_online_fold.is_empty()
+        && native_mesh_claims.is_empty()
+        && nested_mesh_claims.is_empty()
+        && native_online_fold.is_empty()
+        && nested_online_commitments.is_empty()
+        && native_online_commitments.is_empty());
+    if batches || !(online_fq_commitments.is_empty() && online_fq_openings.is_empty()) {
         out.points(online_fq_commitments);
         out.fields(online_fq_openings);
+    }
+    if batches {
+        out.fields(nested_online_fold);
+        out.fields(native_mesh_claims);
+        out.fields(nested_mesh_claims);
+        out.fields(native_online_fold);
+        out.points(nested_online_commitments);
+        out.points(native_online_commitments);
     }
 }
 
@@ -1116,12 +1143,25 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     } else {
         (cursor.points()?, cursor.fields()?)
     };
-    let nested_online_fold = Vec::new();
-    let native_mesh_claims = Vec::new();
-    let nested_mesh_claims = Vec::new();
-    let native_online_fold = Vec::new();
-    let nested_online_commitments = Vec::new();
-    let native_online_commitments = Vec::new();
+    let (
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
+    ) = if cursor.finished() {
+        Default::default()
+    } else {
+        (
+            cursor.fields()?,
+            cursor.fields()?,
+            cursor.fields()?,
+            cursor.fields()?,
+            cursor.points()?,
+            cursor.points()?,
+        )
+    };
     let instance = Instance {
         circuit_id,
         left_header,

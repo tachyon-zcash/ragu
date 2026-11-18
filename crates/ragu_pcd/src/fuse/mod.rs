@@ -130,8 +130,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         // Each field's input stage holds the other field's commitments fixed
         // before w, so both batches supply theirs before either commits.
-        self.begin_native_online([&left, &right], &mut builder)?;
-        self.begin_nested_online([&left, &right], &mut builder)?;
+        self.begin_native_online([&left, &right], source, &mut builder)?;
+        self.begin_nested_online([&left, &right], source, &mut builder)?;
         self.commit_native_online_inputs(rng, &mut builder)?;
         self.commit_nested_online_inputs(rng, &mut builder)?;
         let (preamble_witness, nested_preamble) =

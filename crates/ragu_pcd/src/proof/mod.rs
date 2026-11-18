@@ -1310,9 +1310,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let native_online_polynomials = if let Some(mesh) = C::Profile::NATIVE_MESH {
             mesh.dummy_polynomials(
                 C::Profile::NATIVE_ONLINE,
-                self.native_source
-                    .as_ref()
-                    .expect("source captured at setup"),
+                &self.native_source().expect("source captured at setup"),
                 C::CircuitField::ONE,
             )
             .expect("source rank checked at setup")
@@ -1329,9 +1327,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let nested_online_polynomials = if let Some(mesh) = C::Profile::NESTED_MESH {
             mesh.dummy_polynomials(
                 C::Profile::NESTED_ONLINE,
-                self.nested_source
-                    .as_ref()
-                    .expect("source captured at setup"),
+                &self.nested_source().expect("source captured at setup"),
                 nested_one,
             )
             .expect("source rank checked at setup")

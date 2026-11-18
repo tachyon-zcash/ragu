@@ -52,7 +52,10 @@ use super::{
     program::{Last, Schedule},
     run::{self, Ctx, Loaded, Prepared, View},
     side::Side,
-    stages::{DigitsStage, Front, InstanceStage, LiftsStage, TranscriptStage, WorkStage, step},
+    stages::{
+        DigitsStage, Front, InstanceStage, LiftsStage, OnlineInputStage, OnlineQueryStage,
+        TranscriptStage, WorkStage, step,
+    },
 };
 
 /// The last stage circuit `index` of `schedule` loads, which says whether
@@ -199,17 +202,25 @@ macro_rules! chunk_circuit {
             where
                 Self: 'dr,
             {
+                let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+                let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
                 let (front, dr) = <S as Front<C, K, R, HEADER_SIZE>>::add(dr)?;
                 let (lifts, dr) = dr.add_stage::<LiftsStage<C, S, K, R, HEADER_SIZE>>()?;
                 let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
                 let ($extra, dr) = chunk_circuit!(@extra dr, $Last, $extra, C, S, K, R, HEADER_SIZE);
                 let dr = dr.finish();
+                let online_input =
+                    online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+                let online_query =
+                    online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
                 let front = <S as Front<C, K, R, HEADER_SIZE>>::load(front, dr, &witness)?;
                 let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
                 let work = work.unenforced(dr, witness.as_ref().map(|w| &w.work))?;
                 let $extra = chunk_circuit!(@load dr, witness, $extra, $extra);
                 let $loaded = (&front, &lifts, &work, &$extra);
-                let loaded = $view;
+                let mut loaded = $view;
+                loaded.online_input = View::new(&online_input);
+                loaded.online_query = View::new(&online_query);
                 self.inner
                     .synthesize::<_, S, K, HEADER_SIZE>(dr, loaded, witness)?;
                 Ok(WithAux::new(S::output(dr), D::unit()))
@@ -246,6 +257,8 @@ chunk_circuit!(
             work: View::new(work),
             transcript: View::empty(),
             digits: View::empty(),
+            online_input: View::empty(),
+            online_query: View::empty(),
         }
     }
 );
@@ -263,6 +276,8 @@ chunk_circuit!(
             work: View::new(work),
             transcript: View::new(transcript),
             digits: View::empty(),
+            online_input: View::empty(),
+            online_query: View::empty(),
         }
     }
 );
@@ -280,6 +295,8 @@ chunk_circuit!(
             work: View::new(work),
             transcript: View::empty(),
             digits: View::new(digits),
+            online_input: View::empty(),
+            online_query: View::empty(),
         }
     }
 );
@@ -360,8 +377,14 @@ impl<C: Cycle, S: Side<C>, K: Rank, R: Rank, const HEADER_SIZE: usize> MultiStag
     where
         Self: 'dr,
     {
+        let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+        let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
         let (instance, dr) = dr.add_stage::<InstanceStage<C, S, K, R, HEADER_SIZE>>()?;
         let dr = dr.finish();
+        // The online stages come first in every circuit of the side; this
+        // one reads nothing off them.
+        online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+        online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
         let instance = instance.unenforced(dr, witness.as_ref().map(|w| &w.instance))?;
         let layout = self.schedule.layout.instance;
         let read = |span: super::stages::Span| {
@@ -481,10 +504,14 @@ impl<C: Cycle, S: Front<C, K, R, HEADER_SIZE>, K: Rank, R: Rank, const HEADER_SI
     where
         Self: 'dr,
     {
+        let (online_input, dr) = dr.add_stage::<OnlineInputStage<C, S, R>>()?;
+        let (online_query, dr) = dr.add_stage::<OnlineQueryStage<C, S, R>>()?;
         let (front, dr) = <S as Front<C, K, R, HEADER_SIZE>>::add(dr)?;
         let (lifts, dr) = dr.add_stage::<LiftsStage<C, S, K, R, HEADER_SIZE>>()?;
         let (work, dr) = dr.add_stage::<WorkStage<C, S, K, R, HEADER_SIZE>>()?;
         let dr = dr.finish();
+        online_input.unenforced(dr, witness.as_ref().map(|w| &w.online_input))?;
+        online_query.unenforced(dr, witness.as_ref().map(|w| &w.online_query))?;
         let front = <S as Front<C, K, R, HEADER_SIZE>>::load(front, dr, &witness)?;
         let lifts = lifts.unenforced(dr, witness.as_ref().map(|w| &w.lifts))?;
         let work = work.unenforced(dr, witness.as_ref().map(|w| &w.work))?;

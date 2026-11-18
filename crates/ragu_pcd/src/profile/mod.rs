@@ -199,6 +199,17 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Nested counterpart of [`Self::NATIVE_MESH`].
     const NESTED_MESH: Option<online::mesh::Mesh> = None;
 
+    /// Native online inputs the batch helper holds to the source
+    /// registry's domain: each names a wire of the input stage whose value
+    /// must be one of the points the source registry interpolates its
+    /// circuits over. A restriction opened at such an input is then one
+    /// circuit's wiring polynomial, not a combination of several. Needs
+    /// [`Self::NATIVE_MESH`], whose source fixes the domain.
+    const NATIVE_DOMAIN_INPUTS: &'static [usize] = &[];
+
+    /// Nested counterpart of [`Self::NATIVE_DOMAIN_INPUTS`].
+    const NESTED_DOMAIN_INPUTS: &'static [usize] = &[];
+
     /// Native extension circuits that reserve the online input and query
     /// stages before their own stages, indexed in `native_extension`.
     /// A consumer's first own stage must have `online::stages::QueryStage`
@@ -251,6 +262,29 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     {
         let _ = (context, params, headers);
         Ok(())
+    }
+
+    /// The source registries the profile's meshes certify, the native then
+    /// the nested, for a profile whose prover context holds them: an
+    /// application reads them off its context when its builder captured
+    /// none ([`with_source_registries`](crate::ApplicationBuilder::with_source_registries)).
+    /// The context is fixed when the application is finalized, so the
+    /// sources are too, and setup fixes their tags in the helper circuits.
+    ///
+    /// The default holds none.
+    fn source_registries<'a, 'params: 'a, Base, R, B>(
+        context: &'a Self::Context<'params, Base, R, B>,
+    ) -> (
+        Option<online::source::SourceRegistry<'a, Base::CircuitField>>,
+        Option<online::source::SourceRegistry<'a, Base::ScalarField>>,
+    )
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = context;
+        (None, None)
     }
 
     /// The circuits and stages the profile adds on the native side.
@@ -452,7 +486,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
-    /// Supplies this step's native online inputs before any fuse challenge.
+    /// Supplies this step's native online inputs before any fuse challenge,
+    /// for the proof its extension runs over in this step: `source`'s, the
+    /// proof the step decompresses, or the context's canonical proof without.
     ///
     /// The returned values are committed once in `online::stages::InputStage`.
     /// Consumers must use those stage wires for data that defines a random test.
@@ -463,13 +499,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// slots require this hook to supply the full input vector.
     fn native_online_inputs<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend,
     {
-        let _ = context;
+        let _ = (context, source);
         online::defaults::inputs::<Self, online::stages::Native, _>()
     }
 
@@ -559,7 +596,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         )
     }
 
-    /// Supplies this step's nested online inputs before any fuse challenge.
+    /// Supplies this step's nested online inputs before any fuse challenge,
+    /// as [`native_online_inputs`](Self::native_online_inputs) does the
+    /// native ones.
     ///
     /// The returned values are committed once in `online::stages::InputStage`.
     /// Consumers must use those stage wires for data that defines a random test.
@@ -570,13 +609,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// slots require this hook to supply the full input vector.
     fn nested_online_inputs<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend,
     {
-        let _ = context;
+        let _ = (context, source);
         online::defaults::inputs::<Self, online::stages::Nested, _>()
     }
 
@@ -688,12 +728,29 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
-        for (mesh, layout) in [
-            (Self::NATIVE_MESH, Self::NATIVE_ONLINE),
-            (Self::NESTED_MESH, Self::NESTED_ONLINE),
+        for (mesh, layout, domain) in [
+            (
+                Self::NATIVE_MESH,
+                Self::NATIVE_ONLINE,
+                Self::NATIVE_DOMAIN_INPUTS,
+            ),
+            (
+                Self::NESTED_MESH,
+                Self::NESTED_ONLINE,
+                Self::NESTED_DOMAIN_INPUTS,
+            ),
         ] {
             if let Some(mesh) = mesh {
                 mesh.check(layout)?;
+            }
+            // A domain input is a wire of the input stage, and the domain
+            // is the mesh's source's.
+            if domain.iter().any(|&input| input >= layout.inputs)
+                || (!domain.is_empty() && mesh.is_none())
+            {
+                return Err(Error::Initialization(
+                    "the profile's domain inputs are not inputs of a source-registry mesh".into(),
+                ));
             }
         }
         // Each added step contributes two points to the other side's walk.
@@ -3395,23 +3452,34 @@ mod tests {
         assert!(TooMany::check().is_err());
     }
 
-    /// The aggregator's shape follows its pinned circuits and its one
-    /// online Fq polynomial, and grows with the header size through the
-    /// transcript circuits.
+    /// The aggregator's shape follows its pinned circuits, its one online
+    /// Fq polynomial and its online batches, and grows with the header size
+    /// through the transcript circuits.
     #[test]
     fn aggregator_declares_the_decompression() {
         let shape = Shape::of::<Aggregator<4>>();
         let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
         let nested_stages = extension::nested_stages(num_runs::<WalletRank>());
         assert_eq!(nested_stages, 27, "a stage per run, then four");
-        assert_eq!(
-            shape,
-            Shape::solve(32 + 2 + 6, 19 + 1 + nested_stages, 1, per_step, per_step)
-        );
-        assert_eq!(
-            Shape::of::<Aggregator<96>>(),
-            Shape::solve(35 + 2 + 6, 19 + 1 + nested_stages, 1, per_step, per_step)
-        );
+        // Each field's online batch: its three stages and its helper among
+        // the side's polynomials, the mesh's twenty polynomials among the
+        // points the other side's walk folds, and the outgoing restriction
+        // the proof retains.
+        let batch = online::extension::RXS;
+        let expected = |native_circuits: usize| {
+            let mut shape = Shape::solve_with_online(
+                native_circuits + 2 + 6 + batch,
+                19 + 1 + nested_stages + batch,
+                1 + 20,
+                20,
+                per_step,
+                per_step,
+            );
+            shape.source_polynomials = 2;
+            shape
+        };
+        assert_eq!(shape, expected(32));
+        assert_eq!(Shape::of::<Aggregator<96>>(), expected(35));
         // The knob: at the wallet rank's four per step the walks are
         // far longer.
         assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 1, 4, 4).polynomials());

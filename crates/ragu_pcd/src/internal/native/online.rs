@@ -60,7 +60,7 @@ pub(crate) use crate::header::NUM_ONLINE_FP_POLYS;
 use crate::{
     Application, Proof, SelectableBackend,
     profile::{
-        Profile, ProfiledCycle,
+        Profile, ProfiledCycle, Source,
         online::{Phase, prepared::PreparationChallenges, prover::State},
     },
     proof::ProofBuilder,
@@ -169,8 +169,8 @@ pub(crate) fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
     })
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Begins the step's native online batch from the profile's inputs,
     /// with the children's $x$ and $y$ in the slots a mesh inherits them at,
@@ -178,12 +178,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub(crate) fn begin_native_online(
         &self,
         children: [&Proof<C, R>; 2],
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder.set_native_online(State::begin(
-            C::Profile::native_online_inputs::<C::Base, R, B>(&self.context)?,
+            C::Profile::native_online_inputs::<C::Base, R, B>(&self.context, source)?,
             || Ok(children.map(|child| [child.x(), child.y()])),
-            self.native_source.as_ref(),
+            self.native_source().as_ref(),
         )?);
         self.supply_native_online(
             Phase::BeforeW,
@@ -223,7 +224,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             phase,
             supplied,
             challenges,
-            self.native_source.as_ref(),
+            self.native_source().as_ref(),
             children.map(|children| children.map(|child| &child.native_source_out[..])),
             C::host_generators(self.params),
         )

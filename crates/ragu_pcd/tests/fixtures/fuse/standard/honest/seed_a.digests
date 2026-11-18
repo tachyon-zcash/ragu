@@ -120,4 +120,4 @@ wire.fields = bridge_alpha,circuit_id,left_header,right_header,native_applicatio
 wire.proof.bytes = 26480772
 wire.proof.digest = 84fc3094a50a691e546f5126fdd90975c99d906ca70f98b4dda9b244739706b7
 wire.compressed.bytes = 7908
-wire.compressed.digest = f49c5033e03bd04312a890afa4f0a802ef79259325d6851ed78293189a14106b
+wire.compressed.digest = 28230064b824000a8608881e387fb72ea16ffa537cae4dc030a7f2706a2861c5

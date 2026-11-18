@@ -36,12 +36,16 @@ use super::{BindingCircuit, Circuit, DigitsCircuit, StatementCircuit, Transcript
 use crate::{
     decompress::{
         circuit::Witness,
-        program::{Chunk, CircuitPlan, Last, PointSrc, Schedule, challenges_per_curve, squeezed},
+        online::{self, Values},
+        program::{
+            Chunk, CircuitPlan, Last, PointSrc, Schedule, challenges_per_curve, fuse, squeezed,
+        },
         run::{Prepared, Sides},
         side::{Native, Nested, Side},
         stages::{
-            DigitsStage, Front, InstanceStage, LiftsStage, MessagesStage, Run, TranscriptStage,
-            WorkStage, message_points, native_scalars, num_runs, runs,
+            DigitsStage, Front, InstanceStage, LiftsStage, MessagesStage, OnlineInputStage,
+            OnlineQueryStage, Run, TranscriptStage, WorkStage, message_points, native_scalars,
+            num_runs, runs,
         },
         support::{HEADER_SIZE, Setup, TestR},
     },
@@ -105,6 +109,7 @@ fn kind(chunk: &Chunk) -> &'static str {
         Chunk::Sign { .. } => "sign",
         Chunk::Equal { .. } => "equal",
         Chunk::EqualIf { .. } => "equal under a flag",
+        Chunk::Online { .. } => "online",
         Chunk::Curve { .. } => "curve",
     }
 }
@@ -157,8 +162,33 @@ where
     Ok(Report { gates, satisfied })
 }
 
+/// The polynomials and masks of side `S`'s online stages, unblinded, which
+/// every circuit of the side loads first.
+#[allow(clippy::type_complexity)]
+fn online_stages<S: Side<Pasta>, R: Rank>(
+    prepared: &Prepared<Pasta, S>,
+) -> crate::Result<(
+    Vec<sparse::Polynomial<S::F, R>>,
+    Vec<BondingObject<'static, S::F, R>>,
+)> {
+    type Input<S, R> = OnlineInputStage<Pasta, S, R>;
+    type Query<S, R> = OnlineQueryStage<Pasta, S, R>;
+    let zero = S::F::ZERO;
+    Ok((
+        alloc::vec![
+            <Input<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.online_input)?,
+            <Query<S, R> as StageExt<S::F, R>>::rx(zero, &prepared.online_query)?,
+        ],
+        alloc::vec![
+            <Input<S, R> as StageExt<S::F, R>>::mask()?,
+            <Query<S, R> as StageExt<S::F, R>>::mask()?,
+        ],
+    ))
+}
+
 /// The polynomials and masks of the stages every circuit of side `S`
-/// loads, unblinded: the front, the lifts and the work stages.
+/// loads, unblinded: the online stages, the front, the lifts and the work
+/// stages.
 #[allow(clippy::type_complexity)]
 fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
@@ -169,8 +199,7 @@ fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     type Lifts<S, R> = LiftsStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Work<S, R> = WorkStage<Pasta, S, TestR, R, HEADER_SIZE>;
     let zero = S::F::ZERO;
-    let mut stages = Vec::new();
-    let mut masks = Vec::new();
+    let (mut stages, mut masks) = online_stages::<S, R>(prepared)?;
     for index in 0..S::stages() {
         stages.push(S::rx(index, zero, prepared)?);
         masks.push(S::mask(index)?);
@@ -425,7 +454,8 @@ impl StageWires {
         type Instance = InstanceStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>;
         let _ = prepared;
         StageWires {
-            messages: 2 * <Instance as StageExt<Fp, SmallR>>::num_gates(),
+            messages: 2
+                * (Values::NATIVE.prefix_gates() + <Instance as StageExt<Fp, SmallR>>::num_gates()),
         }
     }
 
@@ -441,9 +471,14 @@ impl StageWires {
 /// The honest reserved wire values of a circuit-field work circuit, in
 /// chain order.
 fn work_circuit_stage_values(prepared: &Prepared<Pasta, Native>) -> Vec<Fp> {
-    let mut values = stage_values::<InstanceStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>>(
-        &prepared.instance,
-    );
+    let mut values =
+        stage_values::<OnlineInputStage<Pasta, Native, SmallR>>(&prepared.online_input);
+    values.extend(stage_values::<OnlineQueryStage<Pasta, Native, SmallR>>(
+        &prepared.online_query,
+    ));
+    values.extend(stage_values::<
+        InstanceStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>,
+    >(&prepared.instance));
     values.extend(stage_values::<
         MessagesStage<Pasta, Native, TestR, SmallR, HEADER_SIZE>,
     >(&prepared.messages));
@@ -583,6 +618,91 @@ fn rejects_tampered_stages() {
     );
     sides.native.work.elements[w] -= Fp::ONE;
 
+    // The registry's evaluations are the online query stage's, which the
+    // step's fuse proves: an evaluation the prover writes in the work stage
+    // other than its wire, a wire other than the evaluation the chunks
+    // read, and an input other than the coordinate the chunks derive each
+    // fail the chunk that holds the side to the online stages.
+    {
+        let regions = &sides.native.schedule.regions;
+        let supplied = [
+            regions.restriction_at_w,
+            regions.registry_values[0],
+            *regions.registry_values.last().unwrap(),
+            regions
+                .restrictions
+                .iter()
+                .flatten()
+                .copied()
+                .next()
+                .unwrap(),
+        ];
+        for slot in supplied {
+            let honest = sides.native.work.elements[slot];
+            sides.native.work.elements[slot] += Fp::ONE;
+            assert!(
+                rejected(&sides.native),
+                "a registry evaluation other than its wire fails a chunk"
+            );
+            sides.native.work.elements[slot] = honest;
+        }
+        let values = Values::NATIVE;
+        for wire in [
+            values.claim(0),
+            values.own_claim(),
+            values.fixed(0),
+            values.at_w(),
+            values.at_children()[1],
+            values.at_u(),
+            values.at_w_c(),
+            values.children()[0],
+            values.children_y()[1],
+            values.children_u()[0],
+            values.u_y(),
+        ] {
+            let position = Values::value_at(wire);
+            sides.native.online_query.elements[position] += Fp::ONE;
+            assert!(
+                rejected(&sides.native),
+                "a query wire other than the evaluation read fails a chunk"
+            );
+            sides.native.online_query.elements[position] -= Fp::ONE;
+        }
+        for input in online::MESH.inherited_coordinates().len()..online::input::NATIVE {
+            let position = Values::input_at(input);
+            sides.native.online_input.elements[position] += Fp::ONE;
+            assert!(
+                rejected(&sides.native),
+                "an input other than the proof's coordinate fails a chunk"
+            );
+            sides.native.online_input.elements[position] -= Fp::ONE;
+        }
+        let values = Values::NESTED;
+        for wire in [
+            values.claim(0),
+            values.at_w(),
+            values.at_w_c(),
+            values.u_y(),
+        ] {
+            let position = Values::value_at(wire);
+            sides.nested.online_query.elements[position] += Fq::ONE;
+            assert!(
+                rejected(&sides.nested),
+                "a nested query wire other than the evaluation read fails a chunk"
+            );
+            sides.nested.online_query.elements[position] -= Fq::ONE;
+        }
+        for input in online::MESH.inherited_coordinates().len()..online::input::NESTED {
+            let position = Values::input_at(input);
+            sides.nested.online_input.elements[position] += Fq::ONE;
+            assert!(
+                rejected(&sides.nested),
+                "a nested input other than the proof's coordinate fails a chunk"
+            );
+            sides.nested.online_input.elements[position] -= Fq::ONE;
+        }
+    }
+
     // The scalar-field side's messages likewise.
     sides.nested.messages.elements[0] += Fq::ONE;
     assert!(
@@ -612,7 +732,7 @@ fn chains_hold_their_bits_to_the_lifts_stage() {
     let mut sides = sides::<SmallR>(&setup);
     let nested = &mut sides.nested;
     let honest_lifts = nested.lifts.clone();
-    let beta = challenges_per_curve::<TestR>() + 3 + squeezed::BETA;
+    let beta = challenges_per_curve::<TestR>() + fuse::LIFTED.len() + squeezed::BETA;
     nested.aux.challenge_bits[beta] = nested.aux.challenge_bits[beta].flip_bit(5);
     nested.run::<TestR, HEADER_SIZE>(params).unwrap();
     // The final equality is $\text{left} = v G_0 + c G' + c b z U$: solve
@@ -903,6 +1023,10 @@ fn statement_circuit_exposes_the_output_header() {
     let mut rx = registry.assemble(&trace, handle, Fp::ZERO).unwrap();
     assert_eq!(rx.revdot(&registry.y(final_mask, y)), Fp::ZERO);
     rx.add_assign(&stage);
+    // The online stages come first in every circuit of the side.
+    for stage in online_stages::<Native, AggregatorRank>(prepared).unwrap().0 {
+        rx.add_assign(&stage);
+    }
     // Prepared outside a step, the side's step binding is all zero.
     let step = || -> FixedVec<Fp, ConstLen<{ crate::profile::STEP_BINDING }>> {
         FixedVec::try_from(alloc::vec![Fp::ZERO; crate::profile::STEP_BINDING]).unwrap()

@@ -14,6 +14,7 @@ use rand::CryptoRng;
 
 use super::{
     extension::{self, Counts},
+    online,
     prover::{Decompressed, Decompression},
 };
 use crate::{
@@ -24,6 +25,13 @@ use crate::{
     profile::{
         AGGREGATOR_NAME, BondingSlot, BuiltIn, CircuitSlot, Extension, ExtensionRxs, Profile,
         ProfiledCycle, Registered, Standard,
+        online::{
+            Layout,
+            circuit::Witness,
+            mesh::Mesh,
+            source::SourceRegistry,
+            stages::{Native, Nested},
+        },
     },
 };
 
@@ -71,18 +79,20 @@ use crate::{
 ///
 /// # Soundness
 ///
-/// The profile is not yet sound against a dishonest prover. The chunk
-/// circuits take the wallet registry's evaluations from the prover
-/// unchecked, so a dishonest prover can have the aggregator accept a
-/// compressed proof the wallet application's verifier rejects. Both IPAs'
+/// The chunk circuits re-execute the wallet application's verifier of a
+/// compressed proof, and what that verifier computes outside a field's
+/// arithmetic is bound through the step that proves them. The wallet
+/// registry's evaluations are claimed values of the profile's online
+/// batches, which the step's fuse opens on restrictions its source meshes
+/// hold to the wallet registries the [`Decompression`] carries; the
+/// proof's own circuit is held to the wallet registry's domain. Both IPAs'
 /// final generators are bound: the host curve's through the polynomial
 /// the decompression step commits in its first output slot, the nested
 /// curve's through the step's online Fq polynomial, each over round
 /// challenges the transcript digest that step stages fixes before its
-/// challenge. The registry's
-/// evaluations close through the online polynomial oracle's queries.
-/// Until then an aggregator proof attests a decompression an honest
-/// prover ran, and the profile is public only under the
+/// challenge. The decompression module's *Registry evaluations* and *The
+/// step binding* give the arguments. The construction has not been
+/// audited, and the profile is public only under the
 /// `unstable-aggregator` feature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
@@ -164,6 +174,24 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
     // One online Fq polynomial per step: the nested IPA's s(X).
     const ONLINE_FQ_POLYS: usize = 1;
 
+    // The wallet registry's evaluations the chunks read, as openings of
+    // its restrictions, which the meshes hold to the registry.
+    const NATIVE_ONLINE: Layout = online::NATIVE;
+    const NESTED_ONLINE: Layout = online::NESTED;
+    const NATIVE_MESH: Option<Mesh> = Some(online::MESH);
+    const NESTED_MESH: Option<Mesh> = Some(online::MESH);
+    // The proof's own circuit is one of the wallet registry's: its domain
+    // point, at which the claims' restriction is opened, is held to that
+    // registry's domain, as the native verifier holds the circuit id.
+    const NATIVE_DOMAIN_INPUTS: &'static [usize] = &[online::input::CIRCUIT];
+    // Every circuit of either extension loads its field's online stages
+    // first: the chunks, which read them, and the statement and binding
+    // circuits, which share the chunks' stages after them.
+    const NATIVE_ONLINE_CONSUMERS: &'static [u32] =
+        online::consumers(Self::native_circuits(HEADER_SIZE).circuits + 2);
+    const NESTED_ONLINE_CONSUMERS: &'static [u32] =
+        online::consumers(Self::NESTED_CIRCUITS.circuits + 1);
+
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
     const NESTED_ENDOSCALINGS_PER_STEP: usize = Self::ENDOSCALINGS_PER_STEP;
 
@@ -239,6 +267,54 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
             }
         }
         Ok(())
+    }
+
+    /// The wallet application's registries, which the context holds: the
+    /// meshes certify the evaluations the chunks read as theirs.
+    fn source_registries<'a, 'params: 'a, Base, R, B>(
+        context: &'a Self::Context<'params, Base, R, B>,
+    ) -> (
+        Option<SourceRegistry<'a, Base::CircuitField>>,
+        Option<SourceRegistry<'a, Base::ScalarField>>,
+    )
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let wallet = context.wallet();
+        (
+            Some(SourceRegistry::new::<WalletRank, B>(
+                wallet.native_registry(),
+            )),
+            Some(SourceRegistry::new::<WalletRank, B>(
+                wallet.nested_registry(),
+            )),
+        )
+    }
+
+    fn native_online_inputs<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+    ) -> Result<alloc::vec::Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        Ok(context.native_online_inputs(source))
+    }
+
+    fn nested_online_inputs<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+    ) -> Result<alloc::vec::Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        Ok(context.nested_online_inputs(source))
     }
 
     fn native_extension() -> Extension {
@@ -332,8 +408,33 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
+        let _ = (context, source, online_openings, registry, rng);
+        Err(Error::Initialization(NO_ONLINE_STAGES.into()))
+    }
+
+    fn native_extension_rxs_with_online<'params, Base, R, const H: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
+        registry: &Registry<'params, Base::CircuitField, R>,
+        online: Option<&Witness<'_, Base::CircuitField, Self, Native>>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
         Self::accepts::<R>(H)?;
-        context.native_rxs::<Self>(source, online_openings, registry, rng)
+        let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
+        context.native_rxs::<Self>(
+            source,
+            online_openings,
+            registry,
+            online::stages(online),
+            rng,
+        )
     }
 
     fn nested_extension_rxs<'params, Base, R, const H: usize, B, RNG>(
@@ -350,13 +451,46 @@ impl<const HEADER_SIZE: usize> Profile for Aggregator<HEADER_SIZE> {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        Self::accepts::<R>(H)?;
-        context.nested_rxs::<Self>(
+        let _ = (
+            context,
             source,
             output_commitments,
             online_fq_openings,
             registry,
             rng,
+        );
+        Err(Error::Initialization(NO_ONLINE_STAGES.into()))
+    }
+
+    fn nested_extension_rxs_with_online<'params, Base, R, const H: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&Decompressed<Base>>,
+        output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+        online_fq_openings: &[Base::ScalarField],
+        registry: &Registry<'params, Base::ScalarField, R>,
+        online: Option<&Witness<'_, Base::ScalarField, Self, Nested>>,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        Self::accepts::<R>(H)?;
+        let online = online.ok_or_else(|| Error::Initialization(NO_ONLINE_STAGES.into()))?;
+        context.nested_rxs::<Self>(
+            source,
+            output_commitments,
+            online_fq_openings,
+            registry,
+            online::stages(online),
+            rng,
         )
     }
 }
+
+/// The chunk circuits load the online stages the step's fuse committed, so
+/// their traces are built with them.
+const NO_ONLINE_STAGES: &str =
+    "the aggregator's chunk circuits are traced over the step's online stages";

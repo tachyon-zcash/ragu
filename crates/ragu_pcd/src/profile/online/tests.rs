@@ -124,6 +124,7 @@ fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
         let mut registry = extension::register_circuit::<F, WalletRank, Batched, S>(
             CircuitSlot::new(RegistryBuilder::new()),
             None,
+            None,
         )?
         .into_registry();
         for j in 0..layout.bondings() {
@@ -1325,6 +1326,131 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
             ReferenceBackend::registry_wxy(&registry(23)?, F::from(2), F::from(3), F::from(5)),
             ReferenceBackend::registry_wxy(&registry(29)?, F::from(2), F::from(3), F::from(5)),
         );
+        Ok(())
+    }
+    check::<Fp, stages::Native>()?;
+    check::<Fq, stages::Nested>()
+}
+
+/// [`SourceMesh`], with one input of each field held to the source
+/// registry's domain.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct DomainInput<const INPUT: usize, const MESH: bool>;
+impl<const INPUT: usize, const MESH: bool> Profile for DomainInput<INPUT, MESH> {
+    const NAME: &'static str = "domain-input-test";
+    const NATIVE_EXTENSION: usize = 0;
+    const NESTED_EXTENSION: usize = 0;
+    const NATIVE_ONLINE: Layout = SourceMesh::NATIVE_ONLINE;
+    const NESTED_ONLINE: Layout = SourceMesh::NESTED_ONLINE;
+    const NATIVE_MESH: Option<super::mesh::Mesh> =
+        if MESH { SourceMesh::NATIVE_MESH } else { None };
+    const NESTED_MESH: Option<super::mesh::Mesh> = Self::NATIVE_MESH;
+    const NATIVE_DOMAIN_INPUTS: &'static [usize] = &[INPUT];
+    const NESTED_DOMAIN_INPUTS: &'static [usize] = &[INPUT];
+    type Context<'params, Base, R, B>
+        = ()
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend;
+}
+
+/// The helper holds a domain input to the domain setup gave it: its
+/// constraints are satisfied by every point of the source registry's
+/// domain at that input and by nothing else, a point of a larger domain
+/// included, and a profile declares such inputs only among a mesh's.
+#[test]
+fn domain_inputs_are_points_of_the_sources_domain() -> Result<()> {
+    use ragu_circuits::{
+        registry::{CircuitIndex, RegistryBuilder},
+        staging::StageExt,
+    };
+
+    /// The source registry interpolates eight circuits.
+    const LOG2: u32 = 3;
+    type P = DomainInput<1, true>;
+
+    fn check<F: Field, S: Side>() -> Result<()> {
+        P::check()?;
+        assert!(DomainInput::<4, true>::check().is_err(), "not an input");
+        assert!(DomainInput::<1, false>::check().is_err(), "no source");
+        let circuit = || circuit::Circuit::<F, P, S>::with_source(Some(F::from(23)), Some(LOG2));
+        assert!(circuit::Circuit::<F, P, S>::with_source(Some(F::from(23)), None).is_err());
+
+        let challenges = Challenges {
+            w: F::from(5),
+            y: F::from(7),
+            x: F::from(11),
+            alpha: F::from(13),
+            u: F::from(17),
+            beta: F::from(3),
+        };
+        let query = stages::QueryWitness::<F, P, S> {
+            challenges: FixedVec::new(vec![F::from(5), F::from(7), F::from(11)])?,
+            points: FixedVec::new(vec![])?,
+            values: FixedVec::new(vec![F::ZERO; 5])?,
+        };
+        let eval = FixedVec::new(vec![F::ZERO; 6])?;
+        let registry = RegistryBuilder::<F, WalletRank>::new()
+            .with_tag(F::ZERO)
+            .register_internal_circuit(MultiStage::<F, WalletRank, _>::new(circuit()?))?
+            .finalize()?;
+        let index = CircuitIndex::new(0);
+        let accepts = |input: F| -> Result<bool> {
+            let inputs = stages::InputWitness::<F, P, S> {
+                source_tag: FixedVec::new(vec![F::from(23)])?,
+                values: FixedVec::new(vec![F::from(2), input, F::from(13), F::from(19)])?,
+                foreign: FixedVec::new(vec![F::ZERO; 4])?,
+            };
+            let helper = MultiStage::<F, WalletRank, _>::new(circuit()?);
+            let (trace, sums) = helper
+                .trace(circuit::Witness {
+                    inputs: &inputs,
+                    query: &query,
+                    eval: &eval,
+                    challenges: challenges.clone(),
+                })?
+                .into_parts();
+            // A staged trace is checked with its committed stage
+            // polynomials.
+            let mut assignment = registry.assemble_with_alpha(&trace, index, F::ZERO)?;
+            assignment.add_assign(&<stages::InputStage<P, S> as StageExt<F, WalletRank>>::rx(
+                F::ZERO,
+                &inputs,
+            )?);
+            assignment.add_assign(&<stages::QueryStage<P, S> as StageExt<F, WalletRank>>::rx(
+                F::ZERO,
+                &query,
+            )?);
+            assignment.add_assign(&<stages::EvalStage<P, S> as StageExt<F, WalletRank>>::rx(
+                F::ZERO,
+                &eval,
+            )?);
+            let instance = circuit::Instance {
+                mesh: S::mesh::<P>()
+                    .unwrap()
+                    .claim_values(S::layout::<P>(), &inputs.values, &query.values)?
+                    .try_into()?,
+                challenges: challenges.clone(),
+                sums,
+                foreign: inputs.foreign.clone(),
+            };
+            let (y, z) = (F::from(31), F::from(37));
+            let mut rhs = assignment.clone();
+            rhs.dilate(z);
+            rhs.add_assign(&registry.circuit_y(index, y));
+            rhs.add_assign(&WalletRank::tz(z));
+            Ok(assignment.revdot(&rhs) == helper.ky(&instance, y)?)
+        };
+
+        for circuit in 0..1 << LOG2 {
+            let point = CircuitIndex::new(circuit).omega_j();
+            assert!(accepts(point)?, "circuit {circuit}'s point");
+        }
+        // The next circuit's point is one of a domain twice the size.
+        assert!(!accepts(CircuitIndex::new(1 << LOG2).omega_j())?);
+        assert!(!accepts(F::from(3))?);
+        assert!(!accepts(F::ZERO)?);
         Ok(())
     }
     check::<Fp, stages::Native>()?;

@@ -124,10 +124,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
 
         if let Some(mesh) = <C::Profile as crate::profile::Profile>::NATIVE_MESH {
-            let source = self
-                .native_source
-                .as_ref()
-                .expect("source captured at setup");
+            let source = &self.native_source().expect("source captured at setup");
             let outgoing = &pcd.proof().native_source_out[0];
             let tau = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
             let (x, y) = (pcd.proof().x(), pcd.proof().y());
@@ -140,10 +137,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             }
         }
         if let Some(mesh) = <C::Profile as crate::profile::Profile>::NESTED_MESH {
-            let source = self
-                .nested_source
-                .as_ref()
-                .expect("source captured at setup");
+            let source = &self.nested_source().expect("source captured at setup");
             let outgoing = &pcd.proof().nested_source_out[0];
             let tau = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
             let (x, y) = (

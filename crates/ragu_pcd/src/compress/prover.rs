@@ -175,10 +175,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 .map(Cow::Borrowed),
             );
             if let Some(mesh) = C::Profile::NATIVE_MESH {
-                let source = self
-                    .native_source
-                    .as_ref()
-                    .expect("source captured at setup");
+                let source = &self.native_source().expect("source captured at setup");
                 let coordinates = Coordinates {
                     w: challenges.w,
                     x: challenges.x,
@@ -257,10 +254,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 .map(Cow::Borrowed),
             );
             if let Some(mesh) = C::Profile::NESTED_MESH {
-                let source = self
-                    .nested_source
-                    .as_ref()
-                    .expect("source captured at setup");
+                let source = &self.nested_source().expect("source captured at setup");
                 let coordinates = Coordinates {
                     w: nested::challenge::<C>(challenges.w)?,
                     x: nested::challenge::<C>(challenges.x)?,

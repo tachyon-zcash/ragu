@@ -67,10 +67,12 @@ fn run_stages_land_where_the_layout_says() {
         );
     }
     let trailing = typed!(Fq, TrailingStage<Pasta, K, R>);
-    let skip = 1 + nested_front::<K>(&layout)[..num_runs::<K>()]
-        .iter()
-        .map(|source| source.shape().gates())
-        .sum::<usize>();
+    let skip = 1
+        + crate::decompress::online::Values::NESTED.prefix_gates()
+        + nested_front::<K>(&layout)[..num_runs::<K>()]
+            .iter()
+            .map(|source| source.shape().gates())
+            .sum::<usize>();
     let shape = trailing_source(&layout).shape();
     let (_, expected) = super::shape_degrees::<R>(skip, shape);
     assert_eq!(trailing, expected);
@@ -105,13 +107,15 @@ fn lifts_and_digits_stages_land_where_the_layout_says() {
 #[test]
 fn standard_parameters_reach_the_runs_generators() {
     let layout = Layout::nested::<Fq, Standard, K>();
-    let gates: usize = nested_front::<K>(&layout)[..num_runs::<K>()]
-        .iter()
-        .map(|source| source.shape().gates())
-        .sum();
+    // The runs follow the aggregator's online stages of the scalar field.
+    let gates: usize = crate::decompress::online::Values::NESTED.prefix_gates()
+        + nested_front::<K>(&layout)[..num_runs::<K>()]
+            .iter()
+            .map(|source| source.shape().gates())
+            .sum::<usize>();
     assert!(
         gates <= crate::pasta::STAGE_REACH,
-        "the runs take {gates} gates, past the baked stage reach"
+        "the online stages and the runs take {gates} gates, past the baked stage reach"
     );
     let standard = run_bases::<Pasta, K>(crate::pasta::baked()).unwrap();
     let aggregator = run_bases::<Pasta, K>(crate::pasta::baked_aggregator()).unwrap();

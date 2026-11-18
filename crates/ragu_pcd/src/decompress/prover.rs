@@ -82,8 +82,10 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Decompressed<C> {
 /// the aggregator decompresses and a canonical decompression, prepared
 /// for chunk circuits at rank `R` with `HEADER_SIZE`-element headers.
 ///
-/// The aggregator profile is not yet sound against a dishonest prover; see
-/// [`Aggregator`]'s *Soundness*.
+/// The wallet application's registries are the source registries the
+/// aggregator's meshes certify (see [`Aggregator`]'s *Soundness*), so an
+/// aggregator's verifier is built over the same wallet application as its
+/// prover.
 pub struct Decompression<'params, C, R, const HEADER_SIZE: usize, B>
 where
     C: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -200,6 +202,25 @@ where
         )]
     }
 
+    /// The native online input stage's values for the proof the step's
+    /// chunks run over: the coordinates of the wallet registry's
+    /// restrictions its verification reads, and the points it reads them
+    /// at, which the step commits before its challenge.
+    pub(crate) fn native_online_inputs(
+        &self,
+        source: Option<&Decompressed<C>>,
+    ) -> Vec<C::CircuitField> {
+        self.sides(source).native.online_inputs().to_vec()
+    }
+
+    /// The nested online input stage's values, likewise.
+    pub(crate) fn nested_online_inputs(
+        &self,
+        source: Option<&Decompressed<C>>,
+    ) -> Vec<C::ScalarField> {
+        self.sides(source).nested.online_inputs().to_vec()
+    }
+
     /// The sides a fuse runs the chunks over: `source`'s, the proof the
     /// step decompresses, or the canonical proof's without.
     fn sides<'a>(&'a self, source: Option<&'a Decompressed<C>>) -> &'a Sides<C> {
@@ -222,6 +243,7 @@ where
         source: Option<&Decompressed<C>>,
         online_openings: &[[C::CircuitField; 2]; 3 * NUM_ONLINE_FP_POLYS],
         registry: &Registry<'_, C::CircuitField, R>,
+        (online_input, online_query): (Vec<C::CircuitField>, Vec<C::CircuitField>),
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::CircuitField, R>> {
         let params = self.wallet.params;
@@ -243,6 +265,8 @@ where
             }
             None => &self.canonical.native,
         };
+        // The chunks load the online stages the step's fuse committed.
+        let prepared = &prepared.clone().with_online(online_input, online_query)?;
         let schedule = prepared.schedule.clone();
         let mut circuits = Vec::with_capacity(schedule.circuits.len() + 2);
         for index in 0..schedule.circuits.len() {
@@ -297,6 +321,7 @@ where
         output_commitments: &[C::HostCurve; NUM_ONLINE_FP_POLYS],
         online_fq_openings: &[C::ScalarField],
         registry: &Registry<'_, C::ScalarField, R>,
+        (online_input, online_query): (Vec<C::ScalarField>, Vec<C::ScalarField>),
         rng: &mut impl CryptoRng,
     ) -> Result<ExtensionRxs<C::ScalarField, R>> {
         let params = self.wallet.params;
@@ -317,7 +342,8 @@ where
                 source.is_some(),
                 output_commitments[S_SLOT],
                 [x, y],
-            )?;
+            )?
+            .with_online(online_input, online_query)?;
         let prepared = &prepared;
         let schedule = prepared.schedule.clone();
         let mut circuits = Vec::with_capacity(schedule.circuits.len() + 1);
@@ -440,9 +466,8 @@ where
     ///
     /// # Soundness
     ///
-    /// The proof attests a decompression an honest prover ran: the
-    /// aggregator profile is not yet sound against a dishonest one (see
-    /// [`Aggregator`]'s *Soundness*).
+    /// See [`Aggregator`]'s *Soundness*: the profile is unaudited and
+    /// behind the `unstable-aggregator` feature.
     pub fn decompress<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         rng: &mut RNG,

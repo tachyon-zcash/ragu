@@ -109,9 +109,10 @@ pub fn check<P: Profile, S: Side>() -> Result<()> {
 pub fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
     slot: CircuitSlot<'params, F, R>,
     source_tag: Option<F>,
+    source_domain: Option<u32>,
 ) -> Result<Registered<'params, F, R>> {
     slot.register_staged(MultiStage::<F, R, _>::new(
-        circuit::Circuit::<F, P, S>::with_source_tag(source_tag)?,
+        circuit::Circuit::<F, P, S>::with_source(source_tag, source_domain)?,
     ))
 }
 

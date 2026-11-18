@@ -51,7 +51,7 @@ use super::challenge;
 use crate::{
     Application, Proof, SelectableBackend,
     profile::{
-        Profile, ProfiledCycle,
+        Profile, ProfiledCycle, Source,
         online::{Phase, prepared::PreparationChallenges, prover::State},
     },
     proof::ProofBuilder,
@@ -176,8 +176,8 @@ pub fn placeholder<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(alloc::vec![F::from(1), F::from(2), F::from(3)])
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Begins the step's nested online batch from the profile's inputs,
     /// with the lifts of the children's $x$ and $y$ in the slots a mesh
@@ -185,10 +185,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub(crate) fn begin_nested_online(
         &self,
         children: [&Proof<C, R>; 2],
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder.set_nested_online(State::begin(
-            C::Profile::nested_online_inputs::<C::Base, R, B>(&self.context)?,
+            C::Profile::nested_online_inputs::<C::Base, R, B>(&self.context, source)?,
             || {
                 let [left, right] = children;
                 Ok([
@@ -196,7 +197,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     [challenge::<C>(right.x())?, challenge::<C>(right.y())?],
                 ])
             },
-            self.nested_source.as_ref(),
+            self.nested_source().as_ref(),
         )?);
         self.supply_nested_online(
             Phase::BeforeW,
@@ -237,7 +238,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             phase,
             supplied,
             challenges,
-            self.nested_source.as_ref(),
+            self.nested_source().as_ref(),
             children.map(|children| children.map(|child| &child.nested_source_out[..])),
             C::nested_generators(self.params),
         )

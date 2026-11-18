@@ -86,6 +86,56 @@ fn both_profiles_prove_in_one_binary() -> Result<()> {
     Ok(())
 }
 
+/// The aggregator's helper circuits fix the tags of the wallet registries
+/// its decompression reads, so an aggregator over another wallet
+/// application is another application: a proof it decompressed from that
+/// wallet's proof does not verify under this one, uncompressed or
+/// compressed.
+#[test]
+fn an_aggregator_over_another_wallet_is_another_application() -> Result<()> {
+    type Agg = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
+    let pasta = ragu_pcd::pasta::baked_aggregator();
+    let poseidon_params = Agg::circuit_poseidon(pasta);
+    let mut rng = StdRng::seed_from_u64(5);
+    let aggregator = |wallet, rng: &mut StdRng| {
+        ApplicationBuilder::<Agg, AggregatorRank, HEADER_SIZE>::new()
+            .register(WitnessLeaf { poseidon_params })?
+            .register(Hash2 { poseidon_params })?
+            .finalize_with(pasta, Decompression::new(wallet, rng)?)
+    };
+    let ours = aggregator(wallet()?, &mut rng)?;
+    // The other wallet registers one step fewer.
+    let other = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
+        .register(WitnessLeaf { poseidon_params })?
+        .finalize(pasta)?;
+    let theirs = aggregator(other, &mut rng)?;
+
+    let wallet = theirs.context().wallet();
+    let (leaf, _) = wallet.seed(&mut rng, WitnessLeaf { poseidon_params }, Fp::from(7))?;
+    let compressed = wallet.compress(&leaf, &mut rng)?;
+    assert!(wallet.verify_compressed(&compressed)?);
+    // Our wallet's verifier refuses the proof, and so does our aggregator,
+    // before proving.
+    let ours_wallet = ours.context().wallet();
+    assert!(!matches!(
+        ours_wallet.verify_compressed(&compressed),
+        Ok(true)
+    ));
+    assert!(ours.decompress(&mut rng, &compressed).is_err());
+    // The other aggregator decompresses it, into a proof of its own
+    // application alone.
+    let node = theirs.decompress(&mut rng, &compressed)?;
+    assert!(theirs.verify_uncompressed(&node, &mut rng)?);
+    assert!(!matches!(
+        ours.verify_uncompressed(&node, &mut rng),
+        Ok(true)
+    ));
+    let compressed = theirs.compress(&node, &mut rng)?;
+    assert!(theirs.verify_compressed(&compressed)?);
+    assert!(!matches!(ours.verify_compressed(&compressed), Ok(true)));
+    Ok(())
+}
+
 /// A wallet compresses over the Standard tables alone: `baked()` carries
 /// the generators past its table that the compression's runs commit at.
 #[test]
