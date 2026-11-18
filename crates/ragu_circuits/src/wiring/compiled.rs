@@ -567,19 +567,50 @@ pub(crate) mod tests {
     use crate::{Circuit, metrics, raw::CircuitAdapterRef};
 
     pub(crate) fn assert_matches_interpreted<C: Circuit<Fp>, R: Rank>(circuit: &C) {
+        assert_matches_interpreted_at::<_, _, R>(
+            circuit,
+            &[Fp::ZERO, Fp::ONE, Fp::from(13)],
+            &[Fp::ZERO, Fp::ONE, Fp::from(29)],
+        );
+    }
+
+    /// The compiled wiring agrees with the interpreters at every `x` and `y`,
+    /// both on its own and given the powers table a registry query shares.
+    pub(crate) fn assert_matches_interpreted_at<F: Field, C: Circuit<F>, R: Rank>(
+        circuit: &C,
+        xs: &[F],
+        ys: &[F],
+    ) {
         let metrics = metrics::eval(circuit).unwrap();
         let plan = crate::floor_planner::floor_plan(&metrics.segments);
         let raw = CircuitAdapterRef(circuit);
         let compiled = compile::<_, _, R>(&raw, &plan).unwrap();
-        for x in [Fp::ZERO, Fp::ONE, Fp::from(13)] {
+        for &y in ys {
+            let sy = super::super::sy::eval::<_, _, R>(&raw, y, &plan).unwrap();
+            let powers = crate::registry::powers::<F, R>(y);
+            assert!(sy.iter_coeffs().eq(compiled.sy(y).iter_coeffs()), "sy");
+            assert!(
+                sy.iter_coeffs()
+                    .eq(compiled.sy_with_powers(y, Some(&powers)).iter_coeffs()),
+                "sy with powers"
+            );
+        }
+        for &x in xs {
             let sx = super::super::sx::eval::<_, _, R>(&raw, x, &plan).unwrap();
-            assert!(sx.iter_coeffs().eq(compiled.sx(x).iter_coeffs()));
-            for y in [Fp::ZERO, Fp::ONE, Fp::from(29)] {
-                let sy = super::super::sy::eval::<_, _, R>(&raw, y, &plan).unwrap();
-                assert!(sy.iter_coeffs().eq(compiled.sy(y).iter_coeffs()));
+            let powers = crate::registry::powers::<F, R>(x);
+            assert!(sx.iter_coeffs().eq(compiled.sx(x).iter_coeffs()), "sx");
+            assert!(
+                sx.iter_coeffs()
+                    .eq(compiled.sx_with_powers(x, Some(&powers)).iter_coeffs()),
+                "sx with powers"
+            );
+            for &y in ys {
+                let sxy = super::super::sxy::eval::<_, _, R>(&raw, x, y, &plan).unwrap();
+                assert_eq!(sxy, compiled.sxy(x, y), "sxy");
                 assert_eq!(
-                    super::super::sxy::eval::<_, _, R>(&raw, x, y, &plan).unwrap(),
-                    compiled.sxy(x, y)
+                    sxy,
+                    compiled.sxy_with_powers(x, y, Some(&powers)),
+                    "sxy with powers"
                 );
             }
         }

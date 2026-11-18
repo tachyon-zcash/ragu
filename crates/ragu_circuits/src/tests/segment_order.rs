@@ -7,14 +7,20 @@ use alloc::{format, vec, vec::Vec};
 use proptest::prelude::*;
 use ragu_core::{
     Coeff, Result,
-    drivers::{Driver, DriverValue},
+    drivers::{Driver, DriverValue, LinearExpression},
     gadgets::Bound,
-    pasta::Fp,
+    pasta::{Fp, Fq},
     routines::{Prediction, Routine},
 };
 use ragu_primitives::allocator::Allocator;
+use ragu_testing::strategies::prime_field_element;
+use udon::field::Field;
 
-use crate::{Circuit, WithAux, polynomials::TestRank};
+use crate::{
+    Circuit, WithAux,
+    polynomials::{WalletRank, Rank, TestRank},
+    wiring::compiled::tests::{assert_matches_interpreted, assert_matches_interpreted_at},
+};
 
 /// Maximum number of wire allocations generated at any one point in a scope.
 const MAX_ALLOCS: usize = 6;
@@ -92,15 +98,34 @@ fn arb_tree() -> impl Strategy<Value = RoutineTree> {
     })
 }
 
-fn drive_tree<'dr, D: Driver<'dr, F = Fp>>(dr: &mut D, tree: &RoutineTree) -> Result<()> {
-    for _ in 0..tree.pre_allocs {
-        ().alloc(dr, || Ok(Coeff::One))?;
-    }
+fn drive_tree<'dr, D: Driver<'dr>>(dr: &mut D, tree: &RoutineTree) -> Result<()> {
+    alloc_chain(dr, tree.pre_allocs)?;
     for (child, post_allocs) in &tree.children {
         dr.routine(TreeRoutine(child.clone()), ())?;
-        for _ in 0..*post_allocs {
-            ().alloc(dr, || Ok(Coeff::One))?;
+        alloc_chain(dr, *post_allocs)?;
+    }
+    Ok(())
+}
+
+/// Allocates `count` wires, constraining each after the first to equal its
+/// predecessor, so that every segment contributes constraints to the wiring
+/// polynomial at its own offset. Every allocated value is one, so the
+/// constraints hold whatever their scale; the scales rotate through each
+/// coefficient form the compiled wiring encodes differently.
+fn alloc_chain<'dr, D: Driver<'dr>>(dr: &mut D, count: usize) -> Result<()> {
+    let five = D::F::ONE.double().double() + D::F::ONE;
+    let mut previous = None;
+    for i in 0..count {
+        let wire = ().alloc(dr, || Ok(Coeff::One))?;
+        if let Some(previous) = &previous {
+            let (scale, negated) = match i % 3 {
+                0 => (Coeff::One, Coeff::NegativeOne),
+                1 => (Coeff::Two, Coeff::Arbitrary(-D::F::ONE.double())),
+                _ => (Coeff::Arbitrary(five), Coeff::Arbitrary(-five)),
+            };
+            dr.enforce_zero(|lc| lc.add_term(&wire, scale).add_term(previous, negated))?;
         }
+        previous = Some(wire);
     }
     Ok(())
 }
@@ -108,12 +133,12 @@ fn drive_tree<'dr, D: Driver<'dr, F = Fp>>(dr: &mut D, tree: &RoutineTree) -> Re
 #[derive(Clone)]
 struct TreeRoutine(RoutineTree);
 
-impl Routine<Fp> for TreeRoutine {
+impl<F: Field> Routine<F> for TreeRoutine {
     type Input = ();
     type Output = ();
     type Aux<'dr> = ();
 
-    fn execute<'dr, D: Driver<'dr, F = Fp>>(
+    fn execute<'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         _input: Bound<'dr, D, Self::Input>,
@@ -123,7 +148,7 @@ impl Routine<Fp> for TreeRoutine {
         Ok(())
     }
 
-    fn predict<'dr, D: Driver<'dr, F = Fp>>(
+    fn predict<'dr, D: Driver<'dr, F = F>>(
         &self,
         _dr: &mut D,
         _input: &Bound<'dr, D, Self::Input>,
@@ -138,13 +163,13 @@ impl Routine<Fp> for TreeRoutine {
 
 struct TreeCircuit(RoutineTree);
 
-impl Circuit<Fp> for TreeCircuit {
+impl<F: Field> Circuit<F> for TreeCircuit {
     type Instance<'source> = ();
     type Witness<'source> = ();
     type Output = ();
     type Aux<'source> = ();
 
-    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
         _dr: &mut D,
         _instance: DriverValue<D, Self::Instance<'source>>,
@@ -155,7 +180,7 @@ impl Circuit<Fp> for TreeCircuit {
         Ok(())
     }
 
-    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>>(
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
         &self,
         dr: &mut D,
         _witness: DriverValue<D, Self::Witness<'source>>,
@@ -166,6 +191,13 @@ impl Circuit<Fp> for TreeCircuit {
         drive_tree(dr, &self.0)?;
         Ok(WithAux::new((), D::unit()))
     }
+}
+
+/// Whether `circuit` fits within rank `R`'s gate and constraint bounds.
+fn fits<R: Rank>(circuit: &TreeCircuit) -> bool {
+    crate::metrics::eval::<Fp, _>(circuit).is_ok_and(|metrics| {
+        metrics.num_gates <= R::n() && metrics.num_constraints < R::num_coeffs()
+    })
 }
 
 proptest! {
@@ -179,17 +211,29 @@ proptest! {
     /// structured form). Agreement confirms that all of them correctly
     /// handle routine scope jumps, segment offsets, and Horner
     /// accumulation across arbitrary nesting topologies.
+    ///
+    /// The compiled wiring the registry evaluates must match those
+    /// interpreters, with and without shared powers: at fixed points, and
+    /// at drawn points on both Pasta fields at the test and production
+    /// ranks.
     #[test]
-    fn polynomial_consistency(tree in arb_tree()) {
+    fn polynomial_consistency(
+        tree in arb_tree(),
+        (fp_x, fp_y) in (prime_field_element::<Fp>(), prime_field_element::<Fp>()),
+        (fq_x, fq_y) in (prime_field_element::<Fq>(), prime_field_element::<Fq>()),
+    ) {
         let circuit = TreeCircuit(tree);
-        if let Ok(metrics) = crate::metrics::eval(&circuit)
-            && metrics.num_gates <= <TestRank as crate::polynomials::Rank>::n()
-            && metrics.num_constraints < <TestRank as crate::polynomials::Rank>::num_coeffs()
-        {
-            crate::wiring::compiled::tests::assert_matches_interpreted::<_, TestRank>(&circuit);
+        if fits::<TestRank>(&circuit) {
+            assert_matches_interpreted::<_, TestRank>(&circuit);
+            assert_matches_interpreted_at::<Fp, _, TestRank>(&circuit, &[fp_x], &[fp_y]);
+            assert_matches_interpreted_at::<Fq, _, TestRank>(&circuit, &[fq_x], &[fq_y]);
+        }
+        if fits::<WalletRank>(&circuit) {
+            assert_matches_interpreted_at::<Fp, _, WalletRank>(&circuit, &[fp_x], &[fp_y]);
+            assert_matches_interpreted_at::<Fq, _, WalletRank>(&circuit, &[fq_x], &[fq_y]);
         }
         // Skip trees that exceed TestRank's multiplication bound.
-        let circuit_obj = match crate::into_wiring_object::<_, _, TestRank>(circuit) {
+        let circuit_obj = match crate::into_wiring_object::<Fp, _, TestRank>(circuit) {
             Ok(obj) => obj,
             Err(_) => return Ok(()),
         };
