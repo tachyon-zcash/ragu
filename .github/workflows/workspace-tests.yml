@@ -16,10 +16,16 @@ on:
 permissions:
   contents: read
 
+env:
+  NEXTEST_TOOL: cargo-nextest@0.9.151
+  PCD_UNIT_FILTER: binary_id(=ragu_pcd)
+
 jobs:
   workspace:
     name: build and workspace tests
     runs-on: ${{ inputs.os }}
+    outputs:
+      pcd-artifact-id: ${{ steps.pcd-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,18 +35,47 @@ jobs:
         with:
           cache-suffix: ${{ inputs.pcd-suite != 'full' && format('release-{0}', inputs.pcd-suite) || (inputs.features == 'all' && 'release' || 'release-default-feature') }}
           cache-pcd-incremental: ${{ runner.os == 'macOS' }}
-      - name: Run workspace tests and collect PCD unit-test binary
+          cargo-tools: ${{ env.NEXTEST_TOOL }}
+      - name: Archive PCD unit tests and run other workspace tests
         shell: bash
         env:
-          PCD_TEST_FEATURES: ${{ inputs.features }}
+          TEST_FEATURES: ${{ inputs.features }}
           PCD_TEST_SUITE: ${{ inputs.pcd-suite }}
-        run: >-
-          ${{ runner.os == 'macOS' && 'env -u CARGO_INCREMENTAL' || '' }}
-          python3 qa/ci/pcd_test_shards.py workspace "$RUNNER_TEMP/pcd-unit-tests" "$PCD_TEST_FEATURES" "$PCD_TEST_SUITE"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        run: |
+          profiles=.github/actions/rust-setup
+          cargo_args=(--workspace --release --locked --config "$profiles/ci-release.toml")
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            unset CARGO_INCREMENTAL
+            cargo_args+=(--config "$profiles/ci-release-macos.toml")
+          fi
+          case "$TEST_FEATURES" in
+            all) cargo_args+=(--all-features) ;;
+            default) ;;
+            *) exit 1 ;;
+          esac
+          case "$PCD_TEST_SUITE" in
+            regular|proofs) cargo_args+=(--config "$profiles/ci-release-pcd-$PCD_TEST_SUITE.toml") ;;
+            full) ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$PCD_TEST_SUITE" == proofs ]]; then
+            # Keep the workspace library feature resolution for the proof binary.
+            cargo_args+=(--lib)
+          fi
+
+          cargo nextest archive "${cargo_args[@]}" -E "$PCD_UNIT_FILTER" \
+            --archive-file "$RUNNER_TEMP/pcd-unit-tests.tar.zst"
+          if [[ "$PCD_TEST_SUITE" != proofs ]]; then
+            cargo nextest run "${cargo_args[@]}" -E "!$PCD_UNIT_FILTER" --no-fail-fast --no-tests=fail
+            # Explicit --doc also selects libraries with doctest = false.
+            cargo test "${cargo_args[@]}" --doc --exclude ragu_no_std
+          fi
+      - id: pcd-artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pcd-unit-tests-${{ inputs.os }}-${{ inputs.features }}-${{ inputs.pcd-suite }}
-          path: ${{ runner.temp }}/pcd-unit-tests
+          path: ${{ runner.temp }}/pcd-unit-tests.tar.zst
+          compression-level: 0
           if-no-files-found: error
           overwrite: true
 
@@ -56,14 +91,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: ${{ env.NEXTEST_TOOL }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: pcd-unit-tests-${{ inputs.os }}-${{ inputs.features }}-${{ inputs.pcd-suite }}
-          path: ${{ runner.temp }}/pcd-unit-tests
+          # An empty ID asks the action to download all artifacts.
+          artifact-ids: ${{ needs.workspace.outputs.pcd-artifact-id || 'missing PCD artifact ID' }}
+          path: ${{ runner.temp }}
       - name: Run PCD unit-test shard
         shell: bash
         env:
-          PCD_SHARD: ${{ strategy.job-index }}
+          # Git Bash can interpret Rust module paths in the filter as a path list.
+          MSYS2_ARG_CONV_EXCL: '--filterset='
+          PCD_SHARD: ${{ matrix.shard }}
           PCD_SHARDS: ${{ strategy.job-total }}
           PCD_TEST_SUITE: ${{ inputs.pcd-suite }}
-        run: python3 qa/ci/pcd_test_shards.py shard "$RUNNER_TEMP/pcd-unit-tests" "$PCD_SHARD" "$PCD_SHARDS" "$PCD_TEST_SUITE"
+        run: |
+          proof_tests='test(/^(online_batch_tests::|proof::fuse_fixture_tests::|proof::profile_substitution_tests::)/)'
+          filter="$PCD_UNIT_FILTER"
+          case "$PCD_TEST_SUITE" in
+            regular) filter="$filter & !$proof_tests" ;;
+            proofs) filter="$filter & $proof_tests" ;;
+          esac
+          cargo-nextest nextest run --archive-file "$RUNNER_TEMP/pcd-unit-tests.tar.zst" \
+            --workspace-remap "$GITHUB_WORKSPACE" --filterset="$filter" \
+            --partition "slice:$PCD_SHARD/$PCD_SHARDS" --no-fail-fast --no-tests=fail

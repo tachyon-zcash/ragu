@@ -45,7 +45,6 @@ jobs:
               - '.github/workflows/rust.yml'
               - '.github/workflows/workspace-tests.yml'
               - '.github/actions/**'
-              - 'qa/ci/**'
             fuzz:
               - 'qa/fuzz/**'
               - '.github/workflows/fuzz-cron.yml'
