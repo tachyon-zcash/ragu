@@ -34,9 +34,11 @@
 //! holds the children's staged points against the children's unified
 //! instances.
 //!
-//! A parent holds each child's nested challenge stage to the child's headers
-//! (see [`challenges`]). The root has no parent, which is why the decider
-//! rederives that stage itself.
+//! A parent holds each child's nested challenge stage to the child's own
+//! binders, which read the base case off the child's input headers (see
+//! [`challenges`]). The root has no parent, which is why the decider
+//! rederives that stage itself, reading the base case off the root's
+//! circuit id.
 //!
 //! [`challenges`]: crate::internal::nested::stages::challenges
 

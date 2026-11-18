@@ -1,8 +1,8 @@
 //! Fixed-length encoding of compressed proofs.
 //!
 //! Fields are encoded in declaration order. Vector lengths come from the
-//! receiving profile and from the payload's dimensions, its rank and header size;
-//! no counts are read from the payload.
+//! receiving profile and from the payload's rank; no counts are read from
+//! the payload.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -21,7 +21,6 @@ use crate::{
             native_components, nested_components,
         },
     },
-    internal::native::online,
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
@@ -67,10 +66,6 @@ macro_rules! codec {
         }
     }
 }
-codec!([F: Field] online::Query<F> {
-    x => Scalar,
-    y => Scalar,
-});
 codec!([F: Field] Child<F> {
     x => Scalar,
     y => Scalar,

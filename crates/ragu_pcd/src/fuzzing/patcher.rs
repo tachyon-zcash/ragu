@@ -39,9 +39,10 @@
 //! * the stage values it checks against an in-circuit computation: the
 //!   collapsed claims `collapse` folds to, the step's own output header
 //!   and circuit id `collapse` pins in the base case, the $k(y)$ evaluations
-//!   `hashes_1` recomputes, the sponge state `hashes_1` saves. These
-//!   are reserved stage wires, committed outside the circuit, and the
-//!   circuit that checks them is the one that binds them.
+//!   `hashes_1` recomputes, the `compute_v` bridge $k(y)$ evaluations
+//!   `collapse` checks, the sponge state `hashes_1` saves. These are
+//!   reserved stage wires, committed outside the circuit, and the circuit
+//!   that checks them is the one that binds them.
 //!
 //! Everything else — the remaining instance wires and the remaining stage
 //! wires — is an input the oracle pins. A covered slot a circuit reads
@@ -902,10 +903,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             hashes_2_witness,
         )?;
 
-        // collapse checks both fold layers, computing the step's own
-        // application k(y) itself. Only the final c comparison is waived at
-        // bootstrap, where it instead pins the step's own output header and
-        // circuit id to the bootstrap step's.
+        // collapse checks both fold layers and the children's compute_v
+        // bridge k(y) values, computing the step's own application k(y)
+        // itself. Only the final c comparison is waived at bootstrap, where
+        // it instead pins the step's own output header and circuit id to the
+        // bootstrap step's.
         let collapse = native::circuits::collapse::Circuit::<
             C,
             R,
@@ -950,7 +952,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 .map(OutputRef::Instance)
                 .chain(
                     stage_wire_indices::<_, R, OuterError<C, R, C::Profile, HEADER_SIZE>>(
-                        |stage| Ok(stage.collapsed.iter().map(|e| *e.wire()).collect()),
+                        |stage| {
+                            Ok(stage
+                                .collapsed
+                                .iter()
+                                .chain([
+                                    &stage.left.compute_v_bridge,
+                                    &stage.right.compute_v_bridge,
+                                ])
+                                .map(|e| *e.wire())
+                                .collect())
+                        },
                     )?
                     .into_iter()
                     .chain(collapse_pinned)

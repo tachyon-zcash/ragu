@@ -44,7 +44,8 @@
 //! the header-derived sign. A step whose prover traced its nested circuits
 //! against a different sign or lift fails those claims in its parent's fold.
 //! The root has no parent: the decider rederives the root's stage polynomial
-//! from its headers and challenges, and compares coefficients.
+//! from its challenges and its circuit id, which fixes the sign (see
+//! [`is_bootstrap`]), and compares coefficients.
 //!
 //! [`challenge`]: crate::internal::nested::challenge
 //! [`StageExt::generator_index_for_a`]: ragu_circuits::staging::StageExt::generator_index_for_a

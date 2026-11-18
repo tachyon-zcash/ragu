@@ -370,8 +370,8 @@ fn expected(name: &str, point: &str) -> Census {
         // At the base case the step's own output header, circuit id and
         // output openings, pinned to the bootstrap step's, replace c among
         // the outputs.
-        "collapse" if point == "bootstrap" => (284, 1946, 40, 23, 0, 23, 157),
-        "collapse" if point == "leaves" || point == "nodes" => (284, 1946, 40, 15, 0, 15, 156),
+        "collapse" if point == "bootstrap" => (284, 1946, 40, 25, 0, 25, 157),
+        "collapse" if point == "leaves" || point == "nodes" => (284, 1946, 40, 17, 0, 17, 156),
         "compute_v" => (440, 7239, 40, 1, 0, 1, 474),
         "bind_challenges_0" => (440, 7816, 40, 2, 0, 2, 728),
         "bind_challenges_1" => (440, 7837, 40, 2, 0, 2, 728),

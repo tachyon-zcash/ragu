@@ -107,9 +107,7 @@ codec! {
     native_points_f_rx => wire::DefaultEncoding,
     native_points_walk_rx => wire::DefaultEncoding,
 
-    // The step's own online polynomials (CircuitField, HostCurve commitment),
-    // then the step's online openings, one per slot of its left, right and
-    // output headers
+    // The step's own online polynomials (CircuitField, HostCurve commitment)
     online_polynomials => wire::Array<wire::DefaultEncoding>,
 
     // Bridge rx polynomials (non-cached, set by caller)

@@ -1,13 +1,16 @@
 //! Evaluate the [`Step`] circuit, in its two phases.
 //!
 //! Before the preamble bridge is committed, [`begin_application_proof`]
-//! fixes what the bridge carries about the application: the children's
-//! output headers, encoded from their data, the step's circuit id and, by
-//! the step's [`prepare`](Step::prepare) phase, the step's own online
-//! polynomials and its application stage. After $w$ is squeezed,
+//! fixes what the bridge carries about the application, by the step's
+//! [`prepare`](Step::prepare) phase: the step's own online polynomials and
+//! its application stage. It also sets the children's output headers,
+//! encoded from their data, and the step's circuit id on the
+//! [`ProofBuilder`]. The bridge does not carry those: the native preamble
+//! commits them after $w$ (see [`preamble`]). After $w$ is squeezed,
 //! [`compute_application_proof`] synthesizes the step circuit with
 //! $\zeta = w$ and the six slots' polynomials (see [`online`]), and sets
-//! the output header and the online openings on the [`ProofBuilder`].
+//! the output header and the online openings on the builder, which the
+//! native preamble commits too.
 //!
 //! The application trace and the application stage are the step's own
 //! polynomials: the step folds their claims and opens them in its own
@@ -18,6 +21,7 @@
 //!
 //! [`begin_application_proof`]: Application::begin_application_proof
 //! [`compute_application_proof`]: Application::compute_application_proof
+//! [`preamble`]: crate::internal::native::stages::preamble
 
 use alloc::vec::Vec;
 
@@ -64,12 +68,13 @@ pub(crate) struct NativeApplication<C: Cycle, R: Rank> {
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// The first phase: sets the children's output headers, the circuit id
-    /// and the step's own online polynomials on the builder, which the
-    /// preamble bridge commits before $w$ is squeezed, and commits the
-    /// step's application stage, which the bridge carries too. Returns what
-    /// the step prepared, which the second phase hands to its circuit, and
-    /// the stage.
+    /// The first phase: sets the step's own online polynomials on the
+    /// builder, whose commitments the preamble bridge carries before $w$ is
+    /// squeezed, and commits the step's application stage, which the bridge
+    /// carries too. Also sets the children's output headers and the circuit
+    /// id on the builder, which the native preamble commits after $w$.
+    /// Returns what the step prepared, which the second phase hands to its
+    /// circuit, and the stage.
     ///
     /// # Errors
     ///
@@ -194,8 +199,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let commitment = B::sparse_commit_to_affine(&rx, C::host_generators(self.params));
 
         let ((left_header, right_header, output_header), output_data, step_aux, queries) = aux;
-        // The step's circuit must encode the headers the preamble committed,
-        // which were fixed from the inputs' data before the circuit ran.
+        // The step's circuit must encode the headers the native preamble
+        // commits next, which were fixed from the inputs' data before the
+        // circuit ran.
         if left_header.into_inner()[..] != *builder.left_header()
             || right_header.into_inner()[..] != *builder.right_header()
         {

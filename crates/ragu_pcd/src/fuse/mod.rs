@@ -178,8 +178,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        // The step's first phase: the headers, circuit id, own online
-        // polynomials and application stage the preamble bridge commits.
+        // The step's first phase: the own online polynomials and application
+        // stage the preamble bridge commits, and the input headers and
+        // circuit id the native preamble commits after w.
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
         let (prepared, application_stage) = self.begin_application_proof(
