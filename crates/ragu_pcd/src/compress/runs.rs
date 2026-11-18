@@ -119,7 +119,12 @@ impl Run {
             Run::Split | Run::Round(_) => points(2),
             Run::Epsilons => elements(2),
             Run::Openings => elements(Derived::ALL.len() + 2),
-            Run::Evaluations => elements(Derived::ALL.len() + 2 + OPENED),
+            Run::Evaluations => elements(
+                Derived::ALL.len()
+                    + 2
+                    + OPENED
+                    + P::NESTED_MESH.map_or(0, |mesh| mesh.polynomial_indices().len()),
+            ),
         }
     }
 }

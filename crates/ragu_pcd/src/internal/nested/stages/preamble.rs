@@ -12,7 +12,7 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, GadgetExt, Point,
+    Element, Point,
     io::Write,
     vec::{ConstLen, FixedVec, Len},
 };
@@ -27,7 +27,10 @@ use crate::{
         },
         nested::{PointsStage, online as online_fq, unified},
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Native, Nested, PhaseLen, PolynomialsLen, Present},
+    },
 };
 
 /// Number of curve points in this stage in profile `P`: the native
@@ -37,6 +40,9 @@ use crate::{
 /// $a$, $b$, `registry_xy` and $P$, and its exported online commitments.
 pub fn num_points<P: Profile>() -> usize {
     3 + NUM_ONLINE_FP_POLYS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_FP_POLYS)
+        + 2 * P::NATIVE_ONLINE.polynomials.len()
+        + <PhaseLen<P, Native, 0> as ragu_primitives::vec::Len>::len()
+        + <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len()
 }
 
 /// Witness data for a single child proof in the preamble bridge stage.
@@ -123,6 +129,12 @@ pub struct ChildWitness<C: Affine, P: Profile> {
     /// the point then the value of each, tied to its nested `compute_v`
     /// and binding circuits.
     pub online_fq_openings: FixedVec<C::Base, online_fq::BoundOpeningsLen<P>>,
+    /// Lifted w, alpha, beta and the two online helper sums of this child.
+    pub online_values: FixedVec<C::Base, Present<P, Nested, 5>>,
+    /// Common source-mesh coordinates and intersection values.
+    pub mesh: FixedVec<C::Base, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
+    /// Common targets for the child's actual native online walk points.
+    pub online_points: FixedVec<C, PolynomialsLen<P, Native>>,
 }
 
 /// The scalar half of a child's nested unified instance (see
@@ -188,6 +200,9 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
             stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
             stashed_online_commitments: proof.online_commitments(),
             stashed_application_stage: proof.native_rx_commitment(RxIndex::ApplicationStage),
+            mesh: proof.nested_mesh_claims.clone().try_into()?,
+            online_values: proof.nested_online_values()?.try_into()?,
+            online_points: proof.native_online_commitments.clone().try_into()?,
             nested: NestedValues {
                 c: instance.c,
                 v: instance.v,
@@ -203,6 +218,13 @@ impl<C: Affine, P: Profile> ChildWitness<C, P> {
 
 /// Witness data for the preamble bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
+    /// This step's native online commitments, fixed before w.
+    pub online_points: FixedVec<C, PhaseLen<P, Native, 0>>,
+    /// This boundary's native online stage commitment.
+    pub online_stage: FixedVec<
+        C,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
+    >,
     /// Commitment from the native preamble stage.
     pub native_preamble: C,
     /// Commitment of the native points binding stage, fixed here before
@@ -323,6 +345,15 @@ pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> 
     /// The openings of the child's own online Fq polynomials it exported.
     #[ragu(gadget)]
     pub online_fq_openings: FixedVec<Element<'dr, D>, online_fq::BoundOpeningsLen<P>>,
+    /// Public values shared by the child's compute-v and online helper claims.
+    #[ragu(gadget)]
+    pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    /// Common source-mesh coordinates and intersection values.
+    #[ragu(gadget)]
+    pub mesh: FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
+    /// Common targets for the child's native online commitments.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PolynomialsLen<P, Native>>,
 }
 
 /// Gadget for the scalar half of a child's nested unified instance.
@@ -353,23 +384,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
             },
             |slot| self.stashed_online_commitments[slot].clone(),
         )
-    }
-
-    /// The child's nested `compute_v` circuit's $k(y)$ in a profile whose
-    /// nested binding names online Fq openings: the $k(y)$ of its nested
-    /// unified instance followed by the openings it exported. `None` for a
-    /// profile that names none, where the circuit's instance is the
-    /// unified instance alone and its $k(y)$ the unified one.
-    pub fn compute_v_ky(&self, dr: &mut D, y: &Element<'dr, D>) -> Result<Option<Element<'dr, D>>> {
-        if self.online_fq_openings.is_empty() {
-            return Ok(None);
-        }
-        let mut ky = ragu_circuits::horner::Horner::new(y);
-        self.nested_instance().write(dr, &mut ky)?;
-        for value in self.online_fq_openings.iter() {
-            value.write(dr, &mut ky)?;
-        }
-        ky.finish_ky(dr).map(Some)
     }
 
     /// The child's nested unified instance, assembled from the values this
@@ -443,6 +457,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<R
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
     fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, P>>) -> Result<Self> {
         Ok(ChildOutput {
+            online_points: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+            })?,
             application: Point::alloc(dr, witness.as_ref().map(|w| w.application))?,
             hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
             hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
@@ -496,6 +513,12 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
                 dr,
                 witness.as_ref().map(|w| w.stashed_application_stage),
             )?,
+            mesh: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.mesh[i]))
+            })?,
+            online_values: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.online_values[i]))
+            })?,
             nested: {
                 let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
                     Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))
@@ -524,6 +547,15 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The native online commitments fixed by this bridge and bound to the walk.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 0>>,
+    /// The native online stage fixed by this bridge's transcript commitment.
+    #[ragu(gadget)]
+    pub online_stage: FixedVec<
+        Point<'dr, D, C>,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
+    >,
     /// Point commitment from the native preamble stage.
     #[ragu(gadget)]
     pub native_preamble: Point<'dr, D, C>,
@@ -559,9 +591,14 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point, then the five nested scalars of each child and
-        // the online Fq openings it exported.
-        num_points::<P>() * 2 + 2 * (5 + online_fq::BoundOpeningsLen::<P>::len())
+        // (x, y) per point, then the five nested scalars of each child, the
+        // online Fq openings it exported and its online helper values and
+        // mesh claims.
+        num_points::<P>() * 2
+            + 2 * (5
+                + online_fq::BoundOpeningsLen::<P>::len()
+                + <Present<P, Nested, 5> as ragu_primitives::vec::Len>::len()
+                + P::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -573,6 +610,12 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Self: 'dr,
     {
         Ok(Output {
+            online_points: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+            })?,
+            online_stage: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))
+            })?,
             native_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.native_preamble))?,
             native_points_binding: Point::alloc(
                 dr,

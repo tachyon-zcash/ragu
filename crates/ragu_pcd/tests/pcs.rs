@@ -387,7 +387,10 @@ mod folding {
         }
 
         fn compute_v_ky(&self) -> impl Iterator<Item = Fq> {
-            [self.left_unified, self.right_unified].into_iter()
+            self.unified_ky()
+        }
+        fn online_helper_ky(&self) -> impl Iterator<Item = Fq> {
+            core::iter::empty()
         }
 
         fn binding_ky(&self) -> impl Iterator<Item = Fq> + Clone {
@@ -620,9 +623,12 @@ mod folding {
                     dr,
                     left_c,
                     right_c,
+                    left_unified.clone(),
+                    right_unified.clone(),
                     left_unified,
                     right_unified,
-                    [None, None],
+                    None,
+                    None,
                     None,
                     None,
                 );

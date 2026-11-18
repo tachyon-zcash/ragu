@@ -260,7 +260,8 @@ fn nested_reduction_verifies() {
     let targets = NestedKy {
         c: proof.nested_c(),
         unified: ky::nested_ky(proof, y).unwrap(),
-        compute_v: None,
+        compute_v: ky::nested_ky(proof, y).unwrap(),
+        online_helper: None,
         binding: None,
     };
     let commitment = |component| match component {

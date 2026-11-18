@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Binding::online`, `Binding::openings`). The `Aggregator` profile sets
   the count to one for the nested IPA's challenge polynomial; the standard
   profile does not change.
+- Online polynomial batches: a profile can declare a fixed batch of
+  online polynomials on each field, each opened at several points, and a
+  source-registry mesh that reduces many claimed registry restrictions to one
+  outgoing restriction per field, closed at compression. No built-in profile
+  declares either, so the standard profile does not change. See the
+  `ragu_pcd` changelog.
 
 ### Changed
 
@@ -76,9 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   children's bridge hashes. At 96 the largest binder uses all 2048 gates; a
   larger header fails `ApplicationBuilder::finalize` with
   `GateBoundExceeded`. Profiles with extensions can have a lower limit.
-- Registry tags are supplied by the application from a randomness beacon;
-  `ApplicationBuilder::finalize` requires them unless the test-only
-  `insecure-test-registry-tag` feature is enabled.
+- Registry tags are derived by `ApplicationBuilder::finalize` from the
+  registered circuits, by hashing every wiring polynomial written out as its
+  monomials.
 - The PCD transcript tag is `ragu-pcd-v1`; proofs made under the placeholder
   tag do not verify. Compression has its own tag, `ragu-ipa-v1`.
 - `ApplicationBuilder` and `Application` take a fourth type parameter

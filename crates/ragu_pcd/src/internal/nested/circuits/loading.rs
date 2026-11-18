@@ -156,6 +156,15 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             walker.enforce_equal(dr, point)?;
         }
 
+        for point in preamble
+            .online_points
+            .iter()
+            .chain(s_prime.online_points.iter())
+            .chain(ab.online_points.iter())
+            .chain(query.online_points.iter())
+        {
+            walker.enforce_equal(dr, point)?;
+        }
         walker.finish();
 
         // The initial point (f.commitment) must match BridgeF.native_f.

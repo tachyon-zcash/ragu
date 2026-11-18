@@ -180,6 +180,21 @@ impl<'dr, C: Cycle, B: SelectableBackend> CycleTranscript<'dr, C, B> {
         &self.runs
     }
 
+    /// Absorbs a scalar-field element as little-endian 128-bit limbs.
+    ///
+    /// The canonical byte representation fixes the number of limbs and each
+    /// limb fits in the circuit field. This encoding covers the whole scalar
+    /// field, including zero.
+    pub(crate) fn write_scalar_limbs(&mut self, scalar: C::ScalarField) -> Result<()> {
+        for chunk in scalar.to_bytes().as_ref().chunks(16) {
+            let mut bytes = [0; 16];
+            bytes[..chunk.len()].copy_from_slice(chunk);
+            self.host()
+                .write_scalar(C::CircuitField::from_u128(u128::from_le_bytes(bytes)))?;
+        }
+        Ok(())
+    }
+
     /// Absorbs a nested-curve point through the [`Point`] gadget, which
     /// rejects the identity as halo2's `common_point` does, after the
     /// commitment of the run before it, if any.

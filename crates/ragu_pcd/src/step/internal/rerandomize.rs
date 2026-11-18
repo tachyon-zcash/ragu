@@ -21,7 +21,7 @@
 //! through); `test_rerandomize_consistency` pins that structurally. And the
 //! right input is the constant unit header, so both inputs cannot be `Dummy`.
 //! [`Encoded::new_uniform`] additionally constrains the witnessed suffix away
-//! from `Dummy`.
+//! from `Dummy`, and from zero; its documentation says why.
 //!
 //! [`Dummy`]: crate::header::Dummy
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
@@ -94,8 +94,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         let allocator = &mut Standard::new();
 
         // Uniform encoding keeps this circuit identical across left header
-        // types and constrains the witnessed suffix away from `Dummy` (see
-        // `Encoded::new_uniform`). The output reuses the left input's wires;
+        // types and constrains the witnessed suffix away from `Dummy` and from
+        // zero (see `Encoded::new_uniform`). The output reuses the left input's wires;
         // the right input is the standard unit encoding carried by the cached
         // seeded proof.
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;

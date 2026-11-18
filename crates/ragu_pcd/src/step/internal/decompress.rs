@@ -11,7 +11,7 @@
 //! [`Rerandomize`] does; `test_decompress_consistency` pins that. Its
 //! inputs are constants, so it cannot take the base case, and
 //! [`Encoded::new_uniform`] holds its witnessed output suffix away from
-//! [`Dummy`].
+//! [`Dummy`] and from zero.
 //!
 //! The step's circuit constrains nothing about the header data it outputs;
 //! the binding is the claims'. The statement carries no polynomials, so the
@@ -53,7 +53,6 @@
 //! header type, which [`finalize_with`] checks is registered at every
 //! suffix the wallet's steps output ([`Profile::check_context`]), so that
 //! the two read the statement alike, field order and padding included.
-//! The setup description a profile's tags cover records those types.
 //!
 //! A decompressed proof's header fields still describe the polynomials the
 //! statement left behind while the proof's slots hold $s(X)$ and padding,
@@ -181,7 +180,7 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Decompress<H> {
         let right = Encoded::new(dr, allocator, right)?;
         // Uniform, so that every header type decompresses through the one
         // registered circuit; the suffix is a witness wire constrained away
-        // from `Dummy` (see `Encoded::new_uniform`).
+        // from `Dummy` and from zero (see `Encoded::new_uniform`).
         let (data, _, _) = witness.cast();
         let output = Encoded::new_uniform(dr, allocator, data.clone())?;
         // The staged digest, made public as the point of an opening: the

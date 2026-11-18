@@ -27,7 +27,10 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::Always,
 };
-use ragu_primitives::{EndoscalarChallenge, Uendo, lift_endoscalar, vec::Len};
+use ragu_primitives::{
+    EndoscalarChallenge, Uendo, lift_endoscalar,
+    vec::{FixedVec, Len},
+};
 use udon::field::Field;
 
 use super::{
@@ -103,6 +106,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
             .chain(batch.commitments(current, builder.online_fq_commitments()))
+            .chain(builder.nested_online().commitments().iter().copied())
             .collect();
         assert_eq!(
             points.len(),
@@ -111,6 +115,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Inputs::from_walk(
             &points,
             [&left.online_fq_commitments, &right.online_fq_commitments],
+            FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         )
     }
 
@@ -238,6 +243,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             for (poly, commitment) in polys.into_iter().zip(commitments) {
                 acc.acc(poly, commitment);
             }
+            // Each distinct online polynomial enters the commitment fold
+            // once, independently of how many openings the quotient checks.
+            let online = builder.native_online();
+            for (poly, &point) in online.polynomials().iter().zip(online.commitments()) {
+                acc.acc(poly, point);
+            }
         }
 
         // Build the PointsStage input vector ([f.commitment, commitments..])
@@ -291,6 +302,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             poly.add_assign(evaluated);
         }
 
+        for evaluated in builder.nested_online().polynomials() {
+            poly.scale(beta);
+            poly.add_assign(evaluated);
+        }
         let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;
         // A child can carry a polynomial inconsistent with its cached point.

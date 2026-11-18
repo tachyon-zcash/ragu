@@ -137,18 +137,21 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
     /// a constant, this encoding also **constrains the suffix wire to differ
     /// from the [`Dummy`](crate::header::Dummy) suffix**, so that no
     /// step consuming a uniform-encoded header can present the suffix that
-    /// triggers the base case. See
-    /// [`is_dummy_input`](crate::internal::native::stages::preamble::ProofInputs::is_dummy_input).
+    /// triggers the base case (see
+    /// [`is_dummy_input`](crate::internal::native::stages::preamble::ProofInputs::is_dummy_input)),
+    /// **and from zero**, the linear coefficient of every non-step circuit's
+    /// instance, so that no such circuit can satisfy the application claim of
+    /// a child presenting it.
     ///
     /// The tradeoff: less efficient (requires emulation + serialization, plus
-    /// one gate for the suffix check) but achieves constraint uniformity across
-    /// different header types.
+    /// two gates for the suffix checks) but achieves constraint uniformity
+    /// across different header types.
     ///
     /// # Constraints
     ///
     /// `HEADER_SIZE` and the destination allocator's behavior and state determine
-    /// the emitted constraints, plus one multiplication gate and two constraints
-    /// for the suffix check. `H::encode` and `H::Output` serialization affect
+    /// the emitted constraints, plus two multiplication gates and four
+    /// constraints for the suffix checks. `H::encode` and `H::Output` serialization affect
     /// only the wireless pre-serialization step.
     ///
     /// # Errors
@@ -175,6 +178,11 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
         // base case.
         let trivial = Element::constant(dr, D::F::from(Suffix::internal(2).get()));
         raw[HEADER_SIZE - 1].sub(dr, &trivial).enforce_nonzero(dr)?;
+        // Pin it away from zero too. Every non-step circuit's instance has a
+        // zero linear coefficient, while an application instance's is its
+        // output header's suffix, so a zero suffix would let such a circuit
+        // satisfy the claim of a child whose output this step consumes.
+        raw[HEADER_SIZE - 1].clone().enforce_nonzero(dr)?;
 
         Ok(Encoded(EncodedInner::Uniform(raw)))
     }
@@ -285,6 +293,47 @@ mod tests {
         assert!(
             forged.is_err(),
             "a uniform-encoded header must not be able to carry the Dummy suffix"
+        );
+    }
+
+    /// A header at the zero suffix, the linear coefficient every non-step
+    /// circuit's instance carries.
+    struct ZeroSuffixHeader;
+
+    impl Header<Fp> for ZeroSuffixHeader {
+        const SUFFIX: Suffix = Suffix::internal(0);
+        type OnlinePolyCommit = (Padding, Padding);
+        type Data = ();
+        type Output = ();
+
+        fn encode<'dr, D: Driver<'dr, F = Fp>, A: Allocator<'dr, D>>(
+            _: &mut D,
+            _: &mut A,
+            _: DriverValue<D, Self::Data>,
+        ) -> Result<Bound<'dr, D, Self::Output>> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn uniform_encoding_cannot_carry_a_zero_suffix() {
+        // A child whose output suffix is zero could have its application claim
+        // satisfied by a non-step circuit, such as an endoscaling step, whose
+        // instance's linear coefficient is zero. `new_uniform` witnesses the
+        // suffix, so it must exclude zero itself.
+        //
+        // End to end, the constraint is pinned only by the fuse fixtures'
+        // digests and the patcher census: forging a zero-suffix child needs a
+        // child proof of a non-step circuit, which no test builds.
+        let mut dr = Emulator::execute();
+        let forged = Encoded::<_, ZeroSuffixHeader, HEADER_SIZE>::new_uniform(
+            &mut dr,
+            &mut (),
+            Always::maybe_just(|| ()),
+        );
+        assert!(
+            forged.is_err(),
+            "a uniform-encoded header must not be able to carry the zero suffix"
         );
     }
 

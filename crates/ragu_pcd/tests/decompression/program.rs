@@ -502,6 +502,9 @@ fn ab_layout_is_the_stage_polynomials() {
     type EqAffine = <Pasta as Cycle>::HostCurve;
     let g = Pasta::host_generators(crate::pasta::baked()).g();
     let witness = ab::Witness {
+        online_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
+            unreachable!("Standard has no native online auxiliary")
+        }),
         a: g[3],
         b: g[4],
         native_points_ab: g[5],

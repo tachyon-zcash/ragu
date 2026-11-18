@@ -40,7 +40,7 @@
 //! [`bind_endoscalar`](super::super::circuits::bind_endoscalar) pins to the
 //! step's own [`nested_p_commitment`] slot. That circuit also exports the
 //! $A_n$, $B_n$ and `registry_xy` points for the next parent and the decider.
-//! Every point stage's curve membership is enforced once, by `bind_endoscalar`.
+//! Every points stage's curve membership is enforced once, by `bind_endoscalar`.
 //!
 //! [`nested_p_commitment`]: super::super::unified::Output::nested_p_commitment
 
@@ -69,11 +69,17 @@ use crate::{
         endoscalar::{InputsLen, PointsWitness},
         nested::{
             self,
-            online::{BoundCommitmentsLen, FqPolysLen},
+            online::{BoundCommitmentsLen, FqEarlyPointsLen, FqPointsLen},
             pcs::NUM_CURRENT_POINTS,
         },
     },
-    profile::Profile,
+    profile::{
+        Profile,
+        online::{
+            Phase,
+            stages::{Nested, PhaseLen, Present, phase_points},
+        },
+    },
 };
 
 /// Length type for the walk's inputs, the initial point aside.
@@ -154,6 +160,8 @@ pub enum InputSource {
     RegistryXy,
     /// The step's own online Fq commitment, by index, in [`PreambleStage`].
     OnlineFq(usize),
+    /// An online auxiliary in its later commitment phase, at a phase-local index.
+    Auxiliary(Phase, usize),
 }
 
 /// The source of the walk's `i`-th input (the initial $F_n$ aside), in the
@@ -226,8 +234,15 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
     ];
     match i - 2 * num_child_points {
         j if j < NUM_CURRENT_POINTS => CURRENT[j],
-        j if j - NUM_CURRENT_POINTS < P::ONLINE_FQ_POLYS => {
-            InputSource::OnlineFq(j - NUM_CURRENT_POINTS)
+        j if j - NUM_CURRENT_POINTS < FqPointsLen::<P>::len() => {
+            let index = j - NUM_CURRENT_POINTS;
+            if index < FqEarlyPointsLen::<P>::len() {
+                InputSource::OnlineFq(index)
+            } else {
+                let index = index - P::ONLINE_FQ_POLYS;
+                let phase = P::NESTED_ONLINE.polynomials[index];
+                InputSource::Auxiliary(phase, index - P::NESTED_ONLINE.phase_range(phase).start)
+            }
         }
         _ => panic!("input {i} is past the walk"),
     }
@@ -255,6 +270,8 @@ pub struct ChildBindingWitness<C: Affine, P: Profile> {
 /// and binding circuit.
 #[derive(Clone)]
 pub struct BindingWitness<C: Affine, P: Profile> {
+    /// This step's nested online input stage, committed before w.
+    pub online_input: FixedVec<C, Present<P, Nested, 1>>,
     pub left: ChildBindingWitness<C, P>,
     pub right: ChildBindingWitness<C, P>,
 }
@@ -264,27 +281,33 @@ pub struct BindingWitness<C: Affine, P: Profile> {
 pub struct PreambleWitness<C: Affine, P: Profile> {
     pub points: FixedVec<C, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
-    pub online_fq: FixedVec<C, FqPolysLen<P>>,
+    pub online_fq: FixedVec<C, FqEarlyPointsLen<P>>,
 }
 
 /// Witness of [`RegistryWxStage`].
-#[derive(Clone, Copy)]
-pub struct RegistryWxWitness<C: Affine> {
+#[derive(Clone)]
+pub struct RegistryWxWitness<C: Affine, P: Profile> {
+    /// Nested online auxiliaries fixed at this boundary.
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 1>>,
     pub registry_wx0: C,
     pub registry_wx1: C,
 }
 
 /// Witness of [`AbStage`].
-#[derive(Clone, Copy)]
-pub struct AbWitness<C: Affine> {
+#[derive(Clone)]
+pub struct AbWitness<C: Affine, P: Profile> {
+    /// Nested online auxiliaries fixed at this boundary.
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 2>>,
     pub registry_wy: C,
     pub a: C,
     pub b: C,
 }
 
 /// Witness of [`FStage`].
-#[derive(Clone, Copy)]
-pub struct FWitness<C: Affine> {
+#[derive(Clone)]
+pub struct FWitness<C: Affine, P: Profile> {
+    /// Nested online auxiliaries fixed at this boundary.
+    pub online_points: FixedVec<C, PhaseLen<P, Nested, 3>>,
     pub registry_xy: C,
     pub f: C,
 }
@@ -328,12 +351,13 @@ impl<C: Affine, P: Profile> WalkWitness<C, P> {
 ///
 /// Panics if either child has other than [`num_child_points`] points or
 /// other than the profile's exported commitments, or if `online_fq` has
-/// other than [`Profile::ONLINE_FQ_POLYS`] points.
+/// other than [`FqEarlyPointsLen`] points.
 pub fn preamble_witnesses<C: Affine, P: Profile>(
     left: &[C],
     right: &[C],
     exported: [&[C]; 2],
     online_fq: &[C],
+    online_input: FixedVec<C, Present<P, Nested, 1>>,
 ) -> (BindingWitness<C, P>, PreambleWitness<C, P>) {
     let num_child_points = num_child_points::<P>();
     let nested_rx = nested::RxIndex::num::<P>();
@@ -363,6 +387,7 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
     points.extend(rest(right));
     (
         BindingWitness {
+            online_input,
             left: bound(left, exported[0]),
             right: bound(right, exported[1]),
         },
@@ -379,9 +404,9 @@ pub fn preamble_witnesses<C: Affine, P: Profile>(
 pub struct Inputs<C: Affine, P: Profile> {
     pub binding: BindingWitness<C, P>,
     pub preamble: PreambleWitness<C, P>,
-    pub registry_wx: RegistryWxWitness<C>,
-    pub ab: AbWitness<C>,
-    pub f: FWitness<C>,
+    pub registry_wx: RegistryWxWitness<C, P>,
+    pub ab: AbWitness<C, P>,
+    pub f: FWitness<C, P>,
 }
 
 impl<C: Affine, P: Profile> Inputs<C, P> {
@@ -393,7 +418,11 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
     /// # Panics
     ///
     /// Panics if `points.len() != NumPoints::<P>::len()`.
-    pub fn from_walk(points: &[C], exported: [&[C]; 2]) -> Self {
+    pub fn from_walk(
+        points: &[C],
+        exported: [&[C]; 2],
+        online_input: FixedVec<C, Present<P, Nested, 1>>,
+    ) -> Self {
         let num_child_points = num_child_points::<P>();
         assert_eq!(points.len(), NumPoints::<P>::len());
         let current = &points[1 + 2 * num_child_points..];
@@ -401,21 +430,31 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             &points[1..1 + num_child_points],
             &points[1 + num_child_points..1 + 2 * num_child_points],
             exported,
-            &current[NUM_CURRENT_POINTS..],
+            &current[NUM_CURRENT_POINTS..NUM_CURRENT_POINTS + FqEarlyPointsLen::<P>::len()],
+            online_input,
         );
         Self {
             binding,
             preamble,
             registry_wx: RegistryWxWitness {
+                online_points: phase_points::<P, Nested, 1, _>(
+                    &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
+                ),
                 registry_wx0: current[0],
                 registry_wx1: current[1],
             },
             ab: AbWitness {
+                online_points: phase_points::<P, Nested, 2, _>(
+                    &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
+                ),
                 registry_wy: current[2],
                 a: current[3],
                 b: current[4],
             },
             f: FWitness {
+                online_points: phase_points::<P, Nested, 3, _>(
+                    &current[NUM_CURRENT_POINTS + P::ONLINE_FQ_POLYS..],
+                ),
                 registry_xy: current[5],
                 f: points[0],
             },
@@ -444,6 +483,12 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::AbB => self.ab.b,
             InputSource::RegistryXy => self.f.registry_xy,
             InputSource::OnlineFq(j) => self.preamble.online_fq[j],
+            InputSource::Auxiliary(phase, j) => match phase {
+                Phase::BeforeW => unreachable!("early points use OnlineFq"),
+                Phase::BeforeY => self.registry_wx.online_points[j],
+                Phase::BeforeX => self.ab.online_points[j],
+                Phase::BeforeAlpha => self.f.online_points[j],
+            },
         }
     }
 
@@ -505,6 +550,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildBinding<'dr, 
 /// Output gadget of [`BindingStage`].
 #[derive(Gadget, Consistent)]
 pub struct Binding<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The nested online input-stage commitment absorbed before w.
+    #[ragu(gadget)]
+    pub online_input: FixedVec<Point<'dr, D, C>, Present<P, Nested, 1>>,
     #[ragu(gadget)]
     pub left: ChildBinding<'dr, D, C, P>,
     #[ragu(gadget)]
@@ -518,12 +566,15 @@ pub struct Preamble<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub points: FixedVec<Point<'dr, D, C>, ChildrenLen<P>>,
     /// The step's own online Fq commitments.
     #[ragu(gadget)]
-    pub online_fq: FixedVec<Point<'dr, D, C>, FqPolysLen<P>>,
+    pub online_fq: FixedVec<Point<'dr, D, C>, FqEarlyPointsLen<P>>,
 }
 
 /// Output gadget of [`RegistryWxStage`].
 #[derive(Gadget, Consistent)]
-pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// Nested online auxiliaries fixed at this boundary.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 1>>,
     #[ragu(gadget)]
     pub registry_wx0: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -532,7 +583,10 @@ pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 
 /// Output gadget of [`AbStage`].
 #[derive(Gadget, Consistent)]
-pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// Nested online auxiliaries fixed at this boundary.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 2>>,
     #[ragu(gadget)]
     pub registry_wy: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -543,7 +597,10 @@ pub struct Ab<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 
 /// Output gadget of [`FStage`].
 #[derive(Gadget, Consistent)]
-pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
+pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// Nested online auxiliaries fixed at this boundary.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Nested, 3>>,
     #[ragu(gadget)]
     pub registry_xy: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -572,9 +629,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> Walk<'dr, D, C, P>
 pub struct WalkInputs<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub binding: &'a Binding<'dr, D, C, P>,
     pub preamble: &'a Preamble<'dr, D, C, P>,
-    pub registry_wx: &'a RegistryWx<'dr, D, C>,
-    pub ab: &'a Ab<'dr, D, C>,
-    pub f: &'a F<'dr, D, C>,
+    pub registry_wx: &'a RegistryWx<'dr, D, C, P>,
+    pub ab: &'a Ab<'dr, D, C, P>,
+    pub f: &'a F<'dr, D, C, P>,
 }
 
 impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a, 'dr, D, C, P> {
@@ -605,6 +662,12 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
             InputSource::OnlineFq(j) => &self.preamble.online_fq[j],
+            InputSource::Auxiliary(phase, j) => match phase {
+                Phase::BeforeW => unreachable!("early points use OnlineFq"),
+                Phase::BeforeY => &self.registry_wx.online_points[j],
+                Phase::BeforeX => &self.ab.online_points[j],
+                Phase::BeforeAlpha => &self.f.online_points[j],
+            },
         }
     }
 }
@@ -614,7 +677,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
 macro_rules! points_stage {
     (
         $(#[$meta:meta])*
-        $Stage:ident, parent = $Parent:ty, witness = $Witness:ident, output = $Output:ident,
+        $Stage:ident, parent = $Parent:ty, witness = $Witness:ident, output = $Output:ident, phase = $phase:literal,
         { $($field:ident),+ $(,)? }
     ) => {
         $(#[$meta])*
@@ -623,12 +686,12 @@ macro_rules! points_stage {
 
         impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for $Stage<C, P> {
             type Parent = $Parent;
-            type Witness<'source> = &'source $Witness<C>;
-            type OutputKind = Kind![C::Base; $Output<'_, _, C>];
+            type Witness<'source> = &'source $Witness<C,P>;
+            type OutputKind = Kind![C::Base; $Output<'_, _, C,P>];
 
             fn values() -> usize {
                 // (x, y) per point.
-                2 * [$(stringify!($field)),+].len()
+                2 * ([$(stringify!($field)),+].len() + PhaseLen::<P,Nested,$phase>::len())
             }
 
             fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -640,6 +703,7 @@ macro_rules! points_stage {
                 Self: 'dr,
             {
                 Ok($Output {
+                    online_points: FixedVec::try_from_fn(|i| Point::alloc(dr,witness.as_ref().map(|w|w.online_points[i])))?,
                     $( $field: Point::alloc(dr, witness.as_ref().map(|w| w.$field))?, )+
                 })
             }
@@ -660,8 +724,10 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
 
     fn values() -> usize {
         // (x, y) per point, of each child: the walked points and the
-        // exported online Fq commitments.
+        // exported online Fq commitments; then this step's nested online
+        // input stage.
         4 * (num_child_bindings::<P>() + BoundCommitmentsLen::<P>::len())
+            + 2 * Present::<P, Nested, 1>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -673,6 +739,9 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for BindingStage
         Self: 'dr,
     {
         Ok(Binding {
+            online_input: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_input[i]))
+            })?,
             left: ChildBinding::alloc(dr, witness.as_ref().map(|w| &w.left))?,
             right: ChildBinding::alloc(dr, witness.as_ref().map(|w| &w.right))?,
         })
@@ -690,7 +759,7 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
     type OutputKind = Kind![C::Base; Preamble<'_, _, C, P>];
 
     fn values() -> usize {
-        2 * (num_children_points::<P>() + P::ONLINE_FQ_POLYS)
+        2 * (num_children_points::<P>() + FqEarlyPointsLen::<P>::len())
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -715,21 +784,21 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
 points_stage!(
     /// The nested registry's $m_n(w_n, x_{i,n}, Y)$ commitments, committed
     /// before $y$.
-    RegistryWxStage, parent = PreambleStage<C, P>, witness = RegistryWxWitness, output = RegistryWx,
+    RegistryWxStage, parent = PreambleStage<C, P>, witness = RegistryWxWitness, output = RegistryWx, phase = 1,
     { registry_wx0, registry_wx1 }
 );
 
 points_stage!(
     /// The nested registry's $m_n(w_n, X, y_n)$ commitment and the nested
     /// accumulator's $A_n$ and $B_n$, committed before $x$.
-    AbStage, parent = RegistryWxStage<C, P>, witness = AbWitness, output = Ab,
+    AbStage, parent = RegistryWxStage<C, P>, witness = AbWitness, output = Ab, phase = 2,
     { registry_wy, a, b }
 );
 
 points_stage!(
     /// The nested registry's $m_n(W, x_n, y_n)$ commitment and the nested
     /// quotient's $F_n$, the walk's initial point, committed before $u$.
-    FStage, parent = AbStage<C, P>, witness = FWitness, output = F,
+    FStage, parent = AbStage<C, P>, witness = FWitness, output = F, phase = 3,
     { registry_xy, f }
 );
 
@@ -820,7 +889,11 @@ mod tests {
         // The children's exported online Fq commitments are held beside
         // the walk's points and are not among them.
         let exported = alloc::vec![points[0]; BoundCommitmentsLen::<P>::len()];
-        let inputs = Inputs::<C, P>::from_walk(&points, [&exported, &exported]);
+        let inputs = Inputs::<C, P>::from_walk(
+            &points,
+            [&exported, &exported],
+            FixedVec::from_fn(|_| points[0]),
+        );
         assert_eq!(inputs.walk(), points);
 
         let num_inputs = NumInputs::<P>::len();
@@ -849,7 +922,7 @@ mod tests {
                 }
                 InputSource::OnlineFq(j) => {
                     assert_eq!(j, online_fq, "online Fq commitments out of slot order");
-                    assert_eq!(i, num_inputs - P::ONLINE_FQ_POLYS + j);
+                    assert_eq!(i, num_inputs - FqPointsLen::<P>::len() + j);
                     // Input `i` is point `1 + i`: the initial point is first.
                     assert_eq!(inputs.preamble.online_fq[j], points[1 + i]);
                     online_fq += 1;
@@ -859,7 +932,7 @@ mod tests {
         }
         assert_eq!(bindings, 2 * num_child_bindings::<P>());
         assert!(children.iter().all(|&c| c));
-        assert_eq!(online_fq, P::ONLINE_FQ_POLYS);
+        assert_eq!(online_fq, FqPointsLen::<P>::len());
     }
 
     #[test]

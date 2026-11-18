@@ -312,7 +312,6 @@ mod tests {
 
     use super::*;
     use crate::{
-        header::NUM_ONLINE_FP_POLYS,
         internal::native::online::NUM_ONLINE_FP_QUERIES,
         profile::{Shape, Standard},
     };
@@ -379,19 +378,19 @@ mod tests {
                 online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
+                source_polynomials: 0,
             }
         );
     }
 
     #[test]
     fn encoded_length_is_a_function_of_profile_rank_and_header_size() {
-        // Every polynomial of the shape and the step's own online
-        // polynomials, with `2^rank` coefficients each; a commitment per
+        // Every polynomial of the shape has `2^rank` coefficients, with a commitment per
         // polynomial plus the nested challenges partial; two headers; the
         // online openings; the bridge alpha and nine challenges; one
         // circuit index. The envelope adds 28 bytes.
         fn payload<R: Rank, const H: usize>() -> usize {
-            let polynomials = Shape::of::<Standard>().polynomials() + NUM_ONLINE_FP_POLYS;
+            let polynomials = Shape::of::<Standard>().polynomials();
             polynomials * R::num_coeffs() * 32
                 + (polynomials + 1) * 32
                 + 2 * H * 32

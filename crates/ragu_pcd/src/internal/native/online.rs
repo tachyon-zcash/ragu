@@ -22,7 +22,7 @@
 //! header's fields are; Ragu proves only that every opening is of the
 //! committed polynomial.
 //!
-//! The commitments live on the nested side, in the `preamble` bridge stage,
+//! The commitments sit in the `preamble` bridge stage,
 //! and the nested walk folds them into $P$ with the rest of the native
 //! batch; the polynomials themselves are native, evaluated at $u$ in the
 //! `eval` stage and folded into $p$ in the same order. Each slot is opened
@@ -30,6 +30,12 @@
 //! polynomial's value there when the step did not; the `query` stage holds
 //! the openings and `compute_v` folds them into the batch and exports them
 //! in its bridge instance for the parent.
+//!
+//! The profile's online batch, [`Profile::NATIVE_ONLINE`], adds online
+//! polynomials of the step's own on this field. The fuse begins it from the
+//! profile's inputs before $w$, supplies its polynomials at each declared
+//! deadline, and commits its input, query and evaluation stages. A profile
+//! that declares no batch supplies and commits nothing.
 
 use alloc::{vec, vec::Vec};
 
@@ -47,10 +53,18 @@ use ragu_primitives::{
     io::Write,
     vec::{ConstLen, FixedVec},
 };
+use rand::CryptoRng;
 use udon::field::Field;
 
-use crate::Proof;
 pub(crate) use crate::header::NUM_ONLINE_FP_POLYS;
+use crate::{
+    Application, Proof, SelectableBackend,
+    profile::{
+        Profile, ProfiledCycle,
+        online::{Phase, prepared::PreparationChallenges, prover::State},
+    },
+    proof::ProofBuilder,
+};
 
 /// The number of online polynomials a step opens across its input and output proofs.
 pub const NUM_ONLINE_FP_QUERIES: usize = 3 * NUM_ONLINE_FP_POLYS;
@@ -153,6 +167,115 @@ pub(crate) fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
             y: Element::alloc(dr, allocator, queries.as_ref().map(|q| q[i].y))?,
         })
     })
+}
+
+impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'_, C, R, HEADER_SIZE, B>
+{
+    /// Begins the step's native online batch from the profile's inputs,
+    /// with the children's $x$ and $y$ in the slots a mesh inherits them at,
+    /// and supplies its polynomials fixed before $w$.
+    pub(crate) fn begin_native_online(
+        &self,
+        children: [&Proof<C, R>; 2],
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        builder.set_native_online(State::begin(
+            C::Profile::native_online_inputs::<C::Base, R, B>(&self.context)?,
+            || Ok(children.map(|child| [child.x(), child.y()])),
+            self.native_source.as_ref(),
+        )?);
+        self.supply_native_online(
+            Phase::BeforeW,
+            PreparationChallenges::default(),
+            Some(children),
+            builder,
+        )
+    }
+
+    /// Supplies the native polynomials fixed at `phase`, a deadline after
+    /// $w$, under the challenges drawn before it.
+    pub(crate) fn prepare_native_online(
+        &self,
+        phase: Phase,
+        challenges: PreparationChallenges<C::CircuitField>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        self.supply_native_online(phase, challenges, None, builder)
+    }
+
+    /// Supplies the polynomials the profile and the mesh fix at `phase`,
+    /// before $w$ with the polynomials `children` hand up.
+    fn supply_native_online(
+        &self,
+        phase: Phase,
+        challenges: PreparationChallenges<C::CircuitField>,
+        children: Option<[&Proof<C, R>; 2]>,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let supplied = C::Profile::native_online_polynomials::<C::Base, R, B>(
+            &self.context,
+            phase,
+            builder.native_online().early_values(),
+            challenges,
+        )?;
+        builder.native_online_mut().prepare::<B, _>(
+            phase,
+            supplied,
+            challenges,
+            self.native_source.as_ref(),
+            children.map(|children| children.map(|child| &child.native_source_out[..])),
+            C::host_generators(self.params),
+        )
+    }
+
+    /// Commits the native input stage, which holds the nested batch's
+    /// commitments fixed before $w$.
+    pub(crate) fn commit_native_online_inputs<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let foreign = builder.nested_online().coordinates()?;
+        builder.native_online_mut().commit_inputs::<B, _, _>(
+            foreign,
+            C::host_generators(self.params),
+            rng,
+        )
+    }
+
+    /// Takes the profile's witness query points and commits the native query
+    /// stage, after $x$ and before $\alpha$.
+    pub(crate) fn commit_native_online_query<RNG: CryptoRng>(
+        &self,
+        challenges: PreparationChallenges<C::CircuitField>,
+        rng: &mut RNG,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        let points = C::Profile::native_online_points::<C::Base, R, B>(
+            &self.context,
+            builder.native_online().early_values(),
+            challenges,
+        )?;
+        builder.native_online_mut().commit_query::<B, _, _>(
+            points,
+            challenges,
+            C::host_generators(self.params),
+            rng,
+        )
+    }
+
+    /// Commits the native evaluation stage at `u`, before `pre_beta`.
+    pub(crate) fn commit_native_online_eval<RNG: CryptoRng>(
+        &self,
+        u: C::CircuitField,
+        rng: &mut RNG,
+        builder: &mut ProofBuilder<'_, C, R, B>,
+    ) -> Result<()> {
+        builder
+            .native_online_mut()
+            .commit_eval::<B, _, _>(u, C::host_generators(self.params), rng)
+    }
 }
 
 #[cfg(test)]

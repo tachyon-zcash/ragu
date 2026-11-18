@@ -96,12 +96,16 @@ restricted in the number of constraints they emit to avoid overlapping this
 term. This so-called [registry constraint](../extensions/registry.md) is
 trivially satisfied for all values of $\color{#7e22ce}{\kappa}$, since $\v{c}_0
 = 0$ anyway. In practice, $\color{#7e22ce}{\kappa}$ is the public registry
-binding tag. The temporary registry-collision workaround accepts it as a setup
-parameter, sampled after the complete pre-keyed system description has been
-fixed and publicly committed; see
+binding tag: a hash of every wiring polynomial in the registry, written out as
+its monomials, which the registry derives when it is finalized; see
 [Registry Tags](../../guide/configuration.md#registry-tags). Its purpose is to
-make non-trivial evaluations of $s$ unpredictable even to someone who chooses
-the circuits.
+keep whoever chooses the circuits from adapting them to challenges already
+derived: any change to the circuits' wiring polynomials changes
+$\color{#7e22ce}{\kappa}$, and with it this coefficient of every wiring
+polynomial. $\color{#7e22ce}{\kappa}$ is public, so the circuit author can
+compute it too; the `Tag` documentation in `ragu_circuits::registry` bounds
+what trying many circuits gains, and states what the tag trusts the circuit
+code to do.
 
 [^conventionally]: There is nothing preventing the roles of $\v{a}_0$ and
     $\v{b}_0$ from being swapped, since neither wire is actually constrained in

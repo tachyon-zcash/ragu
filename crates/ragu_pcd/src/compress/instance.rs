@@ -105,6 +105,22 @@ pub(crate) struct Instance<C: Cycle> {
     pub v: C::CircuitField,
     pub nested_c: C::ScalarField,
     pub nested_v: C::ScalarField,
+    /// The nested source mesh's coordinates and shared intersection values,
+    /// empty without a nested mesh.
+    pub nested_mesh_claims: Vec<C::ScalarField>,
+    /// The nested helper's quotient and evaluation sums, empty when the
+    /// nested online batch is inactive.
+    pub nested_online_fold: Vec<C::ScalarField>,
+    /// The native source mesh's coordinates and shared intersection values,
+    /// empty without a native mesh.
+    pub native_mesh_claims: Vec<C::CircuitField>,
+    /// The native helper's quotient and evaluation sums, empty when the
+    /// native online batch is inactive.
+    pub native_online_fold: Vec<C::CircuitField>,
+    /// The online points, initial and auxiliary, exported by bind_endoscalar.
+    pub nested_online_commitments: Vec<C::NestedCurve>,
+    /// Common claim targets for the actual native online walk points.
+    pub native_online_commitments: Vec<C::HostCurve>,
 
     /// The wires the decider reads off the preamble and eval stages.
     pub left: Child<C::CircuitField>,
@@ -229,6 +245,12 @@ impl<C: ProfiledCycle> Instance<C> {
             v: proof.v(),
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
+            nested_mesh_claims: proof.nested_mesh_claims.clone(),
+            nested_online_fold: proof.nested_online_fold.clone(),
+            native_mesh_claims: proof.native_mesh_claims.clone(),
+            native_online_fold: proof.native_online_fold.clone(),
+            nested_online_commitments: proof.nested_online_commitments.clone(),
+            native_online_commitments: proof.native_online_commitments.clone(),
             left: Child {
                 x: lx,
                 y: ly,
@@ -278,6 +300,13 @@ impl<C: ProfiledCycle> Instance<C> {
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
         let mut host = transcript.host();
+        for &sum in self
+            .native_mesh_claims
+            .iter()
+            .chain(&self.native_online_fold)
+        {
+            host.write_scalar(sum)?;
+        }
         host.write_scalar(self.circuit_id.omega_j())?;
         for &element in self.left_header.iter().chain(&self.right_header) {
             host.write_scalar(element)?;
@@ -310,6 +339,12 @@ impl<C: ProfiledCycle> Instance<C> {
             host.write_scalar(scalar)?;
         }
 
+        // These coordinates are also the bind_endoscalar common claim target.
+        for &point in &self.nested_online_commitments {
+            for coordinate in coordinates(point)? {
+                host.write_scalar(coordinate)?;
+            }
+        }
         let mut nested = transcript.nested();
         for &point in self
             .nested
@@ -339,6 +374,20 @@ impl<C: ProfiledCycle> Instance<C> {
         .chain(self.online_fq_openings.iter().copied())
         {
             nested.write_scalar(scalar)?;
+        }
+        // The same coordinates form the nested compute-v target and the
+        // nested helper's foreign commitment exports.
+        for &point in &self.native_online_commitments {
+            for coordinate in coordinates(point)? {
+                transcript.write_scalar_limbs(coordinate)?;
+            }
+        }
+        for &scalar in self
+            .nested_mesh_claims
+            .iter()
+            .chain(&self.nested_online_fold)
+        {
+            transcript.write_scalar_limbs(scalar)?;
         }
         Ok(())
     }
@@ -482,6 +531,9 @@ impl<C: ProfiledCycle> Instance<C> {
             |index| self.nested_commitment(nested::RxComponent::Rx(index)),
             |i| self.online_fq_commitments[i],
         );
+        let nested_online_stages = ky::nested_online_stages::<C::Profile, _>(|index| {
+            self.nested_commitment(nested::RxComponent::Rx(index))
+        });
         let native = NativeKy {
             c: Some(self.c),
             ..ky::native_ky_of::<C, HEADER_SIZE>(
@@ -494,6 +546,10 @@ impl<C: ProfiledCycle> Instance<C> {
                     unified: &unified,
                     nested_bound: &nested_bound,
                     online_fq: &self.online_fq_commitments,
+                    nested_online_stages: &nested_online_stages,
+                    nested_online_commitments: &self.nested_online_commitments,
+                    native_online_fold: &self.native_online_fold,
+                    native_mesh_claims: &self.native_mesh_claims,
                 },
                 y,
             )?
@@ -502,14 +558,22 @@ impl<C: ProfiledCycle> Instance<C> {
             |index| self.native_commitment(native::RxComponent::Rx(index)),
             |slot| self.online_commitments[slot],
         );
+        let (compute_v, online_helper) = ky::nested_online_ky_of::<C>(
+            &self.nested_unified(challenges)?,
+            &self.online_fq_openings,
+            &ky::nested_online_values::<C>(challenges, &self.nested_online_fold)?,
+            &ky::native_online_stages::<C::Profile, _>(|index| {
+                self.native_commitment(native::RxComponent::Rx(index))
+            }),
+            &self.native_online_commitments,
+            &self.nested_mesh_claims,
+            nested_y,
+        )?;
         let nested = NestedKy {
+            compute_v,
+            online_helper,
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
-            compute_v: ky::nested_compute_v_ky_of::<C>(
-                &self.nested_unified(challenges)?,
-                &self.online_fq_openings,
-                nested_y,
-            )?,
             binding: ky::binding_ky_of(&native_bound, &self.online_fq_openings, nested_y)?,
         };
         Ok((native, nested))
@@ -540,6 +604,12 @@ impl<C: ProfiledCycle> Instance<C> {
         let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested_stages::ab::Witness {
+                online_points: crate::profile::online::stages::phase_points::<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    2,
+                    _,
+                >(&self.native_online_commitments),
                 a: self.native_commitment(native::RxComponent::AbA),
                 b: self.native_commitment(native::RxComponent::AbB),
                 native_points_ab: self

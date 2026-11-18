@@ -11,7 +11,7 @@
 //!
 //! A profile's statement targets come from its headers; its binding targets
 //! come from the extension commitments in the points binding stage. That
-//! stage is loaded only when the profile declares a native binding circuit.
+//! stage is loaded when a native binding or nested online batch needs it.
 //! Its point contracts remain the responsibility of [`super::bind_endoscalar`].
 //!
 //! The inner quotient is fixed before mu is derived, and the outer quotient
@@ -43,7 +43,7 @@
 //! fuse has its child claims enforced — including one whose children carry the
 //! unit `()` header. See [`is_dummy_input`] for how that binding is
 //! established, and for the internal [`Rerandomize`] step, whose suffix is a
-//! witness wire constrained away from `Dummy`.
+//! witness wire constrained away from `Dummy` and from zero.
 //!
 //! [`Dummy`]: crate::header::Dummy
 //! [`Bootstrap`]: crate::step::internal::bootstrap::Bootstrap
@@ -159,10 +159,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     {
         type Binding<C, P> = super::super::stages::points::BindingStage<C, P>;
         // The binding stage is loaded, and so in the circuit's claim, only
-        // for a profile whose native extension binds: the circuit reads
-        // its extension points for the binding k(y) and nothing else.
-        let extension = C::Profile::native_extension();
-        let (binding, builder) = if extension.binding.is_some() {
+        // when the profile needs extension targets: user bindings or online
+        // stage copies. Both use the actual walked child commitments.
+        let extension = crate::profile::native_extension::<C::Profile>();
+        let (binding, builder) = if extension.binding.is_some()
+            || !C::Profile::NESTED_ONLINE.is_empty()
+        {
             let (binding, builder) = builder.add_stage::<Binding<C::NestedCurve, C::Profile>>()?;
             (Some(binding), builder)
         } else {
@@ -204,8 +206,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // The compute_v bridge k(y) values, over the same unified and online
         // wires: what ties the openings each child's batch verified to the
         // openings its application circuit's instance will be held to.
-        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y)?;
-        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y)?;
+        let (left_online, right_online) = if C::Profile::NESTED_ONLINE.is_empty() {
+            (&[][..], &[][..])
+        } else {
+            let binding = binding.as_ref().expect("online stage targets load binding");
+            (&binding.left.extension[..3], &binding.right.extension[..3])
+        };
+        let left_compute_v_ky = preamble.left.compute_v_bridge_ky(dr, &y, left_online)?;
+        let right_compute_v_ky = preamble.right.compute_v_bridge_ky(dr, &y, right_online)?;
         left_compute_v_ky.enforce_equal(dr, &outer_error.left.compute_v_bridge)?;
         right_compute_v_ky.enforce_equal(dr, &outer_error.right.compute_v_bridge)?;
 
@@ -261,30 +269,38 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         // The children's `bind_endoscalar` claims take the same exported
         // commitments after the unified instance, so the point a child's
         // binding circuit exposes is the one its walk took from its
-        // preamble stage. A profile that exports none keeps the unified
-        // k(y) for them.
-        let bind_endoscalar = match &binding {
-            Some(binding) => [
-                preamble
-                    .left
-                    .bind_endoscalar_ky(dr, &y, &binding.left.online_fq)?,
-                preamble
-                    .right
-                    .bind_endoscalar_ky(dr, &y, &binding.right.online_fq)?,
-            ],
-            None => [None, None],
+        // preamble stage, then the actual nested online walk points. A
+        // profile that exports neither keeps the unified k(y) for them.
+        let (left_online_fq, right_online_fq) = match &binding {
+            Some(binding) => (&binding.left.online_fq[..], &binding.right.online_fq[..]),
+            None => (&[][..], &[][..]),
         };
+        let left_bind_endoscalar =
+            preamble
+                .left
+                .bind_endoscalar_ky(dr, &y, &outer_error.left.unified, left_online_fq)?;
+        let right_bind_endoscalar = preamble.right.bind_endoscalar_ky(
+            dr,
+            &y,
+            &outer_error.right.unified,
+            right_online_fq,
+        )?;
+        let left_online_helper = preamble.left.online_helper_ky(dr, &y)?;
+        let right_online_helper = preamble.right.online_helper_ky(dr, &y)?;
         let ky = TwoProofKySource::new(
             dr,
             preamble.left.unified.c.clone(),
             preamble.right.unified.c.clone(),
             &outer_error.left,
             &outer_error.right,
-            bind_endoscalar,
             left_statement,
             right_statement,
             left_binding,
             right_binding,
+            left_bind_endoscalar,
+            right_bind_endoscalar,
+            left_online_helper,
+            right_online_helper,
         );
         let mut ky = ky_values::<C::Profile, _>(&ky);
 

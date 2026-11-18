@@ -48,7 +48,7 @@ pub(crate) const NUM_INTERNAL_STEPS: usize = 2;
 /// decompression step for a profile whose native extension has a statement
 /// circuit.
 pub(crate) fn num_internal_steps<P: Profile>() -> usize {
-    NUM_INTERNAL_STEPS + usize::from(P::native_extension().statement.is_some())
+    NUM_INTERNAL_STEPS + usize::from(crate::profile::native_extension::<P>().statement.is_some())
 }
 
 impl InternalStepIndex {

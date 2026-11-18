@@ -2,7 +2,7 @@
 //!
 //! This computes the multi-quotient polynomial $f(X)$ that acts as a witness
 //! for the claimed evaluations in the `query` stage. This also constructs the
-//! bridge for committing to the polynomial.
+//! `f` bridge stage, which carries the polynomial's commitment.
 //!
 //! Each `udon::polynomial::divide_linear_rev` call below produces the coefficients of $(p\_i(X) - v\_i)
 //! / (X - x\_i)$ for a single query. The static query prefix is defined by
@@ -93,7 +93,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
             let challenges = self.nested_challenges(w, x, y, z, left, right)?;
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
-            self.compute_nested_f(&batch, challenges, alpha)
+            self.compute_nested_f(&batch, challenges, alpha, builder)?
         };
         self.commit_native_points_f(
             rng,
@@ -244,7 +244,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = builder.native_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
@@ -257,7 +258,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         batch: &pcs::Batch<'_, C, R>,
         challenges: pcs::Challenges<C::ScalarField>,
         alpha: C::ScalarField,
-    ) -> NestedF<C, R> {
+        builder: &ProofBuilder<'_, C, R, B>,
+    ) -> Result<NestedF<C, R>> {
         use udon::polynomial::divide_linear_rev;
 
         let iters: Vec<_> = batch
@@ -265,10 +267,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
             .collect();
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = builder.nested_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
-        NestedF { poly, commitment }
+        Ok(NestedF { poly, commitment })
     }
 
     /// The nested batch this step opens, over the nested polynomials the
@@ -314,23 +317,4 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right: pcs::ChildChallenges::of(right)?,
         })
     }
-}
-
-/// Horner-batches quotient coefficient streams with $\alpha$: the first
-/// stream receives the highest power.
-fn alpha_batched_quotients<F: Field, R: Rank>(
-    mut iters: Vec<impl Iterator<Item = F>>,
-    alpha: F,
-) -> sparse::Polynomial<F, R> {
-    let mut coeffs = Vec::with_capacity(R::num_coeffs());
-    let (first, rest) = iters.split_first_mut().unwrap();
-    for val in first.by_ref() {
-        let c = rest
-            .iter_mut()
-            .fold(val, |acc, iter| acc.mul_add(&alpha, &iter.next().unwrap()));
-        coeffs.push(c);
-    }
-    coeffs.reverse();
-
-    sparse::Polynomial::from_coeffs(coeffs)
 }

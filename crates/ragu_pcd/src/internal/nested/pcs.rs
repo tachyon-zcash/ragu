@@ -242,9 +242,8 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
             // The step's own online Fq polynomials, at the point the
             // `query` stage's values are taken at.
             .chain(
-                self.online_fq
-                    .iter()
-                    .map(move |poly| (poly, online_fq_point)),
+                super::online::openings(self.online_fq.len())
+                    .map(move |opening| (&self.online_fq[opening.polynomial], online_fq_point)),
             )
     }
 

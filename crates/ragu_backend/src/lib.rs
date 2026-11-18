@@ -18,6 +18,18 @@ use ragu_circuits::{
 use ragu_core::FixedGenerators;
 use udon::{curve::Affine, fft::Domain, field::Field};
 
+/// Scalar evaluation of a registry, independent of its polynomial rank.
+pub trait RegistryEvaluation<F: Field> {
+    /// Evaluates the registry polynomial at $(w, x, y)$.
+    fn wxy(&self, w: F, x: F, y: F) -> F;
+}
+
+impl<F: Field, R: Rank> RegistryEvaluation<F> for Registry<'_, F, R> {
+    fn wxy(&self, w: F, x: F, y: F) -> F {
+        Registry::wxy(self, w, x, y)
+    }
+}
+
 /// A statically dispatched implementation of Ragu's computational operations.
 ///
 /// Every method has a correctness-first default. Implementations may override
@@ -187,7 +199,12 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
     }
 
     /// Evaluates the registry polynomial at $(w, x, y)$.
-    fn registry_wxy<F: Field, R: Rank>(registry: &Registry<'_, F, R>, w: F, x: F, y: F) -> F {
+    fn registry_wxy<F: Field>(
+        registry: &(impl RegistryEvaluation<F> + ?Sized),
+        w: F,
+        x: F,
+        y: F,
+    ) -> F {
         registry.wxy(w, x, y)
     }
 

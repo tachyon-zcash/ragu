@@ -211,6 +211,28 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) circuit_id: CircuitIndex,
     pub(crate) left_header: Vec<C::CircuitField>,
     pub(crate) right_header: Vec<C::CircuitField>,
+    /// The nested source mesh's coordinates and shared intersection values,
+    /// empty without a nested mesh.
+    pub(crate) nested_mesh_claims: Vec<C::ScalarField>,
+    /// The nested helper's quotient and evaluation sums, empty when the
+    /// nested online batch is inactive.
+    pub(crate) nested_online_fold: Vec<C::ScalarField>,
+    /// The native source mesh's coordinates and shared intersection values,
+    /// empty without a native mesh.
+    pub(crate) native_mesh_claims: Vec<C::CircuitField>,
+    /// The native helper's quotient and evaluation sums, empty when the
+    /// native online batch is inactive.
+    pub(crate) native_online_fold: Vec<C::CircuitField>,
+    /// Common claim targets for the actual nested online walk points.
+    pub(crate) nested_online_commitments: Vec<C::NestedCurve>,
+    /// Common claim targets for the actual native online walk points.
+    pub(crate) native_online_commitments: Vec<C::HostCurve>,
+
+    /// The retained source-registry restriction for the next parent, if declared.
+    pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
+
+    /// The retained source-registry restriction for the next parent, if declared.
+    pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
 
     // Native rx polynomials (CircuitField, HostCurve commitment)
     pub(crate) native_application_rx: sparse::Polynomial<C::CircuitField, R>,
@@ -401,6 +423,11 @@ pub struct Proof<C: Cycle, R: Rank> {
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// The helper's public values, deriving challenges from the proof transcript.
+    pub(crate) fn nested_online_values(&self) -> Result<Vec<C::ScalarField>> {
+        crate::internal::ky::nested_online_values::<C>(&self.challenges(), &self.nested_online_fold)
+    }
+
     /// Whether the headers, polynomial vectors and commitment-cache vectors
     /// have exactly the receiving profile's shape. Check before traversing
     /// components so that missing entries cannot panic and trailing ones
@@ -408,11 +435,31 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     pub(crate) fn well_formed<const HEADER_SIZE: usize>(&self) -> bool {
         let native_steps = native::NumSteps::<C::Profile>::len();
         let nested_steps = nested::NumSteps::<C::Profile>::len();
-        let native_extension = C::Profile::native_extension();
-        let nested_extension = C::Profile::nested_extension();
+        let native_extension = crate::profile::native_extension::<C::Profile>();
+        let nested_extension = crate::profile::nested_extension::<C::Profile>();
 
         self.left_header.len() == HEADER_SIZE
             && self.right_header.len() == HEADER_SIZE
+            && self.native_source_out.len() == usize::from(C::Profile::NATIVE_MESH.is_some())
+            && self.nested_source_out.len() == usize::from(C::Profile::NESTED_MESH.is_some())
+            && self.native_mesh_claims.len()
+                == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.nested_mesh_claims.len()
+                == C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.native_online_commitments.len() == C::Profile::NATIVE_ONLINE.polynomials.len()
+            && self.nested_online_commitments.len() == C::Profile::NESTED_ONLINE.polynomials.len()
+            && self.native_online_fold.len()
+                == <crate::profile::online::stages::Present<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    2,
+                > as ragu_primitives::vec::Len>::len()
+            && self.nested_online_fold.len()
+                == crate::profile::online::stages::Present::<
+                    C::Profile,
+                    crate::profile::online::stages::Nested,
+                    2,
+                >::len()
             && self.native_bind_challenges_rxs.len() == native::NUM_BINDERS
             && self.native_bind_challenges_commitments.len() == native::NUM_BINDERS
             && self.native_endoscaling_step_rxs.len() == native_steps
@@ -977,7 +1024,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         // The step's own online Fq commitments, which the preamble stage
         // holds.
-        let online_fq = builder.online_fq_commitments();
+        let mut online_fq = builder.online_fq_commitments().to_vec();
+        online_fq.extend_from_slice(&builder.nested_online_phase::<0>());
+        let online_fq = &online_fq;
 
         // Test hook: this runs on the thread that calls `fuse`, outside its
         // parallel jobs, as the hook's thread-local requires.
@@ -989,6 +1038,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &nested::pcs::child_commitments(right).collect::<Vec<_>>(),
             [&left.online_fq_commitments, &right.online_fq_commitments],
             online_fq,
+            FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         );
         builder.set_native_points_binding_rx(<native_points::BindingStage<
             C::NestedCurve,
@@ -1018,6 +1068,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let witness = native_points::RegistryWxWitness {
+            online_points: builder.nested_online_phase::<1>(),
             registry_wx0,
             registry_wx1,
         };
@@ -1042,7 +1093,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         b: C::NestedCurve,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let witness = native_points::AbWitness { registry_wy, a, b };
+        let witness = native_points::AbWitness {
+            registry_wy,
+            a,
+            b,
+            online_points: builder.nested_online_phase::<2>(),
+        };
         builder.set_native_points_ab_rx(<native_points::AbStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,
@@ -1063,7 +1119,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         f: C::NestedCurve,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
-        let witness = native_points::FWitness { registry_xy, f };
+        let witness = native_points::FWitness {
+            registry_xy,
+            f,
+            online_points: builder.nested_online_phase::<3>(),
+        };
         builder.set_native_points_f_rx(<native_points::FStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,
@@ -1244,12 +1304,69 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             beta: beta_lift[0],
         };
 
+        // Every online slot the mesh leaves holds the padding polynomial, the
+        // constant one, as the online slots do, so no commitment is the
+        // identity.
+        let native_online_polynomials = if let Some(mesh) = C::Profile::NATIVE_MESH {
+            mesh.dummy_polynomials(
+                C::Profile::NATIVE_ONLINE,
+                self.native_source
+                    .as_ref()
+                    .expect("source captured at setup"),
+                C::CircuitField::ONE,
+            )
+            .expect("source rank checked at setup")
+        } else {
+            vec![
+                online::padding::<C::CircuitField, R>();
+                C::Profile::NATIVE_ONLINE.polynomials.len()
+            ]
+        };
+        let native_online_commitments: Vec<_> = native_online_polynomials
+            .iter()
+            .map(|p| B::sparse_commit_to_affine(p, C::host_generators(self.params)))
+            .collect();
+        let nested_online_polynomials = if let Some(mesh) = C::Profile::NESTED_MESH {
+            mesh.dummy_polynomials(
+                C::Profile::NESTED_ONLINE,
+                self.nested_source
+                    .as_ref()
+                    .expect("source captured at setup"),
+                nested_one,
+            )
+            .expect("source rank checked at setup")
+        } else {
+            vec![
+                online::padding::<C::ScalarField, R>();
+                C::Profile::NESTED_ONLINE.polynomials.len()
+            ]
+        };
+        let nested_online_commitments: Vec<_> = nested_online_polynomials
+            .iter()
+            .map(|p| B::sparse_commit_to_affine(p, C::nested_generators(self.params)))
+            .collect();
         let mut builder = ProofBuilder::<C, R, B>::new(self.params, C::ScalarField::ONE);
+        // Bootstrap bypasses the synthetic child's circuit claims, so it has
+        // no online batch: the builder takes its commitments and outgoing
+        // source polynomials from here.
+        builder.dummy_native_online_commitments = Some(native_online_commitments.clone());
+        if let Some(mesh) = C::Profile::NATIVE_MESH {
+            builder.native_source_out = vec![native_online_polynomials[mesh.outgoing].clone()];
+        }
+        builder.dummy_nested_online_commitments = Some(nested_online_commitments.clone());
+        if let Some(mesh) = C::Profile::NESTED_MESH {
+            builder.nested_source_out = vec![nested_online_polynomials[mesh.outgoing].clone()];
+        }
 
         builder.set_circuit_id(CircuitIndex::new(0));
 
         builder.set_left_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
         builder.set_right_header(vec![C::CircuitField::ZERO; HEADER_SIZE]);
+
+        let extension = crate::profile::nested_extension::<C::Profile>();
+        builder
+            .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
+        builder.set_nested_extension_stage_rxs(vec![ones_nested.clone(); extension.stages]);
 
         // Native rx polynomials (all trivial ones)
         builder.set_native_application_rx(ones_host.clone());
@@ -1293,7 +1410,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder.set_native_bind_endoscalar_rx(ones_host.clone());
         // The dummy carries the profile's extension polynomials as it does
         // the fuse's own circuits', as all-ones traces.
-        let extension = C::Profile::native_extension();
+        let extension = crate::profile::native_extension::<C::Profile>();
         builder.set_native_extension_circuit_rxs(vec![ones_host.clone(); extension.circuits.len()]);
         builder.set_native_extension_stage_rxs(vec![ones_host.clone(); extension.stages]);
 
@@ -1331,6 +1448,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             let nested_commitment =
                 B::sparse_commit_to_affine(&ones_nested, C::nested_generators(self.params));
             let registry_xy_commitment = builder.nested_registry_xy_commitment();
+
             let mut points = Vec::with_capacity(native::NumPoints::<C::Profile>::len());
             let mut polys: Vec<&sparse::Polynomial<C::ScalarField, R>> =
                 Vec::with_capacity(native::NumPoints::<C::Profile>::len());
@@ -1362,11 +1480,21 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             {
                 push(commitment, poly); // the step's own online Fq polynomial
             }
+            for (poly, &point) in nested_online_polynomials
+                .iter()
+                .zip(&nested_online_commitments)
+            {
+                push(point, poly);
+            }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             // The children stand for proofs like this one, so they
             // exported the commitments this one does.
             let exported = builder.exported_online_fq_commitments();
-            let inputs = Inputs::from_walk(&points, [&exported, &exported]);
+            let inputs = Inputs::from_walk(
+                &points,
+                [&exported, &exported],
+                FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
+            );
             self.commit_native_points_stages(&mut trivial_rng, &inputs, &mut builder)
                 .expect("trivial native points stages");
             let (commitment, _) = self
@@ -1387,10 +1515,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         );
         builder.set_nested_collapse_rx(ones_nested.clone());
         builder.set_nested_compute_v_rx(ones_nested.clone());
-        let extension = C::Profile::nested_extension();
-        builder
-            .set_nested_extension_circuit_rxs(vec![ones_nested.clone(); extension.circuits.len()]);
-        builder.set_nested_extension_stage_rxs(vec![ones_nested; extension.stages]);
 
         // Bridge polynomials: compute via Stage::rx() with trivial witnesses
         // so that traces are valid for their witnesses (not just ones).
@@ -1406,6 +1530,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             let rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::s_prime::Witness {
+                    online_points: builder.native_online_phase::<1>(),
                     registry_wx0: host_commitment,
                     registry_wx1: host_commitment,
                     native_points_registry_wx: builder.native_points_registry_wx_commitment(),
@@ -1447,6 +1572,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             let rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::query::Witness {
+                    online_points: builder.native_online_phase::<3>(),
+                    online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                        builder.native_online_stage_commitment(1)
+                    }),
                     native_query: builder.native_query_commitment(),
                     registry_xy: builder.native_registry_xy_commitment(),
                     nested: nested::stages::query::Evaluations::zero(),
@@ -1472,6 +1601,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             let rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::eval::Witness {
+                    online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                        builder.native_online_stage_commitment(2)
+                    }),
                     native_eval: builder.native_eval_commitment(),
                     nested: nested::stages::eval::Evaluations::zero(),
                 },
@@ -1531,6 +1663,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 }
             }
 
+            for (poly, &point) in native_online_polynomials
+                .iter()
+                .zip(&native_online_commitments)
+            {
+                push(point, poly);
+            }
             let poly = beta_fold(&polys, lift_endoscalar(beta_endo));
             let (commitment, _) = self
                 .compute_endoscaling(
@@ -1580,9 +1718,28 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 stashed_points_ab: host_commitment,
                 stashed_points_f: host_commitment,
                 stashed_online_commitments: builder.online_commitments(),
+                online_points: FixedVec::from_fn(|i| builder.native_online_commitment(i)),
                 stashed_application_stage: builder.native_application_stage_commitment(),
+                mesh: FixedVec::from_fn(|i| {
+                    if i < C::Profile::NESTED_MESH
+                        .expect("mesh values only when declared")
+                        .coordinate_indices()
+                        .len()
+                    {
+                        nested_one
+                    } else {
+                        C::ScalarField::ZERO
+                    }
+                }),
                 // What a parent will read off this proof as its nested
                 // instance scalars: a trivial "child" is this proof itself.
+                online_values: FixedVec::from_fn(|i| {
+                    if i < 3 {
+                        nested_one
+                    } else {
+                        C::ScalarField::ZERO
+                    }
+                }),
                 nested: nested::stages::preamble::NestedValues {
                     c: builder.nested_c(),
                     v: B::sparse_eval(builder.nested_p_poly(), nested_one),
@@ -1596,6 +1753,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             let rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::preamble::Witness {
+                    online_points: builder.native_online_phase::<0>(),
+                    online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                        builder.native_online_stage_commitment(0)
+                    }),
                     native_preamble: host_commitment,
                     native_points_binding: builder.native_points_binding_commitment(),
                     native_points_preamble: builder.native_points_preamble_commitment(),

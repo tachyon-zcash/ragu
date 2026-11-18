@@ -259,6 +259,12 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         bridge_alpha: nested.bridge_alpha,
         nested_c: nested.nested_c,
         nested_v: nested.nested_v,
+        native_mesh_claims: native.native_mesh_claims.clone(),
+        nested_mesh_claims: nested.nested_mesh_claims.clone(),
+        nested_online_fold: nested.nested_online_fold.clone(),
+        native_online_fold: native.native_online_fold.clone(),
+        nested_online_commitments: nested.nested_online_commitments.clone(),
+        native_online_commitments: native.native_online_commitments.clone(),
         nested_left: nested.nested_left,
         nested_right: nested.nested_right,
         nested_a_at_u: nested.nested_a_at_u,
@@ -301,16 +307,8 @@ where
     S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
     T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let sender = application::<S, WalletRank>(
-        RegistryTags::from_beacon(&[0x42; 32], SENDER_MANIFEST),
-        SENDER_MANIFEST,
-        source_constraint,
-    )?;
-    let receiver = application::<T, WalletRank>(
-        RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-        RECEIVER_MANIFEST,
-        Some(Fp::from(7)),
-    )?;
+    let sender = application::<S, WalletRank>((None, None), source_constraint)?;
+    let receiver = application::<T, WalletRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c001);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -336,7 +334,19 @@ where
     let local = receiver.compress(&parent, &mut rng)?;
     assert!(receiver.verify_compressed(&local)?);
     let (local, data) = local.into_parts();
-    check_splices(&receiver, &local, data, &foreign, foreign_data, false);
+    // The tags are derived from the registered circuits, so a complete foreign
+    // packet verifies exactly when the sender's registries are the receiver's;
+    // every splice of the two packets is rejected either way.
+    let same_registries = sender.native_registry.tag() == receiver.native_registry.tag()
+        && sender.nested_registry.tag() == receiver.nested_registry.tag();
+    check_splices(
+        &receiver,
+        &local,
+        data,
+        &foreign,
+        foreign_data,
+        same_registries,
+    );
 
     let (second, ()) = receiver.fuse(&mut rng, Sum, (), leaf.clone(), leaf)?;
     let second = receiver.compress(&second, &mut rng)?;
@@ -360,13 +370,17 @@ where
     Ok(())
 }
 
+/// The twin declares no extension, so its registries are the standard
+/// profile's and the two profiles derive the same tags: a complete packet of
+/// either verifies under the other, while every splice of the two is
+/// rejected, as is every edit.
 #[test]
-fn compressed_standard_rejects_twin_packets_and_edits() -> Result<()> {
+fn compressed_standard_checks_twin_packets_and_edits() -> Result<()> {
     check_profile_packets::<Twin, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
-fn compressed_twin_rejects_standard_packets_and_edits() -> Result<()> {
+fn compressed_twin_checks_standard_packets_and_edits() -> Result<()> {
     check_profile_packets::<Standard, Twin>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
@@ -379,11 +393,7 @@ fn check_fresh_weaker_proving<P: Profile>() -> Result<()>
 where
     P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let app = application::<P, WalletRank>(
-        RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-        RECEIVER_MANIFEST,
-        Some(Fp::from(7)),
-    )?;
+    let app = application::<P, WalletRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c002);
     let (honest, ()) = app.seed(
         &mut rng,
@@ -456,10 +466,6 @@ where
             expected: Some(Fp::from(7)),
         })?
         .register(Sum)?
-        .with_registry_tags(
-            RegistryTags::from_beacon(&[0x42; 32], RECEIVER_MANIFEST),
-            RECEIVER_MANIFEST,
-        )?
         .finalize_with(
             params,
             CrossingContext {

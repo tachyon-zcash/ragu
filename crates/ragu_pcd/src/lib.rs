@@ -83,6 +83,13 @@ mod profile_layout_tests;
 mod online_fq_oracles_tests;
 
 #[cfg(test)]
+#[path = "../tests/online_batch.rs"]
+mod online_batch_tests;
+#[cfg(test)]
+#[path = "../tests/source_mesh.rs"]
+mod source_mesh_tests;
+
+#[cfg(test)]
 #[path = "../tests/decompression/statement.rs"]
 mod decompress_statement_tests;
 
@@ -95,12 +102,12 @@ use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
-use profile::{Profile, ProfiledCycle, Standard};
+use profile::{Profile, ProfiledCycle};
 pub use proof::{Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{Registry, RegistryBuilder},
     staging,
 };
 use ragu_core::{Cycle, Error, Result};
@@ -122,114 +129,6 @@ use step::{Step, internal::adapter::Adapter};
 pub(crate) const RAGU_TAG: &[u8] = b"ragu-pcd-v1";
 
 pub use backend::SelectableBackend;
-
-/// Temporary setup tags for an [`Application`]'s native and nested registries.
-///
-/// These are setup parameters for the temporary registry-collision workaround
-/// in [#78](https://github.com/tachyon-zcash/ragu/issues/78). API consumers must
-/// supply them through [`ApplicationBuilder::with_registry_tags`], satisfying
-/// [`Tag`]'s [sampling requirement](Tag#sampling-requirement) for the complete
-/// setup of both registries. Production consumers must not use a fixed test key.
-///
-/// The profile is part of the setup the tags are sampled for (see
-/// [`Profile`]): an application in another profile is another setup, with
-/// its own manifest digest and its own tags, even over the same curves and
-/// steps. [`Self::from_beacon`] names the profile in its labels, so one
-/// beacon output and manifest digest give each profile its own tags.
-///
-/// [`Self::from_beacon`] retains the manifest digest alongside the derived
-/// tags. [`ApplicationBuilder::with_registry_tags`] checks it against the
-/// verifier's expected manifest before installing the final tag values.
-/// The fields are private so tags cannot be relabeled with another profile
-/// or manifest through this API. Finalization does not hash them again.
-///
-/// This checks the association with the expected setup record. The setup
-/// procedure must still authenticate that record, check its artifacts against
-/// the deployed code and parameters, and verify the beacon's provenance.
-///
-/// Tag values can be inspected through the public accessors:
-///
-/// ```
-/// use ragu_core::pasta::Pasta;
-/// use ragu_pcd::RegistryTags;
-///
-/// fn inspect(tags: &RegistryTags<Pasta>) {
-///     let _ = (tags.native(), tags.nested());
-/// }
-/// ```
-///
-/// The fields are private, so those values cannot be used to assemble another
-/// profile's tags through a struct literal:
-///
-/// ```compile_fail,E0451
-/// use ragu_circuits::registry::Tag;
-/// use ragu_core::pasta::Pasta;
-/// use ragu_pcd::{RegistryTags, profile::{Aggregator, Profiled}};
-///
-/// fn relabel(standard: RegistryTags<Pasta>) -> RegistryTags<Profiled<Pasta, Aggregator<4>>> {
-///     RegistryTags {
-///         native: Tag::new(standard.native()),
-///         nested: Tag::new(standard.nested()),
-///         manifest_digest: Vec::new(),
-///     }
-/// }
-/// ```
-pub struct RegistryTags<C: Cycle> {
-    native: Tag<C::CircuitField>,
-    nested: Tag<C::ScalarField>,
-    manifest_digest: Vec<u8>,
-}
-
-impl<C: Cycle> RegistryTags<C> {
-    /// The native registry's final tag value.
-    pub fn native(&self) -> C::CircuitField {
-        self.native.value()
-    }
-
-    /// The nested registry's final tag value.
-    pub fn nested(&self) -> C::ScalarField {
-        self.nested.value()
-    }
-}
-
-impl<C: ProfiledCycle> RegistryTags<C> {
-    /// Derives both tags from a public randomness beacon and a manifest digest,
-    /// with distinct labels for the two registries, which name every profile
-    /// but the standard one: the standard profile's labels are
-    /// `ragu_pcd native registry` and `ragu_pcd nested registry`, the ones
-    /// its ceremony fixed, and another profile's labels follow those with
-    /// the profile's [`NAME`](Profile::NAME) in parentheses.
-    /// `manifest_digest` covers the complete setup of both registries. Both
-    /// inputs are raw bytes, not hex strings. See [`Tag::from_beacon`].
-    pub fn from_beacon(beacon: &[u8], manifest_digest: &[u8]) -> Self {
-        Self {
-            manifest_digest: manifest_digest.to_vec(),
-            native: Tag::from_beacon(
-                beacon,
-                manifest_digest,
-                &Self::label(b"ragu_pcd native registry"),
-            ),
-            nested: Tag::from_beacon(
-                beacon,
-                manifest_digest,
-                &Self::label(b"ragu_pcd nested registry"),
-            ),
-        }
-    }
-
-    /// The label a registry's tag is derived under: `registry` alone in the
-    /// standard profile, and `registry` followed by the profile's name in
-    /// parentheses otherwise.
-    fn label(registry: &[u8]) -> Vec<u8> {
-        let mut label = registry.to_vec();
-        if TypeId::of::<C::Profile>() != TypeId::of::<Standard>() {
-            label.extend_from_slice(b" (");
-            label.extend_from_slice(C::Profile::NAME.as_bytes());
-            label.push(b')');
-        }
-        label
-    }
-}
 
 /// A step circuit's registration, held until every step's
 /// [`NUM_STAGED`](Step::NUM_STAGED) is known, so that every step circuit
@@ -254,6 +153,8 @@ pub struct ApplicationBuilder<
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    native_source: Option<profile::online::source::SourceRegistry<'params, C::CircuitField>>,
+    nested_source: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
     num_application_steps: usize,
     /// The step circuits, registered by [`finalize`](Self::finalize) once
     /// the stage size is known.
@@ -288,6 +189,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     pub fn new() -> Self {
         ApplicationBuilder {
+            native_source: None,
+            nested_source: None,
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
@@ -300,36 +203,39 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
     }
 
-    /// Checks the tags against the verifier's expected setup manifest and
-    /// supplies their final values to both registries.
+    /// Captures the source registries certified by this profile's meshes.
     ///
-    /// The caller's setup procedure must satisfy the
-    /// [sampling requirement](Tag#sampling-requirement) for the complete
-    /// application, including the public parameters supplied to [`Self::finalize`].
-    /// `expected_manifest_digest` must come from trusted verifier configuration,
-    /// fixed independently of incoming proofs or setup records. It identifies
-    /// the complete versioned setup, including this profile, the application
-    /// steps and the public parameters supplied to [`Self::finalize`].
-    /// Matching the actual code and parameters to the manifest and verifying
-    /// the beacon remain the setup procedure's responsibility.
-    ///
-    /// # Errors
-    ///
-    /// Returns an initialization error if the tags were derived for a different
-    /// manifest. The tag type fixes the profile used in their derivation.
-    pub fn with_registry_tags(
+    /// A source can have a different rank from the enclosing application;
+    /// finalization checks that its restrictions fit without truncation.
+    /// The application's setup must identify these sources too.
+    pub fn with_source_registries(
         mut self,
-        tags: RegistryTags<C>,
-        expected_manifest_digest: &[u8],
-    ) -> Result<Self> {
-        if tags.manifest_digest != expected_manifest_digest {
-            return Err(Error::Initialization(
-                "registry tags do not match the expected setup manifest".into(),
-            ));
-        }
-        self.native_registry = self.native_registry.with_tag(tags.native);
-        self.nested_registry = self.nested_registry.with_tag(tags.nested);
-        Ok(self)
+        native: Option<profile::online::source::SourceRegistry<'params, C::CircuitField>>,
+        nested: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
+    ) -> Self {
+        self.native_source = native;
+        self.nested_source = nested;
+        self
+    }
+
+    /// Installs `tag` as the native registry's tag instead of the one
+    /// [`finalize`](Self::finalize) derives from the registered circuits.
+    ///
+    /// A test seam for adversarial tests, which use it to model another setup
+    /// over the same circuits or a tag collision between different ones; see
+    /// [`RegistryBuilder::with_tag`].
+    #[cfg(test)]
+    pub(crate) fn with_native_tag(mut self, tag: C::CircuitField) -> Self {
+        self.native_registry = self.native_registry.with_tag(tag);
+        self
+    }
+
+    /// Installs `tag` as the nested registry's tag; see
+    /// [`with_native_tag`](Self::with_native_tag).
+    #[cfg(test)]
+    pub(crate) fn with_nested_tag(mut self, tag: C::ScalarField) -> Self {
+        self.nested_registry = self.nested_registry.with_tag(tag);
+        self
     }
 
     /// Supplies the proof that bootstraps the recursion instead of building
@@ -375,6 +281,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
+            native_source: self.native_source,
+            nested_source: self.nested_source,
             num_application_steps: self.num_application_steps,
             application_circuits: self.application_circuits,
             stage_size: self.stage_size,
@@ -478,10 +386,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Perform finalization and optimization steps to produce the
     /// [`Application`].
     ///
-    /// Requires [`Self::with_registry_tags`] with values chosen after the
-    /// complete application was fixed and publicly committed. The
-    /// `ragu_circuits/insecure-test-registry-tag` feature supplies a fixed
-    /// fallback for tests and must not be enabled in production.
+    /// This derives each registry's [`Tag`](ragu_circuits::registry::Tag)
+    /// from the circuits it holds: the application's steps, and the profile's
+    /// internal circuits.
     ///
     /// This also bootstraps the recursion: it fuses two synthesized dummies
     /// through an internal step — the only fuse treated as the base case — to
@@ -523,7 +430,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // The decompression step, which a profile with a statement circuit
         // registers below, stages a value: the application stage, which
         // every step circuit reserves, holds it.
-        let decompresses = C::Profile::native_extension().statement.is_some();
+        let decompresses = crate::profile::native_extension::<C::Profile>()
+            .statement
+            .is_some();
         if decompresses {
             type Decompress = step::internal::decompress::Decompress<()>;
             let stage_size = self.stage_size.max(<Decompress as Step<C>>::NUM_STAGED);
@@ -536,6 +445,46 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 ));
             }
             self.stage_size = stage_size;
+        }
+        C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
+        C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
+        for (declared, present) in [
+            (
+                C::Profile::NATIVE_MESH.is_some(),
+                self.native_source.is_some(),
+            ),
+            (
+                C::Profile::NESTED_MESH.is_some(),
+                self.nested_source.is_some(),
+            ),
+        ] {
+            if declared != present {
+                return Err(Error::Initialization(
+                    "source registries do not match the profile meshes".into(),
+                ));
+            }
+        }
+        if let Some(source) = &self.native_source {
+            source.check_rank::<R>()?;
+        }
+        if let Some(source) = &self.nested_source {
+            source.check_rank::<R>()?;
+        }
+        // The bootstrap proof commits the mesh's restrictions at its all-one
+        // challenges, the nested ones at their lift.
+        if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &self.native_source) {
+            mesh.check_source::<_, R>(
+                C::Profile::NATIVE_ONLINE,
+                source,
+                <C::CircuitField as udon::field::Field>::ONE,
+            )?;
+        }
+        if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &self.nested_source) {
+            mesh.check_source::<_, R>(
+                C::Profile::NESTED_ONLINE,
+                source,
+                internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
+            )?;
         }
 
         // Build the native registry:
@@ -555,6 +504,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             log2_circuits,
             self.stage_size,
+            self.native_source.as_ref().map(|source| source.tag()),
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -589,10 +539,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry =
-            internal::nested::register_all::<C, R>(self.nested_registry, params)?;
+        self.nested_registry = internal::nested::register_all::<C, R>(
+            self.nested_registry,
+            params,
+            self.nested_source.as_ref().map(|source| source.tag()),
+        )?;
 
         let mut app = Application {
+            native_source: self.native_source,
+            nested_source: self.nested_source,
             native_registry: self.native_registry.finalize()?,
             nested_registry: self.nested_registry.finalize()?,
             params,
@@ -642,12 +597,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// It covers *declared* (constant) suffixes only. An internal step whose
     /// input suffix is a witness wire — today only `Rerandomize`, via uniform
     /// encoding — must instead constrain that wire away from `Dummy`
-    /// itself; see `ProofInputs::is_dummy_input`.
+    /// itself, and from zero; see `ProofInputs::is_dummy_input` and
+    /// [`Encoded::new_uniform`](step::Encoded::new_uniform).
     ///
     /// No explicit allowed-suffix set is needed: application steps encode
     /// suffixes as constants, [`Encoded::new_uniform`](step::Encoded::new_uniform)
-    /// excludes `Dummy` and rerandomization preserves the input header, internal
-    /// circuits end in a zero suffix that no application header can use, and
+    /// excludes `Dummy` and zero, rerandomization preserves the input header,
+    /// internal circuits end in a zero suffix that no application header can use, and
     /// only `Bootstrap` declares `Dummy` inputs. An internal step with a
     /// witnessed suffix must preserve these restrictions.
     fn register_internal_step<S: Step<C> + 'params>(mut self, step: S) -> Result<Self> {
@@ -718,6 +674,8 @@ pub struct Application<
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
+    native_source: Option<profile::online::source::SourceRegistry<'params, C::CircuitField>>,
+    nested_source: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
     params: &'params C::Params,
     num_application_steps: usize,
     /// The header type each registered step outputs, by suffix, and
@@ -928,6 +886,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             &poly,
             C::host_generators(self.params),
         ))
+    }
+
+    /// Returns a reference to the nested [`Registry`].
+    pub fn nested_registry(&self) -> &Registry<'_, C::ScalarField, R> {
+        &self.nested_registry
     }
 
     /// Returns a reference to the native [`Registry`].

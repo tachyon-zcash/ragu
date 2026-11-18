@@ -338,6 +338,11 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             witness.as_ref().map(|w| &w.extra.online),
             witness.as_ref().map(|w| w.extra.omega_j),
             witness.as_ref().map(|w| &w.extra.unified),
+            // The standard profile has no online batch: no online
+            // commitments, sums or mesh claims.
+            witness.as_ref().map(|_| -> &[C::NestedCurve] { &[] }),
+            witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
+            witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
         )?;
         let layout = ctx.schedule.layout.instance;
         let regions = &ctx.schedule.regions;
@@ -429,7 +434,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             elements[position].enforce_equal(dr, value)?;
         }
         let application = inputs.application_ky(dr, &y)?;
-        let compute_v_bridge = inputs.compute_v_bridge_ky(dr, &y)?;
+        // No online stages either.
+        let compute_v_bridge = inputs.compute_v_bridge_ky(dr, &y, &[])?;
         Ok(alloc::vec![application, bridge, unified, compute_v_bridge])
     }
 

@@ -443,6 +443,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
+        // Each field's input stage holds the other field's commitments fixed
+        // before w, so both batches supply theirs before either commits.
+        self.begin_native_online([&left, &right], &mut builder)?;
+        self.begin_nested_online([&left, &right], &mut builder)?;
+        self.commit_native_online_inputs(rng, &mut builder)?;
+        self.commit_nested_online_inputs(rng, &mut builder)?;
         let (preamble_witness, nested_preamble) =
             self.compute_preamble(rng, &left, &right, None, &mut builder)?;
         let bridge_preamble_commitment =
@@ -464,6 +470,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
+        use crate::profile::online::{Phase, batch::Challenges, prepared::PreparationChallenges};
+        let mut preparation = PreparationChallenges {
+            w: Some(*w.value().take()),
+            y: None,
+            x: None,
+        };
+        self.prepare_native_online(Phase::BeforeY, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeY, preparation, &mut builder)?;
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
@@ -545,6 +559,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
 
+        preparation.y = Some(*y.value().take());
+        self.prepare_native_online(Phase::BeforeX, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeX, preparation, &mut builder)?;
         self.compute_ab(
             rng,
             native_a,
@@ -560,6 +577,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
+        preparation.x = Some(*x.value().take());
+        self.prepare_native_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.commit_native_online_query(preparation, rng, &mut builder)?;
+        self.commit_nested_online_query(preparation, rng, &mut builder)?;
         let (query_witness, nested_query) = self.compute_query(
             rng,
             &w,
@@ -595,6 +617,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
+        self.commit_native_online_eval(*u.value().take(), rng, &mut builder)?;
+        self.commit_nested_online_eval(*u.value().take(), rng, &mut builder)?;
         let bound_challenges =
             [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
@@ -614,8 +638,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // fresh transcript clone until it lands in endoscalar range.
         let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
             EndoscalarChallenge::sample(&mut dr, |dr| {
-                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) = self
+                    .sample_eval_commitment(
+                        rng,
+                        &eval_witness,
+                        &nested_eval,
+                        ragu_primitives::vec::FixedVec::from_fn(|_| {
+                            builder.native_online_stage_commitment(2)
+                        }),
+                    )?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -656,6 +687,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_alpha(*alpha.value().take());
         builder.set_u(*u.value().take());
         builder.set_pre_beta(*pre_beta.element().value().take());
+
+        // Compute-v consumes the same helper sums as the real prover. Keep
+        // the committed stages in state for capture; no extension rx needs
+        // to be assembled for this visitor-only execution.
+        let challenges = Challenges {
+            w: builder.w(),
+            y: builder.y(),
+            x: builder.x(),
+            alpha: builder.alpha(),
+            u: builder.u(),
+            beta: builder.pre_beta(),
+        };
+        let native_online_fold = builder.native_online_mut().trace_fold(challenges)?;
+        let challenges = Challenges {
+            w: nested::challenge::<C>(builder.w())?,
+            y: nested::challenge::<C>(builder.y())?,
+            x: nested::challenge::<C>(builder.x())?,
+            alpha: nested::challenge::<C>(builder.alpha())?,
+            u: nested::challenge::<C>(builder.u())?,
+            beta: nested::challenge::<C>(builder.pre_beta())?,
+        };
+        let nested_online_fold = builder.nested_online_mut().trace_fold(challenges)?;
 
         // Rebuild the shared instance from the finished builder for each
         // circuit. Threading the accumulated coverage (as the prover does) is
@@ -901,6 +954,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let compute_v = native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new();
         let compute_v_witness = || {
             Ok(native::circuits::compute_v::Witness {
+                online_fold: native_online_fold.clone(),
+                binding: &native_points.binding,
                 unified: make_unified(&builder)?,
                 preamble_witness: &preamble_witness,
                 query_witness: &query_witness,
@@ -1114,16 +1169,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // the instance is rebuilt fresh per circuit as `make_unified` does
         // for the native one.
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
+            online_points: builder.native_online_phase::<1>(),
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {
+            online_points: builder.native_online_phase::<2>(),
             a: builder.native_a_commitment(),
             b: builder.native_b_commitment(),
             native_points_ab: builder.native_points_ab_commitment(),
         };
         let nested_query_witness = nested::stages::query::Witness {
+            online_points: builder.native_online_phase::<3>(),
+            online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                builder.native_online_stage_commitment(1)
+            }),
             native_query: builder.native_query_commitment(),
             registry_xy: builder.native_registry_xy_commitment(),
             nested: nested_query,
@@ -1133,6 +1194,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_points_f: builder.native_points_f_commitment(),
         };
         let nested_eval_witness = nested::stages::eval::Witness {
+            online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                builder.native_online_stage_commitment(2)
+            }),
             native_eval: builder.native_eval_commitment(),
             nested: nested_eval,
         };
@@ -1169,6 +1233,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         .concat();
         let nested_witness = || {
             Ok(nested::circuits::common::Witness {
+                online_fold: nested_online_fold.clone(),
                 instance: nested::unified::Instance {
                     c: builder.nested_c(),
                     v: builder.nested_v()?,

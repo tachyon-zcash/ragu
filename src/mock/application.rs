@@ -6,13 +6,13 @@ use core::{any::TypeId, marker::PhantomData};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},
-    registry::{Registry, RegistryBuilder, Tag},
+    registry::{Registry, RegistryBuilder},
 };
 use ragu_core::{
     Cycle, Error, FixedGenerators as _, Result, drivers::Driver as _, maybe::Maybe as _,
 };
 use ragu_pcd::{
-    RegistryTags, SelectableBackend,
+    SelectableBackend,
     ipa::IpaCycle,
     profile::{Profile, ProfiledCycle},
 };
@@ -44,6 +44,9 @@ pub struct ApplicationBuilder<
     bootstrap: Option<Proof<C, R>>,
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    /// A running hash of the registered steps, which the setup hash binds in
+    /// place of the step circuits the mock does not compile.
+    registered_steps: blake2b_simd::State,
     _marker: PhantomData<(&'params C::Params, B)>,
 }
 
@@ -82,6 +85,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             bootstrap: None,
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
+            registered_steps: blake2b_simd::Params::new()
+                .hash_length(32)
+                .personal(b"MkRagu_Steps____")
+                .to_state(),
             _marker: PhantomData,
         }
     }
@@ -95,23 +102,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             bootstrap: self.bootstrap,
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
+            registered_steps: self.registered_steps,
             _marker: PhantomData,
         }
-    }
-
-    pub fn with_registry_tags(
-        mut self,
-        tags: RegistryTags<C>,
-        expected_manifest_digest: &[u8],
-    ) -> Result<Self> {
-        let native = Tag::new(tags.native());
-        let nested = Tag::new(tags.nested());
-        // Reuse the real API's check of the opaque manifest association.
-        let _ = ragu_pcd::ApplicationBuilder::<'params, C, R, HEADER_SIZE, B>::new()
-            .with_registry_tags(tags, expected_manifest_digest)?;
-        self.native_registry = self.native_registry.with_tag(native);
-        self.nested_registry = self.nested_registry.with_tag(nested);
-        Ok(self)
     }
 
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
@@ -134,6 +127,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     /// Mirrors `ragu_pcd::ApplicationBuilder::register`.
+    ///
+    /// The real registry's tags bind each step's circuit; the mock binds the
+    /// step's type and declarations into its setup hash instead, so that
+    /// applications with different steps are different setups here too. Two
+    /// configurations of one step type are one setup in the mock.
     pub fn register<S: Step<C> + 'params>(mut self, _step: S) -> Result<Self> {
         S::INDEX.assert_sequential(self.registered_outputs.len())?;
 
@@ -154,6 +152,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffix::<S::Right>()?;
 
         self.registered_outputs.push(S::Output::SUFFIX);
+        let name = core::any::type_name::<S>();
+        self.registered_steps
+            .update(&(name.len() as u64).to_le_bytes());
+        self.registered_steps.update(name.as_bytes());
+        self.registered_steps
+            .update(&(S::NUM_STAGED as u64).to_le_bytes());
+        for suffix in [S::Output::SUFFIX, S::Left::SUFFIX, S::Right::SUFFIX] {
+            self.registered_steps.update(&suffix.get().to_le_bytes());
+        }
         Ok(self)
     }
 
@@ -182,8 +189,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "invalid header size, rank, or insufficient generators".into(),
             ));
         }
-        // Registries are placeholders: the mock does not compile step circuits.
-        // Finalizing them retains the real tag requirement and access type.
+        // Registries are placeholders: the mock compiles neither the step
+        // circuits nor the profile's internal circuits. Finalizing them derives
+        // their tags as the real registries do, from the circuits they hold,
+        // which here are none; the setup hash binds the registered steps and
+        // the profile's name instead. The name stands in for the internal
+        // circuits, so mock profiles are separate setups even while the real
+        // standard and aggregator profiles register the same circuits.
         let native_registry = self.native_registry.finalize()?;
         let nested_registry = self.nested_registry.finalize()?;
         let polynomials = core::array::from_fn(|_| vec![C::CircuitField::ONE]);
@@ -193,6 +205,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         setup.update(native_registry.tag().to_bytes().as_ref());
         setup.update(nested_registry.tag().to_bytes().as_ref());
         setup.update(C::Profile::NAME.as_bytes());
+        setup.update(self.registered_steps.finalize().as_bytes());
         let mut setup_hash = setup_hash;
         setup_hash.copy_from_slice(setup.finalize().as_bytes());
         let commitment = B::sparse_commit_to_affine(

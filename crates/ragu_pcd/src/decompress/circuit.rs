@@ -611,9 +611,14 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
         once(self.unified.clone())
     }
 
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        // The standard profile has no online batch, so no online helper.
+        core::iter::empty()
+    }
+
     fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq commitment, so the
-        // circuit's instance is the unified one.
+        // The standard profile exports no online Fq commitment and has no
+        // online batch, so the circuit's instance is the unified one.
         once(self.unified.clone())
     }
 
@@ -661,9 +666,14 @@ impl<'dr, D: Driver<'dr>> NestedKySource for NestedTargets<'dr, D> {
     }
 
     fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        // The standard profile exports no online Fq opening, so the
-        // circuit's instance is the unified one.
+        // The standard profile exports no online Fq opening and has no
+        // online batch, so the circuit's instance is the unified one.
         once(self.unified.clone())
+    }
+
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky> {
+        // Nor an online helper.
+        core::iter::empty()
     }
 
     fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
@@ -985,6 +995,10 @@ where
         D::just(|| &instance.online),
         D::just(|| instance.circuit_id.omega_j()),
         D::just(|| &unified),
+        // The standard profile has no online batch.
+        D::just(|| -> &[C::NestedCurve] { &[] }),
+        D::just(|| -> &[C::CircuitField] { &[] }),
+        D::just(|| -> &[C::CircuitField] { &[] }),
     )?;
     {
         use nested::RxIndex::*;
@@ -1094,7 +1108,7 @@ where
             c: allocated.c.clone(),
             application,
             unified_bridge,
-            compute_v_bridge: proof_inputs.compute_v_bridge_ky(dr, y)?,
+            compute_v_bridge: proof_inputs.compute_v_bridge_ky(dr, y, &[])?,
             unified: unified_target,
             one: Element::one(),
             zero: Element::zero(dr),

@@ -618,6 +618,12 @@ fn check_compressed_proofs_match(
         v: _,
         nested_c: _,
         nested_v: _,
+        nested_online_fold: _,
+        native_online_fold: _,
+        native_mesh_claims: _,
+        nested_mesh_claims: _,
+        nested_online_commitments: _,
+        native_online_commitments: _,
         left: Child { x: _, y: _, id: _ },
         right: Child { x: _, y: _, id: _ },
         a_at_u: _,
@@ -1325,6 +1331,14 @@ mod proof_equivalence {
                 circuit_id: _,
                 left_header: _,
                 right_header: _,
+                nested_online_fold: _,
+                native_online_fold: _,
+                native_mesh_claims: _,
+                nested_mesh_claims: _,
+                native_source_out: _,
+                nested_source_out: _,
+                nested_online_commitments: _,
+                native_online_commitments: _,
                 native_application_rx: _,
                 native_application_stage_rx: _,
                 native_preamble_rx: _,
@@ -1438,6 +1452,16 @@ mod proof_equivalence {
                 bridge_eval_commitment: _,
             } = self;
 
+            if !extension_eq(&self.native_source_out, &other.native_source_out)
+                || !extension_eq(&self.nested_source_out, &other.nested_source_out)
+            {
+                return Some("retained source restrictions");
+            }
+            if self.native_mesh_claims != other.native_mesh_claims
+                || self.nested_mesh_claims != other.nested_mesh_claims
+            {
+                return Some("source mesh metadata");
+            }
             if self.bridge_alpha != other.bridge_alpha {
                 return Some("bridge alpha");
             }

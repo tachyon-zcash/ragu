@@ -882,20 +882,24 @@ fn test_non_step_slots_reject_application_instances() {
     );
 }
 
+/// Both tags are derived from the registered circuits: the same application
+/// derives the same tags, and one more application step changes the native
+/// registry's tag.
 #[test]
-fn supplied_tags_reach_both_registries() -> Result<()> {
-    let tags = RegistryTags::<Pasta>::from_beacon(&[0x42; 32], &[0x24; 20]);
-    let native = tags.native.value();
-    let nested = tags.nested.value();
-    let app = ApplicationBuilder::<Pasta, R, 4>::new()
-        .with_registry_tags(tags, &[0x24; 20])?
-        .finalize(crate::pasta::baked())?;
-    assert_eq!(app.native_registry.tag(), native);
-    assert_eq!(app.nested_registry.tag(), nested);
+fn tags_are_derived_from_the_registries() -> Result<()> {
+    let application = |steps| {
+        ApplicationBuilder::<Pasta, R, 4>::new()
+            .register_dummy_circuits(steps)?
+            .finalize(crate::pasta::baked())
+    };
+    let (first, again, larger) = (application(1)?, application(1)?, application(2)?);
+    assert_eq!(first.native_registry.tag(), again.native_registry.tag());
+    assert_eq!(first.nested_registry.tag(), again.nested_registry.tag());
+    assert_ne!(first.native_registry.tag(), larger.native_registry.tag());
     Ok(())
 }
 
-/// Verifies the native registry uses the fixed tag enabled by the testing feature.
+/// Pins the native registry's derived tag, and with it the native circuits.
 #[test]
 fn test_native_registry_tag() {
     let pasta = crate::pasta::baked();
@@ -907,7 +911,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x247e382a1523800d0fc7bccd9b0e1e57eecd7a9758c4b7537f4ed76f5f54fe43"
+        "0x2d3bd669b040baa24f02fdae8bf319801fcb06c99c04a25a4fedc02a5f56e1bb"
     ));
 
     assert_eq!(
@@ -917,7 +921,7 @@ fn test_native_registry_tag() {
     );
 }
 
-/// Verifies the nested registry uses the fixed tag enabled by the testing feature.
+/// Pins the nested registry's derived tag, and with it the nested circuits.
 #[test]
 fn test_nested_registry_tag() {
     let pasta = crate::pasta::baked();
@@ -929,7 +933,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x009ad8ef87fe4e7dc6e51df8807db0f783f39978e29787ab3e00a28c15d2bdbd"
+        "0x1fd75b60fe0dd59838c4f77e1412f7b6b79055a11045b8b360c395f6f741e1a1"
     ));
 
     assert_eq!(
@@ -937,6 +941,64 @@ fn test_nested_registry_tag() {
         expected,
         "Nested registry tag changed unexpectedly!"
     );
+}
+
+/// Asserts that what a registry's tag hashed is what the registry evaluates.
+///
+/// The tag hashes the monomial driver's walk of each circuit, and the
+/// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
+/// point drawn afresh on every run, the hashed monomials with the tag term
+/// equal `sxy` at every domain point, and `sx` and `sy` at the domain point
+/// of every registered circuit.
+fn assert_hashed_monomials_are_evaluated<F: Field, Rk: Rank>(
+    registry: &ragu_circuits::registry::Registry<'_, F, Rk>,
+    name: &str,
+) {
+    use ragu_circuits::registry::CircuitIndex;
+    use rand::Rng;
+    use udon::fft::bit_reverse;
+
+    let x = F::random(|bytes| rand::rng().fill_bytes(bytes));
+    let y = F::random(|bytes| rand::rng().fill_bytes(bytes));
+    let hashed = registry.hashed_wxy_over_domain(x, y);
+
+    assert_eq!(
+        hashed,
+        registry.wxy_over_domain(x, y),
+        "{name} registry, sxy"
+    );
+    for i in 0..registry.num_circuits() {
+        let w = CircuitIndex::new(i).omega_j::<F>();
+        let hashed = hashed[bit_reverse(i, registry.log2_domain())];
+        assert_eq!(
+            hashed,
+            registry.wx(w, x).eval(y),
+            "{name} registry, sx, circuit {i}"
+        );
+        assert_eq!(
+            hashed,
+            registry.wy(w, y).eval(x),
+            "{name} registry, sy, circuit {i}"
+        );
+    }
+}
+
+/// The registries' tags hash the polynomials the registries evaluate: for
+/// every circuit the application registers, native and nested, the monomial
+/// driver's walk agrees with the walks of all three wiring drivers. A circuit
+/// that emitted different constraints on different walks would fail here.
+#[test]
+fn registry_tags_hash_the_evaluated_polynomials() {
+    let pasta = crate::pasta::baked();
+
+    let app = ApplicationBuilder::<Pasta, R, HEADER_SIZE>::new()
+        .register_dummy_circuits(NUM_APP_STEPS)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+
+    assert_hashed_monomials_are_evaluated(&app.native_registry, "native");
+    assert_hashed_monomials_are_evaluated(&app.nested_registry, "nested");
 }
 
 /// Helper test to print current registry tags in copy-pasteable format.
@@ -1213,6 +1275,10 @@ fn test_extension_claims_follow_the_declaration() {
             [50, 51].into_iter()
         }
 
+        fn online_helper_ky(&self) -> impl Iterator<Item = u32> {
+            [90, 91].into_iter()
+        }
+
         fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [40, 41].into_iter()
         }
@@ -1245,6 +1311,7 @@ fn test_extension_claims_follow_the_declaration() {
     let steps = native::NumSteps::<Wider>::len();
     assert_eq!(ones, 2 * (steps + extension.circuits.len()));
     let first_one = targets.iter().position(|&ky| ky == 1).unwrap();
+    assert_eq!(&targets[first_one - 2..first_one], &[45, 46]);
     assert!(
         targets[first_one..first_one + ones]
             .iter()
@@ -1256,7 +1323,7 @@ fn test_extension_claims_follow_the_declaration() {
     // circuits, after the walk's ones and before the stages' zeros.
     fn native_targets<P: Profile>() -> Vec<u32> {
         let steps = native::NumSteps::<P>::len();
-        let circuits = P::native_extension().circuits.len();
+        let circuits = crate::profile::native_extension::<P>().circuits.len();
         let targets: Vec<u32> = ky_values::<P, _>(&Tagged)
             .take(2 * InternalCircuitIndex::num::<P>() + 8)
             .collect();
@@ -1299,6 +1366,9 @@ fn test_extension_claims_follow_the_declaration() {
         fn compute_v_ky(&self) -> impl Iterator<Item = u32> {
             [55, 56].into_iter()
         }
+        fn online_helper_ky(&self) -> impl Iterator<Item = u32> {
+            core::iter::empty()
+        }
 
         fn binding_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [70, 71].into_iter()
@@ -1311,7 +1381,7 @@ fn test_extension_claims_follow_the_declaration() {
 
     fn nested_targets<P: Profile>() -> Vec<u32> {
         let steps = nested::NumSteps::<P>::len();
-        let circuits = P::nested_extension().circuits.len();
+        let circuits = crate::profile::nested_extension::<P>().circuits.len();
         let extension = 2 + 2 * steps + 2 * nested::NUM_INSTANCE_CIRCUITS;
         let targets: Vec<u32> = nested::claims::ky_values::<P, _>(&NestedTagged)
             .take(extension + 2 * circuits + 8)
@@ -1440,34 +1510,21 @@ fn test_extension_overflowing_the_fuse_is_rejected() {
 fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
-    const MANIFEST: &[u8] = &[0x94; 32];
     let params = crate::pasta::baked();
-    let tags = || RegistryTags::from_beacon(&[0x42; 32], MANIFEST);
-    let standard = ApplicationBuilder::<Pasta, R, 96>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 96>::new().finalize(params);
     assert!(standard.is_ok(), "96 fields must fit: {:?}", standard.err());
-    let oversized = ApplicationBuilder::<Pasta, R, 97>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 97>::new().finalize(params);
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2048 })
     ));
 
     type Extended = Profiled<Pasta, Decompressing>;
-    let tags = || RegistryTags::<Extended>::from_beacon(&[0x42; 32], MANIFEST);
-    let extended = ApplicationBuilder::<Extended, R, 94>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize_with(params, Default::default());
+    let extended =
+        ApplicationBuilder::<Extended, R, 94>::new().finalize_with(params, Default::default());
     assert!(extended.is_ok(), "94 fields must fit: {:?}", extended.err());
-    let oversized = ApplicationBuilder::<Extended, R, 95>::new()
-        .with_registry_tags(tags(), MANIFEST)
-        .unwrap()
-        .finalize_with(params, Default::default());
+    let oversized =
+        ApplicationBuilder::<Extended, R, 95>::new().finalize_with(params, Default::default());
     assert!(matches!(
         oversized,
         Err(Error::GateBoundExceeded { limit: 2048 })

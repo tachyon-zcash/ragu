@@ -74,7 +74,6 @@ members = [
   "crates/ragu_primitives",
   "crates/ragu_pcd",
   "crates/ragu_testing",
-  "qa/ceremony",
   "qa/fv/extraction",
   "qa/no_std",
 ]
@@ -111,7 +110,7 @@ repository = "https://github.com/tachyon-zcash/ragu"
 rand = { version = "0.10", default-features = false, features = ["std_rng"] }
 lazy_static = "1.5.0"
 proptest = "1.11.0"
-gungraun = "0.17.0"
+gungraun = "0.20.0"
 blake2b_simd = { version = "1.0", default-features = false }
 # Used only by ragu_pcd's generator build script.
 pasta_curves = { package = "zakura-pasta-curves", version = "1.1.0", default-features = false, features = ["alloc"] }
@@ -122,4 +121,4 @@ bento = { package = "zakura-bento", version = "0.1.0", default-features = false 
 # Udon supplies the Pasta fields, curves, generic arithmetic traits, cycle, and
 # Poseidon parameters.
 udon = { package = "zakura-udon", version = "0.1.0", default-features = false, features = ["traits", "poseidon"] }
-criterion = { version = "0.5", default-features = false }
+criterion = { version = "0.8", default-features = false }

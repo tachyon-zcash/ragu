@@ -113,17 +113,32 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 let (right_unified_ky, right_unified_bridge_ky) =
                     preamble.right.unified_ky_values(dr, &y)?;
 
+                let stages = |proof: &crate::Proof<C, R>| {
+                    ky::nested_online_stages::<C::Profile, _>(|index| {
+                        proof.nested_rx_commitment(index)
+                    })
+                };
+                let left_stages = preamble_witness.as_ref().map(|w| stages(w.left.proof));
+                let right_stages = preamble_witness.as_ref().map(|w| stages(w.right.proof));
+                let left_stages = ky::nested_online_stage_points::<_, _, C::Profile>(
+                    dr,
+                    left_stages.as_ref().map(|p| p.as_slice()),
+                )?;
+                let right_stages = ky::nested_online_stage_points::<_, _, C::Profile>(
+                    dr,
+                    right_stages.as_ref().map(|p| p.as_slice()),
+                )?;
                 let left_ky = native::stages::outer_error::ChildKyOutputs {
                     application: preamble.left.application_ky(dr, &y)?,
                     unified: left_unified_ky,
                     unified_bridge: left_unified_bridge_ky,
-                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y)?,
+                    compute_v_bridge: preamble.left.compute_v_bridge_ky(dr, &y, &left_stages)?,
                 };
                 let right_ky = native::stages::outer_error::ChildKyOutputs {
                     application: preamble.right.application_ky(dr, &y)?,
                     unified: right_unified_ky,
                     unified_bridge: right_unified_bridge_ky,
-                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y)?,
+                    compute_v_bridge: preamble.right.compute_v_bridge_ky(dr, &y, &right_stages)?,
                 };
 
                 let mu = Element::alloc(dr, allocator, mu)?;
@@ -141,25 +156,28 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     )
                 };
                 // The `bind_endoscalar` circuit's, over the online Fq
-                // commitments the children exported.
-                let bind_endoscalar = [
+                // commitments the children exported and their actual nested
+                // online walk points.
+                let left_bind_endoscalar =
                     ky::bind_endoscalar_ky_alloc::<_, _, C::Profile, HEADER_SIZE>(
                         dr,
                         &preamble.left,
                         &y,
+                        &left_ky.unified,
                         preamble_witness
                             .as_ref()
                             .map(|w| w.left.proof.online_fq_commitments.as_slice()),
-                    )?,
+                    )?;
+                let right_bind_endoscalar =
                     ky::bind_endoscalar_ky_alloc::<_, _, C::Profile, HEADER_SIZE>(
                         dr,
                         &preamble.right,
                         &y,
+                        &right_ky.unified,
                         preamble_witness
                             .as_ref()
                             .map(|w| w.right.proof.online_fq_commitments.as_slice()),
-                    )?,
-                ];
+                    )?;
                 let left_bound = preamble_witness.as_ref().map(|w| bound(w.left.proof));
                 let right_bound = preamble_witness.as_ref().map(|w| bound(w.right.proof));
                 let count = left_bound.as_ref().map(|b| b.len()).take();
@@ -183,17 +201,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     right_bound.as_ref().map(|b| b.as_slice()),
                     none(),
                 )?;
+                let left_online_helper = preamble.left.online_helper_ky(dr, &y)?;
+                let right_online_helper = preamble.right.online_helper_ky(dr, &y)?;
                 let ky_source = native::claims::TwoProofKySource::new(
                     dr,
                     preamble.left.unified.c.clone(),
                     preamble.right.unified.c.clone(),
                     &left_ky,
                     &right_ky,
-                    bind_endoscalar,
                     left_statement,
                     right_statement,
                     left_binding,
                     right_binding,
+                    left_bind_endoscalar,
+                    right_bind_endoscalar,
+                    left_online_helper,
+                    right_online_helper,
                 );
                 let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
 
@@ -380,21 +403,46 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     &preamble.right.bound(),
                     &preamble.right.online_fq_openings,
                 )?;
-                // The `compute_v` circuit's, over the openings the children
-                // exported.
-                let compute_v = [
-                    preamble.left.compute_v_ky(dr, &nested_y)?,
-                    preamble.right.compute_v_ky(dr, &nested_y)?,
-                ];
-
-                // Build k(y) values in nested claim order.
+                // Build k(y) values in nested claim order: the `compute_v`
+                // circuit's over the openings the children exported, then
+                // their online helper values and online batch commitments.
+                let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, C::Profile>(
+                    dr,
+                    &nested_y,
+                    &preamble.left.nested_instance(),
+                    &left_unified,
+                    &preamble.left.online_fq_openings,
+                    &preamble.left.online_values,
+                    &ky::native_online_stages::<C::Profile, _>(|index| {
+                        preamble.left[index].clone()
+                    }),
+                    &preamble.left.online_points,
+                    &preamble.left.mesh,
+                )?;
+                let (right_compute_v, right_online_helper) =
+                    ky::nested_online_ky::<_, _, C::Profile>(
+                        dr,
+                        &nested_y,
+                        &preamble.right.nested_instance(),
+                        &right_unified,
+                        &preamble.right.online_fq_openings,
+                        &preamble.right.online_values,
+                        &ky::native_online_stages::<C::Profile, _>(|index| {
+                            preamble.right[index].clone()
+                        }),
+                        &preamble.right.online_points,
+                        &preamble.right.mesh,
+                    )?;
                 let ky_source = nested::claims::TwoProofKySource::new(
                     dr,
                     left_c,
                     right_c,
                     left_unified,
                     right_unified,
-                    compute_v,
+                    left_compute_v,
+                    right_compute_v,
+                    left_online_helper,
+                    right_online_helper,
                     left_binding,
                     right_binding,
                 );

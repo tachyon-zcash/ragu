@@ -15,7 +15,6 @@ updates:
     # https://astral.sh/blog/open-source-security-at-astral#dependency-security
     cooldown:
       default-days: 7
-      semver-major-days: 30
     groups:
       actions:
         patterns:

@@ -358,7 +358,8 @@ impl<C: Cycle> InternalCircuitVisitor<C> for CaptureChecker {
 /// wire nudges the constraints neutralize, is noticed here. The sweep
 /// tallies and `cheatable` are judged at the witness, so they are pinned per
 /// capture point; the rest is structural. The endoscaling tallies depend on
-/// transcript-derived bit patterns, so they also depend on the fixed test tag.
+/// transcript-derived bit patterns, so they also move with the registry tags,
+/// which change with any registered circuit.
 /// These pins cover the consolidated collapse circuits and four challenge binders.
 fn expected(name: &str, point: &str) -> Census {
     let (stage_wires, wires, instance, outputs, demoted, strongly_forced, cheatable) = match name {
@@ -375,15 +376,16 @@ fn expected(name: &str, point: &str) -> Census {
             (478, 7962, 40, 2, 0, 2, 746)
         }
         "bind_beta" => (184, 7323, 40, 56, 0, 56, 626),
-        "bind_endoscalar" if point == "bootstrap" => (490, 3075, 40, 245, 0, 245, 496),
-        "bind_endoscalar" if point == "leaves" => (490, 3075, 40, 245, 0, 245, 499),
-        "bind_endoscalar" if point == "nodes" => (490, 3075, 40, 245, 0, 245, 498),
+        "bind_endoscalar" if point == "bootstrap" => (490, 3075, 40, 245, 0, 245, 497),
+        "bind_endoscalar" if point == "leaves" => (490, 3075, 40, 245, 0, 245, 498),
+        "bind_endoscalar" if point == "nodes" => (490, 3075, 40, 245, 0, 245, 499),
+        "native_endoscaling_step_0" if point == "nodes" => (490, 10605, 1, 2, 0, 2, 244),
         "native_endoscaling_step_0" => (490, 10605, 1, 2, 0, 2, 245),
         step if step.starts_with("native_endoscaling_step_") => (490, 10605, 1, 2, 0, 2, 244),
         step if step.starts_with("endoscaling_step_") => (532, 10688, 0, 2, 0, 2, 265),
-        "nested_collapse" if point == "bootstrap" => (1150, 5685, 39, 47, 0, 47, 583),
-        "nested_collapse" if point == "leaves" => (1150, 5685, 39, 48, 0, 48, 584),
-        "nested_collapse" if point == "nodes" => (1150, 5685, 39, 48, 0, 48, 583),
+        "nested_collapse" if point == "bootstrap" => (1150, 5685, 39, 47, 0, 47, 584),
+        "nested_collapse" if point == "leaves" => (1150, 5685, 39, 48, 0, 48, 583),
+        "nested_collapse" if point == "nodes" => (1150, 5685, 39, 48, 0, 48, 584),
         "nested_compute_v" => (1150, 6825, 39, 1, 0, 1, 577),
         other => panic!("no census pinned for {other}"),
     };
@@ -401,24 +403,24 @@ fn expected(name: &str, point: &str) -> Census {
         ("bind_challenges_3", "bootstrap") => (15, 733),
         ("bind_challenges_3", "leaves" | "nodes") => (13, 733),
         ("bind_beta", _) => (12, 614),
-        ("bind_endoscalar", "bootstrap") => (95, 401),
-        ("bind_endoscalar", "leaves") => (106, 393),
-        ("bind_endoscalar", "nodes") => (100, 398),
-        ("native_endoscaling_step_0", "bootstrap") => (94, 151),
-        ("native_endoscaling_step_0", "leaves") => (105, 140),
-        ("native_endoscaling_step_0", "nodes") => (99, 146),
-        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (94, 150),
-        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (105, 139),
-        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (99, 145),
-        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (93, 172),
-        (step, "leaves") if step.starts_with("endoscaling_step_") => (104, 161),
-        (step, "nodes") if step.starts_with("endoscaling_step_") => (98, 167),
-        ("nested_collapse", "bootstrap") => (106, 477),
-        ("nested_collapse", "leaves") => (116, 468),
-        ("nested_collapse", "nodes") => (110, 473),
-        ("nested_compute_v", "bootstrap") => (105, 472),
-        ("nested_compute_v", "leaves") => (116, 461),
-        ("nested_compute_v", "nodes") => (110, 467),
+        ("bind_endoscalar", "bootstrap") => (106, 391),
+        ("bind_endoscalar", "leaves") => (98, 400),
+        ("bind_endoscalar", "nodes") => (107, 392),
+        ("native_endoscaling_step_0", "bootstrap") => (105, 140),
+        ("native_endoscaling_step_0", "leaves") => (97, 148),
+        ("native_endoscaling_step_0", "nodes") => (106, 138),
+        (step, "bootstrap") if step.starts_with("native_endoscaling_step_") => (105, 139),
+        (step, "leaves") if step.starts_with("native_endoscaling_step_") => (97, 147),
+        (step, "nodes") if step.starts_with("native_endoscaling_step_") => (106, 138),
+        (step, "bootstrap") if step.starts_with("endoscaling_step_") => (104, 161),
+        (step, "leaves") if step.starts_with("endoscaling_step_") => (96, 169),
+        (step, "nodes") if step.starts_with("endoscaling_step_") => (106, 159),
+        ("nested_collapse", "bootstrap") => (117, 467),
+        ("nested_collapse", "leaves") => (108, 475),
+        ("nested_collapse", "nodes") => (118, 466),
+        ("nested_compute_v", "bootstrap") => (116, 461),
+        ("nested_compute_v", "leaves") => (108, 469),
+        ("nested_compute_v", "nodes") => (118, 459),
         other => panic!("no sweep tallies pinned for {other:?}"),
     };
     Census {

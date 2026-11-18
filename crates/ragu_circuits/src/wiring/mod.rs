@@ -82,6 +82,9 @@
 //! * [`sx`]: Evaluates $s(X, Y)$ at $X = x$ for some $x \in \mathbb{F}$.
 //! * [`sy`]: Evaluates $s(X, Y)$ at $Y = y$ for some $y \in \mathbb{F}$.
 //! * [`sxy`]: Evaluates $s(X, Y)$ at $(x, y)$ for some $x, y \in \mathbb{F}$.
+//! * [`monomials`]: Writes out $s(X, Y)$ itself as the list of its nonzero
+//!   terms $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum
+//!   is $s(X, Y)$, for the registry to hash into its tag.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Routine`]: ragu_core::routines::Routine
@@ -89,6 +92,7 @@
 //! [`floor_plan`]: crate::floor_planner::floor_plan
 //! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/local/wiring.html
 
+pub mod monomials;
 pub mod sx;
 pub mod sxy;
 pub mod sy;

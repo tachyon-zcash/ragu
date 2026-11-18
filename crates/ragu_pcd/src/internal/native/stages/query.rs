@@ -28,7 +28,7 @@ use ragu_core::{
     gadgets::{Bound, Gadget, Kind, WireEqualizer},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, allocator::Allocator};
+use ragu_primitives::{Element, allocator::Allocator, vec::Len};
 use udon::field::Field;
 
 use crate::{
@@ -36,7 +36,10 @@ use crate::{
     internal::native::{
         InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues, online,
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// Witness for a child proof's polynomial evaluations.
@@ -96,6 +99,14 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
 
 /// Witness data for the query stage.
 pub struct Witness<C: ProfiledCycle> {
+    /// Coordinates of the nested auxiliaries fixed before alpha.
+    pub online_auxiliaries: ragu_primitives::vec::FixedVec<
+        C::CircuitField,
+        crate::profile::online::stages::PhaseCoordinatesLen<C::Profile, Nested, 3>,
+    >,
+    /// Coordinates of the nested online query-stage commitment.
+    pub online_stage:
+        ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>>,
     /// Pre-computed registry_xy evaluations at each internal circuit's omega^j.
     pub fixed_registry: InternalCircuitValues<C::CircuitField, C::Profile>,
     /// m(w, x, y) - verifies registry_xy/registry_wy consistency at current coordinates.
@@ -281,6 +292,15 @@ impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
 /// This is stage communication data, not part of the circuit's public instance.
 #[derive(Gadget)]
 pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
+    /// Nested auxiliary coordinates fixed before alpha, bound to the walk.
+    #[ragu(gadget)]
+    pub online_auxiliaries: ragu_primitives::vec::FixedVec<
+        Element<'dr, D>,
+        crate::profile::online::stages::PhaseCoordinatesLen<P, Nested, 3>,
+    >,
+    /// The online query commitment fixed at this transcript boundary.
+    #[ragu(gadget)]
+    pub online_stage: ragu_primitives::vec::FixedVec<Element<'dr, D>, Present<P, Nested, 2>>,
     /// Fixed registry evaluations at each internal circuit's omega^j.
     #[ragu(gadget)]
     pub fixed_registry: InternalCircuitValues<Element<'dr, D>, P>,
@@ -319,6 +339,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             + 1
             + 2 * (RxIndex::num::<C::Profile>() + 5)
             + 2 * online::NUM_ONLINE_FP_QUERIES
+            + Present::<C::Profile, Nested, 2>::len()
+            + <crate::profile::online::stages::PhaseCoordinatesLen<C::Profile,Nested,3> as ragu_primitives::vec::Len>::len()
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -340,6 +362,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
         let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
         let online = online::alloc_queries(dr, allocator, witness.as_ref().map(|w| &w.online))?;
         Ok(Output {
+            online_auxiliaries: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    allocator,
+                    witness.as_ref().map(|w| w.online_auxiliaries[i]),
+                )
+            })?,
+            online_stage: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, allocator, witness.as_ref().map(|w| w.online_stage[i]))
+            })?,
             fixed_registry,
             registry_wxy,
             left,

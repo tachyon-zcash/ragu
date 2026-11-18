@@ -44,8 +44,10 @@ use ragu_core::{
     maybe::Maybe,
 };
 use ragu_primitives::{
-    Element, Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, Point, WithSuffix,
-    allocator::Standard, io::Write, vec::FixedVec,
+    Endoscalar, EndoscalarChallenge, GadgetExt as _, HoistedEndoscalar, Point, WithSuffix,
+    allocator::Standard,
+    io::Write,
+    vec::{CollectFixed, FixedVec},
 };
 
 use super::super::{
@@ -57,17 +59,23 @@ use super::super::{
 };
 use crate::{
     internal::nested::online::{BoundCommitmentsLen, bound_commitments},
-    profile::ProfiledCycle,
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Nested, PolynomialsLen},
+    },
 };
 
 /// The circuit's public output: the unified instance, then the
-/// commitments of the step's online Fq polynomials its profile exports.
+/// commitments of the step's online Fq polynomials its profile exports,
+/// then the actual nested online walk points.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>> {
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
     #[ragu(gadget)]
     pub online_fq: FixedVec<Point<'dr, D, C::NestedCurve>, BoundCommitmentsLen<C::Profile>>,
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C::NestedCurve>, PolynomialsLen<C::Profile, Nested>>,
 }
 
 /// Circuit binding the walk stage's endoscalar bits to `pre_beta`, the
@@ -135,7 +143,7 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
         let inputs = witness.as_ref().map(|w| w.inputs);
         let _ = binding.enforced(dr, inputs.as_ref().map(|i| &i.binding))?;
         let preamble = preamble.enforced(dr, inputs.as_ref().map(|i| &i.preamble))?;
-        let _ = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
+        let registry_wx = registry_wx.enforced(dr, inputs.as_ref().map(|i| &i.registry_wx))?;
         let ab = ab.enforced(dr, inputs.as_ref().map(|i| &i.ab))?;
         let f = f.enforced(dr, inputs.as_ref().map(|i| &i.f))?;
         let walk = walk.unenforced(dr, witness.as_ref().map(|w| w.walk))?;
@@ -174,9 +182,20 @@ impl<C: ProfiledCycle, R: Rank> MultiStageCircuit<C::CircuitField, R> for Circui
                 .map(|&slot| preamble.online_fq[slot as usize].clone())
                 .collect::<alloc::vec::Vec<_>>(),
         )?;
-        let (unified, aux) = unified_output.finish_no_suffix(dr, allocator)?;
-        let output = Output { unified, online_fq };
-        let zero = Element::zero(dr);
-        Ok(WithAux::new(WithSuffix::new(output, zero), aux))
+        let online_points = preamble
+            .online_fq
+            .iter()
+            .skip(C::Profile::ONLINE_FQ_POLYS)
+            .chain(registry_wx.online_points.iter())
+            .chain(ab.online_points.iter())
+            .chain(f.online_points.iter())
+            .cloned()
+            .collect_fixed()?;
+        let (output, aux) = unified_output.finish_with(dr, allocator, |unified| Output {
+            unified,
+            online_fq,
+            online_points,
+        })?;
+        Ok(WithAux::new(output, aux))
     }
 }

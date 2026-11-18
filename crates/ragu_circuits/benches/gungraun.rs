@@ -6,7 +6,7 @@ use std::hint::black_box;
 
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use ragu_circuits::{
-    Circuit, CircuitExt,
+    CircuitExt,
     polynomials::{TestRank, WalletRank, sparse},
     registry::{Registry, RegistryBuilder},
     testing::synthesis_counts,
@@ -80,14 +80,14 @@ fn eval_ky((a, b, y): (Fp, Fp, Fp)) {
 
 #[library_benchmark]
 #[bench::simple(MySimpleCircuit)]
-fn metrics_simple(circuit: impl Circuit<Fp> + 'static) {
-    black_box(synthesis_counts(&circuit)).unwrap();
+fn metrics_simple(circuit: MySimpleCircuit) {
+    black_box(synthesis_counts::<Fp, _>(&circuit)).unwrap();
 }
 
 #[library_benchmark]
 #[benches::multiple( SquareCircuit { times: 2 }, SquareCircuit { times: 10 },)]
-fn metrics_square(circuit: impl Circuit<Fp> + 'static) {
-    black_box(synthesis_counts(&circuit)).unwrap();
+fn metrics_square(circuit: SquareCircuit) {
+    black_box(synthesis_counts::<Fp, _>(&circuit)).unwrap();
 }
 
 #[library_benchmark(setup = setup_rng)]
