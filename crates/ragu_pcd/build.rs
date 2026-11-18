@@ -6,6 +6,7 @@ use std::{env, path::PathBuf};
 mod generate;
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(ragu_pcd_ci_tests, values(\"regular\", \"proofs\"))");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/pasta/generate.rs");
 

@@ -1,3 +1,6 @@
+// The proofs test group uses test_mismatch from this module.
+#![cfg_attr(ragu_pcd_ci_tests = "proofs", allow(dead_code, unused_imports))]
+
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -815,7 +818,7 @@ impl Backend for CustomBackend {
     }
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn batch_preserves_order_and_default_msm_override() {
     fn check<C: Affine>() {
         let scalars = [
@@ -861,7 +864,7 @@ fn batch_preserves_order_and_default_msm_override() {
 
 /// A missing scalar or base must not drop the unpaired term: every backend
 /// panics, single or batched, with either operand longer.
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn msms_reject_unequal_operands() {
     fn assert_rejects(msm: impl FnOnce()) {
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(msm))
@@ -898,7 +901,7 @@ fn msms_reject_unequal_operands() {
     check::<AcceleratedProver, ragu_core::pasta::EqAffine>();
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn serial_map_prepares_one_input_at_a_time() {
     let completed = AtomicUsize::new(0);
     let inputs = (0..5).inspect(|&index| {
@@ -913,7 +916,7 @@ fn serial_map_prepares_one_input_at_a_time() {
     assert_eq!(completed.load(Ordering::Relaxed), 5);
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn backend_map_preserves_owned_inputs_and_result_order() {
     fn check<B: Backend>(count: usize) {
         let calls: Vec<_> = (0..count).map(|_| AtomicUsize::new(0)).collect();
@@ -962,7 +965,7 @@ impl crate::backend::TestSealed for SerialFuseBackend {
     type Verifier = ReferenceBackend;
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn serial_fuse_keeps_individual_msms_and_original_iteration() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
         .with_backend::<SerialFuseBackend>()
@@ -977,7 +980,7 @@ fn serial_fuse_keeps_individual_msms_and_original_iteration() {
     assert!(app.verify_uncompressed(&fused, &mut rng).unwrap());
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn selected_backend_dispatch_reaches_protocol_phases() {
     let app = ApplicationBuilder::<Pasta, ProductionRank, TEST_HEADER_SIZE>::new()
         .with_backend::<TrackingBackend>()
@@ -1059,7 +1062,7 @@ fn selected_backend_dispatch_reaches_protocol_phases() {
 /// prover and a verifier that share it. Every selectable backend, and the
 /// verifier each selects, must derive the reference's challenges; a backend
 /// whose `msm` deviates must not, or this check could not catch an override.
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn bridge_challenges_match_the_reference() {
     fn challenges<B: SelectableBackend>() -> [Fp; 2] {
         let params = ragu_pcd::pasta::baked();
@@ -1104,6 +1107,7 @@ fn bridge_challenges_match_the_reference() {
     );
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 proptest! {
     #![proptest_config(config())]
 
@@ -1156,6 +1160,7 @@ proptest! {
 // TODO: Add this end-to-end backend-equivalence property for a generated
 // nontrivial Step; UnitStep exercises the protocol and application-circuit
 // paths, but not nontrivial gadget logic.
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 proptest! {
     #![proptest_config(config())]
 
@@ -1632,6 +1637,7 @@ mod proof_equivalence {
     }
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 mod independent_polynomials {
     use alloc::vec::Vec;
 

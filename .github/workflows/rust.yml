@@ -214,17 +214,26 @@ jobs:
       features: default
 
   test-all-feature:
-    name: all-feature (${{ matrix.os }})
+    name: all-feature (${{ matrix.os }}${{ matrix.pcd-suite != 'full' && format(', {0}', matrix.pcd-suite) || '' }})
     needs: changes
     if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            pcd-suite: full
+          - os: windows-latest
+            pcd-suite: full
+          - os: macos-latest
+            pcd-suite: regular
+          - os: macos-latest
+            pcd-suite: proofs
     uses: $/.github/workflows/workspace-tests.yml
     with:
       os: ${{ matrix.os }}
       features: all
+      pcd-suite: ${{ matrix.pcd-suite }}
 
   # Ensure the mock API stays `no_std`-buildable on a bare-metal target. This is
   # the configuration downstream consumers (e.g. `zcash_tachyon`) compile for

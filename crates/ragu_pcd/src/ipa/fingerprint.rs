@@ -12,6 +12,9 @@
 //!
 //! [`MSM`]: super::MSM
 
+// The fuse fixtures consume the recorded events in the proofs test group.
+#![cfg_attr(ragu_pcd_ci_tests = "regular", allow(dead_code, unused_imports))]
+
 #[cfg(test)]
 pub(crate) use recorder::{Event, capture};
 pub(crate) use recorder::{record_challenge, record_msm, record_point, record_scalar};

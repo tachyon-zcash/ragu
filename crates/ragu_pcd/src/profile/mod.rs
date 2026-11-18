@@ -1712,6 +1712,7 @@ pub(crate) mod testing {
 
     impl<F: Field> StatementContext<F> {
         /// Exposes `header` from now on, or the unit header for `None`.
+        #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
         pub(crate) fn expose(&self, header: Option<Vec<F>>) {
             *self.header.lock().unwrap() = header;
         }

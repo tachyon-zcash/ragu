@@ -1,6 +1,9 @@
 //! Online batches, the identity commitments they reject, and transcript-copy
 //! attacks.
 
+// Keep the mutation hooks available when CI builds the other test group.
+#![cfg_attr(ragu_pcd_ci_tests = "regular", allow(dead_code))]
+
 use alloc::{vec, vec::Vec};
 use core::cell::Cell;
 
@@ -228,7 +231,7 @@ fn verify(app: &App, pcd: &Pcd<C, Rk, ()>, rng: &mut StdRng, expected: bool) -> 
     Ok(())
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn nested_online_batch_round_trip_and_sum_binding() -> Result<()> {
     let app = application()?;
     let mut rng = StdRng::seed_from_u64(0x6060);
@@ -268,7 +271,7 @@ fn nested_online_batch_round_trip_and_sum_binding() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn nested_online_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
     let app = application()?;
     let mut rng = StdRng::seed_from_u64(0x6061);
@@ -339,7 +342,7 @@ pub(crate) fn mutate_query_challenges<F: Field>(mut challenges: Challenges<F>) -
     challenges
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn online_consumer_challenges_are_bound_to_the_enclosing_step() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
@@ -598,12 +601,12 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
     Ok(())
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn native_online_batches_round_trip_without_a_nested_helper() -> Result<()> {
     native_round_trip::<false>()
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn both_online_batches_round_trip_and_bind_points_and_sums() -> Result<()> {
     native_round_trip::<true>()
 }
@@ -617,7 +620,7 @@ pub(crate) fn mutate_native_stage_commitment<P: Affine>(index: usize, point: P) 
     }
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn native_online_stage_copies_bind_at_all_three_deadlines() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
@@ -692,7 +695,7 @@ mod capture {
             Ok(())
         }
     }
-    #[test]
+    #[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
     fn both_online_compute_v_circuits_capture_and_replay() -> Result<()> {
         let app = ApplicationBuilder::<Profiled<Pasta, NativeBatch<true>>, Rk, 2>::new()
             .register(UnitStep)?
@@ -834,7 +837,7 @@ pub(crate) fn mutate_native_phase<P: Affine>(phase: usize, point: P) -> P {
     }
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
@@ -992,7 +995,7 @@ pub(crate) fn mutate_nested_phase<P: Affine>(phase: usize, point: P) -> P {
     }
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn nested_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
@@ -1114,7 +1117,7 @@ impl Profile for LegacyMixed {
     }
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitments() -> Result<()>
 {
     type Mixed = Profiled<Pasta, LegacyMixed>;
@@ -1134,7 +1137,7 @@ fn compatibility_and_multipoint_slots_share_the_batch_without_duplicate_commitme
     Ok(())
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "regular"), test)]
 fn a_nonzero_constant_nested_polynomial_compresses_with_a_zero_quotient_fold() -> Result<()> {
     type Mixed = Profiled<Pasta, LegacyMixed>;
     let app = ApplicationBuilder::<Mixed, Rk, 2>::new()

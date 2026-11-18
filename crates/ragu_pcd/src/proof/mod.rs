@@ -17,22 +17,22 @@ mod codec;
 // `#[ignore]`d in the platform matrix. Rust CI explicitly replays the
 // properties with saved recursion failures, and the scheduled heavy-tests
 // run picks up the full suites with `cargo test -- --ignored`.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/app_stage.rs"]
 mod app_stage_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/bridge_hash.rs"]
 mod bridge_hash_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/compress_blinding.rs"]
 mod compress_blinding_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/recursive_bindings.rs"]
 mod recursive_binding_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/recursive_boundaries.rs"]
 mod recursive_boundary_tests;
 #[cfg(test)]
@@ -44,22 +44,22 @@ pub(crate) mod recursive_propagation_tests;
 #[cfg(test)]
 #[path = "../../tests/backend_equivalence.rs"]
 mod backend_equivalence;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/child_commitments.rs"]
 mod child_commitment_tests;
 // Golden fixtures of the fuse pipeline and the compressed verifier, under
 // `tests/fixtures/fuse/`. Mounted here so the digests destructure `Proof`
 // exhaustively: a new field fails to compile until the fixture pins it.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "regular")))]
 #[path = "../../tests/fuse_fixtures.rs"]
 mod fuse_fixture_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "regular")))]
 #[path = "../../tests/profile_substitution.rs"]
 mod profile_substitution_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/proof_shape.rs"]
 mod proof_shape_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/verify_rejections.rs"]
 mod verify_rejection_tests;
 // Mutable component access for the corruption vocabulary (see

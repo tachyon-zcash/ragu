@@ -1,0 +1,2 @@
+[build]
+rustflags = ["--cfg", 'ragu_pcd_ci_tests="regular"']

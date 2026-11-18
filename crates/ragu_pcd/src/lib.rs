@@ -68,11 +68,11 @@ pub mod step;
 mod verify;
 pub mod wire;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../tests/setup_binding.rs"]
 mod setup_binding_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../tests/profile_layout.rs"]
 mod profile_layout_tests;
 
@@ -87,11 +87,11 @@ mod online_batch_tests;
 #[path = "../tests/source_mesh.rs"]
 mod source_mesh_tests;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../tests/decompress_statement.rs"]
 mod decompress_statement_tests;
 
-#[cfg(all(test, feature = "unstable-fuzzing"))]
+#[cfg(all(test, feature = "unstable-fuzzing", not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;
 
