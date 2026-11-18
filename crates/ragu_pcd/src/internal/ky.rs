@@ -29,7 +29,7 @@ use super::{
     },
     nested::{self, unified as nested_unified},
 };
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 use crate::Pcd;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::Proof;
@@ -283,7 +283,7 @@ pub fn binding_ky_of<F: Field, P: Affine<Base = F>>(points: &[P], y: F) -> Resul
 
 /// The native $k(y)$ values of `pcd` at `y`, read off the proof's public
 /// data and the header data.
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 pub fn native_ky<
     C: ProfiledCycle,
     R: Rank,

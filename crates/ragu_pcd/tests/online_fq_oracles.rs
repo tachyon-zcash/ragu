@@ -11,6 +11,9 @@
 //! can move, should reject it. The other cases keep the polynomial and
 //! quotient construction honest while claiming a false Query or Eval value.
 
+// The mutation hooks are referenced from the shared test build.
+#![cfg_attr(ragu_pcd_ci_tests = "proofs", allow(dead_code))]
+
 use alloc::vec::Vec;
 use core::cell::Cell;
 
@@ -149,22 +152,22 @@ fn rejects(mutation: Mutation) -> Result<()> {
     assert_verification(&app, &parent, &mut rng, false)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_polynomial_swapped_after_its_commitment_rejects() -> Result<()> {
     rejects(Mutation::Commitment)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_consistent_opening_at_the_wrong_point_rejects() -> Result<()> {
     rejects(Mutation::Point)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_false_query_value_rejects() -> Result<()> {
     rejects(Mutation::QueryValue)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_false_eval_value_rejects() -> Result<()> {
     rejects(Mutation::EvalValue)
 }
@@ -213,7 +216,7 @@ mod capture {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
     fn the_fq_enabled_compute_v_can_be_captured_and_replayed() -> Result<()> {
         let app = application()?;
         let mut rng = StdRng::seed_from_u64(0xf006);

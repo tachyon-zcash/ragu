@@ -320,6 +320,6 @@ pub(crate) fn nested_shapes<P: Profile, F: Field>(
     Ok(with_masked(shaper.shapes, masked))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../../tests/compress_claims.rs"]
 mod tests;

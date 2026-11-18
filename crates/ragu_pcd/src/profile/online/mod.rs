@@ -17,7 +17,7 @@ pub(crate) mod prover;
 pub mod source;
 pub mod stages;
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests;
 
 /// The last transcript boundary before a polynomial must be committed.

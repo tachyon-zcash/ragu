@@ -1460,9 +1460,11 @@ pub(crate) mod testing {
     }
 
     /// Declares one rx polynomial and no extension.
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Mismatched;
 
+    #[cfg(not(ragu_pcd_ci_tests = "proofs"))]
     impl Profile for Mismatched {
         const NAME: &'static str = "mismatched";
         const NATIVE_EXTENSION: usize = 1;
@@ -2317,7 +2319,7 @@ pub(crate) mod testing {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 mod tests {
     use ragu_circuits::polynomials::R;
 

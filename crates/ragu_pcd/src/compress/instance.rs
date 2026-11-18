@@ -863,6 +863,6 @@ impl<C: ProfiledCycle> Instance<C> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_ci_tests = "proofs")))]
 #[path = "../../tests/compress_instance.rs"]
 mod tests;

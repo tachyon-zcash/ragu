@@ -1,4 +1,8 @@
 //! Source-registry identities on both fields, including recursive and terminal closure.
+
+// The mutation hook is referenced from the shared test build.
+#![cfg_attr(ragu_pcd_ci_tests = "proofs", allow(dead_code))]
+
 use alloc::{vec, vec::Vec};
 use core::cell::Cell;
 
@@ -471,7 +475,7 @@ fn verify<P: Profile>(
     }
     Ok(())
 }
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<()> {
     let source = ApplicationBuilder::<Pasta, R<13>, 2>::new()
         .register(UnitStep)?
@@ -624,7 +628,7 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
 /// An empty source registry with a zero tag restricts to the zero
 /// polynomial, whose commitment the walk cannot take, so setup rejects it
 /// rather than the first proof failing.
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_source_registry_whose_restrictions_vanish_is_rejected_at_setup() -> Result<()> {
     let native = RegistryBuilder::<Fp, R<13>>::new()
         .with_tag(Fp::ZERO)
@@ -913,12 +917,12 @@ where
     verify(&app, &proof.carry::<()>(()), &mut rng, false)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_native_mesh_alone_closes_and_rejects_corruption() -> Result<()> {
     one_sided_mesh::<NativeMeshOnly>(true, 0x606070)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_nested_mesh_alone_at_other_slots_closes_and_rejects_corruption() -> Result<()> {
     one_sided_mesh::<NestedMeshOnly>(false, 0x606071)
 }
@@ -1096,22 +1100,22 @@ where
     Ok(())
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_native_root_restricting_another_registry_is_rejected() -> Result<()> {
     substituted_source::<NativeMeshOnly>(true, Substitution::Root, 0x606080)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_nested_root_restricting_another_registry_is_rejected() -> Result<()> {
     substituted_source::<NestedMeshOnly>(false, Substitution::Root, 0x606081)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_false_native_obligation_cannot_be_replaced_by_the_true_restriction() -> Result<()> {
     substituted_source::<NativeMeshOnly>(true, Substitution::Replaced, 0x606082)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn a_false_nested_obligation_cannot_be_replaced_by_the_true_restriction() -> Result<()> {
     substituted_source::<NestedMeshOnly>(false, Substitution::Replaced, 0x606083)
 }
@@ -1236,15 +1240,16 @@ where
     Ok(())
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn native_inherited_coordinates_are_the_childs_own() -> Result<()> {
     inherited_coordinates_are_the_childs_own::<NativeMeshOnly>(true, 0x606084)
 }
 
-#[test]
+#[cfg_attr(not(ragu_pcd_ci_tests = "proofs"), test)]
 fn nested_inherited_coordinates_are_the_childs_own() -> Result<()> {
     inherited_coordinates_are_the_childs_own::<NestedMeshOnly>(false, 0x606085)
 }
 
+#[cfg(not(ragu_pcd_ci_tests = "proofs"))]
 #[path = "source_mesh_costs.rs"]
 mod costs;
