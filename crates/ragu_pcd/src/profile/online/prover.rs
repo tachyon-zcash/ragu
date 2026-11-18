@@ -323,13 +323,21 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     fn set_stage<B: Backend, G: FixedGenerators<C>>(
         &mut self,
         index: usize,
-        rx: impl FnOnce() -> Result<sparse::Polynomial<C::Scalar, R>>,
+        mut rx: impl FnMut() -> Result<sparse::Polynomial<C::Scalar, R>>,
         generators: &G,
     ) -> Result<()> {
         if Self::active() {
-            let rx = rx()?;
-            self.stage_commitments[index] = Some(B::sparse_commit_to_affine(&rx, generators));
-            self.stages[index] = Some(rx);
+            // The other field absorbs affine coordinates. Resample the stage
+            // blinder before publishing a commitment that has none.
+            loop {
+                let polynomial = rx()?;
+                let commitment = B::sparse_commit_to_affine(&polynomial, generators);
+                if !commitment.is_identity() {
+                    self.stage_commitments[index] = Some(commitment);
+                    self.stages[index] = Some(polynomial);
+                    break;
+                }
+            }
         }
         Ok(())
     }

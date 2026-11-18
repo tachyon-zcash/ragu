@@ -368,6 +368,74 @@ impl Profile for NestedOnly {
         B: SelectableBackend;
 }
 
+#[cfg(feature = "baked")]
+#[test]
+fn an_identity_online_eval_stage_is_resampled() -> Result<()> {
+    use core::convert::Infallible;
+
+    use ragu_backend::ReferenceBackend;
+    use ragu_circuits::polynomials::sparse;
+    use ragu_core::{Cycle, pasta::Pasta};
+    use rand::{TryCryptoRng, TryRng};
+    use udon::curve::Affine;
+
+    use super::{prepared::PreparationChallenges, prover::State};
+
+    #[derive(Default)]
+    struct StageBlindings(u8);
+
+    impl TryRng for StageBlindings {
+        type Error = Infallible;
+
+        fn try_next_u32(&mut self) -> core::result::Result<u32, Infallible> {
+            unreachable!("stage blinders are sampled with fill_bytes")
+        }
+
+        fn try_next_u64(&mut self) -> core::result::Result<u64, Infallible> {
+            unreachable!("stage blinders are sampled with fill_bytes")
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> core::result::Result<(), Infallible> {
+            dest.fill(0);
+            dest[0] = self.0;
+            self.0 += 1;
+            Ok(())
+        }
+    }
+
+    impl TryCryptoRng for StageBlindings {}
+
+    type C = <Pasta as Cycle>::NestedCurve;
+    let generators = Pasta::nested_generators(crate::pasta::baked());
+    let mut state = State::<C, ProductionRank, NestedOnly, stages::Nested>::new(vec![Fq::ONE])?;
+    // P(X) = X gives a zero evaluation at u = 0.
+    state.supply::<ReferenceBackend, _>(
+        Phase::BeforeW,
+        vec![sparse::Polynomial::from_coeffs(vec![Fq::ZERO, Fq::ONE])],
+        generators,
+    )?;
+    let mut rng = rand::rng();
+    state.commit_inputs::<ReferenceBackend, _, _>(vec![], generators, &mut rng)?;
+    for phase in [Phase::BeforeY, Phase::BeforeX, Phase::BeforeAlpha] {
+        state.supply::<ReferenceBackend, _>(phase, vec![], generators)?;
+    }
+    state.commit_query::<ReferenceBackend, _, _>(
+        vec![Fq::from(6)],
+        PreparationChallenges {
+            w: Some(Fq::from(5)),
+            y: Some(Fq::from(7)),
+            x: Some(Fq::from(11)),
+        },
+        generators,
+        &mut rng,
+    )?;
+    let mut blindings = StageBlindings::default();
+    state.commit_eval::<ReferenceBackend, _, _>(Fq::ZERO, generators, &mut blindings)?;
+    assert_eq!(blindings.0, 2);
+    assert!(!state.stage_commitment(2).is_identity());
+    Ok(())
+}
+
 #[test]
 fn nested_online_targets_bind_the_actual_helper_output_and_claim_order() -> Result<()> {
     use ragu_circuits::{horner::Horner, staging::MultiStageCircuit};
@@ -1374,16 +1442,16 @@ fn mesh_preparation_uses_source_restrictions_and_preserves_both_child_obligation
         assert_eq!(
             queries.values,
             vec![
-                source.evaluate(challenges.w, inputs[0], inputs[1]),
-                source.evaluate(challenges.w, inputs[2], inputs[3]),
-                source.evaluate(challenges.w, inputs[0], challenges.y),
-                source.evaluate(challenges.w, inputs[2], challenges.y),
-                source.evaluate(challenges.w, challenges.x, challenges.y),
+                source.evaluate::<ReferenceBackend>(challenges.w, inputs[0], inputs[1]),
+                source.evaluate::<ReferenceBackend>(challenges.w, inputs[2], inputs[3]),
+                source.evaluate::<ReferenceBackend>(challenges.w, inputs[0], challenges.y),
+                source.evaluate::<ReferenceBackend>(challenges.w, inputs[2], challenges.y),
+                source.evaluate::<ReferenceBackend>(challenges.w, challenges.x, challenges.y),
             ]
         );
         assert_eq!(
             ReferenceBackend::sparse_eval(&polynomials[mesh.outgoing], F::from(29)),
-            source.evaluate(F::from(29), challenges.x, challenges.y)
+            source.evaluate::<ReferenceBackend>(F::from(29), challenges.x, challenges.y)
         );
         // A bad inherited obligation must remain bad, so the shared edge
         // fails. Recomputing it from source would silently erase the fault.
@@ -1458,11 +1526,11 @@ fn terminal_mesh_opens_both_ends_and_counts_each_polynomial_once() -> Result<()>
         };
         let inputs = vec![F::from(2), F::from(3), F::from(13), F::from(19)];
         let values = vec![
-            source.evaluate(coordinates.w, inputs[0], inputs[1]),
-            source.evaluate(coordinates.w, inputs[2], inputs[3]),
-            source.evaluate(coordinates.w, inputs[0], coordinates.y),
-            source.evaluate(coordinates.w, inputs[2], coordinates.y),
-            source.evaluate(coordinates.w, coordinates.x, coordinates.y),
+            source.evaluate::<ReferenceBackend>(coordinates.w, inputs[0], inputs[1]),
+            source.evaluate::<ReferenceBackend>(coordinates.w, inputs[2], inputs[3]),
+            source.evaluate::<ReferenceBackend>(coordinates.w, inputs[0], coordinates.y),
+            source.evaluate::<ReferenceBackend>(coordinates.w, inputs[2], coordinates.y),
+            source.evaluate::<ReferenceBackend>(coordinates.w, coordinates.x, coordinates.y),
         ];
         let metadata = mesh.claim_values(layout, &inputs, &values)?;
         assert_eq!(
@@ -1472,7 +1540,7 @@ fn terminal_mesh_opens_both_ends_and_counts_each_polynomial_once() -> Result<()>
         let polynomials =
             mesh.terminal_polynomials::<_, ProductionRank>(&source, &metadata, coordinates)?;
         let tau = F::from(29);
-        let expected = source.evaluate(tau, coordinates.x, coordinates.y);
+        let expected = source.evaluate::<ReferenceBackend>(tau, coordinates.x, coordinates.y);
         let claims = mesh.terminal_claims(layout, &metadata, coordinates, tau, expected, 7)?;
         assert_eq!(polynomials.len(), 6);
         assert_eq!(claims.len(), 11);

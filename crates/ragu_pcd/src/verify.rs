@@ -133,7 +133,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let (x, y) = (pcd.proof().x(), pcd.proof().y());
             if Verifier::<B>::sparse_commit_to_affine(outgoing, C::host_generators(self.params))
                 != pcd.proof().native_online_commitments[mesh.outgoing]
-                || Verifier::<B>::sparse_eval(outgoing, tau) != source.evaluate(tau, x, y)
+                || Verifier::<B>::sparse_eval(outgoing, tau)
+                    != source.evaluate::<Verifier<B>>(tau, x, y)
             {
                 return Ok(false);
             }
@@ -151,7 +152,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             );
             if Verifier::<B>::sparse_commit_to_affine(outgoing, C::nested_generators(self.params))
                 != pcd.proof().nested_online_commitments[mesh.outgoing]
-                || Verifier::<B>::sparse_eval(outgoing, tau) != source.evaluate(tau, x, y)
+                || Verifier::<B>::sparse_eval(outgoing, tau)
+                    != source.evaluate::<Verifier<B>>(tau, x, y)
             {
                 return Ok(false);
             }

@@ -190,7 +190,11 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                     &instance.native_mesh_claims,
                     coordinates,
                     w,
-                    source.evaluate(w, coordinates.x, coordinates.y),
+                    source.evaluate::<<B as SelectableBackend>::Verifier>(
+                        w,
+                        coordinates.x,
+                        coordinates.y,
+                    ),
                     polys.len(),
                 )?);
                 openings.commitments.extend(
@@ -268,7 +272,11 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                     &instance.nested_mesh_claims,
                     coordinates,
                     w,
-                    source.evaluate(w, coordinates.x, coordinates.y),
+                    source.evaluate::<<B as SelectableBackend>::Verifier>(
+                        w,
+                        coordinates.x,
+                        coordinates.y,
+                    ),
                     polys.len(),
                 )?);
                 openings.commitments.extend(

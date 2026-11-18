@@ -254,6 +254,15 @@ fn source_oracle_cost_census() -> Result<()> {
     ] {
         assert_fixture_counts(layout, mesh.expect("fixture mesh"))?;
     }
+    let polynomials = Shape::of::<SourceCapacity>().polynomials();
+    assert_eq!(polynomials, 141);
+    // Rank only changes the number of coefficients per carried polynomial
+    // in the uncompressed encoding.
+    type C = Profiled<Pasta, SourceCapacity>;
+    assert_eq!(
+        Proof::<C, R<14>>::encoded_len::<2>() - Proof::<C, R<13>>::encoded_len::<2>(),
+        polynomials * (R::<14>::num_coeffs() - R::<13>::num_coeffs()) * 32,
+    );
     census::<Standard, R<13>>("main-standard")?;
     census::<Standard, R<14>>("main-matched")?;
     census::<SourceCapacity, R<14>>("v6-source-capacity")

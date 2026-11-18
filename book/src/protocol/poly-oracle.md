@@ -579,7 +579,7 @@ Like the application's slots, V6's batches take only finite points. A supplied z
 
 #### Authenticate many restrictions with one outgoing obligation {#v6-registry}
 
-Let $m$ be a source registry captured by `ApplicationBuilder::with_source_registries`. The source handle retains the actual registry, fixes its tag in the helper circuit, checks its rank against the enclosing rank, and uses the sealed verifier backend for public evaluation. It is separate from mutable prover context and from the enclosing application's own registry.
+Let $m$ be a source registry captured by `ApplicationBuilder::with_source_registries`. The source handle retains the actual registry, fixes its tag in the helper circuit, checks its rank against the enclosing rank, and selects the backend that prepares its restrictions. Both terminal verifiers evaluate the source using the enclosing application's verifier backend. It is separate from mutable prover context and from the enclosing application's own registry.
 
 For pending identities $R_j(W)=m(W,a_j,b_j)$, fix $[R_j]$ and $(a_j,b_j)$ before $w$. Then prepare the following restrictions at successive deadlines:
 

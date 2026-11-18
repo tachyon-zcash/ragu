@@ -139,7 +139,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                     &instance.native_mesh_claims,
                     coordinates,
                     w,
-                    source.evaluate(w, coordinates.x, coordinates.y),
+                    source.evaluate::<Verifier<B>>(w, coordinates.x, coordinates.y),
                     openings.commitments.len()
                 )));
                 openings.commitments.extend(
@@ -201,7 +201,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                     &instance.nested_mesh_claims,
                     coordinates,
                     w,
-                    source.evaluate(w, coordinates.x, coordinates.y),
+                    source.evaluate::<Verifier<B>>(w, coordinates.x, coordinates.y),
                     openings.commitments.len()
                 )));
                 openings.commitments.extend(

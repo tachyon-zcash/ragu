@@ -6,6 +6,7 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::marker::PhantomData;
 
+use ragu_backend::{Backend, RegistryEvaluation};
 use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::Registry,
@@ -22,7 +23,7 @@ trait Restrictions<F: Field>: Send + Sync {
     fn xy(&self, x: F, y: F) -> Vec<F>;
     fn wx(&self, w: F, x: F) -> Vec<F>;
     fn wy(&self, w: F, y: F) -> Vec<F>;
-    fn evaluate(&self, w: F, x: F, y: F) -> F;
+    fn registry(&self) -> &dyn RegistryEvaluation<F>;
 }
 
 struct Borrowed<'a, F: Field, R: Rank, B: SelectableBackend> {
@@ -52,13 +53,8 @@ impl<F: Field, R: Rank, B: SelectableBackend> Restrictions<F> for Borrowed<'_, F
             .iter_coeffs()
             .collect()
     }
-    fn evaluate(&self, w: F, x: F, y: F) -> F {
-        <<B as SelectableBackend>::Verifier as ragu_backend::Backend>::registry_wxy(
-            self.registry,
-            w,
-            x,
-            y,
-        )
+    fn registry(&self) -> &dyn RegistryEvaluation<F> {
+        self.registry
     }
 }
 
@@ -72,7 +68,8 @@ pub struct SourceRegistry<'a, F: Field> {
     inner: Arc<dyn Restrictions<F> + 'a>,
 }
 impl<'a, F: Field> SourceRegistry<'a, F> {
-    /// Captures the source registry and sealed backend selection.
+    /// Captures the source registry and the backend that prepares its restrictions.
+    /// The enclosing application selects the backend for terminal verification.
     pub fn new<R: Rank, B: SelectableBackend>(registry: &'a Registry<'a, F, R>) -> Self {
         Self {
             inner: Arc::new(Borrowed::<F, R, B> {
@@ -135,15 +132,17 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     pub(crate) fn wy<R: Rank>(&self, w: F, y: F) -> Result<sparse::Polynomial<F, R>> {
         self.polynomial(self.inner.wy(w, y))
     }
-    /// Evaluates the captured source with the sealed verifier backend.
-    pub(crate) fn evaluate(&self, w: F, x: F, y: F) -> F {
-        self.inner.evaluate(w, x, y)
+    /// Evaluates the captured source with the enclosing application's verifier backend.
+    pub(crate) fn evaluate<V: Backend>(&self, w: F, x: F, y: F) -> F {
+        V::registry_wxy(self.inner.registry(), w, x, y)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ragu_backend::{Backend, ReferenceBackend};
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    use ragu_backend::ReferenceBackend;
     use ragu_circuits::{
         polynomials::{R, TestRank},
         registry::RegistryBuilder,
@@ -151,6 +150,23 @@ mod tests {
     use ragu_core::pasta::{Fp, Fq};
 
     use super::*;
+
+    #[derive(Clone, Copy, Debug, Default)]
+    struct TrackingVerifier;
+
+    static EVALUATED: AtomicBool = AtomicBool::new(false);
+
+    impl Backend for TrackingVerifier {
+        fn registry_wxy<F: Field>(
+            registry: &(impl RegistryEvaluation<F> + ?Sized),
+            w: F,
+            x: F,
+            y: F,
+        ) -> F {
+            EVALUATED.store(true, Ordering::Relaxed);
+            ReferenceBackend::registry_wxy(registry, w, x, y)
+        }
+    }
 
     fn check<F: Field>() -> Result<()> {
         let registry = RegistryBuilder::<F, TestRank>::new()
@@ -162,7 +178,9 @@ mod tests {
         let (w, x, y) = (F::from(2), F::from(3), F::from(5));
         let expected = ReferenceBackend::registry_wxy(&registry, w, x, y);
         assert_eq!(source.tag(), F::from(7));
-        assert_eq!(source.evaluate(w, x, y), expected);
+        EVALUATED.store(false, Ordering::Relaxed);
+        assert_eq!(source.evaluate::<TrackingVerifier>(w, x, y), expected);
+        assert!(EVALUATED.load(Ordering::Relaxed));
         assert_eq!(
             ReferenceBackend::sparse_eval(&source.xy::<R<13>>(x, y)?, w),
             expected
@@ -180,8 +198,14 @@ mod tests {
             .register_circuit(())?
             .finalize()?;
         let other = SourceRegistry::new::<_, ReferenceBackend>(&substituted);
-        assert_ne!(source.evaluate(w, x, y), other.evaluate(w, x, y));
-        assert_eq!(source.clone().evaluate(w, x, y), expected);
+        assert_ne!(
+            source.evaluate::<ReferenceBackend>(w, x, y),
+            other.evaluate::<ReferenceBackend>(w, x, y)
+        );
+        assert_eq!(
+            source.clone().evaluate::<ReferenceBackend>(w, x, y),
+            expected
+        );
         let large = RegistryBuilder::<F, R<13>>::new()
             .register_circuit(())?
             .finalize()?;

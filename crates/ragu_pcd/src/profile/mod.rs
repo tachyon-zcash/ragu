@@ -1175,6 +1175,8 @@ pub struct Shape {
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
     pub native_steps: usize,
+    /// The outgoing source polynomial retained for each active source mesh.
+    pub source_polynomials: usize,
 }
 
 impl Shape {
@@ -1185,7 +1187,7 @@ impl Shape {
     /// Panics under the same conditions as [`Self::solve`]. When used in
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
-        Self::solve_with_online(
+        let mut shape = Self::solve_with_online(
             P::NATIVE_EXTENSION
                 + if P::NATIVE_ONLINE.is_empty() {
                     0
@@ -1202,7 +1204,10 @@ impl Shape {
             P::NATIVE_ONLINE.polynomials.len(),
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
-        )
+        );
+        shape.source_polynomials =
+            P::NATIVE_MESH.is_some() as usize + P::NESTED_MESH.is_some() as usize;
+        shape
     }
 
     /// Solves the walk sizes for the given extensions and online Fq
@@ -1284,13 +1289,20 @@ impl Shape {
             online_fq,
             native_points,
             native_steps,
+            source_polynomials: 0,
         }
     }
 
     /// Every polynomial a proof of this shape carries: both sides' rx
-    /// polynomials and, on each side, $a$, $b$, `registry_xy` and $p$.
+    /// polynomials, $a$, $b$, `registry_xy` and $p$ on each side, the step's
+    /// online Fp polynomials, and each mesh's outgoing source polynomial.
     pub const fn polynomials(&self) -> usize {
-        self.native_rx + 4 + self.nested_rx + 4
+        self.native_rx
+            + 4
+            + self.nested_rx
+            + 4
+            + crate::header::NUM_ONLINE_FP_POLYS
+            + self.source_polynomials
     }
 }
 
@@ -2716,9 +2728,10 @@ mod tests {
                 online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
+                source_polynomials: 0,
             }
         );
-        assert_eq!(shape.polynomials(), 99);
+        assert_eq!(shape.polynomials(), 101);
     }
 
     #[test]
@@ -2753,9 +2766,10 @@ mod tests {
                 online_fq: 1,
                 native_points: 104,
                 native_steps: 26,
+                source_polynomials: 0,
             }
         );
-        assert_eq!(shape.polynomials(), 101);
+        assert_eq!(shape.polynomials(), 103);
         assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
         assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
     }

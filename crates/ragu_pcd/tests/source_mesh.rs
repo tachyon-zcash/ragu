@@ -516,16 +516,28 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
     .expect("decode retained source polynomials")
     .carry::<()>(());
     verify(&app, &decoded, &mut rng, true)?;
-    // A valid registry other than the source: one trivial circuit under a
-    // nonzero tag, whose restrictions do not vanish.
+    // Reuse each source tag so that the terminal check has to distinguish
+    // the registry polynomials themselves.
     let wrong_native = RegistryBuilder::<Fp, R<13>>::new()
         .register_circuit(())?
-        .with_tag(Fp::ONE)
+        .with_tag(source.native_registry().tag())
         .finalize()?;
     let wrong_nested = RegistryBuilder::<Fq, R<13>>::new()
         .register_circuit(())?
-        .with_tag(Fq::ONE)
+        .with_tag(source.nested_registry().tag())
         .finalize()?;
+    assert_ne!(
+        wrong_native.wxy(Fp::from(2), Fp::from(3), Fp::from(5)),
+        source
+            .native_registry()
+            .wxy(Fp::from(2), Fp::from(3), Fp::from(5)),
+    );
+    assert_ne!(
+        wrong_nested.wxy(Fq::from(2), Fq::from(3), Fq::from(5)),
+        source
+            .nested_registry()
+            .wxy(Fq::from(2), Fq::from(3), Fq::from(5)),
+    );
     for side in 0..2 {
         let receiving = ApplicationBuilder::<C, Rk, 2>::new()
             .register(UnitStep)?
@@ -542,6 +554,14 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
                 })),
             )
             .finalize(crate::pasta::baked_aggregator())?;
+        assert_eq!(
+            receiving.native_registry().tag(),
+            app.native_registry().tag()
+        );
+        assert_eq!(
+            receiving.nested_registry().tag(),
+            app.nested_registry().tag()
+        );
         assert!(!receiving.verify_uncompressed(&child, &mut rng)?);
         assert!(
             !receiving.verify_compressed(&compressed)?,
