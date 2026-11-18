@@ -2,9 +2,9 @@
 //!
 //! Registries record each circuit once with [`compiled`]. Evaluations then
 //! run that linear program forwards or backwards without re-synthesizing the
-//! circuit. The direct interpreter modules below remain independent reference
-//! implementations for parity tests. Symbolic stage masks keep their compact
-//! closed-form representation.
+//! circuit. The direct interpreters are built only for tests, as independent
+//! references for the compiled program. Symbolic stage masks keep their
+//! compact closed-form representation.
 //!
 //! # Background
 //!
@@ -81,16 +81,17 @@
 //!
 //! # Overview
 //!
-//! This module provides implementations that interpret circuit code directly
-//! (via specialized [`Driver`] implementations) to evaluate $s(X, Y)$ at
-//! specific restrictions more efficiently:
-//!
-//! * [`sx`]: Evaluates $s(X, Y)$ at $X = x$ for some $x \in \mathbb{F}$.
-//! * [`sy`]: Evaluates $s(X, Y)$ at $Y = y$ for some $y \in \mathbb{F}$.
-//! * [`sxy`]: Evaluates $s(X, Y)$ at $(x, y)$ for some $x, y \in \mathbb{F}$.
+//! * [`compiled`]: Records a circuit's constraint emission once, then
+//!   evaluates $s(X, Y)$ at $X = x$, at $Y = y$, or at $(x, y)$ for some
+//!   $x, y \in \mathbb{F}$. Registries evaluate circuits through it.
 //! * [`monomials`]: Writes out $s(X, Y)$ itself as the list of its nonzero
 //!   terms $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum
 //!   is $s(X, Y)$, for the registry to hash into its tag.
+//!
+//! Test builds add `sx`, `sy` and `sxy`, which interpret circuit code directly
+//! (via specialized [`Driver`] implementations) at the same three
+//! restrictions, re-running the circuit on every evaluation. They share no
+//! code with [`compiled`], which is checked against them.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Routine`]: ragu_core::routines::Routine
@@ -99,11 +100,11 @@
 //! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/local/wiring.html
 
 pub mod monomials;
-#[allow(dead_code)]
+#[cfg(test)]
 pub mod sx;
-#[allow(dead_code)]
+#[cfg(test)]
 pub mod sxy;
-#[allow(dead_code)]
+#[cfg(test)]
 pub mod sy;
 
 pub(crate) mod compiled;

@@ -3,8 +3,8 @@
 //! This module provides [`eval`], which runs constraint emission with a
 //! [`Driver`] whose wires are linear forms in the wire monomials of $X$ and
 //! returns every nonzero coefficient of $s(X, Y)$ in a canonical order. Where
-//! [`sx`], [`sy`] and [`sxy`] evaluate the polynomial at a point, this module
-//! writes it down. The registry hashes the result to derive its
+//! [`compiled`] evaluates the polynomial at a point, this module writes it
+//! down. The registry hashes the result to derive its
 //! [tag](crate::registry::Tag).
 //!
 //! # Design
@@ -13,7 +13,7 @@
 //! $X^{4n-1-i}$ and $X^i$ (see [`sparse::View`]). [`Driver::add`] combines
 //! wires into a linear form, and [`Driver::enforce_zero`] records a form as the
 //! coefficient of $Y^q$, where $q$ is the constraint's absolute index under the
-//! floor plan: the same assignment [`sx`] and [`sy`] make, with the first
+//! floor plan: the same assignment [`compiled`] makes, with the first
 //! constraint emitted in a segment taking the segment's highest power.
 //!
 //! Every form is kept canonical (terms sorted by degree, duplicates merged,
@@ -25,7 +25,7 @@
 //! The polynomial written down is the one this walk of the circuit emits.
 //! Circuit code is required to emit the same constraints on every walk,
 //! whichever driver performs it (see [`Circuit`](crate::Circuit)), so it is
-//! also the polynomial [`sx`], [`sy`] and [`sxy`] evaluate. Nothing in this
+//! also the polynomial [`compiled`] records and evaluates. Nothing in this
 //! driver enforces that: the registry tag relies on it, as the
 //! [`Tag`](crate::registry::Tag#trusted-circuit-code) documentation sets out.
 //!
@@ -33,9 +33,7 @@
 //! [`Driver::add`]: ragu_core::drivers::Driver::add
 //! [`Driver::enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 //! [`sparse::View`]: crate::polynomials::sparse::View
-//! [`sx`]: super::sx
-//! [`sy`]: super::sy
-//! [`sxy`]: super::sxy
+//! [`compiled`]: super::compiled
 
 use alloc::{rc::Rc, vec::Vec};
 
