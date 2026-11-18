@@ -1,0 +1,45 @@
+name: macOS CI timing trial
+
+on:
+  push:
+    branches: [ci/macos-cache-pilot-986]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  all-features:
+    uses: $/.github/workflows/workspace-tests.yml
+    with:
+      os: macos-latest
+      features: all
+
+  backend-equivalence:
+    name: backend equivalence (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: $/.github/actions/rust-setup
+        with:
+          components: clippy
+          cache-suffix: backend-equivalence
+          cache-pcd-incremental: ${{ runner.os == 'macOS' }}
+      - name: Run native PCD backend equivalence
+        env:
+          # Each case builds three applications and exercises both proof formats.
+          PROPTEST_CASES: "4"
+        run: >-
+          cargo test --release -p ragu_pcd --no-default-features
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml --config profile.release.package.ragu_pcd.incremental=true' || '' }}
+          --lib backend_equivalence:: -- --test-threads=1
