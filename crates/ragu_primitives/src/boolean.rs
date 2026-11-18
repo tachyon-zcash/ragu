@@ -385,6 +385,73 @@ fn decompose_bits<'dr, D: Driver<'dr>>(
     Ok(bits)
 }
 
+/// Enforces an inclusive constant upper bound on little-endian `bits`.
+///
+/// Emits no constraints if `maximum` needs more than `bits.len()` bits.
+/// Otherwise, each bit beyond the bit-width of `maximum` costs one linear
+/// constraint, including all of `bits` when `maximum == 0`. Below the leading
+/// `1` of `maximum`, each `1` bit above a `0` costs one gate and two linear
+/// constraints, and each `0` run costs one gate and three linear constraints.
+///
+/// # Constraints
+///
+/// `bits.len()` and `maximum` determine the emitted constraints and must not
+/// depend on witness input.
+///
+/// # Soundness
+///
+/// Any satisfying assignment makes the unsigned integer encoded by `bits` at
+/// most the canonical integer representative of `maximum`.
+///
+/// # Completeness
+///
+/// Every bit string at or below the bound admits a satisfying assignment.
+pub fn enforce_le_bits<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    bits: &[Boolean<'dr, D>],
+    maximum: D::F,
+) -> Result<()> {
+    let maximum = maximum.to_le_bits();
+    let maximum = maximum.as_ref();
+    let width = maximum.iter().rposition(|bit| *bit).map_or(0, |i| i + 1);
+    if width > bits.len() {
+        return Ok(());
+    }
+
+    let (low, high) = bits.split_at(width);
+    for bit in high {
+        dr.enforce_zero(|lc| lc.add(bit.wire()))?;
+    }
+    let Some((leading, mut low)) = low.split_last() else {
+        return Ok(());
+    };
+
+    // If the prefix still matches, a zero run must match in full and a one
+    // bit extends the matching prefix only if the input bit is also one.
+    let mut equal = leading.element();
+
+    // Trailing 1s in `maximum` leave those positions unconstrained.
+    let lower = &maximum[..width - 1];
+    let trailing_ones = lower.iter().take_while(|bit| **bit).count();
+    for run in lower[trailing_ones..].chunk_by(|a, b| a == b).rev() {
+        let (rest, run_bits) = low.split_at(low.len() - run.len());
+        low = rest;
+        if run[0] {
+            for bit in run_bits.iter().rev() {
+                equal = equal.mul(dr, &bit.element())?;
+            }
+        } else {
+            // A run is shorter than the modulus bit length, so it has fewer
+            // terms than the modulus and its sum cannot wrap.
+            let sum = run_bits
+                .iter()
+                .fold(Element::zero(dr), |sum, bit| sum.add(dr, &bit.element()));
+            equal.mul(dr, &sum)?.enforce_zero(dr)?;
+        }
+    }
+    Ok(())
+}
+
 impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Boolean<'dr, D> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         Self::alloc(dr, &mut (), self.value())?.enforce_conservative_equal(dr, self)
@@ -646,6 +713,42 @@ mod tests {
         check(31)?;
         assert!(matches!(
             check(32),
+            Err(ragu_core::Error::InvalidWitness(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enforce_le_bits() -> Result<()> {
+        const MAX_MONEY: u64 = 2_100_000_000_000_000;
+        let check = |x: u64, maximum: u64| {
+            Simulator::simulate(x, |dr, x| {
+                let bits = (0..51)
+                    .map(|i| {
+                        let bit = x.as_ref().map(|x| x & (1 << i) != 0);
+                        Boolean::alloc(dr, &mut (), bit)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                dr.reset();
+                enforce_le_bits(dr, &bits, F::from(maximum))
+            })
+        };
+        check(MAX_MONEY - 1, MAX_MONEY)?;
+        let sim = check(MAX_MONEY, MAX_MONEY)?;
+        assert_eq!(sim.num_gates(), 28);
+        assert_eq!(sim.num_constraints(), 65);
+        assert!(matches!(
+            check(MAX_MONEY + 1, MAX_MONEY),
+            Err(ragu_core::Error::InvalidWitness(_))
+        ));
+        let all_ones = (1 << 51) - 1;
+        for maximum in [all_ones, all_ones + 1] {
+            let sim = check(all_ones, maximum)?;
+            assert_eq!(sim.num_gates(), 0);
+            assert_eq!(sim.num_constraints(), 0);
+        }
+        assert!(matches!(
+            check(1, 0),
             Err(ragu_core::Error::InvalidWitness(_))
         ));
         Ok(())
