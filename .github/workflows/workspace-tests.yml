@@ -21,11 +21,12 @@ env:
   PCD_UNIT_FILTER: binary_id(=ragu_pcd)
 
 jobs:
-  workspace:
-    name: build and workspace tests
+  build:
+    name: build test archives
     runs-on: ${{ inputs.os }}
     outputs:
       pcd-artifact-id: ${{ steps.pcd-artifact.outputs.artifact-id }}
+      workspace-artifact-id: ${{ steps.workspace-artifact.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,7 +37,7 @@ jobs:
           cache-suffix: ${{ inputs.pcd-suite != 'full' && format('release-{0}', inputs.pcd-suite) || (inputs.features == 'all' && 'release' || 'release-default-feature') }}
           cache-pcd-incremental: ${{ runner.os == 'macOS' }}
           cargo-tools: ${{ env.NEXTEST_TOOL }}
-      - name: Archive PCD unit tests and run other workspace tests
+      - name: Compile and archive test binaries
         shell: bash
         env:
           TEST_FEATURES: ${{ inputs.features }}
@@ -66,8 +67,11 @@ jobs:
           cargo nextest archive "${cargo_args[@]}" -E "$PCD_UNIT_FILTER" \
             --archive-file "$RUNNER_TEMP/pcd-unit-tests.tar.zst"
           if [[ "$PCD_TEST_SUITE" != proofs ]]; then
-            cargo nextest run "${cargo_args[@]}" -E "!$PCD_UNIT_FILTER" --no-fail-fast --no-tests=fail
-            # Explicit --doc also selects libraries with doctest = false.
+            # Reuse the build above and keep each download limited to its suite.
+            cargo nextest archive "${cargo_args[@]}" -E "!$PCD_UNIT_FILTER" \
+              --archive-file "$RUNNER_TEMP/workspace-tests.tar.zst"
+            # Reuse the compiled libraries on this runner for Cargo doctests.
+            # ragu_no_std sets doctest = false in its manifest.
             cargo test "${cargo_args[@]}" --doc --exclude ragu_no_std
           fi
       - id: pcd-artifact
@@ -78,10 +82,42 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           overwrite: true
+      - id: workspace-artifact
+        if: inputs.pcd-suite != 'proofs'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: workspace-tests-${{ inputs.os }}-${{ inputs.features }}-${{ inputs.pcd-suite }}
+          path: ${{ runner.temp }}/workspace-tests.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+
+  workspace:
+    name: workspace unit and integration tests
+    needs: build
+    if: inputs.pcd-suite != 'proofs'
+    runs-on: ${{ inputs.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: ${{ env.NEXTEST_TOOL }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          # An empty ID asks the action to download all artifacts.
+          artifact-ids: ${{ needs.build.outputs.workspace-artifact-id || 'missing workspace artifact ID' }}
+          path: ${{ runner.temp }}
+      - name: Run workspace tests from archive
+        shell: bash
+        run: |
+          cargo-nextest nextest run --archive-file "$RUNNER_TEMP/workspace-tests.tar.zst" \
+            --workspace-remap "$GITHUB_WORKSPACE" --no-fail-fast --no-tests=fail
 
   pcd:
     name: PCD unit tests (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
-    needs: workspace
+    needs: build
     runs-on: ${{ inputs.os }}
     strategy:
       fail-fast: false
@@ -97,7 +133,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           # An empty ID asks the action to download all artifacts.
-          artifact-ids: ${{ needs.workspace.outputs.pcd-artifact-id || 'missing PCD artifact ID' }}
+          artifact-ids: ${{ needs.build.outputs.pcd-artifact-id || 'missing PCD artifact ID' }}
           path: ${{ runner.temp }}
       - name: Run PCD unit-test shard
         shell: bash
