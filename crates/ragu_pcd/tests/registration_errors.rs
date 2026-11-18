@@ -171,6 +171,13 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
 }
 
 #[test]
+fn application_builder_stays_small_for_registration_chains() {
+    // Each by-value register call can leave a separate builder slot in a debug frame.
+    let bytes = core::mem::size_of::<ApplicationBuilder<'_, Pasta, ProductionRank, 9>>();
+    assert!(bytes <= 512, "application builder grew to {bytes} bytes");
+}
+
+#[test]
 fn register_steps_success_and_finalize() {
     let pasta = ragu_pcd::pasta::baked();
     let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()

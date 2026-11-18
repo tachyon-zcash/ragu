@@ -162,8 +162,9 @@ pub struct ApplicationBuilder<
     stage_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
-    /// which finalization installs instead of building one.
-    bootstrap: Option<Proof<C, R>>,
+    /// which finalization installs instead of building one. Boxed to keep
+    /// the builder small across by-value `register` calls.
+    bootstrap: Option<Box<Proof<C, R>>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -255,7 +256,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "the supplied proof is not a bootstrap proof of this profile's shape".into(),
             ));
         }
-        self.bootstrap = Some(proof);
+        self.bootstrap = Some(Box::new(proof));
         Ok(self)
     }
 
@@ -516,7 +517,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             num_application_steps: self.num_application_steps,
             stage_size: self.stage_size,
-            bootstrap: self.bootstrap,
+            bootstrap: self.bootstrap.map(|proof| *proof),
             seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
