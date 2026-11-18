@@ -2,19 +2,24 @@
 //!
 //! Proof-carrying data (PCD) framework for Rust.
 //!
-//! This crate is the single entry point to Ragu's crates:
+//! This crate is the single entry point to Ragu's crates. The crate root
+//! carries what most callers name:
 //!
-//! - The crate root re-exports [`ragu_core`]: drivers, gadgets, [`Result`],
-//!   [`Error`] and the [`pasta`] cycle. The `Gadget`, `Write` and `Kind!`
-//!   macros resolve their `ragu_core` paths here when a caller depends only on
-//!   `ragu`.
-//! - [`primitives`] is [`ragu_primitives`], where the `Write` and
-//!   `Consistent` macros resolve their `ragu_primitives` paths.
-//! - [`circuits`] is [`ragu_circuits`]: polynomials, registries and staging.
-//! - [`pcd`] is [`ragu_pcd`]: the [`Application`](pcd::Application),
-//!   [`Step`](pcd::step::Step) and [`Header`](pcd::header::Header) API and the
-//!   [`Pcd`](pcd::Pcd) and [`Proof`](pcd::Proof) structures.
-//! - [`acceleration`] is [`ragu_acceleration`]: the accelerated prover.
+//! - everything in [`ragu_core`]: drivers, gadgets, [`Result`], [`Error`] and
+//!   the [`pasta`] cycle. The `Gadget`, `Write` and `Kind!` macros resolve
+//!   their `ragu_core` paths here when a caller depends only on `ragu`;
+//! - the PCD API: [`ApplicationBuilder`], [`Application`], the [`step`] and
+//!   [`header`] modules, and the [`Pcd`], [`Proof`], [`CompressedPcd`] and
+//!   [`CompressedProof`] structures;
+//! - the sparse [`Polynomial`], [`Rank`] and [`ProductionRank`];
+//! - the [`AcceleratedProver`].
+//!
+//! Each member crate stays reachable as a module for the rest of its API:
+//! [`primitives`] ([`ragu_primitives`]: the gadget library, where the `Write`
+//! and `Consistent` macros resolve their `ragu_primitives` paths), [`circuits`]
+//! ([`ragu_circuits`]), [`pcd`] ([`ragu_pcd`], including its baked
+//! generators under `pcd::pasta`) and [`acceleration`]
+//! ([`ragu_acceleration`]).
 //!
 //! Ragu is under heavy development and does not yet expose a stable API.
 //! Please see the [Ragu Book](https://tachyon.z.cash/ragu/) for more
@@ -27,8 +32,14 @@
 #![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1/favicon-32x32.png")]
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1/rustdoc-128x128.png")]
 
-pub use ragu_acceleration as acceleration;
-pub use ragu_circuits as circuits;
+pub use ragu_acceleration::{self as acceleration, AcceleratedProver};
+pub use ragu_circuits::{
+    self as circuits,
+    polynomials::{ProductionRank, Rank, sparse::Polynomial},
+};
 pub use ragu_core::*;
-pub use ragu_pcd as pcd;
+pub use ragu_pcd::{
+    self as pcd, Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof,
+    header, step,
+};
 pub use ragu_primitives as primitives;
