@@ -110,7 +110,7 @@ pub struct NumExtensionCircuits<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionCircuits<P> {
     fn len() -> usize {
-        P::nested_extension().circuits.len()
+        crate::profile::nested_extension::<P>().circuits.len()
     }
 }
 
@@ -119,7 +119,7 @@ pub struct NumExtensionStages<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionStages<P> {
     fn len() -> usize {
-        P::nested_extension().stages
+        crate::profile::nested_extension::<P>().stages
     }
 }
 
@@ -410,7 +410,9 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NumSteps::<P>::len() + NUM_FIXED_INTERNAL + P::nested_extension().internal()
+        NumSteps::<P>::len()
+            + NUM_FIXED_INTERNAL
+            + crate::profile::nested_extension::<P>().internal()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
@@ -419,7 +421,7 @@ impl InternalCircuitIndex {
     /// bondings last.
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
-        let extension = P::nested_extension();
+        let extension = crate::profile::nested_extension::<P>();
         let mut all = Vec::with_capacity(Self::num::<P>());
         for &id in &Self::ALL {
             match id {
@@ -574,7 +576,7 @@ impl RxIndex {
     /// The number of rx components in the nested field in profile `P`,
     /// equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NumSteps::<P>::len() + NUM_FIXED_RX + P::NESTED_EXTENSION
+        Shape::of::<P>().nested_rx
     }
 
     /// All variants in canonical order (circuits, then stages), for profile
@@ -582,7 +584,7 @@ impl RxIndex {
     /// then the profile's extension circuits' and stages' polynomials.
     pub fn all<P: Profile>() -> Vec<Self> {
         let num_steps = NumSteps::<P>::len();
-        let extension = P::nested_extension();
+        let extension = crate::profile::nested_extension::<P>();
         let mut all = Vec::with_capacity(Self::num::<P>());
         for &id in &Self::ALL {
             match id {
@@ -646,6 +648,7 @@ pub mod stages {
 pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
     params: &'params C::Params,
+    source_tag: Option<C::ScalarField>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
@@ -726,18 +729,27 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
                 let circuit = circuits::loading::Circuit::<C::HostCurve, R, C::Profile>::new();
                 registry.register_bonding(MultiStage::new(circuit).into_bonding_object()?)
             }
-            ExtensionCircuit(k) => C::Profile::register_nested_circuit::<C::Base, R>(
-                k as usize,
-                CircuitSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
-            ExtensionBonding(j) => C::Profile::register_nested_bonding::<C::Base, R>(
-                j as usize,
-                BondingSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
+            ExtensionCircuit(k) => {
+                use crate::profile::online::{extension, stages::Nested};
+                let slot = CircuitSlot::new(registry);
+                if Some(k) == extension::helper::<C::Profile, Nested>() {
+                    extension::register_circuit::<_, R, C::Profile, Nested>(slot, source_tag)?
+                } else {
+                    C::Profile::register_nested_circuit::<C::Base, R>(k as usize, slot, params)?
+                }
+                .into_registry()
+            }
+            ExtensionBonding(j) => {
+                use crate::profile::online::{extension, stages::Nested};
+                let slot = BondingSlot::new(registry);
+                match extension::bonding::<_, R, C::Profile, Nested>(j as usize)? {
+                    extension::Bonding::Online(mask) => slot.register(mask),
+                    extension::Bonding::User(index) => {
+                        C::Profile::register_nested_bonding::<C::Base, R>(index, slot, params)?
+                    }
+                }
+                .into_registry()
+            }
         };
     }
 

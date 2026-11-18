@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Until decompression lands, the slot holds a fixed placeholder polynomial,
   no circuit constrains the opened value, and no built-in profile sets the
   count; the standard profile does not change.
+- Online polynomial batches: a profile can declare a fixed batch of
+  online polynomials on each field, each opened at several points, and a
+  source-registry mesh that reduces many claimed registry restrictions to one
+  outgoing restriction per field, closed at compression. No built-in profile
+  declares either, so the standard profile does not change. See the
+  `ragu_pcd` changelog.
 
 ### Changed
 

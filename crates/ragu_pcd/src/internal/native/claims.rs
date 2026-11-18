@@ -47,10 +47,10 @@ const NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V: usize = 2;
 
 /// Number of circuits using unified $k(y)$ in [`build`] after
 /// [`compute_v`]: the [`NUM_BINDERS`] `bind_challenges` circuits,
-/// `bind_beta` and `bind_endoscalar`.
+/// and `bind_beta`; `bind_endoscalar` exports its own point target.
 ///
 /// [`compute_v`]: crate::internal::native::circuits::compute_v
-const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 2 + NUM_BINDERS;
+const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 1 + NUM_BINDERS;
 
 /// The points stages the walk's inputs are committed in, in chain order.
 const POINTS_INPUT_STAGES: [RxIndex; 5] = [
@@ -213,10 +213,10 @@ where
             }
 
             // collapse: Collapse + Preamble + InnerError + OuterError,
-            // and PointsBinding for a profile whose native extension binds,
-            // whose binding k(y) the circuit takes from that stage.
+            // and PointsBinding when extension targets use child stage points.
             CollapseCircuit => {
-                let bound = P::native_extension().binding.is_some();
+                let bound = crate::profile::native_extension::<P>().binding.is_some()
+                    || !P::NESTED_ONLINE.is_empty();
                 for ((((pc, pb), pre), em), en) in source
                     .rx(Rx(Collapse))
                     .zip(source.rx(Rx(PointsBinding)))
@@ -234,15 +234,22 @@ where
                 }
             }
 
-            // compute_v: ComputeV + Preamble + Query + Eval
+            // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
+            // when it exports the nested online input-stage commitment.
             ComputeVCircuit => {
-                for (((cv, pre), q), e) in source
+                for ((((cv, pb), pre), q), e) in source
                     .rx(Rx(ComputeV))
+                    .zip(source.rx(Rx(PointsBinding)))
                     .zip(source.rx(Rx(Preamble)))
                     .zip(source.rx(Rx(Query)))
                     .zip(source.rx(Rx(Eval)))
                 {
-                    processor.internal_circuit_claim(id, [cv, pre, q, e].into_iter());
+                    let mut rxs = alloc::vec![cv];
+                    if !P::NESTED_ONLINE.is_empty() {
+                        rxs.push(pb);
+                    }
+                    rxs.extend([pre, q, e]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
                 }
             }
 
@@ -315,7 +322,7 @@ where
             // Its k(y) is 1, or the statement's for the statement circuit
             // (see `ky_values`).
             ExtensionCircuit(k) => {
-                let extension = P::native_extension();
+                let extension = crate::profile::native_extension::<P>();
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
                     extension.circuits[k as usize]
@@ -337,7 +344,7 @@ where
             // An extension bonding: a stage's mask over its rx, or a final
             // mask over its circuits' rxs
             ExtensionBonding(j) => {
-                let extension = P::native_extension();
+                let extension = crate::profile::native_extension::<P>();
                 if (j as usize) < extension.stages {
                     processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
@@ -448,6 +455,12 @@ pub trait KySource {
     /// instance followed by the step's online openings.
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
+    /// Native online helper target, when the profile has an online batch.
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// The unified instance followed by actual nested online walk points.
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
     /// Base iterator over unified $k(y)$ values.
     ///
     /// Will be repeated [`NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V`] times,
@@ -498,9 +511,10 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V).flatten())
         .chain(source.compute_v_bridge_ky())
         .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V).flatten())
+        .chain(source.bind_endoscalar_ky())
         .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
         .chain({
-            let extension = P::native_extension();
+            let extension = crate::profile::native_extension::<P>();
             let ones: Vec<S::Ky> = source.ones().collect();
             let statement: Vec<S::Ky> = source.statement_ky().collect();
             let binding: Vec<S::Ky> = source.binding_ky().collect();
@@ -512,9 +526,20 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
                 extension.binding.is_none() || binding.len() == ones.len(),
                 "a profile with a binding circuit takes one binding value per proof"
             );
+            let helper = crate::profile::online::extension::helper::<
+                P,
+                crate::profile::online::stages::Native,
+            >();
+            let helper_ky: Vec<S::Ky> = source.online_helper_ky().collect();
+            assert!(
+                helper.is_none() || helper_ky.len() == ones.len(),
+                "an online helper takes one target per proof"
+            );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {
-                if extension.statement == Some(circuit) {
+                if helper == Some(circuit) {
+                    helper_ky.clone()
+                } else if extension.statement == Some(circuit) {
                     statement.clone()
                 } else if bound == Some(circuit) {
                     binding.clone()
@@ -534,6 +559,10 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_bridge: Element<'dr, D>,
     pub left_compute_v_bridge: Element<'dr, D>,
     pub right_compute_v_bridge: Element<'dr, D>,
+    pub left_online_helper: Option<Element<'dr, D>>,
+    pub right_online_helper: Option<Element<'dr, D>>,
+    pub left_bind_endoscalar: Element<'dr, D>,
+    pub right_bind_endoscalar: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
     pub left_statement: Option<Element<'dr, D>>,
@@ -559,10 +588,18 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_statement: Option<Element<'dr, D>>,
         left_binding: Option<Element<'dr, D>>,
         right_binding: Option<Element<'dr, D>>,
+        left_bind_endoscalar: Element<'dr, D>,
+        right_bind_endoscalar: Element<'dr, D>,
+        left_online_helper: Option<Element<'dr, D>>,
+        right_online_helper: Option<Element<'dr, D>>,
     ) -> Self {
         Self {
             left_raw_c,
             right_raw_c,
+            left_bind_endoscalar,
+            right_bind_endoscalar,
+            left_online_helper,
+            right_online_helper,
             left_app: left_ky.application.clone(),
             right_app: right_ky.application.clone(),
             left_bridge: left_ky.unified_bridge.clone(),
@@ -598,6 +635,17 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
         once(self.left_compute_v_bridge.clone()).chain(once(self.right_compute_v_bridge.clone()))
+    }
+
+    fn online_helper_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        self.left_online_helper
+            .iter()
+            .chain(self.right_online_helper.iter())
+            .cloned()
+    }
+
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_bind_endoscalar.clone()).chain(once(self.right_bind_endoscalar.clone()))
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

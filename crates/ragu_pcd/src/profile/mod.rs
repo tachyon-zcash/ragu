@@ -47,6 +47,8 @@
 //! Each registry's tag is derived from the circuits it holds, so profiles that
 //! register different circuits have different tags.
 
+pub mod online;
+
 use alloc::vec::Vec;
 use core::{
     any::{TypeId, type_name},
@@ -132,8 +134,10 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     const NESTED_EXTENSION: usize;
 
     /// The number of online polynomials over the scalar field that each
-    /// step of the profile commits, at most
-    /// [`NUM_ONLINE_FQ_POLYS`].
+    /// step of the profile commits, at most [`NUM_ONLINE_FQ_POLYS`]. Each is
+    /// opened at the lift of w. New consumers should use
+    /// [`Self::NESTED_ONLINE`] for explicit points, preparation hooks and
+    /// authenticated staged access.
     ///
     /// A step commits such a polynomial natively, before its challenge
     /// $w$ is drawn. The nested `compute_v` circuit opens it and folds the
@@ -142,13 +146,40 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// one point to the native walk, and a full walk then needs another
     /// step on each side.
     ///
-    /// Until decompression lands, each slot holds a fixed placeholder
-    /// polynomial, and no circuit constrains its value at the opening
-    /// point: the slot proves only that the value is an opening of the
-    /// committed polynomial. Do not rely on it for anything else.
+    /// These compatibility slots retain fixed placeholder witnesses. They
+    /// establish opening consistency only. Use [`Self::NESTED_ONLINE`]
+    /// preparation hooks and consumers for a polynomial-specific relation.
     ///
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
+
+    /// Native online polynomial and opening declarations. The application
+    /// slots are separate from this layout.
+    ///
+    /// Commitments follow their declared initial or auxiliary phases.
+    const NATIVE_ONLINE: online::Layout = online::Layout::EMPTY;
+
+    /// Nested online polynomial and opening declarations, independent of
+    /// the native layout and of the legacy V5 slot.
+    ///
+    /// Commitments follow their declared initial or auxiliary phases.
+    const NESTED_ONLINE: online::Layout = online::Layout::EMPTY;
+
+    /// A setup-fixed native source-registry mesh over declared online slots.
+    /// Both inherited obligations are carried by every ordinary step.
+    const NATIVE_MESH: Option<online::mesh::Mesh> = None;
+
+    /// Nested counterpart of [`Self::NATIVE_MESH`].
+    const NESTED_MESH: Option<online::mesh::Mesh> = None;
+
+    /// Native extension circuits that reserve the online input and query
+    /// stages before their own stages, indexed in `native_extension`.
+    /// A consumer's first own stage must have `online::stages::QueryStage`
+    /// as its parent. Circuits with no own stage end at that query stage.
+    const NATIVE_ONLINE_CONSUMERS: &'static [u32] = &[];
+
+    /// Nested counterpart of [`Self::NATIVE_ONLINE_CONSUMERS`].
+    const NESTED_ONLINE_CONSUMERS: &'static [u32] = &[];
 
     /// The endoscalings a native endoscaling step performs: what fits a
     /// step beside the stages it reserves at the profile's rank. The walk
@@ -322,6 +353,202 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
+    /// Supplies this step's native online inputs before any fuse challenge.
+    ///
+    /// The returned values are committed once in `online::stages::InputStage`.
+    /// Consumers must use those stage wires for data that defines a random test.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies only inherited mesh coordinates. Other input
+    /// slots require this hook to supply the full input vector.
+    fn native_online_inputs<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = context;
+        online::defaults::inputs::<Self, online::stages::Native, _>()
+    }
+
+    /// Supplies native online polynomials at one commitment deadline.
+    ///
+    /// Return only the slots declared for `phase` that are not owned by the
+    /// source mesh, in declaration order. The protocol prepares mesh slots.
+    /// `inputs` are the immutable pre-w values; `challenges` contains only
+    /// challenges sampled before this phase. Prover hooks supply witnesses;
+    /// the transcript and registered consumers enforce the relation.
+    ///
+    /// # Errors
+    ///
+    /// The default handles empty phases and rejects a phase needing polynomials.
+    fn native_online_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        phase: online::Phase,
+        inputs: &[Base::CircuitField],
+        challenges: online::prepared::PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::CircuitField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        online::defaults::polynomials::<Self, online::stages::Native, _>(phase)
+    }
+
+    /// Supplies the native witness query points after x and before alpha.
+    ///
+    /// These fill only `Point::Witness` slots. Input, challenge and setup-fixed
+    /// points are resolved by the protocol; consumers constrain arbitrary
+    /// witness points to their intended values using the shared query stage.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies no points and rejects a nonempty declaration.
+    fn native_online_points<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        inputs: &[Base::CircuitField],
+        challenges: online::prepared::PreparationChallenges<Base::CircuitField>,
+    ) -> Result<Vec<Base::CircuitField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        online::defaults::points::<Self, online::stages::Native, _>()
+    }
+
+    /// Traces the user extension with the online batch's immutable stage data.
+    ///
+    /// Consumer circuits reserve the declared online prefix. Their witnesses
+    /// must use `online`'s input and query values, including the opposite
+    /// field's pre-w polynomial commitment coordinates. The protocol supplies
+    /// the helper trace and online stage polynomials separately.
+    ///
+    /// # Errors
+    ///
+    /// The default delegates to [`Self::native_extension_rxs`].
+    fn native_extension_rxs_with_online<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::CircuitField, R>,
+        online: Option<
+            &online::circuit::Witness<'_, Base::CircuitField, Self, online::stages::Native>,
+        >,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::CircuitField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let _ = online;
+        Self::native_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
+    }
+
+    /// Supplies this step's nested online inputs before any fuse challenge.
+    ///
+    /// The returned values are committed once in `online::stages::InputStage`.
+    /// Consumers must use those stage wires for data that defines a random test.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies only inherited mesh coordinates. Other input
+    /// slots require this hook to supply the full input vector.
+    fn nested_online_inputs<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = context;
+        online::defaults::inputs::<Self, online::stages::Nested, _>()
+    }
+
+    /// Supplies nested online polynomials at one commitment deadline.
+    ///
+    /// Return only the slots declared for `phase` that are not owned by the
+    /// source mesh, in declaration order. The protocol prepares mesh slots.
+    /// `inputs` are the immutable pre-w values; `challenges` contains only
+    /// challenges sampled before this phase. Prover hooks supply witnesses;
+    /// the transcript and registered consumers enforce the relation.
+    ///
+    /// # Errors
+    ///
+    /// The default handles empty phases and rejects a phase needing polynomials.
+    fn nested_online_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        phase: online::Phase,
+        inputs: &[Base::ScalarField],
+        challenges: online::prepared::PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        online::defaults::polynomials::<Self, online::stages::Nested, _>(phase)
+    }
+
+    /// Supplies the nested witness query points after x and before alpha.
+    ///
+    /// These fill only `Point::Witness` slots. Input, challenge and setup-fixed
+    /// points are resolved by the protocol; consumers constrain arbitrary
+    /// witness points to their intended values using the shared query stage.
+    ///
+    /// # Errors
+    ///
+    /// The default supplies no points and rejects a nonempty declaration.
+    fn nested_online_points<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        inputs: &[Base::ScalarField],
+        challenges: online::prepared::PreparationChallenges<Base::ScalarField>,
+    ) -> Result<Vec<Base::ScalarField>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, inputs, challenges);
+        online::defaults::points::<Self, online::stages::Nested, _>()
+    }
+
+    /// Traces the user extension with the online batch's immutable stage data.
+    ///
+    /// Consumer circuits reserve the declared online prefix. Their witnesses
+    /// must use `online`'s input and query values, including the opposite
+    /// field's pre-w polynomial commitment coordinates. The protocol supplies
+    /// the helper trace and online stage polynomials separately.
+    ///
+    /// # Errors
+    ///
+    /// The default delegates to [`Self::nested_extension_rxs`].
+    fn nested_extension_rxs_with_online<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
+        context: &Self::Context<'params, Base, R, B>,
+        registry: &Registry<'params, Base::ScalarField, R>,
+        online: Option<
+            &online::circuit::Witness<'_, Base::ScalarField, Self, online::stages::Nested>,
+        >,
+        rng: &mut RNG,
+    ) -> Result<ExtensionRxs<Base::ScalarField, R>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+        RNG: CryptoRng,
+    {
+        let _ = online;
+        Self::nested_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
+    }
+
     /// Checks that the constants agree with the extensions and that the
     /// extensions are well formed, and that the endoscaling counts allow
     /// the walk sizes to converge.
@@ -339,6 +566,16 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) exceeds
     /// [`NUM_ONLINE_FQ_POLYS`].
     fn check() -> Result<()> {
+        Self::NATIVE_ONLINE.check()?;
+        Self::NESTED_ONLINE.check()?;
+        for (mesh, layout) in [
+            (Self::NATIVE_MESH, Self::NATIVE_ONLINE),
+            (Self::NESTED_MESH, Self::NESTED_ONLINE),
+        ] {
+            if let Some(mesh) = mesh {
+                mesh.check(layout)?;
+            }
+        }
         // Each added step contributes two points to the other side's walk.
         // A full pass must shrink that contribution for a fixed point to exist.
         if Self::NATIVE_ENDOSCALINGS_PER_STEP.saturating_mul(Self::NESTED_ENDOSCALINGS_PER_STEP)
@@ -406,8 +643,20 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 "only the native extension carries a statement circuit".into(),
             ));
         }
+        online::extension::check::<Self, online::stages::Native>()?;
+        online::extension::check::<Self, online::stages::Nested>()?;
         Ok(())
     }
+}
+
+/// The registered native extension, including the online batch helper.
+pub(crate) fn native_extension<P: Profile>() -> Extension {
+    online::extension::layout::<P, online::stages::Native>()
+}
+
+/// The registered nested extension, including the online batch helper.
+pub(crate) fn nested_extension<P: Profile>() -> Extension {
+    online::extension::layout::<P, online::stages::Nested>()
 }
 
 /// A registry slot a profile's circuit hook fills with one internal circuit.
@@ -905,24 +1154,29 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>, P: Profile> ProfiledCycle 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shape {
     /// The native rx polynomials: the fixed ones, the walk's steps and the
-    /// profile's extension.
+    /// profile's extension, with the native online batch's helper circuit
+    /// and stages when [`Profile::NATIVE_ONLINE`] is nonempty.
     pub native_rx: usize,
-    /// The nested-curve points the nested walk folds: the native batch.
+    /// The nested-curve points the nested walk folds: the native batch, with
+    /// the commitments of the [`Profile::NATIVE_ONLINE`] polynomials.
     pub nested_points: usize,
     /// The nested walk's steps.
     pub nested_steps: usize,
-    /// The nested rx polynomials.
+    /// The nested rx polynomials, with the nested online batch's helper
+    /// circuit and stages when [`Profile::NESTED_ONLINE`] is nonempty.
     pub nested_rx: usize,
-    /// The step's own online polynomials over the scalar field (see
-    /// [`Profile::ONLINE_FQ_POLYS`]).
+    /// The step's own polynomials over the scalar field: the
+    /// [`Profile::ONLINE_FQ_POLYS`] slots followed by the
+    /// [`Profile::NESTED_ONLINE`] polynomials.
     pub online_fq: usize,
-    /// The nested-curve points the native walk folds: the nested batch,
-    /// with the commitments of the step's own online polynomials over the
-    /// scalar field.
+    /// The host-curve points the native walk folds: the nested batch, with
+    /// the commitments of the [`online_fq`](Self::online_fq) polynomials.
     pub native_points: usize,
     /// The native walk's steps: the fixed point, where the count the batch
     /// needs is the count the native rx polynomials were sized with.
     pub native_steps: usize,
+    /// The outgoing source polynomial retained for each active source mesh.
+    pub source_polynomials: usize,
 }
 
 impl Shape {
@@ -933,13 +1187,27 @@ impl Shape {
     /// Panics under the same conditions as [`Self::solve`]. When used in
     /// a constant layout, an invalid shape fails at compile time.
     pub const fn of<P: Profile>() -> Self {
-        Self::solve(
-            P::NATIVE_EXTENSION,
-            P::NESTED_EXTENSION,
-            P::ONLINE_FQ_POLYS,
+        let mut shape = Self::solve_with_online(
+            P::NATIVE_EXTENSION
+                + if P::NATIVE_ONLINE.is_empty() {
+                    0
+                } else {
+                    online::extension::RXS
+                },
+            P::NESTED_EXTENSION
+                + if P::NESTED_ONLINE.is_empty() {
+                    0
+                } else {
+                    online::extension::RXS
+                },
+            P::ONLINE_FQ_POLYS + P::NESTED_ONLINE.polynomials.len(),
+            P::NATIVE_ONLINE.polynomials.len(),
             P::NATIVE_ENDOSCALINGS_PER_STEP,
             P::NESTED_ENDOSCALINGS_PER_STEP,
-        )
+        );
+        shape.source_polynomials =
+            P::NATIVE_MESH.is_some() as usize + P::NESTED_MESH.is_some() as usize;
+        shape
     }
 
     /// Solves the walk sizes for the given extensions and online Fq
@@ -957,6 +1225,24 @@ impl Shape {
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
+        Self::solve_with_online(
+            native_extension,
+            nested_extension,
+            online_fq,
+            0,
+            native_endoscalings,
+            nested_endoscalings,
+        )
+    }
+
+    const fn solve_with_online(
+        native_extension: usize,
+        nested_extension: usize,
+        online_fq: usize,
+        online_fp: usize,
+        native_endoscalings: usize,
+        nested_endoscalings: usize,
+    ) -> Self {
         let mut native_steps = 1;
         let mut rounds = 0;
         loop {
@@ -965,6 +1251,7 @@ impl Shape {
                 native_extension,
                 nested_extension,
                 online_fq,
+                online_fp,
                 native_endoscalings,
                 nested_endoscalings,
             );
@@ -984,11 +1271,12 @@ impl Shape {
         native_extension: usize,
         nested_extension: usize,
         online_fq: usize,
+        online_fp: usize,
         native_endoscalings: usize,
         nested_endoscalings: usize,
     ) -> Self {
         let native_rx = native::NUM_FIXED_RX + native_steps + native_extension;
-        let nested_points = nested::num_endoscaling_points(native_rx);
+        let nested_points = nested::num_endoscaling_points(native_rx) + online_fp;
         let nested_steps = endoscalar::num_steps(nested_endoscalings, nested_points);
         let nested_rx = nested::NUM_FIXED_RX + nested_steps + nested_extension;
         let native_points = nested::pcs::num_batched_points(nested_rx, online_fq);
@@ -1001,13 +1289,20 @@ impl Shape {
             online_fq,
             native_points,
             native_steps,
+            source_polynomials: 0,
         }
     }
 
     /// Every polynomial a proof of this shape carries: both sides' rx
-    /// polynomials and, on each side, $a$, $b$, `registry_xy` and $p$.
+    /// polynomials, $a$, $b$, `registry_xy` and $p$ on each side, the step's
+    /// online Fp polynomials, and each mesh's outgoing source polynomial.
     pub const fn polynomials(&self) -> usize {
-        self.native_rx + 4 + self.nested_rx + 4
+        self.native_rx
+            + 4
+            + self.nested_rx
+            + 4
+            + crate::header::NUM_ONLINE_FP_POLYS
+            + self.source_polynomials
     }
 }
 
@@ -2433,9 +2728,10 @@ mod tests {
                 online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
+                source_polynomials: 0,
             }
         );
-        assert_eq!(shape.polynomials(), 99);
+        assert_eq!(shape.polynomials(), 101);
     }
 
     #[test]
@@ -2470,9 +2766,10 @@ mod tests {
                 online_fq: 1,
                 native_points: 104,
                 native_steps: 26,
+                source_polynomials: 0,
             }
         );
-        assert_eq!(shape.polynomials(), 101);
+        assert_eq!(shape.polynomials(), 103);
         assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
         assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
     }
@@ -2524,6 +2821,7 @@ mod tests {
                 shape.native_steps,
                 native_extension,
                 nested_extension,
+                0,
                 0,
                 4,
                 4,

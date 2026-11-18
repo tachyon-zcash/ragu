@@ -115,6 +115,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let query_witness = native::stages::query::Witness {
+            online_auxiliaries: builder.nested_online_auxiliary_coordinates(),
+            online_stage: builder.nested_online_stage_coordinates(1),
             fixed_registry,
             registry_wxy,
             left: left_witness,
@@ -190,10 +192,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The value of each online Fq polynomial at its opening point.
         let online_fq_point = online_fq::point(w);
         let online_fq = FixedVec::try_from(
-            builder
-                .online_fq_polynomials()
-                .iter()
-                .map(|poly| {
+            online_fq::openings(builder.online_fq_polynomials().len())
+                .map(|opening| {
+                    let poly = &builder.online_fq_polynomials()[opening.polynomial];
                     let value = B::sparse_eval(poly, online_fq_point);
                     // Test hook: this runs on the thread that calls `fuse`,
                     // outside its parallel jobs, as the hook's thread-local
@@ -217,6 +218,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::query::Witness {
+                online_points: builder.native_online_phase::<3>(),
+                online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                    builder.native_online_stage_commitment(1)
+                }),
                 native_query: builder.native_query_commitment(),
                 registry_xy: builder.native_registry_xy_commitment(),
                 nested: nested_query.clone(),

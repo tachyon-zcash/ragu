@@ -81,6 +81,13 @@ mod profile_layout_tests;
 mod online_fq_oracles_tests;
 
 #[cfg(test)]
+#[path = "../tests/online_batch.rs"]
+mod online_batch_tests;
+#[cfg(test)]
+#[path = "../tests/source_mesh.rs"]
+mod source_mesh_tests;
+
+#[cfg(test)]
 #[path = "../tests/decompress_statement.rs"]
 mod decompress_statement_tests;
 
@@ -144,6 +151,8 @@ pub struct ApplicationBuilder<
 > {
     native_registry: RegistryBuilder<'params, C::CircuitField, R>,
     nested_registry: RegistryBuilder<'params, C::ScalarField, R>,
+    native_source: Option<profile::online::source::SourceRegistry<'params, C::CircuitField>>,
+    nested_source: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
     num_application_steps: usize,
     /// The step circuits, registered by [`finalize`](Self::finalize) once
     /// the stage size is known.
@@ -172,6 +181,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Create an empty [`ApplicationBuilder`] for proof-carrying data.
     pub fn new() -> Self {
         ApplicationBuilder {
+            native_source: None,
+            nested_source: None,
             native_registry: RegistryBuilder::new(),
             nested_registry: RegistryBuilder::new(),
             num_application_steps: 0,
@@ -181,6 +192,21 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             bootstrap: None,
             _marker: PhantomData,
         }
+    }
+
+    /// Captures the source registries certified by this profile's meshes.
+    ///
+    /// A source can have a different rank from the enclosing application;
+    /// finalization checks that its restrictions fit without truncation.
+    /// The application's setup must identify these sources too.
+    pub fn with_source_registries(
+        mut self,
+        native: Option<profile::online::source::SourceRegistry<'params, C::CircuitField>>,
+        nested: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
+    ) -> Self {
+        self.native_source = native;
+        self.nested_source = nested;
+        self
     }
 
     /// Installs `tag` as the native registry's tag instead of the one
@@ -246,6 +272,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         ApplicationBuilder {
             native_registry: self.native_registry,
             nested_registry: self.nested_registry,
+            native_source: self.native_source,
+            nested_source: self.nested_source,
             num_application_steps: self.num_application_steps,
             application_circuits: self.application_circuits,
             stage_size: self.stage_size,
@@ -378,6 +406,46 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
+        C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
+        C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
+        for (declared, present) in [
+            (
+                C::Profile::NATIVE_MESH.is_some(),
+                self.native_source.is_some(),
+            ),
+            (
+                C::Profile::NESTED_MESH.is_some(),
+                self.nested_source.is_some(),
+            ),
+        ] {
+            if declared != present {
+                return Err(Error::Initialization(
+                    "source registries do not match the profile meshes".into(),
+                ));
+            }
+        }
+        if let Some(source) = &self.native_source {
+            source.check_rank::<R>()?;
+        }
+        if let Some(source) = &self.nested_source {
+            source.check_rank::<R>()?;
+        }
+        // The bootstrap proof commits the mesh's restrictions at its all-one
+        // challenges, the nested ones at their lift.
+        if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &self.native_source) {
+            mesh.check_source::<_, R>(
+                C::Profile::NATIVE_ONLINE,
+                source,
+                <C::CircuitField as udon::field::Field>::ONE,
+            )?;
+        }
+        if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &self.nested_source) {
+            mesh.check_source::<_, R>(
+                C::Profile::NESTED_ONLINE,
+                source,
+                internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
+            )?;
+        }
 
         // Build the native registry:
         // 1. Application circuits (with the final stage size)
@@ -396,6 +464,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             log2_circuits,
             self.stage_size,
+            self.native_source.as_ref().map(|source| source.tag()),
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -413,7 +482,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // The decompression step, for a profile whose extension verifies a
         // compressed proof: the one step whose output header is that
         // proof's statement (see `step::internal::decompress`).
-        if C::Profile::native_extension().statement.is_some() {
+        if crate::profile::native_extension::<C::Profile>()
+            .statement
+            .is_some()
+        {
             self =
                 self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
         }
@@ -430,10 +502,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry =
-            internal::nested::register_all::<C, R>(self.nested_registry, params)?;
+        self.nested_registry = internal::nested::register_all::<C, R>(
+            self.nested_registry,
+            params,
+            self.nested_source.as_ref().map(|source| source.tag()),
+        )?;
 
         let mut app = Application {
+            native_source: self.native_source,
+            nested_source: self.nested_source,
             native_registry: self.native_registry.finalize()?,
             nested_registry: self.nested_registry.finalize()?,
             params,
@@ -558,6 +635,8 @@ pub struct Application<
 > {
     native_registry: Registry<'params, C::CircuitField, R>,
     nested_registry: Registry<'params, C::ScalarField, R>,
+    native_source: Option<profile::online::source::SourceRegistry<'params, C::CircuitField>>,
+    nested_source: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
     params: &'params C::Params,
     num_application_steps: usize,
     /// The application stage's size, in values.
@@ -754,6 +833,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             &poly,
             C::host_generators(self.params),
         ))
+    }
+
+    /// Returns a reference to the nested [`Registry`].
+    pub fn nested_registry(&self) -> &Registry<'_, C::ScalarField, R> {
+        &self.nested_registry
     }
 
     /// Returns a reference to the native [`Registry`].

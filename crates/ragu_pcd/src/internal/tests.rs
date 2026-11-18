@@ -1274,6 +1274,14 @@ fn test_extension_claims_follow_the_declaration() {
             [50, 51].into_iter()
         }
 
+        fn online_helper_ky(&self) -> impl Iterator<Item = u32> {
+            [90, 91].into_iter()
+        }
+
+        fn bind_endoscalar_ky(&self) -> impl Iterator<Item = u32> {
+            [80, 81].into_iter()
+        }
+
         fn unified_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [40, 41].into_iter()
         }
@@ -1302,6 +1310,7 @@ fn test_extension_claims_follow_the_declaration() {
     let steps = native::NumSteps::<Wider>::len();
     assert_eq!(ones, 2 * (steps + extension.circuits.len()));
     let first_one = targets.iter().position(|&ky| ky == 1).unwrap();
+    assert_eq!(&targets[first_one - 2..first_one], &[80, 81]);
     assert!(
         targets[first_one..first_one + ones]
             .iter()
@@ -1313,7 +1322,7 @@ fn test_extension_claims_follow_the_declaration() {
     // circuits, after the walk's ones and before the stages' zeros.
     fn native_targets<P: Profile>() -> Vec<u32> {
         let steps = native::NumSteps::<P>::len();
-        let circuits = P::native_extension().circuits.len();
+        let circuits = crate::profile::native_extension::<P>().circuits.len();
         let targets: Vec<u32> = ky_values::<P, _>(&Tagged)
             .take(2 * InternalCircuitIndex::num::<P>() + 8)
             .collect();
@@ -1350,6 +1359,13 @@ fn test_extension_claims_follow_the_declaration() {
             [40, 41].into_iter()
         }
 
+        fn compute_v_ky(&self) -> impl Iterator<Item = u32> {
+            [50, 51].into_iter()
+        }
+        fn online_helper_ky(&self) -> impl Iterator<Item = u32> {
+            core::iter::empty()
+        }
+
         fn binding_ky(&self) -> impl Iterator<Item = u32> + Clone {
             [70, 71].into_iter()
         }
@@ -1361,7 +1377,7 @@ fn test_extension_claims_follow_the_declaration() {
 
     fn nested_targets<P: Profile>() -> Vec<u32> {
         let steps = nested::NumSteps::<P>::len();
-        let circuits = P::nested_extension().circuits.len();
+        let circuits = crate::profile::nested_extension::<P>().circuits.len();
         let extension = 2 + 2 * steps + 2 * nested::NUM_INSTANCE_CIRCUITS;
         let targets: Vec<u32> = nested::claims::ky_values::<P, _>(&NestedTagged)
             .take(extension + 2 * circuits + 8)

@@ -59,10 +59,10 @@ use ragu_circuits::{
 use ragu_core::{
     Result,
     drivers::{Driver, DriverValue},
-    gadgets::Bound,
+    gadgets::{Bound, Gadget, Kind},
     maybe::Maybe,
 };
-use ragu_primitives::{Element, GadgetExt, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt, allocator::Standard, io::Write, vec::FixedVec};
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::common;
@@ -79,8 +79,37 @@ use crate::{
             unified,
         },
     },
-    profile::Profile,
+    profile::{
+        Profile,
+        online::stages::{Nested, Present},
+    },
 };
+
+/// The batch instance and the online helper's authenticated challenges and sums.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    #[ragu(gadget)]
+    pub unified: unified::Output<'dr, D, C>,
+    /// Lifted w, alpha and beta, then the helper's quotient and evaluation sums.
+    #[ragu(gadget)]
+    pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    /// The native online Input, Query and Eval commitments at their deadlines.
+    #[ragu(gadget)]
+    pub online_stages: FixedVec<
+        ragu_primitives::Point<'dr, D, C>,
+        Present<P, crate::profile::online::stages::Native, 3>,
+    >,
+    /// Actual native online commitment points, also the helper's foreign exports.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<
+        ragu_primitives::Point<'dr, D, C>,
+        crate::profile::online::stages::PolynomialsLen<P, crate::profile::online::stages::Native>,
+    >,
+    /// Actual child coordinates, bound to this step's inherited nested mesh inputs.
+    #[ragu(gadget)]
+    pub inherited_coordinates:
+        FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshPresent<P, Nested, 4>>,
+}
 
 /// Circuit computing the nested batch evaluation $v_n$.
 pub struct Circuit<C: Affine, R: Rank, P: Profile> {
@@ -99,7 +128,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     type Last = stages::challenges::Stage<C, R, P>;
     type Instance<'source> = &'source unified::Instance<C>;
     type Witness<'source> = common::Witness<'source, C, P>;
-    type Output = unified::OutputKind<C>;
+    type Output = Kind![C::Base; Output<'_, _, C, P>];
     type Aux<'source> = unified::Instance<C>;
 
     fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -117,7 +146,20 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
     ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
         let (dr, stages) = common::load_all(dr, &witness)?;
 
+        if let Some(mesh) = P::NATIVE_MESH {
+            for (restriction, child) in mesh
+                .inherited
+                .iter()
+                .zip([&stages.preamble.left, &stages.preamble.right])
+            {
+                stages.preamble.online_points[restriction.polynomial]
+                    .enforce_equal(dr, &child.online_points[mesh.outgoing])?;
+            }
+        }
         let allocator = &mut Standard::new();
+        let online_fold = FixedVec::<_, Present<P, Nested, 2>>::try_from_fn(|i| {
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.online_fold[i]))
+        })?;
         let mut unified = unified::OutputBuilder::new(witness.map(|w| w.instance));
         let lift = |i: usize| &stages.challenges.pairs[i].lift;
         let query = &stages.query.nested;
@@ -165,17 +207,31 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 &stages.preamble,
             )?;
             let mut horner = Horner::new(lift(challenges::ALPHA));
-            for (pu, v, denominator) in poly_queries(
-                eval,
-                query,
-                &stages.preamble,
-                &denominators,
-                &computed_ax,
-                &computed_bx,
-            ) {
-                pu.sub(dr, v).mul(dr, denominator)?.write(dr, &mut horner)?;
-            }
+            crate::profile::online::batch::append_quotients(
+                dr,
+                &mut horner,
+                poly_queries(
+                    eval,
+                    query,
+                    &stages.preamble,
+                    &denominators,
+                    &computed_ax,
+                    &computed_bx,
+                ),
+            )?;
             horner.finish(dr)
+        };
+
+        let fu = if P::NESTED_ONLINE.is_empty() {
+            fu
+        } else {
+            crate::profile::online::batch::mul_pow(
+                dr,
+                &fu,
+                lift(challenges::ALPHA),
+                P::NESTED_ONLINE.openings.len(),
+            )?
+            .add(dr, &online_fold[0])
         };
 
         // The endoscalar the endoscaling steps walked P with lifts to the
@@ -191,10 +247,57 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             eval.write(dr, &mut horner)?;
             horner.finish(dr)
         };
+        let computed_v = if P::NESTED_ONLINE.is_empty() {
+            computed_v
+        } else {
+            crate::profile::online::batch::mul_pow(
+                dr,
+                &computed_v,
+                beta,
+                P::NESTED_ONLINE.polynomials.len(),
+            )?
+            .add(dr, &online_fold[1])
+        };
         unified.v.provide(computed_v);
 
         let (output, instance) = unified.finish(dr, allocator)?;
-        Ok(WithAux::new(output, instance))
+        let online_values = FixedVec::from_fn(|i| match i {
+            0 => lift(challenges::W).clone(),
+            1 => lift(challenges::ALPHA).clone(),
+            2 => beta.clone(),
+            _ => online_fold[i - 3].clone(),
+        });
+        Ok(WithAux::new(
+            Output {
+                inherited_coordinates: FixedVec::from_fn(|i| {
+                    [
+                        &stages.preamble.left.nested.x,
+                        &stages.preamble.left.nested.y,
+                        &stages.preamble.right.nested.x,
+                        &stages.preamble.right.nested.y,
+                    ][i]
+                        .clone()
+                }),
+                unified: output,
+                online_values,
+                online_points: stages
+                    .preamble
+                    .online_points
+                    .iter()
+                    .chain(stages.s_prime.online_points.iter())
+                    .chain(stages.ab.online_points.iter())
+                    .chain(stages.query.online_points.iter())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .try_into()?,
+                online_stages: FixedVec::from_fn(|i| match i {
+                    0 => stages.preamble.online_stage[0].clone(),
+                    1 => stages.query.online_stage[0].clone(),
+                    _ => stages.eval.online_stage[0].clone(),
+                }),
+            },
+            instance,
+        ))
     }
 }
 
@@ -466,7 +569,7 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
         (&eval.registry_xy, &query.fixed_registry[j], &d.internal[j])
     }))
     // The step's own online Fq polynomials at zeta_q, the lift of w.
-    .chain((0..eval.online_fq.len()).map(move |i| {
-        (&eval.online_fq[i], &query.online_fq[i], &d.challenges.w)
+    .chain(crate::internal::nested::online::openings(eval.online_fq.len()).map(move |opening| {
+        (&eval.online_fq[opening.polynomial], &query.online_fq[opening.value], &d.challenges.w)
     }))
 }

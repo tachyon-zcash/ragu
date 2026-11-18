@@ -123,6 +123,41 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             return Ok(false);
         }
 
+        if let Some(mesh) = <C::Profile as crate::profile::Profile>::NATIVE_MESH {
+            let source = self
+                .native_source
+                .as_ref()
+                .expect("source captured at setup");
+            let outgoing = &pcd.proof().native_source_out[0];
+            let tau = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
+            let (x, y) = (pcd.proof().x(), pcd.proof().y());
+            if Verifier::<B>::sparse_commit_to_affine(outgoing, C::host_generators(self.params))
+                != pcd.proof().native_online_commitments[mesh.outgoing]
+                || Verifier::<B>::sparse_eval(outgoing, tau)
+                    != source.evaluate::<Verifier<B>>(tau, x, y)
+            {
+                return Ok(false);
+            }
+        }
+        if let Some(mesh) = <C::Profile as crate::profile::Profile>::NESTED_MESH {
+            let source = self
+                .nested_source
+                .as_ref()
+                .expect("source captured at setup");
+            let outgoing = &pcd.proof().nested_source_out[0];
+            let tau = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
+            let (x, y) = (
+                proof_check!(nested_challenge::<C>(pcd.proof().x())),
+                proof_check!(nested_challenge::<C>(pcd.proof().y())),
+            );
+            if Verifier::<B>::sparse_commit_to_affine(outgoing, C::nested_generators(self.params))
+                != pcd.proof().nested_online_commitments[mesh.outgoing]
+                || Verifier::<B>::sparse_eval(outgoing, tau)
+                    != source.evaluate::<Verifier<B>>(tau, x, y)
+            {
+                return Ok(false);
+            }
+        }
         // Sample verification challenges w, y, and z.
         let w = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         let y = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
@@ -196,7 +231,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             let nested_ky = proof_check!(ky::nested_ky(pcd.proof(), y_nested));
             let native_bound =
                 ky::nested_bound::<C::Profile, _>(|index| pcd.proof().native_rx_commitment(index));
+            let (compute_v, online_helper) = proof_check!(ky::nested_online_ky_of::<C>(
+                &proof_check!(pcd.proof().nested_instance()),
+                &proof_check!(pcd.proof().nested_online_values()),
+                &ky::native_online_stages::<C::Profile, _>(|index| pcd
+                    .proof()
+                    .native_rx_commitment(index)),
+                &pcd.proof().native_online_commitments,
+                &pcd.proof().nested_mesh_claims,
+                y_nested,
+            ));
             let ky_source = ky::NestedKy {
+                compute_v,
+                online_helper,
                 // The nested accumulator's claim is tautological here: its
                 // k(y) is derived from the very polynomials the claim checks.
                 // It remains meaningful inside the collapse circuit, where
@@ -376,6 +423,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     nested_internal::RxIndex::BridgeAB,
                 ),
                 &nested_ab::Witness {
+                    online_points: crate::profile::online::stages::phase_points::<
+                        C::Profile,
+                        crate::profile::online::stages::Native,
+                        2,
+                        _,
+                    >(&proof.native_online_commitments),
                     a: proof.native_commitment(RxComponent::AbA),
                     b: proof.native_commitment(RxComponent::AbB),
                     native_points_ab: proof

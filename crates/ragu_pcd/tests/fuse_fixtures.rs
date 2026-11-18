@@ -549,6 +549,14 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         circuit_id,
         left_header,
         right_header,
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
+        native_source_out,
+        nested_source_out,
         native_application_rx,
         native_application_stage_rx,
         native_preamble_rx,
@@ -663,6 +671,16 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.push("circuit_id", usize::from(*circuit_id));
     lines.fields("left_header", left_header);
     lines.fields("right_header", right_header);
+    assert!(nested_online_commitments.is_empty());
+    assert!(native_online_commitments.is_empty());
+    assert!(native_source_out.is_empty());
+    assert!(nested_source_out.is_empty());
+    assert!(native_mesh_claims.is_empty());
+    assert!(nested_mesh_claims.is_empty());
+    assert!(native_online_fold.is_empty());
+    if !nested_online_fold.is_empty() {
+        lines.fields("nested_online_fold", nested_online_fold);
+    }
     lines.field("bridge_alpha", bridge_alpha);
 
     lines.poly("native_application_rx", native_application_rx);
@@ -866,6 +884,12 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         circuit_id,
         left_header,
         right_header,
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
         online,
         native: native_commitments,
         native_registry_xy,
@@ -909,6 +933,13 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(v);
     out.field(nested_c);
     out.field(nested_v);
+    // These fixtures pin the zero-capability encoding.
+    assert!(nested_online_fold.is_empty());
+    assert!(native_mesh_claims.is_empty());
+    assert!(nested_mesh_claims.is_empty());
+    assert!(native_online_fold.is_empty());
+    assert!(nested_online_commitments.is_empty());
+    assert!(native_online_commitments.is_empty());
     for Child { x, y, id } in [left, right] {
         out.field(x);
         out.field(y);
@@ -1026,10 +1057,22 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_right = nested_child()?;
     let nested_a_at_u = cursor.field()?;
     let nested_b_at_u = cursor.field()?;
+    let nested_online_fold = Vec::new();
+    let native_mesh_claims = Vec::new();
+    let nested_mesh_claims = Vec::new();
+    let native_online_fold = Vec::new();
+    let nested_online_commitments = Vec::new();
+    let native_online_commitments = Vec::new();
     let instance = Instance {
         circuit_id,
         left_header,
         right_header,
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
         online,
         native: native_commitments,
         native_registry_xy,
@@ -1411,7 +1454,26 @@ fn wire_lines<C: FixtureCycle>(
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
 ) {
-    lines.push("wire.fields", super::codec::WIRE_FIELDS.join(","));
+    lines.push(
+        "wire.fields",
+        super::codec::WIRE_FIELDS
+            .iter()
+            .copied()
+            .filter(|&name| name != "nested_online_fold" || !proof.nested_online_fold.is_empty())
+            .filter(|&name| name != "native_mesh_claims" || !proof.native_mesh_claims.is_empty())
+            .filter(|&name| name != "nested_mesh_claims" || !proof.nested_mesh_claims.is_empty())
+            .filter(|&name| name != "native_online_fold" || !proof.native_online_fold.is_empty())
+            .filter(|&name| {
+                (name != "native_source_out" || !proof.native_source_out.is_empty())
+                    && (name != "nested_source_out" || !proof.nested_source_out.is_empty())
+                    && (name != "native_online_commitments"
+                        || !proof.native_online_commitments.is_empty())
+                    && (name != "nested_online_commitments"
+                        || !proof.nested_online_commitments.is_empty())
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    );
     let bytes = proof.to_bytes().unwrap();
     let payload = &bytes[crate::wire::ENVELOPE_SIZE..];
     lines.push("wire.proof.bytes", payload.len());
@@ -1672,6 +1734,12 @@ fn stage_commitments<C: FixtureCycle>(
     let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
         bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB),
         &nested_stages::ab::Witness {
+            online_points: crate::profile::online::stages::phase_points::<
+                C::Profile,
+                crate::profile::online::stages::Native,
+                2,
+                _,
+            >(&instance.native_online_commitments),
             a: instance.native_commitment(native::RxComponent::AbA),
             b: instance.native_commitment(native::RxComponent::AbB),
             native_points_ab: instance
@@ -1806,6 +1874,12 @@ fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> C
         v: tape.field(),
         nested_c: tape.field(),
         nested_v: tape.field(),
+        nested_mesh_claims: tape.fields(lengths.nested_mesh_claims.len()),
+        nested_online_fold: tape.fields(lengths.nested_online_fold.len()),
+        native_mesh_claims: tape.fields(lengths.native_mesh_claims.len()),
+        native_online_fold: tape.fields(lengths.native_online_fold.len()),
+        nested_online_commitments: tape.points(lengths.nested_online_commitments.len()),
+        native_online_commitments: tape.points(lengths.native_online_commitments.len()),
         left: Child {
             x: tape.field(),
             y: tape.field(),

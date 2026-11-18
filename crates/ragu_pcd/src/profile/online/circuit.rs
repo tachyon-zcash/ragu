@@ -1,0 +1,227 @@
+//! The independent online opening fold, with explicit public challenge inputs.
+
+use core::marker::PhantomData;
+
+use ragu_circuits::{
+    WithAux,
+    polynomials::Rank,
+    staging::{MultiStageCircuit, StageBuilder},
+};
+use ragu_core::{
+    Error, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe,
+};
+use ragu_primitives::{
+    Element, Endoscalar, EndoscalarChallenge, GadgetExt,
+    io::Write,
+    vec::{ConstLen, FixedVec},
+};
+use udon::field::Field;
+
+use super::{
+    batch::{Challenges, Queries},
+    stages::{
+        EvalStage, ForeignLen, InputStage, InputWitness, PolynomialsLen, QueryStage, QueryWitness,
+        Side,
+    },
+};
+use crate::profile::Profile;
+
+/// Public values shared by the batch helper and the fuse's `compute_v` target.
+#[derive(Clone)]
+pub(crate) struct Instance<F, P: Profile, S: Side> {
+    /// The authenticated enclosing-step challenges. On the native side `beta`
+    /// carries raw `pre_beta`; on the nested side it is the effective lift.
+    pub challenges: Challenges<F>,
+    /// The quotient and polynomial-evaluation sums, in that order.
+    pub sums: [F; 2],
+    /// The opposite field's pre-w polynomial commitments, as canonical coordinates.
+    pub foreign: FixedVec<F, ForeignLen<P, S>>,
+    /// Early coordinates and shared edge values, in the mesh's fixed order.
+    pub mesh: FixedVec<F, super::stages::MeshClaimsLen<P, S>>,
+}
+
+/// The helper's public output, before the extension's zero suffix.
+#[derive(Gadget, Write)]
+pub(crate) struct Output<'dr, D: Driver<'dr>, P: Profile, S: Side> {
+    /// `w`, `y`, `x`, `alpha`, `u`, and the side's `beta` input, in order.
+    #[ragu(gadget)]
+    pub challenges: FixedVec<Element<'dr, D>, ConstLen<6>>,
+    /// The quotient and evaluation sums.
+    #[ragu(gadget)]
+    pub sums: FixedVec<Element<'dr, D>, ConstLen<2>>,
+    /// The same commitment coordinates that online consumers read before w.
+    #[ragu(gadget)]
+    pub foreign: FixedVec<Element<'dr, D>, ForeignLen<P, S>>,
+    /// The same early coordinates and intersection wires used by consumers.
+    #[ragu(gadget)]
+    pub mesh: FixedVec<Element<'dr, D>, super::stages::MeshClaimsLen<P, S>>,
+}
+
+/// The three committed stage witnesses and the authenticated challenge inputs.
+pub struct Witness<'a, F: Field, P: Profile, S: Side> {
+    /// Input values committed before `w`.
+    pub inputs: &'a InputWitness<F, P, S>,
+    /// Opening points and claims committed before `alpha`.
+    pub query: &'a QueryWitness<F, P, S>,
+    /// One value at `u` per polynomial, committed before `pre_beta`.
+    pub eval: &'a FixedVec<F, PolynomialsLen<P, S>>,
+    /// Public challenge inputs fixed by the parent or terminal verifier.
+    pub challenges: Challenges<F>,
+}
+
+/// Computes the two online-batch sums without loading the fuse preamble.
+pub(crate) struct Circuit<F: Field, P: Profile, S: Side> {
+    source_tag: Option<F>,
+    marker: PhantomData<(P, S)>,
+}
+impl<F: Field, P: Profile, S: Side> Default for Circuit<F, P, S> {
+    fn default() -> Self {
+        Self {
+            source_tag: None,
+            marker: PhantomData,
+        }
+    }
+}
+impl<F: Field, P: Profile, S: Side> Circuit<F, P, S> {
+    /// Uses the source tag captured when the enclosing application was set up.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a missing or undeclared source identity.
+    pub(crate) fn with_source_tag(source_tag: Option<F>) -> Result<Self> {
+        if source_tag.is_some() != S::mesh::<P>().is_some() {
+            return Err(Error::Initialization(
+                "source registry does not match the mesh declaration".into(),
+            ));
+        }
+        Ok(Self {
+            source_tag,
+            marker: PhantomData,
+        })
+    }
+}
+
+impl<F: Field, R: Rank, P: Profile, S: Side> MultiStageCircuit<F, R> for Circuit<F, P, S> {
+    type Last = EvalStage<P, S>;
+    type Instance<'source> = &'source Instance<F, P, S>;
+    type Witness<'source> = Witness<'source, F, P, S>;
+    type Output = Kind![F; Output<'_, _, P, S>];
+    type Aux<'source> = [F; 2];
+
+    fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        dr: &mut D,
+        instance: DriverValue<D, Self::Instance<'source>>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        let challenges = allocate_challenges(dr, instance.as_ref().map(|i| &i.challenges))?;
+        let sums = FixedVec::try_from_fn(|j| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|i| i.sums[j]))
+        })?;
+        let foreign = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|v| v.foreign[i]))
+        })?;
+        let mesh = FixedVec::try_from_fn(|i| {
+            Element::alloc(dr, &mut (), instance.as_ref().map(|v| v.mesh[i]))
+        })?;
+        Ok(Output {
+            challenges,
+            sums,
+            foreign,
+            mesh,
+        })
+    }
+
+    fn witness<'a, 'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
+        &self,
+        builder: StageBuilder<'a, 'dr, D, R, (), Self::Last>,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'source>>>> {
+        let (inputs, builder) = builder.add_stage::<InputStage<P, S>>()?;
+        let (query, builder) = builder.add_stage::<QueryStage<P, S>>()?;
+        let (eval, builder) = builder.add_stage::<EvalStage<P, S>>()?;
+        let dr = builder.finish();
+        let inputs = inputs.unenforced(dr, witness.as_ref().map(|w| w.inputs))?;
+        if self.source_tag.is_some() != S::mesh::<P>().is_some() {
+            return Err(Error::Initialization(
+                "online helper is missing its captured source".into(),
+            ));
+        }
+        if let Some(tag) = self.source_tag {
+            let expected = Element::constant(dr, tag);
+            inputs.source_tag[0].enforce_equal(dr, &expected)?;
+        }
+        let query = query.unenforced(dr, witness.as_ref().map(|w| w.query))?;
+        let eval = eval.unenforced(dr, witness.as_ref().map(|w| w.eval))?;
+        // Consumers use these very same staged wires. Their authenticity is
+        // supplied by the helper's public claim target, not a prover copy.
+        let public = FixedVec::<_, ConstLen<6>>::try_from_fn(|i| {
+            if i < query.challenges.len() {
+                Ok(query.challenges[i].clone())
+            } else {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    witness.as_ref().map(|w| {
+                        let c = &w.challenges;
+                        [c.w, c.y, c.x, c.alpha, c.u, c.beta][i]
+                    }),
+                )
+            }
+        })?;
+        let beta = if S::NATIVE {
+            let challenge = EndoscalarChallenge::from_element(dr, &mut (), public[5].clone())?;
+            Endoscalar::extract(challenge).lift(dr)?
+        } else {
+            public[5].clone()
+        };
+        let challenges = Challenges {
+            w: public[0].clone(),
+            y: public[1].clone(),
+            x: public[2].clone(),
+            alpha: public[3].clone(),
+            u: public[4].clone(),
+            beta,
+        };
+        let mesh = if let Some(mesh) = S::mesh::<P>() {
+            mesh.claim_values(S::layout::<P>(), &inputs.values, &query.values)?
+        } else {
+            alloc::vec::Vec::new()
+        }
+        .try_into()?;
+        let query = Queries {
+            inputs: inputs.values.to_vec(),
+            points: query.points.to_vec(),
+            values: query.values.to_vec(),
+        };
+        let (f, e) = S::layout::<P>().fold(dr, &query, &eval, &challenges)?;
+        let sums = FixedVec::new(alloc::vec![f, e])?;
+        let values = D::just(|| [*sums[0].value().take(), *sums[1].value().take()]);
+        Ok(WithAux::new(
+            Output {
+                challenges: public,
+                sums,
+                foreign: inputs.foreign,
+                mesh,
+            },
+            values,
+        ))
+    }
+}
+
+fn allocate_challenges<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    challenges: DriverValue<D, &Challenges<D::F>>,
+) -> Result<FixedVec<Element<'dr, D>, ConstLen<6>>> {
+    FixedVec::try_from_fn(|i| {
+        Element::alloc(
+            dr,
+            &mut (),
+            challenges
+                .as_ref()
+                .map(|c| [c.w, c.y, c.x, c.alpha, c.u, c.beta][i]),
+        )
+    })
+}

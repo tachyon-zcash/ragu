@@ -38,7 +38,10 @@ use udon::field::Field;
 use crate::{
     Application, Pcd, RAGU_TAG,
     internal::{nested, transcript::Transcript},
-    profile::ProfiledCycle,
+    profile::{
+        ProfiledCycle,
+        online::{Phase, prepared::PreparationChallenges},
+    },
     proof::ProofBuilder,
     step::Step,
 };
@@ -110,6 +113,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut dr = Emulator::execute();
         let mut transcript = Transcript::new(&mut dr, C::circuit_poseidon(self.params), RAGU_TAG)?;
 
+        // Each field's input stage holds the other field's commitments fixed
+        // before w, so both batches supply theirs before either commits.
+        self.begin_native_online([&left, &right], &mut builder)?;
+        self.begin_nested_online([&left, &right], &mut builder)?;
+        self.commit_native_online_inputs(rng, &mut builder)?;
+        self.commit_nested_online_inputs(rng, &mut builder)?;
         let (preamble_witness, nested_preamble) =
             self.compute_preamble(rng, &left, &right, &mut builder)?;
         let bridge_preamble_commitment =
@@ -134,6 +143,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .nested_registry
             .at(nested::challenge::<C>(*w.value().take())?);
 
+        let mut preparation = PreparationChallenges {
+            w: Some(*w.value().take()),
+            y: None,
+            x: None,
+        };
+        self.prepare_native_online(Phase::BeforeY, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeY, preparation, &mut builder)?;
         let (native_s_prime, nested_s_prime) = self.compute_s_prime(
             rng,
             &native_registry,
@@ -217,6 +233,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_outer_error_commitment.write(&mut dr, &mut transcript)?;
         let mu_prime = transcript.challenge(&mut dr)?;
 
+        preparation.y = Some(*y.value().take());
+        self.prepare_native_online(Phase::BeforeX, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeX, preparation, &mut builder)?;
         self.compute_ab(
             rng,
             native_a,
@@ -232,6 +251,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_ab_commitment.write(&mut dr, &mut transcript)?;
         let x = transcript.challenge(&mut dr)?;
 
+        preparation.x = Some(*x.value().take());
+        self.prepare_native_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.prepare_nested_online(Phase::BeforeAlpha, preparation, &mut builder)?;
+        self.commit_native_online_query(preparation, rng, &mut builder)?;
+        self.commit_nested_online_query(preparation, rng, &mut builder)?;
         let (query_witness, nested_query) = self.compute_query(
             rng,
             &w,
@@ -267,6 +291,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
         let u = transcript.challenge(&mut dr)?;
 
+        self.commit_native_online_eval(*u.value().take(), rng, &mut builder)?;
+        self.commit_nested_online_eval(*u.value().take(), rng, &mut builder)?;
         let bound_challenges =
             [&w, &y, &z, &mu, &mu_prime, &x, &alpha, &u].map(|challenge| *challenge.value().take());
         let (eval_witness, nested_eval, nested_challenges_witness) = self.compute_eval(
@@ -297,8 +323,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 // Fresh eval-stage blindings each attempt: re-deriving the eval
                 // commitment is what makes `pre_beta` independent across
                 // retries.
-                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) =
-                    self.sample_eval_commitment(rng, &eval_witness, &nested_eval)?;
+                let (eval_rx, bridge_eval_rx, bridge_eval_commitment) = self
+                    .sample_eval_commitment(
+                        rng,
+                        &eval_witness,
+                        &nested_eval,
+                        ragu_primitives::vec::FixedVec::from_fn(|_| {
+                            builder.native_online_stage_commitment(2)
+                        }),
+                    )?;
 
                 let mut transcript = transcript.clone();
                 let bridge_eval_commitment_point = Point::constant(dr, bridge_eval_commitment)?;
@@ -357,16 +390,22 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         )?;
 
         let nested_s_prime_witness = nested::stages::s_prime::Witness {
+            online_points: builder.native_online_phase::<1>(),
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {
+            online_points: builder.native_online_phase::<2>(),
             a: builder.native_a_commitment(),
             b: builder.native_b_commitment(),
             native_points_ab: builder.native_points_ab_commitment(),
         };
         let nested_query_witness = nested::stages::query::Witness {
+            online_points: builder.native_online_phase::<3>(),
+            online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                builder.native_online_stage_commitment(1)
+            }),
             native_query: builder.native_query_commitment(),
             registry_xy: builder.native_registry_xy_commitment(),
             nested: nested_query,
@@ -376,6 +415,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_points_f: builder.native_points_f_commitment(),
         };
         let nested_eval_witness = nested::stages::eval::Witness {
+            online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                builder.native_online_stage_commitment(2)
+            }),
             native_eval: builder.native_eval_commitment(),
             nested: nested_eval,
         };

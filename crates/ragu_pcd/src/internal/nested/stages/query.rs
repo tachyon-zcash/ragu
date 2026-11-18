@@ -34,7 +34,10 @@ use crate::{
         online::FqPolysLen,
         pcs::{InternalLen, OwnRxLen},
     },
-    profile::{Profile, ProfiledCycle},
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Native, PhaseLen, Present},
+    },
 };
 
 /// Number of curve points in this stage.
@@ -132,6 +135,10 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
+    /// Native auxiliary commitments fixed before alpha.
+    pub online_points: FixedVec<C, PhaseLen<P, Native, 3>>,
+    /// This boundary's native online stage commitment.
+    pub online_stage: FixedVec<C, Present<P, Native, 1>>,
     pub native_query: C,
     pub registry_xy: C,
     /// The nested query values.
@@ -202,6 +209,12 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
 /// public instance.
 #[derive(Gadget, Write)]
 pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// Native auxiliary points fixed before alpha and bound to the walk.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 3>>,
+    /// The native online stage fixed by this bridge's transcript commitment.
+    #[ragu(gadget)]
+    pub online_stage: FixedVec<Point<'dr, D, C>, Present<P, Native, 1>>,
     #[ragu(gadget)]
     pub native_query: Point<'dr, D, C>,
     #[ragu(gadget)]
@@ -224,7 +237,11 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     fn values() -> usize {
         // (x, y) per point + fixed registry + registry_wxy + 2 children
         // + y per online Fq opening
-        NUM * 2 + InternalLen::<P>::len() + 1 + 2 * (OwnRxLen::<P>::len() + 4) + P::ONLINE_FQ_POLYS
+        2 * (PhaseLen::<P, Native, 3>::len() + Present::<P, Native, 1>::len() + NUM)
+            + InternalLen::<P>::len()
+            + 1
+            + 2 * (OwnRxLen::<P>::len() + 4)
+            + P::ONLINE_FQ_POLYS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -263,6 +280,12 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         };
 
         Ok(Output {
+            online_points: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+            })?,
+            online_stage: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))
+            })?,
             native_query,
             registry_xy,
             nested,
