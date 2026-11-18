@@ -1271,16 +1271,16 @@ fn rerandomize_forging_dummy_inputs_is_rejected() {
         let (honest, ()) = app
             .fuse(&mut rng, Seed::new(), Fp::from(7), unit.clone(), unit)
             .expect("honest seed");
-        let seeded_trivial = app
-            .seeded_trivial_pcd(&mut rng)
-            .expect("the cached seeded unit proof");
+        let randomizer = app
+            .random_trivial_pcd(&mut rng)
+            .expect("the random trivial proof");
         let (forged, ()) = app
             .fuse_forging_dummy_inputs(
                 &mut rng,
                 crate::step::internal::rerandomize::Rerandomize::new(),
                 (),
                 honest.clone(),
-                seeded_trivial,
+                randomizer,
                 None,
             )
             .expect("the forging prover assembles a proof");

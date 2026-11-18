@@ -61,8 +61,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// * `rng`: a random number generator used to sample randomness during
     ///   proof generation. The fact that this method takes a random number
     ///   generator is not an indication that the resulting proof-carrying data
-    ///   is zero-knowledge. [`Application::rerandomize`] is intended to provide
-    ///   that property, but the current construction does not yet establish it.
+    ///   is zero-knowledge. [`Application::rerandomize`] masks the result's
+    ///   accumulators; its documentation says what the result still shows.
     /// * `step`: the [`Step`] instance that has been registered in this
     ///   [`Application`].
     /// * `witness`: the witness input for the [`Step`]

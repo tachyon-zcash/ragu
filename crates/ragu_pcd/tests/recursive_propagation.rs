@@ -186,11 +186,7 @@ pub(crate) mod support {
 
     impl Drop for AppLease<'_> {
         fn drop(&mut self) {
-            let mut app = self.app.take().unwrap();
-            // This cache consumes the caller's RNG on its first use. Reset it
-            // so a later test sees exactly the same state as a fresh app, while
-            // successive cases and shrinking within one test still share it.
-            app.seeded_trivial.take();
+            let app = self.app.take().unwrap();
             self.pool.0.lock().unwrap().push(app);
         }
     }
@@ -206,8 +202,9 @@ pub(crate) mod support {
     }
 
     /// Run independent mutations after their shared honest control. Each case
-    /// gets its own application with the control's already initialized neutral
-    /// proof, preserving the prover RNG consumption of the sequential checks.
+    /// gets its own application of the control's configuration: an
+    /// application keeps no state between proofs, so a case draws the
+    /// randomness the sequential checks would.
     /// A test-only worker pool runs the cases without enabling additional
     /// prover features, including when the library's `multicore` feature is off.
     pub(crate) fn for_each_case<T: Send>(
@@ -215,11 +212,6 @@ pub(crate) mod support {
         cases: impl IntoParallelIterator<Item = T>,
         check: impl Fn(&App, T) -> Result<()> + Send + Sync,
     ) -> Result<()> {
-        let neutral = app
-            .seeded_trivial
-            .get()
-            .expect("run the rerandomized honest control before its mutations")
-            .clone();
         let native_tag = app.native_registry.tag();
         let nested_tag = app.nested_registry.tag();
         cases.into_par_iter().try_for_each(|case| {
@@ -227,7 +219,6 @@ pub(crate) mod support {
             let app = lease.app();
             assert_eq!(app.native_registry.tag(), native_tag);
             assert_eq!(app.nested_registry.tag(), nested_tag);
-            assert!(app.seeded_trivial.set(neutral.clone()).is_ok());
             check(app, case)
         })
     }
@@ -245,12 +236,10 @@ pub(crate) mod support {
             .app()
             .rerandomize(lease.app().bootstrap_pcd(), &mut first_rng)
             .unwrap();
-        assert!(lease.app().seeded_trivial.get().is_some());
         drop(lease);
         assert_eq!(pool.0.lock().unwrap().len(), 1);
 
         let lease = pool.checkout();
-        assert!(lease.app().seeded_trivial.get().is_none());
         let mut second_rng = StdRng::seed_from_u64(873);
         let second = lease
             .app()
@@ -268,8 +257,9 @@ pub(crate) mod support {
                 .unwrap()
         );
 
-        // A mutation following its control must inherit the initialized cache,
-        // without consuming the random bytes used to create it a second time.
+        // A mutation following its control runs on another application of
+        // the pool. It must give the control's proof from the control's
+        // randomness.
         let mut expected_rng = StdRng::seed_from_u64(875);
         let expected = lease
             .app()

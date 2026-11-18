@@ -119,6 +119,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step to the bootstrap circuit id and the unit output header. The proof and
   compressed-proof schemas move to version 3, and `Proof::encoded_len` and
   `CompressedProof::encoded_len` no longer take a header size.
+- `Application::rerandomize` folds its input with a fresh trivial proof whose
+  accumulator polynomials are uniformly random, instead of a proof the
+  application cached. The trivial proof is a bootstrap proof over a random
+  dummy, so each call now makes two fuses and draws `24n` more field
+  elements for a rank of `4n` coefficients. The output's accumulator
+  polynomials are uniform up to a fixed number of relations with the
+  output's other values. The output is not yet zero-knowledge: the method's
+  documentation lists what it still shows. No circuit, registry tag or proof schema
+  changes. `Application` no longer caches a proof: the same randomness
+  gives the same output on every call, and the type no longer holds the
+  cell that kept it from being `Sync`.
 
 ## [0.0.0] - 2025-11-05
 

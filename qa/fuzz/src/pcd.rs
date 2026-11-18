@@ -44,17 +44,11 @@ pub type NativeField = <Pasta as Cycle>::CircuitField;
 /// The nested field.
 pub type NestedField = <Pasta as Cycle>::ScalarField;
 
-/// The application, wrapped so a `LazyLock` can hold it.
+/// The application the PCD targets hold in a `LazyLock`.
 ///
-/// [`Application`] holds a `OnceCell` (`seeded_trivial`, memoizing the
-/// rerandomization fixture), which breaks auto-`Sync`.
+/// [`Application`] keeps no state between proofs and is `Sync`, so this
+/// wrapper is too.
 pub struct SyncApp(pub Application<'static, C, R, HEADER_SIZE>);
-
-// SAFETY: libFuzzer drives `fuzz_target!` on a single thread, so the
-// `OnceCell` inside is never touched concurrently — not even on the very
-// first call that initializes it. No PCD target spawns worker threads or
-// hands the application to one. If one ever does, this must be revisited.
-unsafe impl Sync for SyncApp {}
 
 /// Poseidon parameters for the baked Pasta cycle.
 fn poseidon() -> &'static <Pasta as Cycle>::CircuitPoseidon {

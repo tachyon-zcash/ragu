@@ -267,8 +267,8 @@ fuzz_target!(
 /// Rerandomizes `pcd` when asked, checking the result still verifies.
 ///
 /// Rerandomization is part of the lifecycle and rebuilds the root through a
-/// fuse with the seeded trivial proof, so it exercises a path no plain fuse
-/// reaches.
+/// fuse with a fresh random trivial proof, so it exercises a path no plain
+/// fuse reaches.
 fn maybe_rerandomize(
     app: &App,
     pcd: Pcd<C, R, InternalNode>,

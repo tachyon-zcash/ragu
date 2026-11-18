@@ -1,11 +1,35 @@
 //! Rerandomization step for PCDs.
 //!
-//! This is a simple step: it takes a header-carrying proof and folds it with the
-//! application's cached seeded unit proof, producing the same header. To keep
+//! This is a simple step: it takes a header-carrying proof and folds it with a
+//! trivial unit proof, producing the same header. To keep
 //! the circuit identical no matter what the left header is, we use a _uniform_
 //! encoding — which makes every left/output header slot, including the suffix,
 //! a witness wire rather than a constant. The right header is the unit header
-//! carried by the cached proof.
+//! carried by the trivial proof.
+//!
+//! ## Where the randomness comes from
+//!
+//! This circuit holds no random wires. [`Application::rerandomize`] gives it
+//! a fresh right child for each call: a bootstrap proof over a dummy whose
+//! accumulator polynomials are uniformly random
+//! ([`Application::random_trivial_pcd`]). The circuit does not read that
+//! child's polynomials. The fold does: the output's $a$, $b$ and $p$, in
+//! each field, include the child's with a nonzero weight, so the child's
+//! polynomials mask them.
+//!
+//! Random wires in this circuit cannot do the same. A step folds its own
+//! application claim, so such wires do reach the output's $a$ in this
+//! fuse. But a trace is not uniform: each gate's product wire is a function
+//! of its other two, and the stage masks hold other coefficients to zero.
+//! The accumulator of a base case has no such relation, because the base
+//! case leaves $c$ free and $\text{revdot}(a, b) = c$ is the only claim
+//! on it.
+//!
+//! One fuse is enough for that mask. A step once left its application
+//! claim to its parent, and its preamble then held its children's input
+//! headers, so a second rerandomization was needed before the output held
+//! no header of the steps below its input. See
+//! [`Application::rerandomize`] for what the output still shows.
 //!
 //! The output proof's polynomials are copies of the left input proof's, which
 //! the circuit holds equal at $\zeta$ slot by slot: the parent sees only
@@ -25,6 +49,8 @@
 //!
 //! [`Dummy`]: crate::header::Dummy
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
+//! [`Application::rerandomize`]: crate::Application::rerandomize
+//! [`Application::random_trivial_pcd`]: crate::Application::random_trivial_pcd
 
 use core::marker::PhantomData;
 
@@ -96,8 +122,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // Uniform encoding keeps this circuit identical across left header
         // types and constrains the witnessed suffix away from `Dummy` and from
         // zero (see `Encoded::new_uniform`). The output reuses the left input's wires;
-        // the right input is the standard unit encoding carried by the cached
-        // seeded proof.
+        // the right input is the standard unit encoding carried by the
+        // trivial proof.
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
         let right_encoded = Encoded::new(dr, allocator, right)?;
 
@@ -111,15 +137,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
             output.enforce_equal(dr, &left)?;
         }
 
-        // TODO(ebfull): It's possible that the witness for this step needs to
-        // be populated with some random data, for actual re-randomization
-        // (zero-knowledge), though it's not certain at this stage in
-        // development. Note that random wires here would only randomize this
-        // step's own application polynomial, which is already blinded; the
-        // folded accumulator of the resulting proof is a deterministic function
-        // of the input proof, cached seeded proof, and public challenges, so
-        // hiding it would need a fold-level randomizer claim rather than extra
-        // witness here.
+        // No random wires: the right child's accumulators mask the fold (see
+        // the module documentation).
 
         // Return left's data as the output data - this preserves it!
         Ok((

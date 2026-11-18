@@ -1378,11 +1378,18 @@ fn prover_fixtures<C: FixtureCycle>() {
         &mut failures,
     );
 
-    // The first rerandomization also proves the seeded trivial proof the
-    // step fuses against, so this tape covers both.
+    // Rerandomization first proves the trivial proof the step fuses
+    // against. That proof draws six uniformly random polynomials, megabytes
+    // of randomness and too much to commit as a tape, so it comes from the
+    // frozen generator under a fixed seed, as compression's blinding does.
+    // The tape covers the rerandomization fuse, and the output's digests
+    // pin the trivial proof as its right child.
+    let randomizer = app
+        .random_trivial_pcd(&mut Tape::record(seed(11)))
+        .expect("the random trivial proof must prove");
     let mut rerandomize_tape = fixtures.tape(RERANDOMIZE, 10);
     let rerandomized = app
-        .rerandomize(merge_abcd, &mut rerandomize_tape)
+        .rerandomize_with(merge_abcd, randomizer, &mut rerandomize_tape)
         .expect("rerandomization must succeed");
     check(
         &app,

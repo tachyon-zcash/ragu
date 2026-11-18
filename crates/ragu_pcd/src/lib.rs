@@ -96,7 +96,7 @@ mod decompress_statement_tests;
 mod profile_corruption_tests;
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use core::{any::TypeId, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
@@ -520,7 +520,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             num_application_steps: self.num_application_steps,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap,
-            seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
         };
@@ -656,9 +655,6 @@ pub struct Application<
     /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
     /// `Application`.
     bootstrap: Option<Proof<C, R>>,
-    /// A valid `Pcd<()>` used as the right child during rerandomization.
-    /// Lazily derived from the bootstrap proof and then reused.
-    seeded_trivial: OnceCell<Proof<C, R>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -724,67 +720,133 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             .expect("finalize always sets the bootstrap proof")
     }
 
-    /// The bootstrap proof as the `Pcd<()>` that [`seed`](Self::seed) and
-    /// rerandomization consume; see [`bootstrap_proof`](Self::bootstrap_proof).
+    /// The bootstrap proof as the `Pcd<()>` that [`seed`](Self::seed)
+    /// consumes; see [`bootstrap_proof`](Self::bootstrap_proof).
     fn bootstrap_pcd(&self) -> Pcd<C, R, ()> {
         self.bootstrap_proof().clone().carry(())
     }
 
-    /// Returns the cached valid `Pcd<()>` used as the neutral right child of
-    /// rerandomization.
+    /// Returns a fresh trivial proof whose accumulators are uniformly random:
+    /// the right child of one rerandomization.
     ///
-    /// The proof is lazily created by folding the bootstrap proof with itself
-    /// through the unit instantiation of the rerandomization step. Subsequent
-    /// calls reuse the same proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Result<Pcd<C, R, ()>> {
-        let proof = match self.seeded_trivial.get() {
-            Some(proof) => proof,
-            None => {
-                let (pcd, ()) = self.fuse(
-                    rng,
-                    step::internal::rerandomize::Rerandomize::new(),
-                    (),
-                    self.bootstrap_pcd(),
-                    self.bootstrap_pcd(),
-                )?;
-                self.seeded_trivial.get_or_init(|| pcd.into_parts().0)
-            }
-        };
-        Ok(proof.clone().carry(()))
+    /// It is a bootstrap proof, as [`bootstrap_proof`](Self::bootstrap_proof)
+    /// is, but its left child is a
+    /// [`random_dummy_pcd`](Self::random_dummy_pcd). The base case leaves the
+    /// folded claim free, so the proof verifies and attests nothing. Its
+    /// $a$, $b$ and $p$ are a fold of the dummy's, in each field, with a
+    /// nonzero weight on them, so they are independent and uniform too.
+    ///
+    /// The proof does not depend on what it later rerandomizes. Use it once:
+    /// the mask hides one fold only.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the prover's errors.
+    pub(crate) fn random_trivial_pcd<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+    ) -> Result<Pcd<C, R, ()>> {
+        let mask = self.random_dummy_pcd(rng);
+        let (pcd, ()) = self.fuse(
+            rng,
+            step::internal::bootstrap::Bootstrap::new(),
+            (),
+            mask,
+            self.dummy_pcd(),
+        )?;
+        Ok(pcd)
     }
 
-    /// Rerandomize proof-carrying data.
+    /// Rerandomizes proof-carrying data.
     ///
-    /// This will internally fold the [`Pcd`] with a cached seeded `Pcd<()>`
-    /// using an internal rerandomization step, producing a
-    /// fresh proof that is valid for the same [`Header`] and carries the same
-    /// data. `Application::verify_uncompressed` produces the same result on
-    /// the provided `pcd` as it would on the output of this method.
+    /// Returns a fresh proof for the same [`Header`] that carries the same
+    /// data and the same output polynomials.
+    /// `Application::verify_uncompressed` gives the same verdict on the
+    /// result as on `pcd`.
     ///
-    /// The intent is that the output be unlinkable to the input. Today that is
-    /// not achieved at all: the output embeds the input's commitments and stage
-    /// polynomials in the clear (as its left-child data), and its folded
-    /// accumulator is a deterministic function of the input proof, cached
-    /// seeded proof, and public challenges. Achieving witness-hiding of the
-    /// accumulator needs a fold-level randomizer; unlinkability of an
-    /// uncompressed proof additionally needs the child data hidden (compression,
-    /// or a second randomized pass). Both are future work, tracked separately.
+    /// The method makes two fuses. The first builds a trivial proof whose
+    /// accumulators are uniformly random; it does not read `pcd`. The second
+    /// folds `pcd` with that proof through the internal rerandomization
+    /// step.
+    ///
+    /// # What the result hides
+    ///
+    /// The accumulator polynomials $a$, $b$ and $p$ of the result, in each
+    /// field, are the bulk of the proof. Each is a fold that includes the
+    /// trivial proof's polynomial with a nonzero weight. The trivial proof's
+    /// polynomials are independent and uniform over all polynomials of the
+    /// rank. The other values of the result depend on them through a fixed
+    /// number of values only: commitments, evaluations and fold quotients.
+    /// So each accumulator polynomial of the result is uniform, up to that
+    /// fixed number of relations with the result's other values. The profile
+    /// sets the number, not the rank.
+    ///
+    /// The result holds no header of the steps below `pcd` in the clear. A
+    /// step folds its own application claim, so the step that made `pcd` is
+    /// the last one whose proof held its inputs' headers.
+    ///
+    /// # What the result does not hide
+    ///
+    /// The result is not yet zero-knowledge. Its stage polynomials are in
+    /// the clear, as in every uncompressed proof, and they hold these values
+    /// of `pcd`:
+    ///
+    /// - The circuit id of the step that made `pcd`.
+    /// - The unified instance of `pcd`: its commitments, its challenges, and
+    ///   its $c$ and $v$. A party that holds `pcd` can link the result to it.
+    /// - A fixed number of field elements that are functions of the
+    ///   polynomials of `pcd`: the evaluations of each at two points of this
+    ///   fold, and the quotient coefficients of the revdot fold.
+    ///
+    /// Each stage and trace polynomial of `pcd` has one random coefficient.
+    /// That is fewer than the values above that depend on it, so the values
+    /// are not independent of `pcd`. To hide them, a proof needs more random
+    /// coefficients in each such polynomial. A second rerandomization moves
+    /// these values one fuse away from the clear, which takes the circuit id
+    /// out of it; it does not hide them.
+    ///
+    /// The output polynomials are copies of those of `pcd`. They are part of
+    /// what the proof-carrying data exposes, as the header's data is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] if `pcd` does not have this
+    /// application's profile's shape, and propagates the prover's errors
+    /// otherwise.
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<C, R, H>> {
-        let seeded_trivial = self.seeded_trivial_pcd(rng)?;
+        let randomizer = self.random_trivial_pcd(rng)?;
+        self.rerandomize_with(pcd, randomizer, rng)
+    }
 
-        // The Rerandomize step's witness() returns the left input's data as
-        // output data, preserving it through rerandomization. Its right child
-        // is the valid, cached seeded unit proof.
+    /// Folds `pcd` with `randomizer` through the rerandomization step: the
+    /// second fuse of [`rerandomize`](Self::rerandomize).
+    ///
+    /// `randomizer` must come from
+    /// [`random_trivial_pcd`](Self::random_trivial_pcd) and must not be used
+    /// again. A proof with other accumulators still gives a result that
+    /// verifies, but the result's accumulators then hide nothing.
+    ///
+    /// # Errors
+    ///
+    /// As for [`rerandomize`](Self::rerandomize).
+    pub(crate) fn rerandomize_with<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: Pcd<C, R, H>,
+        randomizer: Pcd<C, R, ()>,
+        rng: &mut RNG,
+    ) -> Result<Pcd<C, R, H>> {
+        // The step returns the left input's data as its output data, and
+        // copies the left input's output polynomials.
         self.fuse(
             rng,
             step::internal::rerandomize::Rerandomize::new(),
             (),
             pcd,
-            seeded_trivial,
+            randomizer,
         )
         .map(|(pcd, ())| pcd)
     }

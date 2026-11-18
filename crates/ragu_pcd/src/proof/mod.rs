@@ -60,6 +60,9 @@ mod profile_substitution_tests;
 #[path = "../../tests/proof_shape.rs"]
 mod proof_shape_tests;
 #[cfg(test)]
+#[path = "../../tests/rerandomize_mask.rs"]
+mod rerandomize_mask_tests;
+#[cfg(test)]
 #[path = "../../tests/verify_rejections.rs"]
 mod verify_rejection_tests;
 // Mutable component access for the corruption vocabulary (see
@@ -165,6 +168,13 @@ impl<C: Cycle, R: Rank, H: Header<C::CircuitField>> Clone for Pcd<C, R, H> {
             data: self.data.clone(),
         }
     }
+}
+
+/// The accumulator polynomials of a dummy proof, in each field: $a$, $b$ and
+/// the $f$ that leads the batch polynomial $p$.
+struct AccumulatorMasks<C: Cycle, R: Rank> {
+    native: [sparse::Polynomial<C::CircuitField, R>; 3],
+    nested: [sparse::Polynomial<C::ScalarField, R>; 3],
 }
 
 /// The Horner fold of `polys` under `beta`, the first weighted highest: the
@@ -1195,6 +1205,40 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 
     pub(crate) fn dummy_proof(&self) -> Proof<C, R> {
+        self.dummy_proof_with(None)
+    }
+
+    /// Returns a dummy whose accumulator polynomials are uniformly random.
+    ///
+    /// This is [`dummy_pcd`](Self::dummy_pcd) with six polynomials sampled
+    /// from `rng`: in each field the $a$ and $b$ of the revdot accumulator,
+    /// and the $f$ that leads the batch polynomial $p$. The three
+    /// polynomials of a field are independent and uniform over all
+    /// polynomials of the rank, so $a$, $b$ and $p$ are too: $p$ is the
+    /// $\beta$-fold of the batch, and $f$ has a nonzero weight in it.
+    ///
+    /// Like every dummy it does not verify, and only the bootstrap step
+    /// consumes it. The base case leaves that step's folded claim free in
+    /// both fields, so the claim $\text{revdot}(a, b) = c$ needs nothing of
+    /// $a$ and $b$. The batch claim $p(u) = v$ is enforced, and holds: the
+    /// builder commits these polynomials and evaluates them, as it does the
+    /// constant ones of [`dummy_pcd`](Self::dummy_pcd).
+    /// [`Application::rerandomize`](crate::Application::rerandomize) is the
+    /// one caller.
+    pub(crate) fn random_dummy_pcd<RNG: rand::CryptoRng>(
+        &self,
+        rng: &mut RNG,
+    ) -> Pcd<C, R, crate::header::Dummy> {
+        self.dummy_proof_with(Some(AccumulatorMasks {
+            native: core::array::from_fn(|_| sparse::Polynomial::random(rng)),
+            nested: core::array::from_fn(|_| sparse::Polynomial::random(rng)),
+        }))
+        .carry(())
+    }
+
+    /// Builds a dummy proof. Its accumulator polynomials are `masks`, or
+    /// the all-ones trace that fills every other slot.
+    fn dummy_proof_with(&self, masks: Option<AccumulatorMasks<C, R>>) -> Proof<C, R> {
         let ones_host = {
             let mut view = sparse::View::<_, R, _>::trace();
             view.a.push(C::CircuitField::ONE);
@@ -1213,6 +1257,30 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             view.d.push(C::ScalarField::ONE);
             view.build()
         };
+
+        // The accumulator polynomials: a, b and the f that leads the batch,
+        // in each field. Their commitments go wherever a real proof holds
+        // them, so that each batch polynomial below stays the fold of
+        // polynomials this proof holds.
+        let AccumulatorMasks {
+            native: [native_a, native_b, native_f],
+            nested: [nested_a, nested_b, nested_f],
+        } = masks.unwrap_or_else(|| AccumulatorMasks {
+            native: core::array::from_fn(|_| ones_host.clone()),
+            nested: core::array::from_fn(|_| ones_nested.clone()),
+        });
+        let [
+            native_a_commitment,
+            native_b_commitment,
+            native_f_commitment,
+        ] = [&native_a, &native_b, &native_f]
+            .map(|poly| B::sparse_commit_to_affine(poly, C::host_generators(self.params)));
+        let [
+            nested_a_commitment,
+            nested_b_commitment,
+            nested_f_commitment,
+        ] = [&nested_a, &nested_b, &nested_f]
+            .map(|poly| B::sparse_commit_to_affine(poly, C::nested_generators(self.params)));
 
         // registry_xy must be the actual registry evaluation (fuse cross-checks it).
         let registry_xy_poly = B::registry_xy(
@@ -1318,8 +1386,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_preamble_rx(ones_host.clone());
         builder.set_native_inner_error_rx(ones_host.clone());
         builder.set_native_outer_error_rx(ones_host.clone());
-        builder.set_native_a_poly(ones_host.clone(), host_commitment);
-        builder.set_native_b_poly(ones_host.clone(), host_commitment);
+        builder.set_native_a_poly(native_a.clone(), native_a_commitment);
+        builder.set_native_b_poly(native_b.clone(), native_b_commitment);
         builder.set_native_query_rx(ones_host.clone());
         builder.set_native_registry_xy_poly(registry_xy_poly);
         // This dummy proof uses padding: every online slot is padding.
@@ -1354,14 +1422,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_extension_circuit_rxs(vec![ones_host.clone(); extension.circuits.len()]);
         builder.set_native_extension_stage_rxs(vec![ones_host.clone(); extension.stages]);
 
-        // Nested accumulator: a trivial claim (all-ones traces), so that a
-        // dummy child contributes a well-formed raw claim to its parent's
-        // nested fold. The nested batch is trivial too, except for the
-        // registry restriction a parent opens. Commitments are computed
-        // lazily by the builder, except P_n, which the native walk below
-        // computes.
-        builder.set_nested_a_poly(ones_nested.clone());
-        builder.set_nested_b_poly(ones_nested.clone());
+        // Nested accumulator: a trivial claim (all-ones traces, or the
+        // masks), so that a dummy child contributes a well-formed raw claim
+        // to its parent's nested fold. The nested batch is trivial too,
+        // except for the registry restriction a parent opens. Commitments
+        // are computed lazily by the builder, except P_n, which the native
+        // walk below computes.
+        builder.set_nested_a_poly(nested_a.clone());
+        builder.set_nested_b_poly(nested_b.clone());
         builder.set_nested_registry_xy_poly(nested_registry_xy_poly);
 
         let beta_endo = extract_endoscalar(C::CircuitField::ONE)
@@ -1393,7 +1461,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 polys.push(poly);
             };
             let registry_xy = builder.nested_registry_xy_poly();
-            push(nested_commitment, &ones_nested); // f_n
+            push(nested_f_commitment, &nested_f); // f_n
             for _ in 0..2 {
                 for _ in nested::RxIndex::all::<C::Profile>() {
                     push(nested_commitment, &ones_nested);
@@ -1406,8 +1474,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             push(nested_commitment, &ones_nested); // registry_wx0
             push(nested_commitment, &ones_nested); // registry_wx1
             push(nested_commitment, &ones_nested); // registry_wy
-            push(nested_commitment, &ones_nested); // a
-            push(nested_commitment, &ones_nested); // b
+            push(nested_a_commitment, &nested_a); // a
+            push(nested_b_commitment, &nested_b); // b
             push(registry_xy_commitment, registry_xy); // registry_xy
             for (poly, &commitment) in builder
                 .online_fq_polynomials()
@@ -1523,7 +1591,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let rx = nested::stages::f::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ONE,
                 &nested::stages::f::Witness {
-                    native_f: host_commitment,
+                    native_f: native_f_commitment,
                     native_points_f: builder.native_points_f_commitment(),
                 },
             )
@@ -1567,7 +1635,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let online = builder.online_polynomials();
 
             // Initial: native_f commitment.
-            push(host_commitment, &ones_host);
+            push(native_f_commitment, &native_f);
 
             // Per-child block: all per-child commitments are
             // `host_commitment` (ones_host), except registry_xy which
@@ -1588,8 +1656,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             push(host_commitment, &ones_host); // own application
             push(host_commitment, &ones_host); // own application stage
             push(host_commitment, &ones_host); // registry_wy
-            push(host_commitment, &ones_host); // a
-            push(host_commitment, &ones_host); // b
+            push(native_a_commitment, &native_a); // a
+            push(native_b_commitment, &native_b); // b
             push(registry_xy_commitment, registry_xy); // native_registry_xy
             // The six online slots: every one is this proof's own padding,
             // as the children of the bootstrap fuse that opens them hold it.

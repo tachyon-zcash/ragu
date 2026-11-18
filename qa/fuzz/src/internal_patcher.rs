@@ -209,7 +209,7 @@ impl Point {
 }
 
 /// A reproducible honest tree. Generated tests vary these fields; applications
-/// are local so parallel tests never share `pcd::SyncApp`'s single-thread state.
+/// are local, so parallel tests share none.
 #[derive(Debug)]
 pub struct CaptureCase {
     pub point: Point,

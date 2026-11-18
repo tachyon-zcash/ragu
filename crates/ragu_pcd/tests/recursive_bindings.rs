@@ -976,9 +976,9 @@ mod claim_values {
         .into_iter()
         .flat_map(|case| [(ChildKind::Fused, case), (ChildKind::Bootstrap, case)]);
 
-        // The fused honest control has initialized the neutral proof. Each
-        // remaining chain starts its own RNG and can share that cache, so the
-        // two child kinds need not run consecutively on the same worker.
+        // Each remaining chain starts its own RNG, and an application keeps
+        // no state between proofs, so the two child kinds need not run
+        // consecutively on the same worker.
         let cases = core::iter::once((ChildKind::Bootstrap, ("honest", None, None)))
             .chain(mutations)
             .collect::<Vec<_>>();
