@@ -162,13 +162,12 @@ _flamegraph_linux PACKAGE GROUP TARGET *ARGS: _flamegraph_setup
 fmt_check:
   cargo +{{_nightly}} fmt --all -- --config-path rustfmt.nightly.toml --check
 
-# clippy in every configuration CI lints (rust.yml: clippy, mock; backend.yml)
+# clippy in every configuration CI lints (rust.yml: clippy; backend.yml)
 [group('lint')]
 clippy: backend_clippy
   cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
   cargo clippy -p ragu_pcd --lib --locked -- -D warnings
   cargo clippy -p ragu_pcd --lib --locked --features baked,multicore -- -D warnings
-  cargo clippy -p ragu --no-default-features --features mock --lib --tests --locked -- -D warnings
 
 # rustdoc with warnings denied, private items included (rust.yml: docs)
 [group('lint')]
@@ -209,7 +208,7 @@ _book_build: _book_setup
 
 # every CI check runnable on this machine, serially; only the Windows/macOS matrix legs are left out. Expect well over an hour.
 [group('ci')]
-ci_local: lint ci_test_all ci_test_default ci_corruption ci_mock proptests_fast ci_nostd ci_bitrot ci_fuzz_harness backend_lane ci_fixtures ci_fv ci_supply_chain
+ci_local: lint ci_test_all ci_test_default ci_corruption proptests_fast ci_bitrot ci_fuzz_harness backend_lane ci_fixtures ci_fv ci_supply_chain
   @echo "All CI checks passed!"
 
 # full test suite, all features (rust.yml: all-feature)
@@ -231,16 +230,6 @@ ci_corruption:
     proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations \
     proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations \
     proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
-
-# the mock API under no-default-features (rust.yml: mock; its clippy step is in `clippy`)
-[group('ci')]
-ci_mock:
-  cargo test --release -p ragu --no-default-features --features mock --locked
-
-# the mock API on a bare-metal target (rust.yml: build-nostd)
-[group('ci')]
-ci_nostd: _thumb_setup
-  cargo build -p ragu --lib --locked --no-default-features --features mock --target thumbv7em-none-eabihf
 
 # benches and examples still build (rust.yml: bitrot; bench.yml: build benchmarks)
 [group('ci')]

@@ -20,48 +20,20 @@ all-features = true
 
 [features]
 default = ["multicore"]
-# Opt-in API-level mock of `ragu_pcd` (see the crate docs). Off by default.
-mock = [
-  "dep:blake2b_simd",
-  "dep:udon",
-  "dep:ragu_core",
-  "dep:ragu_primitives",
-  "dep:ragu_circuits",
-  "dep:ragu_pcd",
-  "ragu_pcd/baked",
-  "dep:ragu_backend",
-  "dep:rand",
+multicore = [
+  "ragu_circuits/multicore",
+  "ragu_pcd/multicore",
 ]
-# Exposes `Application::verify_uncompressed` and `verify_differential`, as
-# `ragu_pcd` does. Production verification goes through `verify_compressed`.
-test-utils = []
-# Kept for compatibility: the mock has no parallel stage of its own.
-multicore = []
-# `serde::{Serialize, Deserialize}` for the mock `Proof` and `Pcd`, as their
-# wire bytes. Only meaningful with `mock`.
-serde = ["dep:serde"]
 std = []
 
 [lib]
 bench = false
 
-# mock dependencies (pulled in only by the `mock` feature). The mock defines
-# only what a consumer cannot import from a real Ragu crate, so this list is
-# limited to the crates its own signatures name. Consumers depend on
-# `ragu_circuits`, `ragu_primitives` and the rest directly.
 [dependencies]
-blake2b_simd = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
-serde = { version = "1", default-features = false, features = ["alloc"], optional = true }
-udon = { workspace = true, optional = true }
-ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_pcd = { path = "crates/ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"], optional = true }
-ragu_backend = { path = "crates/ragu_backend", version = "0.0.0", default-features = false, optional = true }
-
-[dev-dependencies]
-serde_json = "1"
+ragu_core = { path = "crates/ragu_core", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_circuits = { path = "crates/ragu_circuits", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_primitives = { path = "crates/ragu_primitives", version = "0.0.0", default-features = false, features = ["alloc"] }
+ragu_pcd = { path = "crates/ragu_pcd", version = "0.0.0", default-features = false, features = ["alloc"] }
 
 [workspace]
 members = [

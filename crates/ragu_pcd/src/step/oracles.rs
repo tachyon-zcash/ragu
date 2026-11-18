@@ -328,11 +328,7 @@ pub struct BridgeHash<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> BridgeHash<'dr, D> {
     /// Creates a bridge hash from its coordinates.
-    ///
-    /// Not part of the public API: Ragu allocates the bridge hash for a
-    /// step. This is public only for the mock in the `ragu` crate.
-    #[doc(hidden)]
-    pub fn new(x: Element<'dr, D>, y: Element<'dr, D>) -> Self {
+    pub(crate) fn new(x: Element<'dr, D>, y: Element<'dr, D>) -> Self {
         BridgeHash { x, y }
     }
 

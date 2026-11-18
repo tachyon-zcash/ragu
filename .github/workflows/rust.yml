@@ -95,28 +95,6 @@ jobs:
           cargo clippy -p ragu_pcd --lib --locked -- -D warnings
           cargo clippy -p ragu_pcd --lib --locked --features baked,multicore -- -D warnings
 
-  # The `mock` feature is off by default and is the root crate's only API. It
-  # gets its own job to exercise the no-default-features configuration used by
-  # downstream consumers.
-  mock:
-    name: mock
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup Rust
-        uses: $/.github/actions/rust-setup
-        with:
-          components: clippy
-          cache-suffix: mock
-      - name: Run clippy (mock)
-        run: cargo clippy -p ragu --no-default-features --features mock --lib --tests --locked -- -D warnings
-      - name: Run tests (mock)
-        run: cargo test --release -p ragu --no-default-features --features mock --locked
-
   proptests-fast:
     name: proptests (fast)
     needs: changes
@@ -225,28 +203,6 @@ jobs:
           cache-suffix: release
       - name: Run tests (all features)
         run: cargo test --release --all --locked --all-features
-
-  # Ensure the mock API stays `no_std`-buildable on a bare-metal target. This is
-  # the configuration downstream consumers (e.g. `zcash_tachyon`) compile for
-  # `no_std`, so a regression here breaks their embedded builds. The other jobs
-  # only exercise targets that have `std`, which is how past `no_std` breakage
-  # (a std-only transitive dep sneaking in via default features) went unnoticed.
-  build-nostd:
-    name: build (thumbv7em-none-eabihf, no_std)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup Rust
-        uses: $/.github/actions/rust-setup
-        with:
-          targets: thumbv7em-none-eabihf
-          cache-suffix: nostd
-      - name: Build the mock API for a bare-metal no_std target
-        run: cargo build -p ragu --lib --locked --no-default-features --features mock --target thumbv7em-none-eabihf
 
   bitrot:
     name: bitrot check
@@ -393,13 +349,11 @@ jobs:
       - changes
       - fmt
       - clippy
-      - mock
       - proptests-fast
       - test-debug-assertions
       - test-default-feature
       - test-all-feature
       - test-corruption
-      - build-nostd
       - bitrot
       - fuzz-check
       - docs
