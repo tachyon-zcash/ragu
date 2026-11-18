@@ -265,11 +265,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     }
 
     /// The source registries the profile's meshes certify, the native then
-    /// the nested, for a profile whose prover context holds them: an
-    /// application reads them off its context when its builder captured
-    /// none ([`with_source_registries`](crate::ApplicationBuilder::with_source_registries)).
-    /// The context is fixed when the application is finalized, so the
-    /// sources are too, and setup fixes their tags in the helper circuits.
+    /// the nested, for a profile whose prover context holds them. A builder
+    /// may supply a source only for a field this hook leaves empty
+    /// ([`with_source_registries`](crate::ApplicationBuilder::with_source_registries)).
+    /// Setup fixes the sources' tags in the helper circuits. This hook is
+    /// also called during proving and verification, so it must return the
+    /// same `Some` or `None` choices and the same registries throughout the
+    /// application's lifetime, including when the context contains interior
+    /// mutable state.
     ///
     /// The default holds none.
     fn source_registries<'a, 'params: 'a, Base, R, B>(

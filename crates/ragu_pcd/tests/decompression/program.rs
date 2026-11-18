@@ -83,7 +83,10 @@ fn check(schedule: &Schedule) {
         PointSrc::Work(slot) => assert!(points[*slot], "point slot {slot} read before written"),
         PointSrc::Instance(p) => assert!(*p < layout.instance.points),
         PointSrc::Message(p) => assert!(*p < layout.messages.points),
-        PointSrc::Generator(_) | PointSrc::U => {}
+        PointSrc::Generator(_)
+        | PointSrc::U
+        | PointSrc::FixedMultiple(_, _)
+        | PointSrc::ScaleCorrection(_, _) => {}
     };
     let read_element =
         |src: &ElementSrc, elements: &[bool], points: &[bool], lifts: &[bool]| match src {

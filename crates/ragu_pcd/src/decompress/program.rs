@@ -98,6 +98,13 @@ use crate::{
     profile::{ProfiledCycle, Standard},
 };
 
+/// A fixed point used as a signed-digit scaling offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixedPointSrc {
+    Generator(usize),
+    U,
+}
+
 /// A point a chunk reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PointSrc {
@@ -113,6 +120,12 @@ pub(crate) enum PointSrc {
     Generator(usize),
     /// The IPA's $U$ generator of the side's curve.
     U,
+    /// A small multiple of a fixed point, used to give different scalar
+    /// chains different offsets even when their scalars are zero.
+    FixedMultiple(FixedPointSrc, u64),
+    /// Minus `multiple` copies of a full signed-digit chain's offset,
+    /// $-multiple \cdot 2^{n-1} P$ for its fixed point $P$.
+    ScaleCorrection(FixedPointSrc, u64),
 }
 
 /// An element a chunk reads.
@@ -258,7 +271,8 @@ pub(crate) enum Chunk {
     /// `init`, or from `offset` when the part is the first, ended by the
     /// offset's removal when `finish`, into `out`; and, for a scalar of
     /// the other field, the same digits' part of the other side's digits
-    /// stage commitment (`bind`).
+    /// stage commitment (`bind`). A last part with `finish = false` retains
+    /// its offset; its enclosing sum must subtract that offset.
     Scale {
         point: PointSrc,
         scalar: ScalarRef,
@@ -1285,10 +1299,20 @@ impl Builder {
 
     /// $k P$ for a full-width scalar, as [`Limits::scale_parts`] chunks
     /// over consecutive runs of its digits, from the top down, into `out`.
+    /// With `remove_offset = false`, `out` retains the signed-digit offset
+    /// so a zero scalar still has an affine point; its aggregate must use
+    /// [`PointSrc::ScaleCorrection`].
     /// A scalar of the other field is scaled by once: its digits' part of
     /// the other side's digits stage commitment rides along, into a slot
     /// [`digits_sum`](Self::digits_sum) takes.
-    fn scale(&mut self, point: PointSrc, scalar: ScalarRef, offset: PointSrc, out: usize) {
+    fn scale(
+        &mut self,
+        point: PointSrc,
+        scalar: ScalarRef,
+        offset: PointSrc,
+        out: usize,
+        remove_offset: bool,
+    ) {
         let n = self.scalar_bits;
         let parts = self.limits.scale_parts;
         let ScalarRef::Bits(id) = scalar;
@@ -1326,7 +1350,7 @@ impl Builder {
                 offset,
                 digits: (lo, hi),
                 init,
-                finish: last,
+                finish: last && remove_offset,
                 out: slot,
                 bind,
             });
@@ -1563,7 +1587,11 @@ impl Builder {
         .enumerate()
         {
             let out = self.regions.ipa_terms[i];
-            self.scale(point, scalar, PointSrc::Generator(1), out);
+            // Keep a distinct offset in each term. A zero scalar then
+            // produces a nonidentity point, and the sum removes all three
+            // offsets together below.
+            let offset = PointSrc::FixedMultiple(FixedPointSrc::Generator(1), 1 << i);
+            self.scale(point, scalar, offset, out, false);
         }
         let right = self.slots.point();
         let terms = self.regions.ipa_terms;
@@ -1572,6 +1600,10 @@ impl Builder {
             &[
                 (PointSrc::Work(terms[1]), None),
                 (PointSrc::Work(terms[2]), None),
+                (
+                    PointSrc::ScaleCorrection(FixedPointSrc::Generator(1), 7),
+                    None,
+                ),
             ],
             right,
         );
@@ -2370,18 +2402,22 @@ fn native_schedule_with<
     b.regions.ab_bridge = b.slots.point();
     {
         let scaled = b.slots.points(ab_terms.len());
-        for (k, &(index, _)) in ab_terms.iter().enumerate() {
+        for (k, &(index, which)) in ab_terms.iter().enumerate() {
             b.scale(
                 PointSrc::Generator(index),
                 ScalarRef::Bits(3 + k),
                 PointSrc::U,
                 scaled[k],
+                which != AbValue::Alpha,
             );
         }
-        let terms: Vec<(PointSrc, Option<ChallengeRef>)> = scaled[1..]
+        let mut terms: Vec<(PointSrc, Option<ChallengeRef>)> = scaled[1..]
             .iter()
             .map(|&slot| (PointSrc::Work(slot), None))
             .collect();
+        // The alpha term may be zero. Its scale retains the fixed offset
+        // rather than writing the identity into a point slot.
+        terms.push((PointSrc::ScaleCorrection(FixedPointSrc::U, 1), None));
         let out = b.regions.ab_bridge;
         b.sum(PointSrc::Work(scaled[0]), &terms, out);
         b.chunks.push(Chunk::Equal {

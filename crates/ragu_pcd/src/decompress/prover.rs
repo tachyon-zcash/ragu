@@ -119,9 +119,10 @@ where
     /// parameters, whose tables reach rank `R`, such as
     /// `baked_aggregator()`: their prefix is the Standard tables, so its
     /// proofs are those of a wallet over `baked()`. `finalize_with` holds
-    /// the aggregator's parameters and header types to its, and the
-    /// registry check the decompression module's *What remains* waits on
-    /// will hold the proofs it decompresses to its registry.
+    /// the aggregator's parameters and header types to its and refuses
+    /// source registries other than the wallet's. The online meshes hold
+    /// the decompression's registry evaluations to those registries. The
+    /// caller must still select the network's intended wallet application.
     ///
     /// # Errors
     ///

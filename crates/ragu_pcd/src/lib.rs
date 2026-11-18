@@ -203,7 +203,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
     }
 
-    /// Captures the source registries certified by this profile's meshes.
+    /// Supplies source registries for meshes whose profile context supplies
+    /// none. Finalization rejects two sources for the same field.
     ///
     /// A source can have a different rank from the enclosing application;
     /// finalization checks that its restrictions fit without truncation.
@@ -448,13 +449,21 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
         C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
         C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
-        // The sources the meshes certify: the builder's, or without them the
-        // profile's own, which borrow the context and so are read off it
-        // again after setup (see `Application::native_source`). Setup checks
-        // them and fixes their tags in the helper circuits here.
+        // The sources the meshes certify: one per field, supplied by the
+        // builder or the profile's context. Context sources borrow it and
+        // are read off it again after setup (see `Application::native_source`).
+        // Setup fixes their tags in the helper circuits here.
         let ((native_tag, native_domain), (nested_tag, nested_domain)) = {
             let (profile_native, profile_nested) =
                 C::Profile::source_registries::<C::Base, R, B>(&context);
+            if (self.native_source.is_some() && profile_native.is_some())
+                || (self.nested_source.is_some() && profile_nested.is_some())
+            {
+                return Err(Error::Initialization(
+                    "the builder and profile context both supply a source registry for the same field"
+                        .into(),
+                ));
+            }
             let native_source = self.native_source.clone().or(profile_native);
             let nested_source = self.nested_source.clone().or(profile_nested);
             for (declared, present) in [
@@ -904,9 +913,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         ))
     }
 
-    /// The native source registry the profile's mesh certifies: the one
-    /// the builder captured, or without one the profile's own, read off the
-    /// prover context the application holds (see
+    /// The native source registry the profile's mesh certifies: the builder's
+    /// or the profile context's, whichever supplied it at setup (see
     /// [`Profile::source_registries`]).
     pub(crate) fn native_source(
         &self,

@@ -1313,13 +1313,23 @@ where
             for &(index, which) in &witness.ab_terms {
                 let base = Point::constant(dr, g[index])?;
                 let digits = Digits::alloc(dr, D::try_just(|| value(which))?)?;
-                let term = derive::scale(dr, &base, &digits, *C::nested_u(params), bank)?;
+                let term = if which == AbValue::Alpha {
+                    derive::scale_chain(dr, &base, &digits, None, *C::nested_u(params), bank)?
+                } else {
+                    derive::scale(dr, &base, &digits, *C::nested_u(params), bank)?
+                };
                 acc = Some(match acc {
                     None => term,
                     Some(acc) => acc.add_incomplete(dr, &term, bank)?,
                 });
             }
-            acc.expect("the ab bridge has coefficients")
+            let acc = acc.expect("the ab bridge has coefficients");
+            let correction = derive::scale_offset(
+                *C::nested_u(params),
+                Digits::<'dr, D>::width::<C::ScalarField>(),
+            );
+            let correction = Point::constant(dr, correction)?.negate(dr);
+            acc.add_incomplete(dr, &correction, bank)?
         };
         ab.enforce_equal(dr, bridge_at(nested::RxIndex::BridgeAB))
     })?;

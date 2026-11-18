@@ -24,7 +24,7 @@ use udon::{
 
 use super::{
     Claim, Digits, Fixed, Opening, Scalars, batched, enforce_opening, fold, native_claims,
-    nested_claims, scale,
+    nested_claims, scale, scale_chain, scale_offset,
 };
 use crate::{
     compress::{
@@ -432,6 +432,50 @@ fn check_scale<C: Affine>(side: &Side<C>) {
     .unwrap();
 }
 
+/// The IPA final check's three scalars can each be zero. Distinct retained
+/// offsets keep every intermediate point affine and cancel in the sum.
+fn check_zero_scalars<C: Affine>(side: &Side<C>) {
+    let points = [side.params.g[0], side.g_prime, side.params.u];
+    let offset = side.params.g[1];
+    for zero in 0..3 {
+        let mut values = [C::Scalar::ONE; 3];
+        values[zero] = C::Scalar::ZERO;
+        let expected =
+            (points[0] * values[0] + points[1] * values[1] + points[2] * values[2]).to_affine();
+        Simulator::simulate((), |dr, _| {
+            let actual = NonzeroBank::scope(dr, |dr, bank| {
+                let mut terms = Vec::new();
+                for i in 0..3 {
+                    let point = Point::constant(dr, points[i])?;
+                    let digits = Digits::alloc(dr, <Dr<C> as Driver>::just(|| values[i]))?;
+                    let shifted_offset = (offset * C::Scalar::from(1u64 << i)).to_affine();
+                    terms.push(scale_chain(
+                        dr,
+                        &point,
+                        &digits,
+                        None,
+                        shifted_offset,
+                        bank,
+                    )?);
+                }
+                let mut terms = terms.into_iter();
+                let mut acc = terms.next().expect("three terms");
+                for term in terms {
+                    acc = acc.add_incomplete(dr, &term, bank)?;
+                }
+                let correction = (scale_offset(offset, super::digit_width::<C::Scalar>())
+                    * C::Scalar::from(7))
+                .to_affine();
+                let correction = Point::constant(dr, correction)?.negate(dr);
+                acc.add_incomplete(dr, &correction, bank)
+            })?;
+            assert_eq!(actual.value().take(), expected);
+            Ok(())
+        })
+        .expect("a zero IPA scalar still has an affine final point");
+    }
+}
+
 #[test]
 fn native_commitments_derive_in_circuit() {
     let setup = Setup::new();
@@ -443,6 +487,7 @@ fn native_commitments_derive_in_circuit() {
         dr.num_constraints()
     );
     check_scale(&side);
+    check_zero_scalars(&side);
     let dr = check_opening(&side, side.messages.opening.c).expect("the honest opening holds");
     std::println!(
         "native opening: {} gates, {} constraints",
@@ -463,6 +508,7 @@ fn nested_commitments_derive_in_circuit() {
         dr.num_constraints()
     );
     check_scale(&side);
+    check_zero_scalars(&side);
     let dr = check_opening(&side, side.messages.opening.c).expect("the honest opening holds");
     std::println!(
         "nested opening: {} gates, {} constraints",

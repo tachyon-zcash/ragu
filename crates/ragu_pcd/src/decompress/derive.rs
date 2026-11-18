@@ -536,6 +536,12 @@ pub(crate) fn scale_chain<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     Ok(acc)
 }
 
+/// The offset accumulated by an `n`-digit signed-digit chain.
+pub(crate) fn scale_offset<C: Affine>(offset: C, n: usize) -> C {
+    let doubled = C::Scalar::ONE.double().pow_u64((n - 1) as u64);
+    (offset * doubled).to_affine()
+}
+
 /// Ends a signed-digit chain of `n` digits: removes the offset's $2^{n-1}$
 /// multiple from `acc`.
 pub(crate) fn scale_shift<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
@@ -545,8 +551,7 @@ pub(crate) fn scale_shift<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     n: usize,
     bank: &mut NonzeroBank<'dr, D>,
 ) -> Result<Point<'dr, D, C>> {
-    let doubled = C::Scalar::ONE.double().pow_u64((n - 1) as u64);
-    let shift = Point::constant(dr, (offset * doubled).to_affine())?.negate(dr);
+    let shift = Point::constant(dr, scale_offset(offset, n))?.negate(dr);
     acc.add_incomplete(dr, &shift, bank)
 }
 
@@ -634,11 +639,22 @@ pub(crate) fn enforce_opening<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
 
     let g_0 = Point::constant(dr, fixed.g_0)?;
     let u_point = Point::constant(dr, fixed.u)?;
-    let right = scale(dr, &g_0, &scalars.v, fixed.offset, bank)?;
-    let scaled_g_prime = scale(dr, &opening.g_prime, &scalars.c, fixed.offset, bank)?;
-    let right = right.add_incomplete(dr, &scaled_g_prime, bank)?;
-    let scaled_u = scale(dr, &u_point, &scalars.cbz, fixed.offset, bank)?;
-    let right = right.add_incomplete(dr, &scaled_u, bank)?;
+    let shifted = |dr: &mut D,
+                   point: &Point<'dr, D, C>,
+                   digits: &Digits<'dr, D>,
+                   multiple: u64,
+                   bank: &mut NonzeroBank<'dr, D>| {
+        let offset = (fixed.offset * C::Scalar::from(multiple)).to_affine();
+        scale_chain(dr, point, digits, None, offset, bank)
+    };
+    let mut right = shifted(dr, &g_0, &scalars.v, 1, bank)?;
+    let scaled_g_prime = shifted(dr, &opening.g_prime, &scalars.c, 2, bank)?;
+    right = right.add_incomplete(dr, &scaled_g_prime, bank)?;
+    let scaled_u = shifted(dr, &u_point, &scalars.cbz, 4, bank)?;
+    right = right.add_incomplete(dr, &scaled_u, bank)?;
+    let correction = (scale_offset(fixed.offset, scalars.v.len()) * C::Scalar::from(7)).to_affine();
+    let correction = Point::constant(dr, correction)?.negate(dr);
+    right = right.add_incomplete(dr, &correction, bank)?;
     left.enforce_equal(dr, &right)
 }
 

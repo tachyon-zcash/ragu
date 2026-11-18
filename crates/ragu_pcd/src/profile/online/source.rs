@@ -1,7 +1,8 @@
 //! Immutable source-registry operations captured by the enclosing setup.
 //!
-//! A profile chooses an actual registry once during application finalization.
-//! Its prover context cannot replace that registry while preparing a proof.
+//! A profile chooses an actual registry during application finalization.
+//! A context-supplied source must remain the same for the application's
+//! lifetime; see [`Profile::source_registries`](crate::profile::Profile::source_registries).
 
 use alloc::{sync::Arc, vec::Vec};
 use core::marker::PhantomData;

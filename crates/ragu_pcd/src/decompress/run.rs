@@ -26,7 +26,10 @@ use ragu_primitives::{
     poseidon::{Sponge, SpongeState},
     vec::{FixedVec, Len},
 };
-use udon::{curve::EndomorphismAffine as Affine, field::Field};
+use udon::{
+    curve::{EndomorphismAffine as Affine, Projective},
+    field::Field,
+};
 
 use super::{
     batch,
@@ -34,8 +37,8 @@ use super::{
     derive::{self, Digits},
     ipa, online,
     program::{
-        APPLICATION, Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, Op, PointSrc, ScalarRef,
-        Schedule, Step, squeezed,
+        APPLICATION, Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, FixedPointSrc, Op,
+        PointSrc, ScalarRef, Schedule, Step, squeezed,
     },
     revdot,
     side::{Native, Nested, Side},
@@ -211,6 +214,15 @@ where
             PointSrc::Work(slot) => l.work.points[slot].clone(),
             PointSrc::Generator(i) => Point::constant(dr, self.generators[i])?,
             PointSrc::U => Point::constant(dr, self.u)?,
+            PointSrc::FixedMultiple(source, multiple) => Point::constant(
+                dr,
+                (self.fixed_source(source) * S::Other::from(multiple)).to_affine(),
+            )?,
+            PointSrc::ScaleCorrection(source, multiple) => {
+                let width = Digits::<'dr, D>::width::<S::Other>();
+                let offset = derive::scale_offset(self.fixed_source(source), width);
+                Point::constant(dr, (offset * S::Other::from(multiple)).to_affine())?.negate(dr)
+            }
         })
     }
 
@@ -294,7 +306,17 @@ where
         match src {
             PointSrc::Generator(i) => self.generators[i],
             PointSrc::U => self.u,
+            PointSrc::FixedMultiple(source, multiple) => {
+                (self.fixed_source(source) * S::Other::from(multiple)).to_affine()
+            }
             _ => panic!("an offset is a fixed point"),
+        }
+    }
+
+    fn fixed_source(&self, src: FixedPointSrc) -> S::P {
+        match src {
+            FixedPointSrc::Generator(i) => self.generators[i],
+            FixedPointSrc::U => self.u,
         }
     }
 
