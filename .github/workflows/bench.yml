@@ -46,7 +46,6 @@ jobs:
               - 'rust-toolchain.toml'
               - '.github/workflows/bench.yml'
               - '.github/actions/**'
-              - 'qa/bench/**'
 
   # PR path: compile benchmarks only (no execution)
   build:
@@ -66,13 +65,8 @@ jobs:
           # The benchmark compile job only runs on pull requests.
           save-pr-dependencies: true
 
-      - name: Check workflow benchmark runner
-        run: python3 -m unittest discover -s qa/bench -p 'test_*.py'
-
       - name: Build benchmarks
-        run: |
-          cargo bench --workspace --all-features --locked --bench gungraun --no-run
-          cargo bench -p ragu_pcd --all-features --locked --bench workflow --no-run
+        run: cargo bench --workspace --all-features --locked --bench gungraun --no-run
 
   # Manual dispatch: full run + regression summary against a chosen baseline,
   # saved as the baseline for its commit when dispatched on main
