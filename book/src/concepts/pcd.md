@@ -132,10 +132,14 @@ should be reserved for the boundaries of application logic, such as when a
 succinct proof must be communicated to a third party.
 
 In its uncompressed form, a PCD can be passed through [`rerandomize`] to produce
-a fresh proof of the same certified data. The current construction does not yet
-establish zero knowledge or unlinkability: it still exposes child data and lacks
-a fold-level accumulator randomizer. Those properties require additional
-protocol work.
+a fresh proof of the same certified data. Rerandomization fuses the proof with
+a trivial proof whose accumulator is uniformly random, so the accumulator of
+the result, which is most of the proof, is random too. The
+result also holds no header of the steps below the input. It does not yet
+establish zero knowledge or unlinkability: it still shows which step made the
+input, the input's commitments and challenges, and a small number of field
+elements computed from the input's polynomials. Hiding those requires
+additional protocol work.
 
 [`Header`]: ragu_pcd::header::Header
 [`Data`]: ragu_pcd::header::Header::Data

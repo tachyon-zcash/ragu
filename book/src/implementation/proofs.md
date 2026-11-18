@@ -203,11 +203,55 @@ The `rerandomize` method produces a fresh proof that verifies identically:
 let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 ```
 
-It is intended to support privacy-preserving applications, but the current
-construction does not yet establish zero knowledge or unlinkability.
+Internally, rerandomization makes two fuses. The first builds a trivial
+`Pcd<()>` whose accumulator polynomials $a$, $b$ and $p$ are uniformly random,
+in both fields. The second folds the input proof with it through a dedicated
+rerandomization step, which keeps the input's header, data and output
+polynomials. The first fuse does not read the input.
 
-Internally, rerandomization folds the input proof with a cached seeded `Pcd<()>`
-using a dedicated rerandomization step.
+The fold puts the trivial proof's polynomials into the result's accumulator
+with a nonzero weight, so they mask it: the result's accumulator polynomials
+are uniformly random, apart from a small, fixed number of relations with the
+result's other values. One fuse is enough for this. A step folds its own
+application claim, so the result holds no header of the steps below the
+input.
+
+It is intended to support privacy-preserving applications, but the result is
+not yet zero-knowledge or unlinkable. The details below are for auditors.
+
+- **Where the random accumulator comes from.** The trivial proof is a
+  bootstrap proof: the internal bootstrap step over two dummy proofs, one of
+  which holds uniformly random $a$, $b$ and $f$ polynomials in each field. The
+  base case leaves the folded claim $c$ free, and
+  $\text{revdot}(a, b) = c$ is the only claim on an accumulator, so any $a$
+  and $b$ are valid. The batch claim $p(u) = v$ is enforced and holds, since
+  the prover evaluates the polynomials it commits. Random wires in a step's
+  own trace cannot give a uniform accumulator, because a trace is constrained.
+- **What the mask covers.** Let the *view* be the result without its six
+  accumulator polynomials. The result's $a$ and $b$ are the trivial proof's
+  times a nonzero weight, plus terms that do not involve the random
+  polynomials. Its $p$ is an invertible linear map of the trivial proof's $p$,
+  plus terms in the other polynomials. The view depends on the random
+  polynomials through a fixed number of values: their commitments, their
+  evaluations at the points of the two fuses, and the fold quotients. Given
+  those values the random polynomials stay uniform on what the values leave
+  free, and so do the result's accumulator polynomials. The count of those
+  values depends on the profile and not on the rank, so the accumulator can
+  show of the input only what that many field elements can.
+- **What the view still shows.** The result's stage polynomials are in the
+  clear. They hold the input's circuit id, the input's unified instance (its
+  commitments, challenges, $c$ and $v$), and a fixed number of field elements
+  that depend on the input's polynomials: each one's evaluations at two points
+  of this fold, and the quotient coefficients of the revdot fold. A party that
+  holds the input can link the result to it.
+- **Why that is not zero knowledge.** Each stage and trace polynomial has one
+  random coefficient, which keeps commitments away from the identity and is
+  not a blind. The view holds more values that depend on such a polynomial
+  than that. Hiding the view's values needs as many random coefficients
+  in each stage and trace polynomial as values that depend on it. A second
+  rerandomization does not replace that: it moves the values one fuse away
+  from the clear, which takes the input's circuit id out of it, and leaves
+  them covered by one random coefficient as before.
 
 ## Unified Accumulator Structure
 
