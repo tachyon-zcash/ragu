@@ -41,17 +41,24 @@ _flamegraph_setup: _install_binstall
 book COMMAND: _book_setup
   mdbook {{COMMAND}} ./book --open
 
-# fast per-commit tests (~2 min warm): all unit and integration tests but the slow proving suites in `_test_skip`; ARGS go to libtest, e.g. `just test compress::`
+# fast per-commit tests (~3 min warm): all unit and integration tests but the slow proving suites in `_test_skip`; ARGS go to libtest, e.g. `just test compress::`
 [group('dev')]
 test *ARGS:
   cargo test --profile fast-test --workspace --all-features --locked -- {{_test_skip}} {{ARGS}}
 
 # Each pattern is a libtest substring filter. These suites prove with the
 # Aggregator or extension profiles, recurse through several generations, or
-# compare backends. They are 62 tests but about 80% of the suite's test time,
+# compare backends. They are about 100 tests but most of the suite's test time,
 # each taking from half a minute to several minutes. What remains still proves end to end
 # (`nontrivial`, `wire`, `compress::tests`, the standard-profile `verify::tests`,
 # and others). `ci_test_all`, `backend_lane` and `ci_fixtures` run the skipped ones.
+#
+# The last four are whole suites over custom online profiles and the base case.
+# Together they took 13 of the 15 minutes `just test` reached after they landed.
+# `profile::tests` still proves an online Fq polynomial end to end, about 30
+# `profile::online` unit tests cover the batch, layout, mesh, preparation and
+# claim targets without proving, and `verify::tests` still confines the base
+# case to a bootstrap proof.
 _test_skip := (
   "--skip proof::profile_substitution_tests " +
   "--skip proof::backend_equivalence " +
@@ -71,7 +78,11 @@ _test_skip := (
   "--skip bootstrap_exempts_child_claims_with_consistent_commitments " +
   "--skip rerandomization_flow " +
   "--skip multiple_rerandomizations_all_verify " +
-  "--skip both_profiles_prove_in_one_binary"
+  "--skip both_profiles_prove_in_one_binary " +
+  "--skip online_batch_tests " +
+  "--skip online_fq_oracles_tests " +
+  "--skip source_mesh_tests " +
+  "--skip proof::base_case_combinations_tests"
 )
 
 # run quicker proptests used for routine local/CI coverage
@@ -208,7 +219,7 @@ _book_build: _book_setup
 
 # every CI check runnable on this machine, serially; only the Windows/macOS matrix legs are left out. Expect well over an hour.
 [group('ci')]
-ci_local: lint ci_test_all ci_test_default ci_corruption proptests_fast ci_bitrot ci_fuzz_harness backend_lane ci_fixtures ci_fv ci_supply_chain
+ci_local: lint ci_test_all ci_test_default ci_corruption ci_debug proptests_fast ci_bitrot ci_fuzz_harness backend_lane ci_fixtures ci_fv ci_supply_chain
   @echo "All CI checks passed!"
 
 # full test suite, all features (rust.yml: all-feature)
@@ -230,6 +241,12 @@ ci_corruption:
     proof::recursive_boundary_tests::stages::same_lift_bit_substitutions_reject_through_two_generations \
     proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations \
     proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
+
+# PCD debug-assertion regressions, optimized (rust.yml: test-debug-assertions)
+[group('ci')]
+ci_debug:
+  CARGO_PROFILE_TEST_OPT_LEVEL=3 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_DEBUG_ASSERTIONS=true \
+    cargo test -p ragu_pcd --lib --locked --all-features proof::child_commitment_tests
 
 # benches and examples still build (rust.yml: bitrot; bench.yml: build benchmarks)
 [group('ci')]
