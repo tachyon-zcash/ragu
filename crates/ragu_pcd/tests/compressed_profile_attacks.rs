@@ -363,7 +363,9 @@ where
 /// profile's and the two profiles derive the same tags: a complete packet of
 /// either verifies under the other, while every splice of the two is
 /// rejected, as is every edit.
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn compressed_standard_checks_twin_packets_and_edits() -> Result<()> {
     check_profile_packets::<Twin, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }

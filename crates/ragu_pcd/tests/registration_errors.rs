@@ -9,7 +9,7 @@ use ragu_core::{
     pasta::{Fp, Pasta},
 };
 use ragu_pcd::{
-    ApplicationBuilder,
+    Application, ApplicationBuilder,
     header::{Header, OnlinePoly, Padding, Suffix},
     step::{Encoded, Index, Oracles, Step},
 };
@@ -171,6 +171,13 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
 }
 
 #[test]
+fn application_builder_stays_small_for_registration_chains() {
+    // Each by-value register call can leave a separate builder slot in a debug frame.
+    let bytes = core::mem::size_of::<ApplicationBuilder<'_, Pasta, WalletRank, 9>>();
+    assert!(bytes <= 512, "application builder grew to {bytes} bytes");
+}
+
+#[test]
 fn register_steps_success_and_finalize() {
     let pasta = ragu_pcd::pasta::baked();
     let builder = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
@@ -217,10 +224,12 @@ impl Header<Fp> for CopiedUnitSuffix {
     }
 }
 
-struct HeaderStep<L, R, O>(PhantomData<(L, R, O)>);
+struct HeaderStep<L, R, O, const N: usize = 0>(PhantomData<(L, R, O)>);
 
-impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, R, O> {
-    const INDEX: Index = Index::new(0);
+impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>, const N: usize> Step<Pasta>
+    for HeaderStep<L, R, O, N>
+{
+    const INDEX: Index = Index::new(N);
     type Witness<'source> = O::Data;
     type Aux<'source> = ();
     type Left = L;
@@ -249,6 +258,41 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>> Step<Pasta> for HeaderStep<L, 
         let output = Encoded::new(dr, allocator, witness.clone())?;
         Ok(((left, right, output), witness, D::unit()))
     }
+}
+
+// Compile and lint the chain without running application setup at test time.
+const _: fn() -> Result<Application<'static, Pasta, WalletRank, 9>> = register_long_chain;
+
+#[deny(clippy::large_stack_frames)]
+fn register_long_chain() -> Result<Application<'static, Pasta, WalletRank, 9>> {
+    fn step<const N: usize>() -> HeaderStep<(), (), (), N> {
+        HeaderStep(PhantomData)
+    }
+
+    ApplicationBuilder::<Pasta, WalletRank, 9>::new()
+        .register(step::<0>())?
+        .register(step::<1>())?
+        .register(step::<2>())?
+        .register(step::<3>())?
+        .register(step::<4>())?
+        .register(step::<5>())?
+        .register(step::<6>())?
+        .register(step::<7>())?
+        .register(step::<8>())?
+        .register(step::<9>())?
+        .register(step::<10>())?
+        .register(step::<11>())?
+        .register(step::<12>())?
+        .register(step::<13>())?
+        .register(step::<14>())?
+        .register(step::<15>())?
+        .register(step::<16>())?
+        .register(step::<17>())?
+        .register(step::<18>())?
+        .register(step::<19>())?
+        .register(step::<20>())?
+        .register(step::<21>())?
+        .finalize(ragu_pcd::pasta::baked())
 }
 
 fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {

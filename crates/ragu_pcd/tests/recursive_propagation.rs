@@ -1629,6 +1629,7 @@ mod commitments {
             .flat_map(|child| {
                 [
                     child.bridge_preamble_commitment(),
+                    child.bridge_hash_commitment(),
                     child.bridge_s_prime_commitment(),
                     child.bridge_inner_error_commitment(),
                     child.bridge_outer_error_commitment(),

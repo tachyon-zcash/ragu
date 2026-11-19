@@ -13,13 +13,12 @@ use ragu_core::{
 use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
+#[cfg(ragu_pcd_nightly_tests)]
+use crate::profile::{Profiled, testing::Twin};
 use crate::{
     Application, ApplicationBuilder, Pcd,
     ipa::IpaCycle,
-    profile::{
-        Profile, Profiled, ProfiledCycle,
-        testing::{Twin, UnitStep},
-    },
+    profile::{Profile, ProfiledCycle, testing::UnitStep},
 };
 
 const HEADER_SIZE: usize = 4;
@@ -134,12 +133,16 @@ fn standard_nested_setup_binding() -> Result<()> {
     check_setup_binding::<Pasta>(ChangedTag::Nested)
 }
 
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn twin_native_setup_binding() -> Result<()> {
     check_setup_binding::<Profiled<Pasta, Twin>>(ChangedTag::Native)
 }
 
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn twin_nested_setup_binding() -> Result<()> {
     check_setup_binding::<Profiled<Pasta, Twin>>(ChangedTag::Nested)
 }

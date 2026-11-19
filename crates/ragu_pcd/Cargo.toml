@@ -121,12 +121,14 @@ required-features = ["multicore"]
 [[test]]
 name = "corruption"
 required-features = ["unstable-fuzzing"]
+test = false # Selected by the corruption job and `just ci_corruption`.
 
 [[test]]
 name = "nontrivial"
 
 [[test]]
 name = "online_fp_oracles"
+test = false # Selected by the corruption job and `just ci_corruption`.
 
 [[test]]
 name = "pasta_parameters"

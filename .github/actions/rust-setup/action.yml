@@ -21,6 +21,26 @@ inputs:
     description: Optional suffix to differentiate cache keys between jobs
     required: false
     default: ""
+  save-dependencies:
+    description: Allow this job to populate its dependency cache on main
+    required: false
+    default: "true"
+  save-pr-dependencies:
+    description: Allow this job to populate a pull-request-local dependency cache
+    required: false
+    default: "false"
+  ci-release-profile:
+    description: Include this runner's CI release profile files in the dependency cache key
+    required: false
+    default: "false"
+  cache-compiler:
+    description: Use sccache for a non-incremental Linux build
+    required: false
+    default: "false"
+  cache-pcd-incremental:
+    description: Cache PCD compiler state for a native release build
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -88,45 +108,73 @@ runs:
         components: ${{ steps.toolchain-config.outputs.components }}
         targets: ${{ steps.toolchain-config.outputs.targets }}
 
-    # Cache cargo registry and git separately (shared across all jobs)
-    - name: Cache cargo registry
-      id: registry-cache
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # The action caches dependency artifacts and sets CARGO_INCREMENTAL=0.
+    # Main populates caches for matching PR jobs. PR-only jobs can opt in to
+    # saving a cache scoped to their own merge ref.
+    - name: Restore Cargo dependencies
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      env:
+        RAGU_CI_RELEASE_PROFILE_HASH: >-
+          ${{ inputs.ci-release-profile == 'true' &&
+              format('{0}{1}',
+                hashFiles('.github/actions/rust-setup/ci-release.toml'),
+                runner.os == 'macOS' && hashFiles('.github/actions/rust-setup/ci-release-macos.toml') ||
+                runner.os == 'Windows' && hashFiles('.github/actions/rust-setup/ci-release-windows.toml') ||
+                '') || '' }}
       with:
-        path: |
-          ~/.cargo/registry/index
-          ~/.cargo/registry/cache
-          ~/.cargo/git/db
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
+        shared-key: ${{ inputs.cache-suffix || github.job }}
+        env-vars: RAGU_CI_RELEASE_PROFILE_HASH
+        cache-bin: false
+        save-if: >-
+          ${{ (github.ref == 'refs/heads/main' && inputs.save-dependencies == 'true') ||
+              (github.event_name == 'pull_request' && inputs.save-pr-dependencies == 'true') }}
 
-    # Cache target directory (job-specific due to different build configurations)
-    # Includes source file hash to avoid stale incremental compilation artifacts
-    - name: Cache target directory
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - name: Install compiler cache
+      if: runner.os == 'Linux' && inputs.cache-compiler == 'true' && inputs.cache-pcd-incremental != 'true'
+      id: sccache
+      continue-on-error: true
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       with:
-        path: target
-        key: ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('crates/**/src/**/*.rs') }}
-        restore-keys: |
-          ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}-
-          ${{ runner.os }}-target-${{ inputs.targets }}-${{ inputs.cache-suffix }}-${{ hashFiles('rust-toolchain.toml') }}-
-
-    - name: Fetch dependencies
-      if: steps.registry-cache.outputs.cache-hit != 'true'
+        version: v0.19.0
+    - name: Enable compiler cache
+      if: steps.sccache.outcome == 'success'
       shell: bash
-      run: cargo fetch --locked
-
-    # Clean workspace crates to ensure fresh builds (keeps dependency artifacts)
-    - name: Clean workspace crates (keep deps)
-      shell: bash
+      env:
+        SCCACHE_GHA_ENABLED: 'true'
+        SCCACHE_GHA_RW_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
+        # proc-macro-crate reads Cargo manifests during macro expansion.
+        SCCACHE_GHA_VERSION: ${{ hashFiles('**/Cargo.toml', 'Cargo.lock') }}
       run: |
-        set -euo pipefail
-        pkgs=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"]))')
-        for p in $pkgs; do
-          cargo clean -p "$p" --release 2>/dev/null || true
-          cargo clean -p "$p" 2>/dev/null || true
-        done
+        if ! sccache --start-server; then
+          echo '::warning::sccache could not start. Cargo will compile without it.'
+          exit 0
+        fi
+        {
+          echo 'CARGO_INCREMENTAL=0'
+          echo 'RUSTC_WRAPPER=sccache'
+          echo "SCCACHE_GHA_ENABLED=$SCCACHE_GHA_ENABLED"
+          echo "SCCACHE_GHA_RW_MODE=$SCCACHE_GHA_RW_MODE"
+          echo "SCCACHE_GHA_VERSION=$SCCACHE_GHA_VERSION"
+        } >> "$GITHUB_ENV"
+
+    # Limit new snapshots for a configuration to once a week per ref.
+    # A PR can restore main's snapshot and still save under its own key.
+    - name: Select PCD compiler cache week
+      if: inputs.cache-pcd-incremental == 'true'
+      id: pcd-cache-week
+      shell: bash
+      run: printf 'week=%s\n' "$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+    # Restore PCD compiler state after rust-cache restores the dependencies.
+    # Callers unset CARGO_INCREMENTAL for the build to use the package profile.
+    - name: Cache PCD incremental compiler state
+      if: inputs.cache-pcd-incremental == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/release/incremental/ragu_pcd-*
+        key: pcd-incremental-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', '.github/actions/rust-setup/ci-release*.toml') }}-${{ steps.pcd-cache-week.outputs.week }}-${{ github.ref }}
+        restore-keys: |
+          pcd-incremental-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', '.github/actions/rust-setup/ci-release*.toml') }}-
 
     - name: Install cargo tools
       if: inputs.cargo-tools != ''

@@ -711,8 +711,7 @@ fn check_guards(
     Ok(())
 }
 
-#[test]
-fn noncanonical_unit_children_reject_through_two_generations() {
+fn check_noncanonical_unit_children<const CHECK_GRANDPARENTS: bool>() {
     let app = ApplicationBuilder::<C, R, HEADER_SIZE>::new()
         .register(UnitStep)
         .expect("register unit step")
@@ -767,16 +766,31 @@ fn noncanonical_unit_children_reject_through_two_generations() {
                     .unwrap(),
                 "{origin}/{mutation}: parent must reject",
             );
-            let (grandparent, ()) = app
-                .fuse(&mut rng, UnitStep, (), parent.clone(), parent)
-                .expect("assemble grandparent");
-            assert!(
-                !app.verify_uncompressed(&grandparent, StdRng::seed_from_u64(873007))
-                    .unwrap(),
-                "{origin}/{mutation}: grandparent must reject",
-            );
+            #[cfg(ragu_pcd_nightly_tests)]
+            if CHECK_GRANDPARENTS {
+                let (grandparent, ()) = app
+                    .fuse(&mut rng, UnitStep, (), parent.clone(), parent)
+                    .expect("assemble grandparent");
+                assert!(
+                    !app.verify_uncompressed(&grandparent, StdRng::seed_from_u64(873007))
+                        .unwrap(),
+                    "{origin}/{mutation}: grandparent must reject",
+                );
+            }
         }
     }
+}
+
+#[test]
+fn noncanonical_unit_children_reject_through_parent() {
+    check_noncanonical_unit_children::<false>();
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn noncanonical_unit_children_reject_through_two_generations() {
+    check_noncanonical_unit_children::<true>();
 }
 
 proptest! {

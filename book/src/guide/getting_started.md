@@ -20,13 +20,15 @@ Add Ragu to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ragu_circuits = "0.1"
-ragu_core = "0.1"
-ragu_pcd = { version = "0.1", features = ["baked"] }
-ragu_primitives = "0.1"
-udon = { package = "zakura-udon", version = "0.1.0", features = ["traits"] }
+ragu = { version = "0.1", features = ["baked"] }
 rand = "0.10"
 ```
+
+The `ragu` crate is the only Ragu dependency an application needs. Its root
+holds the items most code names, such as `ApplicationBuilder`, `Result` and
+the `header` and `step` modules. The rest of Ragu is under its `primitives`,
+`circuits` and `pcd` modules, and the `udon` arithmetic crate that Ragu uses
+is under `ragu::udon`.
 
 ## Overview: Building a Merkle Tree with Proofs
 
@@ -58,12 +60,12 @@ Headers define what data flows through the proof tree. This example uses two
 types:
 
 ```rust
-use udon::field::Field;
-use ragu_core::{Result, drivers::{Driver, DriverValue}, gadgets::{Bound, Kind}, maybe::Maybe};
-use ragu_pcd::header::{Header, Padding, Suffix};
-use ragu_primitives::allocator::{Allocator, Standard};
-use ragu_primitives::Element;
-use ragu_primitives::poseidon::Sponge;
+use ragu::{Result, drivers::{Driver, DriverValue}, gadgets::{Bound, Kind}, maybe::Maybe};
+use ragu::header::{Header, Padding, Suffix};
+use ragu::primitives::allocator::{Allocator, Standard};
+use ragu::primitives::Element;
+use ragu::primitives::poseidon::Sponge;
+use ragu::udon::field::Field;
 
 // LeafNode: carries a hash of raw data
 struct LeafNode;
@@ -110,16 +112,18 @@ impl<F: Field> Header<F> for InternalNode {
 - `Output`: The circuit representation (Element gadget)
 - `encode`: How to convert `Data` into circuit form. The `allocator`
   parameter controls allocation; see
-  [Allocation](primitives/allocation.md)
+  [Allocation](primitives/allocation.md). The encoding must be injective:
+  no two `Data` values may encode to the same field elements; see
+  [Encodings Must Be Injective](writing_circuits.md#injective-encodings)
 
 ## Step 2: Implement CreateLeaf Step
 
 This step creates leaf proofs from raw values:
 
 ```rust
-use ragu_core::Cycle;
-use ragu_pcd::step::{Encoded, Index, Oracles, Step};
-use ragu_primitives::poseidon::Sponge;
+use ragu::Cycle;
+use ragu::step::{Encoded, Index, Oracles, Step};
+use ragu::primitives::poseidon::Sponge;
 
 struct CreateLeaf<'params, C: Cycle> {
     poseidon_params: &'params C::CircuitPoseidon,
@@ -256,14 +260,14 @@ the two headers together).
 The application is configured and built as follows:
 
 ```rust
-use ragu_circuits::polynomials::R;
-use ragu_core::pasta::{Fp, Pasta};
-use ragu_pcd::ApplicationBuilder;
+use ragu::ApplicationBuilder;
+use ragu::circuits::polynomials::R;
+use ragu::pasta::{Fp, Pasta};
 use rand::{SeedableRng, rngs::StdRng};
 
 fn main() -> Result<()> {
     // 1. Initialize Pasta curve parameters
-    let pasta = ragu_pcd::pasta::baked();
+    let pasta = ragu::pcd::pasta::baked();
     let mut rng = StdRng::seed_from_u64(12345);
 
     // 2. Build application with our steps
@@ -286,38 +290,36 @@ fn main() -> Result<()> {
 ## Step 5: Create and Verify Proofs
 
 The application can now be used to create proofs. `seed` and `fuse` return
-proofs in _uncompressed_ form, the form that can be fused further. To check a
-proof, compress it: `compress` reduces it to a succinct proof, and
-`verify_compressed` verifies that.
+the new proof, which carries its header data, together with the step's `Aux`
+output. The proof is in _uncompressed_ form, the form that can be fused
+further. To check a proof, compress it: `compress` reduces it to a succinct
+proof, and `verify_compressed` verifies that.
 
 ```rust
 // Create first leaf using seed
-let leaf1 = app.seed(
+let (leaf1, ()) = app.seed(
     &mut rng,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(100u64),  // Hash the value 100
 )?;
-let leaf1 = leaf1.0.carry(leaf1.1);
 println!("Seed 1 created (value: 100)");
 
 // Create second leaf
-let leaf2 = app.seed(
+let (leaf2, ()) = app.seed(
     &mut rng,
     CreateLeaf { poseidon_params: Pasta::circuit_poseidon(pasta) },
     Fp::from(200u64),  // Hash the value 200
 )?;
-let leaf2 = leaf2.0.carry(leaf2.1);
 println!("Seed 2 created (value: 200)");
 
 // Combine leaves into internal node using fuse
-let node1 = app.fuse(
+let (node1, ()) = app.fuse(
     &mut rng,
     CombineNodes { poseidon_params: Pasta::circuit_poseidon(pasta) },
     (),  // No extra witness
     leaf1,
     leaf2,
 )?;
-let node1 = node1.0.carry::<InternalNode>(node1.1);
 
 // Compress the root and verify the compressed proof
 let compressed = app.compress(&node1, &mut rng)?;

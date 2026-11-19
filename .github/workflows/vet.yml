@@ -3,13 +3,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
   # Audit on a weekly cadence so new RustSec advisories published against
   # already-pinned deps surface even without a lockfile change.
   schedule:
     - cron: '0 6 * * 1'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: Supply chain-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:

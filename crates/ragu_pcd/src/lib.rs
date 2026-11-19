@@ -17,6 +17,8 @@
 //!   and the aggregator profile, which carries decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`bridge_hash`] — the bridge hash of a commitment, computed outside the
+//!   circuit.
 //! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs.
@@ -49,6 +51,7 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
+pub mod bridge_hash;
 mod compress;
 #[cfg(feature = "unstable-aggregator")]
 mod decompress;
@@ -164,8 +167,9 @@ pub struct ApplicationBuilder<
     stage_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
-    /// which finalization installs instead of building one.
-    bootstrap: Option<Proof<C, R>>,
+    /// which finalization installs instead of building one. Boxed to keep
+    /// the builder small across by-value `register` calls.
+    bootstrap: Option<Box<Proof<C, R>>>,
     /// The header type each registered step outputs, by suffix, and
     /// whether its proofs carry an online polynomial, in a slot its
     /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) does not leave to
@@ -268,7 +272,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 "the supplied proof is not a bootstrap proof of this profile's shape".into(),
             ));
         }
-        self.bootstrap = Some(proof);
+        self.bootstrap = Some(Box::new(proof));
         Ok(self)
     }
 
@@ -583,7 +587,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             #[cfg(feature = "unstable-aggregator")]
             output_headers: self.output_headers,
             stage_size: self.stage_size,
-            bootstrap: self.bootstrap,
+            bootstrap: self.bootstrap.map(|proof| *proof),
             seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
@@ -887,10 +891,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Fails if `point` is the identity, which the stage cannot hold.
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
-        internal::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
-            point,
-            C::nested_generators(self.params),
-        )
+        bridge_hash::digest::<B, _, _, R, _>(point, C::nested_generators(self.params))
     }
 
     /// The commitment of an online polynomial with coefficients `coeffs`, in

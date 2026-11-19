@@ -346,6 +346,25 @@ The `allocator` parameter controls how field elements are allocated;
 see [Allocation](primitives/allocation.md) for details on choosing an
 allocator.
 
+### Encodings Must Be Injective {#injective-encodings}
+
+A proof commits only to the field elements of its header. Verifiers bind
+the data a `Pcd` carries to those elements by recomputing `encode` from
+it, so the encoding must be injective: no two distinct `Data` values may
+encode to the same field elements. If two do, an honest proof of one also
+verifies when it carries the other, which opens the protocol built on top
+to an adaptive soundness attack. Ragu cannot check this; it is an
+obligation of the application.
+
+The constraints `encode` emits do not discharge it. They hold a prover's
+witness to the invariants of `Data` inside the circuit, but verifiers
+recompute the encoding without checking them. Instead, `Data` should be a
+type that cannot hold values the encoding would confuse. A flag and an
+amount encoded as `2 * amount + flag` should be a `bool` and a `u64`, not
+two field elements: in the field, `(1, 1000)` and `(0, 1000 + 1/2)`
+encode to the same element although both flags are boolean, where `1/2`
+is the inverse of 2.
+
 ## Common Patterns
 
 ### Pattern 1: Seed Steps (Create Initial Proofs)

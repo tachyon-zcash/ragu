@@ -23,6 +23,7 @@ pub mod comparison;
 pub mod consistent;
 mod element;
 mod endoscalar;
+mod fixed_base;
 mod foreign;
 mod invertible;
 pub mod io;
@@ -35,12 +36,13 @@ pub mod suffix;
 mod util;
 pub mod vec;
 
-pub use boolean::{Boolean, decompose, multipack};
+pub use boolean::{Boolean, decompose, decompose_n, enforce_le_bits, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::{
     ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Endoscalar, EndoscalarChallenge,
     EndoscalarRangeError, HoistedEndoscalar, Uendo, extract_endoscalar, lift_endoscalar,
 };
+pub use fixed_base::FixedBase;
 pub use invertible::{Invertible, Nonzero, NonzeroBank};
 use io::{Buffer, Write};
 pub use point::Point;

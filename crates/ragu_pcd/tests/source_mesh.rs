@@ -15,7 +15,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use udon::{curve::Affine, field::Field};
 
 use crate::{
-    Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
+    Application, ApplicationBuilder, Pcd, SelectableBackend,
     ipa::IpaCycle,
     profile::{
         Profile, Profiled, ProfiledCycle, ProverContext, Standard,
@@ -473,7 +473,9 @@ fn verify<P: Profile>(
     }
     Ok(())
 }
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<()> {
     let source = ApplicationBuilder::<Pasta, R<13>, 2>::new()
         .register(UnitStep)?
@@ -510,7 +512,7 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
         &[0, 12, outgoing],
         &[0, 12, outgoing],
     )?;
-    let decoded = Proof::<C, Rk>::from_bytes(
+    let decoded = crate::Proof::<C, Rk>::from_bytes(
         &parent
             .proof()
             .to_bytes()

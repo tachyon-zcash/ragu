@@ -17,22 +17,23 @@ mod codec;
 // `#[ignore]`d in the platform matrix. Rust CI explicitly replays the
 // properties with saved recursion failures, and the scheduled heavy-tests
 // run picks up the full suites with `cargo test -- --ignored`.
+// The backend, fixture and debug jobs compile a smaller harness for their filters.
 #[cfg(test)]
 #[path = "../../tests/app_stage.rs"]
 mod app_stage_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/base_case_combinations.rs"]
 mod base_case_combinations_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/bridge_hash.rs"]
 mod bridge_hash_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/compression/blinding.rs"]
 mod compress_blinding_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/recursive_bindings.rs"]
 mod recursive_binding_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/recursive_boundaries.rs"]
 mod recursive_boundary_tests;
 #[cfg(test)]
@@ -53,13 +54,13 @@ mod child_commitment_tests;
 #[cfg(test)]
 #[path = "../../tests/fuse_fixtures.rs"]
 mod fuse_fixture_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/profile_substitution.rs"]
 mod profile_substitution_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/proof_shape.rs"]
 mod proof_shape_tests;
-#[cfg(test)]
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
 #[path = "../../tests/verify_rejections.rs"]
 mod verify_rejection_tests;
 // Mutable component access for the corruption vocabulary (see
