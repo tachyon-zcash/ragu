@@ -1,37 +1,23 @@
 name: Heavy tests
 
-# Runs the full recursion regression suites beyond the PR gate's seed replays.
-# The properties in `crates/ragu_pcd/tests/{recursive_bindings,
-# recursive_propagation, recursive_boundaries, base_case_combinations}.rs`
-# and the proof-producing properties in `tests/pcs.rs` use production-rank
-# proofs and are marked `#[ignore]` in the platform matrix. Rust CI also
-# replays the saved recursive-boundary and recursive-binding failures with
-# one fresh case per affected property. The PCS denominator gadget test
-# stays in the PR gate.
-# This workflow runs them with `--ignored`, one job per suite, at eight
-# cases per property. The suites assert proof bindings, which depend on
-# neither the platform nor the prover's scheduling, so they run once, with
-# every feature on, on x86-64 Linux. The serial trace evaluator keeps its
-# own unit tests and the PR gate's default-features pass.
-# Build the shared test executable once, including the proof regressions.
+# Build the all-feature workspace test targets once and run every ignored
+# test at eight cases per property. Rust CI selects the opt-out integration
+# targets (corruption and online_fp_oracles) in its exhaustive job.
 
 on:
-  # Daily at 02:00 UTC, after the fuzzing campaigns have had their window.
-  # Scheduled runs always use the default branch.
   schedule:
     - cron: '0 2 * * *'
-  # A fresh run on current `main` after a fix or a lost night.
   workflow_dispatch:
 
-# No concurrency group: a run times out well inside the 24-hour cron, so there
-# is nothing to supersede, and a declared group only lets another run cancel it.
+env:
+  NEXTEST_TOOL: cargo-nextest@0.9.151
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build heavy test binary
+    name: Build test archive
     runs-on: ubuntu-latest
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
@@ -43,84 +29,53 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: heavy-tests
-      - name: Compile the PCD test binary
+          cargo-tools: ${{ env.NEXTEST_TOOL }}
+      - name: Build and archive the workspace tests
         shell: bash
         env:
           RAGU_PCD_NIGHTLY_TESTS: '1'
-        run: |
-          cargo test --release -p ragu_pcd --locked --all-features --lib --no-run \
-            --message-format=json-render-diagnostics > "$RUNNER_TEMP/pcd-test-build.jsonl"
-          binary=$(jq -ers '
-            [.[] | select(.reason == "compiler-artifact" and .target.name == "ragu_pcd"
-                         and .profile.test and .executable) | .executable]
-            | if length == 1 then .[0] else error("expected one PCD test binary") end
-          ' "$RUNNER_TEMP/pcd-test-build.jsonl")
-          install "$binary" "$RUNNER_TEMP/pcd-heavy-tests"
-      - name: Upload the PCD test binary
+        run: >-
+          cargo nextest archive --release --locked --workspace --all-features --tests
+          --archive-file "$RUNNER_TEMP/heavy-tests.tar.zst"
+      - name: Upload the test archive
         id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: pcd-heavy-tests-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/pcd-heavy-tests
+          name: heavy-tests-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/heavy-tests.tar.zst
           if-no-files-found: error
-          # Keep the binary available for GitHub's 30-day rerun window.
+          compression-level: 0
+          # Keep the archive available for GitHub's 30-day rerun window.
           retention-days: 30
 
-  suites:
-    name: ${{ matrix.suite.name }}
+  ignored:
+    name: Ignored tests (${{ matrix.shard }}/${{ strategy.job-total }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        suite:
-          # `filter` holds one or more libtest name filters for ignored
-          # `ragu_pcd` unit tests.
-          - name: recursive bindings
-            filter: proof::recursive_binding_tests
-          - name: recursive propagation
-            filter: proof::recursive_propagation_tests
-          - name: recursive boundaries
-            filter: proof::recursive_boundary_tests
-          - name: base case combinations
-            filter: proof::base_case_combinations_tests
-          - name: PCS
-            filter: fuse::pcs_tests
-          - name: proof regressions
-            filter: >-
-              source_mesh_tests::both_source_meshes_close_at_the_root_and_survive_ordinary_steps
-              online_batch_tests::native_auxiliaries_bind_at_every_deadline_and_survive_recursion
-              online_batch_tests::nested_auxiliaries_bind_at_every_deadline_and_survive_recursion
-              proof::profile_substitution_tests::standard_accepts_aggregator_payloads_only_with_the_same_registries
-              proof::profile_substitution_tests::compressed_attacks::compressed_standard_checks_aggregator_packets_and_edits
-              proof::profile_substitution_tests::verifier_setup::aggregator_verifier_uses_its_registered_application_circuits
-              setup_binding_tests::aggregator_native_setup_binding
-              setup_binding_tests::aggregator_nested_setup_binding
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Download the PCD test binary
+      - name: Install Nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: ${{ env.NEXTEST_TOOL }}
+      - name: Download the test archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.build.outputs.artifact-id || 'missing PCD test artifact ID' }}
+          artifact-ids: ${{ needs.build.outputs.artifact-id || 'missing heavy test artifact ID' }}
           path: ${{ runner.temp }}
-      - name: Run the suite's ignored tests
+      - name: Run an ignored-test partition
         shell: bash
-        working-directory: crates/ragu_pcd
         env:
-          SUITE: ${{ matrix.suite.filter }}
+          PARTITION: slice:${{ matrix.shard }}/${{ strategy.job-total }}
           PROPTEST_CASES: "8"
-        run: |
-          binary="$RUNNER_TEMP/pcd-heavy-tests"
-          chmod +x "$binary"
-          read -r -a suite_filters <<< "$SUITE"
-          for filter in "${suite_filters[@]}"; do
-            tests=$("$binary" --ignored --list "$filter")
-            if ! grep -q ': test$' <<< "$tests"; then
-              echo "No ignored tests match $filter" >&2
-              exit 1
-            fi
-          done
-          "$binary" --ignored "${suite_filters[@]}"
+        run: >-
+          cargo-nextest nextest run --archive-file "$RUNNER_TEMP/heavy-tests.tar.zst"
+          --workspace-remap "$GITHUB_WORKSPACE" --partition "$PARTITION"
+          --ignore-default-filter --no-fail-fast --no-tests fail -- --ignored

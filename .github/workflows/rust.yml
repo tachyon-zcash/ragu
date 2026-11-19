@@ -3,10 +3,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      full-suite:
+        description: Run all jobs regardless of changed paths
+        type: boolean
+        default: false
 
 # Cancel in-progress runs when a new commit is pushed to the same branch/PR
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: Rust CI-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -24,15 +30,21 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
-      fuzz: ${{ steps.filter.outputs.fuzz }}
-      book: ${{ steps.filter.outputs.book }}
+      rust: ${{ steps.full.outputs.enabled || steps.filter.outputs.rust }}
+      fuzz: ${{ steps.full.outputs.enabled || steps.filter.outputs.fuzz }}
+      book: ${{ steps.full.outputs.enabled || steps.filter.outputs.book }}
     steps:
+      - name: Enable all jobs for the full suite
+        id: full
+        if: inputs.full-suite
+        run: echo 'enabled=true' >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !inputs.full-suite }}
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: ${{ !inputs.full-suite }}
         id: filter
         with:
           filters: |
@@ -90,9 +102,10 @@ jobs:
       - name: Run clippy
         env:
           RAGU_PCD_NIGHTLY_TESTS: "1"
-        run: >-
-          cargo clippy --workspace --lib --tests --benches --locked --all-features
-          --test corruption --test online_fp_oracles -- -D warnings
+        # Cargo's --tests selection omits targets declared with test = false.
+        run: |
+          cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+          cargo clippy --workspace --locked --all-features --test corruption --test online_fp_oracles -- -D warnings
       # Workspace builds turn on `test-utils` through `ragu_pcd`'s dev-dependency
       # on itself, so only a library-only pass sees the production configuration
       # and flags code that only the uncompressed test oracle still uses.
@@ -366,8 +379,8 @@ jobs:
         run: mdbook build ./book
 
   # Aggregate gate: a single, stable required status check. It always runs —
-  # even on non-Rust PRs where every job below is skipped — and fails only if a
-  # needed job actually failed or was cancelled (skipped counts as success).
+  # even on non-Rust PRs where every job below is skipped. Full-suite runs
+  # require all jobs to succeed, including jobs gated by paths on PRs.
   # Require THIS in the ruleset instead of the individual job names: a skipped
   # matrix job reports its un-expanded name, so its per-platform checks
   # never report and block lean-/docs-only PRs.
@@ -389,13 +402,16 @@ jobs:
       - book
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any required job failed or was cancelled
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      - name: Report unsuccessful required jobs
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          (inputs.full-suite && contains(needs.*.result, 'skipped'))
         # Pass the expansion through `env` rather than interpolating `${{ }}`
         # directly into `run:`, which zizmor's template-injection audit flags.
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          echo "A required job failed or was cancelled:"
+          echo "A required job did not succeed."
           echo "$NEEDS_JSON"
           exit 1

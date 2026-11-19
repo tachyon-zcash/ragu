@@ -1,0 +1,32 @@
+name: Daily test coverage watchdog
+
+on:
+  schedule:
+    # Check later in the UTC day to give the full suite time to finish.
+    - cron: '47 14 * * *'
+
+permissions:
+  actions: read
+
+jobs:
+  check:
+    name: Check for today's successful full test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check full-suite run history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          today=$(date -u +%F)
+          run_url=$(gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/full-tests.yml/runs" \
+            -f branch="$DEFAULT_BRANCH" -f created="$today" -f status=success -F per_page=1 \
+            --jq '.workflow_runs[0].html_url // ""')
+          if [[ -z "$run_url" ]]; then
+            echo "::error::No successful full test suite run on $DEFAULT_BRANCH for $today UTC."
+            echo "[Full test suite runs]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/full-tests.yml)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '[Successful full test suite](%s)\n' "$run_url" >> "$GITHUB_STEP_SUMMARY"

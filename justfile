@@ -176,7 +176,8 @@ fmt_check:
 # clippy in every configuration CI lints (rust.yml: clippy; backend.yml)
 [group('lint')]
 clippy: backend_clippy
-  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy --workspace --lib --tests --benches --locked --all-features --test corruption --test online_fp_oracles -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy --workspace --locked --all-features --test corruption --test online_fp_oracles -- -D warnings
   cargo clippy -p ragu_pcd --lib --locked -- -D warnings
   cargo clippy -p ragu_pcd --lib --locked --features baked,multicore -- -D warnings
 
@@ -320,7 +321,8 @@ _supply_chain_setup: _install_binstall
 [group('backend')]
 backend_clippy:
   cargo clippy -p ragu_acceleration --lib --tests --no-default-features -- -D warnings
-  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features --test online_fp_oracles -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy -p ragu_pcd --no-default-features --test online_fp_oracles -- -D warnings
   CLIPPY_CONF_DIR=qa/backend cargo clippy -p ragu_pcd --lib --no-deps --all-features -- -D clippy::disallowed_methods
 
 # backend lane: the PCD end-to-end equivalence, serially
