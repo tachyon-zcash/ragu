@@ -5,10 +5,10 @@
 //! corresponds to where `ragu_core` traits are re-exported. Also, the end-user
 //! might have renamed the crates, so we must use `proc-macro-crate`.
 //!
-//! Only `ragu_core` and `ragu_primitives` support that `ragu` umbrella-crate
-//! fallback. `udon`, whose field vocabulary the generated bounds name,
-//! must be present as a direct dependency of the caller, possibly renamed;
-//! its resolution does not fall back to `ragu`.
+//! `udon`, whose field vocabulary the generated bounds name, resolves to the
+//! caller's direct dependency when there is one, possibly renamed, and
+//! otherwise to the `udon` that `ragu_core` re-exports, through `ragu` or
+//! `ragu_core`.
 
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
@@ -68,10 +68,13 @@ fn udon_path() -> Result<Path> {
             parse_quote! { ::#name }
         }
         Err(_) => {
-            return Err(Error::new(
-                Span::call_site(),
-                "Failed to find zakura-udon crate. Ensure it is included in your Cargo.toml.",
-            ));
+            let ragu_core = ragu_core_path().map_err(|_| {
+                Error::new(
+                    Span::call_site(),
+                    "Failed to find zakura-udon, ragu or ragu_core crate. Ensure one is included in your Cargo.toml.",
+                )
+            })?;
+            parse_quote! { #ragu_core::udon }
         }
     })
 }

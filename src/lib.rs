@@ -2,48 +2,44 @@
 //!
 //! Proof-carrying data (PCD) framework for Rust.
 //!
-//! Ragu is under heavy development and does not yet expose a stable API. Enable
-//! the `mock` feature to instead expose an API-level mock of `ragu_pcd`
-//! (re-exported at the crate root), used to integrate downstream consumers
-//! (e.g. Zebra) against the eventual interface ahead of the real
-//! implementation. See the [Ragu Book](https://tachyon.z.cash/ragu/) for more
+//! This crate is the single entry point to Ragu's crates. The crate root
+//! carries what most callers name:
+//!
+//! - everything in [`ragu_core`]: drivers, gadgets, [`Result`], [`Error`], the
+//!   [`pasta`] cycle and the [`udon`] arithmetic crate. The `Gadget`, `Write`
+//!   and `Kind!` macros resolve their `ragu_core` and `udon` paths here when a
+//!   caller depends only on `ragu`;
+//! - the PCD API: [`ApplicationBuilder`], [`Application`], the [`step`] and
+//!   [`header`] modules, and the [`Pcd`], [`Proof`], [`CompressedPcd`] and
+//!   [`CompressedProof`] structures;
+//! - the sparse [`Polynomial`], [`Rank`] and [`ProductionRank`];
+//! - the [`AcceleratedProver`].
+//!
+//! Each member crate stays reachable as a module for the rest of its API:
+//! [`primitives`] ([`ragu_primitives`]: the gadget library, where the `Write`
+//! and `Consistent` macros resolve their `ragu_primitives` paths), [`circuits`]
+//! ([`ragu_circuits`]), [`pcd`] ([`ragu_pcd`], including its baked
+//! generators under `pcd::pasta`) and [`acceleration`]
+//! ([`ragu_acceleration`]).
+//!
+//! Ragu is under heavy development and does not yet expose a stable API.
+//! Please see the [Ragu Book](https://tachyon.z.cash/ragu/) for more
 //! information.
-// The lints below apply to the `mock` surface, which mirrors an external API.
+
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(clippy::type_complexity, clippy::too_many_arguments)]
 #![deny(rustdoc::broken_intra_doc_links)]
-#![cfg_attr(not(feature = "mock"), deny(missing_docs))]
+#![deny(missing_docs)]
 #![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1/favicon-32x32.png")]
 #![doc(html_logo_url = "https://tachyon.z.cash/assets/ragu/v1/rustdoc-128x128.png")]
-#![cfg_attr(
-    feature = "mock",
-    expect(clippy::pub_use, reason = "crate public API re-exports")
-)]
-#![cfg_attr(
-    feature = "mock",
-    expect(clippy::missing_const_for_fn, reason = "mirrors non-const ragu API")
-)]
-#![cfg_attr(
-    feature = "mock",
-    expect(
-        clippy::missing_trait_methods,
-        reason = "default impls are fine in a mock"
-    )
-)]
 
-#[cfg(feature = "std")]
-extern crate std;
-
-#[cfg(feature = "mock")]
-extern crate alloc;
-
-#[cfg(all(feature = "mock", test))]
-extern crate self as ragu;
-#[cfg(all(feature = "mock", test))]
-use ragu_core::gadgets;
-
-#[cfg(feature = "mock")]
-mod mock;
-#[cfg(feature = "mock")]
-pub use mock::*;
+pub use ragu_acceleration::{self as acceleration, AcceleratedProver};
+pub use ragu_circuits::{
+    self as circuits,
+    polynomials::{ProductionRank, Rank, sparse::Polynomial},
+};
+pub use ragu_core::*;
+pub use ragu_pcd::{
+    self as pcd, Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof,
+    header, step,
+};
+pub use ragu_primitives as primitives;

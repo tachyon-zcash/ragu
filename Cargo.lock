@@ -815,16 +815,11 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 name = "ragu"
 version = "0.0.0"
 dependencies = [
- "blake2b_simd",
- "ragu_backend",
+ "ragu_acceleration",
  "ragu_circuits",
  "ragu_core",
  "ragu_pcd",
  "ragu_primitives",
- "rand",
- "serde",
- "serde_json",
- "zakura-udon",
 ]
 
 [[package]]
@@ -898,7 +893,7 @@ dependencies = [
 name = "ragu_no_std"
 version = "0.0.0"
 dependencies = [
- "ragu_pcd",
+ "ragu",
 ]
 
 [[package]]

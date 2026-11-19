@@ -89,7 +89,7 @@ jobs:
         run: >-
           cargo build -p ragu_pcd --lib --no-default-features --features alloc
           --target thumbv7em-none-eabihf
-      - name: Build a no_std consumer of baked Pasta parameters
+      - name: Build a no_std consumer that depends only on ragu
         run: >-
           cargo build -p ragu_no_std --lib --no-default-features --locked
           --target thumbv7em-none-eabihf
