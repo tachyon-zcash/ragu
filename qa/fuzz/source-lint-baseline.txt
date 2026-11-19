@@ -16,9 +16,9 @@ RAGU005|crates/ragu_primitives/src/allocator.rs|109|Structural pool occupancy se
 RAGU004|crates/ragu_primitives/src/allocator.rs|112|The pooled allocator intentionally returns A, stores Extra, and wastes the zero B and C wires.
 RAGU004|crates/ragu_primitives/src/boolean.rs|220|The inverse is a constrained witness hint whose wire is intentionally not exposed by is_zero.
 RAGU005|crates/ragu_primitives/src/element.rs|481|Iterator emptiness is structural API input; the method documents that its length must not depend on witness data.
-RAGU005|crates/ragu_primitives/src/fixed_base.rs|121|The window width, fixed by `N` when the table is prepared, determines which positions are absent and represented by a constant zero.
-RAGU005|crates/ragu_primitives/src/fixed_base.rs|129|A one-bit top window omits the quadratic product because its width, fixed by `N`, has no second bit.
-RAGU005|crates/ragu_primitives/src/fixed_base.rs|139|A short top window omits the cubic product because its width, fixed by `N`, has no third bit.
+RAGU005|crates/ragu_primitives/src/fixed_base.rs|119|The window width, fixed by `N` when the table is prepared, determines which positions are absent and represented by a constant zero.
+RAGU005|crates/ragu_primitives/src/fixed_base.rs|127|A one-bit top window omits the quadratic product because its width, fixed by `N`, has no second bit.
+RAGU005|crates/ragu_primitives/src/fixed_base.rs|137|A short top window omits the cubic product because its width, fixed by `N`, has no third bit.
 RAGU005|crates/ragu_primitives/src/invertible.rs|333|Checked versus unchecked construction mode determines whether a product is accumulated.
 RAGU005|crates/ragu_primitives/src/invertible.rs|343|The same structural construction mode determines whether the batched proof is discharged.
 RAGU005|crates/ragu_primitives/src/point.rs|107|A native construction-time constant is rejected before either coordinate is embedded.
