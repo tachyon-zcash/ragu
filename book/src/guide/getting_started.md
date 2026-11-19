@@ -112,7 +112,9 @@ impl<F: Field> Header<F> for InternalNode {
 - `Output`: The circuit representation (Element gadget)
 - `encode`: How to convert `Data` into circuit form. The `allocator`
   parameter controls allocation; see
-  [Allocation](primitives/allocation.md)
+  [Allocation](primitives/allocation.md). The encoding must be injective:
+  no two `Data` values may encode to the same field elements; see
+  [Encodings Must Be Injective](writing_circuits.md#injective-encodings)
 
 ## Step 2: Implement CreateLeaf Step
 
