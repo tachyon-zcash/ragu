@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `decompose_n` decomposes a field element into a caller-chosen number of bits.
+- `enforce_le_bits` for inclusive constant bounds on little-endian bits.
+- `Element::enforce_le` and `Element::enforce_lt` bound a field element by a
+  constant through an `N`-bit decomposition.
 
 ## [0.0.0] - 2025-07-30
 

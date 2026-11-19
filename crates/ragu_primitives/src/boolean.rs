@@ -385,6 +385,90 @@ fn decompose_bits<'dr, D: Driver<'dr>>(
     Ok(bits)
 }
 
+/// Enforces an inclusive constant upper bound on little-endian `bits`.
+///
+/// Emits no constraints if `maximum` needs more than `bits.len()` bits.
+/// Otherwise, each bit beyond the bit-width of `maximum` costs one linear
+/// constraint, including all of `bits` when `maximum == 0`. Below the leading
+/// `1` of `maximum`, each `1` bit above a `0` costs one gate and two linear
+/// constraints, and each `0` run costs one gate and three linear constraints.
+///
+/// # Constraints
+///
+/// `bits.len()` and `maximum` determine the emitted constraints and must not
+/// depend on witness input.
+///
+/// # Soundness
+///
+/// Any satisfying assignment makes the unsigned integer encoded by `bits` at
+/// most the canonical integer representative of `maximum`.
+///
+/// # Completeness
+///
+/// Every bit string at or below the bound admits a satisfying assignment.
+pub fn enforce_le_bits<'dr, D: Driver<'dr>>(
+    dr: &mut D,
+    bits: &[Boolean<'dr, D>],
+    maximum: D::F,
+) -> Result<()> {
+    // This function never reads a witness value. Every branch and loop bound
+    // below comes from `constant` (the bits of `maximum`) or from `bits.len()`,
+    // so the emitted constraints are the same for every witness.
+    let constant = maximum.to_le_bits();
+    let constant = constant.as_ref();
+    let width = constant.iter().rposition(|bit| *bit).map_or(0, |i| i + 1);
+
+    // A constant that needs more bits than the input has exceeds every input.
+    if width > bits.len() {
+        return Ok(());
+    }
+
+    // Input bits above the leading one of the constant must be zero.
+    for bit in &bits[width..] {
+        dr.enforce_zero(|lc| lc.add(bit.wire()))?;
+    }
+
+    // A zero constant has no leading one; every input bit is now zero.
+    if width == 0 {
+        return Ok(());
+    }
+    let leading = width - 1;
+
+    // The ones at the low end of the constant bound nothing: whatever the
+    // input holds there, it cannot exceed the constant.
+    let trailing_ones = constant[..leading].iter().take_while(|bit| **bit).count();
+
+    // Pair each remaining input bit with the constant's bit at its position.
+    let positions: Vec<(bool, &Boolean<'dr, D>)> = constant[trailing_ones..leading]
+        .iter()
+        .copied()
+        .zip(&bits[trailing_ones..leading])
+        .collect();
+
+    // Walk down from the leading one, a run of equal constant bits at a time.
+    // `equal` is one if the input equals the constant at every position walked
+    // so far, and zero if it is already below the constant.
+    let mut equal = bits[leading].element();
+    for run in positions.chunk_by(|a, b| a.0 == b.0).rev() {
+        let inputs = run.iter().map(|(_, bit)| bit.element());
+        if run[0].0 {
+            // The constant is one here. The input stays equal only if it is
+            // one as well; a zero puts it below the constant.
+            for input in inputs.rev() {
+                equal = equal.mul(dr, &input)?;
+            }
+        } else {
+            // The constant is zero here. An input that is still equal must be
+            // zero at every position of the run, or it exceeds the constant.
+            // A run has fewer terms than the modulus, so the sum of its bits
+            // is zero only if every bit is.
+            let sum = Element::sum(dr, inputs);
+            equal.mul(dr, &sum)?.enforce_zero(dr)?;
+        }
+    }
+    Ok(())
+}
+
 impl<'dr, D: Driver<'dr>> Consistent<'dr, D> for Boolean<'dr, D> {
     fn enforce_consistent(&self, dr: &mut D) -> Result<()> {
         Self::alloc(dr, &mut (), self.value())?.enforce_conservative_equal(dr, self)
@@ -652,6 +736,90 @@ mod tests {
     }
 
     #[test]
+    fn test_enforce_le_bits() -> Result<()> {
+        const MAX_MONEY: u64 = 2_100_000_000_000_000;
+        let check = |x: u64, maximum: u64| {
+            Simulator::simulate(x, |dr, x| {
+                let bits = (0..51)
+                    .map(|i| {
+                        let bit = x.as_ref().map(|x| x & (1 << i) != 0);
+                        Boolean::alloc(dr, &mut (), bit)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                dr.reset();
+                enforce_le_bits(dr, &bits, F::from(maximum))
+            })
+        };
+        check(MAX_MONEY - 1, MAX_MONEY)?;
+        let sim = check(MAX_MONEY, MAX_MONEY)?;
+        assert_eq!(sim.num_gates(), 28);
+        assert_eq!(sim.num_constraints(), 65);
+        assert!(matches!(
+            check(MAX_MONEY + 1, MAX_MONEY),
+            Err(ragu_core::Error::InvalidWitness(_))
+        ));
+        let all_ones = (1 << 51) - 1;
+        for maximum in [all_ones, all_ones + 1] {
+            let sim = check(all_ones, maximum)?;
+            assert_eq!(sim.num_gates(), 0);
+            assert_eq!(sim.num_constraints(), 0);
+        }
+        assert!(matches!(
+            check(1, 0),
+            Err(ragu_core::Error::InvalidWitness(_))
+        ));
+        Ok(())
+    }
+
+    /// Runs [`enforce_le_bits`] on freshly allocated `bits`, counting only the
+    /// bound's own gates and constraints.
+    fn le_bits(bits: &[bool], maximum: F) -> Result<Simulator> {
+        Simulator::simulate(bits, |dr, witness| {
+            let bits = (0..bits.len())
+                .map(|i| Boolean::alloc(dr, &mut (), witness.as_ref().map(|bits| bits[i])))
+                .collect::<Result<Vec<_>>>()?;
+            dr.reset();
+            enforce_le_bits(dr, &bits, maximum)
+        })
+    }
+
+    /// Compares two little-endian bit strings of any lengths as integers.
+    fn le_as_integers(bits: &[bool], maximum: &[bool]) -> bool {
+        let bit = |bits: &[bool], i: usize| bits.get(i).copied().unwrap_or(false);
+        (0..bits.len().max(maximum.len()))
+            .rev()
+            .map(|i| (bit(bits, i), bit(maximum, i)))
+            .find(|(x, m)| x != m)
+            .is_none_or(|(_, m)| m)
+    }
+
+    /// Every input of up to six bits against every constant up to one bit
+    /// wider: the bound accepts exactly the inputs at or below the constant,
+    /// and the emitted shape does not depend on the input.
+    #[test]
+    fn test_enforce_le_bits_exhaustive() {
+        for len in 0..=6 {
+            for maximum in 0..(2u64 << len) + 2 {
+                let mut shape = None;
+                for x in 0..1u64 << len {
+                    let bits: Vec<bool> = (0..len).map(|i| x >> i & 1 == 1).collect();
+                    match le_bits(&bits, F::from(maximum)) {
+                        Ok(sim) => {
+                            assert!(x <= maximum, "accepted {x} > {maximum} on {len} bits");
+                            let this = (sim.num_gates(), sim.num_constraints());
+                            assert_eq!(*shape.get_or_insert(this), this);
+                        }
+                        Err(ragu_core::Error::InvalidWitness(_)) => {
+                            assert!(x > maximum, "rejected {x} <= {maximum} on {len} bits");
+                        }
+                        Err(e) => panic!("unexpected error: {e:?}"),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_is_equal_same() -> Result<()> {
         let sim = Simulator::simulate((F::from(123u64), F::from(123u64)), |dr, witness| {
             let (a_val, b_val) = witness.cast();
@@ -691,6 +859,39 @@ mod tests {
     }
 
     proptest! {
+        /// Differential check against integer comparison, on bit strings up
+        /// to wider than the field. Inputs are either arbitrary or a few bit
+        /// flips away from the constant, so that long matching prefixes occur.
+        #[test]
+        fn enforce_le_bits_matches_integer_order(
+            maximum in strategies::prime_field_element::<F>(),
+            len in 0usize..=300,
+            noise in proptest::collection::vec(proptest::bool::ANY, 300),
+            flips in proptest::option::of(
+                proptest::collection::vec(any::<proptest::sample::Index>(), 0..=3),
+            ),
+        ) {
+            let maximum_bits = maximum.to_le_bits();
+            let mut bits = noise;
+            bits.truncate(len);
+            if let Some(flips) = flips {
+                for (i, bit) in bits.iter_mut().enumerate() {
+                    *bit = maximum_bits.get(i).copied().unwrap_or(false);
+                }
+                for flip in flips.iter().filter(|_| len > 0) {
+                    let i = flip.index(len);
+                    bits[i] = !bits[i];
+                }
+            }
+
+            let accepted = match le_bits(&bits, maximum) {
+                Ok(_) => true,
+                Err(ragu_core::Error::InvalidWitness(_)) => false,
+                Err(e) => return Err(TestCaseError::fail(format!("{e:?}"))),
+            };
+            prop_assert_eq!(accepted, le_as_integers(&bits, &maximum_bits));
+        }
+
         #[test]
         fn boolean_and_idempotent(a_val in proptest::bool::ANY) {
             let mut actual = None;
