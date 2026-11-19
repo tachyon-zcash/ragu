@@ -6,8 +6,9 @@
 //! extension's polynomials, and its bootstrap proof verifies with the
 //! chunks run over the wallet application's canonical compressed proof. A
 //! wallet proof decompresses into a proof of the aggregator carrying its
-//! header; one relabelled on the way fails, and so does one whose two
-//! sides were prepared from different compressed proofs.
+//! header; one relabelled on the way fails, and so do one whose two
+//! sides were prepared from different compressed proofs and one of another
+//! wallet application's registry.
 
 use alloc::{string::ToString, vec::Vec};
 
@@ -823,6 +824,104 @@ fn the_aggregator_reads_statements_with_the_wallets_headers() {
     assert!(
         matches!(none, Err(Error::Initialization(_))),
         "no header at the wallet's suffix"
+    );
+}
+
+/// A prover cannot pass another wallet application's proof through the
+/// decompression, whichever stage it writes that application's registry
+/// in. The other application registers one more step, under our wallet's
+/// registry tags: a collision no prover can produce, which the test
+/// installs so that the two aggregators' own registries are the same and
+/// only the wallet registry their batches certify tells them apart.
+///
+/// With the other registry's evaluations in the work stage alone, under
+/// our aggregator's batches, the chunk that holds them to the query stage
+/// is unsatisfied. With the batches over the other registry too, as the
+/// aggregator built over that application proves them, every circuit of
+/// our registries is satisfied and the terminal check is what fails: the
+/// verifier evaluates the wallet registry it holds, uncompressed and
+/// compressed.
+#[test]
+fn another_applications_registry_is_rejected_in_either_stage() {
+    let pasta = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(47);
+    let ours_wallet = wallet();
+    let other_wallet = ApplicationBuilder::<Pasta, TestR, HEADER_SIZE>::new()
+        .with_native_tag(ours_wallet.native_registry.tag())
+        .with_nested_tag(ours_wallet.nested_registry.tag())
+        .register(Leaf)
+        .unwrap()
+        .register(Join)
+        .unwrap()
+        .finalize(pasta)
+        .unwrap();
+    let (leaf, _) = other_wallet.seed(&mut rng, Leaf, Fp::from(42)).unwrap();
+    let compressed = other_wallet.compress(&leaf, &mut rng).unwrap();
+    assert!(other_wallet.verify_compressed(&compressed).unwrap());
+    assert!(
+        !matches!(ours_wallet.verify_compressed(&compressed), Ok(true)),
+        "the proof is not one of our wallet application's"
+    );
+
+    let aggregator = |wallet, rng: &mut StdRng| {
+        ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
+            .register(Leaf)
+            .unwrap()
+            .register(Join)
+            .unwrap()
+            .finalize_with(pasta, Decompression::new(wallet, rng).unwrap())
+            .unwrap()
+    };
+    let ours = aggregator(ours_wallet, &mut rng);
+    let theirs = aggregator(other_wallet, &mut rng);
+    assert_eq!(
+        (ours.native_registry.tag(), ours.nested_registry.tag()),
+        (theirs.native_registry.tag(), theirs.nested_registry.tag()),
+        "the aggregators' own registries are the same"
+    );
+    assert!(
+        ours.decompress(&mut rng, &compressed).is_err(),
+        "our prover refuses the proof before proving"
+    );
+
+    // The work stage alone: the other application's evaluations, as its
+    // own verifier computes them, under our aggregator's batches, which
+    // open our wallet's registry.
+    let prepared = theirs.context().prepare(&compressed).unwrap();
+    let (forged, ()) = ours
+        .fuse_with_source(
+            &mut rng,
+            Decompress::<Value>::new(),
+            (
+                Fp::from(42),
+                prepared.host_rounds(),
+                prepared.transcript_digest(),
+            ),
+            ours.bootstrap_pcd(),
+            ours.bootstrap_pcd(),
+            Some(&prepared),
+        )
+        .unwrap();
+    assert!(
+        matches!(ours.verify_uncompressed(&forged, &mut rng), Ok(false)),
+        "evaluations of another registry than the batches' fail a chunk"
+    );
+
+    // Both stages: the other aggregator's decompression, whose batches
+    // open the other application's registry, is a proof of the registries
+    // the two aggregators share, and our verifier's terminal check
+    // evaluates our wallet's registry.
+    let node = theirs.decompress(&mut rng, &compressed).unwrap();
+    assert!(theirs.verify_uncompressed(&node, &mut rng).unwrap());
+    assert!(
+        matches!(ours.verify_uncompressed(&node, &mut rng), Ok(false)),
+        "batches over another registry fail the terminal check"
+    );
+    let compressed = theirs.compress(&node, &mut rng).unwrap();
+    assert!(theirs.verify_compressed(&compressed).unwrap());
+    assert!(
+        matches!(ours.verify_compressed(&compressed), Ok(false)),
+        "and its compression the compressed verifier's"
     );
 }
 

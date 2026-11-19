@@ -99,7 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `profile::online::mesh::Mesh` over a batch's slots, and
   `ApplicationBuilder::with_source_registries` captures the registries it
   restricts as `profile::online::source::SourceRegistry`s, or, without them,
-  `Profile::source_registries` reads them off the profile's prover context.
+  `Profile::source_registries` reads them off the profile's prover context;
+  finalization refuses a builder and a context that both supply one for the
+  same field.
   Each step carries both children's outgoing restrictions, and compression
   closes the root's. `Profile::{NATIVE,NESTED}_DOMAIN_INPUTS` name inputs the
   helper holds to the source registry's domain, and

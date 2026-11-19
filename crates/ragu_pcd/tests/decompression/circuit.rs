@@ -1,9 +1,10 @@
 //! The decompressed verifier end to end on a real compressed proof: both
 //! sides' circuits accept the honest proof, and a message or statement
 //! tampered with after the witness is prepared fails one of them. The
-//! tamperings leave the witness's $G'$ honest; a prover who recomputes
-//! $G'$ to fit is one of the open gaps the module records, and is not
-//! covered.
+//! tamperings leave the witness's $G'$ honest: these whole-side circuits
+//! take $G'$ as a witness point they do not bind, which the chunk circuits
+//! do through the step binding, so a prover who recomputes $G'$ to fit is
+//! not covered here.
 
 use ragu_core::pasta::{Fp, Fq, Pasta};
 use ragu_primitives::Simulator;

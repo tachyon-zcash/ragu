@@ -31,10 +31,11 @@ const STATE: usize =
     <<Pasta as Cycle>::CircuitPoseidon as PoseidonPermutation<<Pasta as Cycle>::CircuitField>>::T;
 
 /// Every work slot a chunk reads was written by an earlier chunk, or is
-/// prover-supplied, every slot is written at most once, every sponge
-/// state is saved before it is resumed, every lift and digit is written,
-/// every exposed point is written, and every stage position read is
-/// within the layout.
+/// prover-supplied, every slot is written exactly once or prover-supplied,
+/// so that the work stage holds no slot nothing fills, every sponge state
+/// is saved before it is resumed, every lift and digit is written, every
+/// exposed point is written, and every stage position read is within the
+/// layout.
 fn check(schedule: &Schedule) {
     let layout = &schedule.layout;
     let mut elements = alloc::vec![false; schedule.elements];
@@ -344,6 +345,13 @@ fn check(schedule: &Schedule) {
     );
     for &slot in &regions.exposed {
         assert!(points[slot], "exposed point {slot} is written");
+    }
+    // The work stage holds no slot nothing fills.
+    for (slot, &written) in points.iter().enumerate() {
+        assert!(written, "point slot {slot} is never written");
+    }
+    for (slot, &written) in elements.iter().enumerate() {
+        assert!(written, "element slot {slot} is never written");
     }
 }
 

@@ -720,11 +720,12 @@ fn rejects_tampered_stages() {
 /// A chunk that scales by a challenge taken from bits holds those bits to
 /// the lifts stage. The scalar-field side is re-run with other bits for
 /// the host curve's $\beta$, which only point chains scale by, and with
-/// the $G'$ a prover choosing those bits would pick, since nothing binds
-/// it yet: the one that keeps the IPA's final equality. Every chunk is
-/// then consistent with the other bits; the lifts stage alone is restored
-/// to the honest lifts. A circuit that runs no lift chunk then fails: the
-/// chains' bits cannot differ from the lift chunk's.
+/// the $G'$ a prover choosing those bits would pick, which nothing holds
+/// outside the decompression step: the one that keeps the IPA's final
+/// equality. Every chunk is then consistent with the other bits; the lifts
+/// stage alone is restored to the honest lifts. A circuit that runs no
+/// lift chunk then fails: the chains' bits cannot differ from the lift
+/// chunk's.
 #[test]
 fn chains_hold_their_bits_to_the_lifts_stage() {
     let setup = Setup::new();

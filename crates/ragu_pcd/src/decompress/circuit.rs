@@ -20,10 +20,12 @@
 //! stage the other side recomputes or absorbs (see [`stages`]); here, in
 //! the whole-side circuits the tests run, the [`Witness`] carries them and
 //! the two sides allocate them from it, with each side's own $v$ and
-//! $c b z$ held to the witness's. The registry's evaluations arrive as wires nothing yet
-//! checks, and each side's IPA takes its $G'$ as a witness point these
-//! circuits do not bind: the chunk circuits bind both through the step
-//! binding, and the module's *What remains* records the rest.
+//! $c b z$ held to the witness's. Here the registry's evaluations arrive
+//! as wires nothing checks, and each side's IPA takes its $G'$ as a
+//! witness point these circuits do not bind: the chunk circuits hold the
+//! evaluations to the step's online batches and bind $G'$ through the step
+//! binding (see the module's *Registry evaluations* and *The step
+//! binding*).
 //!
 //! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
 //! [`stages`]: super::stages

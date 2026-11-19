@@ -1494,12 +1494,18 @@ impl Builder {
                 .members(g)
                 .map(|i| pick(&claims[i]).then_some(PointSrc::Work(claim_points[i])))
                 .collect();
-            let slot = self.slots.point();
-            if self.horner(&members, inner, slot) {
-                groups.push(Some(PointSrc::Work(slot)));
-            } else {
+            // A group none of whose claims is picked has no chain, and
+            // takes no slot.
+            if members.iter().all(Option::is_none) {
                 groups.push(None);
+                continue;
             }
+            let slot = self.slots.point();
+            assert!(
+                self.horner(&members, inner, slot),
+                "a group with a member has a chain"
+            );
+            groups.push(Some(PointSrc::Work(slot)));
         }
         assert!(
             self.horner(&groups, outer, out),
@@ -2545,9 +2551,9 @@ fn nested_schedule_with<
     let scalar = |i: usize| ElementSrc::Instance(instance.scalars.at(i));
 
     // The lifts: the nested curve's compression challenges, the fuse's x,
-    // y and u and the host curve's compression challenges, all squeezed on
-    // the other side, from their bits, into the lifts stage in that order,
-    // which the other side recomputes.
+    // y, u and w and the host curve's compression challenges, all squeezed
+    // on the other side, from their bits, into the lifts stage in that
+    // order, which the other side recomputes.
     b.regions.lifts = b.slots.lifts(per_curve);
     b.regions.fuse_lifts = b.slots.lifts(fuse::LIFTED.len());
     b.regions.point_lifts = b.slots.lifts(per_curve);

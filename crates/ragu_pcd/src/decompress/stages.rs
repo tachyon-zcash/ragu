@@ -438,7 +438,7 @@ impl Layout {
 
     /// The scalar-field side's layout, over the scalar field `F`, for a
     /// proof in profile `P`: it lifts both curves' compression challenges
-    /// and the fuse's $x$, $y$ and $u$, all squeezed on the other side,
+    /// and the fuse's $x$, $y$, $u$ and $w$, all squeezed on the other side,
     /// and holds the digits of its $v$, $c$ and $c b z$ and of the `ab`
     /// bridge's coefficients for the circuit-field side.
     pub(crate) fn nested<F: Field, P: Profile, K: Rank>() -> Self {

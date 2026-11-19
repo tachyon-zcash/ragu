@@ -295,11 +295,11 @@
 //!
 //! The controls with the real circuits cover a wallet proof's
 //! decompression, a relabelled one, mixed sides, swapped chunk circuits,
-//! the dummy suffix and two levels of recursion over decompressed proofs,
-//! and were checked against builds with a check disabled: without the
-//! lifts-stage binding of a chunk's challenge bits, or without the
-//! enforcement of a chunk's work-stage writes, the chunk tests that target
-//! them fail.
+//! another application's registry, the dummy suffix and two levels of
+//! recursion over decompressed proofs, and were checked against builds
+//! with a check disabled: without the lifts-stage binding of a chunk's
+//! challenge bits, or without the enforcement of a chunk's work-stage
+//! writes, the chunk tests that target them fail.
 
 use alloc::vec::Vec;
 

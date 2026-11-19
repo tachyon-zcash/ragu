@@ -49,8 +49,8 @@ test-utils = []
 unstable-fuzzing = ["test-utils"]
 # Exposes the aggregator profile: `profile::Aggregator`, its `Decompression`
 # context and chunk circuit `Counts`, and `Application::decompress`. Not part of
-# the stable public API: the profile is not yet sound against a dishonest
-# prover (see `Aggregator`'s docs).
+# the stable public API: the construction has not been audited (see
+# `Aggregator`'s docs).
 unstable-aggregator = []
 
 [build-dependencies]
