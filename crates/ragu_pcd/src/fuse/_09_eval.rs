@@ -26,6 +26,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use super::{
+    _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
 };
@@ -48,6 +49,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bound_challenges: &[C::CircuitField; native::circuits::bind_challenges::NUM_BOUND],
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,
@@ -66,10 +68,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         }
         // The binding partials use only the ten lifts and the sign. Beta
         // is filled after `pre_beta` is squeezed, before this witness is committed.
-        let nested_challenges = nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
+        let nested_challenges = nested::stages::challenges::Witness::new(
             lifts,
-            builder.left_header(),
-            builder.right_header(),
+            nested::stages::challenges::takes_base_case::<_, HEADER_SIZE>(
+                builder.left_header(),
+                builder.right_header(),
+            ),
             C::ScalarField::ZERO,
         );
         let partials = native::stages::eval::BindingPartials::compute::<C, R, B>(
@@ -100,6 +104,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             || native::stages::eval::CurrentStepWitness {
                 registry_wx0: B::sparse_eval(&s_prime.registry_wx0_poly, u),
                 registry_wx1: B::sparse_eval(&s_prime.registry_wx1_poly, u),
+                application: B::sparse_eval(&application.rx, u),
+                application_stage: B::sparse_eval(&application.stage.rx, u),
                 registry_wy: B::sparse_eval(&registry_wy.poly, u),
                 a_poly: B::sparse_eval(native_a_poly, u),
                 b_poly: B::sparse_eval(native_b_poly, u),
@@ -109,6 +115,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
 
         let native = native::stages::eval::Witness {
+            online_stage: builder.nested_online_stage_coordinates(2),
             left: left_witness,
             right: right_witness,
             current,
@@ -166,6 +173,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         eval_witness: &native::stages::eval::Witness<C>,
         nested_eval: &nested::stages::eval::Evaluations<C::ScalarField, C::Profile>,
+        online_stage: ragu_primitives::vec::FixedVec<
+            C::HostCurve,
+            crate::profile::online::stages::Present<
+                C::Profile,
+                crate::profile::online::stages::Native,
+                1,
+            >,
+        >,
     ) -> Result<(
         sparse::Polynomial<C::CircuitField, R>,
         sparse::Polynomial<C::ScalarField, R>,
@@ -181,6 +196,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested::stages::eval::Witness {
+                online_stage,
                 native_eval: native_eval_commitment,
                 nested: nested_eval.clone(),
             },

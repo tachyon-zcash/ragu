@@ -33,7 +33,7 @@ fn check(mutate: impl FnOnce(&mut TestProof)) -> Result<()> {
 
     let mut proof = honest.proof().clone();
     mutate(&mut proof);
-    assert!(proof.well_formed::<4>());
+    assert!(proof.well_formed());
     assert_ne!(
         ReferenceBackend::sparse_commit_to_affine(
             proof.nested_p_poly(),

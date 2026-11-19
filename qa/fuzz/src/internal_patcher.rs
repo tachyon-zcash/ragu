@@ -47,7 +47,8 @@ pub fn capture_checked<'w, F: Field, Cir: Circuit<F>>(
                 .copied()
                 .filter(|output| matches!(output, OutputRef::Instance(2..)))
                 .collect::<Vec<_>>(),
-            (2..39).map(OutputRef::Instance).collect::<Vec<_>>(),
+            // x, y, u and the sixteen exported points' coordinates.
+            (2..37).map(OutputRef::Instance).collect::<Vec<_>>(),
             "nested collapse must declare x, y, u and every exported point coordinate",
         );
     }

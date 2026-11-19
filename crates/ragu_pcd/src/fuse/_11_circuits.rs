@@ -16,7 +16,7 @@ use crate::{
     Application,
     header::NUM_ONLINE_FP_POLYS,
     internal::{native, native::total_circuit_counts, nested},
-    profile::{Profile, ProfiledCycle},
+    profile::{Profile, ProfiledCycle, online::batch::Challenges},
     proof::ProofBuilder,
 };
 
@@ -135,9 +135,30 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut *rng,
         )?;
 
+        // The online batch's helper, traced first: compute-v takes its fold.
+        let challenges = Challenges {
+            w: builder.w(),
+            y: builder.y(),
+            x: builder.x(),
+            alpha: builder.alpha(),
+            u: builder.u(),
+            beta: builder.pre_beta(),
+        };
+        let online_fold = builder.native_online_mut().trace(
+            challenges.clone(),
+            &self.native_registry,
+            |circuit| {
+                native::InternalCircuitIndex::ExtensionCircuit(circuit)
+                    .circuit_index::<C::Profile>()
+            },
+            rng,
+        )?;
+
         let (compute_v_trace, unified) =
             native::circuits::compute_v::Circuit::<C, R, HEADER_SIZE>::new()
                 .trace(native::circuits::compute_v::Witness {
+                    online_fold,
+                    binding: &native_points.binding,
                     unified,
                     preamble_witness,
                     query_witness,
@@ -223,13 +244,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_native_bind_endoscalar_rx(bind_endoscalar_rx);
 
         // The profile's extension: its prover fills every circuit's and
-        // stage's polynomial over the context the application holds.
-        let extension = C::Profile::native_extension();
-        let rxs = C::Profile::native_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
+        // stage's polynomial over the context the application holds, and the
+        // online batch completes them with its helper's and stages'.
+        let extension = crate::profile::native_extension::<C::Profile>();
+        let online = builder.native_online().witness(challenges);
+        let rxs = C::Profile::native_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             &self.native_registry,
+            online.as_ref(),
             rng,
         )?;
+        let rxs = builder.native_online_mut().extension_rxs(rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its native extension".into(),
@@ -254,10 +279,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_endoscalar: Uendo,
         nested_points: &nested::PointsWitness<C::HostCurve, C::Profile>,
         nested_preamble_witness: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
-        nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve>,
+        nested_s_prime_witness: &nested::stages::s_prime::Witness<C::HostCurve, C::Profile>,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
         nested_outer_error_witness: &nested::stages::outer_error::Witness<C::HostCurve, C::Profile>,
-        nested_ab_witness: &nested::stages::ab::Witness<C::HostCurve>,
+        nested_ab_witness: &nested::stages::ab::Witness<C::HostCurve, C::Profile>,
         nested_query_witness: &nested::stages::query::Witness<C::HostCurve, C::Profile>,
         nested_f_witness: &nested::stages::f::Witness<C::HostCurve>,
         nested_eval_witness: &nested::stages::eval::Witness<C::HostCurve, C::Profile>,
@@ -287,12 +312,30 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_points_f_commitment(),
                 builder.online_commitments()[0],
                 builder.online_commitments()[1],
-                builder.native_application_stage_commitment(),
             ],
             coverage: Default::default(),
         };
+        // The online batch's helper, traced first: compute-v takes its fold.
+        let challenges = Challenges {
+            w: nested::challenge::<C>(builder.w())?,
+            y: nested::challenge::<C>(builder.y())?,
+            x: nested::challenge::<C>(builder.x())?,
+            alpha: nested::challenge::<C>(builder.alpha())?,
+            u: nested::challenge::<C>(builder.u())?,
+            beta: nested::challenge::<C>(builder.pre_beta())?,
+        };
+        let online_fold = builder.nested_online_mut().trace(
+            challenges.clone(),
+            &self.nested_registry,
+            |circuit| {
+                nested::InternalCircuitIndex::ExtensionCircuit(circuit)
+                    .circuit_index::<C::Profile>()
+            },
+            rng,
+        )?;
         let witness = |instance| nested::circuits::common::Witness {
             instance,
+            online_fold: online_fold.clone(),
             endoscalar: nested_endoscalar,
             bridge_hash: builder.online_commitments()[NUM_ONLINE_FP_POLYS - 1],
             points: nested_points,
@@ -339,12 +382,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_collapse_rx(collapse_rx);
         builder.set_nested_compute_v_rx(compute_v_rx);
 
-        let extension = C::Profile::nested_extension();
-        let rxs = C::Profile::nested_extension_rxs::<C::Base, R, HEADER_SIZE, B, RNG>(
+        // The profile's extension, as on the native side.
+        let extension = crate::profile::nested_extension::<C::Profile>();
+        let online = builder.nested_online().witness(challenges);
+        let rxs = C::Profile::nested_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
             &self.nested_registry,
+            online.as_ref(),
             rng,
         )?;
+        let rxs = builder.nested_online_mut().extension_rxs(rxs)?;
         if rxs.circuits.len() != extension.circuits.len() || rxs.stages.len() != extension.stages {
             return Err(Error::Initialization(
                 "the profile's prover did not fill its nested extension".into(),

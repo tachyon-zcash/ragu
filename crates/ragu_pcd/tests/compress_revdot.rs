@@ -156,7 +156,6 @@ fn verify_native_round(
 ) -> Option<Openings<EqAffine>> {
     let mut t = transcript();
     verify_native::<Pasta, TestR, ReferenceBackend>(
-        round.proof.circuit_id(),
         |component| round.proof.native_commitment(component),
         &app.native_registry,
         round.y,
@@ -260,6 +259,8 @@ fn nested_reduction_verifies() {
     let targets = NestedKy {
         c: proof.nested_c(),
         unified: ky::nested_ky(proof, y).unwrap(),
+        compute_v: ky::nested_ky(proof, y).unwrap(),
+        online_helper: None,
         binding: None,
     };
     let commitment = |component| match component {

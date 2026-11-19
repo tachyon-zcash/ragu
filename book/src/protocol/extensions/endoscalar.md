@@ -143,7 +143,7 @@ $\beta$. Lift injectivity is what makes
 that equality determine the bits. Stage sharing, the parent challenge
 commitment binding, and the root check must preserve these same wires.
 
-`bind_beta` performs two plain endoscalings, one per child, and costs 1891
+`bind_beta` performs two plain endoscalings, one per child, and costs 1897
 gates at 143 bits. It now ends at the preamble under its own final mask
 instead of chaining through the `outer_error` stage, whose wires it never
 read. Its claim contains `BindBeta`, `PointsBinding`, and `Preamble`; the
@@ -154,13 +154,15 @@ including masks, with 25 native and 29 nested walk steps once the online
 polynomials of the input and output proofs, the application stage and the
 bridge-hash stage join the batch.
 
-The constraint census uses production rank `R<13>`, a 96-element header,
+The constraint census uses production rank `R<13>`, a 201-element header,
 and 6000 placeholder application circuits. In that fixture the largest
 `bind_challenges` variant uses all 2048 gates; the binders load the
-preamble, query and eval stages, each of which now carries the online
-openings, the application stage's evaluations and the children's bridge
-hashes. The census tests pin that count;
-extending the binder requires rechecking its capacity.
+preamble, query and eval stages, and the preamble carries the step's own
+output header and online openings beside the children's bridge hashes. The
+header grew from 96 elements when each step began to fold its own
+application claim: the preamble then stopped carrying the grandchildren's
+headers. The census tests pin that count; extending the binder requires
+rechecking its capacity.
 
 The exceptional-case invariant is explicit in the integer model: every
 accumulator has Eisenstein norm at least four, while every digit has norm
@@ -204,7 +206,7 @@ domain size $K=64$, revdot group size and group count $M=7$, $N=14$ on the
 native side and $M=8$, $N=10$ on the nested side, $T=150$ nested PCS
 queries (the 18 static openings, each child's 43 rx polynomials at
 $x_n z_n$, and the registry restriction at each of the 46 nested internal
-circuits' $\omega^j$), and point folds of 101 native and 117 nested terms.
+circuits' $\omega^j$), and point folds of 101 native and 115 nested terms.
 One challenge set drives both fields' revdot folds, so each fold challenge
 is charged for both sides. The entries bound the number of roots charged to
 a challenge, conditional on the relevant discrepancy being a nonzero
@@ -226,10 +228,10 @@ has $m-1$ coefficients and must be committed before the folding challenge.
 | $x_n$ | Two folded-polynomial checks and registry restriction | $3(D-1)=24573$ |
 | $\alpha_n$ | Batching the $T$ opening claims | $T-1=149$ |
 | $u_n$ | Quotient identity, clearing at most $T$ denominators | $D+T-1=8341$ |
-| $\beta$ | Both point folds, with 101 and 117 terms | $100+116=216$ |
+| $\beta$ | Both point folds, with 101 and 115 terms | $100+114=214$ |
 
 Counting the comparisons separately, rather than relying on the gist's
-six-check shorthand, gives $66521/2^{143} \approx 2^{-126.98}$ for this
+six-check shorthand, gives $66519/2^{143} \approx 2^{-126.98}$ for this
 local ledger. In particular, the lower-degree challenges must not be
 omitted, even though they do not change the rounded estimate of about
 127 bits. The $u_n$ entry conservatively clears the quotient denominators;

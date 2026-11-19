@@ -98,7 +98,7 @@ pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionCircuits<P> {
     fn len() -> usize {
-        P::native_extension().circuits.len()
+        crate::profile::native_extension::<P>().circuits.len()
     }
 }
 
@@ -107,7 +107,7 @@ pub struct NumExtensionStages<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionStages<P> {
     fn len() -> usize {
-        P::native_extension().stages
+        crate::profile::native_extension::<P>().stages
     }
 }
 
@@ -116,7 +116,7 @@ pub struct NumExtensionBondings<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionBondings<P> {
     fn len() -> usize {
-        P::native_extension().bondings()
+        crate::profile::native_extension::<P>().bondings()
     }
 }
 
@@ -131,16 +131,19 @@ fn try_fixed_vec<T, L: Len, E>(
     Ok(FixedVec::new(values).expect("the index range fixes the vector length"))
 }
 
-/// The native rx polynomials that are not endoscaling steps: the
-/// application's and its stage's, the four hashing, collapse and compute-v
-/// circuits', the binders', bind-beta's, bind-endoscalar's and the eleven
-/// stages'.
-pub const NUM_FIXED_RX: usize = 19 + NUM_BINDERS;
+/// The native rx polynomials that are not endoscaling steps: the four
+/// hashing, collapse and compute-v circuits', the binders', bind-beta's,
+/// bind-endoscalar's and the eleven stages'.
+///
+/// The application's rx and its stage's are not among them: a step folds
+/// its own application claim and opens both polynomials itself, so a proof
+/// does not carry them to its parent.
+pub const NUM_FIXED_RX: usize = 17 + NUM_BINDERS;
 
 /// The native internal circuits that are not endoscaling steps: the rx
-/// polynomials' circuits and stages, the application's two aside, the five
-/// final stage masks, and the application stage's mask and final mask.
-pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX - 2 + 5 + 2;
+/// polynomials' circuits and stages, the five final stage masks, and the
+/// application stage's mask and final mask.
+pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 5 + 2;
 
 /// The minimum groups for the native quotient fold: fourteen groups of
 /// seven provide room for 98 claims. Larger profiles grow the group count.
@@ -149,9 +152,9 @@ pub const NUM_FOLD_GROUPS: usize = 14;
 /// The claims in a native fold group.
 pub const FOLD_GROUP_SIZE: usize = 7;
 
-/// The native revdot claims of profile `P` the fuse folds: two children's
-/// raw and application claims, each internal circuit's claim per child,
-/// and each bonding's claim across both.
+/// The native revdot claims of profile `P` the fuse folds: the two
+/// children's raw claims, the step's own application claim, each internal
+/// circuit's claim per child, and each bonding's claim across both.
 pub fn num_claims<P: Profile>() -> usize {
     let (circuits, bondings) =
         InternalCircuitIndex::all::<P>()
@@ -163,7 +166,7 @@ pub fn num_claims<P: Profile>() -> usize {
                     (circuits + 1, bondings)
                 }
             });
-    2 + 2 + 2 * circuits + bondings
+    2 + 1 + 2 * circuits + bondings
 }
 
 /// Length type for the native fold's groups in profile `P`: the standard
@@ -352,14 +355,16 @@ impl InternalCircuitIndex {
     /// The number of internal circuits registered by [`register_all`] in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_INTERNAL + NumSteps::<P>::len() + P::native_extension().internal()
+        NUM_FIXED_INTERNAL
+            + NumSteps::<P>::len()
+            + crate::profile::native_extension::<P>().internal()
     }
 
     /// All variants in canonical iteration order, for profile `P`:
     /// [`ALL`](Self::ALL) with the walk resized to the profile's steps, the
     /// profile's extension circuits after the walk and its bondings last.
     pub fn all<P: Profile>() -> Vec<Self> {
-        let extension = P::native_extension();
+        let extension = crate::profile::native_extension::<P>();
         let all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
@@ -587,12 +592,6 @@ impl<T, P: Profile> InternalCircuitValues<T, P> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxIndex {
     // Circuits
-    Application,
-    /// The application stage, which the application claim adds to the
-    /// step's own polynomial. The stage mask holds it to its block and the
-    /// application final mask holds the step's own polynomial to zero
-    /// there, so its commitment binds exactly the staged values.
-    ApplicationStage,
     Hashes1,
     Hashes2,
     Collapse,
@@ -650,8 +649,6 @@ impl RxIndex {
 
         let mut slots = [None; Self::NUM];
         let mut c = 0;
-        push(&mut slots, &mut c, Self::Application);
-        push(&mut slots, &mut c, Self::ApplicationStage);
         push(&mut slots, &mut c, Self::Hashes1);
         push(&mut slots, &mut c, Self::Hashes2);
         push(&mut slots, &mut c, Self::Collapse);
@@ -689,14 +686,14 @@ impl RxIndex {
 
     /// The number of rx polynomial components in profile `P`.
     pub fn num<P: Profile>() -> usize {
-        NUM_FIXED_RX + NumSteps::<P>::len() + P::NATIVE_EXTENSION
+        Shape::of::<P>().native_rx
     }
 
     /// All variants in canonical order, for profile `P`: [`ALL`](Self::ALL)
     /// with the walk resized to the profile's steps, then the profile's
     /// extension circuits' and stages' polynomials.
     pub fn all<P: Profile>() -> Vec<Self> {
-        let extension = P::native_extension();
+        let extension = crate::profile::native_extension::<P>();
         let all = Self::all_with(
             NumSteps::<P>::len(),
             extension.circuits.len(),
@@ -733,8 +730,6 @@ impl RxIndex {
 /// [`try_from_fn`](Self::try_from_fn) to construct from a closure.
 #[derive(Clone)]
 pub struct RxValues<T, P: Profile> {
-    pub application: T,
-    pub application_stage: T,
     pub hashes_1: T,
     pub hashes_2: T,
     pub collapse: T,
@@ -781,8 +776,6 @@ impl<T, P: Profile> RxValues<T, P> {
     pub fn get(&self, id: RxIndex) -> &T {
         use RxIndex::*;
         match id {
-            Application => &self.application,
-            ApplicationStage => &self.application_stage,
             Hashes1 => &self.hashes_1,
             Hashes2 => &self.hashes_2,
             Collapse => &self.collapse,
@@ -824,8 +817,6 @@ impl<T, P: Profile> RxValues<T, P> {
     ) -> core::result::Result<Self, E> {
         use RxIndex::*;
         Ok(RxValues {
-            application: f(Application)?,
-            application_stage: f(ApplicationStage)?,
             hashes_1: f(Hashes1)?,
             hashes_2: f(Hashes2)?,
             collapse: f(Collapse)?,
@@ -902,10 +893,9 @@ pub(crate) enum StaticFQuery {
     RegistryWyAtX,
     /// Current registry-xy polynomial queried at the current $w$.
     RegistryXyAtW,
-    /// Current registry-xy polynomial queried at the left child's circuit id.
-    RegistryXyAtLeftCircuitId,
-    /// Current registry-xy polynomial queried at the right child's circuit id.
-    RegistryXyAtRightCircuitId,
+    /// Current registry-xy polynomial queried at the step's own circuit id:
+    /// the selector restriction of the step's application claim.
+    RegistryXyAtCircuitId,
     /// Left child $a$ polynomial queried at $xz$.
     LeftAbAAtXz,
     /// Left child $b$ polynomial queried at $x$.
@@ -918,10 +908,14 @@ pub(crate) enum StaticFQuery {
     CurrentAAtXz,
     /// Current accumulator $b$ polynomial queried at $x$.
     CurrentBAtX,
+    /// The step's own application rx queried at $xz$.
+    CurrentApplicationAtXz,
+    /// The step's own application stage rx queried at $xz$.
+    CurrentApplicationStageAtXz,
 }
 
 /// Ordered static prefix for fuse quotient polynomial queries.
-pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
+pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 21] = [
     StaticFQuery::LeftP,
     StaticFQuery::RightP,
     StaticFQuery::LeftRegistryXyAtW,
@@ -934,14 +928,15 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
     StaticFQuery::RegistryWyAtRightX,
     StaticFQuery::RegistryWyAtX,
     StaticFQuery::RegistryXyAtW,
-    StaticFQuery::RegistryXyAtLeftCircuitId,
-    StaticFQuery::RegistryXyAtRightCircuitId,
+    StaticFQuery::RegistryXyAtCircuitId,
     StaticFQuery::LeftAbAAtXz,
     StaticFQuery::LeftAbBAtX,
     StaticFQuery::RightAbAAtXz,
     StaticFQuery::RightAbBAtX,
     StaticFQuery::CurrentAAtXz,
     StaticFQuery::CurrentBAtX,
+    StaticFQuery::CurrentApplicationAtXz,
+    StaticFQuery::CurrentApplicationStageAtXz,
 ];
 
 /// Registers internal native circuits and masks into the provided registry.
@@ -956,6 +951,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     params: &'params C::Params,
     log2_circuits: u32,
     stage_size: usize,
+    source_tag: Option<C::CircuitField>,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
@@ -965,18 +961,31 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
-            ExtensionCircuit(k) => C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
-                k as usize,
-                CircuitSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
-            ExtensionBonding(j) => C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
-                j as usize,
-                BondingSlot::new(registry),
-                params,
-            )?
-            .into_registry(),
+            ExtensionCircuit(k) => {
+                use crate::profile::online::{extension, stages::Native};
+                let slot = CircuitSlot::new(registry);
+                if Some(k) == extension::helper::<C::Profile, Native>() {
+                    extension::register_circuit::<_, R, C::Profile, Native>(slot, source_tag)?
+                } else {
+                    C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
+                        k as usize, slot, params,
+                    )?
+                }
+                .into_registry()
+            }
+            ExtensionBonding(j) => {
+                use crate::profile::online::{extension, stages::Native};
+                let slot = BondingSlot::new(registry);
+                match extension::bonding::<_, R, C::Profile, Native>(j as usize)? {
+                    extension::Bonding::Online(mask) => slot.register(mask),
+                    extension::Bonding::User(index) => {
+                        C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
+                            index, slot, params,
+                        )?
+                    }
+                }
+                .into_registry()
+            }
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
             }

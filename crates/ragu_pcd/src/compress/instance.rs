@@ -34,7 +34,7 @@ use crate::{
     header::NUM_ONLINE_FP_POLYS,
     internal::{
         ky::{self, NativeKy, NestedKy},
-        native::{self, online, stages as native_stages, unified as native_unified},
+        native::{self, stages as native_stages, unified as native_unified},
         nested::{
             self, challenge as nested_challenge, stages as nested_stages, unified as nested_unified,
         },
@@ -44,12 +44,11 @@ use crate::{
 };
 
 /// A child's values the current step's query and eval stages are checked
-/// against: its $x$, $y$ and circuit id as the preamble stage holds them.
+/// against: its $x$ and $y$ as the preamble stage holds them.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Child<F> {
     pub x: F,
     pub y: F,
-    pub id: F,
 }
 
 /// A child's nested $x$ and $y$ as the preamble bridge stage holds them.
@@ -63,16 +62,13 @@ pub(crate) struct NestedChild<F> {
 /// [`Instance::nested_openings`] open beyond the reduction's.
 pub(crate) const OPENED: usize = 4;
 
-/// The instance of a proof: its commitments, its headers and the scalars
-/// the decider would derive or read off polynomials.
+/// The instance of a proof: its circuit id, its commitments and the scalars
+/// the decider would derive or read off polynomials. Like a proof, it
+/// carries no header: the output header is encoded from the data it
+/// carries.
 #[derive(Clone, Debug)]
 pub(crate) struct Instance<C: Cycle> {
     pub circuit_id: CircuitIndex,
-    pub left_header: Vec<C::CircuitField>,
-    pub right_header: Vec<C::CircuitField>,
-    /// The online openings the proof's `compute_v` exported, which its
-    /// application circuit's instance is held to.
-    pub online: online::Queries<C::CircuitField>,
 
     /// The native commitments in [`native_components`] order.
     pub native: Vec<C::HostCurve>,
@@ -96,6 +92,22 @@ pub(crate) struct Instance<C: Cycle> {
     pub v: C::CircuitField,
     pub nested_c: C::ScalarField,
     pub nested_v: C::ScalarField,
+    /// The nested source mesh's coordinates and shared intersection values,
+    /// empty without a nested mesh.
+    pub nested_mesh_claims: Vec<C::ScalarField>,
+    /// The nested helper's quotient and evaluation sums, empty when the
+    /// nested online batch is inactive.
+    pub nested_online_fold: Vec<C::ScalarField>,
+    /// The native source mesh's coordinates and shared intersection values,
+    /// empty without a native mesh.
+    pub native_mesh_claims: Vec<C::CircuitField>,
+    /// The native helper's quotient and evaluation sums, empty when the
+    /// native online batch is inactive.
+    pub native_online_fold: Vec<C::CircuitField>,
+    /// The online points, initial and auxiliary, exported by bind_endoscalar.
+    pub nested_online_commitments: Vec<C::NestedCurve>,
+    /// Common claim targets for the actual native online walk points.
+    pub native_online_commitments: Vec<C::HostCurve>,
 
     /// The wires the decider reads off the preamble and eval stages.
     pub left: Child<C::CircuitField>,
@@ -148,12 +160,11 @@ impl<C: ProfiledCycle> Instance<C> {
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
             }
             Ok(wires)
         })?;
         let child: Vec<_> = child.iter().map(|&i| preamble.read(i)).collect();
-        let [lx, ly, lid, rx, ry, rid] = child.try_into().expect("six child values");
+        let [lx, ly, rx, ry] = child.try_into().expect("four child values");
 
         let eval = StageReader::<C::CircuitField, R>::new(&proof[native::RxIndex::Eval]);
         let ab = stage_wire_indices::<_, R, NativeEval<C, R, HEADER_SIZE>>(|out| {
@@ -194,9 +205,6 @@ impl<C: ProfiledCycle> Instance<C> {
 
         Ok(Instance {
             circuit_id: proof.circuit_id(),
-            left_header: proof.left_header().to_vec(),
-            right_header: proof.right_header().to_vec(),
-            online: *proof.online_openings(),
             native: native_components::<C::Profile>()
                 .map(|component| proof.native_commitment(component))
                 .collect(),
@@ -218,16 +226,14 @@ impl<C: ProfiledCycle> Instance<C> {
             v: proof.v(),
             nested_c: proof.nested_c(),
             nested_v: proof.nested_v()?,
-            left: Child {
-                x: lx,
-                y: ly,
-                id: lid,
-            },
-            right: Child {
-                x: rx,
-                y: ry,
-                id: rid,
-            },
+            nested_mesh_claims: proof.nested_mesh_claims.clone(),
+            nested_online_fold: proof.nested_online_fold.clone(),
+            native_mesh_claims: proof.native_mesh_claims.clone(),
+            native_online_fold: proof.native_online_fold.clone(),
+            nested_online_commitments: proof.nested_online_commitments.clone(),
+            native_online_commitments: proof.native_online_commitments.clone(),
+            left: Child { x: lx, y: ly },
+            right: Child { x: rx, y: ry },
             a_at_u,
             b_at_u,
             nested_left: NestedChild {
@@ -258,23 +264,22 @@ impl<C: ProfiledCycle> Instance<C> {
         self.nested_commitment(nested::RxComponent::Rx(index))
     }
 
-    /// Absorbs the instance into `transcript`: the circuit id, the headers
-    /// and the online openings, then every commitment and scalar of each
-    /// curve, so that every challenge squeezed afterwards depends on all of
-    /// it.
+    /// Absorbs the instance into `transcript`: the circuit id, then every
+    /// commitment and scalar of each curve, so that every challenge squeezed
+    /// afterwards depends on all of it.
     pub(crate) fn absorb<B: SelectableBackend>(
         &self,
         transcript: &mut CycleTranscript<'_, C, B>,
     ) -> Result<()> {
         let mut host = transcript.host();
+        for &sum in self
+            .native_mesh_claims
+            .iter()
+            .chain(&self.native_online_fold)
+        {
+            host.write_scalar(sum)?;
+        }
         host.write_scalar(self.circuit_id.omega_j())?;
-        for &element in self.left_header.iter().chain(&self.right_header) {
-            host.write_scalar(element)?;
-        }
-        for query in &self.online {
-            host.write_scalar(query.x)?;
-            host.write_scalar(query.y)?;
-        }
         for &point in self
             .native
             .iter()
@@ -284,21 +289,16 @@ impl<C: ProfiledCycle> Instance<C> {
             host.write_point(point)?;
         }
         let (l, r) = (self.left, self.right);
-        for scalar in [
-            self.c,
-            self.v,
-            l.x,
-            l.y,
-            l.id,
-            r.x,
-            r.y,
-            r.id,
-            self.a_at_u,
-            self.b_at_u,
-        ] {
+        for scalar in [self.c, self.v, l.x, l.y, r.x, r.y, self.a_at_u, self.b_at_u] {
             host.write_scalar(scalar)?;
         }
 
+        // These coordinates are also the bind_endoscalar common claim target.
+        for &point in &self.nested_online_commitments {
+            for coordinate in coordinates(point)? {
+                host.write_scalar(coordinate)?;
+            }
+        }
         let mut nested = transcript.nested();
         for &point in self.nested.iter().chain([
             &self.nested_registry_xy,
@@ -320,6 +320,20 @@ impl<C: ProfiledCycle> Instance<C> {
             self.nested_b_at_u,
         ] {
             nested.write_scalar(scalar)?;
+        }
+        // The same coordinates form the nested compute-v target and the
+        // nested helper's foreign commitment exports.
+        for &point in &self.native_online_commitments {
+            for coordinate in coordinates(point)? {
+                transcript.write_scalar_limbs(coordinate)?;
+            }
+        }
+        for &scalar in self
+            .nested_mesh_claims
+            .iter()
+            .chain(&self.nested_online_fold)
+        {
+            transcript.write_scalar_limbs(scalar)?;
         }
         Ok(())
     }
@@ -443,7 +457,6 @@ impl<C: ProfiledCycle> Instance<C> {
                 self.native_commitment(Rx(PointsF)),
                 self.online_commitments[0],
                 self.online_commitments[1],
-                self.native_commitment(Rx(ApplicationStage)),
             ],
             coverage: Default::default(),
         })
@@ -462,17 +475,21 @@ impl<C: ProfiledCycle> Instance<C> {
         let nested_bound = ky::native_bound::<C::Profile, _>(|index| {
             self.nested_commitment(nested::RxComponent::Rx(index))
         });
+        let nested_online_stages = ky::nested_online_stages::<C::Profile, _>(|index| {
+            self.nested_commitment(nested::RxComponent::Rx(index))
+        });
         let native = NativeKy {
             c: Some(self.c),
             ..ky::native_ky_of::<C, HEADER_SIZE>(
                 ky::NativeParts {
-                    left_header: &self.left_header,
-                    right_header: &self.right_header,
                     output_header,
-                    online: &self.online,
                     circuit_id: self.circuit_id,
                     unified: &unified,
                     nested_bound: &nested_bound,
+                    nested_online_stages: &nested_online_stages,
+                    nested_online_commitments: &self.nested_online_commitments,
+                    native_online_fold: &self.native_online_fold,
+                    native_mesh_claims: &self.native_mesh_claims,
                 },
                 y,
             )?
@@ -480,7 +497,19 @@ impl<C: ProfiledCycle> Instance<C> {
         let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
             self.native_commitment(native::RxComponent::Rx(index))
         });
+        let (compute_v, online_helper) = ky::nested_online_ky_of::<C>(
+            &self.nested_unified(challenges)?,
+            &ky::nested_online_values::<C>(challenges, &self.nested_online_fold)?,
+            &ky::native_online_stages::<C::Profile, _>(|index| {
+                self.native_commitment(native::RxComponent::Rx(index))
+            }),
+            &self.native_online_commitments,
+            &self.nested_mesh_claims,
+            nested_y,
+        )?;
         let nested = NestedKy {
+            compute_v,
+            online_helper,
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
             binding: ky::binding_ky_of(&native_bound, nested_y)?,
@@ -490,9 +519,9 @@ impl<C: ProfiledCycle> Instance<C> {
 
     /// Whether the two nested stages the decider recomputes from public data
     /// commit as the instance claims: the challenge stage from the
-    /// challenges' lifts and the headers, and the `ab` bridge stage from the
+    /// challenges' lifts and the circuit id, and the `ab` bridge stage from the
     /// native $a$, $b$ and points commitments under `bridge_alpha`.
-    pub(crate) fn stages_match<R: Rank, B: Backend, const HEADER_SIZE: usize>(
+    pub(crate) fn stages_match<R: Rank, B: Backend>(
         &self,
         challenges: &nested::Challenges<C::CircuitField>,
         generators: &C::NestedGenerators,
@@ -503,16 +532,21 @@ impl<C: ProfiledCycle> Instance<C> {
         let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
         let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::ZERO,
-            &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
+            &nested_stages::challenges::Witness::new(
                 challenge_lifts.try_into().expect("NUM challenge lifts"),
-                &self.left_header,
-                &self.right_header,
+                nested_stages::challenges::is_bootstrap::<C::Profile>(self.circuit_id)?,
                 beta_lift[0],
             ),
         )?;
         let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
             crate::proof::bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested_stages::ab::Witness {
+                online_points: crate::profile::online::stages::phase_points::<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    2,
+                    _,
+                >(&self.native_online_commitments),
                 a: self.native_commitment(native::RxComponent::AbA),
                 b: self.native_commitment(native::RxComponent::AbB),
                 native_points_ab: self
@@ -556,18 +590,17 @@ impl<C: ProfiledCycle> Instance<C> {
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
             }
             Ok(wires)
         })?;
-        let preamble = claim(Rx(Preamble), preamble, vec![l.x, l.y, l.id, r.x, r.y, r.id]);
+        let preamble = claim(Rx(Preamble), preamble, vec![l.x, l.y, r.x, r.y]);
 
         let query = degrees::<_, R, NativeQuery<C, R, HEADER_SIZE>>(|out| {
             let mut wires = wires_of(&out.fixed_registry)?;
             wires.extend(wires_of(&out.registry_wxy)?);
+            wires.extend(wires_of(&out.registry_xy_at_circuit_id)?);
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
                 wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
             }
             Ok(wires)
@@ -583,11 +616,10 @@ impl<C: ProfiledCycle> Instance<C> {
             .collect();
         values.extend([
             m(w, x, y),
+            m(self.circuit_id.omega_j(), x, y),
             m(w, l.x, l.y),
-            m(l.id, x, y),
             m(w, l.x, y),
             m(w, r.x, r.y),
-            m(r.id, x, y),
             m(w, r.x, y),
         ]);
         let query = claim(Rx(Query), query, values);

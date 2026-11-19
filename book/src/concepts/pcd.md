@@ -108,7 +108,9 @@ recursive statement: the computation graph must have leaves that do not
 represent a transition from prior certified data, since no predecessor can exist
 by definition. Ragu confines this base case to a single internal step, the only
 one whose two child PCD instances may be invalid; every application step has the
-claims of both children enforced.
+claims of both children enforced. A step taking the base case is held to be that
+internal step, with its data-less output and padding polynomial slots, by a
+check its own parent enforces.
 
 That internal step declares a private `Dummy` header for both inputs, and
 `Dummy` is the sentinel that selects the base case. It outputs a data-less

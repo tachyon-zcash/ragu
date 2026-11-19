@@ -18,7 +18,7 @@ use ragu_core::{
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{HoistedEndoscalar, Uendo};
+use ragu_primitives::{HoistedEndoscalar, Uendo, vec::FixedVec};
 use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
@@ -26,21 +26,26 @@ use crate::{
         endoscalar::EndoscalarStage,
         nested::{Points, PointsStage, PointsWitness, stages, unified},
     },
-    profile::Profile,
+    profile::{
+        Profile,
+        online::stages::{Nested, Present},
+    },
 };
 
 /// The witnesses of every stage a nested circuit reserves, and the nested
 /// unified instance the circuit outputs.
 pub struct Witness<'a, C: Affine, P: Profile> {
     pub instance: unified::Instance<C>,
+    /// The online helper's two sums, exported by compute-v to the same targets.
+    pub online_fold: FixedVec<C::Base, Present<P, Nested, 2>>,
     pub endoscalar: Uendo,
     pub bridge_hash: C,
     pub points: &'a PointsWitness<C, P>,
     pub preamble: &'a stages::preamble::Witness<C, P>,
-    pub s_prime: &'a stages::s_prime::Witness<C>,
+    pub s_prime: &'a stages::s_prime::Witness<C, P>,
     pub inner_error: &'a stages::inner_error::Witness<C, P>,
     pub outer_error: &'a stages::outer_error::Witness<C, P>,
-    pub ab: &'a stages::ab::Witness<C>,
+    pub ab: &'a stages::ab::Witness<C, P>,
     pub query: &'a stages::query::Witness<C, P>,
     pub f: &'a stages::f::Witness<C>,
     pub eval: &'a stages::eval::Witness<C, P>,
@@ -53,10 +58,10 @@ pub struct Loaded<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub bridge_hash: stages::bridge_hash::Output<'dr, D, C>,
     pub points: Points<'dr, D, C, P>,
     pub preamble: stages::preamble::Output<'dr, D, C, P>,
-    pub s_prime: stages::s_prime::Output<'dr, D, C>,
+    pub s_prime: stages::s_prime::Output<'dr, D, C, P>,
     pub inner_error: stages::inner_error::Output<'dr, D, C, P>,
     pub outer_error: stages::outer_error::Output<'dr, D, C, P>,
-    pub ab: stages::ab::Output<'dr, D, C>,
+    pub ab: stages::ab::Output<'dr, D, C, P>,
     pub query: stages::query::Output<'dr, D, C, P>,
     pub f: stages::f::Output<'dr, D, C>,
     pub eval: stages::eval::Output<'dr, D, C, P>,

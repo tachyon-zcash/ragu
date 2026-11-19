@@ -29,6 +29,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use super::{
+    _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
 };
@@ -73,6 +74,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &mut ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
     ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -88,12 +90,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             builder,
             left,
             right,
+            application,
         )?;
         let nested = {
             let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
             let challenges = self.nested_challenges(w, x, y, z, left, right)?;
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
-            self.compute_nested_f(&batch, challenges, alpha)
+            self.compute_nested_f(&batch, challenges, alpha, builder)?
         };
         self.commit_native_points_f(
             rng,
@@ -140,6 +143,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder: &ProofBuilder<'_, C, R, B>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
     ) -> Result<NativeF<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -194,13 +198,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 StaticFQuery::RegistryXyAtW => {
                     divide_linear_rev(builder.native_registry_xy_poly().iter_coeffs(), w)
                 }
-                StaticFQuery::RegistryXyAtLeftCircuitId => divide_linear_rev(
+                StaticFQuery::RegistryXyAtCircuitId => divide_linear_rev(
                     builder.native_registry_xy_poly().iter_coeffs(),
-                    left.circuit_id().omega_j(),
-                ),
-                StaticFQuery::RegistryXyAtRightCircuitId => divide_linear_rev(
-                    builder.native_registry_xy_poly().iter_coeffs(),
-                    right.circuit_id().omega_j(),
+                    application.circuit_id.omega_j(),
                 ),
                 StaticFQuery::LeftAbAAtXz => {
                     divide_linear_rev(left[RxComponent::AbA].iter_coeffs(), xz)
@@ -219,6 +219,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 }
                 StaticFQuery::CurrentBAtX => {
                     divide_linear_rev(builder.native_b_poly().iter_coeffs(), x)
+                }
+                StaticFQuery::CurrentApplicationAtXz => {
+                    divide_linear_rev(application.rx.iter_coeffs(), xz)
+                }
+                StaticFQuery::CurrentApplicationStageAtXz => {
+                    divide_linear_rev(application.stage.rx.iter_coeffs(), xz)
                 }
             })
             .collect();
@@ -244,7 +250,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
         }
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = builder.native_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
@@ -257,7 +264,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         batch: &pcs::Batch<'_, C, R>,
         challenges: pcs::Challenges<C::ScalarField>,
         alpha: C::ScalarField,
-    ) -> NestedF<C, R> {
+        builder: &ProofBuilder<'_, C, R, B>,
+    ) -> Result<NestedF<C, R>> {
         use udon::polynomial::divide_linear_rev;
 
         let iters: Vec<_> = batch
@@ -265,10 +273,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
             .collect();
 
-        let poly = alpha_batched_quotients::<_, R>(iters, alpha);
+        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
+        let poly = builder.nested_online().append_quotient(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
-        NestedF { poly, commitment }
+        Ok(NestedF { poly, commitment })
     }
 
     /// The nested batch this step opens, over the nested polynomials the
@@ -314,23 +323,4 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             right: pcs::ChildChallenges::of(right)?,
         })
     }
-}
-
-/// Horner-batches quotient coefficient streams with $\alpha$: the first
-/// stream receives the highest power.
-fn alpha_batched_quotients<F: Field, R: Rank>(
-    mut iters: Vec<impl Iterator<Item = F>>,
-    alpha: F,
-) -> sparse::Polynomial<F, R> {
-    let mut coeffs = Vec::with_capacity(R::num_coeffs());
-    let (first, rest) = iters.split_first_mut().unwrap();
-    for val in first.by_ref() {
-        let c = rest
-            .iter_mut()
-            .fold(val, |acc, iter| acc.mul_add(&alpha, &iter.next().unwrap()));
-        coeffs.push(c);
-    }
-    coeffs.reverse();
-
-    sparse::Polynomial::from_coeffs(coeffs)
 }

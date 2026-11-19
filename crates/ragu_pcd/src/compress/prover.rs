@@ -19,7 +19,7 @@ use crate::{
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
     proof::commitments_match,
 };
 
@@ -73,7 +73,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
         let proof = pcd.proof();
-        if !proof.well_formed::<HEADER_SIZE>() {
+        if !proof.well_formed() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));
         }
         if !self.native_registry.circuit_in_domain(proof.circuit_id()) {
@@ -116,6 +116,30 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 "an online polynomial differs from its cached commitment".into(),
             ));
         }
+        if let Some(mesh) = C::Profile::NATIVE_MESH
+            && !commitments_match::<<B as SelectableBackend>::Verifier, _, _, R, _>(
+                &[&proof.native_source_out[0]],
+                &[proof.native_online_commitments[mesh.outgoing]],
+                C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+                C::host_generators(self.params),
+            )
+        {
+            return Err(Error::InvalidWitness(
+                "retained source restriction differs from its commitment".into(),
+            ));
+        }
+        if let Some(mesh) = C::Profile::NESTED_MESH
+            && !commitments_match::<<B as SelectableBackend>::Verifier, _, _, R, _>(
+                &[&proof.nested_source_out[0]],
+                &[proof.nested_online_commitments[mesh.outgoing]],
+                C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+                C::nested_generators(self.params),
+            )
+        {
+            return Err(Error::InvalidWitness(
+                "retained source restriction differs from its commitment".into(),
+            ));
+        }
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
         let mut transcript = transcript::<C, B>(self.params, &instance, &output_header)?;
         let native_sampled = Sampled::squeeze(&mut transcript.host())?;
@@ -151,6 +175,43 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 ]
                 .map(Cow::Borrowed),
             );
+            if let Some(mesh) = C::Profile::NATIVE_MESH {
+                let source = self
+                    .native_source
+                    .as_ref()
+                    .expect("source captured at setup");
+                let coordinates = Coordinates {
+                    w: challenges.w,
+                    x: challenges.x,
+                    y: challenges.y,
+                };
+                openings.claims.extend(mesh.terminal_claims(
+                    C::Profile::NATIVE_ONLINE,
+                    &instance.native_mesh_claims,
+                    coordinates,
+                    w,
+                    source.evaluate::<<B as SelectableBackend>::Verifier>(
+                        w,
+                        coordinates.x,
+                        coordinates.y,
+                    ),
+                    polys.len(),
+                )?);
+                openings.commitments.extend(
+                    mesh.polynomial_indices()
+                        .into_iter()
+                        .map(|i| instance.native_online_commitments[i]),
+                );
+                polys.extend(
+                    mesh.terminal_polynomials::<_, R>(
+                        source,
+                        &instance.native_mesh_claims,
+                        coordinates,
+                    )?
+                    .into_iter()
+                    .map(Cow::Owned),
+                );
+            }
             let u = *C::host_u(self.params);
             let (batch, opening) = open::<_, R, B>(
                 &polys,
@@ -196,6 +257,43 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 ]
                 .map(Cow::Borrowed),
             );
+            if let Some(mesh) = C::Profile::NESTED_MESH {
+                let source = self
+                    .nested_source
+                    .as_ref()
+                    .expect("source captured at setup");
+                let coordinates = Coordinates {
+                    w: nested::challenge::<C>(challenges.w)?,
+                    x: nested::challenge::<C>(challenges.x)?,
+                    y: nested::challenge::<C>(challenges.y)?,
+                };
+                openings.claims.extend(mesh.terminal_claims(
+                    C::Profile::NESTED_ONLINE,
+                    &instance.nested_mesh_claims,
+                    coordinates,
+                    w,
+                    source.evaluate::<<B as SelectableBackend>::Verifier>(
+                        w,
+                        coordinates.x,
+                        coordinates.y,
+                    ),
+                    polys.len(),
+                )?);
+                openings.commitments.extend(
+                    mesh.polynomial_indices()
+                        .into_iter()
+                        .map(|i| instance.nested_online_commitments[i]),
+                );
+                polys.extend(
+                    mesh.terminal_polynomials::<_, R>(
+                        source,
+                        &instance.nested_mesh_claims,
+                        coordinates,
+                    )?
+                    .into_iter()
+                    .map(Cow::Owned),
+                );
+            }
             let u = *C::nested_u(self.params);
             let (batch, opening) = open::<_, R, B>(
                 &polys,

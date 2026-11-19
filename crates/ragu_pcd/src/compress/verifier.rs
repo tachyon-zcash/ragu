@@ -9,7 +9,7 @@ use crate::{
     header::Header,
     internal::ky,
     ipa::{CycleTranscript, IpaCycle},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
 };
 
 /// The backend whose kernels [`Application::verify_compressed`] consults for
@@ -56,12 +56,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         let instance = &proof.instance;
 
         // The proof's circuit_id must be in the registry's domain, for the
-        // reason `verify_uncompressed` gives, and the headers must have the
-        // declared size; and the messages must have the shape read below.
-        if !self.native_registry.circuit_in_domain(instance.circuit_id)
-            || instance.left_header.len() != HEADER_SIZE
-            || instance.right_header.len() != HEADER_SIZE
-            || !proof.well_formed::<R>()
+        // reason `verify_uncompressed` gives, and the messages must have the
+        // shape read below.
+        if !self.native_registry.circuit_in_domain(instance.circuit_id) || !proof.well_formed::<R>()
         {
             return Ok(false);
         }
@@ -73,10 +70,10 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         let Some(challenges) = proof_check!(instance.challenges(&mut fuse_transcript)) else {
             return Ok(false);
         };
-        if !proof_check!(instance.stages_match::<R, Verifier<B>, HEADER_SIZE>(
-            &challenges,
-            C::nested_generators(self.params),
-        )) {
+        if !proof_check!(
+            instance
+                .stages_match::<R, Verifier<B>>(&challenges, C::nested_generators(self.params),)
+        ) {
             return Ok(false);
         }
 
@@ -104,7 +101,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 sigma,
             )?;
             let Some(mut openings) = proof_check!(revdot::verify_native::<C, R, Verifier<B>>(
-                instance.circuit_id,
                 |component| instance.native_commitment(component),
                 registry,
                 y,
@@ -124,6 +120,30 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             );
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
+            if let Some(mesh) = C::Profile::NATIVE_MESH {
+                let source = self
+                    .native_source
+                    .as_ref()
+                    .expect("source captured at setup");
+                let coordinates = Coordinates {
+                    w: challenges.w,
+                    x: challenges.x,
+                    y: challenges.y,
+                };
+                openings.claims.extend(proof_check!(mesh.terminal_claims(
+                    C::Profile::NATIVE_ONLINE,
+                    &instance.native_mesh_claims,
+                    coordinates,
+                    w,
+                    source.evaluate::<Verifier<B>>(w, coordinates.x, coordinates.y),
+                    openings.commitments.len()
+                )));
+                openings.commitments.extend(
+                    mesh.polynomial_indices()
+                        .into_iter()
+                        .map(|i| instance.native_online_commitments[i]),
+                );
+            }
             proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
                 &openings,
                 &proof.native.batch,
@@ -162,6 +182,30 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             )?;
             openings.commitments.extend(commitments);
             openings.claims.extend(claims);
+            if let Some(mesh) = C::Profile::NESTED_MESH {
+                let source = self
+                    .nested_source
+                    .as_ref()
+                    .expect("source captured at setup");
+                let coordinates = Coordinates {
+                    w: crate::internal::nested::challenge::<C>(challenges.w)?,
+                    x: crate::internal::nested::challenge::<C>(challenges.x)?,
+                    y: crate::internal::nested::challenge::<C>(challenges.y)?,
+                };
+                openings.claims.extend(proof_check!(mesh.terminal_claims(
+                    C::Profile::NESTED_ONLINE,
+                    &instance.nested_mesh_claims,
+                    coordinates,
+                    w,
+                    source.evaluate::<Verifier<B>>(w, coordinates.x, coordinates.y),
+                    openings.commitments.len()
+                )));
+                openings.commitments.extend(
+                    mesh.polynomial_indices()
+                        .into_iter()
+                        .map(|i| instance.nested_online_commitments[i]),
+                );
+            }
             proof_check!(batch::verify_openings::<_, R, Verifier<B>>(
                 &openings,
                 &proof.nested.batch,

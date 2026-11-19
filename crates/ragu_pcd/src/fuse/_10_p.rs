@@ -27,10 +27,14 @@ use ragu_core::{
     drivers::emulator::{Emulator, Wireless},
     maybe::Always,
 };
-use ragu_primitives::{EndoscalarChallenge, Uendo, lift_endoscalar, vec::Len};
+use ragu_primitives::{
+    EndoscalarChallenge, Uendo, lift_endoscalar,
+    vec::{FixedVec, Len},
+};
 use udon::field::Field;
 
 use super::{
+    _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
     _08_f::{NativeF, NestedF},
@@ -103,12 +107,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
             .chain(batch.commitments(current, builder.online_fq_commitments()))
+            .chain(builder.nested_online().commitments().iter().copied())
             .collect();
         assert_eq!(
             points.len(),
             crate::internal::native::NumPoints::<C::Profile>::len()
         );
-        Inputs::from_walk(&points)
+        Inputs::from_walk(
+            &points,
+            FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -118,6 +126,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         pre_beta: &EndoscalarChallenge<'dr, NativeFuseEmulator<C>>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
@@ -141,6 +150,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             beta_endo,
             left,
             right,
+            application,
             s_prime,
             registry_wy,
             f,
@@ -175,6 +185,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         beta_endo: Uendo,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
@@ -220,6 +231,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
             acc.acc(&s_prime.registry_wx0_poly, s_prime.registry_wx0_commitment);
             acc.acc(&s_prime.registry_wx1_poly, s_prime.registry_wx1_commitment);
+            acc.acc(&application.rx, application.commitment);
+            acc.acc(&application.stage.rx, application.stage.commitment);
             acc.acc(&registry_wy.poly, registry_wy.commitment);
             acc.acc(builder.native_a_poly(), builder.native_a_commitment());
             acc.acc(builder.native_b_poly(), builder.native_b_commitment());
@@ -234,6 +247,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             let commitments = online::commitments(left, right, builder.online_commitments());
             for (poly, commitment) in polys.into_iter().zip(commitments) {
                 acc.acc(poly, commitment);
+            }
+            // Each distinct online polynomial enters the commitment fold
+            // once, independently of how many openings the quotient checks.
+            let online = builder.native_online();
+            for (poly, &point) in online.polynomials().iter().zip(online.commitments()) {
+                acc.acc(poly, point);
             }
         }
 
@@ -288,6 +307,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             poly.add_assign(evaluated);
         }
 
+        for evaluated in builder.nested_online().polynomials() {
+            poly.scale(beta);
+            poly.add_assign(evaluated);
+        }
         let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;
         // A child can carry a polynomial inconsistent with its cached point.

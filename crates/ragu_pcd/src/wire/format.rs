@@ -7,7 +7,7 @@ use ragu_circuits::polynomials::Rank;
 use crate::{
     CompressedProof, Proof,
     profile::ProfiledCycle,
-    wire::{Decode, Dimensions, Encode, Error, MAX_HEADER_SIZE, MAX_RANK, Reader},
+    wire::{Decode, Dimensions, Encode, Error, MAX_RANK, Reader},
 };
 
 const MAGIC: &[u8; 8] = b"RAGUPCD\0";
@@ -75,15 +75,14 @@ impl PayloadKind {
         }
     }
 }
-const PROOF_SCHEMA_VERSION: u16 = 2;
-const COMPRESSED_SCHEMA_VERSION: u16 = 2;
+const PROOF_SCHEMA_VERSION: u16 = 3;
+const COMPRESSED_SCHEMA_VERSION: u16 = 3;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 const PROTOCOL_VERSION: u16 = 1;
 pub(crate) const ENVELOPE_SIZE: usize = 28;
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
-    /// Encodes this proof with its version envelope. The rank comes from `R`
-    /// and the header size from the proof's child headers.
+    /// Encodes this proof with its version envelope. The rank comes from `R`.
     ///
     /// This checks representation, not proof validity. The caller selects
     /// the expected application through its deployment or consensus rules.
@@ -94,22 +93,18 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// [`wire`](crate::wire), vectors have inconsistent lengths or any point
     /// is the identity.
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error<'static>> {
-        let dims = Dimensions {
-            rank: R::RANK,
-            header_size: self.left_header.len(),
-        };
-        encode(self, PayloadKind::Proof, dims)
+        encode(self, PayloadKind::Proof, Dimensions::of::<R>())
     }
 
-    /// The exact encoded length for the expected header size, including the
-    /// envelope. Bound transport input to this size before buffering it.
-    pub fn encoded_len<const HEADER_SIZE: usize>() -> usize {
-        ENVELOPE_SIZE + <Self as Decode>::encoded_len(Dimensions::of::<R, HEADER_SIZE>())
+    /// The exact encoded length, including the envelope. Bound transport
+    /// input to this size before buffering it.
+    pub fn encoded_len() -> usize {
+        ENVELOPE_SIZE + <Self as Decode>::encoded_len(Dimensions::of::<R>())
     }
 
     /// Decodes one proof, checking the envelope, bounded dimensions and exact
     /// payload length before reading its fields. The declared rank must
-    /// match `R`; the header size comes from the envelope.
+    /// match `R`.
     ///
     /// Attach the accompanying output data with [`carry`](Self::carry),
     /// compress with [`Application::compress`](crate::Application::compress)
@@ -130,8 +125,8 @@ impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
 
 impl<C: ProfiledCycle> CompressedProof<C> {
     /// Encodes this compressed proof with its version envelope. The rank
-    /// comes from its IPA round count and the header size from its child
-    /// headers. This checks representation, not proof validity.
+    /// comes from its IPA round count. This checks representation, not
+    /// proof validity.
     ///
     /// # Errors
     ///
@@ -147,26 +142,22 @@ impl<C: ProfiledCycle> CompressedProof<C> {
                 .len()
                 .try_into()
                 .map_err(|_| Error::Unencodable)?,
-            header_size: self.instance.left_header.len(),
         };
         encode(self, PayloadKind::Compressed, dims)
     }
 
-    /// The exact encoded length for the expected rank and header size,
-    /// including the envelope. Bound transport input to this size before
-    /// buffering it. The length alone does not fix the dimensions: each IPA
-    /// round adds 128 bytes and each header element 64, so a rank one lower
-    /// with two more header elements has the same length. Decoding admits
-    /// any bounded dimensions, and
+    /// The exact encoded length for the expected rank, including the
+    /// envelope. Bound transport input to this size before buffering it.
+    /// Decoding admits any bounded rank, and
     /// [`verify_compressed`](crate::Application::verify_compressed) rejects
     /// every shape but the application's.
-    pub fn encoded_len<R: Rank, const HEADER_SIZE: usize>() -> usize {
-        ENVELOPE_SIZE + <Self as Decode>::encoded_len(Dimensions::of::<R, HEADER_SIZE>())
+    pub fn encoded_len<R: Rank>() -> usize {
+        ENVELOPE_SIZE + <Self as Decode>::encoded_len(Dimensions::of::<R>())
     }
 
     /// Decodes one compressed proof, checking the envelope, bounded dimensions
-    /// and exact payload length before reading its fields. The rank and header
-    /// size come from the envelope; verification checks the application's shape.
+    /// and exact payload length before reading its fields. The rank comes from
+    /// the envelope; verification checks the application's shape.
     /// The caller selects the expected application and parameters through
     /// its deployment or consensus rules.
     ///
@@ -196,7 +187,8 @@ pub(crate) fn write_envelope(payload: PayloadKind, dims: Dimensions, bytes: &mut
         bytes.extend_from_slice(&word.to_le_bytes());
     }
     bytes.extend_from_slice(&dims.rank.to_le_bytes());
-    bytes.extend_from_slice(&(dims.header_size as u64).to_le_bytes());
+    // The header size: no payload of these schemas carries a header.
+    bytes.extend_from_slice(&0u64.to_le_bytes());
 }
 
 fn encode<T: Encode + Decode>(
@@ -204,7 +196,7 @@ fn encode<T: Encode + Decode>(
     payload: PayloadKind,
     dims: Dimensions,
 ) -> Result<Vec<u8>, Error<'static>> {
-    if dims.rank > MAX_RANK || dims.header_size > MAX_HEADER_SIZE {
+    if dims.rank > MAX_RANK {
         return Err(Error::Unencodable);
     }
     let mut bytes = Vec::with_capacity(ENVELOPE_SIZE + T::encoded_len(dims));
@@ -282,40 +274,30 @@ fn open<'a>(
             reason,
         });
     }
+    // No payload of these schemas carries a header, so any other header
+    // size would be a second encoding of the same payload.
     let header_bytes = &envelope[20..28];
-    let header_size = u64::from_le_bytes(header_bytes.try_into().expect("8-byte header size"));
-    if header_size > MAX_HEADER_SIZE as u64 {
+    if header_bytes != &known[20..28] {
         return Err(Error::Invalid {
             offset: 20,
             bytes: header_bytes,
-            reason: "proof header size exceeds the limit",
+            reason: "proof header size must be zero",
         });
     }
-    Ok((
-        reader,
-        Dimensions {
-            rank,
-            header_size: header_size as usize,
-        },
-    ))
+    Ok((reader, Dimensions { rank }))
 }
 
 #[cfg(test)]
 mod tests {
     use ragu_circuits::polynomials::{ProductionRank, TestRank};
-    use ragu_core::pasta::{Fp, Pasta};
-    use udon::field::Field;
+    use ragu_core::pasta::Pasta;
 
     use super::*;
-    use crate::{
-        header::NUM_ONLINE_FP_POLYS,
-        internal::native::online::NUM_ONLINE_FP_QUERIES,
-        profile::{Shape, Standard},
-    };
+    use crate::profile::{Shape, Standard};
 
     #[test]
     fn payload_kind_inspection() {
-        let dims = Dimensions::of::<TestRank, 4>();
+        let dims = Dimensions::of::<TestRank>();
         let prefix_len = MAGIC.len() + 2 * size_of::<u16>();
         for kind in [PayloadKind::Proof, PayloadKind::Compressed] {
             let mut bytes = Vec::new();
@@ -355,81 +337,71 @@ mod tests {
         );
     }
 
-    // Schema v2 is the standard profile's shape under `ragu-pcd-v1`, with
-    // the online polynomials (see `internal::native::online`) in the batch and
-    // the application stage beside the application trace. A change to either
-    // moves the layout or the verifier semantics and needs
-    // a new schema or protocol version, not a silent re-pin.
+    // Schema v3 is the standard profile's shape under `ragu-pcd-v1`, with
+    // the online polynomials (see `internal::native::online`) in the batch
+    // and each step folding its own application claim. A change to either
+    // moves the layout or the verifier semantics and needs a new schema or
+    // protocol version, not a silent re-pin.
     #[test]
-    fn schema_v2_pins_protocol_and_shape() {
+    fn schema_v3_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
         assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 48,
-                nested_points: 117,
+                native_rx: 46,
+                nested_points: 115,
                 nested_steps: 29,
                 nested_rx: 43,
                 online_fq: 0,
                 native_points: 101,
                 native_steps: 25,
+                source_polynomials: 0,
             }
         );
     }
 
     #[test]
-    fn encoded_length_is_a_function_of_profile_rank_and_header_size() {
-        // Every polynomial of the shape and the step's own online
-        // polynomials, with `2^rank` coefficients each; a commitment per
-        // polynomial plus the nested challenges partial; two headers; the
-        // online openings; the bridge alpha and nine challenges; one
-        // circuit index. The envelope adds 28 bytes.
-        fn payload<R: Rank, const H: usize>() -> usize {
-            let polynomials = Shape::of::<Standard>().polynomials() + NUM_ONLINE_FP_POLYS;
-            polynomials * R::num_coeffs() * 32
-                + (polynomials + 1) * 32
-                + 2 * H * 32
-                + 2 * NUM_ONLINE_FP_QUERIES * 32
-                + 10 * 32
-                + 4
+    fn encoded_length_is_a_function_of_profile_and_rank() {
+        // Every polynomial of the shape, with `2^rank` coefficients each; a
+        // commitment per polynomial plus the nested challenges partial; the
+        // bridge alpha and nine challenges; one circuit index. The envelope
+        // adds 28 bytes.
+        fn payload<R: Rank>() -> usize {
+            let polynomials = Shape::of::<Standard>().polynomials();
+            polynomials * R::num_coeffs() * 32 + (polynomials + 1) * 32 + 10 * 32 + 4
         }
         assert_eq!(
-            <Proof<Pasta, ProductionRank> as Decode>::encoded_len(Dimensions::of::<
-                ProductionRank,
-                4,
-            >()),
-            payload::<ProductionRank, 4>()
+            <Proof<Pasta, ProductionRank> as Decode>::encoded_len(
+                Dimensions::of::<ProductionRank>()
+            ),
+            payload::<ProductionRank>()
         );
         assert_eq!(
-            <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank, 1>()),
-            payload::<TestRank, 1>()
+            <Proof<Pasta, TestRank> as Decode>::encoded_len(Dimensions::of::<TestRank>()),
+            payload::<TestRank>()
         );
         assert_eq!(
-            Proof::<Pasta, ProductionRank>::encoded_len::<4>(),
-            28 + payload::<ProductionRank, 4>()
+            Proof::<Pasta, ProductionRank>::encoded_len(),
+            28 + payload::<ProductionRank>()
         );
-        // 102 instance points; 27 instance scalars and the online openings'
-        // two scalars each; per side 6+2R points, 21 scalars; plus the
-        // circuit index and common envelope.
+        // 100 instance points; 17 instance scalars; per side 6+2R points,
+        // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
-            CompressedProof::<Pasta>::encoded_len::<ProductionRank, 4>(),
-            28 + 4 + (102 + 27 + 2 * NUM_ONLINE_FP_QUERIES + 2 * (6 + 2 * 13 + 21)) * 32
+            CompressedProof::<Pasta>::encoded_len::<ProductionRank>(),
+            28 + 4 + (100 + 17 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 
     #[test]
     fn rejects_other_envelope_versions() {
-        let dims = Dimensions::of::<TestRank, 4>();
+        let dims = Dimensions::of::<TestRank>();
         for (kind, length) in [
-            (
-                PayloadKind::Proof,
-                Proof::<Pasta, TestRank>::encoded_len::<4>(),
-            ),
+            (PayloadKind::Proof, Proof::<Pasta, TestRank>::encoded_len()),
             (
                 PayloadKind::Compressed,
-                CompressedProof::<Pasta>::encoded_len::<TestRank, 4>(),
+                CompressedProof::<Pasta>::encoded_len::<TestRank>(),
             ),
         ] {
             let mut bytes = Vec::with_capacity(length);
@@ -457,15 +429,17 @@ mod tests {
             (PayloadKind::Proof, Some(TestRank::RANK)),
             (PayloadKind::Compressed, None),
         ] {
-            for header_size in [MAX_HEADER_SIZE as u64 + 1, u64::MAX] {
+            // No payload carries a header, so only a zero header size is
+            // admitted: any other would be a second encoding.
+            for header_size in [1, 4, u64::MAX] {
                 let mut bytes = Vec::new();
-                write_envelope(kind, Dimensions::of::<TestRank, 4>(), &mut bytes);
+                write_envelope(kind, Dimensions::of::<TestRank>(), &mut bytes);
                 bytes[20..28].copy_from_slice(&header_size.to_le_bytes());
                 assert!(matches!(
                     open(&bytes, kind, expected_rank),
                     Err(Error::Invalid {
                         offset: 20,
-                        reason: "proof header size exceeds the limit",
+                        reason: "proof header size must be zero",
                         ..
                     })
                 ));
@@ -474,7 +448,7 @@ mod tests {
         let mut bytes = Vec::new();
         write_envelope(
             PayloadKind::Compressed,
-            Dimensions::of::<TestRank, 4>(),
+            Dimensions::of::<TestRank>(),
             &mut bytes,
         );
         bytes[16..20].copy_from_slice(&(MAX_RANK + 1).to_le_bytes());
@@ -486,35 +460,5 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    #[test]
-    fn header_codec_reads_exactly_the_declared_size() {
-        use crate::wire::{HeaderSize, Scalar, SizedSequence};
-        type Headers = SizedSequence<Scalar, HeaderSize>;
-        let dims = |header_size| Dimensions {
-            rank: 0,
-            header_size,
-        };
-        let header = alloc::vec![Fp::ONE, Fp::from(2), Fp::from(3), Fp::from(4)];
-        let bytes = <Vec<Fp> as Encode<Headers>>::to_bytes(&header, dims(4));
-        assert_eq!(bytes.len(), 4 * 32);
-        assert_eq!(
-            <Vec<Fp> as Decode<Headers>>::from_bytes(&bytes, dims(4)).unwrap(),
-            header
-        );
-        // Under other dimensions the header has no encoding, and its bytes
-        // are another length than expected.
-        let mut output = Vec::new();
-        assert_eq!(
-            <Vec<Fp> as Encode<Headers>>::encode(&header, &mut output, dims(3)),
-            Err(Error::Unencodable)
-        );
-        let Error::Length { expected, actual } =
-            <Vec<Fp> as Decode<Headers>>::from_bytes(&bytes, dims(3)).unwrap_err()
-        else {
-            panic!("expected a length error")
-        };
-        assert_eq!((expected, actual), (96, 128));
     }
 }

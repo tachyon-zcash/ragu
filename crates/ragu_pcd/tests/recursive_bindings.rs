@@ -104,10 +104,9 @@ mod challenge_binding {
 
     fn witness(proof: &Proof<C, R>) -> Result<challenges::Witness<Fq>> {
         let lifts = proof.challenges().lifts::<C>()?;
-        Ok(challenges::Witness::new::<_, HEADER_SIZE>(
+        Ok(challenges::Witness::new(
             lifts[..challenges::NUM].try_into().unwrap(),
-            proof.left_header(),
-            proof.right_header(),
+            challenges::is_bootstrap::<crate::profile::Standard>(proof.circuit_id())?,
             lifts[challenges::NUM],
         ))
     }
@@ -170,10 +169,7 @@ mod challenge_binding {
     /// The decider's check of a root: its challenge stage is the stage of its
     /// own lifts and headers.
     fn stage_matches(proof: &Proof<C, R>) -> Result<bool> {
-        crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
-            proof,
-            &proof.challenges().lifts::<C>()?,
-        )
+        crate::verify::nested_challenges_match::<C, R>(proof, &proof.challenges().lifts::<C>()?)
     }
 
     /// Changes one lift and repairs every cache `install_lifts` lists, so
@@ -381,7 +377,12 @@ fn walk_inputs(
     points.extend(nested::pcs::child_commitments(left));
     points.extend(nested::pcs::child_commitments(right));
     points.extend([wx[0], wx[1], ab[0], ab[1], ab[2], f[0]]);
-    let inputs = points::Inputs::from_walk(&points);
+    let inputs = points::Inputs::from_walk(
+        &points,
+        ragu_primitives::vec::FixedVec::from_fn(|_| {
+            unreachable!("Standard has no online input stage")
+        }),
+    );
     assert_eq!(
         horner(&points, nested::challenge::<C>(proof.pre_beta())?),
         proof.nested_p_commitment()
@@ -600,7 +601,12 @@ mod walk_binding {
             assert_ne!(points[index], original[index]);
             assert_ne!(points[0], original[0]);
             assert_eq!(horner(&points, beta), honest.proof().nested_p_commitment());
-            let changed_inputs = points::Inputs::from_walk(&points);
+            let changed_inputs = points::Inputs::from_walk(
+                &points,
+                ragu_primitives::vec::FixedVec::from_fn(|_| {
+                    unreachable!("Standard has no online input stage")
+                }),
+            );
             let (mut proof, data) = honest.clone().into_parts();
             install_walk(app, &mut proof, &changed_inputs, &mut rng)?;
             assert_eq!(proof.nested_v()?, honest.proof().nested_v()?);
@@ -692,7 +698,12 @@ mod walk_binding {
         install_walk(
             app,
             &mut proof,
-            &points::Inputs::from_walk(&points),
+            &points::Inputs::from_walk(
+                &points,
+                ragu_primitives::vec::FixedVec::from_fn(|_| {
+                    unreachable!("Standard has no online input stage")
+                }),
+            ),
             &mut rng,
         )?;
         assert_eq!(proof.nested_v()?, honest.proof().nested_v()?);
@@ -806,6 +817,9 @@ mod claim_values {
         let bridge = nested::stages::ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
             crate::proof::bridge_alpha_power(proof.bridge_alpha, nested::RxIndex::BridgeAB),
             &nested::stages::ab::Witness {
+                online_points: ragu_primitives::vec::FixedVec::from_fn(|_| {
+                    unreachable!("Standard has no online auxiliaries")
+                }),
                 a: proof.native_a_commitment.0,
                 b: proof.native_b_commitment.0,
                 native_points_ab: proof.native_points_ab_commitment.0,

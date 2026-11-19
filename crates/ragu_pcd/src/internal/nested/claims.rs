@@ -21,7 +21,7 @@ use ragu_core::{Result, drivers::Driver};
 use ragu_primitives::{Element, vec::Len};
 use udon::field::Field;
 
-use super::{InternalCircuitIndex, NUM_INSTANCE_CIRCUITS, RxComponent, RxIndex};
+use super::{InternalCircuitIndex, RxComponent, RxIndex};
 use crate::{
     internal::claims::{Builder, Source, sum_polynomials},
     profile::Profile,
@@ -170,7 +170,7 @@ where
             // An extension circuit: its rx and the extension stages it loads
             // (k(y) = 1).
             ExtensionCircuit(k) => {
-                let extension = P::nested_extension();
+                let extension = crate::profile::nested_extension::<P>();
                 let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
                 for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
                     extension.circuits[k as usize]
@@ -191,7 +191,7 @@ where
             // An extension bonding: a stage's mask over its rx, or a final
             // mask over its circuits' rxs.
             ExtensionBonding(j) => {
-                let extension = P::nested_extension();
+                let extension = crate::profile::nested_extension::<P>();
                 if (j as usize) < extension.stages {
                     processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
                 } else {
@@ -285,12 +285,14 @@ pub trait KySource {
     /// bound is required for `repeat_n`.
     fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
-    /// The nested unified instance's $k(y)$, one per proof, for the
-    /// instance circuit checks.
-    ///
-    /// Repeated once per instance circuit by [`ky_prefix`]. The `+ Clone`
-    /// bound is required for `repeat_n`.
+    /// The nested unified instance's $k(y)$, one per proof, for collapse.
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// Compute-v's target, including the online helper's public values.
+    fn compute_v_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// The online helper's target, one per proof when active.
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// One value per proof for the binding circuit of the profile's nested
     /// extension: the $k(y)$ of the native extension stage commitments it
@@ -316,29 +318,40 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
 /// - The raw accumulator values (one per proof)
 /// - `num_steps` copies of the per-proof ones (for EndoscalingStep circuit
 ///   checks, interleaved across proofs exactly as [`build`] emits them)
-/// - `NUM_INSTANCE_CIRCUITS` copies of the per-proof unified $k(y)$ values
-///   (for the instance circuit checks, interleaved the same way)
-/// - One copy of the per-proof ones per extension circuit of profile `P`
-///   but its binding circuit, which takes the per-proof binding values
+/// - The per-proof collapse targets, then the compute-v targets
+/// - One copy of the per-proof ones per extension circuit of profile `P`,
+///   except the binding and online helper circuits, which use their targets
 pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     let num_steps = super::NumSteps::<P>::len();
 
     source
         .raw_c()
         .chain(core::iter::repeat_n(source.ones(), num_steps).flatten())
-        .chain(core::iter::repeat_n(source.unified_ky(), NUM_INSTANCE_CIRCUITS).flatten())
+        .chain(source.unified_ky())
+        .chain(source.compute_v_ky())
         .chain({
-            let extension = P::nested_extension();
+            let extension = crate::profile::nested_extension::<P>();
             let ones: Vec<S::Ky> = source.ones().collect();
             let binding: Vec<S::Ky> = source.binding_ky().collect();
             assert!(
                 extension.binding.is_none() || binding.len() == ones.len(),
                 "a profile with a binding circuit takes one binding value per proof"
             );
+            let helper_ky: Vec<S::Ky> = source.online_helper_ky().collect();
+            let helper = crate::profile::online::extension::helper::<
+                P,
+                crate::profile::online::stages::Nested,
+            >();
+            assert!(
+                helper.is_none() || helper_ky.len() == ones.len(),
+                "an online batch takes one helper target per proof"
+            );
             let bound = extension.binding.as_ref().map(|binding| binding.circuit);
             (0..extension.circuits.len() as u32).flat_map(move |circuit| {
                 if bound == Some(circuit) {
                     binding.clone()
+                } else if helper == Some(circuit) {
+                    helper_ky.clone()
                 } else {
                     ones.clone()
                 }
@@ -356,6 +369,10 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub right_raw_c: Element<'dr, D>,
     pub left_unified: Element<'dr, D>,
     pub right_unified: Element<'dr, D>,
+    pub left_compute_v: Element<'dr, D>,
+    pub right_compute_v: Element<'dr, D>,
+    pub left_online_helper: Option<Element<'dr, D>>,
+    pub right_online_helper: Option<Element<'dr, D>>,
     pub left_binding: Option<Element<'dr, D>>,
     pub right_binding: Option<Element<'dr, D>>,
     pub one: Element<'dr, D>,
@@ -373,6 +390,10 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         right_raw_c: Element<'dr, D>,
         left_unified: Element<'dr, D>,
         right_unified: Element<'dr, D>,
+        left_compute_v: Element<'dr, D>,
+        right_compute_v: Element<'dr, D>,
+        left_online_helper: Option<Element<'dr, D>>,
+        right_online_helper: Option<Element<'dr, D>>,
         left_binding: Option<Element<'dr, D>>,
         right_binding: Option<Element<'dr, D>>,
     ) -> Self {
@@ -381,6 +402,10 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_raw_c,
             left_unified,
             right_unified,
+            left_compute_v,
+            right_compute_v,
+            left_online_helper,
+            right_online_helper,
             left_binding,
             right_binding,
             one: Element::one(),
@@ -402,6 +427,17 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
 
     fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
         once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn compute_v_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        [self.left_compute_v.clone(), self.right_compute_v.clone()].into_iter()
+    }
+
+    fn online_helper_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        self.left_online_helper
+            .iter()
+            .chain(self.right_online_helper.iter())
+            .cloned()
     }
 
     fn binding_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {

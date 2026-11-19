@@ -25,14 +25,12 @@ use crate::{
 
 /// $k(Y)$ evaluation values for a single child proof.
 pub struct ChildKyValues<F> {
-    /// k(y) for the application circuit.
-    pub application: F,
     /// k(y) for the unified circuit.
     pub unified: F,
     /// k(y) for the header-unified binding.
     pub unified_bridge: F,
     /// k(y) for the `compute_v` circuit: the unified instance with the
-    /// child's online openings.
+    /// child's online batch exports.
     pub compute_v_bridge: F,
 }
 
@@ -69,9 +67,6 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
 /// k(y) output gadgets for a single child proof.
 #[derive(Gadget, Consistent)]
 pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
-    /// k(y) for the application circuit.
-    #[ragu(gadget)]
-    pub application: Element<'dr, D>,
     /// k(y) for the unified circuit.
     #[ragu(gadget)]
     pub unified: Element<'dr, D>,
@@ -79,7 +74,7 @@ pub struct ChildKyOutputs<'dr, D: Driver<'dr>> {
     #[ragu(gadget)]
     pub unified_bridge: Element<'dr, D>,
     /// k(y) for the `compute_v` circuit: the unified instance with the
-    /// child's online openings.
+    /// child's online batch exports.
     #[ragu(gadget)]
     pub compute_v_bridge: Element<'dr, D>,
 }
@@ -126,10 +121,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP, C::CircuitPoseidon>];
 
     fn values() -> usize {
-        // N - 1 quotient coefficients + N collapsed values + 8 ky values + sponge state elements
+        // N - 1 quotient coefficients + N collapsed values + 6 ky values + sponge state elements
         NumErrorTerms::<FP::NumGroups>::len()
             + FP::NumGroups::len()
-            + 8
+            + 6
             + PoseidonStateLen::<C::CircuitField, C::CircuitPoseidon>::len()
     }
 
@@ -149,11 +144,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             .map(|i| Element::alloc(dr, allocator, witness.as_ref().map(|w| w.collapsed[i])))
             .try_collect_fixed()?;
         let left = ChildKyOutputs {
-            application: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|w| w.ky.left.application),
-            )?,
             unified: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.ky.left.unified))?,
             unified_bridge: Element::alloc(
                 dr,
@@ -167,11 +157,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             )?,
         };
         let right = ChildKyOutputs {
-            application: Element::alloc(
-                dr,
-                allocator,
-                witness.as_ref().map(|w| w.ky.right.application),
-            )?,
             unified: Element::alloc(dr, allocator, witness.as_ref().map(|w| w.ky.right.unified))?,
             unified_bridge: Element::alloc(
                 dr,

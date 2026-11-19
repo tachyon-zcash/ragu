@@ -154,7 +154,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .last()
             .expect("every walk has at least one interstitial");
         let held = [
-            &stages.preamble.native_preamble,
+            &stages.s_prime.native_preamble,
             &stages.inner_error.native_inner_error,
             &stages.outer_error.native_outer_error,
             &stages.query.native_query,
@@ -170,7 +170,6 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             &stages.f.native_points_f,
             &stages.preamble.online_commitments[0],
             &stages.preamble.online_commitments[1],
-            &stages.preamble.application_stage,
         ];
         // The bridge-hash stage holds the step's own last online commitment,
         // the one the preamble holds and w absorbed.
@@ -194,7 +193,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         // The binding circuit's k(y): the k(y) of the children's native
         // extension stages it names, as the bridge preamble holds them. A
         // profile without a binding computes nothing here.
-        let binding = P::nested_extension().binding;
+        let binding = crate::profile::nested_extension::<P>().binding;
         let left_binding = ky::binding_ky(
             dr,
             y,
@@ -209,12 +208,36 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 stages.preamble.right.extension_stages[j as usize].clone()
             }),
         )?;
+        let (left_compute_v, left_online_helper) = ky::nested_online_ky::<_, _, P>(
+            dr,
+            y,
+            &stages.preamble.left.nested_instance(),
+            &left_unified,
+            &stages.preamble.left.online_values,
+            &ky::native_online_stages::<P, _>(|index| stages.preamble.left[index].clone()),
+            &stages.preamble.left.online_points,
+            &stages.preamble.left.mesh,
+        )?;
+        let (right_compute_v, right_online_helper) = ky::nested_online_ky::<_, _, P>(
+            dr,
+            y,
+            &stages.preamble.right.nested_instance(),
+            &right_unified,
+            &stages.preamble.right.online_values,
+            &ky::native_online_stages::<P, _>(|index| stages.preamble.right[index].clone()),
+            &stages.preamble.right.online_points,
+            &stages.preamble.right.mesh,
+        )?;
         let ky = TwoProofKySource::new(
             dr,
             stages.preamble.left.nested.c.clone(),
             stages.preamble.right.nested.c.clone(),
             left_unified,
             right_unified,
+            left_compute_v,
+            right_compute_v,
+            left_online_helper,
+            right_online_helper,
             left_binding,
             right_binding,
         );

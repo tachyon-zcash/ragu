@@ -16,12 +16,17 @@ use ragu_circuits::{
     staging::StageExt,
 };
 use ragu_core::{Cycle, Result};
+use ragu_primitives::vec::{FixedVec, Len};
+use udon::{curve::Affine, field::Field};
 
 use super::{Cached, Proof};
 use crate::{
     header::NUM_ONLINE_FP_POLYS,
     internal::{native::online, nested},
-    profile::ProfiledCycle,
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Native, Nested, Present},
+    },
 };
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -182,7 +187,7 @@ macro_rules! explicit_commitment_getter {
 /// `self` is used (avoiding macro hygiene issues with `self` in token trees).
 macro_rules! cached_bridge {
     ($rx:ident, $commitment:ident,
-     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
+     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident $(::<$phase:literal>)?()),* }) => {
         pub(crate) fn $rx(&self) -> Result<&Arc<sparse::Polynomial<C::ScalarField, R>>> {
             if let Some(rx) = self.$rx.get() {
                 return Ok(rx);
@@ -190,7 +195,7 @@ macro_rules! cached_bridge {
             let rx = nested::stages::$stage::Stage::<C::HostCurve, R, C::Profile>::rx(
                 self.bridge_alpha_power($idx),
                 &nested::stages::$stage::Witness {
-                    $($wit_field: self.$getter()),*
+                    $($wit_field: self.$getter$(::<$phase>)?()),*
                 },
             )?;
             // The early return above guarantees the cell is empty, so
@@ -212,21 +217,26 @@ macro_rules! cached_bridge {
 /// Native commitment caches are computed lazily from polynomials on first
 /// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
 /// because they are computed via non-standard techniques.
-pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
+pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     params: &'params C::Params,
     _backend: PhantomData<B>,
 
     /// Shared alpha source for the cached `ab` bridge commitment.
     bridge_alpha: C::ScalarField,
 
-    // Application metadata
+    // Application metadata. Only the circuit id goes into the proof: the
+    // headers are the step's own, read by its preamble and challenge stage.
     circuit_id: Option<CircuitIndex>,
     left_header: Option<Vec<C::CircuitField>>,
     right_header: Option<Vec<C::CircuitField>>,
+    output_header: Option<Vec<C::CircuitField>>,
+    /// The header a test's prover stages its left child's bridge $k(y)$
+    /// over, in place of its preamble's copy (see
+    /// [`forge_left_bridge_header`](Self::forge_left_bridge_header)).
+    #[cfg(test)]
+    forged_left_bridge_header: Option<Vec<C::CircuitField>>,
 
     // Native rx polynomials
-    native_application_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_application_stage_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_inner_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -257,6 +267,20 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]>,
     online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
     online_openings: Option<online::Queries<C::CircuitField>>,
+
+    // Online polynomial preparation, discarded after this step's PCS fold.
+    // The fuse begins both sides' for every profile; the synthetic bootstrap
+    // proof has neither.
+    native_online: Option<NativeOnline<C, R>>,
+    nested_online: Option<NestedOnline<C, R>>,
+
+    // The synthetic bootstrap proof's outgoing source polynomials and
+    // explicit commitments, which it has no online prover state to take
+    // from. Ordinary proofs take theirs from their state.
+    pub(crate) native_source_out: Vec<sparse::Polynomial<C::CircuitField, R>>,
+    pub(crate) nested_source_out: Vec<sparse::Polynomial<C::ScalarField, R>>,
+    pub(crate) dummy_native_online_commitments: Option<Vec<C::HostCurve>>,
+    pub(crate) dummy_nested_online_commitments: Option<Vec<C::NestedCurve>>,
 
     // The step's own online Fq polynomials, with their commitments cached.
     // The proof does not carry them: only this step's nested batch opens
@@ -345,8 +369,6 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     pre_beta: Option<C::CircuitField>,
 
     // Native commitment caches (lazily computed from polynomials)
-    native_application_commitment: OnceCell<C::HostCurve>,
-    native_application_stage_commitment: OnceCell<C::HostCurve>,
     native_preamble_commitment: OnceCell<C::HostCurve>,
     native_inner_error_commitment: OnceCell<C::HostCurve>,
     native_outer_error_commitment: OnceCell<C::HostCurve>,
@@ -377,7 +399,169 @@ pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
     bridge_ab_commitment: OnceCell<C::NestedCurve>,
 }
 
+/// A step's native online batch.
+pub(crate) type NativeOnline<C, R> = crate::profile::online::prover::State<
+    <C as Cycle>::HostCurve,
+    R,
+    <C as ProfiledCycle>::Profile,
+    Native,
+>;
+/// A step's nested online batch.
+pub(crate) type NestedOnline<C, R> = crate::profile::online::prover::State<
+    <C as Cycle>::NestedCurve,
+    R,
+    <C as ProfiledCycle>::Profile,
+    Nested,
+>;
+
 impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
+    // A step's online batches. The fuse sets both for every profile; the
+    // bootstrap proof sets neither.
+    setter!(set_native_online, native_online, NativeOnline<C, R>);
+    setter!(set_nested_online, nested_online, NestedOnline<C, R>);
+    ref_getter!(native_online, native_online, NativeOnline<C, R>);
+    ref_getter!(nested_online, nested_online, NestedOnline<C, R>);
+
+    /// Mutably borrows the step's native online batch.
+    pub(crate) fn native_online_mut(&mut self) -> &mut NativeOnline<C, R> {
+        self.native_online.as_mut().expect("native_online not set")
+    }
+
+    /// Mutably borrows the step's nested online batch.
+    pub(crate) fn nested_online_mut(&mut self) -> &mut NestedOnline<C, R> {
+        self.nested_online.as_mut().expect("nested_online not set")
+    }
+
+    /// The two coordinates fixed in the native query or eval stage.
+    pub(crate) fn nested_online_stage_coordinates(
+        &self,
+        index: usize,
+    ) -> ragu_primitives::vec::FixedVec<C::CircuitField, Present<C::Profile, Nested, 2>> {
+        ragu_primitives::vec::FixedVec::from_fn(|i| {
+            let (x, y) = self
+                .nested_online_stage_commitment(index)
+                .coordinates()
+                .expect("online stage commitment is finite");
+            [x, y][i]
+        })
+    }
+
+    /// The actual online stage commitment, or the synthetic dummy's stored stage.
+    pub(crate) fn nested_online_stage_commitment(&self, index: usize) -> C::NestedCurve {
+        let point = self.nested_online.as_ref().map_or_else(
+            || self.nested_extension_stage_commitments()[index],
+            |state| state.stage_commitment(index),
+        );
+        #[cfg(test)]
+        let point = crate::online_batch_tests::mutate_stage_commitment(index, point);
+        point
+    }
+
+    /// The actual native online polynomial commitment in fold order.
+    pub(crate) fn native_online_commitment(&self, index: usize) -> C::HostCurve {
+        if let Some(state) = &self.native_online {
+            state.commitments()[index]
+        } else {
+            self.dummy_native_online_commitments
+                .as_ref()
+                .expect("bootstrap native online commitments must be set")[index]
+        }
+    }
+
+    /// Native online commitment copies fixed at one transcript deadline.
+    pub(crate) fn native_online_phase<const PHASE: usize>(
+        &self,
+    ) -> FixedVec<
+        C::HostCurve,
+        crate::profile::online::stages::PhaseLen<
+            C::Profile,
+            crate::profile::online::stages::Native,
+            PHASE,
+        >,
+    > {
+        let points = if let Some(state) = &self.native_online {
+            state.commitments()
+        } else {
+            self.dummy_native_online_commitments
+                .as_deref()
+                .expect("bootstrap native online commitments")
+        };
+        let points = crate::profile::online::stages::phase_points::<
+            C::Profile,
+            crate::profile::online::stages::Native,
+            PHASE,
+            _,
+        >(points);
+        #[cfg(test)]
+        let points =
+            FixedVec::from_fn(|i| crate::online_batch_tests::mutate_native_phase(PHASE, points[i]));
+        points
+    }
+
+    /// Nested online commitment copies fixed at one transcript deadline.
+    pub(crate) fn nested_online_phase<const PHASE: usize>(
+        &self,
+    ) -> FixedVec<
+        C::NestedCurve,
+        crate::profile::online::stages::PhaseLen<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+            PHASE,
+        >,
+    > {
+        let points = if let Some(state) = &self.nested_online {
+            state.commitments()
+        } else {
+            self.dummy_nested_online_commitments
+                .as_deref()
+                .expect("bootstrap nested online commitments")
+        };
+        let points = crate::profile::online::stages::phase_points::<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+            PHASE,
+            _,
+        >(points);
+        #[cfg(test)]
+        let points =
+            FixedVec::from_fn(|i| crate::online_batch_tests::mutate_nested_phase(PHASE, points[i]));
+        points
+    }
+
+    /// Early coordinates of nested auxiliaries, fixed in the query before alpha.
+    pub(crate) fn nested_online_auxiliary_coordinates(
+        &self,
+    ) -> FixedVec<
+        C::CircuitField,
+        crate::profile::online::stages::PhaseCoordinatesLen<
+            C::Profile,
+            crate::profile::online::stages::Nested,
+            3,
+        >,
+    > {
+        let points = self.nested_online_phase::<3>();
+        FixedVec::from_fn(|i| {
+            let point = points[i / 2];
+            #[cfg(test)]
+            let point = crate::online_batch_tests::mutate_nested_auxiliary_query(point);
+            let (x, y) = point
+                .coordinates()
+                .expect("a nonzero online polynomial commits to a finite point");
+            [x, y][i % 2]
+        })
+    }
+
+    /// Native online stage commitment fixed at its transcript deadline.
+    pub(crate) fn native_online_stage_commitment(&self, index: usize) -> C::HostCurve {
+        let point = self.native_online.as_ref().map_or_else(
+            || self.native_extension_stage_commitments()[index],
+            |state| state.stage_commitment(index),
+        );
+        #[cfg(test)]
+        let point = crate::online_batch_tests::mutate_native_stage_commitment(index, point);
+        point
+    }
+
     /// Create a new empty builder with the given `bridge_alpha` source for
     /// deriving cached bridge polynomial alphas.
     pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
@@ -388,8 +572,9 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             circuit_id: None,
             left_header: None,
             right_header: None,
-            native_application_rx: None,
-            native_application_stage_rx: None,
+            output_header: None,
+            #[cfg(test)]
+            forged_left_bridge_header: None,
             native_preamble_rx: None,
             native_inner_error_rx: None,
             native_outer_error_rx: None,
@@ -416,6 +601,12 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: None,
             native_points_walk_rx: None,
             online_polynomials: None,
+            native_source_out: Vec::new(),
+            nested_source_out: Vec::new(),
+            dummy_nested_online_commitments: None,
+            dummy_native_online_commitments: None,
+            native_online: None,
+            nested_online: None,
             online_fq_polynomials: None,
             online_fq_commitments: OnceCell::new(),
             online_commitments: OnceCell::new(),
@@ -471,8 +662,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             alpha: None,
             u: None,
             pre_beta: None,
-            native_application_commitment: OnceCell::new(),
-            native_application_stage_commitment: OnceCell::new(),
             native_preamble_commitment: OnceCell::new(),
             native_inner_error_commitment: OnceCell::new(),
             native_outer_error_commitment: OnceCell::new(),
@@ -508,14 +697,79 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     }
 
     setter!(set_circuit_id, circuit_id, CircuitIndex);
+    getter!(circuit_id, circuit_id, CircuitIndex);
+
+    /// Replaces the suffix of both input headers with the `Dummy` suffix,
+    /// for a test playing a prover that forges the base case.
+    #[cfg(test)]
+    pub(crate) fn forge_dummy_inputs(&mut self) {
+        use crate::header::{Dummy, Header};
+        let dummy = C::CircuitField::from(<Dummy as Header<C::CircuitField>>::SUFFIX.get());
+        for header in [&mut self.left_header, &mut self.right_header] {
+            *header
+                .as_mut()
+                .and_then(|header| header.last_mut())
+                .expect("input headers are set") = dummy;
+        }
+    }
+
+    /// Adds `delta` to the first field of the left input header, for a test
+    /// playing a prover that witnesses another input header in its preamble
+    /// than the one its circuit encoded.
+    #[cfg(test)]
+    pub(crate) fn forge_left_header_field(&mut self, delta: C::CircuitField) {
+        *self
+            .left_header
+            .as_mut()
+            .and_then(|header| header.first_mut())
+            .expect("the left input header is set") += delta;
+    }
+
+    /// Replaces the circuit id, for a test playing a prover that forges it.
+    #[cfg(test)]
+    pub(crate) fn forge_circuit_id(&mut self, circuit_id: CircuitIndex) {
+        self.circuit_id = Some(circuit_id);
+    }
+
+    /// Sets the header the prover stages its left child's bridge $k(y)$
+    /// over, for a test playing a prover whose fold targets another output
+    /// header for that child than its preamble witnesses.
+    #[cfg(test)]
+    pub(crate) fn forge_left_bridge_header(&mut self, header: Vec<C::CircuitField>) {
+        self.forged_left_bridge_header = Some(header);
+    }
+
+    /// The header set by
+    /// [`forge_left_bridge_header`](Self::forge_left_bridge_header), if any.
+    #[cfg(test)]
+    pub(crate) fn forged_left_bridge_header(&self) -> Option<&[C::CircuitField]> {
+        self.forged_left_bridge_header.as_deref()
+    }
+
+    /// Adds `blind` to the native preamble polynomial and drops its cached
+    /// commitment, for a test playing a prover that swaps the stage after
+    /// the `s_prime` bridge absorbed its commitment. A `blind` supported on
+    /// the blinding coefficient leaves every value the stage holds as it
+    /// was.
+    #[cfg(test)]
+    pub(crate) fn reblind_native_preamble(
+        &mut self,
+        blind: &sparse::Polynomial<C::CircuitField, R>,
+    ) {
+        self.native_preamble_rx
+            .as_mut()
+            .expect("native_preamble_rx not set")
+            .add_assign(blind);
+        self.native_preamble_commitment = OnceCell::new();
+    }
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
     setter!(set_right_header, right_header, Vec<C::CircuitField>);
+    setter!(set_output_header, output_header, Vec<C::CircuitField>);
 
     slice_getter!(left_header, left_header, C::CircuitField);
     slice_getter!(right_header, right_header, C::CircuitField);
+    slice_getter!(output_header, output_header, C::CircuitField);
 
-    native_setter!(set_native_application_rx, native_application_rx);
-    native_setter!(set_native_application_stage_rx, native_application_stage_rx);
     native_setter!(set_native_preamble_rx, native_preamble_rx);
     native_setter!(set_native_inner_error_rx, native_inner_error_rx);
     native_setter!(set_native_outer_error_rx, native_outer_error_rx);
@@ -744,18 +998,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
 
     lazy_commitment!(
         native,
-        native_application_commitment,
-        native_application_commitment,
-        native_application_rx
-    );
-    lazy_commitment!(
-        native,
-        native_application_stage_commitment,
-        native_application_stage_commitment,
-        native_application_stage_rx
-    );
-    lazy_commitment!(
-        native,
         native_preamble_commitment,
         native_preamble_commitment,
         native_preamble_rx
@@ -897,7 +1139,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         {
             a: native_a_commitment(),
             b: native_b_commitment(),
-            native_points_ab: native_points_ab_commitment()
+            native_points_ab: native_points_ab_commitment(),
+            online_points: native_online_phase::<2>()
         }
     );
 
@@ -1137,8 +1380,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         // Force lazy evaluation of every native commitment cache by invoking
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
-        self.native_application_commitment();
-        self.native_application_stage_commitment();
         self.native_preamble_commitment();
         self.native_inner_error_commitment();
         self.native_outer_error_commitment();
@@ -1198,15 +1439,68 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             };
         }
 
+        // A step's online batches hold what the proof carries of them. The
+        // bootstrap proof has none: it carries the commitments and source
+        // polynomials it was given, a zero fold, and mesh claims that are one
+        // at the coordinates and zero at the shared values.
+        let native_online_fold = match &self.native_online {
+            Some(state) => state.fold()?.to_vec(),
+            None => alloc::vec![C::CircuitField::ZERO; Present::<C::Profile, Native, 2>::len()],
+        };
+        let nested_online_fold = match &self.nested_online {
+            Some(state) => state.fold()?.to_vec(),
+            None => alloc::vec![C::ScalarField::ZERO; Present::<C::Profile, Nested, 2>::len()],
+        };
+
         Ok(Proof {
+            nested_source_out: match &self.nested_online {
+                Some(state) => state.source_out(),
+                None => self.nested_source_out,
+            },
+            native_source_out: match &self.native_online {
+                Some(state) => state.source_out(),
+                None => self.native_source_out,
+            },
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),
-            left_header: take!(left_header),
-            right_header: take!(right_header),
+            native_online_commitments: if let Some(state) = &self.native_online {
+                state.commitments().to_vec()
+            } else {
+                self.dummy_native_online_commitments
+                    .take()
+                    .expect("bootstrap native online commitments must be set")
+            },
+            nested_online_commitments: if let Some(state) = &self.nested_online {
+                state.commitments().to_vec()
+            } else {
+                self.dummy_nested_online_commitments
+                    .take()
+                    .expect("bootstrap online commitments must be set")
+            },
+            native_mesh_claims: if let Some(state) = &self.native_online {
+                state.mesh_claims()?
+            } else if let Some(mesh) = C::Profile::NATIVE_MESH {
+                let mut values = alloc::vec![C::CircuitField::ZERO;mesh.claims_len()];
+                values[..mesh.coordinate_indices().len()].fill(C::CircuitField::ONE);
+                values
+            } else {
+                Vec::new()
+            },
+            native_online_fold,
+            nested_mesh_claims: if let Some(state) = &self.nested_online {
+                state.mesh_claims()?
+            } else if let Some(mesh) = C::Profile::NESTED_MESH {
+                let mut values = alloc::vec![C::ScalarField::ZERO;mesh.claims_len()];
+                values[..mesh.coordinate_indices().len()].fill(
+                    crate::internal::nested::challenge::<C>(C::CircuitField::ONE)?,
+                );
+                values
+            } else {
+                Vec::new()
+            },
+            nested_online_fold,
 
-            native_application_rx: take!(native_application_rx),
-            native_application_stage_rx: take!(native_application_stage_rx),
             native_preamble_rx: take!(native_preamble_rx),
             native_inner_error_rx: take!(native_inner_error_rx),
             native_outer_error_rx: take!(native_outer_error_rx),
@@ -1233,7 +1527,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: take!(native_points_f_rx),
             native_points_walk_rx: take!(native_points_walk_rx),
             online_polynomials: take!(online_polynomials),
-            online_openings: take!(online_openings),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -1310,8 +1603,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             u: take!(u),
             pre_beta: take!(pre_beta),
 
-            native_application_commitment: cached!(native_application_commitment),
-            native_application_stage_commitment: cached!(native_application_stage_commitment),
             native_preamble_commitment: cached!(native_preamble_commitment),
             native_inner_error_commitment: cached!(native_inner_error_commitment),
             native_outer_error_commitment: cached!(native_outer_error_commitment),

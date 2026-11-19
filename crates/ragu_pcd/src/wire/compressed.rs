@@ -1,8 +1,8 @@
 //! Fixed-length encoding of compressed proofs.
 //!
 //! Fields are encoded in declaration order. Vector lengths come from the
-//! receiving profile and from the payload's dimensions, its rank and header size;
-//! no counts are read from the payload.
+//! receiving profile and from the payload's rank; no counts are read from
+//! the payload.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -21,12 +21,11 @@ use crate::{
             native_components, nested_components,
         },
     },
-    internal::native::online,
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
-        Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, HeaderSize,
-        Point, Reader, Rounds, Scalar, SizedSequence, field_len,
+        Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, Point, Reader,
+        Rounds, Scalar, SizedSequence, field_len,
     },
 };
 
@@ -67,14 +66,9 @@ macro_rules! codec {
         }
     }
 }
-codec!([F: Field] online::Query<F> {
-    x => Scalar,
-    y => Scalar,
-});
 codec!([F: Field] Child<F> {
     x => Scalar,
     y => Scalar,
-    id => Scalar,
 });
 codec!([F: Field] NestedChild<F> {
     x => Scalar,
@@ -128,9 +122,6 @@ codec!([P: Affine] Messages<P> {
 });
 codec!([C: ProfiledCycle] Instance<C> {
     circuit_id => DefaultEncoding,
-    left_header => SizedSequence<Scalar, HeaderSize>,
-    right_header => SizedSequence<Scalar, HeaderSize>,
-    online => Array<DefaultEncoding>,
     native => FixedSequence<Point, Native<C::Profile>>,
     native_registry_xy => Point,
     native_p => Point,
@@ -144,6 +135,12 @@ codec!([C: ProfiledCycle] Instance<C> {
     v => Scalar,
     nested_c => Scalar,
     nested_v => Scalar,
+    nested_mesh_claims => FixedSequence<Scalar, crate::profile::online::stages::MeshClaimsLen<C::Profile, crate::profile::online::stages::Nested>>,
+    nested_online_fold => FixedSequence<Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Nested, 2>>,
+    native_mesh_claims => FixedSequence<Scalar, crate::profile::online::stages::MeshClaimsLen<C::Profile, crate::profile::online::stages::Native>>,
+    native_online_fold => FixedSequence<Scalar, crate::profile::online::stages::Present<C::Profile, crate::profile::online::stages::Native, 2>>,
+    nested_online_commitments => FixedSequence<Point, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Nested>>,
+    native_online_commitments => FixedSequence<Point, crate::profile::online::stages::PolynomialsLen<C::Profile, crate::profile::online::stages::Native>>,
     left => DefaultEncoding,
     right => DefaultEncoding,
     a_at_u => Scalar,
@@ -153,8 +150,48 @@ codec!([C: ProfiledCycle] Instance<C> {
     nested_a_at_u => Scalar,
     nested_b_at_u => Scalar,
 });
+struct MeshBatch<P, S>(PhantomData<(P, S)>);
+struct MeshMessages<P, S>(PhantomData<(P, S)>);
+struct BatchValues<P, S>(PhantomData<(P, S)>);
+impl<P: Profile, S: crate::profile::online::stages::Side> Len for BatchValues<P, S> {
+    fn len() -> usize {
+        Derived::ALL.len()
+            + 2
+            + OPENED
+            + S::mesh::<P>().map_or(0, |mesh| mesh.polynomial_indices().len())
+    }
+}
+macro_rules! profile_codec {
+    ($ty:ty, $encoding:ty { $($field:ident => $enc:ty),* $(,)? }) => {
+        impl<C: Affine, P: Profile, S: crate::profile::online::stages::Side> Encode<$encoding> for $ty {
+            fn encode(&self, out: &mut Vec<u8>, dims: Dimensions) -> Result<(), Error<'static>> {
+                $( <_ as Encode<$enc>>::encode(&self.$field, out, dims)?; )*
+                Ok(())
+            }
+        }
+        impl<C: Affine, P: Profile, S: crate::profile::online::stages::Side> Decode<$encoding> for $ty {
+            fn encoded_len(dims: Dimensions) -> usize {
+                0 $(+ field_len::<Self, _, $enc>(|value| &value.$field, dims))*
+            }
+            fn decode<'a>(reader: &mut Reader<'a>, dims: Dimensions) -> Result<Self, Error<'a>> {
+                Ok(Self {
+                    $( $field: <_ as Decode<$enc>>::decode(reader, dims)?, )*
+                })
+            }
+        }
+    }
+}
+profile_codec!(Batch<C>, MeshBatch<P, S> {
+    f => Point,
+    evaluations => FixedSequence<Scalar, BatchValues<P, S>>,
+});
+profile_codec!(Messages<C>, MeshMessages<P, S> {
+    reduction => DefaultEncoding,
+    batch => MeshBatch<P, S>,
+    opening => DefaultEncoding,
+});
 codec!([C: ProfiledCycle] CompressedProof<C> {
     instance => DefaultEncoding,
-    native => DefaultEncoding,
-    nested => DefaultEncoding,
+    native => MeshMessages<C::Profile, crate::profile::online::stages::Native>,
+    nested => MeshMessages<C::Profile, crate::profile::online::stages::Nested>,
 });

@@ -58,7 +58,7 @@ use crate::{
     SelectableBackend,
     header::{Header, NUM_ONLINE_FP_POLYS},
     ipa::{CycleTranscript, IPA_TAG, IpaProof, IpaTranscript},
-    profile::ProfiledCycle,
+    profile::{Profile, ProfiledCycle},
 };
 
 pub(crate) mod batch;
@@ -108,18 +108,45 @@ impl<C: ProfiledCycle> CompressedProof<C> {
     /// commitment per component, one opening per derived polynomial, one
     /// value per batched polynomial and one IPA round per bit of the rank.
     fn well_formed<R: Rank>(&self) -> bool {
-        fn side<P: Affine, R: Rank>(messages: &Messages<P>) -> bool {
+        fn side<P: Affine, R: Rank>(messages: &Messages<P>, mesh_polynomials: usize) -> bool {
             let derived = Derived::ALL.len();
             // The batch covers the derived polynomials, the reduction's p
             // and q, and the four the instance opens.
             messages.reduction.openings.len() == derived
-                && messages.batch.evaluations.len() == derived + 2 + instance::OPENED
+                && messages.batch.evaluations.len()
+                    == derived + 2 + instance::OPENED + mesh_polynomials
                 && messages.opening.rounds.len() == R::RANK as usize
         }
         self.instance.native.len() == native_components::<C::Profile>().count()
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
-            && side::<_, R>(&self.native)
-            && side::<_, R>(&self.nested)
+            && self.instance.native_mesh_claims.len()
+                == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.instance.nested_mesh_claims.len()
+                == C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.claims_len())
+            && self.instance.native_online_commitments.len()
+                == C::Profile::NATIVE_ONLINE.polynomials.len()
+            && self.instance.nested_online_commitments.len()
+                == C::Profile::NESTED_ONLINE.polynomials.len()
+            && self.instance.native_online_fold.len()
+                == <crate::profile::online::stages::Present<
+                    C::Profile,
+                    crate::profile::online::stages::Native,
+                    2,
+                > as ragu_primitives::vec::Len>::len()
+            && self.instance.nested_online_fold.len()
+                == <crate::profile::online::stages::Present<
+                    C::Profile,
+                    crate::profile::online::stages::Nested,
+                    2,
+                > as ragu_primitives::vec::Len>::len()
+            && side::<_, R>(
+                &self.native,
+                C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.polynomial_indices().len()),
+            )
+            && side::<_, R>(
+                &self.nested,
+                C::Profile::NESTED_MESH.map_or(0, |mesh| mesh.polynomial_indices().len()),
+            )
     }
 }
 
