@@ -3,6 +3,8 @@
 //! and compression messages. Exhaustive destructuring keeps those copies
 //! complete when either proof representation changes.
 
+use std::sync::OnceLock;
+
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::{ProductionRank, R, Rank};
 use ragu_core::{
@@ -17,7 +19,7 @@ use udon::field::Field;
 
 use super::{Proof, recursive_propagation_tests::support::Value};
 use crate::{
-    Application, ApplicationBuilder, CompressedProof, Pcd,
+    Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd,
     compress::instance::Instance,
     ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
@@ -59,8 +61,6 @@ fn copy_proof_payload<
         Proof {
             bridge_alpha,
             circuit_id,
-            left_header,
-            right_header,
             nested_online_fold,
             native_mesh_claims,
             nested_mesh_claims,
@@ -69,8 +69,6 @@ fn copy_proof_payload<
             native_online_commitments,
             native_source_out,
             nested_source_out,
-            native_application_rx,
-            native_application_stage_rx,
             native_preamble_rx,
             native_inner_error_rx,
             native_outer_error_rx,
@@ -97,7 +95,6 @@ fn copy_proof_payload<
             native_points_f_rx,
             native_points_walk_rx,
             online_polynomials,
-            online_openings,
             bridge_preamble_rx,
             bridge_hash_rx,
             bridge_s_prime_rx,
@@ -141,8 +138,6 @@ fn copy_proof_payload<
             alpha,
             u,
             pre_beta,
-            native_application_commitment,
-            native_application_stage_commitment,
             native_preamble_commitment,
             native_inner_error_commitment,
             native_outer_error_commitment,
@@ -202,15 +197,12 @@ fn copy_compressed_payload<
         instance,
         Instance {
             circuit_id,
-            left_header,
-            right_header,
             nested_online_fold,
             native_mesh_claims,
             nested_mesh_claims,
             native_online_fold,
             nested_online_commitments,
             native_online_commitments,
-            online,
             native,
             native_registry_xy,
             native_p,
@@ -407,25 +399,20 @@ fn check_both_verifiers<P: Profile, Rk: Rank>(
     Ok(())
 }
 
-/// Submits the sender's payload to receivers of profile `T`: first one with
-/// the tags its registries derive, which accepts the payload exactly when
-/// `share_registries` says the two profiles register the same circuits; then
-/// ones whose tags differ from the sender's in either registry or both,
-/// standing in for another setup, which must reject it however it is reused.
-fn check_same_shape<S: Profile, T: Profile>(
+struct SenderFixture<P: Profile> {
+    tags: (Fp, Fq),
+    source: TestPcd<P>,
+    compressed: CompressedPcd<C<P>, Value>,
+}
+
+fn sender_fixture<P: Profile>(
     sender_constraint: Option<Fp>,
-    receiver_constraint: Option<Fp>,
     foreign_value: Fp,
-    local_value: Fp,
-    share_registries: bool,
-) -> Result<()>
+) -> Result<SenderFixture<P>>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
-    assert_eq!(Shape::of::<S>(), Shape::of::<T>());
-    let sender = application::<S, ProductionRank>((None, None), sender_constraint)?;
-    let (native_tag, nested_tag) = (sender.native_registry.tag(), sender.nested_registry.tag());
+    let sender = application::<P, ProductionRank>((None, None), sender_constraint)?;
     let mut rng = StdRng::seed_from_u64(0x908_1501);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -435,8 +422,44 @@ where
         foreign_value,
     )?;
     assert!(sender.verify_uncompressed(&source, &mut rng)?);
-    let compressed_source = sender.compress(&source, &mut rng)?;
-    assert!(sender.verify_compressed(&compressed_source)?);
+    let compressed = sender.compress(&source, &mut rng)?;
+    assert!(sender.verify_compressed(&compressed)?);
+    Ok(SenderFixture {
+        tags: (sender.native_registry.tag(), sender.nested_registry.tag()),
+        source,
+        compressed,
+    })
+}
+
+fn standard_sender() -> &'static SenderFixture<Standard> {
+    static STANDARD: OnceLock<SenderFixture<Standard>> = OnceLock::new();
+    let value = Fp::from(7);
+    STANDARD.get_or_init(|| sender_fixture(Some(value), value).expect("build the Standard sender"))
+}
+
+/// Submits the sender's payload to receivers of profile `T`: first one with
+/// the tags its registries derive, which accepts the payload exactly when
+/// `share_registries` says the two profiles register the same circuits; then
+/// ones whose tags differ from the sender's in either registry or both,
+/// standing in for another setup, which must reject it however it is reused.
+fn check_same_shape<S: Profile, T: Profile, const CHECK_GRANDPARENTS: bool>(
+    sender: &SenderFixture<S>,
+    receiver_constraint: Option<Fp>,
+    local_value: Fp,
+    share_registries: bool,
+) -> Result<()>
+where
+    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+{
+    assert_eq!(Shape::of::<S>(), Shape::of::<T>());
+    let (native_tag, nested_tag) = sender.tags;
+    let foreign_value = *sender.source.data();
+    let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(sender.source.proof().clone())
+        .carry::<Value>(foreign_value);
+    let compressed = copy_compressed_payload::<C<S>, C<T>>(sender.compressed.proof().clone())
+        .carry::<Value>(foreign_value);
+    // Receiver randomness is independent of the shared sender fixture.
+    let mut rng = StdRng::seed_from_u64(0x908_1502);
 
     // Tags are derived from the registered circuits, so a receiver with its
     // own derived tags holds the sender's registries exactly when the two
@@ -447,11 +470,7 @@ where
         share_registries,
         "the profiles' registries"
     );
-    let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
-        .carry::<Value>(foreign_value);
     check_both_verifiers(&derived, &foreign, share_registries, &mut rng)?;
-    let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
-        .carry::<Value>(foreign_value);
     assert_eq!(derived.verify_compressed(&compressed)?, share_registries);
 
     for changed in [
@@ -486,14 +505,10 @@ where
         )?;
         check_both_verifiers(&receiver, &local, true, &mut rng)?;
 
-        let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(source.proof().clone())
-            .carry::<Value>(foreign_value);
         assert!(
-            foreign.proof().well_formed::<HEADER_SIZE>(),
+            foreign.proof().well_formed(),
             "same-shape substitution must reach the claim checks"
         );
-        let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
-            .carry::<Value>(foreign_value);
         assert!(
             !receiver.verify_compressed(&compressed)?,
             "foreign compressed payload: {changed:?}"
@@ -505,8 +520,11 @@ where
         let (parent, ()) = receiver.fuse(&mut rng, Sum, (), local.clone(), local.clone())?;
         assert_eq!(*parent.data(), local_value + local_value);
         check_both_verifiers(&receiver, &parent, true, &mut rng)?;
-        let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), parent, local.clone())?;
-        check_both_verifiers(&receiver, &grandparent, true, &mut rng)?;
+        #[cfg(ragu_pcd_nightly_tests)]
+        if CHECK_GRANDPARENTS {
+            let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), parent, local.clone())?;
+            check_both_verifiers(&receiver, &grandparent, true, &mut rng)?;
+        }
 
         for foreign_on_left in [true, false] {
             let (left, right) = if foreign_on_left {
@@ -517,13 +535,16 @@ where
             let (parent, ()) = receiver.fuse(&mut rng, Sum, (), left, right)?;
             assert_eq!(*parent.data(), foreign_value + local_value);
             check_both_verifiers(&receiver, &parent, false, &mut rng)?;
-            let (left, right) = if foreign_on_left {
-                (parent, local.clone())
-            } else {
-                (local.clone(), parent)
-            };
-            let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), left, right)?;
-            check_both_verifiers(&receiver, &grandparent, false, &mut rng)?;
+            #[cfg(ragu_pcd_nightly_tests)]
+            if CHECK_GRANDPARENTS {
+                let (left, right) = if foreign_on_left {
+                    (parent, local.clone())
+                } else {
+                    (local.clone(), parent)
+                };
+                let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), left, right)?;
+                check_both_verifiers(&receiver, &grandparent, false, &mut rng)?;
+            }
         }
     }
     Ok(())
@@ -535,10 +556,20 @@ where
 /// land, the payload is rejected.
 #[test]
 fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Result<()> {
-    check_same_shape::<Standard, Aggregator>(
+    check_standard_payloads_in_aggregator::<false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn aggregator_checks_standard_registry_tags_through_two_generations() -> Result<()> {
+    check_standard_payloads_in_aggregator::<true>()
+}
+
+fn check_standard_payloads_in_aggregator<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
+    check_same_shape::<Standard, Aggregator, CHECK_GRANDPARENTS>(
+        standard_sender(),
         Some(Fp::from(7)),
-        Some(Fp::from(7)),
-        Fp::from(7),
         Fp::from(7),
         true,
     )
@@ -546,12 +577,13 @@ fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Resul
 
 /// The converse of
 /// [`aggregator_accepts_standard_payloads_only_with_the_same_registries`].
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Result<()> {
-    check_same_shape::<Aggregator, Standard>(
+    check_same_shape::<Aggregator, Standard, true>(
+        &sender_fixture(Some(Fp::from(7)), Fp::from(7))?,
         Some(Fp::from(7)),
-        Some(Fp::from(7)),
-        Fp::from(7),
         Fp::from(7),
         true,
     )
@@ -559,13 +591,23 @@ fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Resul
 
 #[test]
 fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
+    check_weaker_payloads_in_standard::<false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn standard_rejects_a_weaker_profile_through_two_generations() -> Result<()> {
+    check_weaker_payloads_in_standard::<true>()
+}
+
+fn check_weaker_payloads_in_standard<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
     // A Standard leaf must be 7. The foreign profile accepts 9 instead,
     // so rejection here also protects an independently false statement.
     assert_ne!(Fp::from(9), Fp::from(7));
-    check_same_shape::<Permissive, Standard>(
-        None,
+    check_same_shape::<Permissive, Standard, CHECK_GRANDPARENTS>(
+        &sender_fixture(None, Fp::from(9))?,
         Some(Fp::from(7)),
-        Fp::from(9),
         Fp::from(7),
         false,
     )
@@ -573,10 +615,20 @@ fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
 
 #[test]
 fn standard_cannot_substitute_for_a_weaker_profile() -> Result<()> {
-    check_same_shape::<Standard, Permissive>(
-        Some(Fp::from(7)),
+    check_standard_payloads_in_weaker_profile::<false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn weaker_profile_rejects_standard_through_two_generations() -> Result<()> {
+    check_standard_payloads_in_weaker_profile::<true>()
+}
+
+fn check_standard_payloads_in_weaker_profile<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
+    check_same_shape::<Standard, Permissive, CHECK_GRANDPARENTS>(
+        standard_sender(),
         None,
-        Fp::from(7),
         Fp::from(9),
         false,
     )
@@ -614,7 +666,7 @@ where
 
     let foreign =
         copy_proof_payload::<C<S>, C<T>, R<14>>(source.into_parts().0).carry::<Value>(Fp::from(7));
-    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!foreign.proof().well_formed());
     assert!(!receiver.verify_uncompressed(&foreign, &mut rng)?);
     assert!(matches!(
         receiver.compress(&foreign, &mut rng),

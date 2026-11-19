@@ -46,6 +46,7 @@ fn expected_rx_order() -> Vec<RxIndex> {
             EndoscalarStage,
             PointsStage,
             BridgePreamble,
+            BridgeHash,
             BridgeSPrime,
             BridgeInnerError,
             BridgeOuterError,
@@ -70,6 +71,7 @@ fn expected_circuit_order() -> Vec<InternalCircuitIndex> {
             PointsStage,
             PointsFinalStaged,
             BridgePreamble,
+            BridgeHash,
             BridgeSPrime,
             BridgeInnerError,
             BridgeOuterError,
@@ -915,7 +917,7 @@ mod challenge_stage {
 
     use super::{
         folding,
-        support::{self, C, Cache, HEADER_SIZE, R, Value},
+        support::{self, C, Cache, R, Value},
     };
     use crate::internal::nested::stages::challenges;
 
@@ -949,7 +951,7 @@ mod challenge_stage {
                 "{case}: the edit must leave the child's nested claims true"
             );
             assert!(
-                !crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
+                !crate::verify::nested_challenges_match::<C, R>(
                     &forged,
                     &forged.challenges().lifts::<C>()?,
                 )?,

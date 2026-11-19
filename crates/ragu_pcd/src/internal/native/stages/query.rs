@@ -13,8 +13,8 @@
 //!
 //! Additionally witnesses the $a$/$b$ polynomial evaluations and registry
 //! transition evaluations needed for mesh consistency checks, and the
-//! step's online openings (see [`online`]): the point each slot's
-//! polynomial is opened at and the claimed evaluation.
+//! step's own application claim's evaluations: its registry selector at
+//! its circuit id, and its application trace and stage at $xz$.
 
 use core::marker::PhantomData;
 
@@ -34,7 +34,7 @@ use udon::field::Field;
 use crate::{
     Proof,
     internal::native::{
-        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues, online,
+        InternalCircuitIndex, InternalCircuitValues, RxComponent, RxIndex, RxValues,
     },
     profile::{
         Profile, ProfiledCycle,
@@ -56,9 +56,6 @@ pub struct ChildEvaluationsWitness<F, P: Profile> {
     /// Child's `registry_xy` polynomial evaluated at current step's $w$.
     pub child_registry_xy_at_current_w: F,
 
-    /// Current `registry_xy` polynomial evaluated at child's `circuit_id`.
-    pub current_registry_xy_at_child_circuit_id: F,
-
     /// Current `registry_wy` polynomial evaluated at child's $x$.
     pub current_registry_wy_at_child_x: F,
 }
@@ -74,7 +71,6 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
         w: F,
         x: F,
         xz: F,
-        registry_xy: &sparse::Polynomial<F, R>,
         registry_wy: &sparse::Polynomial<F, R>,
     ) -> Self {
         let mut rx = B::map(
@@ -88,10 +84,6 @@ impl<F: Field, P: Profile> ChildEvaluationsWitness<F, P> {
             a_poly_at_xz: B::sparse_eval(&proof[RxComponent::AbA], xz),
             b_poly_at_x: B::sparse_eval(&proof[RxComponent::AbB], x),
             child_registry_xy_at_current_w: B::sparse_eval(proof.native_registry_xy_poly(), w),
-            current_registry_xy_at_child_circuit_id: B::sparse_eval(
-                registry_xy,
-                proof.circuit_id().omega_j(),
-            ),
             current_registry_wy_at_child_x: B::sparse_eval(registry_wy, proof.x()),
         }
     }
@@ -111,12 +103,17 @@ pub struct Witness<C: ProfiledCycle> {
     pub fixed_registry: InternalCircuitValues<C::CircuitField, C::Profile>,
     /// m(w, x, y) - verifies registry_xy/registry_wy consistency at current coordinates.
     pub registry_wxy: C::CircuitField,
+    /// Current `registry_xy` polynomial evaluated at the step's own
+    /// `circuit_id`: the selector restriction of its application claim.
+    pub registry_xy_at_circuit_id: C::CircuitField,
+    /// The step's own application rx evaluated at $xz$.
+    pub application_at_xz: C::CircuitField,
+    /// The step's own application stage rx evaluated at $xz$.
+    pub application_stage_at_xz: C::CircuitField,
     /// Left child proof polynomial evaluations.
     pub left: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
     /// Right child proof polynomial evaluations.
     pub right: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
-    /// The step's online openings, one per slot (see [`online`]).
-    pub online: online::Queries<C::CircuitField>,
 }
 
 /// Allocate [`InternalCircuitValues`] of [`Element`]s from pre-computed witness
@@ -243,10 +240,6 @@ pub struct ChildEvaluations<'dr, D: Driver<'dr>, P: Profile> {
     #[ragu(gadget)]
     pub child_registry_xy_at_current_w: Element<'dr, D>,
 
-    /// Current `registry_xy` polynomial evaluated at child's `circuit_id`.
-    #[ragu(gadget)]
-    pub current_registry_xy_at_child_circuit_id: Element<'dr, D>,
-
     /// Current `registry_wy` polynomial evaluated at child's $x$.
     #[ragu(gadget)]
     pub current_registry_wy_at_child_x: Element<'dr, D>,
@@ -270,13 +263,6 @@ impl<'dr, D: Driver<'dr>, P: Profile> ChildEvaluations<'dr, D, P> {
                 dr,
                 allocator,
                 witness.as_ref().map(|w| w.child_registry_xy_at_current_w),
-            )?,
-            current_registry_xy_at_child_circuit_id: Element::alloc(
-                dr,
-                allocator,
-                witness
-                    .as_ref()
-                    .map(|w| w.current_registry_xy_at_child_circuit_id),
             )?,
             current_registry_wy_at_child_x: Element::alloc(
                 dr,
@@ -307,16 +293,22 @@ pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
     /// m(w, x, y) - verifies registry_xy/registry_wy consistency at current coordinates.
     #[ragu(gadget)]
     pub registry_wxy: Element<'dr, D>,
+    /// Current `registry_xy` polynomial evaluated at the step's own
+    /// `circuit_id`.
+    #[ragu(gadget)]
+    pub registry_xy_at_circuit_id: Element<'dr, D>,
+    /// The step's own application rx evaluated at $xz$.
+    #[ragu(gadget)]
+    pub application_at_xz: Element<'dr, D>,
+    /// The step's own application stage rx evaluated at $xz$.
+    #[ragu(gadget)]
+    pub application_stage_at_xz: Element<'dr, D>,
     /// Left child proof polynomial evaluations.
     #[ragu(gadget)]
     pub left: ChildEvaluations<'dr, D, P>,
     /// Right child proof polynomial evaluations.
     #[ragu(gadget)]
     pub right: ChildEvaluations<'dr, D, P>,
-    /// The step's online openings, one per slot: the point and the claimed
-    /// evaluation `compute_v` folds into the batch and exports.
-    #[ragu(gadget)]
-    pub online: online::QueriesOutput<'dr, D>,
 }
 
 /// The query stage of the fuse witness.
@@ -333,12 +325,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C::Profile>];
 
     fn values() -> usize {
-        // InternalCircuitIndex::num + registry_wxy (1) + 2 * ChildEvaluations
-        // (rx + 5 each) + (x, y) per online slot
+        // InternalCircuitIndex::num + registry_wxy (1) + the own application
+        // claim's selector, rx and stage rx (3) + 2 * ChildEvaluations (rx + 4
+        // each) + the nested online batch's query stage and auxiliaries
         InternalCircuitIndex::num::<C::Profile>()
             + 1
-            + 2 * (RxIndex::num::<C::Profile>() + 5)
-            + 2 * online::NUM_ONLINE_FP_QUERIES
+            + 3
+            + 2 * (RxIndex::num::<C::Profile>() + 4)
             + Present::<C::Profile, Nested, 2>::len()
             + <crate::profile::online::stages::PhaseCoordinatesLen<C::Profile,Nested,3> as ragu_primitives::vec::Len>::len()
     }
@@ -358,9 +351,20 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             witness.as_ref().map(|w| &w.fixed_registry),
         )?;
         let registry_wxy = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.registry_wxy))?;
+        let registry_xy_at_circuit_id = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.registry_xy_at_circuit_id),
+        )?;
+        let application_at_xz =
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.application_at_xz))?;
+        let application_stage_at_xz = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.application_stage_at_xz),
+        )?;
         let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
         let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
-        let online = online::alloc_queries(dr, allocator, witness.as_ref().map(|w| &w.online))?;
         Ok(Output {
             online_auxiliaries: ragu_primitives::vec::FixedVec::try_from_fn(|i| {
                 Element::alloc(
@@ -374,9 +378,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             })?,
             fixed_registry,
             registry_wxy,
+            registry_xy_at_circuit_id,
+            application_at_xz,
+            application_stage_at_xz,
             left,
             right,
-            online,
         })
     }
 }

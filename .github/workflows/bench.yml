@@ -62,6 +62,8 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: bench
+          # The benchmark compile job only runs on pull requests.
+          save-pr-dependencies: true
 
       - name: Build benchmarks
         run: cargo bench --workspace --all-features --locked --bench gungraun --no-run

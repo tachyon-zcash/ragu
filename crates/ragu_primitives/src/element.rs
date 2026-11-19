@@ -17,6 +17,7 @@ use udon::field::Field;
 use crate::{
     Boolean, GadgetExt, Invertible, Nonzero,
     allocator::Allocator,
+    boolean::{decompose_n, enforce_le_bits},
     comparison::GadgetEquals,
     consistent::Consistent,
     io::{Buffer, Write},
@@ -461,6 +462,72 @@ impl<'dr, D: Driver<'dr>> Element<'dr, D> {
         diff.is_zero(dr, allocator)
     }
 
+    /// Enforces that this element is at most the constant `maximum`.
+    ///
+    /// This decomposes the element into `N` bits with [`decompose_n`] and
+    /// bounds the bits with [`enforce_le_bits`]. Call those functions directly
+    /// to keep the bits.
+    ///
+    /// The decomposition costs `N` gates and $2N + 1$ linear constraints. The
+    /// bound adds the cost of [`enforce_le_bits`], which is nothing when
+    /// `maximum` is at least $2^N - 1$.
+    ///
+    /// # Constraints
+    ///
+    /// `N` and `maximum` determine the emitted constraints. `maximum` must not
+    /// depend on witness input.
+    ///
+    /// # Soundness
+    ///
+    /// Any satisfying assignment places this element below $2^N$ and at or
+    /// below the canonical integer representative of `maximum`.
+    /// `N <= D::F::CAPACITY` is checked at compile time, so the element cannot
+    /// wrap around the modulus to pass.
+    ///
+    /// # Completeness
+    ///
+    /// Every element that is below $2^N$ and at or below `maximum` admits a
+    /// satisfying assignment. No larger element does, so an `N` below the bit
+    /// length of `maximum` rejects the elements from $2^N$ to `maximum`.
+    pub fn enforce_le<const N: usize>(
+        &self,
+        dr: &mut D,
+        allocator: &mut impl Allocator<'dr, D>,
+        maximum: D::F,
+    ) -> Result<()> {
+        let bits = decompose_n::<_, N>(dr, allocator, self)?;
+        enforce_le_bits(dr, &bits, maximum)
+    }
+
+    /// Enforces that this element is below the constant `bound`.
+    ///
+    /// This is [`enforce_le`](Self::enforce_le) with a maximum of `bound - 1`,
+    /// and has the same cost, soundness, and completeness for that maximum.
+    ///
+    /// # Constraints
+    ///
+    /// `N` and `bound` determine the emitted constraints. `bound` must not
+    /// depend on witness input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `bound` is zero. No element is below zero, and
+    /// `bound - 1` would wrap to the largest field element, which bounds
+    /// nothing.
+    pub fn enforce_lt<const N: usize>(
+        &self,
+        dr: &mut D,
+        allocator: &mut impl Allocator<'dr, D>,
+        bound: D::F,
+    ) -> Result<()> {
+        if bound == D::F::ZERO {
+            return Err(Error::InvalidWitness(
+                "no element is below a bound of zero".into(),
+            ));
+        }
+        self.enforce_le::<N>(dr, allocator, bound - D::F::ONE)
+    }
+
     /// Computes a weighted sum of the elements yielded by an iterator by the
     /// powers of the provided `scale_factor`.
     ///
@@ -760,7 +827,126 @@ mod tests {
         Ok(())
     }
 
+    const MAX_MONEY: u64 = 2_100_000_000_000_000;
+
+    /// The largest 51-bit integer; `MAX_MONEY` needs all 51 bits.
+    const MAX_51: u64 = (1 << 51) - 1;
+
+    #[test]
+    fn test_enforce_le() -> Result<()> {
+        let le = |x: F, maximum: u64| {
+            Simulator::simulate(x, |dr, x| {
+                let allocator = &mut Standard::new();
+                let x = Element::alloc(dr, allocator, x)?;
+                dr.reset();
+                x.enforce_le::<51>(dr, allocator, F::from(maximum))
+            })
+        };
+
+        le(F::ZERO, MAX_MONEY)?;
+        le(F::from(MAX_MONEY - 1), MAX_MONEY)?;
+        // Decomposition is 51 gates and 103 constraints; the bound on the bits
+        // is 28 gates and 65 constraints.
+        let sim = le(F::from(MAX_MONEY), MAX_MONEY)?;
+        assert_eq!(sim.num_gates(), 51 + 28);
+        assert_eq!(sim.num_constraints(), 103 + 65);
+        assert!(le(F::from(MAX_MONEY + 1), MAX_MONEY).is_err());
+        assert!(le(F::from(MAX_51), MAX_MONEY).is_err());
+
+        // A maximum of `2^N - 1` or more leaves only the `N`-bit range check,
+        // which still rejects every element from `2^N` up.
+        for maximum in [MAX_51, MAX_51 + 1, u64::MAX] {
+            let sim = le(F::from(MAX_51), maximum)?;
+            assert_eq!(sim.num_gates(), 51);
+            assert_eq!(sim.num_constraints(), 103);
+            assert!(le(F::from(MAX_51 + 1), maximum).is_err());
+        }
+
+        // An element just below the modulus does not wrap around to pass.
+        assert!(le(-F::ONE, MAX_MONEY).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_enforce_lt() -> Result<()> {
+        let lt = |x: F, bound: u64| {
+            Simulator::simulate(x, |dr, x| {
+                let allocator = &mut Standard::new();
+                let x = Element::alloc(dr, allocator, x)?;
+                dr.reset();
+                x.enforce_lt::<51>(dr, allocator, F::from(bound))
+            })
+        };
+
+        lt(F::ZERO, MAX_MONEY)?;
+        // The bound on the bits is that of `MAX_MONEY - 1`: 26 gates and 60
+        // constraints on top of the decomposition.
+        let sim = lt(F::from(MAX_MONEY - 1), MAX_MONEY)?;
+        assert_eq!(sim.num_gates(), 51 + 26);
+        assert_eq!(sim.num_constraints(), 103 + 60);
+        assert!(lt(F::from(MAX_MONEY), MAX_MONEY).is_err());
+        assert!(lt(F::from(MAX_MONEY + 1), MAX_MONEY).is_err());
+
+        // Only zero is below one.
+        lt(F::ZERO, 1)?;
+        assert!(lt(F::ONE, 1).is_err());
+
+        // Nothing is below zero; `bound - 1` must not wrap into a bound that
+        // accepts everything.
+        assert!(lt(F::ZERO, 0).is_err());
+        assert!(lt(F::from(MAX_MONEY), 0).is_err());
+
+        // A bound of `2^N` is exactly the `N`-bit range check.
+        let sim = lt(F::from(MAX_51), MAX_51 + 1)?;
+        assert_eq!(sim.num_gates(), 51);
+        assert_eq!(sim.num_constraints(), 103);
+        assert!(lt(F::from(MAX_51 + 1), MAX_51 + 1).is_err());
+        assert!(lt(-F::ONE, MAX_MONEY).is_err());
+
+        Ok(())
+    }
+
     proptest! {
+        /// Differential check of `enforce_le` and `enforce_lt` against integer
+        /// comparison on 64 bits. The element is either arbitrary or within two
+        /// of the bound, so that both sides of the boundary occur.
+        #[test]
+        fn enforce_le_lt_match_integer_order(
+            bound in prop_oneof![
+                strategies::edge_u64().prop_map(F::from),
+                strategies::prime_field_element::<F>(),
+            ],
+            x in prop_oneof![
+                strategies::edge_u64().prop_map(F::from),
+                strategies::prime_field_element::<F>(),
+            ],
+            delta in proptest::option::of(-2i64..=2),
+        ) {
+            let x = match delta {
+                Some(delta) if delta < 0 => bound - F::from(delta.unsigned_abs()),
+                Some(delta) => bound + F::from(delta.unsigned_abs()),
+                None => x,
+            };
+            let le = Simulator::simulate(x, |dr, x| {
+                let allocator = &mut Standard::new();
+                Element::alloc(dr, allocator, x)?.enforce_le::<64>(dr, allocator, bound)
+            });
+            let lt = Simulator::simulate(x, |dr, x| {
+                let allocator = &mut Standard::new();
+                Element::alloc(dr, allocator, x)?.enforce_lt::<64>(dr, allocator, bound)
+            });
+
+            // Most significant bit first, slices of one length order as the
+            // integers they encode.
+            let x_bits = x.to_le_bits();
+            let order = x_bits.iter().rev().cmp(bound.to_le_bits().iter().rev());
+            let fits = x_bits[64..].iter().all(|bit| !bit);
+
+            prop_assert_eq!(le.is_ok(), fits && order.is_le());
+            prop_assert_eq!(lt.is_ok(), fits && order.is_lt());
+        }
+
         #[test]
         fn element_add_sub_roundtrip(
             a_fe in strategies::prime_field_element::<F>(),

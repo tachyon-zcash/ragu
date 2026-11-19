@@ -129,8 +129,7 @@ use crate::{
     },
     header::{Header, Padding, Suffix},
     internal::{
-        ky,
-        native::{self, online},
+        ky, native,
         nested::{self, stages as nested_stages},
     },
     ipa::{
@@ -547,8 +546,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     let Proof {
         bridge_alpha,
         circuit_id,
-        left_header,
-        right_header,
         nested_online_fold,
         native_mesh_claims,
         nested_mesh_claims,
@@ -557,8 +554,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_online_commitments,
         native_source_out,
         nested_source_out,
-        native_application_rx,
-        native_application_stage_rx,
         native_preamble_rx,
         native_inner_error_rx,
         native_outer_error_rx,
@@ -585,7 +580,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_points_f_rx,
         native_points_walk_rx,
         online_polynomials,
-        online_openings,
         bridge_preamble_rx,
         bridge_hash_rx,
         bridge_s_prime_rx,
@@ -629,8 +623,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         alpha,
         u,
         pre_beta,
-        native_application_commitment: _,
-        native_application_stage_commitment: _,
         native_preamble_commitment: _,
         native_inner_error_commitment: _,
         native_outer_error_commitment: _,
@@ -669,8 +661,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     } = proof;
 
     lines.push("circuit_id", usize::from(*circuit_id));
-    lines.fields("left_header", left_header);
-    lines.fields("right_header", right_header);
     assert!(nested_online_commitments.is_empty());
     assert!(native_online_commitments.is_empty());
     assert!(native_source_out.is_empty());
@@ -683,8 +673,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     }
     lines.field("bridge_alpha", bridge_alpha);
 
-    lines.poly("native_application_rx", native_application_rx);
-    lines.poly("native_application_stage_rx", native_application_stage_rx);
     lines.poly("native_preamble_rx", native_preamble_rx);
     lines.poly("native_inner_error_rx", native_inner_error_rx);
     lines.poly("native_outer_error_rx", native_outer_error_rx);
@@ -711,13 +699,6 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.poly("native_points_f_rx", native_points_f_rx);
     lines.poly("native_points_walk_rx", native_points_walk_rx);
     lines.polys("online_polynomials", online_polynomials);
-    lines.fields(
-        "online_openings",
-        &online_openings
-            .iter()
-            .flat_map(|query| [query.x, query.y])
-            .collect::<Vec<_>>(),
-    );
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
     lines.poly("bridge_hash_rx", bridge_hash_rx);
@@ -882,15 +863,12 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
 
     let Instance {
         circuit_id,
-        left_header,
-        right_header,
         nested_online_fold,
         native_mesh_claims,
         nested_mesh_claims,
         native_online_fold,
         nested_online_commitments,
         native_online_commitments,
-        online,
         native: native_commitments,
         native_registry_xy,
         native_p,
@@ -914,12 +892,6 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         nested_b_at_u,
     } = instance;
     out.u32(usize::from(*circuit_id));
-    out.fields(left_header);
-    out.fields(right_header);
-    for query in online {
-        out.field(&query.x);
-        out.field(&query.y);
-    }
     out.points(native_commitments);
     out.point(native_registry_xy);
     out.point(native_p);
@@ -940,10 +912,9 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     assert!(native_online_fold.is_empty());
     assert!(nested_online_commitments.is_empty());
     assert!(native_online_commitments.is_empty());
-    for Child { x, y, id } in [left, right] {
+    for Child { x, y } in [left, right] {
         out.field(x);
         out.field(y);
-        out.field(id);
     }
     out.field(a_at_u);
     out.field(b_at_u);
@@ -1011,18 +982,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         return None;
     }
     let circuit_id = CircuitIndex::new(cursor.u32()?);
-    let left_header = cursor.fields()?;
-    let right_header = cursor.fields()?;
-    let mut online = [online::Query {
-        x: C::CircuitField::ZERO,
-        y: C::CircuitField::ZERO,
-    }; online::NUM_ONLINE_FP_QUERIES];
-    for query in &mut online {
-        *query = online::Query {
-            x: cursor.field()?,
-            y: cursor.field()?,
-        };
-    }
     let native_commitments = cursor.points()?;
     let native_registry_xy = cursor.point()?;
     let native_p = cursor.point()?;
@@ -1040,7 +999,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         Some(Child {
             x: cursor.field()?,
             y: cursor.field()?,
-            id: cursor.field()?,
         })
     };
     let left = child()?;
@@ -1065,15 +1023,12 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let native_online_commitments = Vec::new();
     let instance = Instance {
         circuit_id,
-        left_header,
-        right_header,
         nested_online_fold,
         native_mesh_claims,
         nested_mesh_claims,
         native_online_fold,
         nested_online_commitments,
         native_online_commitments,
-        online,
         native: native_commitments,
         native_registry_xy,
         native_p,
@@ -1682,7 +1637,7 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
                     assert!(
                         proof
                             .instance
-                            .stages_match::<R, Checker, HEADER_SIZE>(&challenges, generators)
+                            .stages_match::<R, Checker>(&challenges, generators)
                             .expect("the stages are committed"),
                         "{label}: the verifier rejects the rebuilt stages"
                     );
@@ -1723,10 +1678,9 @@ fn stage_commitments<C: FixtureCycle>(
     let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
     let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
         C::ScalarField::ZERO,
-        &nested_stages::challenges::Witness::new::<_, HEADER_SIZE>(
+        &nested_stages::challenges::Witness::new(
             challenge_lifts.try_into().expect("NUM challenge lifts"),
-            &instance.left_header,
-            &instance.right_header,
+            nested_stages::challenges::is_bootstrap::<C::Profile>(instance.circuit_id).ok()?,
             beta_lift[0],
         ),
     )
@@ -1795,8 +1749,7 @@ fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
     let masked = instance
         .native_bindings::<R, Checker, HEADER_SIZE>(&challenges, registry, sigma)
         .expect("the bindings are computed");
-    let shapes = claims::native_shapes::<C::Profile, _>(instance.circuit_id, z, &masked)
-        .expect("the claims are shaped");
+    let shapes = claims::native_shapes::<C::Profile, _>(z, &masked).expect("the claims are shaped");
     let mut host = transcript.host();
     let weights = reduction.fold.replay(&mut host).expect("the fold replays");
     let [rho] = squeeze(&mut host);
@@ -1855,12 +1808,6 @@ fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> C
     let lengths = &shape.instance;
     let instance = Instance {
         circuit_id: lengths.circuit_id,
-        left_header: tape.fields(lengths.left_header.len()),
-        right_header: tape.fields(lengths.right_header.len()),
-        online: core::array::from_fn(|_| online::Query {
-            x: tape.field(),
-            y: tape.field(),
-        }),
         native: tape.points(lengths.native.len()),
         native_registry_xy: tape.point(),
         native_p: tape.point(),
@@ -1883,12 +1830,10 @@ fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> C
         left: Child {
             x: tape.field(),
             y: tape.field(),
-            id: tape.field(),
         },
         right: Child {
             x: tape.field(),
             y: tape.field(),
-            id: tape.field(),
         },
         a_at_u: tape.field(),
         b_at_u: tape.field(),

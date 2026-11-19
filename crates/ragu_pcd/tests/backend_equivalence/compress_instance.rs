@@ -8,7 +8,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
-use super::{HEADER_SIZE, Instance, TestR, replay, setup};
+use super::{Instance, TestR, replay, setup};
 use crate::internal::nested;
 
 #[test]
@@ -20,17 +20,17 @@ fn recomputed_stages_match_across_backends() {
         let verify = |result| assert_eq!(result, expected);
         verify(
             instance
-                .stages_match::<TestR, ReferenceBackend, HEADER_SIZE>(&challenges, generators)
+                .stages_match::<TestR, ReferenceBackend>(&challenges, generators)
                 .unwrap(),
         );
         verify(
             instance
-                .stages_match::<TestR, AcceleratedBackend, HEADER_SIZE>(&challenges, generators)
+                .stages_match::<TestR, AcceleratedBackend>(&challenges, generators)
                 .unwrap(),
         );
         verify(
             instance
-                .stages_match::<TestR, AcceleratedProver, HEADER_SIZE>(&challenges, generators)
+                .stages_match::<TestR, AcceleratedProver>(&challenges, generators)
                 .unwrap(),
         );
     };

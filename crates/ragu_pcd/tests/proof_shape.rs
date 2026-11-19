@@ -7,7 +7,6 @@ use ragu_backend::ReferenceBackend;
 use ragu_circuits::polynomials::{ProductionRank, R, Rank};
 use ragu_core::{Error, pasta::Pasta};
 use rand::{SeedableRng, rngs::StdRng};
-use udon::field::Field;
 
 use super::Proof;
 use crate::{
@@ -93,14 +92,14 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     check_pair!(
         native_extension_circuit_rxs,
         native_extension_circuit_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().native_hashes_1_rx,
+        honest.proof().native_hashes_1_commitment
     );
     check_pair!(
         native_extension_stage_rxs,
         native_extension_stage_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().native_hashes_1_rx,
+        honest.proof().native_hashes_1_commitment
     );
     check_pair!(
         nested_extension_circuit_rxs,
@@ -117,8 +116,8 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     check_pair!(
         native_endoscaling_step_rxs,
         native_endoscaling_step_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().native_hashes_1_rx,
+        honest.proof().native_hashes_1_commitment
     );
     check_pair!(
         nested_endoscaling_step_rxs,
@@ -129,22 +128,9 @@ fn check_shapes<C: IpaCycle + ProfiledCycle, R: Rank>(app: &Application<'_, C, R
     check_pair!(
         native_bind_challenges_rxs,
         native_bind_challenges_commitments,
-        honest.proof().native_application_rx,
-        honest.proof().native_application_commitment
+        honest.proof().native_hashes_1_rx,
+        honest.proof().native_hashes_1_commitment
     );
-
-    macro_rules! check_header {
-        ($header:ident) => {
-            let mut proof = honest.proof().clone();
-            proof.$header.push(C::CircuitField::ZERO);
-            reject(proof, concat!("trailing ", stringify!($header)));
-            let mut proof = honest.proof().clone();
-            proof.$header.pop().unwrap();
-            reject(proof, concat!("missing ", stringify!($header)));
-        };
-    }
-    check_header!(left_header);
-    check_header!(right_header);
 }
 
 #[test]

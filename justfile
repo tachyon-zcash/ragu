@@ -41,17 +41,24 @@ _flamegraph_setup: _install_binstall
 book COMMAND: _book_setup
   mdbook {{COMMAND}} ./book --open
 
-# fast per-commit tests (~2 min warm): all unit and integration tests but the slow proving suites in `_test_skip`; ARGS go to libtest, e.g. `just test compress::`
+# fast per-commit tests (~3 min warm): all unit and integration tests but the slow proving suites in `_test_skip`; ARGS go to libtest, e.g. `just test compress::`
 [group('dev')]
 test *ARGS:
   cargo test --profile fast-test --workspace --all-features --locked -- {{_test_skip}} {{ARGS}}
 
 # Each pattern is a libtest substring filter. These suites prove with the
 # Aggregator or extension profiles, recurse through several generations, or
-# compare backends. They are 62 tests but about 80% of the suite's test time,
+# compare backends. They are about 100 tests but most of the suite's test time,
 # each taking from half a minute to several minutes. What remains still proves end to end
 # (`nontrivial`, `wire`, `compress::tests`, the standard-profile `verify::tests`,
 # and others). `ci_test_all`, `backend_lane` and `ci_fixtures` run the skipped ones.
+#
+# The last four are whole suites over custom online profiles and the base case.
+# Together they took 13 of the 15 minutes `just test` reached after they landed.
+# `profile::tests` still proves an online Fq polynomial end to end, about 30
+# `profile::online` unit tests cover the batch, layout, mesh, preparation and
+# claim targets without proving, and `verify::tests` still confines the base
+# case to a bootstrap proof.
 _test_skip := (
   "--skip proof::profile_substitution_tests " +
   "--skip proof::backend_equivalence " +
@@ -71,7 +78,11 @@ _test_skip := (
   "--skip bootstrap_exempts_child_claims_with_consistent_commitments " +
   "--skip rerandomization_flow " +
   "--skip multiple_rerandomizations_all_verify " +
-  "--skip both_profiles_prove_in_one_binary"
+  "--skip both_profiles_prove_in_one_binary " +
+  "--skip online_batch_tests " +
+  "--skip online_fq_oracles_tests " +
+  "--skip source_mesh_tests " +
+  "--skip proof::base_case_combinations_tests"
 )
 
 # run quicker proptests used for routine local/CI coverage
@@ -162,13 +173,13 @@ _flamegraph_linux PACKAGE GROUP TARGET *ARGS: _flamegraph_setup
 fmt_check:
   cargo +{{_nightly}} fmt --all -- --config-path rustfmt.nightly.toml --check
 
-# clippy in every configuration CI lints (rust.yml: clippy, mock; backend.yml)
+# clippy in every configuration CI lints (rust.yml: clippy; backend.yml)
 [group('lint')]
 clippy: backend_clippy
-  cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy --workspace --lib --tests --benches --locked --all-features -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy --workspace --locked --all-features --test corruption --test online_fp_oracles -- -D warnings
   cargo clippy -p ragu_pcd --lib --locked -- -D warnings
   cargo clippy -p ragu_pcd --lib --locked --features baked,multicore -- -D warnings
-  cargo clippy -p ragu --no-default-features --features mock --lib --tests --locked -- -D warnings
 
 # rustdoc with warnings denied, private items included (rust.yml: docs)
 [group('lint')]
@@ -209,7 +220,7 @@ _book_build: _book_setup
 
 # every CI check runnable on this machine, serially; only the Windows/macOS matrix legs are left out. Expect well over an hour.
 [group('ci')]
-ci_local: lint ci_test_all ci_test_default ci_corruption ci_mock proptests_fast ci_nostd ci_bitrot ci_fuzz_harness backend_lane ci_fixtures ci_fv ci_supply_chain
+ci_local: lint ci_test_all ci_test_default ci_corruption ci_debug proptests_fast ci_bitrot ci_fuzz_harness backend_lane ci_fixtures ci_fv ci_supply_chain
   @echo "All CI checks passed!"
 
 # full test suite, all features (rust.yml: all-feature)
@@ -232,15 +243,11 @@ ci_corruption:
     proof::recursive_boundary_tests::stages::corrupted_hoisted_products_reject_through_two_generations \
     proof::recursive_binding_tests::challenge_binding::partial_and_pre_beta_substitutions_reject_through_two_generations
 
-# the mock API under no-default-features (rust.yml: mock; its clippy step is in `clippy`)
+# PCD debug-assertion regressions, optimized (rust.yml: test-debug-assertions)
 [group('ci')]
-ci_mock:
-  cargo test --release -p ragu --no-default-features --features mock --locked
-
-# the mock API on a bare-metal target (rust.yml: build-nostd)
-[group('ci')]
-ci_nostd: _thumb_setup
-  cargo build -p ragu --lib --locked --no-default-features --features mock --target thumbv7em-none-eabihf
+ci_debug:
+  CARGO_PROFILE_TEST_OPT_LEVEL=3 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_DEBUG_ASSERTIONS=true \
+    cargo test -p ragu_pcd --lib --locked --all-features proof::child_commitment_tests
 
 # benches and examples still build (rust.yml: bitrot; bench.yml: build benchmarks)
 [group('ci')]
@@ -314,7 +321,8 @@ _supply_chain_setup: _install_binstall
 [group('backend')]
 backend_clippy:
   cargo clippy -p ragu_acceleration --lib --tests --no-default-features -- -D warnings
-  cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features -- -D warnings
+  RAGU_PCD_NIGHTLY_TESTS=1 cargo clippy -p ragu_pcd --no-default-features --test online_fp_oracles -- -D warnings
   CLIPPY_CONF_DIR=qa/backend cargo clippy -p ragu_pcd --lib --no-deps --all-features -- -D clippy::disallowed_methods
 
 # backend lane: the PCD end-to-end equivalence, serially

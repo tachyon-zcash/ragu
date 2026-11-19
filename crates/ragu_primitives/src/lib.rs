@@ -36,7 +36,7 @@ pub mod suffix;
 mod util;
 pub mod vec;
 
-pub use boolean::{Boolean, decompose, multipack};
+pub use boolean::{Boolean, decompose, decompose_n, enforce_le_bits, multipack};
 pub use element::{Element, multiadd};
 pub use endoscalar::{
     ENDOSCALAR_BITS, ENDOSCALAR_DIGITS, ENDOSCALAR_PRODUCTS, Endoscalar, EndoscalarChallenge,

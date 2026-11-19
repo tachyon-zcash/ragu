@@ -1,0 +1,5 @@
+# Reduce optimization work for the large PCD test crate on macOS runners.
+[profile.release.package.ragu_pcd]
+opt-level = 2
+codegen-units = 128
+incremental = true

@@ -55,7 +55,7 @@ flowchart BT
     pcd["ragu_pcd<br/><i>recursive proof circuits,<br/>Ragu generator parameters</i>"]
     backend["ragu_backend<br/><i>kernels & reference backend</i>"]
     acceleration["ragu_acceleration<br/><i>acceleration implementations</i>"]
-    ragu["ragu<br/><i>optional API mock</i>"]
+    ragu["ragu<br/><i>public API crate</i>"]
 
     core --> udon
     core --> macros
@@ -76,17 +76,22 @@ flowchart BT
     backend --> circuits
     acceleration --> udon
     acceleration --> backend
-    ragu -.->|mock| core
-    ragu -.->|mock| udon
+    ragu --> core
+    ragu --> prims
+    ragu --> circuits
+    ragu --> pcd
+    ragu --> acceleration
 ```
 
 ## Project Structure
 
 Ragu is developed as a Cargo workspace.
 
-* **`ragu`**: The repository-root crate provides an opt-in API mock through
-  its `mock` feature. Applications using the real proof implementation depend
-  on `ragu_pcd` and the circuit and primitive crates they use directly.
+* **`ragu`**: This is the primary crate (at the repository root) that is
+  intended for users to import. Most of the remaining crates are transitive
+  dependencies of `ragu`. This crate aims to present a stable and minimal
+  API for the entire construction, and may deliberately expose less
+  functionality than the other crates are capable of providing.
 * `crates/`
     * **`ragu_macros`**: Internal crate that contains procedural macros both
       used within the project and exposed to users in other crates.

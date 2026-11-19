@@ -17,7 +17,7 @@
 //! `verify_compressed` accept the decoded proof, that exact proof is fused as
 //! both children of a parent, which must verify.
 //!
-//! This entire suite is ignored in the platform matrix and runs in the
+//! This suite is compiled and run by the
 //! dedicated Linux PR job with `--test corruption -- --include-ignored`.
 //!
 //! What is deliberately *not* a fixture is
@@ -38,16 +38,14 @@ use ragu_core::{
 use ragu_pcd::{
     Application, ApplicationBuilder, Pcd, Proof,
     fuzzing::corrupt::{
-        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_FP_POLYS,
-        NUM_ONLINE_FP_QUERIES, NativeCommitment, NativeRx, NestedAccumulator, NestedCommitment,
-        NestedRx, RxComponent, Side,
+        Binding, BridgeCommitment, Challenge, Corruption, NUM_ONLINE_FP_POLYS, NativeCommitment,
+        NativeRx, NestedAccumulator, NestedCommitment, NestedRx, RxComponent,
     },
     header::Header,
     wire,
 };
 use ragu_testing::pcd::nontrivial::{Hash2, InternalNode, LeafNode, Merge2};
 use rand::{SeedableRng, rngs::StdRng};
-use udon::field::Field;
 
 /// Which header a fixture's proof carries, so it can be verified again after
 /// corruption.
@@ -169,18 +167,7 @@ fn vocabulary() -> Vec<Corruption<C>> {
         // Out of the registry's domain, and in it but not the honest id.
         Corruption::CircuitId(u32::MAX),
         Corruption::CircuitId(1),
-        Corruption::SwapHeaders,
     ];
-
-    for side in [Side::Left, Side::Right] {
-        for index in 0..HEADER_SIZE {
-            out.push(Corruption::HeaderElement { side, index, delta });
-        }
-        // Shorter, longer, and past any plausible header.
-        for len in [0, HEADER_SIZE - 1, HEADER_SIZE + 1, 64] {
-            out.push(Corruption::HeaderLen { side, len });
-        }
-    }
 
     for which in Challenge::ALL {
         // A value no honest proof carries in that slot: the dummy fixture's
@@ -250,9 +237,8 @@ fn vocabulary() -> Vec<Corruption<C>> {
         });
     }
 
-    // The step's own online polynomials, their commitments and every
-    // opening's point and value. The out-of-range ones are in
-    // `no_op_edits`.
+    // The step's own online polynomials and their commitments. The
+    // out-of-range ones are in `no_op_edits`.
     for index in 0..NUM_ONLINE_FP_POLYS {
         for coeff in coeffs {
             out.push(Corruption::OnlineCoeff {
@@ -263,18 +249,13 @@ fn vocabulary() -> Vec<Corruption<C>> {
         }
         out.push(Corruption::NegateOnlineCommitment(index));
     }
-    for slot in 0..NUM_ONLINE_FP_QUERIES {
-        for value in [false, true] {
-            out.push(Corruption::OnlineQuery { slot, value, delta });
-        }
-    }
 
     out
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CorruptionGroup {
-    HeadersAndChallenges,
+    CircuitIdAndChallenges,
     CommitmentsAndAccumulators,
     NativePolynomials,
     NestedPolynomials,
@@ -284,12 +265,7 @@ impl CorruptionGroup {
     /// Every vocabulary entry belongs to exactly one independently run group.
     fn of(corruption: &Corruption<C>) -> Self {
         match corruption {
-            Corruption::CircuitId(_)
-            | Corruption::HeaderElement { .. }
-            | Corruption::HeaderLen { .. }
-            | Corruption::SwapHeaders
-            | Corruption::Challenge(..)
-            | Corruption::OnlineQuery { .. } => Self::HeadersAndChallenges,
+            Corruption::CircuitId(_) | Corruption::Challenge(..) => Self::CircuitIdAndChallenges,
             Corruption::NegateBridgeCommitment(_)
             | Corruption::NegateChallengesPartial
             | Corruption::NegateNativeCommitment(_)
@@ -395,7 +371,7 @@ fn no_op_edits() -> Vec<Corruption<C>> {
     let mut out = Vec::new();
     for (coeff, delta) in [(0, 0u64), (Proof::<C, R>::num_coeffs(), 7), (usize::MAX, 7)] {
         out.push(Corruption::NativeCoeff {
-            component: RxComponent::Rx(NativeRx::Application),
+            component: RxComponent::Rx(NativeRx::Hashes1),
             coeff,
             delta: Fp::from(delta),
         });
@@ -417,18 +393,6 @@ fn no_op_edits() -> Vec<Corruption<C>> {
         delta,
     });
     out.push(Corruption::NegateOnlineCommitment(NUM_ONLINE_FP_POLYS));
-    for value in [false, true] {
-        out.push(Corruption::OnlineQuery {
-            slot: 0,
-            value,
-            delta: Fp::ZERO,
-        });
-        out.push(Corruption::OnlineQuery {
-            slot: NUM_ONLINE_FP_QUERIES,
-            value,
-            delta,
-        });
-    }
     out
 }
 
@@ -488,6 +452,7 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
     }
 
     let mut accepted = 0usize;
+    let mut honest_bytes = None;
     for (described, corrupted, binding) in sweep {
         let bytes = match corrupted.proof.to_bytes() {
             Ok(bytes) => bytes,
@@ -507,6 +472,12 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
             bytes,
             "{shape:?}: the round trip is not exact: {described}",
         );
+        // Identical decoded inputs exercise the same compression and parent
+        // checks with this application's fixed data and RNG seed.
+        if !binding.binds_compressed() && honest_bytes.as_ref() == Some(&bytes) {
+            accepted += 1;
+            continue;
+        }
         let decoded = Fixture {
             shape,
             proof: decoded,
@@ -528,6 +499,11 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
             decoded.fuses_with_itself(&app, 1234),
             "{shape:?}: an accepted decoded child made a parent that does not verify: {described}",
         );
+        // The honest proof is the first case. Retain its encoding so the
+        // no-op edits can reuse the successful checks above.
+        if honest_bytes.is_none() {
+            honest_bytes = Some(bytes);
+        }
         accepted += 1;
     }
     // Entries the vocabulary leaves unbound on this shape, such as edits to
@@ -546,7 +522,7 @@ macro_rules! corruption_tests {
             #[test]
             #[ignore = "corruption suite: run by the Linux corruption job"]
             fn headers_and_challenges_reject() {
-                check_corruptions($shape, CorruptionGroup::HeadersAndChallenges);
+                check_corruptions($shape, CorruptionGroup::CircuitIdAndChallenges);
             }
 
             #[test]
@@ -658,21 +634,6 @@ fn a_parent_rejects_a_child_with_edited_online_data() {
         },
         Corruption::NegateOnlineCommitment(0),
         Corruption::NegateOnlineCommitment(1),
-        Corruption::OnlineQuery {
-            slot: 4,
-            value: false,
-            delta,
-        },
-        Corruption::OnlineQuery {
-            slot: 5,
-            value: true,
-            delta,
-        },
-        Corruption::OnlineQuery {
-            slot: 0,
-            value: true,
-            delta,
-        },
     ];
     for corruption in corruptions {
         let described = format!("{corruption:?}");
@@ -777,9 +738,9 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
         proof: fixture.proof.clone(),
         data: fixture.data,
     };
-    let first = both.proof.corrupt(Corruption::HeaderElement {
-        side: Side::Left,
-        index: 0,
+    let first = both.proof.corrupt(Corruption::NativeCoeff {
+        component: RxComponent::Rx(NativeRx::Hashes1),
+        coeff: 0,
         delta: Fp::from(3u64),
     });
     let second = both
@@ -803,14 +764,14 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
         proof: fixture.proof.clone(),
         data: fixture.data,
     };
-    cancelled.proof.corrupt(Corruption::HeaderElement {
-        side: Side::Left,
-        index: 0,
+    cancelled.proof.corrupt(Corruption::NativeCoeff {
+        component: RxComponent::Rx(NativeRx::Hashes1),
+        coeff: 0,
         delta: Fp::from(3u64),
     });
-    cancelled.proof.corrupt(Corruption::HeaderElement {
-        side: Side::Left,
-        index: 0,
+    cancelled.proof.corrupt(Corruption::NativeCoeff {
+        component: RxComponent::Rx(NativeRx::Hashes1),
+        coeff: 0,
         delta: -Fp::from(3u64),
     });
     assert!(
@@ -829,11 +790,6 @@ fn coordinated_corruptions_reject_and_cancelling_ones_do_not() {
 fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
     match *corruption {
         Corruption::CircuitId(id) => Corruption::CircuitId(id),
-        Corruption::HeaderElement { side, index, delta } => {
-            Corruption::HeaderElement { side, index, delta }
-        }
-        Corruption::HeaderLen { side, len } => Corruption::HeaderLen { side, len },
-        Corruption::SwapHeaders => Corruption::SwapHeaders,
         Corruption::Challenge(which, value) => Corruption::Challenge(which, value),
         Corruption::NegateBridgeCommitment(which) => Corruption::NegateBridgeCommitment(which),
         Corruption::NegateChallengesPartial => Corruption::NegateChallengesPartial,
@@ -886,8 +842,5 @@ fn clone_corruption(corruption: &Corruption<C>) -> Corruption<C> {
             delta,
         },
         Corruption::NegateOnlineCommitment(index) => Corruption::NegateOnlineCommitment(index),
-        Corruption::OnlineQuery { slot, value, delta } => {
-            Corruption::OnlineQuery { slot, value, delta }
-        }
     }
 }

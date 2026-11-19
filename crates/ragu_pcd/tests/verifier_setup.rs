@@ -181,8 +181,22 @@ where
     application::<P, Rk>((None, None), Some(Fp::from(7)))
 }
 
+fn local_control<P: Profile, Rk: Rank>(verifier: &App<P, Rk>) -> Result<Pcd<C<P>, Rk, Value>> {
+    let mut rng = StdRng::seed_from_u64(0x908_f17f);
+    let (local, ()) = verifier.seed(
+        &mut rng,
+        Seed {
+            expected: Some(Fp::from(7)),
+        },
+        Fp::from(7),
+    )?;
+    check_both_verifiers(verifier, &local, true, &mut rng)?;
+    Ok(local)
+}
+
 fn check_prover<S: Profile, T: Profile, Rk: Rank>(
     verifier: &App<T, Rk>,
+    local: &Pcd<C<T>, Rk, Value>,
     constraint: Option<Fp>,
     value: Fp,
     same_registries: (bool, bool),
@@ -243,26 +257,19 @@ where
         },
         value,
     )?;
-    check_both_verifiers(&prover, &source, true, &mut rng)?;
+    assert!(prover.verify_uncompressed(&source, &mut rng)?);
     let compressed = prover.compress(&source, &mut rng)?;
+    assert!(prover.verify_compressed(&compressed)?);
     let compressed =
         copy_compressed_payload::<C<S>, C<T>>(compressed.into_parts().0).carry::<Value>(value);
     assert_eq!(verifier.verify_compressed(&compressed)?, accepted);
 
     let foreign = copy_proof_payload::<C<S>, C<T>, Rk>(source.into_parts().0).carry::<Value>(value);
-    assert!(foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(foreign.proof().well_formed());
     check_both_verifiers(verifier, &foreign, accepted, &mut rng)?;
     let refreshed = verifier.rerandomize(foreign.clone(), &mut rng)?;
     check_both_verifiers(verifier, &refreshed, accepted, &mut rng)?;
 
-    let (local, ()) = verifier.seed(
-        &mut rng,
-        Seed {
-            expected: Some(Fp::from(7)),
-        },
-        Fp::from(7),
-    )?;
-    check_both_verifiers(verifier, &local, true, &mut rng)?;
     for foreign_on_left in [true, false] {
         let (left, right) = if foreign_on_left {
             (foreign.clone(), local.clone())
@@ -289,6 +296,7 @@ where
     P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
 {
     let verifier = verifier::<P, ProductionRank>()?;
+    let local = local_control(&verifier)?;
     // An equivalent registered relation is the control for erasing the Rust
     // profile type. Removing its constraint or changing its constant must fail.
     for (constraint, value, accepted) in [
@@ -298,6 +306,7 @@ where
     ] {
         check_prover::<Permissive, P, ProductionRank>(
             &verifier,
+            &local,
             constraint,
             value,
             (accepted, true),
@@ -312,15 +321,19 @@ fn standard_verifier_uses_its_registered_application_circuits() -> Result<()> {
     check_application_circuits::<Standard>()
 }
 
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn aggregator_verifier_uses_its_registered_application_circuits() -> Result<()> {
     check_application_circuits::<Aggregator>()
 }
 
 fn check_extension_circuit<const NATIVE: bool>() -> Result<()> {
     let verifier = verifier::<ExtensionPolicy<true, NATIVE>, R<14>>()?;
+    let local = local_control(&verifier)?;
     check_prover::<ExtensionPolicy<false, NATIVE>, ExtensionPolicy<true, NATIVE>, R<14>>(
         &verifier,
+        &local,
         Some(Fp::from(7)),
         Fp::from(7),
         (!NATIVE, NATIVE),

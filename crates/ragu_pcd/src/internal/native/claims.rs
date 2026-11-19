@@ -32,9 +32,10 @@ use crate::{
 ///
 /// These circuits use [`unified::InternalOutputKind`]. [`hashes_1`] comes
 /// before them and uses `unified_bridge_ky`, because its public inputs
-/// include the child proof headers (see [`hashes_1::Output`]), and
-/// [`compute_v`] uses `compute_v_bridge_ky`, because its public inputs
-/// include the step's online openings (see [`compute_v::Output`]).
+/// include the step's own output header and circuit id (see
+/// [`hashes_1::Output`]), and [`compute_v`] uses `compute_v_bridge_ky`,
+/// because its public inputs include the profile's online batch exports
+/// (see [`compute_v::Output`]).
 ///
 /// [`hashes_1`]: crate::internal::native::circuits::hashes_1
 /// [`hashes_1::Output`]: crate::internal::native::circuits::hashes_1::Output
@@ -163,7 +164,8 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
 ///
 /// The ordering is: for each claim type, add claims for all proofs before
 /// moving to the next claim type. This produces an interleaved order:
-/// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
+/// `[L_raw, R_raw, app, L_h1, R_h1, ...]` for the fuse, whose one
+/// application claim is the step's own.
 ///
 /// This ordering must match the $k(y)$ ordering in
 /// [`collapse`](crate::internal::native::circuits::collapse)
@@ -181,13 +183,10 @@ where
         processor.raw_claim(a, b);
     }
 
-    // App circuits (interleaved per proof), each over the step's own
-    // polynomial and the proof's application stage.
-    let rxs = source
-        .rx(Rx(Application))
-        .zip(source.rx(Rx(ApplicationStage)));
-    for (app_id, (own, stage)) in source.app_circuits().zip(rxs) {
-        processor.circuit_claim(app_id, [own, stage].into_iter());
+    // Application circuit claims, each over the step's own polynomial and
+    // its application stage's: the fuse's own, none for a decider.
+    for (app_id, rxs) in source.applications() {
+        processor.circuit_claim(app_id, rxs.into_iter());
     }
 
     // Internal circuits and stages in canonical order.
@@ -407,12 +406,18 @@ where
 
             // The application stage stays in its block, and the step's own
             // polynomial outside it, so the stage commitment binds exactly
-            // the staged values.
+            // the staged values. Like the application claim, these are the
+            // fuse's own, over its own two polynomials, and a decider has
+            // none.
             ApplicationStage => {
-                processor.bonding_claim(id, source.rx(Rx(RxIndex::ApplicationStage)))?;
+                for (_, [_, stage]) in source.applications() {
+                    processor.bonding_claim(id, once(stage))?;
+                }
             }
             ApplicationFinalStaged => {
-                processor.bonding_claim(id, source.rx(Rx(Application)))?;
+                for (_, [own, _]) in source.applications() {
+                    processor.bonding_claim(id, once(own))?;
+                }
             }
             EvalFinalStaged => {
                 processor.bonding_claim(
@@ -445,14 +450,16 @@ pub trait KySource {
     /// Iterator over raw_c values (the c from AB proof / preamble unified).
     fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// Iterator over application circuit $k(y)$ values.
+    /// Iterator over application circuit $k(y)$ values, one per claim the
+    /// source's [`applications`](crate::internal::claims::Source::applications)
+    /// yields.
     fn application_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Iterator over unified bridge $k(y)$ values.
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Iterator over the `compute_v` bridge $k(y)$ values: the unified
-    /// instance followed by the step's online openings.
+    /// instance followed by the profile's online batch exports.
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// Native online helper target, when the profile has an online batch.
@@ -553,8 +560,7 @@ pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
 pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
     pub left_raw_c: Element<'dr, D>,
     pub right_raw_c: Element<'dr, D>,
-    pub left_app: Element<'dr, D>,
-    pub right_app: Element<'dr, D>,
+    pub application: Element<'dr, D>,
     pub left_bridge: Element<'dr, D>,
     pub right_bridge: Element<'dr, D>,
     pub left_compute_v_bridge: Element<'dr, D>,
@@ -574,14 +580,15 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 }
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
-    /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values
-    /// and the statement and binding circuits' k(y) values, `None` for a
-    /// profile without one.
+    /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values,
+    /// the step's own application k(y), and the statement and binding
+    /// circuits' k(y) values, `None` for a profile without one.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
         right_raw_c: Element<'dr, D>,
+        application: Element<'dr, D>,
         left_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
         left_statement: Option<Element<'dr, D>>,
@@ -600,8 +607,7 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
             right_bind_endoscalar,
             left_online_helper,
             right_online_helper,
-            left_app: left_ky.application.clone(),
-            right_app: right_ky.application.clone(),
+            application,
             left_bridge: left_ky.unified_bridge.clone(),
             right_bridge: right_ky.unified_bridge.clone(),
             left_compute_v_bridge: left_ky.compute_v_bridge.clone(),
@@ -626,7 +632,7 @@ impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
     }
 
     fn application_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
-        once(self.left_app.clone()).chain(once(self.right_app.clone()))
+        once(self.application.clone())
     }
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {

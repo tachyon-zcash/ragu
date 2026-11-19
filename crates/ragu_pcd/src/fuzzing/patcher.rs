@@ -37,10 +37,12 @@
 //! * the unified slots it covers — `provide`s, or `receive`s and checks —
 //!   read off the `Coverage` it reports; and
 //! * the stage values it checks against an in-circuit computation: the
-//!   collapsed claims `collapse` folds to, the $k(y)$ evaluations
-//!   `collapse` recomputes, the sponge state `hashes_1` saves. These
-//!   are reserved stage wires, committed outside the circuit, and the
-//!   circuit that checks them is the one that binds them.
+//!   collapsed claims `collapse` folds to, the step's own output header
+//!   and circuit id `collapse` pins in the base case, the $k(y)$ evaluations
+//!   `hashes_1` recomputes, the `compute_v` bridge $k(y)$ evaluations
+//!   `collapse` checks, the sponge state `hashes_1` saves. These are
+//!   reserved stage wires, committed outside the circuit, and the circuit
+//!   that checks them is the one that binds them.
 //!
 //! Everything else — the remaining instance wires and the remaining stage
 //! wires — is an input the oracle pins. A covered slot a circuit reads
@@ -94,7 +96,7 @@ use crate::{
     Application, Pcd, RAGU_TAG,
     internal::{
         endoscalar::EndoscalarStage,
-        native::{self, stages::points as native_points, total_circuit_counts},
+        native::{self, online, stages::points as native_points, total_circuit_counts},
         nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
         transcript::Transcript,
     },
@@ -431,7 +433,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
-        let prepared = self.begin_application_proof(
+        let (prepared, application_stage) = self.begin_application_proof(
             rng,
             &step,
             &witness,
@@ -449,13 +451,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         self.begin_nested_online([&left, &right], &mut builder)?;
         self.commit_native_online_inputs(rng, &mut builder)?;
         self.commit_nested_online_inputs(rng, &mut builder)?;
-        let (preamble_witness, nested_preamble) =
-            self.compute_preamble(rng, &left, &right, &mut builder)?;
+        let nested_preamble =
+            self.compute_preamble(rng, &left, &right, &application_stage, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
         let w = transcript.challenge(&mut dr)?;
-        self.compute_application_proof(
+        let (_application_data, _application_aux, application) = self.compute_application_proof(
             rng,
             step,
             witness,
@@ -463,8 +465,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (&right, right_data),
             *w.value().take(),
             prepared,
+            application_stage,
             &mut builder,
         )?;
+        let preamble_witness = self.compute_native_preamble(rng, &left, &right, &mut builder)?;
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry
@@ -484,6 +488,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -495,6 +500,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let native_source = NativeFuseProofSource {
             left: &left,
             right: &right,
+            application: &application,
         };
         let nested_source = NestedFuseProofSource {
             left: &left,
@@ -549,6 +555,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_claims,
             &nested_source,
             &nested_preamble,
+            &w,
             &y,
             &mu,
             saved_transcript_state,
@@ -592,6 +599,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -612,6 +620,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
             &left,
             &right,
+            &application,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -625,6 +634,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &bound_challenges,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &nested_s_prime,
@@ -669,6 +679,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &pre_beta,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &native_f,
@@ -892,9 +903,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             hashes_2_witness,
         )?;
 
-        // collapse checks both fold layers and the children's application
-        // and compute_v bridge k(y) values. Only the final c comparison is
-        // waived at bootstrap.
+        // collapse checks both fold layers and the children's compute_v
+        // bridge k(y) values, computing the step's own application k(y)
+        // itself. Only the final c comparison is waived at bootstrap, where
+        // it instead pins the step's own output header and circuit id to the
+        // bootstrap step's.
         let collapse = native::circuits::collapse::Circuit::<
             C,
             R,
@@ -910,12 +923,27 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 inner_error_witness: &native_inner_error_witness,
             })
         };
-        // At the base case the covered slot, c, is left free by design, so
-        // only the k(y) checks remain as outputs.
+        // At the base case the covered slot, c, is left free by design; the
+        // base-case pin forces the own output header, circuit id and output
+        // openings instead.
         let collapse_covered = if base_case {
             Vec::new()
         } else {
             covered_outputs(&collapse, collapse_witness()?, coverage(&[]))?
+        };
+        let collapse_pinned = if base_case {
+            stage_wire_indices::<_, R, native::stages::preamble::Stage<C, R, HEADER_SIZE>>(
+                |stage| {
+                    let mut wires = wires_of(&stage.own.output_header)?;
+                    wires.extend(wires_of(&stage.own.circuit_id)?);
+                    for slot in online::OUTPUT_SLOTS {
+                        wires.extend(wires_of(&stage.own.online[slot])?);
+                    }
+                    Ok(wires)
+                },
+            )?
+        } else {
+            Vec::new()
         };
         let collapse_spec = CircuitSpec {
             name: "collapse".into(),
@@ -929,9 +957,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                                 .collapsed
                                 .iter()
                                 .chain([
-                                    &stage.left.application,
                                     &stage.left.compute_v_bridge,
-                                    &stage.right.application,
                                     &stage.right.compute_v_bridge,
                                 ])
                                 .map(|e| *e.wire())
@@ -939,6 +965,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         },
                     )?
                     .into_iter()
+                    .chain(collapse_pinned)
                     .map(OutputRef::Stage),
                 )
                 .collect(),
@@ -1172,6 +1199,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             online_points: builder.native_online_phase::<1>(),
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
+            native_preamble: builder.native_preamble_commitment(),
+            native_application: application.commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {
@@ -1257,7 +1286,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                         builder.native_points_f_commitment(),
                         builder.online_commitments()[0],
                         builder.online_commitments()[1],
-                        builder.native_application_stage_commitment(),
                     ],
                     coverage: Default::default(),
                 },

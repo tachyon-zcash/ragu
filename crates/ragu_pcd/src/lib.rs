@@ -17,6 +17,8 @@
 //!   and the aggregator profile that will carry decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
+//! - [`bridge_hash`] — the bridge hash of a commitment, computed outside the
+//!   circuit.
 //! - [`Proof::to_bytes`] / [`Proof::from_bytes`] and their [`CompressedProof`]
 //!   counterparts — versioned byte encodings for storing and transporting
 //!   proofs.
@@ -49,6 +51,7 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
+pub mod bridge_hash;
 mod compress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
@@ -162,8 +165,9 @@ pub struct ApplicationBuilder<
     stage_size: usize,
     header_map: BTreeMap<header::Suffix, TypeId>,
     /// A bootstrap proof supplied with [`with_bootstrap`](Self::with_bootstrap),
-    /// which finalization installs instead of building one.
-    bootstrap: Option<Proof<C, R>>,
+    /// which finalization installs instead of building one. Boxed to keep
+    /// the builder small across by-value `register` calls.
+    bootstrap: Option<Box<Proof<C, R>>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -237,9 +241,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// The proof is checked for this profile's shape and for being a proof of
     /// the bootstrap step, not for validity. No supplied proof can make
-    /// anything verify that otherwise would not, since every
-    /// [`seed`](Application::seed) enforces its children's claims, but one
-    /// that does not verify makes every proof built on it fail verification.
+    /// anything verify that otherwise would not. Every
+    /// [`seed`](Application::seed) enforces its children's claims, and
+    /// those claims hold a proof of the bootstrap step to the unit header
+    /// and padding polynomial slots, whatever its own application claim,
+    /// which no one enforces. But a supplied proof that does not verify
+    /// makes every proof built on it fail verification.
     /// Key a stored proof by everything that fixes it (see
     /// [`Application::bootstrap_proof`]) so that a changed application never
     /// loads a stale one.
@@ -250,12 +257,12 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// profile's shape or is not a proof of the bootstrap step.
     pub fn with_bootstrap(mut self, proof: Proof<C, R>) -> Result<Self> {
         let bootstrap = step::InternalStepIndex::Bootstrap.circuit_index::<C::Profile>()?;
-        if !proof.well_formed::<HEADER_SIZE>() || proof.circuit_id() != bootstrap {
+        if !proof.well_formed() || proof.circuit_id() != bootstrap {
             return Err(Error::Initialization(
                 "the supplied proof is not a bootstrap proof of this profile's shape".into(),
             ));
         }
-        self.bootstrap = Some(proof);
+        self.bootstrap = Some(Box::new(proof));
         Ok(self)
     }
 
@@ -516,7 +523,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             num_application_steps: self.num_application_steps,
             stage_size: self.stage_size,
-            bootstrap: self.bootstrap,
+            bootstrap: self.bootstrap.map(|proof| *proof),
             seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
@@ -806,10 +813,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Fails if `point` is the identity, which the stage cannot hold.
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
-        internal::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
-            point,
-            C::nested_generators(self.params),
-        )
+        bridge_hash::digest::<B, _, _, R, _>(point, C::nested_generators(self.params))
     }
 
     /// The commitment of an online polynomial with coefficients `coeffs`, in
