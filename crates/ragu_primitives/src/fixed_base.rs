@@ -12,8 +12,12 @@ use crate::{
     vec::{ConstLen, FixedVec},
 };
 
-/// An affine table evaluated in at most two gates.
+/// An affine table of up to eight points, selected by `width` bits in at most
+/// two gates.
 struct Window<F> {
+    /// The number of bits that select an entry, fixed when the table is
+    /// prepared. It alone decides which products [`Self::select`] emits.
+    width: usize,
     left: [F; 3],
     right: [F; 3],
     inner: [F; 3],
@@ -42,6 +46,7 @@ impl<F: Field> Window<F> {
             // monomials are 1, b0, b1 and b0*b1, with absent bits set to zero.
             let short = |v: [F; 8]| [v[0], v[1], v[2], F::ZERO, v[3], F::ZERO];
             return Ok(Self {
+                width,
                 left: [F::ONE, F::ZERO, F::ZERO],
                 right: [F::ZERO, F::ONE, F::ZERO],
                 inner: [F::ZERO; 3],
@@ -82,6 +87,7 @@ impl<F: Field> Window<F> {
             [coordinate[0], linear(1), linear(2), linear(4), alpha, gamma]
         };
         let window = Self {
+            width,
             left,
             right,
             inner,
@@ -99,16 +105,28 @@ impl<F: Field> Window<F> {
         Ok(window)
     }
 
+    /// Selects the entry indexed by the little-endian `bits`.
     fn select<'dr, D: Driver<'dr, F = F>, C: EndomorphismAffine<Base = F>>(
         &self,
         dr: &mut D,
         bits: &[Boolean<'dr, D>],
     ) -> Result<Point<'dr, D, C>> {
-        let elements: [_; 3] = array::from_fn(|i| match bits.get(i) {
-            Some(bit) => bit.element(),
-            None => Element::zero(dr),
+        // This never reads a witness value. Every branch below depends only on
+        // `self.width`, fixed when the table was prepared, so the emitted
+        // constraints are the same for every witness.
+        assert_eq!(bits.len(), self.width, "a window selects with its own bits");
+
+        // Positions at or above the width are absent and hold a constant zero.
+        let elements: [_; 3] = array::from_fn(|i| {
+            if i < self.width {
+                bits[i].element()
+            } else {
+                Element::zero(dr)
+            }
         });
-        let p = if bits.len() >= 2 {
+
+        // The quadratic product needs two bits, so a one-bit window omits it.
+        let p = if self.width >= 2 {
             let left = multiadd(dr, &elements, &self.left);
             let right = multiadd(dr, &elements, &self.right);
             left.mul(dr, &right)?
@@ -116,7 +134,9 @@ impl<F: Field> Window<F> {
             Element::zero(dr)
         };
         let [b0, b1, b2] = elements;
-        let c = if bits.len() == 3 {
+
+        // The cubic product needs three bits, so only a full window emits it.
+        let c = if self.width == 3 {
             let inner = multiadd(dr, &[b0.clone(), b1.clone(), p.clone()], &self.inner);
             b2.mul(dr, &inner)?
         } else {
@@ -197,6 +217,11 @@ impl<C: EndomorphismAffine, const N: usize> FixedBase<C, N> {
     /// $W = \lceil N/3\rceil$ is the number of windows.
     /// This does not bind `bits` to another value or require a canonical encoding.
     ///
+    /// # Constraints
+    ///
+    /// `N` determines the emitted constraints, and the table's base and
+    /// correction determine their coefficients.
+    ///
     /// # Completeness
     ///
     /// Witness generation fails exactly when the prefix and top entry have
@@ -242,6 +267,10 @@ impl<C: EndomorphismAffine, const N: usize> FixedBase<C, N> {
     ///
     /// This costs four additional gates and eight additional constraints.
     ///
+    /// # Constraints
+    ///
+    /// As for [`Self::mul`].
+    ///
     /// # Completeness
     ///
     /// Given a prepared table, witness generation succeeds iff both the
@@ -268,21 +297,35 @@ impl<C: EndomorphismAffine, const N: usize> FixedBase<C, N> {
         Self::add_checked(dr, &sum, &top)
     }
 
+    /// Selects every window's entry and sums all but the top one, which is
+    /// returned separately.
     fn prefix_and_top<'dr, D: Driver<'dr, F = C::Base>>(
         &self,
         dr: &mut D,
         bits: &FixedVec<Boolean<'dr, D>, ConstLen<N>>,
     ) -> Result<(Point<'dr, D, C>, Point<'dr, D, C>)> {
-        let (low, high) = bits.split_at(3 * (Self::WINDOWS - 1));
-        let mut prefix = self.windows[0].select(dr, &low[..3])?;
-        let top = Self::WINDOWS - 1;
+        // This never reads a witness value. `N` fixes the number of windows and
+        // the width of each, so the emitted constraints are the same for every
+        // witness.
+        //
+        // Pair each window with its bits: three per window, least significant
+        // first, with the top window taking the last `TOP_BITS`.
+        let windows: Vec<_> = self.windows.iter().zip(bits.chunks(3)).collect();
+        let (&(first, first_bits), rest) = windows
+            .split_first()
+            .expect("N >= 4 gives at least two windows");
+        let (&(top, top_bits), interior) = rest
+            .split_last()
+            .expect("N >= 4 gives at least two windows");
+
+        let mut prefix = first.select(dr, first_bits)?;
         // The offset bound proves every interior x-difference nonzero.
         let mut bank = NonzeroBank::new_unchecked();
-        for (window, bits) in self.windows[1..top].iter().zip(low[3..].chunks(3)) {
-            let entry = window.select(dr, bits)?;
+        for &(window, window_bits) in interior {
+            let entry = window.select(dr, window_bits)?;
             prefix = prefix.add_incomplete(dr, &entry, &mut bank)?;
         }
-        Ok((prefix, self.windows[top].select(dr, high)?))
+        Ok((prefix, top.select(dr, top_bits)?))
     }
 
     fn add_checked<'dr, D: Driver<'dr, F = C::Base>>(

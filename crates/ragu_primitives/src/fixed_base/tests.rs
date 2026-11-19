@@ -1,3 +1,5 @@
+use alloc::{format, string::String};
+
 use ragu_core::{
     maybe::Maybe,
     pasta::{Ep, EpAffine, Fp, Fq},
@@ -105,6 +107,53 @@ fn zero_scalar_can_join_an_addend() -> Result<()> {
         assert_eq!(dr.num_gates(), 12);
         Ok(())
     })?;
+    Ok(())
+}
+
+/// `N` and the table fix the emitted constraints; the scalar never changes
+/// them, for each top-window width and through both entry points.
+#[test]
+fn constraints_do_not_depend_on_the_scalar() -> Result<()> {
+    fn events<const N: usize>(
+        table: &FixedBase<EpAffine, N>,
+        scalar: u64,
+        onto: Option<EpAffine>,
+    ) -> Result<String> {
+        let mut dr = Recorder::<Fp>::new();
+        let bits = allocate(&mut dr, array::from_fn(|i| scalar >> i & 1 == 1))?;
+        match onto {
+            Some(onto) => {
+                let onto = Point::alloc(&mut dr, Recorder::<Fp>::just(|| onto))?;
+                table.mul_and_add(&mut dr, &bits, &onto)?;
+            }
+            None => {
+                table.mul(&mut dr, &bits)?;
+            }
+        }
+        Ok(format!("{:?}", dr.events))
+    }
+    fn assert_same<const K: usize>(traces: [Result<String>; K]) -> Result<()> {
+        let traces = traces.into_iter().collect::<Result<Vec<_>>>()?;
+        assert!(traces.windows(2).all(|pair| pair[0] == pair[1]));
+        Ok(())
+    }
+
+    let base = EpAffine::generator();
+    let identity = Ep::identity();
+    // Each set gives every bit both values and avoids the table's exceptional
+    // additions, such as 12 for a two-window table.
+    let one_bit_top = FixedBase::<_, 4>::new(base, identity)?;
+    assert_same([1, 6, 15].map(|scalar| events(&one_bit_top, scalar, None)))?;
+    let two_bit_top = FixedBase::<_, 5>::new(base, identity)?;
+    assert_same([1, 6, 31].map(|scalar| events(&two_bit_top, scalar, None)))?;
+    let three_bit_top = FixedBase::<_, 6>::new(base, identity)?;
+    assert_same([1, 22, 63].map(|scalar| events(&three_bit_top, scalar, None)))?;
+    let onto = (base * Fq::from(9)).to_affine();
+    assert_same([0, 13, 50].map(|scalar| events(&three_bit_top, scalar, Some(onto))))?;
+    let corrected = FixedBase::<_, 51>::new(base, -(base * Fq::from(5)))?;
+    assert_same(
+        [1, 0x2_AAAA_AAAA_AAAA, (1 << 51) - 1].map(|scalar| events(&corrected, scalar, None)),
+    )?;
     Ok(())
 }
 
