@@ -411,41 +411,58 @@ pub fn enforce_le_bits<'dr, D: Driver<'dr>>(
     bits: &[Boolean<'dr, D>],
     maximum: D::F,
 ) -> Result<()> {
-    let maximum = maximum.to_le_bits();
-    let maximum = maximum.as_ref();
-    let width = maximum.iter().rposition(|bit| *bit).map_or(0, |i| i + 1);
+    // This function never reads a witness value. Every branch and loop bound
+    // below comes from `constant` (the bits of `maximum`) or from `bits.len()`,
+    // so the emitted constraints are the same for every witness.
+    let constant = maximum.to_le_bits();
+    let constant = constant.as_ref();
+    let width = constant.iter().rposition(|bit| *bit).map_or(0, |i| i + 1);
+
+    // A constant that needs more bits than the input has exceeds every input.
     if width > bits.len() {
         return Ok(());
     }
 
-    let (low, high) = bits.split_at(width);
-    for bit in high {
+    // Input bits above the leading one of the constant must be zero.
+    for bit in &bits[width..] {
         dr.enforce_zero(|lc| lc.add(bit.wire()))?;
     }
-    let Some((leading, mut low)) = low.split_last() else {
+
+    // A zero constant has no leading one; every input bit is now zero.
+    if width == 0 {
         return Ok(());
-    };
+    }
+    let leading = width - 1;
 
-    // If the prefix still matches, a zero run must match in full and a one
-    // bit extends the matching prefix only if the input bit is also one.
-    let mut equal = leading.element();
+    // The ones at the low end of the constant bound nothing: whatever the
+    // input holds there, it cannot exceed the constant.
+    let trailing_ones = constant[..leading].iter().take_while(|bit| **bit).count();
 
-    // Trailing 1s in `maximum` leave those positions unconstrained.
-    let lower = &maximum[..width - 1];
-    let trailing_ones = lower.iter().take_while(|bit| **bit).count();
-    for run in lower[trailing_ones..].chunk_by(|a, b| a == b).rev() {
-        let (rest, run_bits) = low.split_at(low.len() - run.len());
-        low = rest;
-        if run[0] {
-            for bit in run_bits.iter().rev() {
-                equal = equal.mul(dr, &bit.element())?;
+    // Pair each remaining input bit with the constant's bit at its position.
+    let positions: Vec<(bool, &Boolean<'dr, D>)> = constant[trailing_ones..leading]
+        .iter()
+        .copied()
+        .zip(&bits[trailing_ones..leading])
+        .collect();
+
+    // Walk down from the leading one, a run of equal constant bits at a time.
+    // `equal` is one if the input equals the constant at every position walked
+    // so far, and zero if it is already below the constant.
+    let mut equal = bits[leading].element();
+    for run in positions.chunk_by(|a, b| a.0 == b.0).rev() {
+        let inputs = run.iter().map(|(_, bit)| bit.element());
+        if run[0].0 {
+            // The constant is one here. The input stays equal only if it is
+            // one as well; a zero puts it below the constant.
+            for input in inputs.rev() {
+                equal = equal.mul(dr, &input)?;
             }
         } else {
-            // A run is shorter than the modulus bit length, so it has fewer
-            // terms than the modulus and its sum cannot wrap.
-            let sum = run_bits
-                .iter()
-                .fold(Element::zero(dr), |sum, bit| sum.add(dr, &bit.element()));
+            // The constant is zero here. An input that is still equal must be
+            // zero at every position of the run, or it exceeds the constant.
+            // A run has fewer terms than the modulus, so the sum of its bits
+            // is zero only if every bit is.
+            let sum = Element::sum(dr, inputs);
             equal.mul(dr, &sum)?.enforce_zero(dr)?;
         }
     }
