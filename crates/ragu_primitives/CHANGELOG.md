@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `decompose_n` decomposes a field element into a caller-chosen number of bits.
+
 ## [0.0.0] - 2025-07-30
 
 ### Added
