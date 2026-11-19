@@ -195,10 +195,6 @@ jobs:
           CARGO_PROFILE_TEST_DEBUG: "0"
           CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
           RAGU_PCD_TARGETED_TESTS: "1"
-          # Without local ThinLTO each codegen unit of the PCD unit-test
-          # target is optimized and freed on its own, which keeps the
-          # compiler within the runner's memory.
-          CARGO_PROFILE_TEST_LTO: "off"
         run: cargo test -p ragu_pcd --lib --locked --all-features proof::child_commitment_tests
 
   test-default-feature:
