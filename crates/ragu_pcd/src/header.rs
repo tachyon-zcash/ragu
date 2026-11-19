@@ -11,6 +11,9 @@ use ragu_core::{
 use ragu_primitives::{allocator::Allocator, io::Write};
 use udon::field::Field;
 
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
+#[path = "../tests/header_injectivity.rs"]
+mod injectivity_tests;
 mod online;
 
 pub(crate) use self::online::slot;
@@ -108,6 +111,28 @@ impl Suffix {
 ///
 /// See the [Writing Circuits](https://tachyon.z.cash/ragu/guide/writing_circuits.html)
 /// guide for usage patterns and examples.
+///
+/// # Injectivity
+///
+/// A proof commits only to the field elements of its header, the public inputs
+/// it speaks in terms of. Verifiers bind the data a [`Pcd`](crate::Pcd)
+/// carries to those elements by recomputing [`encode`](Self::encode) from it,
+/// so the encoding must be injective: no two distinct [`Data`](Self::Data)
+/// values may encode to the same field elements. A header whose encoding is
+/// lossy in this way is buggy. An honest proof of one value also verifies when
+/// it carries the other, an adaptive soundness attack on the protocol built on
+/// top.
+///
+/// Ragu cannot check this; it is an obligation of the application. The
+/// constraints `encode` emits do not discharge it. They hold a prover's
+/// witness to the invariants of `Data` inside the circuit, and verifiers
+/// recompute the encoding natively without checking them, taking any routine's
+/// [`Known`](ragu_core::routines::Prediction::Known) prediction in place of
+/// executing it. Instead, `Data` should be a type that cannot hold values the
+/// encoding would confuse. A flag and an amount encoded as `2 * amount + flag`
+/// should be a `bool` and a `u64`, not two field elements: in the field,
+/// `(1, 1000)` and `(0, 1000 + 1/2)` encode to the same element although both
+/// flags are boolean, where `1/2` is the inverse of 2.
 pub trait Header<F: Field>: Send + Sync + Any {
     /// Each header should use a unique suffix to distinguish itself from other
     /// headers. Application headers must use [`Suffix::new`]; only `()` may
@@ -121,12 +146,19 @@ pub trait Header<F: Field>: Send + Sync + Any {
     type OnlinePolyCommit: OnlinePolyCommit;
 
     /// The witness input needed to encode a header.
+    ///
+    /// It must not be able to hold two values that [`encode`](Self::encode)
+    /// maps to the same field elements; see [Injectivity](Header#injectivity).
     type Data: Send + Clone;
 
     /// The output gadget that encodes the data for this header.
     type Output: Write<F>;
 
     /// Encodes witness input into a gadget representing this header.
+    ///
+    /// The encoding must be injective in [`Data`](Self::Data), and the
+    /// constraints it emits do not make it so; see
+    /// [Injectivity](Header#injectivity).
     ///
     /// Implementations should pass `allocator` through to all allocation
     /// calls rather than substituting a different allocator.
