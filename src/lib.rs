@@ -27,7 +27,6 @@
 //! information.
 
 #![no_std]
-#![allow(clippy::type_complexity)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 #![doc(html_favicon_url = "https://tachyon.z.cash/assets/ragu/v1/favicon-32x32.png")]

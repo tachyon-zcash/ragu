@@ -80,6 +80,7 @@ flowchart BT
     ragu --> prims
     ragu --> circuits
     ragu --> pcd
+    ragu --> acceleration
 ```
 
 ## Project Structure

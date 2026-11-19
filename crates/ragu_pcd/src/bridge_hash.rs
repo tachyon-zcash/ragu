@@ -13,5 +13,9 @@
 //! digest binds the point but need not use this encoding or be fixed before
 //! the step's challenge, so anchor applications must compare natively
 //! recomputed advancement against canonical-chain anchors.
+//!
+//! Every backend computes the same [`digest`]. A caller outside Ragu passes
+//! [`AcceleratedProver`](ragu_acceleration::AcceleratedProver) as its backend
+//! `B`, or the backend its [`Application`](crate::Application) uses.
 
 pub use crate::internal::nested::stages::bridge_hash::{digest, rx};
