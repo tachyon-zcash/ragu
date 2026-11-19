@@ -168,7 +168,6 @@ fn claim_targets_match_positional_ky_values() {
         compute_v_bridge: Fp::from(13),
         bind_endoscalar: Fp::from(17),
         online_helper: None,
-        application: Fp::from(7),
         statement: None,
         binding: None,
     };
@@ -178,8 +177,7 @@ fn claim_targets_match_positional_ky_values() {
         vec![Fp::ONE],
         Fp::ONE,
     )];
-    let shapes =
-        claims::native_shapes::<Standard, _>(CircuitIndex::new(0), Fp::from(11), &masked).unwrap();
+    let shapes = claims::native_shapes::<Standard, _>(Fp::from(11), &masked).unwrap();
     assert_eq!(
         claim_targets(
             &shapes,

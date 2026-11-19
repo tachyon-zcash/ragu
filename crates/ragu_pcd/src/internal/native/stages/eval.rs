@@ -187,6 +187,16 @@ pub struct CurrentStepWitness<F> {
     /// stage.
     pub registry_wx1: F,
 
+    /// Evaluation of the step's own application rx at $u$. This polynomial
+    /// is committed in the `_03_s_prime` step of the fuse operation, within
+    /// the _nested_ `s_prime` stage.
+    pub application: F,
+
+    /// Evaluation of the step's own application stage rx at $u$. This
+    /// polynomial is committed in the `_02_preamble` step of the fuse
+    /// operation, within the _nested_ `preamble` stage.
+    pub application_stage: F,
+
     /// Evaluation of the committed $m(w, X, y)$ at $u$. This polynomial is
     /// committed in the `_04_inner_error` step of the fuse operation, within
     /// the _nested_ `inner_error` stage.
@@ -251,6 +261,8 @@ impl<C: ProfiledCycle> Witness<C> {
             current: CurrentStepWitness {
                 registry_wx0: C::CircuitField::ZERO,
                 registry_wx1: C::CircuitField::ZERO,
+                application: C::CircuitField::ZERO,
+                application_stage: C::CircuitField::ZERO,
                 registry_wy: C::CircuitField::ZERO,
                 a_poly: C::CircuitField::ZERO,
                 b_poly: C::CircuitField::ZERO,
@@ -323,6 +335,10 @@ pub struct Evaluations<'dr, D: Driver<'dr>, P: Profile> {
     #[ragu(gadget)]
     pub registry_wx1: Element<'dr, D>,
     #[ragu(gadget)]
+    pub application: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub application_stage: Element<'dr, D>,
+    #[ragu(gadget)]
     pub registry_wy: Element<'dr, D>,
     #[ragu(gadget)]
     pub a_poly: Element<'dr, D>,
@@ -366,10 +382,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (rx + 4 each) + current step elements (6)
+        // 2 * ChildEvaluations (rx + 4 each) + current step elements (8)
         // + the online slots + (x, y) per binding partial
         2 * (RxIndex::num::<C::Profile>() + 4)
-            + 6
+            + 8
             + online::NUM_ONLINE_FP_QUERIES
             + 2 * (NUM_BINDERS - 1)
             + Present::<C::Profile, Nested, 2>::len()
@@ -395,6 +411,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             dr,
             allocator,
             witness.as_ref().map(|w| w.current.registry_wx1),
+        )?;
+        let application = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.current.application),
+        )?;
+        let application_stage = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.current.application_stage),
         )?;
         let registry_wy = Element::alloc(
             dr,
@@ -423,6 +449,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
                 right,
                 registry_wx0,
                 registry_wx1,
+                application,
+                application_stage,
                 registry_wy,
                 a_poly,
                 b_poly,

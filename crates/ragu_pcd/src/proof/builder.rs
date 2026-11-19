@@ -224,14 +224,19 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     /// Shared alpha source for the cached `ab` bridge commitment.
     bridge_alpha: C::ScalarField,
 
-    // Application metadata
+    // Application metadata. Only the circuit id goes into the proof: the
+    // headers are the step's own, read by its preamble and challenge stage.
     circuit_id: Option<CircuitIndex>,
     left_header: Option<Vec<C::CircuitField>>,
     right_header: Option<Vec<C::CircuitField>>,
+    output_header: Option<Vec<C::CircuitField>>,
+    /// The header a test's prover stages its left child's bridge $k(y)$
+    /// over, in place of its preamble's copy (see
+    /// [`forge_left_bridge_header`](Self::forge_left_bridge_header)).
+    #[cfg(test)]
+    forged_left_bridge_header: Option<Vec<C::CircuitField>>,
 
     // Native rx polynomials
-    native_application_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
-    native_application_stage_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_inner_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
     native_outer_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
@@ -364,8 +369,6 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     pre_beta: Option<C::CircuitField>,
 
     // Native commitment caches (lazily computed from polynomials)
-    native_application_commitment: OnceCell<C::HostCurve>,
-    native_application_stage_commitment: OnceCell<C::HostCurve>,
     native_preamble_commitment: OnceCell<C::HostCurve>,
     native_inner_error_commitment: OnceCell<C::HostCurve>,
     native_outer_error_commitment: OnceCell<C::HostCurve>,
@@ -569,8 +572,9 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             circuit_id: None,
             left_header: None,
             right_header: None,
-            native_application_rx: None,
-            native_application_stage_rx: None,
+            output_header: None,
+            #[cfg(test)]
+            forged_left_bridge_header: None,
             native_preamble_rx: None,
             native_inner_error_rx: None,
             native_outer_error_rx: None,
@@ -658,8 +662,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             alpha: None,
             u: None,
             pre_beta: None,
-            native_application_commitment: OnceCell::new(),
-            native_application_stage_commitment: OnceCell::new(),
             native_preamble_commitment: OnceCell::new(),
             native_inner_error_commitment: OnceCell::new(),
             native_outer_error_commitment: OnceCell::new(),
@@ -695,14 +697,79 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     }
 
     setter!(set_circuit_id, circuit_id, CircuitIndex);
+    getter!(circuit_id, circuit_id, CircuitIndex);
+
+    /// Replaces the suffix of both input headers with the `Dummy` suffix,
+    /// for a test playing a prover that forges the base case.
+    #[cfg(test)]
+    pub(crate) fn forge_dummy_inputs(&mut self) {
+        use crate::header::{Dummy, Header};
+        let dummy = C::CircuitField::from(<Dummy as Header<C::CircuitField>>::SUFFIX.get());
+        for header in [&mut self.left_header, &mut self.right_header] {
+            *header
+                .as_mut()
+                .and_then(|header| header.last_mut())
+                .expect("input headers are set") = dummy;
+        }
+    }
+
+    /// Adds `delta` to the first field of the left input header, for a test
+    /// playing a prover that witnesses another input header in its preamble
+    /// than the one its circuit encoded.
+    #[cfg(test)]
+    pub(crate) fn forge_left_header_field(&mut self, delta: C::CircuitField) {
+        *self
+            .left_header
+            .as_mut()
+            .and_then(|header| header.first_mut())
+            .expect("the left input header is set") += delta;
+    }
+
+    /// Replaces the circuit id, for a test playing a prover that forges it.
+    #[cfg(test)]
+    pub(crate) fn forge_circuit_id(&mut self, circuit_id: CircuitIndex) {
+        self.circuit_id = Some(circuit_id);
+    }
+
+    /// Sets the header the prover stages its left child's bridge $k(y)$
+    /// over, for a test playing a prover whose fold targets another output
+    /// header for that child than its preamble witnesses.
+    #[cfg(test)]
+    pub(crate) fn forge_left_bridge_header(&mut self, header: Vec<C::CircuitField>) {
+        self.forged_left_bridge_header = Some(header);
+    }
+
+    /// The header set by
+    /// [`forge_left_bridge_header`](Self::forge_left_bridge_header), if any.
+    #[cfg(test)]
+    pub(crate) fn forged_left_bridge_header(&self) -> Option<&[C::CircuitField]> {
+        self.forged_left_bridge_header.as_deref()
+    }
+
+    /// Adds `blind` to the native preamble polynomial and drops its cached
+    /// commitment, for a test playing a prover that swaps the stage after
+    /// the `s_prime` bridge absorbed its commitment. A `blind` supported on
+    /// the blinding coefficient leaves every value the stage holds as it
+    /// was.
+    #[cfg(test)]
+    pub(crate) fn reblind_native_preamble(
+        &mut self,
+        blind: &sparse::Polynomial<C::CircuitField, R>,
+    ) {
+        self.native_preamble_rx
+            .as_mut()
+            .expect("native_preamble_rx not set")
+            .add_assign(blind);
+        self.native_preamble_commitment = OnceCell::new();
+    }
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
     setter!(set_right_header, right_header, Vec<C::CircuitField>);
+    setter!(set_output_header, output_header, Vec<C::CircuitField>);
 
     slice_getter!(left_header, left_header, C::CircuitField);
     slice_getter!(right_header, right_header, C::CircuitField);
+    slice_getter!(output_header, output_header, C::CircuitField);
 
-    native_setter!(set_native_application_rx, native_application_rx);
-    native_setter!(set_native_application_stage_rx, native_application_stage_rx);
     native_setter!(set_native_preamble_rx, native_preamble_rx);
     native_setter!(set_native_inner_error_rx, native_inner_error_rx);
     native_setter!(set_native_outer_error_rx, native_outer_error_rx);
@@ -929,18 +996,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         Arc<sparse::Polynomial<C::ScalarField, R>>
     );
 
-    lazy_commitment!(
-        native,
-        native_application_commitment,
-        native_application_commitment,
-        native_application_rx
-    );
-    lazy_commitment!(
-        native,
-        native_application_stage_commitment,
-        native_application_stage_commitment,
-        native_application_stage_rx
-    );
     lazy_commitment!(
         native,
         native_preamble_commitment,
@@ -1325,8 +1380,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         // Force lazy evaluation of every native commitment cache by invoking
         // its getter. The a/b/p caches are set externally via their explicit
         // setters, so they are not touched here.
-        self.native_application_commitment();
-        self.native_application_stage_commitment();
         self.native_preamble_commitment();
         self.native_inner_error_commitment();
         self.native_outer_error_commitment();
@@ -1411,8 +1464,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             bridge_alpha: self.bridge_alpha,
 
             circuit_id: take!(circuit_id),
-            left_header: take!(left_header),
-            right_header: take!(right_header),
             native_online_commitments: if let Some(state) = &self.native_online {
                 state.commitments().to_vec()
             } else {
@@ -1450,8 +1501,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             },
             nested_online_fold,
 
-            native_application_rx: take!(native_application_rx),
-            native_application_stage_rx: take!(native_application_stage_rx),
             native_preamble_rx: take!(native_preamble_rx),
             native_inner_error_rx: take!(native_inner_error_rx),
             native_outer_error_rx: take!(native_outer_error_rx),
@@ -1478,7 +1527,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: take!(native_points_f_rx),
             native_points_walk_rx: take!(native_points_walk_rx),
             online_polynomials: take!(online_polynomials),
-            online_openings: take!(online_openings),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),
@@ -1555,8 +1603,6 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             u: take!(u),
             pre_beta: take!(pre_beta),
 
-            native_application_commitment: cached!(native_application_commitment),
-            native_application_stage_commitment: cached!(native_application_stage_commitment),
             native_preamble_commitment: cached!(native_preamble_commitment),
             native_inner_error_commitment: cached!(native_inner_error_commitment),
             native_outer_error_commitment: cached!(native_outer_error_commitment),

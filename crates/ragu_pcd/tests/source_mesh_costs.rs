@@ -212,8 +212,8 @@ fn census<P: Profile, Rk: Rank>(label: &str) -> Result<()> {
         stages_q,
         <nested::stages::query::Stage<Host, Rk, P> as StageExt<Fq, Rk>>::num_gates(),
         <nested::stages::eval::Stage<Host, Rk, P> as StageExt<Fq, Rk>>::num_gates(),
-        Proof::<C<P>, Rk>::encoded_len::<2>(),
-        CompressedProof::<C<P>>::encoded_len::<Rk, 2>(),
+        Proof::<C<P>, Rk>::encoded_len(),
+        CompressedProof::<C<P>>::encoded_len::<Rk>(),
         P::NATIVE_ONLINE.polynomials.len(),
         P::NESTED_ONLINE.polynomials.len(),
         P::NATIVE_ONLINE.openings.len(),
@@ -255,12 +255,12 @@ fn source_oracle_cost_census() -> Result<()> {
         assert_fixture_counts(layout, mesh.expect("fixture mesh"))?;
     }
     let polynomials = Shape::of::<SourceCapacity>().polynomials();
-    assert_eq!(polynomials, 141);
+    assert_eq!(polynomials, 139);
     // Rank only changes the number of coefficients per carried polynomial
     // in the uncompressed encoding.
     type C = Profiled<Pasta, SourceCapacity>;
     assert_eq!(
-        Proof::<C, R<14>>::encoded_len::<2>() - Proof::<C, R<13>>::encoded_len::<2>(),
+        Proof::<C, R<14>>::encoded_len() - Proof::<C, R<13>>::encoded_len(),
         polynomials * (R::<14>::num_coeffs() - R::<13>::num_coeffs()) * 32,
     );
     census::<Standard, R<13>>("main-standard")?;

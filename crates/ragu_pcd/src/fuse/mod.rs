@@ -28,6 +28,8 @@ mod pcs_tests;
 #[path = "../fuzzing/patcher.rs"]
 pub(crate) mod patcher;
 
+#[cfg(test)]
+pub(crate) use _01_application::NativeApplication;
 use claims::{NativeFuseProofSource, NestedFuseProofSource};
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result, drivers::emulator::Emulator, maybe::Maybe};
@@ -82,11 +84,158 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |_, _| {}, |_, _| {})
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that edits its own application
+    /// polynomials after its circuit ran: `edit` runs on the trace and the
+    /// stage before the trace is committed. The stage's commitment was
+    /// absorbed before $w$, so an edited stage is one the step swapped in
+    /// after $\zeta$.
+    #[cfg(test)]
+    pub(crate) fn fuse_editing_application<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        edit: impl FnOnce(&mut _01_application::NativeApplication<C, R>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |_, application| edit(application),
+            |_, _| {},
+        )
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that witnesses its own application
+    /// data in place of the step's: `forge` sets the input header suffixes
+    /// to the [`Dummy`](crate::header::Dummy) suffix, which takes the base
+    /// case, and, if given, the circuit id. The step's application trace is
+    /// left as the step computed it, so its claim no longer matches the
+    /// data the preamble witnesses; the base case leaves the folded claim
+    /// free, so only the base-case pin in `collapse` can reject the proof.
+    #[cfg(test)]
+    pub(crate) fn fuse_forging_dummy_inputs<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        circuit_id: Option<ragu_circuits::registry::CircuitIndex>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |builder, application| {
+                builder.forge_dummy_inputs();
+                if let Some(circuit_id) = circuit_id {
+                    builder.forge_circuit_id(circuit_id);
+                    application.circuit_id = circuit_id;
+                }
+            },
+            |_, _| {},
+        )
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that, after $w$ is squeezed, witnesses
+    /// in its native preamble a left input header whose first field is off
+    /// by `delta`. The step's circuit ran on the honest header, and the
+    /// child's committed traces export the honest one.
+    #[cfg(test)]
+    pub(crate) fn fuse_editing_left_header<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        delta: C::CircuitField,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |builder, _| builder.forge_left_header_field(delta),
+            |_, _| {},
+        )
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that stages, as the target of its
+    /// left child's `hashes_1` claim, the bridge $k(y)$ over `header` in
+    /// place of the one over its preamble's copy of the child's output
+    /// header. With the header the child exported, the prover's fold agrees
+    /// with the child's committed traces whatever its preamble witnesses, so
+    /// only `hashes_1`'s equality between the two can reject it.
+    #[cfg(test)]
+    pub(crate) fn fuse_staging_left_bridge<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        header: alloc::vec::Vec<C::CircuitField>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            |builder, _| builder.forge_left_bridge_header(header),
+            |_, _| {},
+        )
+    }
+
+    /// [`fuse`](Self::fuse) as a prover that swaps in other polynomials of
+    /// its own after $y$ is squeezed: `swap` runs on the builder and the
+    /// application polynomials once the `s_prime` bridge has absorbed the
+    /// commitments of the native preamble and of the application trace.
+    #[cfg(test)]
+    pub(crate) fn fuse_swapping_after_y<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        swap: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(rng, step, witness, left, right, |_, _| {}, swap)
+    }
+
+    /// [`fuse`](Self::fuse), with `edit` applied to the step's application
+    /// data after its circuit ran and before anything commits to it, and
+    /// `swap` applied after $y$ is squeezed, once the `s_prime` bridge has
+    /// absorbed the native preamble's and the application trace's
+    /// commitments. Only tests edit or swap anything: `fuse` passes closures
+    /// that do nothing.
+    fn fuse_with<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        edit: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
+        swap: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
         // The children's polynomials are read by this profile's layout
         // below; a child of another shape is refused, as the verifier
         // refuses it, rather than read past its ends.
-        if !left.proof().well_formed::<HEADER_SIZE>() || !right.proof().well_formed::<HEADER_SIZE>()
-        {
+        if !left.proof().well_formed() || !right.proof().well_formed() {
             return Err(Error::InvalidWitness(
                 "a child proof does not have this profile's shape".into(),
             ));
@@ -97,11 +246,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
-        // The step's first phase: the headers, circuit id and own online
-        // polynomials the preamble bridge commits.
+        // The step's first phase: the own online polynomials and application
+        // stage the preamble bridge commits, and the input headers and
+        // circuit id the native preamble commits after w.
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
-        let prepared = self.begin_application_proof(
+        let (prepared, application_stage) = self.begin_application_proof(
             rng,
             &step,
             &witness,
@@ -119,8 +269,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         self.begin_nested_online([&left, &right], &mut builder)?;
         self.commit_native_online_inputs(rng, &mut builder)?;
         self.commit_nested_online_inputs(rng, &mut builder)?;
-        let (preamble_witness, nested_preamble) =
-            self.compute_preamble(rng, &left, &right, &mut builder)?;
+        let nested_preamble =
+            self.compute_preamble(rng, &left, &right, &application_stage, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -128,7 +278,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // The step's second phase: its circuit, with zeta = w and every
         // slot's polynomial at hand, whose openings the batch below proves.
-        let (application_data, application_aux) = self.compute_application_proof(
+        // The native preamble follows it, as it holds the output header and
+        // the openings the circuit fixed.
+        let (application_data, application_aux, mut application) = self.compute_application_proof(
             rng,
             step,
             witness,
@@ -136,8 +288,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             (&right, right_data),
             *w.value().take(),
             prepared,
+            application_stage,
             &mut builder,
         )?;
+        edit(&mut builder, &mut application);
+        let preamble_witness = self.compute_native_preamble(rng, &left, &right, &mut builder)?;
         let native_registry = self.native_registry.at(*w.value().take());
         let nested_registry = self
             .nested_registry
@@ -156,6 +311,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -163,10 +319,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         bridge_s_prime_commitment.write(&mut dr, &mut transcript)?;
         let y = transcript.challenge(&mut dr)?;
         let z = transcript.challenge(&mut dr)?;
+        swap(&mut builder, &mut application);
 
         let native_source = NativeFuseProofSource {
             left: &left,
             right: &right,
+            application: &application,
         };
         let nested_source = NestedFuseProofSource {
             left: &left,
@@ -223,6 +381,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_claims,
             &nested_source,
             &nested_preamble,
+            &w,
             &y,
             &mu,
             saved_transcript_state,
@@ -266,6 +425,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_registry_wy,
             &left,
             &right,
+            &application,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -286,6 +446,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &mut builder,
             &left,
             &right,
+            &application,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -299,6 +460,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &bound_challenges,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &nested_s_prime,
@@ -357,6 +519,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &pre_beta,
             &left,
             &right,
+            &application,
             &native_s_prime,
             &registry_wy,
             &native_f,
@@ -393,6 +556,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             online_points: builder.native_online_phase::<1>(),
             registry_wx0: native_s_prime.registry_wx0_commitment,
             registry_wx1: native_s_prime.registry_wx1_commitment,
+            native_preamble: builder.native_preamble_commitment(),
+            native_application: application.commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
         };
         let nested_ab_witness = nested::stages::ab::Witness {

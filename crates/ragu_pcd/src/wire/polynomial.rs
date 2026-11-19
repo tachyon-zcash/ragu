@@ -50,10 +50,7 @@ mod tests {
     use super::*;
 
     // A polynomial's layout depends on its rank alone.
-    const DIMS: Dimensions = Dimensions {
-        rank: 0,
-        header_size: 0,
-    };
+    const DIMS: Dimensions = Dimensions { rank: 0 };
 
     type Poly = Polynomial<Fp, TestRank>;
 

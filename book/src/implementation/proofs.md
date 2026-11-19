@@ -160,8 +160,10 @@ the child proofs).
 
 Within the step's `witness` function, calling `.encode()` on the
 child encoders commits the child proof data to the witness
-polynomials. Verification of these claims is deferred and occurs
-when this proof is itself folded into a subsequent step.
+polynomials. The step folds its own application claim into its
+accumulator; verification of the accumulator, and of the claims of
+the step's own recursion circuits, is deferred and occurs when this
+proof is itself folded into a subsequent step.
 
 ## The `carry` Method
 
