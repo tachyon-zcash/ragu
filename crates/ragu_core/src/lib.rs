@@ -5,7 +5,7 @@
 //! necessary) in other crates and so this crate is only intended to be used
 //! internally by Ragu.
 //!
-//! This crate reexports Udon's cycle and Poseidon traits and exposes its Pasta
+//! This crate reexports [`udon`], its cycle and Poseidon traits, and its Pasta
 //! types through [`pasta`]. Ragu-specific generator derivation and loading
 //! live in `ragu_pcd::pasta`.
 //!
@@ -45,6 +45,10 @@ pub mod routines;
 pub use drivers::Coeff;
 pub use errors::{Error, Result};
 pub use execution::{fft, for_each_mut, ifft, msm, msm_batch};
+/// The `udon` arithmetic crate, so that a caller depending only on Ragu names
+/// the same fields and curves Ragu does. The derive macros resolve `udon`
+/// here when the caller does not depend on it directly.
+pub use udon;
 pub use udon::{
     cycle::{Cycle, FixedGenerators},
     poseidon::PoseidonPermutation,

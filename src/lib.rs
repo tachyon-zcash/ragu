@@ -5,9 +5,10 @@
 //! This crate is the single entry point to Ragu's crates. The crate root
 //! carries what most callers name:
 //!
-//! - everything in [`ragu_core`]: drivers, gadgets, [`Result`], [`Error`] and
-//!   the [`pasta`] cycle. The `Gadget`, `Write` and `Kind!` macros resolve
-//!   their `ragu_core` paths here when a caller depends only on `ragu`;
+//! - everything in [`ragu_core`]: drivers, gadgets, [`Result`], [`Error`], the
+//!   [`pasta`] cycle and the [`udon`] arithmetic crate. The `Gadget`, `Write`
+//!   and `Kind!` macros resolve their `ragu_core` and `udon` paths here when a
+//!   caller depends only on `ragu`;
 //! - the PCD API: [`ApplicationBuilder`], [`Application`], the [`step`] and
 //!   [`header`] modules, and the [`Pcd`], [`Proof`], [`CompressedPcd`] and
 //!   [`CompressedProof`] structures;
