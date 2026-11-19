@@ -84,7 +84,8 @@ within the fresh runner; adequate recorded validation can be reused instead of
 running the same checks four times. The controller reserves one logical CPU
 for the runner and splits the remaining CPUs among concurrent reviewers, with
 a minimum of one per review. This sets the defaults for Cargo compilation,
-libtest and Rayon. Per-pass durations are recorded in the receipt, with native
+libtest and Rayon. Each review's build output is removed once that review and
+any retry finish. Per-pass durations are recorded in the receipt, with native
 token usage and cost in each Claude result artifact.
 
 Repeated authorized commands for an already active identical review retain its

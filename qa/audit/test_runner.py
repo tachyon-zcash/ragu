@@ -101,9 +101,13 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             core_paths = [self.out / name for name in ("core-findings.json", "code-review.md")]
             if skill == "code-review":
+                target = Path(env["CARGO_TARGET_DIR"])
+                target.mkdir()
+                (target / "build-output").touch()
                 for path in core_paths:
                     self.assertNotIn(str(path), command[-1])
             else:
+                self.assertFalse((Path(env["TMPDIR"]).parent / "code-review" / "target").exists())
                 for path in core_paths:
                     self.assertIn(str(path), command[-1])
                 self.assertEqual(runner.read_json(self.out / "core-findings.json"), {"findings": []})

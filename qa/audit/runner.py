@@ -1145,6 +1145,10 @@ def review(root, run, work, out, private, reuse=None):
             (scratch / skill / "shared-temp").mkdir(mode=0o700)
         arguments = (executable, root, run, work, out, private, plugin, merge_base, scratch)
 
+        def release_build_outputs(skill):
+            # Only that reviewer's retries can use this target directory.
+            shutil.rmtree(scratch / skill / "target", ignore_errors=True)
+
         def attempt(skill, reserve, core=True):
             """One pass, retried once after a transient failure while the job has time for it."""
             for retry in (False, True):
@@ -1170,6 +1174,8 @@ def review(root, run, work, out, private, reuse=None):
                 # The specialists still review, independently of the core index.
                 failed.append(SKILLS[0])
                 print(f"Incomplete {SKILLS[0]}; see artifacts", flush=True)
+            finally:
+                release_build_outputs(SKILLS[0])
         else:
             core = read_json(out / "code-review.json")["structured_output"]
             write_json(out / "core-findings.json", {"findings": findings.review(core, SKILLS[0])[0]})
@@ -1185,6 +1191,8 @@ def review(root, run, work, out, private, reuse=None):
                     # missing pass still fails the gate; never log model text.
                     failed.append(skill)
                     print(f"Incomplete {skill}; see artifacts", flush=True)
+                finally:
+                    release_build_outputs(skill)
         if not failed and not reconciled:
             if schedule.remaining() >= RECONCILE_TIMEOUT:
                 reconcile_reviews(executable, root, run, work, out, private, plugin, scratch, cancelled, budget)
