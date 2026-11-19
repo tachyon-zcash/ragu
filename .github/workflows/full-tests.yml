@@ -1,0 +1,66 @@
+name: Full test suite
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust CI
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: $/.github/workflows/rust.yml
+    with:
+      full-suite: true
+
+  backend:
+    name: Backend CI
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: $/.github/workflows/backend.yml
+    with:
+      full-suite: true
+
+  fv:
+    name: Formal Verification CI
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: $/.github/workflows/fv.yml
+    with:
+      full-suite: true
+
+  lint:
+    name: Lint
+    uses: $/.github/workflows/lint.yml
+
+  vet:
+    name: Supply chain
+    uses: $/.github/workflows/vet.yml
+
+  audit:
+    name: Workflow audit
+    uses: $/.github/workflows/zizmor.yml
+
+  result:
+    name: Full test suite result
+    if: always()
+    needs: [rust, backend, fv, lint, vet, audit]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require every test workflow to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          if ! jq -e 'length > 0 and all(.[]; .result == "success")' <<< "$RESULTS" > /dev/null; then
+            echo "::error::A required full-suite workflow did not succeed."
+            jq -r 'to_entries[] | "\(.key) \(.value.result)"' <<< "$RESULTS"
+            exit 1
+          fi

@@ -4,10 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      full-suite:
+        description: Run verification regardless of changed paths
+        type: boolean
+        default: false
 
 # Cancel in-progress runs when a new commit is pushed to the same branch/PR
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: Formal Verification CI-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -21,13 +27,19 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      fv: ${{ steps.filter.outputs.fv }}
+      fv: ${{ steps.full.outputs.enabled || steps.filter.outputs.fv }}
     steps:
+      - name: Enable verification for the full suite
+        id: full
+        if: inputs.full-suite
+        run: echo 'enabled=true' >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !inputs.full-suite }}
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: ${{ !inputs.full-suite }}
         id: filter
         with:
           filters: |

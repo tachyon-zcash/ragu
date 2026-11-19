@@ -1,0 +1,7 @@
+# Keep release optimization while partitioning the large PCD test targets
+# into smaller code generation units and skipping local ThinLTO.
+[profile.release]
+lto = "off"
+
+[profile.release.package.ragu_pcd]
+codegen-units = 64

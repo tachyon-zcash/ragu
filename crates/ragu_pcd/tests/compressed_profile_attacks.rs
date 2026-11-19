@@ -348,7 +348,9 @@ where
 /// packet of either verifies under the other, while every splice of the two
 /// is rejected, as is every edit. Once the aggregator's decompression circuits
 /// land, the tags diverge and the complete foreign packet is rejected too.
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn compressed_standard_checks_aggregator_packets_and_edits() -> Result<()> {
     check_profile_packets::<Aggregator, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }
