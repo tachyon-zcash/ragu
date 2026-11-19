@@ -20,6 +20,9 @@ RAGU005|crates/ragu_primitives/src/boolean.rs|432|A zero constant needs only the
 RAGU005|crates/ragu_primitives/src/boolean.rs|454|The constant's bits determine whether to update the matching prefix or constrain a zero run.
 RAGU005|crates/ragu_primitives/src/element.rs|523|A zero constant bound admits no element and is rejected structurally before any constraint is emitted.
 RAGU005|crates/ragu_primitives/src/element.rs|548|Iterator emptiness is structural API input; the method documents that its length must not depend on witness data.
+RAGU005|crates/ragu_primitives/src/fixed_base.rs|119|The window width, fixed by `N` when the table is prepared, determines which positions are absent and represented by a constant zero.
+RAGU005|crates/ragu_primitives/src/fixed_base.rs|127|A one-bit top window omits the quadratic product because its width, fixed by `N`, has no second bit.
+RAGU005|crates/ragu_primitives/src/fixed_base.rs|137|A short top window omits the cubic product because its width, fixed by `N`, has no third bit.
 RAGU005|crates/ragu_primitives/src/invertible.rs|333|Checked versus unchecked construction mode determines whether a product is accumulated.
 RAGU005|crates/ragu_primitives/src/invertible.rs|343|The same structural construction mode determines whether the batched proof is discharged.
 RAGU005|crates/ragu_primitives/src/point.rs|107|A native construction-time constant is rejected before either coordinate is embedded.
