@@ -237,6 +237,15 @@ jobs:
           ci-release-profile: true
           cache-compiler: ${{ runner.os == 'Linux' }}
           cache-pcd-incremental: ${{ runner.os == 'macOS' || runner.os == 'Windows' }}
+      - name: Build tests (all features)
+        if: runner.os == 'macOS' || runner.os == 'Windows'
+        shell: bash
+        run: >-
+          env -u CARGO_INCREMENTAL
+          cargo test --release --all --locked --all-features --no-run --timings
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
+          ${{ runner.os == 'Windows' && '--config .github/actions/rust-setup/ci-release-windows.toml' || '' }}
       - name: Run tests (all features)
         shell: bash
         run: >-

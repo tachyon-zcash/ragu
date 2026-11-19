@@ -101,6 +101,17 @@ jobs:
         run: |
           cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features -- -D warnings
           cargo clippy -p ragu_pcd --no-default-features --test online_fp_oracles -- -D warnings
+      - name: Build native PCD backend equivalence tests
+        if: runner.os == 'macOS' || runner.os == 'Windows'
+        shell: bash
+        env:
+          RAGU_PCD_TARGETED_TESTS: "1"
+        run: >-
+          env -u CARGO_INCREMENTAL
+          cargo test --release -p ragu_pcd --no-default-features --lib --no-run --timings
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
+          ${{ runner.os == 'Windows' && '--config .github/actions/rust-setup/ci-release-windows.toml' || '' }}
       - name: Run native PCD backend equivalence
         shell: bash
         env:
