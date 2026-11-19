@@ -364,11 +364,12 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn(str(path), filesystem["denyWrite"])
 
     def test_cargo_build_parallelism_accounts_for_concurrent_reviewers(self):
-        for cpus in (None, 1, 2, 4, 8):
+        for cpus, core, specialist in ((None, "1", "1"), (1, "1", "1"), (2, "1", "1"),
+                                       (4, "3", "1"), (8, "7", "2")):
             with patch.object(os, "cpu_count", return_value=cpus):
                 values = [runner.environment(self.run, self.work, skill, self.work / "scratch") for skill in runner.SKILLS]
-            self.assertEqual(int(values[0]["CARGO_BUILD_JOBS"]), max(2, cpus or 1))
-            self.assertEqual([int(value["CARGO_BUILD_JOBS"]) for value in values[1:]], [max(2, (cpus or 1) // 3)] * 3)
+            for variable in ("CARGO_BUILD_JOBS", "RAYON_NUM_THREADS", "RUST_TEST_THREADS"):
+                self.assertEqual([value[variable] for value in values], [core, specialist, specialist, specialist])
             self.assertEqual({value["CARGO_PROFILE_DEV_DEBUG"] for value in values}, {"0"})
 
     def test_linux_mounts_private_temp_before_starting_claude(self):
@@ -429,6 +430,7 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(status["last_tool"], "Bash")
         self.assertIn("diagnostic [REDACTED]", (self.out / "code-review.stderr").read_text())
         self.assertIn("tool calls", log.getvalue())
+        self.assertRegex(log.getvalue(), r"\d+ MiB disk available")
         artifacts = "".join(path.read_text() for path in self.out.iterdir()) + log.getvalue()
         self.assertNotIn("dummy-local-key", artifacts)
         self.assertNotIn("UNTRUSTED_COMMAND_CANARY", artifacts)

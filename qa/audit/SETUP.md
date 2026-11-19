@@ -81,10 +81,11 @@ reports remain in artifacts and under **For agents**. Specialists read their
 skill's evidence reference, but cannot read each other's reports or state, or
 modify another checkout. Cargo's download cache is shared
 within the fresh runner; adequate recorded validation can be reused instead of
-running the same checks four times. Each specialist defaults to one third of
-the runner's logical CPUs for Cargo compilation, with a minimum of one build
-job; the core pass uses the full CPU count. Per-pass durations are recorded in the
-receipt, with native token usage and cost in each Claude result artifact.
+running the same checks four times. The controller reserves one logical CPU
+for the runner and splits the remaining CPUs among concurrent reviewers, with
+a minimum of one per review. This sets the defaults for Cargo compilation,
+libtest and Rayon. Per-pass durations are recorded in the receipt, with native
+token usage and cost in each Claude result artifact.
 
 Repeated authorized commands for an already active identical review retain its
 existing run and status, including commands arriving together before either
@@ -140,8 +141,8 @@ not determine the completion gate. Deleting the invoking comment also stops
 reconciliation; publication still marks the invocation cancelled.
 
 Each pass has a 55-minute deadline and emits a safe progress heartbeat every
-30 seconds in the workflow log (elapsed time, event count, and fixed tool names;
-no tool arguments or reasoning). Git setup and verification commands have
+30 seconds in the workflow log with elapsed time, event count, fixed tool names,
+and available memory and disk space. Git setup and verification commands have
 three-minute deadlines and cannot prompt for credentials. Timeout/cancellation
 stops the review process group; on Linux a private PID namespace also contains
 detached children. Artifacts retain the final native result, bounded stderr

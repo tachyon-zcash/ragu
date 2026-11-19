@@ -492,6 +492,8 @@ def environment(run, work, skill, scratch):
     # Allowlist rather than removing known secret names from the Actions env.
     result = {key: os.environ[key] for key in INHERITED_ENV if key in os.environ}
     workers = len(SKILLS) - 1 if skill in SKILLS[1:] else 1
+    # Leave a CPU for the runner and divide the rest among concurrent reviews.
+    jobs = str(max(1, ((os.cpu_count() or 1) - 1) // workers))
     model, effort = model_settings(run, skill)
     result.update({
         "CLAUDE_CONFIG_DIR": str(work / "claude" / skill),
@@ -500,10 +502,10 @@ def environment(run, work, skill, scratch):
         "CARGO_HOME": str(cargo_home(work)),
         # The checkout is read-only, so builds go to the session's scratch.
         "CARGO_TARGET_DIR": str(scratch / skill / "target"),
-        # Builds are rare and short-lived; a floor of two jobs keeps a specialist
-        # from compiling on one core, and dropping debuginfo speeds every build.
-        "CARGO_BUILD_JOBS": str(max(2, (os.cpu_count() or 1) // workers)),
+        "CARGO_BUILD_JOBS": jobs,
         "CARGO_PROFILE_DEV_DEBUG": "0",
+        "RAYON_NUM_THREADS": jobs,
+        "RUST_TEST_THREADS": jobs,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_CODE_SUBAGENT_MODEL": model,
@@ -759,6 +761,22 @@ def watch_comment(run, cancelled):
         thread.join(timeout=11)
 
 
+def host_resources(path):
+    """Log available memory and disk even if a runner can't finish its upload."""
+    readings = []
+    try:
+        with Path("/proc/meminfo").open() as stream:
+            memory = next(line for line in stream if line.startswith("MemAvailable:"))
+        readings.append(f"{int(memory.split()[1]) // 1024} MiB memory available")
+    except (OSError, StopIteration, ValueError):
+        pass
+    try:
+        readings.append(f"{shutil.disk_usage(path).free // (1024 * 1024)} MiB disk available")
+    except OSError:
+        pass
+    return "".join(f", {reading}" for reading in readings)
+
+
 def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, timeout=None, budget=None):
     """Keep the final native result and bounded diagnostics, not a tool transcript."""
     started = time.monotonic()
@@ -782,7 +800,8 @@ def execute_review(command, *, cwd, env, run, skill, out, private, cancelled, ti
         (out / f"{skill}.stderr").write_text(diagnostic)
         if heartbeat:
             print(f"{skill}: {status['elapsed_seconds']:.0f}s, {status['events']} events, "
-                  f"{status['tool_calls']} tool calls, last tool {status['last_tool'] or 'none'}", flush=True)
+                  f"{status['tool_calls']} tool calls, last tool {status['last_tool'] or 'none'}"
+                  f"{host_resources(env.get('TMPDIR', cwd))}", flush=True)
 
     def event(line):
         nonlocal result
