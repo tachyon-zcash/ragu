@@ -442,7 +442,7 @@ fn standard_sender() -> &'static SenderFixture<Standard> {
 /// `share_registries` says the two profiles register the same circuits; then
 /// ones whose tags differ from the sender's in either registry or both,
 /// standing in for another setup, which must reject it however it is reused.
-fn check_same_shape<S: Profile, T: Profile>(
+fn check_same_shape<S: Profile, T: Profile, const CHECK_GRANDPARENTS: bool>(
     sender: &SenderFixture<S>,
     receiver_constraint: Option<Fp>,
     local_value: Fp,
@@ -520,8 +520,11 @@ where
         let (parent, ()) = receiver.fuse(&mut rng, Sum, (), local.clone(), local.clone())?;
         assert_eq!(*parent.data(), local_value + local_value);
         check_both_verifiers(&receiver, &parent, true, &mut rng)?;
-        let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), parent, local.clone())?;
-        check_both_verifiers(&receiver, &grandparent, true, &mut rng)?;
+        #[cfg(ragu_pcd_nightly_tests)]
+        if CHECK_GRANDPARENTS {
+            let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), parent, local.clone())?;
+            check_both_verifiers(&receiver, &grandparent, true, &mut rng)?;
+        }
 
         for foreign_on_left in [true, false] {
             let (left, right) = if foreign_on_left {
@@ -532,13 +535,16 @@ where
             let (parent, ()) = receiver.fuse(&mut rng, Sum, (), left, right)?;
             assert_eq!(*parent.data(), foreign_value + local_value);
             check_both_verifiers(&receiver, &parent, false, &mut rng)?;
-            let (left, right) = if foreign_on_left {
-                (parent, local.clone())
-            } else {
-                (local.clone(), parent)
-            };
-            let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), left, right)?;
-            check_both_verifiers(&receiver, &grandparent, false, &mut rng)?;
+            #[cfg(ragu_pcd_nightly_tests)]
+            if CHECK_GRANDPARENTS {
+                let (left, right) = if foreign_on_left {
+                    (parent, local.clone())
+                } else {
+                    (local.clone(), parent)
+                };
+                let (grandparent, ()) = receiver.fuse(&mut rng, Sum, (), left, right)?;
+                check_both_verifiers(&receiver, &grandparent, false, &mut rng)?;
+            }
         }
     }
     Ok(())
@@ -550,7 +556,18 @@ where
 /// land, the payload is rejected.
 #[test]
 fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Result<()> {
-    check_same_shape::<Standard, Aggregator>(
+    check_standard_payloads_in_aggregator::<false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn aggregator_checks_standard_registry_tags_through_two_generations() -> Result<()> {
+    check_standard_payloads_in_aggregator::<true>()
+}
+
+fn check_standard_payloads_in_aggregator<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
+    check_same_shape::<Standard, Aggregator, CHECK_GRANDPARENTS>(
         standard_sender(),
         Some(Fp::from(7)),
         Fp::from(7),
@@ -564,7 +581,7 @@ fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Resul
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Result<()> {
-    check_same_shape::<Aggregator, Standard>(
+    check_same_shape::<Aggregator, Standard, true>(
         &sender_fixture(Some(Fp::from(7)), Fp::from(7))?,
         Some(Fp::from(7)),
         Fp::from(7),
@@ -574,10 +591,21 @@ fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Resul
 
 #[test]
 fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
+    check_weaker_payloads_in_standard::<false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn standard_rejects_a_weaker_profile_through_two_generations() -> Result<()> {
+    check_weaker_payloads_in_standard::<true>()
+}
+
+fn check_weaker_payloads_in_standard<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
     // A Standard leaf must be 7. The foreign profile accepts 9 instead,
     // so rejection here also protects an independently false statement.
     assert_ne!(Fp::from(9), Fp::from(7));
-    check_same_shape::<Permissive, Standard>(
+    check_same_shape::<Permissive, Standard, CHECK_GRANDPARENTS>(
         &sender_fixture(None, Fp::from(9))?,
         Some(Fp::from(7)),
         Fp::from(7),
@@ -587,7 +615,23 @@ fn weaker_profile_cannot_bypass_standard_constraints() -> Result<()> {
 
 #[test]
 fn standard_cannot_substitute_for_a_weaker_profile() -> Result<()> {
-    check_same_shape::<Standard, Permissive>(standard_sender(), None, Fp::from(9), false)
+    check_standard_payloads_in_weaker_profile::<false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
+fn weaker_profile_rejects_standard_through_two_generations() -> Result<()> {
+    check_standard_payloads_in_weaker_profile::<true>()
+}
+
+fn check_standard_payloads_in_weaker_profile<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
+    check_same_shape::<Standard, Permissive, CHECK_GRANDPARENTS>(
+        standard_sender(),
+        None,
+        Fp::from(9),
+        false,
+    )
 }
 
 fn check_different_shapes<S: Profile, T: Profile>() -> Result<()>

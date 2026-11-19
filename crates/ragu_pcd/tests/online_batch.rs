@@ -555,7 +555,7 @@ pub(crate) fn check_identity_online_commitments<P: Profile>(
     Ok(())
 }
 
-fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
+fn native_round_trip<const WITH_NESTED: bool, const CHECK_MUTATIONS: bool>() -> Result<()> {
     type Cycle<const N: bool> = Profiled<Pasta, NativeBatch<N>>;
     let app = ApplicationBuilder::<Cycle<WITH_NESTED>, Rk, 2>::new()
         .register(UnitStep)?
@@ -563,8 +563,10 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
     let mut rng = StdRng::seed_from_u64(0x6160 + u64::from(WITH_NESTED));
     let (child, ()) = app.seed(&mut rng, UnitStep, ())?;
     verify_profile(&app, &child, &mut rng, true)?;
-    let nested: &[usize] = if WITH_NESTED { &[0, 1] } else { &[] };
-    check_identity_online_commitments(&app, &child, &mut rng, &[0, 1], nested)?;
+    if CHECK_MUTATIONS {
+        let nested: &[usize] = if WITH_NESTED { &[0, 1] } else { &[] };
+        check_identity_online_commitments(&app, &child, &mut rng, &[0, 1], nested)?;
+    }
     let (parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), child.clone())?;
     let bytes = parent
         .proof()
@@ -574,6 +576,9 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
         .expect("decode native online proof")
         .carry::<()>(());
     verify_profile(&app, &decoded, &mut rng, true)?;
+    if !CHECK_MUTATIONS {
+        return Ok(());
+    }
     // Both foreign helper exports and the actual walk use these common points.
     for i in 0..2 {
         let mut proof = child.proof().clone();
@@ -600,12 +605,19 @@ fn native_round_trip<const WITH_NESTED: bool>() -> Result<()> {
 
 #[test]
 fn native_online_batches_round_trip_without_a_nested_helper() -> Result<()> {
-    native_round_trip::<false>()
+    native_round_trip::<false, true>()
 }
 
 #[test]
+fn both_online_batches_round_trip() -> Result<()> {
+    native_round_trip::<true, false>()
+}
+
+#[cfg(ragu_pcd_nightly_tests)]
+#[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn both_online_batches_round_trip_and_bind_points_and_sums() -> Result<()> {
-    native_round_trip::<true>()
+    native_round_trip::<true, true>()
 }
 
 std::thread_local! { static ALTER_NATIVE_STAGE: Cell<Option<usize>> = const { Cell::new(None) }; }
