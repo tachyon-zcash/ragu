@@ -25,6 +25,10 @@ inputs:
     description: Allow this job to populate its dependency cache on main
     required: false
     default: "true"
+  save-pr-dependencies:
+    description: Allow this job to populate a pull-request-local dependency cache
+    required: false
+    default: "false"
   ci-release-profile:
     description: Include this runner's CI release profile files in the dependency cache key
     required: false
@@ -105,7 +109,8 @@ runs:
         targets: ${{ steps.toolchain-config.outputs.targets }}
 
     # The action caches dependency artifacts and sets CARGO_INCREMENTAL=0.
-    # Only main populates these caches for its matching PR jobs.
+    # Main populates caches for matching PR jobs. PR-only jobs can opt in to
+    # saving a cache scoped to their own merge ref.
     - name: Restore Cargo dependencies
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       env:
@@ -120,21 +125,10 @@ runs:
         shared-key: ${{ inputs.cache-suffix || github.job }}
         env-vars: RAGU_CI_RELEASE_PROFILE_HASH
         cache-bin: false
-        save-if: ${{ github.ref == 'refs/heads/main' && inputs.save-dependencies == 'true' }}
+        save-if: >-
+          ${{ (github.ref == 'refs/heads/main' && inputs.save-dependencies == 'true') ||
+              (github.event_name == 'pull_request' && inputs.save-pr-dependencies == 'true') }}
 
-    - name: Configure compiler cache
-      if: runner.os == 'Linux' && inputs.cache-compiler == 'true' && inputs.cache-pcd-incremental != 'true'
-      shell: bash
-      env:
-        CACHE_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
-        # proc-macro-crate reads Cargo manifests during macro expansion.
-        MANIFEST_HASH: ${{ hashFiles('**/Cargo.toml', 'Cargo.lock') }}
-      run: |
-        {
-          echo 'SCCACHE_GHA_ENABLED=true'
-          echo "SCCACHE_GHA_RW_MODE=$CACHE_MODE"
-          echo "SCCACHE_GHA_VERSION=$MANIFEST_HASH"
-        } >> "$GITHUB_ENV"
     - name: Install compiler cache
       if: runner.os == 'Linux' && inputs.cache-compiler == 'true' && inputs.cache-pcd-incremental != 'true'
       id: sccache
@@ -145,10 +139,22 @@ runs:
     - name: Enable compiler cache
       if: steps.sccache.outcome == 'success'
       shell: bash
+      env:
+        SCCACHE_GHA_ENABLED: 'true'
+        SCCACHE_GHA_RW_MODE: ${{ github.ref == 'refs/heads/main' && 'READ_WRITE' || 'READ_ONLY' }}
+        # proc-macro-crate reads Cargo manifests during macro expansion.
+        SCCACHE_GHA_VERSION: ${{ hashFiles('**/Cargo.toml', 'Cargo.lock') }}
       run: |
+        if ! sccache --start-server; then
+          echo '::warning::sccache could not start. Cargo will compile without it.'
+          exit 0
+        fi
         {
           echo 'CARGO_INCREMENTAL=0'
           echo 'RUSTC_WRAPPER=sccache'
+          echo "SCCACHE_GHA_ENABLED=$SCCACHE_GHA_ENABLED"
+          echo "SCCACHE_GHA_RW_MODE=$SCCACHE_GHA_RW_MODE"
+          echo "SCCACHE_GHA_VERSION=$SCCACHE_GHA_VERSION"
         } >> "$GITHUB_ENV"
 
     # Limit new snapshots for a configuration to once a week per ref.

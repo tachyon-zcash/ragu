@@ -2,7 +2,7 @@ name: Daily test coverage watchdog
 
 on:
   schedule:
-    # Check later in the UTC day to give the full suite time to finish.
+    # Check later in the UTC day to give both suites time to finish.
     - cron: '47 14 * * *'
 
 permissions:
@@ -10,23 +10,32 @@ permissions:
 
 jobs:
   check:
-    name: Check for today's successful full test suite
+    name: Check today's test suite and heavy tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check full-suite run history
+      - name: Check daily run history
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           today=$(date -u +%F)
-          run_url=$(gh api --method GET \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/full-tests.yml/runs" \
-            -f branch="$DEFAULT_BRANCH" -f created="$today" -f status=success -F per_page=1 \
-            --jq '.workflow_runs[0].html_url // ""')
-          if [[ -z "$run_url" ]]; then
-            echo "::error::No successful full test suite run on $DEFAULT_BRANCH for $today UTC."
-            echo "[Full test suite runs]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/full-tests.yml)" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          printf '[Successful full test suite](%s)\n' "$run_url" >> "$GITHUB_STEP_SUMMARY"
+          result=0
+          for workflow in full-tests.yml heavy-tests.yml; do
+            history_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/$workflow"
+            if ! run_url=$(gh api --method GET \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs" \
+              -f branch="$DEFAULT_BRANCH" -f created="$today" -f status=success -F per_page=1 \
+              --jq '.workflow_runs[0].html_url // ""'); then
+              echo "::error::Could not check $workflow run history."
+              printf -- '- [Could not check %s](%s)\n' "$workflow" "$history_url" >> "$GITHUB_STEP_SUMMARY"
+              result=1
+            elif [[ -z "$run_url" ]]; then
+              echo "::error::No successful $workflow run on $DEFAULT_BRANCH for $today UTC."
+              printf -- '- [Missing successful %s run](%s)\n' "$workflow" "$history_url" >> "$GITHUB_STEP_SUMMARY"
+              result=1
+            else
+              printf -- '- [Successful %s run](%s)\n' "$workflow" "$run_url" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit "$result"

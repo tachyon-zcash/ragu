@@ -10,9 +10,9 @@ on:
         type: boolean
         default: false
 
-# Cancel in-progress runs when a new commit is pushed to the same branch/PR.
+# Keep the daily suite independent of pushes to main and manual suite runs.
 concurrency:
-  group: Backend CI-${{ github.event.pull_request.number || github.ref }}
+  group: Backend CI-${{ inputs.full-suite && format('full-suite-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ !inputs.full-suite }}
 
 env:
