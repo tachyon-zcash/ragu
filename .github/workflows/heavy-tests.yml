@@ -63,7 +63,8 @@ jobs:
           name: pcd-heavy-tests-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pcd-heavy-tests
           if-no-files-found: error
-          retention-days: 7
+          # Keep the binary available for GitHub's 30-day rerun window.
+          retention-days: 30
 
   suites:
     name: ${{ matrix.suite.name }}

@@ -34,6 +34,7 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: release
+          ci-release-profile: true
           save-dependencies: false
           cache-compiler: true
       - name: Check the fuse and verifier fixtures

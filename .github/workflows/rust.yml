@@ -88,6 +88,8 @@ jobs:
         with:
           components: clippy
       - name: Run clippy
+        env:
+          RAGU_PCD_NIGHTLY_TESTS: "1"
         run: >-
           cargo clippy --workspace --lib --tests --benches --locked --all-features
           --test corruption --test online_fp_oracles -- -D warnings
@@ -130,6 +132,7 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: release
+          ci-release-profile: true
           save-dependencies: false
           cache-compiler: true
       # Compile and run the corruption suite, including the rejection sweeps
@@ -194,6 +197,7 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: release-default-feature
+          ci-release-profile: true
           cache-compiler: true
       - name: Run tests (default features)
         run: >-
@@ -217,6 +221,7 @@ jobs:
         uses: $/.github/actions/rust-setup
         with:
           cache-suffix: release
+          ci-release-profile: true
           cache-compiler: ${{ runner.os == 'Linux' }}
           cache-pcd-incremental: ${{ runner.os == 'macOS' || runner.os == 'Windows' }}
       - name: Run tests (all features)
