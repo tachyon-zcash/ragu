@@ -17,7 +17,7 @@
 //! `verify_compressed` accept the decoded proof, that exact proof is fused as
 //! both children of a parent, which must verify.
 //!
-//! This entire suite is ignored in the platform matrix and runs in the
+//! This suite is compiled and run by the
 //! dedicated Linux PR job with `--test corruption -- --include-ignored`.
 //!
 //! What is deliberately *not* a fixture is
@@ -452,6 +452,7 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
     }
 
     let mut accepted = 0usize;
+    let mut honest_bytes = None;
     for (described, corrupted, binding) in sweep {
         let bytes = match corrupted.proof.to_bytes() {
             Ok(bytes) => bytes,
@@ -471,6 +472,12 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
             bytes,
             "{shape:?}: the round trip is not exact: {described}",
         );
+        // Identical decoded inputs exercise the same compression and parent
+        // checks with this application's fixed data and RNG seed.
+        if !binding.binds_compressed() && honest_bytes.as_ref() == Some(&bytes) {
+            accepted += 1;
+            continue;
+        }
         let decoded = Fixture {
             shape,
             proof: decoded,
@@ -492,6 +499,11 @@ fn check_decoded_proofs_fuse_when_accepted(shape: Shape) {
             decoded.fuses_with_itself(&app, 1234),
             "{shape:?}: an accepted decoded child made a parent that does not verify: {described}",
         );
+        // The honest proof is the first case. Retain its encoding so the
+        // no-op edits can reuse the successful checks above.
+        if honest_bytes.is_none() {
+            honest_bytes = Some(bytes);
+        }
         accepted += 1;
     }
     // Entries the vocabulary leaves unbound on this shape, such as edits to

@@ -16,11 +16,40 @@ permissions:
   contents: read
 
 jobs:
-  fixtures:
-    name: fuse fixtures
+  changes:
+    name: detect backend changes
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - '.cargo/**'
+              - 'crates/**'
+              - 'qa/no_std/**'
+              - '**/*.rs'
+              - '**/*.proptest-regressions'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/fixtures.yml'
+              - '.github/workflows/backend.yml'
+              - '.github/actions/**'
+
+  fixtures:
+    name: fuse fixtures
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
     uses: $/.github/workflows/fixtures.yml
 
   # Extend this shared matrix when another accelerated backend lands instead
@@ -29,6 +58,8 @@ jobs:
   # backend's distinct feature configuration and end-to-end boundary.
   backend-equivalence:
     name: backend equivalence (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,6 +74,7 @@ jobs:
         with:
           components: clippy
           cache-suffix: backend-equivalence
+          cache-pcd-incremental: ${{ runner.os == 'macOS' || runner.os == 'Windows' }}
       - name: Run acceleration backend clippy
         if: matrix.os == 'ubuntu-latest'
         run: >-
@@ -52,13 +84,21 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: >-
           cargo clippy -p ragu_pcd --lib --tests --benches --no-default-features
-          -- -D warnings
+          --test online_fp_oracles -- -D warnings
       - name: Run native PCD backend equivalence
+        shell: bash
         env:
           # Each case builds three applications and exercises both proof formats.
           PROPTEST_CASES: "4"
+          RAGU_PCD_TARGETED_TESTS: "1"
+          # Keep the Rust module filter intact when Git Bash launches Cargo.
+          MSYS2_ARG_CONV_EXCL: 'backend_equivalence::'
         run: >-
+          ${{ runner.os != 'Linux' && 'env -u CARGO_INCREMENTAL' || '' }}
           cargo test --release -p ragu_pcd --no-default-features
+          --config .github/actions/rust-setup/ci-release.toml
+          ${{ runner.os == 'macOS' && '--config .github/actions/rust-setup/ci-release-macos.toml' || '' }}
+          ${{ runner.os == 'Windows' && '--config .github/actions/rust-setup/ci-release-windows.toml' || '' }}
           --lib backend_equivalence:: -- --test-threads=1
       - name: Enforce PCD MSM and FFT backend routing
         if: matrix.os == 'ubuntu-latest'
@@ -71,6 +111,8 @@ jobs:
   # Every backend must retain its correctness-first fallback on bare metal.
   backend-nostd:
     name: backend no_std
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,6 +143,7 @@ jobs:
     name: backend-required
     if: always()
     needs:
+      - changes
       - fixtures
       - backend-equivalence
       - backend-nostd
@@ -108,13 +151,21 @@ jobs:
     steps:
       - name: Validate required backend jobs
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          RUN_BACKEND: ${{ needs.changes.outputs.backend == 'true' || github.event_name == 'push' }}
           FIXTURES_RESULT: ${{ needs.fixtures.result }}
           EQUIVALENCE_RESULT: ${{ needs.backend-equivalence.result }}
           NOSTD_RESULT: ${{ needs.backend-nostd.result }}
         run: |
-          if [[ "$FIXTURES_RESULT" != "success" ||
-                "$EQUIVALENCE_RESULT" != "success" ||
-                "$NOSTD_RESULT" != "success" ]]; then
+          expected=skipped
+          if [[ "$RUN_BACKEND" == true ]]; then
+            expected=success
+          fi
+          if [[ "$CHANGES_RESULT" != "success" ||
+                "$FIXTURES_RESULT" != "$expected" ||
+                "$EQUIVALENCE_RESULT" != "$expected" ||
+                "$NOSTD_RESULT" != "$expected" ]]; then
+            echo "Backend change detection: $CHANGES_RESULT"
             echo "Fuse fixtures: $FIXTURES_RESULT"
             echo "Backend equivalence: $EQUIVALENCE_RESULT"
             echo "Backend no_std: $NOSTD_RESULT"

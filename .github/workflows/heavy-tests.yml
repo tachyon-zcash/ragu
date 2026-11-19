@@ -13,6 +13,7 @@ name: Heavy tests
 # neither the platform nor the prover's scheduling, so they run once, with
 # every feature on, on x86-64 Linux. The serial trace evaluator keeps its
 # own unit tests and the PR gate's default-features pass.
+# Build the shared test executable once, including the proof regressions.
 
 on:
   # Daily at 02:00 UTC, after the fuzzing campaigns have had their window.
@@ -29,16 +30,52 @@ permissions:
   contents: read
 
 jobs:
+  build:
+    name: Build heavy test binary
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Rust
+        uses: $/.github/actions/rust-setup
+        with:
+          cache-suffix: heavy-tests
+      - name: Compile the PCD test binary
+        shell: bash
+        env:
+          RAGU_PCD_NIGHTLY_TESTS: '1'
+        run: |
+          cargo test --release -p ragu_pcd --locked --all-features --lib --no-run \
+            --message-format=json-render-diagnostics > "$RUNNER_TEMP/pcd-test-build.jsonl"
+          binary=$(jq -ers '
+            [.[] | select(.reason == "compiler-artifact" and .target.name == "ragu_pcd"
+                         and .profile.test and .executable) | .executable]
+            | if length == 1 then .[0] else error("expected one PCD test binary") end
+          ' "$RUNNER_TEMP/pcd-test-build.jsonl")
+          install "$binary" "$RUNNER_TEMP/pcd-heavy-tests"
+      - name: Upload the PCD test binary
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pcd-heavy-tests-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pcd-heavy-tests
+          if-no-files-found: error
+          retention-days: 7
+
   suites:
     name: ${{ matrix.suite.name }}
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
         suite:
-          # `filter` is a libtest name filter over the ignored tests of the
-          # `ragu_pcd` unit binary: the module each file is mounted as.
+          # `filter` holds one or more libtest name filters for ignored
+          # `ragu_pcd` unit tests.
           - name: recursive bindings
             filter: proof::recursive_binding_tests
           - name: recursive propagation
@@ -49,21 +86,40 @@ jobs:
             filter: proof::base_case_combinations_tests
           - name: PCS
             filter: fuse::pcs_tests
+          - name: proof regressions
+            filter: >-
+              source_mesh_tests::both_source_meshes_close_at_the_root_and_survive_ordinary_steps
+              online_batch_tests::native_auxiliaries_bind_at_every_deadline_and_survive_recursion
+              online_batch_tests::nested_auxiliaries_bind_at_every_deadline_and_survive_recursion
+              proof::profile_substitution_tests::standard_accepts_aggregator_payloads_only_with_the_same_registries
+              proof::profile_substitution_tests::compressed_attacks::compressed_standard_checks_aggregator_packets_and_edits
+              proof::profile_substitution_tests::verifier_setup::aggregator_verifier_uses_its_registered_application_circuits
+              setup_binding_tests::aggregator_native_setup_binding
+              setup_binding_tests::aggregator_nested_setup_binding
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Setup Rust
-        uses: $/.github/actions/rust-setup
+      - name: Download the PCD test binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          cache-suffix: heavy-tests
-      - name: Run the suite's ignored properties
-        # The filter reaches the command through `env` rather than `${{ }}`
-        # interpolation in `run:`, which zizmor's template-injection audit
-        # flags. Eight cases per property; the PR gate skips these tests.
+          artifact-ids: ${{ needs.build.outputs.artifact-id || 'missing PCD test artifact ID' }}
+          path: ${{ runner.temp }}
+      - name: Run the suite's ignored tests
+        shell: bash
+        working-directory: crates/ragu_pcd
         env:
           SUITE: ${{ matrix.suite.filter }}
           PROPTEST_CASES: "8"
-        run: >-
-          cargo test --release -p ragu_pcd --locked --all-features
-          -- --ignored "$SUITE"
+        run: |
+          binary="$RUNNER_TEMP/pcd-heavy-tests"
+          chmod +x "$binary"
+          read -r -a suite_filters <<< "$SUITE"
+          for filter in "${suite_filters[@]}"; do
+            tests=$("$binary" --ignored --list "$filter")
+            if ! grep -q ': test$' <<< "$tests"; then
+              echo "No ignored tests match $filter" >&2
+              exit 1
+            fi
+          done
+          "$binary" --ignored "${suite_filters[@]}"

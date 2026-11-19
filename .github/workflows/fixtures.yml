@@ -22,37 +22,8 @@ permissions:
   contents: read
 
 jobs:
-  changes:
-    name: detect changes
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      fixtures: ${{ steps.filter.outputs.fixtures }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        id: filter
-        with:
-          filters: |
-            fixtures:
-              - '.cargo/**'
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-              - '.github/workflows/fixtures.yml'
-              - '.github/workflows/backend.yml'
-              - '.github/actions/**'
-
   fuse:
     name: fuse fixtures
-    needs: changes
-    if: needs.changes.outputs.fixtures == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -62,39 +33,15 @@ jobs:
       - name: Setup Rust
         uses: $/.github/actions/rust-setup
         with:
-          cache-suffix: fixtures
+          cache-suffix: release
+          save-dependencies: false
+          cache-compiler: true
       - name: Check the fuse and verifier fixtures
         env:
           RAGU_FIXTURES: check
+          RAGU_PCD_TARGETED_TESTS: "1"
         # Release profiles can enable debug assertions, marking these tests ignored.
         run: >-
           cargo test --release -p ragu_pcd --locked --all-features
+          --config .github/actions/rust-setup/ci-release.toml
           --lib proof::fuse_fixture_tests -- --include-ignored
-
-  result:
-    name: fixture result
-    if: always()
-    needs: [changes, fuse]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate fixture jobs
-        env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
-          FIXTURES_RESULT: ${{ needs.fuse.result }}
-          FIXTURES_CHANGED: ${{ needs.changes.outputs.fixtures }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [[ "$CHANGES_RESULT" != "success" ]]; then
-            echo "Fixture change detection: $CHANGES_RESULT"
-            exit 1
-          fi
-          if [[ "$FIXTURES_RESULT" == "success" ]]; then
-            exit 0
-          fi
-          if [[ "$FIXTURES_RESULT" == "skipped" &&
-                "$FIXTURES_CHANGED" == "false" &&
-                "$EVENT_NAME" != "push" ]]; then
-            exit 0
-          fi
-          echo "Fuse fixtures: $FIXTURES_RESULT"
-          exit 1

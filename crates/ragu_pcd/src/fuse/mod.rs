@@ -120,7 +120,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// left as the step computed it, so its claim no longer matches the
     /// data the preamble witnesses; the base case leaves the folded claim
     /// free, so only the base-case pin in `collapse` can reject the proof.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_targeted_tests)))]
     pub(crate) fn fuse_forging_dummy_inputs<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -151,7 +151,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// in its native preamble a left input header whose first field is off
     /// by `delta`. The step's circuit ran on the honest header, and the
     /// child's committed traces export the honest one.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_targeted_tests)))]
     pub(crate) fn fuse_editing_left_header<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -178,7 +178,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// header. With the header the child exported, the prover's fold agrees
     /// with the child's committed traces whatever its preamble witnesses, so
     /// only `hashes_1`'s equality between the two can reject it.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_targeted_tests)))]
     pub(crate) fn fuse_staging_left_bridge<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -203,7 +203,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// its own after $y$ is squeezed: `swap` runs on the builder and the
     /// application polynomials once the `s_prime` bridge has absorbed the
     /// commitments of the native preamble and of the application trace.
-    #[cfg(test)]
+    #[cfg(all(test, not(ragu_pcd_targeted_tests)))]
     pub(crate) fn fuse_swapping_after_y<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,

@@ -718,8 +718,10 @@ mod capture {
 /// Four restrictions with shared intersection values, prepared at the four
 /// transcript boundaries. This exercises the batch schedule, independently of
 /// the later source-registry identity accumulator.
+#[cfg(ragu_pcd_nightly_tests)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct NativePhases;
+#[cfg(ragu_pcd_nightly_tests)]
 impl Profile for NativePhases {
     const NAME: &'static str = "native-online-phases";
     const NATIVE_EXTENSION: usize = 0;
@@ -834,7 +836,9 @@ pub(crate) fn mutate_native_phase<P: Affine>(phase: usize, point: P) -> P {
     }
 }
 
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
@@ -879,8 +883,10 @@ fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<(
 /// Four restrictions with shared intersection values, prepared at the four
 /// transcript boundaries. This exercises the batch schedule, independently of
 /// the later source-registry identity accumulator.
+#[cfg(ragu_pcd_nightly_tests)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct NestedPhases;
+#[cfg(ragu_pcd_nightly_tests)]
 impl Profile for NestedPhases {
     const NAME: &'static str = "nested-online-phases";
     const NATIVE_EXTENSION: usize = 0;
@@ -992,7 +998,9 @@ pub(crate) fn mutate_nested_phase<P: Affine>(phase: usize, point: P) -> P {
     }
 }
 
+#[cfg(ragu_pcd_nightly_tests)]
 #[test]
+#[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
 fn nested_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<()> {
     struct Reset;
     impl Drop for Reset {
