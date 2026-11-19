@@ -27,9 +27,11 @@
 //! batch; the polynomials themselves are native, evaluated at $u$ in the
 //! `eval` stage and folded into $p$ in the same order. Each slot is opened
 //! once, at the point the step queried it, or at $\zeta = w$ with the
-//! polynomial's value there when the step did not; the `query` stage holds
-//! the openings and `compute_v` folds them into the batch and exports them
-//! in its bridge instance for the parent.
+//! polynomial's value there when the step did not; the native `preamble`
+//! stage holds the openings, committed after the step's circuit ran,
+//! `compute_v` folds them into the batch, and `collapse` folds the step's
+//! own application claim over the same wires, which is what holds the
+//! instance the step circuit satisfied to the openings the batch proves.
 //!
 //! The profile's online batch, [`Profile::NATIVE_ONLINE`], adds online
 //! polynomials of the step's own on this field. The fuse begins it from the
@@ -38,6 +40,7 @@
 //! that declares no batch supplies and commits nothing.
 
 use alloc::{vec, vec::Vec};
+use core::marker::PhantomData;
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
@@ -51,7 +54,7 @@ use ragu_primitives::{
     allocator::Allocator,
     consistent::Consistent,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{ConstLen, FixedVec, Len},
 };
 use rand::CryptoRng;
 use udon::field::Field;
@@ -68,6 +71,11 @@ use crate::{
 
 /// The number of online polynomials a step opens across its input and output proofs.
 pub const NUM_ONLINE_FP_QUERIES: usize = 3 * NUM_ONLINE_FP_POLYS;
+
+/// The slots of the step's own output polynomials among its
+/// [`NUM_ONLINE_FP_QUERIES`], which the instance orders left, right, output.
+pub(crate) const OUTPUT_SLOTS: core::ops::Range<usize> =
+    2 * NUM_ONLINE_FP_POLYS..NUM_ONLINE_FP_QUERIES;
 
 /// Length type for a step's online slots.
 pub(crate) type QueriesLen = ConstLen<NUM_ONLINE_FP_QUERIES>;
@@ -132,15 +140,6 @@ pub(crate) struct Query<F> {
 /// instance does not repeat.
 pub(crate) type Queries<F> = [Query<F>; NUM_ONLINE_FP_QUERIES];
 
-/// The openings of a step that queried nothing: every slot at `zeta`, with
-/// `evaluate(slot, zeta)` the slot's value there.
-pub(crate) fn queries_at<F: Field>(zeta: F, mut evaluate: impl FnMut(usize, F) -> F) -> Queries<F> {
-    core::array::from_fn(|slot| Query {
-        x: zeta,
-        y: evaluate(slot, zeta),
-    })
-}
-
 /// The opening of one slot, as wires.
 #[derive(Gadget, Write, Consistent)]
 pub(crate) struct QueryOutput<'dr, D: Driver<'dr>> {
@@ -154,6 +153,65 @@ pub(crate) struct QueryOutput<'dr, D: Driver<'dr>> {
 
 /// A step's online openings, as wires, in slot order.
 pub(crate) type QueriesOutput<'dr, D> = FixedVec<QueryOutput<'dr, D>, QueriesLen>;
+
+/// The slot whose opening a step exposes for the step binding, the point
+/// and the value: its first output slot, where the decompression step
+/// commits the host IPA's $s(X)$ and opens it at $\zeta$ (see
+/// [`decompress`](crate::step::internal::decompress)).
+pub(crate) const STEP_OPENING: usize =
+    OUTPUT_SLOTS.start + crate::step::internal::decompress::S_SLOT;
+
+/// The slot whose opening's point a step exposes for the step binding: its
+/// left input's first, which the decompression step opens at the transcript
+/// digest it staged.
+pub(crate) const STEP_DIGEST: usize = crate::step::internal::decompress::DIGEST_SLOT;
+
+/// Length type for what a step in profile `P` exposes of its online
+/// openings to the step that consumes its proof: the step binding's
+/// openings, [`STEP_BINDING`](crate::profile::STEP_BINDING) less its flag,
+/// for a profile with a statement circuit, whose claim reads them, and
+/// nothing for a profile without one.
+///
+/// A step folds its own application claim, so its parent does not
+/// otherwise see its openings: `hashes_1` exports these after the step's
+/// output header and circuit id, and the parent holds its copy to that
+/// export (see
+/// [`ProofInputs`](super::stages::preamble::ProofInputs)).
+pub(crate) struct StepBindingLen<P>(PhantomData<P>);
+
+impl<P: Profile> Len for StepBindingLen<P> {
+    fn len() -> usize {
+        if crate::profile::native_extension::<P>().statement.is_some() {
+            crate::profile::STEP_BINDING - 1
+        } else {
+            0
+        }
+    }
+}
+
+/// The step binding's openings among a step's `queries`, in profile `P`:
+/// the [`STEP_OPENING`] slot's point and value, then the [`STEP_DIGEST`]
+/// slot's point; none for a profile without a statement circuit.
+pub(crate) fn step_binding<P: Profile, F: Copy>(queries: &Queries<F>) -> Vec<F> {
+    let binding = [
+        queries[STEP_OPENING].x,
+        queries[STEP_OPENING].y,
+        queries[STEP_DIGEST].x,
+    ];
+    binding[..StepBindingLen::<P>::len()].to_vec()
+}
+
+/// [`step_binding`] over the openings' wires.
+pub(crate) fn step_binding_wires<'dr, D: Driver<'dr>, P: Profile>(
+    queries: &QueriesOutput<'dr, D>,
+) -> FixedVec<Element<'dr, D>, StepBindingLen<P>> {
+    let binding = [
+        &queries[STEP_OPENING].x,
+        &queries[STEP_OPENING].y,
+        &queries[STEP_DIGEST].x,
+    ];
+    FixedVec::from_fn(|i| binding[i].clone())
+}
 
 /// Allocates the openings' wires from their values.
 pub(crate) fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
@@ -310,7 +368,5 @@ mod tests {
         let padding = padding::<Fp, TestRank>();
         assert_eq!(padding.eval(Fp::from(17)), Fp::ONE);
         assert_eq!(padding.eval(Fp::ZERO), Fp::ONE);
-        let queries = queries_at(Fp::from(5), |_, x| padding.eval(x));
-        assert!(queries.iter().all(|q| q.x == Fp::from(5) && q.y == Fp::ONE));
     }
 }

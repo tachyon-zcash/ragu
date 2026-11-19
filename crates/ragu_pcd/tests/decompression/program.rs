@@ -434,7 +434,7 @@ fn limits_scale_with_the_rank() {
 }
 
 /// The native chunk count grows with the header size, since the
-/// compression's transcript absorbs the three headers; the nested count
+/// compression's transcript absorbs the output header; the nested count
 /// does not, so a profile pinning the counts pins them per header size.
 #[test]
 fn native_counts_follow_the_header_size() {

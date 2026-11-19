@@ -7,16 +7,17 @@
 //!
 //! | Restriction | Opened at | The verifier's use |
 //! |---|---|---|
-//! | $(r, y_c)$ | each internal circuit's $\omega_j$, the proof's own circuit's | the claims' wiring restrictions |
-//! | $(x, y)$ | each internal circuit's $\omega_j$, $w$, the children's ids, $u$, $w_c$ | the query stage's fixed registry, $m(w, x, y)$, the children's circuits, the eval stage's, the instance's opening |
+//! | $(r, y_c)$ | each internal circuit's $\omega_j$ | the claims' wiring restrictions |
+//! | $(x, y)$ | each internal circuit's $\omega_j$, $w$, the proof's own circuit's, $u$, $w_c$ | the query stage's fixed registry, $m(w, x, y)$, the proof's own circuit's selector, the eval stage's, the instance's opening |
 //! | $(x_l, y_l)$, $(x_r, y_r)$ | $w$ | the children's registries at the proof's $w$ |
 //! | $(x_l, y)$, $(x_r, y)$ | $w$ | the proof's registry at the children's $x$ |
 //! | $(x_l, u)$, $(x_r, u)$, $(u, y)$ | $w$ | the eval stage's registry values |
 //!
 //! Here $w$, $x$, $y$ and $u$ are the decompressed proof's fuse
 //! challenges, $x_l$, $y_l$, $x_r$ and $y_r$ its children's, and $r$,
-//! $y_c$ and $w_c$ its compression's. The nested side has no child ids
-//! and no circuit of its own.
+//! $y_c$ and $w_c$ its compression's. A proof folds its own application
+//! claim, so no claim's restriction is at its own circuit; the nested side
+//! has no circuit of its own.
 //!
 //! [`MESH`] declares the nine as the restrictions a step introduces, with
 //! the two it inherits from its children, and [`NATIVE`] and [`NESTED`]
@@ -29,7 +30,6 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::registry::CircuitIndex;
 use ragu_core::{Cycle, Result};
 use ragu_primitives::{extract_endoscalar, lift_endoscalar};
 use udon::{curve::EndomorphismAffine as Affine, field::Field};
@@ -76,14 +76,10 @@ pub(crate) mod input {
     pub const W_C: usize = 14;
     /// The nested side's wires.
     pub const NESTED: usize = 15;
-    /// Native side: the left child's circuit id.
-    pub const LEFT_ID: usize = 15;
-    /// Native side: the right child's circuit id.
-    pub const RIGHT_ID: usize = 16;
     /// Native side: the proof's own circuit's domain point.
-    pub const CIRCUIT: usize = 17;
+    pub const CIRCUIT: usize = 15;
     /// The native side's wires.
-    pub const NATIVE: usize = 18;
+    pub const NATIVE: usize = 16;
 }
 
 /// The polynomial slots: the restrictions fixed before $w$, the two
@@ -197,8 +193,7 @@ const EDGES: usize = 2 + INTRODUCED.len() + HELPERS.len() + 1;
 pub(crate) struct Values {
     /// The internal circuits of the standard profile on this side.
     circuits: usize,
-    /// Whether this is the native side, which has the proof's own circuit
-    /// and its children's.
+    /// Whether this is the native side, which has the proof's own circuit.
     native: bool,
 }
 
@@ -226,14 +221,8 @@ impl Values {
         EDGES + j
     }
 
-    /// Native side: $m(\omega, r, y_c)$ at the proof's own circuit.
-    pub(crate) const fn own_claim(self) -> usize {
-        assert!(self.native, "the native side has the proof's own circuit");
-        EDGES + self.circuits
-    }
-
     const fn fixed_base(self) -> usize {
-        EDGES + self.circuits + self.native as usize
+        EDGES + self.circuits
     }
 
     /// $m(\omega_j, x, y)$ for internal circuit `j`: the query stage's
@@ -252,16 +241,16 @@ impl Values {
         self.fixed_base() + self.circuits
     }
 
-    /// Native side: $m(\omega_l, x, y)$ and $m(\omega_r, x, y)$ at the
-    /// children's circuits.
-    pub(crate) const fn at_children(self) -> [usize; 2] {
-        assert!(self.native, "the native side has the children's circuits");
-        [self.at_w() + 1, self.at_w() + 2]
+    /// Native side: $m(\omega, x, y)$ at the proof's own circuit, the
+    /// registry selector of the application claim the proof folded itself.
+    pub(crate) const fn at_circuit(self) -> usize {
+        assert!(self.native, "the native side has the proof's own circuit");
+        self.at_w() + 1
     }
 
     /// $m(u, x, y)$.
     pub(crate) const fn at_u(self) -> usize {
-        self.at_w() + 1 + 2 * self.native as usize
+        self.at_w() + 1 + self.native as usize
     }
 
     /// $m(w_c, x, y)$: the instance's opening of the registry restriction.
@@ -296,16 +285,16 @@ impl Values {
 
     /// The wires the query stage's wire binding expects, in the order the
     /// native verifier lists its values: the fixed registry, $m(w, x, y)$,
-    /// then each child's registry at $w$, on the native side its circuit's
-    /// restriction, and the proof's registry at its $x$.
+    /// on the native side the proof's own circuit's restriction, then each
+    /// child's registry at $w$ and the proof's registry at its $x$.
     pub(crate) fn query_binding(self) -> Vec<usize> {
         let mut wires: Vec<usize> = (0..self.circuits).map(|j| self.fixed(j)).collect();
         wires.push(self.at_w());
+        if self.native {
+            wires.push(self.at_circuit());
+        }
         for child in 0..2 {
             wires.push(self.children()[child]);
-            if self.native {
-                wires.push(self.at_children()[child]);
-            }
             wires.push(self.children_y()[child]);
         }
         wires
@@ -366,34 +355,20 @@ impl Values {
     }
 
     /// The query stage's values a side's chunks read, as the native
-    /// verifier computed them for the proof `own` was prepared from, whose
-    /// own circuit is `circuit_id`: the claims' restrictions, the
-    /// instance's opening and the wire bindings' registry values. The
-    /// step's challenges and the mesh's intersections, which only its fuse
-    /// knows, are left zero.
+    /// verifier computed them for the proof `own` was prepared from: the
+    /// claims' restrictions, the instance's opening and the wire bindings'
+    /// registry values. The step's challenges and the mesh's
+    /// intersections, which only its fuse knows, are left zero.
     ///
     /// # Panics
     ///
-    /// Panics if `own` does not hold the verifier's bindings in its order:
-    /// the preamble's, the query's, then the eval's.
-    pub(crate) fn evaluations<P: Affine>(
-        self,
-        own: &SideWitness<P>,
-        circuit_id: CircuitIndex,
-    ) -> Vec<P::Scalar> {
+    /// Panics if `own` does not hold the verifier's bindings in its order,
+    /// the preamble's, the query's, then the eval's, or if a claim names
+    /// another circuit than an internal one.
+    pub(crate) fn evaluations<P: Affine>(self, own: &SideWitness<P>) -> Vec<P::Scalar> {
         let mut stage = alloc::vec![P::Scalar::ZERO; self.query_stage()];
         for &(circuit, value) in &own.restrictions {
-            let index = usize::from(circuit);
-            let wire = if index < self.circuits {
-                self.claim(index)
-            } else {
-                assert!(
-                    self.native && circuit == circuit_id,
-                    "a claim names an internal circuit or the proof's own"
-                );
-                self.own_claim()
-            };
-            stage[Self::value_at(wire)] = value;
+            stage[Self::value_at(self.claim(usize::from(circuit)))] = value;
         }
         stage[Self::value_at(self.at_w_c())] = own.restriction_at_w;
         let (query, eval) = (&own.masked[1].2, &own.masked[2].2);
@@ -486,8 +461,8 @@ const fn openings<const LEN: usize>(values: Values) -> [Opening; LEN] {
     value += 1;
     assert!(value == EDGES, "one value per intersection");
 
-    // The claims' restrictions: m(W, r, y_c) at each internal circuit and,
-    // on the native side, at the proof's own.
+    // The claims' restrictions: m(W, r, y_c) at each internal circuit. The
+    // proof folded its own application claim, so none is at its own.
     let mut j = 0;
     while j < values.circuits {
         out[next] = Opening {
@@ -499,17 +474,8 @@ const fn openings<const LEN: usize>(values: Values) -> [Opening; LEN] {
         value += 1;
         j += 1;
     }
-    if values.native {
-        out[next] = Opening {
-            polynomial: slot::CLAIMS,
-            point: Point::Input(input::CIRCUIT),
-            value,
-        };
-        next += 1;
-        value += 1;
-    }
     // m(W, x, y): at each internal circuit, at w, on the native side at the
-    // children's circuits, at u and at the compression's w.
+    // proof's own circuit, at u and at the compression's w.
     let mut j = 0;
     while j < values.circuits {
         out[next] = Opening {
@@ -521,17 +487,11 @@ const fn openings<const LEN: usize>(values: Values) -> [Opening; LEN] {
         value += 1;
         j += 1;
     }
-    let points = [
-        input::W,
-        input::LEFT_ID,
-        input::RIGHT_ID,
-        input::U,
-        input::W_C,
-    ];
+    let points = [input::W, input::CIRCUIT, input::U, input::W_C];
     let mut i = 0;
     while i < points.len() {
-        let child = i == 1 || i == 2;
-        if values.native || !child {
+        let own = i == 1;
+        if values.native || !own {
             out[next] = Opening {
                 polynomial: slot::XY,
                 point: Point::Input(points[i]),
@@ -696,7 +656,7 @@ pub(crate) fn native_inputs<C: Cycle>(witness: &Prepared<C>) -> Result<Vec<C::Ci
         [fuse.w, fuse.x, fuse.y, fuse.u],
         [[left.x, left.y], [right.x, right.y]],
     )?;
-    inputs.extend([left.id, right.id, instance.circuit_id.omega_j()]);
+    inputs.push(instance.circuit_id.omega_j());
     debug_assert_eq!(inputs.len(), input::NATIVE);
     Ok(inputs)
 }
@@ -851,13 +811,7 @@ mod tests {
             }
             assert_eq!(opening(values.u_y()), (slot::U_Y, at(input::W)));
             if values.native {
-                assert_eq!(
-                    opening(values.own_claim()),
-                    (slot::CLAIMS, at(input::CIRCUIT))
-                );
-                let [left, right] = values.at_children();
-                assert_eq!(opening(left), (slot::XY, at(input::LEFT_ID)));
-                assert_eq!(opening(right), (slot::XY, at(input::RIGHT_ID)));
+                assert_eq!(opening(values.at_circuit()), (slot::XY, at(input::CIRCUIT)));
             }
             assert_eq!(layout.values, values.len());
         }

@@ -71,7 +71,7 @@ pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
     /// The Poseidon permutation over `F`.
     type Poseidon: PoseidonPermutation<Self::F>;
     /// What the side's chunks need beyond the stages: its unified instance
-    /// and the headers the targets derive from.
+    /// and what else the targets derive from.
     type Extra: Send + Sync;
     /// The chunk circuits' public output: nothing, on either side, since a
     /// chunk carries no instance. The slot a chunk is registered through
@@ -175,13 +175,10 @@ pub(crate) struct Native;
 pub(crate) struct Nested;
 
 /// What the circuit-field side's targets chunk allocates: the native
-/// unified instance, the headers and the circuit id's domain point.
+/// unified instance, the output header and the circuit id's domain point.
 pub(crate) struct NativeExtra<C: Cycle> {
     pub unified: native_unified::Instance<C>,
-    pub left_header: Vec<C::CircuitField>,
-    pub right_header: Vec<C::CircuitField>,
     pub output_header: Vec<C::CircuitField>,
-    pub online: crate::internal::native::online::Queries<C::CircuitField>,
     pub omega_j: C::CircuitField,
 }
 
@@ -270,16 +267,11 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
             instance.v,
             l.x,
             l.y,
-            l.id,
             r.x,
             r.y,
-            r.id,
             instance.a_at_u,
             instance.b_at_u,
         ];
-        elements.extend(instance.online.iter().flat_map(|query| [query.x, query.y]));
-        elements.extend_from_slice(&instance.left_header);
-        elements.extend_from_slice(&instance.right_header);
         elements.extend_from_slice(output_header);
         // The step binding, which the step that proves the chunks sets:
         // zero outside the decompression step.
@@ -331,10 +323,7 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         let instance = &witness.proof.instance;
         Ok(NativeExtra {
             unified: instance.unified(&witness.fuse),
-            left_header: instance.left_header.clone(),
-            right_header: instance.right_header.clone(),
             output_header: witness.header.clone(),
-            online: instance.online,
             omega_j: instance.circuit_id.omega_j(),
         })
     }
@@ -348,14 +337,14 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         let witness = &ctx.witness;
         let inputs = ProofInputs::<D, C, HEADER_SIZE>::alloc_from_parts(
             dr,
-            witness.as_ref().map(|w| w.extra.left_header.as_slice()),
-            witness.as_ref().map(|w| w.extra.right_header.as_slice()),
             witness.as_ref().map(|w| w.extra.output_header.as_slice()),
-            witness.as_ref().map(|w| &w.extra.online),
             witness.as_ref().map(|w| w.extra.omega_j),
+            // The standard profile has no statement circuit, so its steps
+            // expose no step binding.
+            witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
             witness.as_ref().map(|w| &w.extra.unified),
-            // The standard profile has no online batch: no online
-            // commitments, sums or mesh claims.
+            // Nor has it an online batch: no online commitments, sums or
+            // mesh claims.
             witness.as_ref().map(|_| -> &[C::NestedCurve] { &[] }),
             witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
             witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
@@ -431,28 +420,21 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         elements[layout.scalars.at(native_scalars::V)].enforce_equal(dr, &unified.v)?;
         elements[layout.scalars.at(native_scalars::OMEGA_J)]
             .enforce_equal(dr, &inputs.circuit_id)?;
-        for (span, theirs) in [
-            (layout.left_header, inputs.children.left.iter()),
-            (layout.right_header, inputs.children.right.iter()),
-            (layout.output_header, inputs.output_header.iter()),
-        ] {
-            for (position, theirs) in span.positions().zip(theirs) {
-                elements[position].enforce_equal(dr, theirs)?;
-            }
+        for (position, theirs) in layout
+            .output_header
+            .positions()
+            .zip(inputs.output_header.iter())
+        {
+            elements[position].enforce_equal(dr, theirs)?;
         }
+        // The proof folded its own application claim, so its verifier has
+        // no application target: the `hashes_1` claim's, over the unified
+        // instance, the output header and the circuit id, and the unified
+        // one, which the standard profile's `compute_v` claim takes too,
+        // having no online batch to export for.
         let y = ctx.lift(regions.lifts[squeezed::Y]);
         let (unified, bridge) = inputs.unified_ky_values(dr, &y)?;
-        for (position, value) in layout
-            .online
-            .positions()
-            .zip(inputs.online.iter().flat_map(|query| [&query.x, &query.y]))
-        {
-            elements[position].enforce_equal(dr, value)?;
-        }
-        let application = inputs.application_ky(dr, &y)?;
-        // No online stages either.
-        let compute_v_bridge = inputs.compute_v_bridge_ky(dr, &y, &[])?;
-        Ok(alloc::vec![application, bridge, unified, compute_v_bridge])
+        Ok(alloc::vec![bridge, unified])
     }
 
     fn ky_targets<'dr, D: Driver<'dr, F = Self::F>>(
@@ -463,10 +445,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
         let regions = &ctx.schedule.regions;
         let targets = NativeTargets {
             c: ctx.loaded.instance.elements[layout.scalars.at(native_scalars::C)].clone(),
-            application: ctx.work(regions.targets[0]),
-            unified_bridge: ctx.work(regions.targets[1]),
-            unified: ctx.work(regions.targets[2]),
-            compute_v_bridge: ctx.work(regions.targets[3]),
+            unified_bridge: ctx.work(regions.targets[0]),
+            unified: ctx.work(regions.targets[1]),
             one: Element::one(),
             zero: Element::zero(dr),
         };
@@ -644,7 +624,6 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
                 native_position::<Standard>(Rx(PointsF)),
                 listed + 2,
                 listed + 3,
-                native_position::<Standard>(Rx(ApplicationStage)),
             ]
         };
         for (position, theirs) in exported.iter().zip(output.exported.iter()) {

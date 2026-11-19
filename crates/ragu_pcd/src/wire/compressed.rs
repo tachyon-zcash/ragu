@@ -1,8 +1,8 @@
 //! Fixed-length encoding of compressed proofs.
 //!
 //! Fields are encoded in declaration order. Vector lengths come from the
-//! receiving profile and from the payload's dimensions, its rank and header size;
-//! no counts are read from the payload.
+//! receiving profile and from the payload's rank; no counts are read from
+//! the payload.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -22,14 +22,14 @@ use crate::{
         },
     },
     internal::{
-        native::online,
+        native::online::StepBindingLen,
         nested::online::{BoundCommitmentsLen, BoundOpeningsLen},
     },
     ipa::IpaProof,
     profile::{Profile, ProfiledCycle},
     wire::{
-        Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, HeaderSize,
-        Point, Reader, Rounds, Scalar, SizedSequence, field_len,
+        Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, Point, Reader,
+        Rounds, Scalar, SizedSequence, field_len,
     },
 };
 
@@ -70,14 +70,9 @@ macro_rules! codec {
         }
     }
 }
-codec!([F: Field] online::Query<F> {
-    x => Scalar,
-    y => Scalar,
-});
 codec!([F: Field] Child<F> {
     x => Scalar,
     y => Scalar,
-    id => Scalar,
 });
 codec!([F: Field] NestedChild<F> {
     x => Scalar,
@@ -131,13 +126,11 @@ codec!([P: Affine] Messages<P> {
 });
 codec!([C: ProfiledCycle] Instance<C> {
     circuit_id => DefaultEncoding,
-    left_header => SizedSequence<Scalar, HeaderSize>,
-    right_header => SizedSequence<Scalar, HeaderSize>,
-    online => Array<DefaultEncoding>,
     native => FixedSequence<Point, Native<C::Profile>>,
     native_registry_xy => Point,
     native_p => Point,
     online_commitments => Array<Point>,
+    step_binding => FixedSequence<Scalar, StepBindingLen<C::Profile>>,
     online_fq_commitments => FixedSequence<Point, BoundCommitmentsLen<C::Profile>>,
     online_fq_openings => FixedSequence<Scalar, BoundOpeningsLen<C::Profile>>,
     nested => FixedSequence<Point, Nested<C::Profile>>,

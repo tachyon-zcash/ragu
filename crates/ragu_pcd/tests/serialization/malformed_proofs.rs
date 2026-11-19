@@ -29,10 +29,7 @@ fn fixture() -> (TestApp, TestProof) {
 // encoding it) and a payload of another length is rejected before a byte is
 // interpreted, so malformed shapes are checked at the in-memory boundaries.
 fn assert_rejected(app: &TestApp, proof: TestProof, field: &str) {
-    assert!(
-        !proof.well_formed::<4>(),
-        "{field}: the shape check must fail"
-    );
+    assert!(!proof.well_formed(), "{field}: the shape check must fail");
     let result = app.verify_uncompressed(&proof.carry::<()>(()), StdRng::seed_from_u64(5678));
     assert!(
         matches!(&result, Ok(false)),
@@ -130,25 +127,4 @@ fn rejects_identity_instance_commitments() {
         native_points_ab_commitment.0,
         native_points_f_commitment.0,
     );
-}
-
-#[test]
-fn rejects_malformed_child_header_lengths() {
-    let (app, original) = fixture();
-    for left in [true, false] {
-        for length in [0, 3, 5] {
-            let mut proof = original.clone();
-            let header = if left {
-                &mut proof.left_header
-            } else {
-                &mut proof.right_header
-            };
-            header.resize(length, header[0]);
-            assert_rejected(
-                &app,
-                proof,
-                if left { "left_header" } else { "right_header" },
-            );
-        }
-    }
 }

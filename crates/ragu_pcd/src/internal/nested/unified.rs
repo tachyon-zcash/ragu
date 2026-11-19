@@ -48,9 +48,8 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::internal::native::{online::NUM_ONLINE_FP_POLYS, unified::Slot};
 
 /// The host-curve commitments the instance exports, in [`Write`] order:
-/// the fourteen stage commitments, the step's own online commitments and
-/// its application stage's.
-pub const NUM_EXPORTED: usize = 15 + NUM_ONLINE_FP_POLYS;
+/// the fourteen stage commitments and the step's own online commitments.
+pub const NUM_EXPORTED: usize = 14 + NUM_ONLINE_FP_POLYS;
 
 // The exported lists (the proof's, the builder's, the compressed instance's,
 // nested collapse's held commitments and a child's stashed copies) spell

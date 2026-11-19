@@ -67,7 +67,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Absorb<'dr, D> for Point<'dr, 
 pub(crate) struct Child<'dr, D: Driver<'dr>> {
     pub x: Element<'dr, D>,
     pub y: Element<'dr, D>,
-    pub id: Element<'dr, D>,
 }
 
 /// The instance as the transcript absorbs it, with the fields of
@@ -80,9 +79,6 @@ pub(crate) struct Child<'dr, D: Driver<'dr>> {
 pub(crate) struct Instance<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     /// $\omega^j$ of the circuit id.
     pub circuit_id: Element<'dr, D>,
-    pub left_header: Vec<Element<'dr, D>>,
-    pub right_header: Vec<Element<'dr, D>>,
-    pub online: Vec<Element<'dr, D>>,
 
     /// The nested commitments, in
     /// [`nested_components`](crate::compress::revdot::nested_components)
@@ -102,10 +98,9 @@ pub(crate) struct Instance<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
 }
 
 impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Instance<'dr, D, C> {
-    /// Absorbs the instance in the native verifier's order: the circuit id
-    /// and the headers, the host commitments' run, the host curve's
-    /// scalars, the nested commitments, then the run of the scalar
-    /// field's instance values.
+    /// Absorbs the instance in the native verifier's order: the circuit
+    /// id, the host commitments' run, the host curve's scalars, the nested
+    /// commitments, then the run of the scalar field's instance values.
     fn absorb<P: PoseidonPermutation<D::F>>(
         &self,
         dr: &mut D,
@@ -113,12 +108,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Instance<'dr, D, C> {
         runs: &mut Runs<'_, 'dr, D, C>,
     ) -> Result<()> {
         self.circuit_id.absorb(dr, transcript)?;
-        for element in self.left_header.iter().chain(&self.right_header) {
-            element.absorb(dr, transcript)?;
-        }
-        for element in &self.online {
-            element.absorb(dr, transcript)?;
-        }
         runs.absorb(dr, transcript)?; // the host commitments
         let (l, r) = (&self.left, &self.right);
         for element in [
@@ -126,10 +115,8 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Instance<'dr, D, C> {
             &self.v,
             &l.x,
             &l.y,
-            &l.id,
             &r.x,
             &r.y,
-            &r.id,
             &self.a_at_u,
             &self.b_at_u,
         ] {

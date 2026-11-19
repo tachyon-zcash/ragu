@@ -101,7 +101,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// The native chunk circuits of the decompression for
     /// `header_size`-element headers, and how many of them run transcript
     /// chunks, first among them, and digits chunks, last. The
-    /// compression's transcript absorbs the three headers, so the
+    /// compression's transcript absorbs the output header, so the
     /// transcript ones grow with the header size.
     ///
     /// # Panics
@@ -117,9 +117,9 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
                 digits: 1,
             },
             #[cfg(test)]
-            96 => Counts {
-                circuits: 35,
-                transcript: 7,
+            201 => Counts {
+                circuits: 34,
+                transcript: 6,
                 digits: 1,
             },
             _ => panic!("the aggregator profile pins no circuit counts for this header size"),

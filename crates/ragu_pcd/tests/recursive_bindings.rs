@@ -104,10 +104,9 @@ mod challenge_binding {
 
     fn witness(proof: &Proof<C, R>) -> Result<challenges::Witness<Fq>> {
         let lifts = proof.challenges().lifts::<C>()?;
-        Ok(challenges::Witness::new::<_, HEADER_SIZE>(
+        Ok(challenges::Witness::new(
             lifts[..challenges::NUM].try_into().unwrap(),
-            proof.left_header(),
-            proof.right_header(),
+            challenges::is_bootstrap::<crate::profile::Standard>(proof.circuit_id())?,
             lifts[challenges::NUM],
         ))
     }
@@ -170,10 +169,7 @@ mod challenge_binding {
     /// The decider's check of a root: its challenge stage is the stage of its
     /// own lifts and headers.
     fn stage_matches(proof: &Proof<C, R>) -> Result<bool> {
-        crate::verify::nested_challenges_match::<C, R, HEADER_SIZE>(
-            proof,
-            &proof.challenges().lifts::<C>()?,
-        )
+        crate::verify::nested_challenges_match::<C, R>(proof, &proof.challenges().lifts::<C>()?)
     }
 
     /// Changes one lift and repairs every cache `install_lifts` lists, so

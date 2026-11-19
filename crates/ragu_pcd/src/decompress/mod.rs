@@ -145,9 +145,14 @@
 //! values of the instance stage after the header: a flag, one in a proof
 //! of the decompression step and zero in any other, the point and value
 //! at which that step opened its first output slot, and the transcript
-//! digest that step staged, all zero in any other. Through them both
-//! IPAs' round challenges are fixed before the step's challenge
-//! $\zeta = w$, and the host curve's $G'$ is bound:
+//! digest that step staged, all zero in any other. A step folds its own
+//! application claim, so its openings stay in its own preamble: its
+//! `hashes_1` exports these three after its output header and circuit
+//! id, and the step that consumes its proof holds its copy to that
+//! export
+//! ([`StepBindingLen`](crate::internal::native::online::StepBindingLen)).
+//! Through them both IPAs' round challenges are fixed before the step's
+//! challenge $\zeta = w$, and the host curve's $G'$ is bound:
 //!
 //! - The decompression step stages the transcript digest: the last
 //!   squeeze of the compression's transcript over the proof it

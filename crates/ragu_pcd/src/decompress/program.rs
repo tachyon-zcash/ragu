@@ -284,7 +284,7 @@ pub(crate) enum Chunk {
         bind: Option<Bind>,
     },
     /// The base-case sign's term of the challenge stage: the generator,
-    /// negated unless both headers are the dummy's.
+    /// negated unless the proof's circuit id is the bootstrap step's.
     Sign {
         generator: usize,
         out: usize,
@@ -418,9 +418,8 @@ pub(crate) struct Regions {
     /// scales by such a challenge holds its bits' lift to this slot. Empty
     /// on the circuit-field side, which takes no challenge from bits.
     pub bits_lifts: Vec<usize>,
-    /// The claims' base targets: application, unified bridge, unified and
-    /// compute-v bridge on the circuit-field side; unified alone on the
-    /// scalar-field side.
+    /// The claims' base targets: unified bridge and unified on the
+    /// circuit-field side; unified alone on the scalar-field side.
     pub targets: Vec<usize>,
     /// The registry restriction at $(r, y)$ of each claim that names a
     /// circuit, by claim index, prover-supplied: the claims naming one
@@ -1122,17 +1121,11 @@ impl nested::claims::Processor<Standard, usize> for Planner {
     }
 }
 
-/// The application circuit's index in a schedule's claims. The chunk
-/// circuits are fixed for every application circuit, so a schedule names
-/// the proof's own circuit by this index, which no internal circuit holds,
-/// and the prover supplies that circuit's restriction under it.
-pub(crate) const APPLICATION: CircuitIndex = CircuitIndex::from_u32(u32::MAX);
-
-/// A source over the native components by position, with the application
-/// circuit under [`APPLICATION`].
-struct NativePositions {
-    circuit_id: CircuitIndex,
-}
+/// A source over the native components by position. A proof folds its own
+/// application claim, so its verifier's claims name internal circuits
+/// alone, and the chunk circuits are the same for every application
+/// circuit.
+struct NativePositions;
 
 impl Source for NativePositions {
     type RxComponent = native::RxComponent;
@@ -1143,8 +1136,8 @@ impl Source for NativePositions {
         once(native_position::<Standard>(component))
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        once(self.circuit_id)
+    fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [usize; 2])> {
+        core::iter::empty()
     }
 }
 
@@ -1159,20 +1152,16 @@ impl Source for NestedPositions {
         once(nested_position::<Standard>(component))
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn applications(&self) -> impl Iterator<Item = ((), [usize; 2])> {
         core::iter::empty()
     }
 }
 
-/// The native claims' plans, the application circuit's under
-/// [`APPLICATION`], then the wire bindings', in the compressed verifier's
-/// order, over positions within the native commitments.
+/// The native claims' plans, then the wire bindings', in the compressed
+/// verifier's order, over positions within the native commitments.
 pub(crate) fn native_claims() -> Result<Vec<ClaimPlan>> {
     let mut planner = Planner { claims: Vec::new() };
-    let source = NativePositions {
-        circuit_id: APPLICATION,
-    };
-    native::claims::build::<Standard, _, _>(&source, &mut planner)?;
+    native::claims::build::<Standard, _, _>(&NativePositions, &mut planner)?;
     planner.masked(
         [
             native::RxIndex::Preamble,
@@ -1753,14 +1742,7 @@ fn body<K: Rank>(b: &mut Builder, body: Body<'_>) -> (Vec<BindingPlan>, Vec<Elem
         let online = body.online;
         let mut values: Vec<(ElementSrc, usize)> = named
             .iter()
-            .map(|&(circuit, slot)| {
-                let wire = if circuit == APPLICATION {
-                    online.own_claim()
-                } else {
-                    online.claim(usize::from(circuit))
-                };
-                (ElementSrc::Work(slot), wire)
-            })
+            .map(|&(circuit, slot)| (ElementSrc::Work(slot), online.claim(usize::from(circuit))))
             .collect();
         values.push((
             ElementSrc::Work(b.regions.restriction_at_w),
@@ -2002,16 +1984,15 @@ pub(crate) fn native_binding_degrees<C: ProfiledCycle, R: Rank, const HEADER_SIZ
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.unified.x)?);
                 wires.extend(wires_of(&child.unified.y)?);
-                wires.extend(wires_of(&child.circuit_id)?);
             }
             Ok(wires)
         })?,
         degrees::<_, R, NativeQuery<C, R, HEADER_SIZE>>(|out| {
             let mut wires = wires_of(&out.fixed_registry)?;
             wires.extend(wires_of(&out.registry_wxy)?);
+            wires.extend(wires_of(&out.registry_xy_at_circuit_id)?);
             for child in [&out.left, &out.right] {
                 wires.extend(wires_of(&child.child_registry_xy_at_current_w)?);
-                wires.extend(wires_of(&child.current_registry_xy_at_child_circuit_id)?);
                 wires.extend(wires_of(&child.current_registry_wy_at_child_x)?);
             }
             Ok(wires)
@@ -2163,16 +2144,6 @@ fn native_schedule_with<
         let runs = b.regions.runs.clone();
         let mut t = Ops::new(IPA_TAG, &runs);
         t.absorb(scalar(native_scalars::OMEGA_J));
-        for p in instance
-            .left_header
-            .positions()
-            .chain(instance.right_header.positions())
-        {
-            t.absorb(ElementSrc::Instance(p));
-        }
-        for p in instance.online.positions() {
-            t.absorb(ElementSrc::Instance(p));
-        }
         // The host commitments.
         t.foreign();
         for i in native_scalars::C..=native_scalars::B_AT_U {
@@ -2284,7 +2255,7 @@ fn native_schedule_with<
         vec![
             (
                 preamble,
-                (native_scalars::LEFT_X..=native_scalars::RIGHT_ID)
+                (native_scalars::LEFT_X..=native_scalars::RIGHT_Y)
                     .map(|i| Some(scalar(i)))
                     .collect(),
             ),
@@ -2336,15 +2307,13 @@ fn native_schedule_with<
         (ElementSrc::Work(b.regions.fuse[fuse::U]), input::U),
         (ElementSrc::Work(b.regions.fuse[fuse::W]), input::W),
         (ElementSrc::Lift(b.regions.lifts[squeezed::W]), input::W_C),
-        (scalar(native_scalars::LEFT_ID), input::LEFT_ID),
-        (scalar(native_scalars::RIGHT_ID), input::RIGHT_ID),
         (scalar(native_scalars::OMEGA_J), input::CIRCUIT),
     ];
     let (bindings, digits) = body::<K>(
         &mut b,
         Body {
             scalar_claims: &claims,
-            targets: 4,
+            targets: 2,
             bindings,
             extra_digits: Vec::new(),
             point_claims: &nested_plans,

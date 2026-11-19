@@ -220,7 +220,6 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> NestedProcessor<Standard, Poin
 #[cfg(test)]
 struct Commitments<'p, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     points: &'p [Point<'dr, D, C>],
-    circuit_id: Option<CircuitIndex>,
 }
 
 #[cfg(test)]
@@ -240,8 +239,9 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Source for Commitments<'_, 'dr
         once(self.point(native_position::<Standard>(component)))
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = CircuitIndex> {
-        self.circuit_id.into_iter()
+    /// A proof folds its own application claim, so its verifier has none.
+    fn applications(&self) -> impl Iterator<Item = (CircuitIndex, [Self::Rx; 2])> {
+        core::iter::empty()
     }
 }
 
@@ -261,20 +261,18 @@ impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> Source for NestedCommitments<'
         once(self.points[nested_position::<Standard>(component)].clone())
     }
 
-    fn app_circuits(&self) -> impl Iterator<Item = ()> {
+    fn applications(&self) -> impl Iterator<Item = ((), [Self::Rx; 2])> {
         core::iter::empty()
     }
 }
 
 /// The native claims' points over `commitments`, the native components'
-/// in the instance's order, for the application circuit `circuit_id`, then
-/// the wire bindings over the stage polynomials `masked` names, in the
-/// compressed verifier's order.
+/// in the instance's order, then the wire bindings over the stage
+/// polynomials `masked` names, in the compressed verifier's order.
 #[cfg(test)]
 pub(crate) fn native_claims<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     dr: &mut D,
     commitments: &[Point<'dr, D, C>],
-    circuit_id: CircuitIndex,
     z: &Endoscalar<'dr, D>,
     masked: impl Iterator<Item = native::RxComponent>,
     bank: &mut NonzeroBank<'dr, D>,
@@ -288,7 +286,6 @@ pub(crate) fn native_claims<'dr, D: Driver<'dr>, C: Affine<Base = D::F>>(
     };
     let source = Commitments {
         points: commitments,
-        circuit_id: Some(circuit_id),
     };
     native::claims::build::<Standard, _, _>(&source, &mut deriver)?;
     deriver.finish(masked.map(|component| source.point(native_position::<Standard>(component))))

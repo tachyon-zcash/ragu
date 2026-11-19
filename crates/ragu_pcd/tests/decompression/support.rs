@@ -146,7 +146,6 @@ impl Setup {
             )
             .unwrap();
         let mut openings = revdot::verify_native::<Pasta, TestR, ReferenceBackend>(
-            instance.circuit_id,
             |component| instance.native_commitment(component),
             registry,
             sampled.y,

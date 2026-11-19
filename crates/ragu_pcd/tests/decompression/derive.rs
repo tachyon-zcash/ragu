@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Cycle, Result,
     drivers::Driver,
@@ -68,7 +68,6 @@ struct Side<C: Affine> {
     commitments: Vec<C>,
     shapes: Vec<Shape<usize, C::Scalar>>,
     masked: Vec<usize>,
-    circuit_id: Option<CircuitIndex>,
     messages: Messages<C>,
     openings: Openings<C>,
     raw: Challenges<C::Scalar>,
@@ -146,8 +145,7 @@ fn native_side(setup: &Setup) -> Side<<Pasta as Cycle>::HostCurve> {
             sampled.sigma,
         )
         .unwrap();
-    let shapes =
-        claims::native_shapes::<Standard, _>(instance.circuit_id, lifted.z, &masked).unwrap();
+    let shapes = claims::native_shapes::<Standard, _>(lifted.z, &masked).unwrap();
     let position = |component| crate::compress::revdot::native_position::<Standard>(component);
     let shapes = shapes
         .into_iter()
@@ -176,7 +174,6 @@ fn native_side(setup: &Setup) -> Side<<Pasta as Cycle>::HostCurve> {
         commitments: instance.native.clone(),
         shapes,
         masked: masked.iter().map(|m| position(m.poly)).collect(),
-        circuit_id: Some(instance.circuit_id),
         messages,
         openings,
         raw,
@@ -266,7 +263,6 @@ fn nested_side(setup: &Setup) -> Side<<Pasta as Cycle>::NestedCurve> {
         commitments: instance.nested.clone(),
         shapes,
         masked: masked.iter().map(|m| position(m.poly)).collect(),
-        circuit_id: None,
         messages,
         openings,
         raw,
@@ -311,14 +307,7 @@ fn claims_of<'dr, C: Affine>(
                 .nth(position)
                 .expect("a native component")
         });
-        native_claims(
-            dr,
-            commitments,
-            side.circuit_id.expect("the native side has a circuit"),
-            z,
-            masked,
-            bank,
-        )
+        native_claims(dr, commitments, z, masked, bank)
     } else {
         let masked = side.masked.iter().map(|&position| {
             crate::compress::revdot::nested_components::<Standard>()

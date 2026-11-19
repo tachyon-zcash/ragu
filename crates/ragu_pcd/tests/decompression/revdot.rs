@@ -92,8 +92,7 @@ fn native_side(setup: &Setup) -> Side<'_, Fp, native::RxComponent, EqAffine> {
             sampled.sigma,
         )
         .unwrap();
-    let shapes =
-        claims::native_shapes::<Standard, _>(instance.circuit_id, sampled.z, &masked).unwrap();
+    let shapes = claims::native_shapes::<Standard, _>(sampled.z, &masked).unwrap();
     let targets: Vec<Fp> = native::claims::ky_values::<Standard, _>(&targets)
         .take(shapes.len())
         .collect();
@@ -107,7 +106,6 @@ fn native_side(setup: &Setup) -> Side<'_, Fp, native::RxComponent, EqAffine> {
         move |reduction: &Reduction<EqAffine>| {
             let (mut t, sampled, nested_sampled) = setup.transcript();
             revdot::verify_native::<Pasta, TestR, ReferenceBackend>(
-                instance.circuit_id,
                 |component| instance.native_commitment(component),
                 registry,
                 sampled.y,

@@ -599,15 +599,21 @@ fn rejects_tampered_stages() {
     assert!(rejected(&sides.native), "a tampered instance fails a chunk");
     sides.native.instance.elements[c] -= Fp::ONE;
 
-    // The online openings are shared by transcript replay and the targets.
-    for position in sides.native.schedule.layout.instance.online.positions() {
-        sides.native.instance.elements[position] += Fp::ONE;
-        assert!(
-            rejected(&sides.native),
-            "a tampered online opening fails a chunk"
-        );
-        sides.native.instance.elements[position] -= Fp::ONE;
-    }
+    // The circuit id is shared by transcript replay, the targets and the
+    // challenge stage's base-case sign.
+    let id = sides
+        .native
+        .schedule
+        .layout
+        .instance
+        .scalars
+        .at(native_scalars::OMEGA_J);
+    sides.native.instance.elements[id] += Fp::ONE;
+    assert!(
+        rejected(&sides.native),
+        "a tampered circuit id fails a chunk"
+    );
+    sides.native.instance.elements[id] -= Fp::ONE;
 
     // The work stage: a squeezed challenge fails its transcript chunk.
     let w = sides.native.schedule.regions.squeezed[0];
@@ -649,10 +655,9 @@ fn rejects_tampered_stages() {
         let values = Values::NATIVE;
         for wire in [
             values.claim(0),
-            values.own_claim(),
             values.fixed(0),
             values.at_w(),
-            values.at_children()[1],
+            values.at_circuit(),
             values.at_u(),
             values.at_w_c(),
             values.children()[0],

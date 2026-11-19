@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nested one), through `bind_endoscalar`'s and the nested `compute_v`'s
   instances; a proof and a compressed proof of such a profile carry them.
   `Profile::native_extension_rxs` is handed the step's six online openings.
+  A step folds its own application claim, so in a profile with a statement
+  circuit its `hashes_1` exports the step binding's openings after its
+  output header and circuit id, and a proof and a compressed proof of such
+  a profile carry them.
   A profile with a statement circuit reserves an application stage of at
   least one value, which the decompression step stages. A
   profile that names none, the Standard one included, exports nothing and
@@ -175,6 +179,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test-utils` feature, which `unstable-fuzzing` enables. Production
   verification compresses a proof with `Application::compress` and checks it
   with `Application::verify_compressed`.
+- Each step folds its own application claim, with its application trace and
+  stage, instead of leaving it to its parent. A proof no longer carries its
+  application trace, its application stage, its input headers or its online
+  openings; its `hashes_1` exports its own output header and circuit id,
+  which the parent holds its copies to. At the base case, `collapse` pins a
+  step to the bootstrap circuit id and the unit output header. The proof and
+  compressed-proof schemas move to version 3, and `Proof::encoded_len` and
+  `CompressedProof::encoded_len` no longer take a header size.
 
 ## [0.0.0] - 2025-11-05
 

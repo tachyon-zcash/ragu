@@ -62,8 +62,6 @@ fn copy_proof_payload<
         Proof {
             bridge_alpha,
             circuit_id,
-            left_header,
-            right_header,
             nested_online_fold,
             native_mesh_claims,
             nested_mesh_claims,
@@ -72,8 +70,6 @@ fn copy_proof_payload<
             native_online_commitments,
             native_source_out,
             nested_source_out,
-            native_application_rx,
-            native_application_stage_rx,
             native_preamble_rx,
             native_inner_error_rx,
             native_outer_error_rx,
@@ -100,7 +96,7 @@ fn copy_proof_payload<
             native_points_f_rx,
             native_points_walk_rx,
             online_polynomials,
-            online_openings,
+            step_binding,
             online_fq_commitments,
             online_fq_openings,
             bridge_preamble_rx,
@@ -146,8 +142,6 @@ fn copy_proof_payload<
             alpha,
             u,
             pre_beta,
-            native_application_commitment,
-            native_application_stage_commitment,
             native_preamble_commitment,
             native_inner_error_commitment,
             native_outer_error_commitment,
@@ -207,19 +201,17 @@ fn copy_compressed_payload<
         instance,
         Instance {
             circuit_id,
-            left_header,
-            right_header,
             nested_online_fold,
             native_mesh_claims,
             nested_mesh_claims,
             native_online_fold,
             nested_online_commitments,
             native_online_commitments,
-            online,
             native,
             native_registry_xy,
             native_p,
             online_commitments,
+            step_binding,
             online_fq_commitments,
             online_fq_openings,
             nested,
@@ -492,7 +484,7 @@ where
         let foreign = copy_proof_payload::<C<S>, C<T>, WalletRank>(source.proof().clone())
             .carry::<Value>(foreign_value);
         assert!(
-            foreign.proof().well_formed::<HEADER_SIZE>(),
+            foreign.proof().well_formed(),
             "same-shape substitution must reach the claim checks"
         );
         let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed_source.proof().clone())
@@ -616,7 +608,7 @@ where
 
     let foreign =
         copy_proof_payload::<C<S>, C<T>, R<14>>(source.into_parts().0).carry::<Value>(Fp::from(7));
-    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!foreign.proof().well_formed());
     assert!(!receiver.verify_uncompressed(&foreign, &mut rng)?);
     assert!(matches!(
         receiver.compress(&foreign, &mut rng),
@@ -666,7 +658,7 @@ fn standard_and_aggregator_cannot_substitute_for_each_other() -> Result<()> {
     let foreign =
         copy_proof_payload::<C<Standard>, C<Agg>, AggregatorRank>(from_standard.into_parts().0)
             .carry::<Value>(Fp::from(7));
-    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!foreign.proof().well_formed());
     assert!(!aggregator.verify_uncompressed(&foreign, &mut rng)?);
     assert!(matches!(
         aggregator.compress(&foreign, &mut rng),
@@ -681,7 +673,7 @@ fn standard_and_aggregator_cannot_substitute_for_each_other() -> Result<()> {
     let foreign =
         copy_proof_payload::<C<Agg>, C<Standard>, AggregatorRank>(from_aggregator.into_parts().0)
             .carry::<Value>(Fp::from(7));
-    assert!(!foreign.proof().well_formed::<HEADER_SIZE>());
+    assert!(!foreign.proof().well_formed());
     assert!(!standard.verify_uncompressed(&foreign, &mut rng)?);
     assert!(matches!(
         standard.compress(&foreign, &mut rng),

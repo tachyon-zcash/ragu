@@ -34,6 +34,7 @@ use ragu_primitives::{
 use udon::field::Field;
 
 use super::{
+    _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
     _08_f::{NativeF, NestedF},
@@ -126,6 +127,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         pre_beta: &EndoscalarChallenge<'dr, NativeFuseEmulator<C>>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
@@ -149,6 +151,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             beta_endo,
             left,
             right,
+            application,
             s_prime,
             registry_wy,
             f,
@@ -183,6 +186,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         beta_endo: Uendo,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        application: &NativeApplication<C, R>,
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
@@ -228,6 +232,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
             acc.acc(&s_prime.registry_wx0_poly, s_prime.registry_wx0_commitment);
             acc.acc(&s_prime.registry_wx1_poly, s_prime.registry_wx1_commitment);
+            acc.acc(&application.rx, application.commitment);
+            acc.acc(&application.stage.rx, application.stage.commitment);
             acc.acc(&registry_wy.poly, registry_wy.commitment);
             acc.acc(builder.native_a_poly(), builder.native_a_commitment());
             acc.acc(builder.native_b_poly(), builder.native_b_commitment());

@@ -2996,7 +2996,7 @@ mod tests {
     fn declared_extensions_check() {
         Standard::check().unwrap();
         Aggregator::<4>::check().unwrap();
-        Aggregator::<96>::check().unwrap();
+        Aggregator::<201>::check().unwrap();
         assert!(Aggregator::<4>::native_extension().is_consistent());
         assert!(Aggregator::<4>::nested_extension().is_consistent());
         Wider::check().unwrap();
@@ -3382,8 +3382,8 @@ mod tests {
         assert_eq!(
             shape,
             Shape {
-                native_rx: 48,
-                nested_points: 117,
+                native_rx: 46,
+                nested_points: 115,
                 nested_steps: 29,
                 nested_rx: 43,
                 online_fq: 0,
@@ -3392,7 +3392,7 @@ mod tests {
                 source_polynomials: 0,
             }
         );
-        assert_eq!(shape.polynomials(), 101);
+        assert_eq!(shape.polynomials(), 99);
     }
 
     #[test]
@@ -3411,26 +3411,28 @@ mod tests {
     }
 
     #[test]
-    fn an_online_fq_polynomial_alone_adds_a_step_to_each_walk() {
+    fn an_online_fq_polynomial_alone_adds_a_native_step() {
         // The standard layout with the slot on. Its native walk was full,
-        // so the point adds a native step, whose rx polynomial adds a
-        // nested step in turn: one more rx polynomial on each side.
+        // so the point adds a native step. The children's commitments of
+        // that step's rx polynomial are two more nested walk points, and
+        // the nested walk has room for them: one more rx polynomial on the
+        // native side only.
         let shape = Shape::of::<Opening>();
         assert_eq!(shape, Shape::solve(0, 0, 1, 4, 4));
         assert_eq!(
             shape,
             Shape {
-                native_rx: 49,
-                nested_points: 119,
-                nested_steps: 30,
-                nested_rx: 44,
+                native_rx: 47,
+                nested_points: 117,
+                nested_steps: 29,
+                nested_rx: 43,
                 online_fq: 1,
-                native_points: 104,
+                native_points: 102,
                 native_steps: 26,
                 source_polynomials: 0,
             }
         );
-        assert_eq!(shape.polynomials(), 103);
+        assert_eq!(shape.polynomials(), 100);
         assert_eq!(native::RxIndex::num::<Opening>(), shape.native_rx);
         assert_eq!(nested::RxIndex::num::<Opening>(), shape.nested_rx);
     }
@@ -3482,7 +3484,7 @@ mod tests {
             shape
         };
         assert_eq!(shape, expected(32));
-        assert_eq!(Shape::of::<Aggregator<96>>(), expected(35));
+        assert_eq!(Shape::of::<Aggregator<201>>(), expected(34));
         // The knob: at the wallet rank's four per step the walks are
         // far longer.
         assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 1, 4, 4).polynomials());
@@ -3504,7 +3506,7 @@ mod tests {
             params,
         );
         assert!(matches!(at_wallet_rank, Err(Error::Initialization(_))));
-        let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 96>(
+        let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 201>(
             0,
             CircuitSlot::new(RegistryBuilder::new()),
             params,

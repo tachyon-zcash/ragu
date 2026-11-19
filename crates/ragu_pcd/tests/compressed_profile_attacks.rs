@@ -50,10 +50,8 @@ fn check_edits<P: Profile, Rk: Rank>(
     scalar!(v, Fp::ONE);
     scalar!(left.x, Fp::ONE);
     scalar!(left.y, Fp::ONE);
-    scalar!(left.id, Fp::ONE);
     scalar!(right.x, Fp::ONE);
     scalar!(right.y, Fp::ONE);
-    scalar!(right.id, Fp::ONE);
     scalar!(a_at_u, Fp::ONE);
     scalar!(b_at_u, Fp::ONE);
     scalar!(bridge_alpha, Fq::ONE);
@@ -66,14 +64,6 @@ fn check_edits<P: Profile, Rk: Rank>(
     scalar!(nested_a_at_u, Fq::ONE);
     scalar!(nested_b_at_u, Fq::ONE);
 
-    for i in 0..HEADER_SIZE {
-        edit(&alloc::format!("left header {i}"), &|p| {
-            p.instance.left_header[i] += Fp::ONE
-        });
-        edit(&alloc::format!("right header {i}"), &|p| {
-            p.instance.right_header[i] += Fp::ONE
-        });
-    }
     for i in 0..proof.instance.native.len() {
         edit(&alloc::format!("native component {i}"), &|p| {
             p.instance.native[i] = -p.instance.native[i]
@@ -91,14 +81,17 @@ fn check_edits<P: Profile, Rk: Rank>(
             p.instance.online_commitments[i] = -p.instance.online_commitments[i]
         });
     }
-    for i in 0..proof.instance.online.len() {
-        edit(&alloc::format!("online query {i} point"), &|p| {
-            p.instance.online[i].x += Fp::ONE
-        });
-        edit(&alloc::format!("online query {i} value"), &|p| {
-            p.instance.online[i].y += Fp::ONE
+    // What a profile with a statement circuit exposes of the step's
+    // online openings, which its `hashes_1` claim takes; a profile without
+    // one carries none, and one more is not the shape the verifier reads.
+    for i in 0..proof.instance.step_binding.len() {
+        edit(&alloc::format!("step binding {i}"), &|p| {
+            p.instance.step_binding[i] += Fp::ONE
         });
     }
+    edit("step binding trailing entry", &|p| {
+        p.instance.step_binding.push(Fp::ONE)
+    });
     macro_rules! point {
         ($field:ident) => {
             edit(stringify!($field), &|p| {
@@ -123,8 +116,6 @@ fn check_edits<P: Profile, Rk: Rank>(
             });
         };
     }
-    length!(left_header);
-    length!(right_header);
     length!(native);
     length!(nested);
     edit("native component order", &|p| p.instance.native.reverse());
@@ -235,13 +226,11 @@ fn check_edits<P: Profile, Rk: Rank>(
 fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) -> Instance<C<P>> {
     Instance {
         circuit_id: native.circuit_id,
-        left_header: native.left_header.clone(),
-        right_header: native.right_header.clone(),
-        online: native.online,
         native: native.native.clone(),
         native_registry_xy: native.native_registry_xy,
         native_p: native.native_p,
         online_commitments: native.online_commitments,
+        step_binding: native.step_binding.clone(),
         // The step's online Fq exports are the nested curve's points and
         // the scalar field's values.
         online_fq_commitments: nested.online_fq_commitments.clone(),
@@ -409,7 +398,7 @@ where
     // Every reduction, batch and IPA is freshly generated for the attempt.
     for expected in [None, Some(Fp::from(9))] {
         let (bad, ()) = app.seed(&mut rng, Seed { expected }, Fp::from(9))?;
-        assert!(bad.proof().well_formed::<HEADER_SIZE>());
+        assert!(bad.proof().well_formed());
         let compressed = app.compress(&bad, &mut rng)?;
         reject(
             &app,

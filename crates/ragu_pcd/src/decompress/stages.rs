@@ -110,7 +110,7 @@ use crate::{
 pub(crate) const NESTED_POINTS: usize = 2 + nested::RxIndex::NUM + 3;
 /// The circuit field's values the instance carries, in
 /// [`native_scalars`] order.
-pub(crate) const NATIVE_SCALARS: usize = 11;
+pub(crate) const NATIVE_SCALARS: usize = 9;
 /// One curve's scalar messages: the two $\varepsilon$, the five openings,
 /// $p(1/r)$ and $q(r)$, the batch's values and the IPA's $c$.
 pub(crate) const MESSAGE_SCALARS: usize =
@@ -270,12 +270,10 @@ pub(crate) mod native_scalars {
     pub const V: usize = 2;
     pub const LEFT_X: usize = 3;
     pub const LEFT_Y: usize = 4;
-    pub const LEFT_ID: usize = 5;
-    pub const RIGHT_X: usize = 6;
-    pub const RIGHT_Y: usize = 7;
-    pub const RIGHT_ID: usize = 8;
-    pub const A_AT_U: usize = 9;
-    pub const B_AT_U: usize = 10;
+    pub const RIGHT_X: usize = 5;
+    pub const RIGHT_Y: usize = 6;
+    pub const A_AT_U: usize = 7;
+    pub const B_AT_U: usize = 8;
 }
 
 /// Positions of the scalar field's instance values within the
@@ -360,12 +358,8 @@ pub(crate) struct InstanceLayout {
     /// Elements: this field's instance values, in [`native_scalars`] or
     /// [`nested_scalars`] order.
     pub scalars: Span,
-    /// Elements, circuit-field side: the online openings as (x, y) pairs.
-    pub online: Span,
-    /// Elements, circuit-field side: the children's headers and the
-    /// statement, the compressed proof's output header.
-    pub left_header: Span,
-    pub right_header: Span,
+    /// Elements, circuit-field side: the statement, the compressed proof's
+    /// output header.
     pub output_header: Span,
     /// Elements, circuit-field side: the step binding, in [`step`] order.
     pub step: Span,
@@ -419,9 +413,6 @@ impl Layout {
         let instance = InstanceLayout {
             commitments: points.next(NESTED_POINTS),
             scalars: elements.next(NATIVE_SCALARS),
-            online: elements.next(2 * crate::internal::native::online::NUM_ONLINE_FP_QUERIES),
-            left_header: elements.next(HEADER_SIZE),
-            right_header: elements.next(HEADER_SIZE),
             output_header: elements.next(HEADER_SIZE),
             step: elements.next(step::LEN),
             points: points.0,

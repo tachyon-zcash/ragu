@@ -21,12 +21,11 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 {
     /// Admits `proof` to the compression's transcript, as verification
     /// begins: its circuit id is in the registry's domain, for the reason
-    /// `verify_uncompressed` gives; its headers have the declared size; its
-    /// messages have the shape the verifier reads; the fuse's challenges,
-    /// from the bridge commitments in the fuse's schedule, lie in the
-    /// endoscalar range; and the two nested stages the decider
-    /// recomputes from public data commit as the instance claims. Returns
-    /// the fuse's challenges.
+    /// `verify_uncompressed` gives; its messages have the shape the
+    /// verifier reads; the fuse's challenges, from the bridge commitments
+    /// in the fuse's schedule, lie in the endoscalar range; and the two
+    /// nested stages the decider recomputes from public data commit as the
+    /// instance claims. Returns the fuse's challenges.
     ///
     /// [`verify_compressed`](Self::verify_compressed) runs these checks
     /// before the compression's transcript, and so does the decompression's
@@ -48,11 +47,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 "the circuit id is outside the registry's domain".into(),
             ));
         }
-        if instance.left_header.len() != HEADER_SIZE || instance.right_header.len() != HEADER_SIZE {
-            return Err(Error::InvalidWitness(
-                "a child header does not have the declared size".into(),
-            ));
-        }
         if !proof.well_formed::<R>() {
             return Err(Error::InvalidWitness(
                 "the messages do not have the shape the verifier reads".into(),
@@ -67,10 +61,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 "a fuse challenge is outside the endoscalar range".into(),
             ));
         }
-        if !instance.stages_match::<R, Verifier<B>, HEADER_SIZE>(
-            &challenges,
-            C::nested_generators(self.params),
-        )? {
+        if !instance
+            .stages_match::<R, Verifier<B>>(&challenges, C::nested_generators(self.params))?
+        {
             return Err(Error::InvalidWitness(
                 "a recomputed nested stage does not commit as the instance claims".into(),
             ));
@@ -139,7 +132,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
                 sigma,
             )?;
             let Some(mut openings) = proof_check!(revdot::verify_native::<C, R, Verifier<B>>(
-                instance.circuit_id,
                 |component| instance.native_commitment(component),
                 registry,
                 y,

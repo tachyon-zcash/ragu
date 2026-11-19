@@ -53,9 +53,11 @@ type P = Aggregator<HEADER_SIZE>;
 /// binding circuits after the chunks.
 #[test]
 fn pinned_layout_is_the_schedules() {
+    /// The internal tests' header size.
+    const CENSUS: usize = crate::internal::tests::HEADER_SIZE;
     std::println!(
         "native counts at census header: {:?}",
-        native_counts::<Pasta, WalletRank, AggregatorRank, 96>().unwrap()
+        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
     );
     assert_eq!(
         P::native_circuits(HEADER_SIZE),
@@ -68,8 +70,8 @@ fn pinned_layout_is_the_schedules() {
         "the nested pins"
     );
     assert_eq!(
-        Aggregator::<96>::native_circuits(96),
-        native_counts::<Pasta, WalletRank, AggregatorRank, 96>().unwrap(),
+        Aggregator::<CENSUS>::native_circuits(CENSUS),
+        native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap(),
         "the native pins for the internal tests' header size"
     );
     assert_eq!(
@@ -81,12 +83,12 @@ fn pinned_layout_is_the_schedules() {
         nested::<Pasta, WalletRank, AggregatorRank, HEADER_SIZE>().unwrap()
     );
     assert_eq!(
-        Aggregator::<96>::native_extension(),
-        native::<Pasta, WalletRank, AggregatorRank, 96>().unwrap()
+        Aggregator::<CENSUS>::native_extension(),
+        native::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
     );
     assert_eq!(
-        Aggregator::<96>::nested_extension(),
-        nested::<Pasta, WalletRank, AggregatorRank, 96>().unwrap()
+        Aggregator::<CENSUS>::nested_extension(),
+        nested::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
     );
 
     let native = P::native_extension();
@@ -517,6 +519,23 @@ fn decompresses_a_wallet_proof() {
         ),
         "another exported commitment fails"
     );
+    // The step folded its own application claim, so it also exposes what
+    // the statement claim's step binding reads of its online openings:
+    // the point and the value at which it opened its first output slot
+    // and the digest it staged. Its `hashes_1` claim and the statement
+    // claim take the proof's copy, so another value fails one of them.
+    assert_eq!(proof.step_binding.len(), 3);
+    for i in 0..proof.step_binding.len() {
+        let mut other = proof.clone();
+        other.step_binding[i] += Fp::ONE;
+        assert!(
+            matches!(
+                app.verify_uncompressed(&other.carry::<Value>(data), &mut rng),
+                Ok(false)
+            ),
+            "another step binding value fails: {i}"
+        );
+    }
     let mut other = proof;
     other.online_fq_openings[1] += <ragu_core::pasta::Fq as udon::field::Field>::ONE;
     assert!(
@@ -633,9 +652,9 @@ fn decompresses_a_wallet_proof() {
 
 /// A compressed proof the wallet application's verifier rejects up front is
 /// refused before any proving: `decompress` fails with the admission's own
-/// rejection on a circuit id outside the registry's domain, a child header
-/// of another size, an IPA opening a round pair short of the rank and a
-/// recomputed nested stage that does not commit as the instance claims.
+/// rejection on a circuit id outside the registry's domain, an IPA opening
+/// a round pair short of the rank and a recomputed nested stage that does
+/// not commit as the instance claims.
 #[test]
 fn refuses_a_proof_the_wallet_rejects() {
     let pasta = crate::pasta::baked_aggregator();
@@ -651,12 +670,9 @@ fn refuses_a_proof_the_wallet_rejects() {
         .unwrap();
     let wallet = app.context().wallet();
 
-    let edits: [(&str, fn(&mut CompressedProof<Pasta>)); 4] = [
+    let edits: [(&str, fn(&mut CompressedProof<Pasta>)); 3] = [
         ("an out-of-domain circuit id", |proof| {
             proof.instance.circuit_id = CircuitIndex::new(u32::MAX as usize);
-        }),
-        ("a header of another size", |proof| {
-            proof.instance.left_header.push(Fp::ZERO);
         }),
         ("a round pair short of the rank", |proof| {
             proof.native.opening.rounds.pop();
@@ -1097,7 +1113,10 @@ fn messages_size<P: udon::curve::Affine>(
 fn compressed_size<C: Cycle>(proof: &crate::CompressedProof<C>) -> (usize, usize) {
     let instance = &proof.instance;
     let points = instance.native.len() + 2 + instance.nested.len() + 3;
-    let scalars = instance.left_header.len() + instance.right_header.len() + 1 + 4 + 1 + 6 + 4 + 4;
+    // The circuit id and the bridge blinding, the four accumulator values,
+    // each child's x and y on both fields, and a(u) and b(u) on both.
+    let _ = instance;
+    let scalars = 1 + 1 + 4 + 4 + 4 + 4;
     let native = messages_size(&proof.native);
     let nested = messages_size(&proof.nested);
     (points + native.0 + nested.0, scalars + native.1 + nested.1)

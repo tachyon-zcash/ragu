@@ -10,7 +10,7 @@
 
 use alloc::{sync::Arc, vec::Vec};
 
-use ragu_circuits::{polynomials::Rank, registry::CircuitIndex};
+use ragu_circuits::polynomials::Rank;
 use ragu_core::{
     Coeff, Cycle, Error, Result,
     drivers::{
@@ -37,8 +37,8 @@ use super::{
     derive::{self, Digits},
     ipa, online,
     program::{
-        APPLICATION, Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, FixedPointSrc, Op,
-        PointSrc, ScalarRef, Schedule, Step, squeezed,
+        Bind, ChainChunk, ChallengeRef, Chunk, ElementSrc, FixedPointSrc, Op, PointSrc, ScalarRef,
+        Schedule, Step, squeezed,
     },
     revdot,
     side::{Native, Nested, Side},
@@ -54,7 +54,7 @@ use crate::{
             fold::{Derived, Weights},
         },
     },
-    header::{Header, Suffix},
+    header::Header,
     ipa::IpaCycle,
     profile::{ProfiledCycle, Standard},
 };
@@ -789,13 +789,14 @@ where
             }
         }
         Chunk::Sign { generator, out } => {
-            let dummy = Element::constant(dr, D::F::from(Suffix::internal(2).get()));
+            // The verifier of a proof reads the base case off its circuit
+            // id: a proof that took it is one of the bootstrap step.
+            let bootstrap = crate::step::InternalStepIndex::Bootstrap
+                .circuit_index::<crate::profile::Standard>()?;
+            let bootstrap = Element::constant(dr, bootstrap.omega_j());
             let elements = ctx.loaded.instance.elements;
-            let left = &elements[layout.instance.left_header.at(HEADER_SIZE - 1)];
-            let right = &elements[layout.instance.right_header.at(HEADER_SIZE - 1)];
-            let left = left.is_equal(dr, &mut (), &dummy)?;
-            let right = right.is_equal(dr, &mut (), &dummy)?;
-            let base_case = left.and(dr, &right)?;
+            let id = &elements[layout.instance.scalars.at(stages::native_scalars::OMEGA_J)];
+            let base_case = id.is_equal(dr, &mut (), &bootstrap)?;
             let negate = base_case.not(dr);
             let point = Point::constant(dr, ctx.generators[*generator])?;
             writes.push(Write::Point(*out, point.conditional_negate(dr, &negate)?));
@@ -927,7 +928,6 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> Allocated<'dr, D, P> {
 /// run commitments, `runs`.
 fn supply<F: Field, P, Q>(
     schedule: &Schedule,
-    circuit_id: CircuitIndex,
     own: &SideWitness<Q>,
     other: &SideWitness<P>,
     runs: &[P],
@@ -947,11 +947,6 @@ fn supply<F: Field, P, Q>(
     }
     for (claim, slot) in schedule.claims.iter().zip(&regions.restrictions) {
         if let (Kind::Circuit(circuit) | Kind::Bonding(circuit), Some(slot)) = (claim.kind, slot) {
-            let circuit = if circuit == APPLICATION {
-                circuit_id
-            } else {
-                circuit
-            };
             let value = own
                 .restrictions
                 .iter()
@@ -1000,7 +995,6 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
         let mut work = Values::blank(schedule.points, schedule.elements, placeholder);
         supply(
             &schedule,
-            instance.circuit_id,
             S::own(witness),
             S::other(witness),
             &S::runs(witness),
@@ -1033,7 +1027,7 @@ impl<C: Cycle, S: Side<C>> Prepared<C, S> {
             },
             online_query: Values {
                 points: Vec::new(),
-                elements: S::ONLINE.evaluations(S::own(witness), instance.circuit_id),
+                elements: S::ONLINE.evaluations(S::own(witness)),
             },
             extra: Arc::new(S::extra(witness)?),
             schedule,

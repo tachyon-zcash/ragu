@@ -39,7 +39,8 @@
 //! proof, and both can be read from this step's proof. The native
 //! extension's statement circuit exposes the output header the extension
 //! verified as its public output, and its claim's $k(y)$, computed by the
-//! verifier of this proof from this proof's circuit id and output header
+//! verifier of this proof from this proof's circuit id, output header and
+//! the two openings above, which the proof's `hashes_1` exports for it
 //! ([`statement_ky`]), is that header's when the circuit id is this step's
 //! and the unit header's for any other step. A proof of this step whose
 //! output header is not the decompressed statement's therefore has a false

@@ -136,7 +136,10 @@ sequenceDiagram
 decider:
 
 - **Statement:** the decompressing step's output header equals the header in
-  [instance], the one the chunks verified $\pi$ against.
+  [instance], the one the chunks verified $\pi$ against. The claim also
+  carries the step binding below; a step folds its own application claim, so
+  it exports the two openings the binding reads beside its output header, in
+  `hashes_1`'s instance.
 - **Binding,** one claim per side: every point a side took from the other as
   a witness, the absorbed run commitments and each side's recomputation of
   the other's [lifts] and [digits], equals the stage commitment the proof

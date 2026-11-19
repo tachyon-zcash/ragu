@@ -87,7 +87,6 @@ use crate::{
 #[cfg(test)]
 use crate::{
     compress::revdot::{OpeningClaim, fold::Derived, native_components, nested_components},
-    header::Suffix,
     internal::{
         native::{
             self,
@@ -274,9 +273,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
         let instance = &proof.instance;
         let header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;
 
-        // The verifier's admission: the circuit id's domain, the headers'
-        // size, the messages' shape, the fuse's challenges and the two nested
-        // stages the decider recomputes. Nothing below repeats these checks
+        // The verifier's admission: the circuit id's domain, the messages'
+        // shape, the fuse's challenges and the two nested stages the
+        // decider recomputes. Nothing below repeats these checks
         // natively, and the chunk circuits' constraints on the recomputed
         // stages are not enforced when their traces are prepared, so a proof
         // the verifier rejects is refused here, before any proving.
@@ -301,14 +300,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Witness<C> {
                 registry,
                 native_sampled.sigma,
             )?;
-            let shapes = claims::native_shapes::<Standard, _>(
-                instance.circuit_id,
-                native_sampled.z,
-                &masked,
-            )?;
+            let shapes = claims::native_shapes::<Standard, _>(native_sampled.z, &masked)?;
             let kinds = shapes.iter().map(|shape| shape.kind).collect();
             let mut openings = crate::compress::revdot::verify_native::<C, K, Verifier<B>>(
-                instance.circuit_id,
                 |component| instance.native_commitment(component),
                 registry,
                 native_sampled.y,
@@ -582,9 +576,7 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
 /// [`ky_values`](crate::internal::native::claims::ky_values).
 pub(crate) struct NativeTargets<'dr, D: Driver<'dr>> {
     pub c: Element<'dr, D>,
-    pub application: Element<'dr, D>,
     pub unified_bridge: Element<'dr, D>,
-    pub compute_v_bridge: Element<'dr, D>,
     pub unified: Element<'dr, D>,
     pub one: Element<'dr, D>,
     pub zero: Element<'dr, D>,
@@ -598,7 +590,9 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
     }
 
     fn application_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        once(self.application.clone())
+        // A proof folds its own application claim, so its verifier has no
+        // application target.
+        core::iter::empty()
     }
 
     fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky> {
@@ -606,7 +600,9 @@ impl<'dr, D: Driver<'dr>> NativeKySource for NativeTargets<'dr, D> {
     }
 
     fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky> {
-        once(self.compute_v_bridge.clone())
+        // The standard profile has no online batch to export for, so the
+        // `compute_v` circuit's instance is the unified one.
+        once(self.unified.clone())
     }
 
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone {
@@ -930,12 +926,6 @@ where
     let nested_points = points(dr, instance.nested.iter().copied())?;
     let allocated = transcript::Instance {
         circuit_id: element(dr, instance.circuit_id.omega_j())?,
-        left_header: elements(dr, instance.left_header.iter().copied())?,
-        right_header: elements(dr, instance.right_header.iter().copied())?,
-        online: elements(
-            dr,
-            instance.online.iter().flat_map(|query| [query.x, query.y]),
-        )?,
         nested: nested_points,
         nested_registry_xy: point(dr, instance.nested_registry_xy)?,
         nested_p: point(dr, instance.nested_p)?,
@@ -945,12 +935,10 @@ where
         left: transcript::Child {
             x: element(dr, instance.left.x)?,
             y: element(dr, instance.left.y)?,
-            id: element(dr, instance.left.id)?,
         },
         right: transcript::Child {
             x: element(dr, instance.right.x)?,
             y: element(dr, instance.right.y)?,
-            id: element(dr, instance.right.id)?,
         },
         a_at_u: element(dr, instance.a_at_u)?,
         b_at_u: element(dr, instance.b_at_u)?,
@@ -991,13 +979,13 @@ where
     let unified = instance.unified(&witness.fuse);
     let proof_inputs = ProofInputs::<D, C, HEADER_SIZE>::alloc_from_parts(
         dr,
-        D::just(|| instance.left_header.as_slice()),
-        D::just(|| instance.right_header.as_slice()),
         D::just(|| witness.header.as_slice()),
-        D::just(|| &instance.online),
         D::just(|| instance.circuit_id.omega_j()),
+        // The standard profile has no statement circuit, so no step
+        // binding.
+        D::just(|| -> &[C::CircuitField] { &[] }),
         D::just(|| &unified),
-        // The standard profile has no online batch.
+        // Nor an online batch.
         D::just(|| -> &[C::NestedCurve] { &[] }),
         D::just(|| -> &[C::CircuitField] { &[] }),
         D::just(|| -> &[C::CircuitField] { &[] }),
@@ -1040,11 +1028,9 @@ where
             .circuit_id
             .enforce_equal(dr, &proof_inputs.circuit_id)?;
         // Indexed by the constant rather than zipped over the allocated
-        // headers, so that the loop's bound is visibly fixed.
+        // header, so that the loop's bound is visibly fixed.
         #[allow(clippy::needless_range_loop)]
         for i in 0..HEADER_SIZE {
-            allocated.left_header[i].enforce_equal(dr, &proof_inputs.children.left[i])?;
-            allocated.right_header[i].enforce_equal(dr, &proof_inputs.children.right[i])?;
             header[i].enforce_equal(dr, &proof_inputs.output_header[i])?;
         }
     }
@@ -1091,26 +1077,14 @@ where
         &runs,
     )?;
 
-    for (value, query_value) in allocated.online.iter().zip(
-        proof_inputs
-            .online
-            .iter()
-            .flat_map(|query| [&query.x, &query.y]),
-    ) {
-        value.enforce_equal(dr, query_value)?;
-    }
-
     // The host curve's field checks.
     {
         let side = &witness.native;
         let y = &native_challenges.sampled.y.lift;
         let (unified_target, unified_bridge) = proof_inputs.unified_ky_values(dr, y)?;
-        let application = proof_inputs.application_ky(dr, y)?;
         let targets = NativeTargets {
             c: allocated.c.clone(),
-            application,
             unified_bridge,
-            compute_v_bridge: proof_inputs.compute_v_bridge_ky(dr, y, &[])?,
             unified: unified_target,
             one: Element::one(),
             zero: Element::zero(dr),
@@ -1131,15 +1105,8 @@ where
         bind_expected(
             dr,
             &bindings[0],
-            0..6,
-            &[
-                l.x.clone(),
-                l.y.clone(),
-                l.id.clone(),
-                r.x.clone(),
-                r.y.clone(),
-                r.id.clone(),
-            ],
+            0..4,
+            &[l.x.clone(), l.y.clone(), r.x.clone(), r.y.clone()],
         )?;
         bind_expected(
             dr,
@@ -1276,10 +1243,11 @@ where
                 Some(acc) => acc.add_incomplete(dr, &term, bank)?,
             });
         }
-        let dummy = Element::constant(dr, C::CircuitField::from(Suffix::internal(2).get()));
-        let left_dummy = allocated.left_header[HEADER_SIZE - 1].is_equal(dr, &mut (), &dummy)?;
-        let right_dummy = allocated.right_header[HEADER_SIZE - 1].is_equal(dr, &mut (), &dummy)?;
-        let base_case = left_dummy.and(dr, &right_dummy)?;
+        // The base case, read off the circuit id: a proof that took it
+        // is one of the bootstrap step.
+        let bootstrap = crate::step::InternalStepIndex::Bootstrap.circuit_index::<Standard>()?;
+        let bootstrap = Element::constant(dr, bootstrap.omega_j());
+        let base_case = allocated.circuit_id.is_equal(dr, &mut (), &bootstrap)?;
         let sign = generator(dr, challenge_stage::SIGN_INDEX)?;
         let negate = base_case.not(dr);
         let sign = sign.conditional_negate(dr, &negate)?;
@@ -1401,9 +1369,6 @@ where
                 Some(output.exported[9 + i].clone());
         }
     }
-    native_points
-        [native_position::<Standard>(native::RxComponent::Rx(native::RxIndex::ApplicationStage))] =
-        Some(output.exported[16].clone());
     for (commitment, exported) in instance
         .online_commitments
         .iter()
@@ -1582,7 +1547,6 @@ where
         let claims = derive::native_claims(
             dr,
             &commitments,
-            instance.circuit_id,
             &z,
             native.masked.iter().map(|&(position, _, _)| {
                 native_components::<Standard>()
