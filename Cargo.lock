@@ -893,7 +893,7 @@ dependencies = [
 name = "ragu_no_std"
 version = "0.0.0"
 dependencies = [
- "ragu_pcd",
+ "ragu",
 ]
 
 [[package]]

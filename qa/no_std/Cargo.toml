@@ -11,5 +11,6 @@ test = false
 doctest = false
 bench = false
 
+# Only `ragu`: the derives below must resolve every path they emit through it.
 [dependencies]
-ragu_pcd = { path = "../../crates/ragu_pcd", default-features = false, features = ["baked"] }
+ragu = { path = "../..", default-features = false, features = ["baked"] }
