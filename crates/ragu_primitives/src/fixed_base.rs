@@ -694,18 +694,49 @@ mod tests {
         Ok(())
     }
 
-    /// Scalar zero makes the prefix and top entry opposite, with the identity
-    /// as their sum. No assignment completes the final addition there.
+    /// Opposite points make the slope's denominator `y + (-y)` zero. Their
+    /// numerator `3x^2 - 2y` usually is not, which already leaves no slope,
+    /// but at the one Pallas point with `3x^2 = 2y` it vanishes too and any
+    /// slope satisfies the division. Only `same * dy = 0` rejects that pair.
     #[test]
     fn final_addition_rejects_opposite_points() -> Result<()> {
-        let table = FixedBase::<_, 6>::new(EpAffine::generator(), EpAffine::identity())?;
+        // The root of `9x^4 - 4x^3 - 20`, with `y = 3x^2 / 2`.
+        let x = Fp::from_limbs([
+            0xb69d_a7ec_c505_312b,
+            0x58ae_9225_c286_b656,
+            0xc458_778a_af03_481f,
+            0x3f79_684f_8e55_8611,
+        ])
+        .unwrap();
+        let y = Fp::from_limbs([
+            0x6772_3e6b_e40c_c2d8,
+            0x47e8_ad12_423b_5343,
+            0xe6f0_9de9_d336_c855,
+            0x1e07_9988_8d83_9897,
+        ])
+        .unwrap();
+        let special = EpAffine::from_xy(x, y).expect("on the curve");
+        assert_eq!(Fp::from(3) * x.square(), y.double());
+
+        // Record an honest addition, then make the right point `-special` and
+        // pin an arbitrary slope, the first wire of the third gate from the end.
         let mut dr = Recorder::<Fp>::new();
-        let bits = allocate(&mut dr, bits_of(1))?;
-        table.mul(&mut dr, &bits)?;
-        let fixed: Vec<_> = bits.iter().map(|bit| *bit.wire()).collect();
-        for &wire in &fixed {
-            dr.values[wire] = Fp::ZERO;
-        }
+        let left = Point::alloc(&mut dr, Recorder::<Fp>::just(|| special))?;
+        let right = Point::alloc(&mut dr, Recorder::<Fp>::just(EpAffine::generator))?;
+        FixedBase::<EpAffine, 6>::add_or_double(&mut dr, &left, &right)?;
+        assert!(constraints_hold(&dr.events, &dr.values));
+
+        let (slope, _, _) = gate_from_end(&dr.events, 2);
+        dr.values[*right.x.wire()] = x;
+        dr.values[*right.y.wire()] = -y;
+        dr.values[slope] = Fp::from(7);
+        let fixed = [
+            *left.x.wire(),
+            *left.y.wire(),
+            *right.x.wire(),
+            *right.y.wire(),
+            slope,
+        ];
         repair(&dr.events, &mut dr.values, &fixed);
         assert!(!constraints_hold(&dr.events, &dr.values));
         Ok(())
