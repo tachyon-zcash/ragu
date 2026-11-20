@@ -79,12 +79,21 @@ use crate::{
 ///
 /// # Soundness
 ///
-/// The chunk circuits re-execute the wallet application's verifier of a
-/// compressed proof, and what that verifier computes outside a field's
-/// arithmetic is bound through the step that proves them. The wallet
-/// registry's evaluations are claimed values of the profile's online
-/// batches, which the step's fuse opens on restrictions its source meshes
-/// hold to the wallet registries the [`Decompression`] carries; the
+/// The decompression step's public statement is the wallet's output header.
+/// The compressed proof's fields are witnesses for the chunk circuits. The
+/// consumer binds each run commitment the transcript absorbs to the stage
+/// holding the values the chunks check. Honest proofs use the same run
+/// commitments as native verification. The mask allows nonzero values in
+/// unused slots, which can change the challenges for the same proof fields.
+///
+/// A soundness argument for the wallet statement must cover the circuit's
+/// transcript and the prover's adaptive queries, including repeated trials
+/// with different unused coefficients. A bound across the verifier's rounds
+/// remains open (see the decompression module's *What binds the two sides*).
+///
+/// The wallet registry's evaluations are claimed values of the profile's
+/// online batches, which the step's fuse opens on restrictions its source
+/// meshes hold to the wallet registries the [`Decompression`] carries. The
 /// proof's own circuit is held to the wallet registry's domain. Both IPAs'
 /// final generators are bound: the host curve's through the polynomial
 /// the decompression step commits in its first output slot, the nested
@@ -94,6 +103,18 @@ use crate::{
 /// step binding* give the arguments. The construction has not been
 /// audited, and the profile is public only under the
 /// `unstable-aggregator` feature.
+///
+/// # Privacy
+///
+/// Compressing the result of [`decompress`](crate::Application::decompress)
+/// publishes its run stage commitments. The first two commit to the wallet
+/// proof's instance commitments and scalars without blinding. They stay the
+/// same across independent compressions of the same underlying wallet
+/// proof, so observers can link the published decompression proofs.
+///
+/// An ordinary fuse uses the canonical wallet bootstrap proof for its own
+/// extension stages. If the parent is compressed, it publishes the run
+/// commitments for that bootstrap proof. Compression is non-hiding.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Aggregator<const HEADER_SIZE: usize>;
 

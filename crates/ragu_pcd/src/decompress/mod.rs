@@ -4,22 +4,17 @@
 //! [`Application::verify_compressed`](crate::Application::verify_compressed)
 //! runs natively: it replays the compression's transcript, folds the revdot
 //! claims and checks the split, the batch and one IPA opening per curve.
-//! Decompression re-executes that verifier as circuits of a new proof over
-//! the same cycle, so that the compressed proof's statement becomes an
-//! ordinary accumulator the fuse can take as a child. Each kind of check
-//! the native verifier makes has a circuit mechanism:
+//! Decompression checks the wallet verifier's equations in circuits of a
+//! new proof over the same cycle, with the wallet statement as its output
+//! header. The fuse can take this proof as a child.
 //!
 //! - **Transcript.** The native verifier squeezes its challenges from a
 //!   Poseidon transcript over the instance and its messages. The transcript
-//!   chunks replay it with the Poseidon `Sponge` gadget over the loaded
-//!   messages, sliced at the sponge's permutation boundaries; host-curve
-//!   points and scalar-field values, which lie in the other field, enter as
-//!   the native verifier
-//!   absorbs them, one nested-curve commitment per run of them before a
-//!   challenge, the commitment of the stage that holds the run on the
-//!   scalar-field side, which the circuit-field side absorbs as a witness
-//!   point its binding circuit exposes for the proof's consumer to hold to
-//!   that stage (see [`stages`]).
+//!   chunks follow the same absorption order with the Poseidon `Sponge`
+//!   gadget, sliced at the sponge's permutation boundaries. Each run of
+//!   host-curve points and scalar-field values enters as the nested-curve
+//!   commitment of the stage that holds it, before the next challenge
+//!   (see *What binds the two sides*).
 //! - **Field identities.** The fold's weights and $W(r)$, the public parts
 //!   of the folded claims, the split identity, the batch's $f(u)$ and $v$
 //!   and the IPA's $b$ are arithmetic in one field: [`Element`] arithmetic
@@ -92,9 +87,8 @@
 //!
 //! # Integration
 //!
-//! [`chunk`] is the complete verifier as circuits: every check the native
-//! verifier makes runs in some chunk of one side or the other, over the
-//! stages of [`stages`]. [`extension`] lays the chunk circuits and their
+//! The [`chunk`] circuits check the verifier's equations on both sides over
+//! the stages of [`stages`]. [`extension`] lays the chunk circuits and their
 //! stages out as a profile's extension (see [`profile`](crate::profile))
 //! and registers them through the profile's hooks beside the fuse's
 //! circuits, on both registries; [`prover`] fills their polynomials for
@@ -122,19 +116,25 @@
 //! holds its bits' lift to the lifts stage slot the challenge's lift chunk
 //! fills, and a scalar's digits are allocated once, across the parts of
 //! its one scaling. What holds a witness to the sending side is the fuse's
-//! design: the sending side holds the value as wires of an unblinded
-//! stage, the receiving side recomputes that stage's commitment from the
-//! witness it took, or takes the commitment itself as the witness, as the
-//! transcript does for a run, and its binding circuit exposes the point for
-//! the proof's consumer to hold to the stage's actual commitment, through
-//! the circuit's claim (see [`stages`] for the stages,
+//! design. The sending side holds the values in stage wires. The receiving
+//! side recomputes the unblinded commitment from the values it took, or
+//! takes the commitment itself as a witness, as the transcript does for a
+//! run. Its binding circuit exposes the point for the proof's consumer to
+//! hold to the stage's actual commitment through the circuit's claim (see
+//! [`stages`] for the stages,
 //! [`chunk::BindingCircuit`] for the circuit and
-//! [`Binding`](crate::profile::Binding) for the consumer's check). Each
-//! run's commitment is that of the stage holding the run's values, so
-//! every challenge is a function of the messages before it, as the native
-//! verifier's are: a prover who prepares the two sides from different
-//! compressed proofs, each consistent with itself, or who chooses a
-//! message after the challenge that depends on it, fails that claim.
+//! [`Binding`](crate::profile::Binding) for the consumer's check).
+//!
+//! Each run commitment binds the checked values before the transcript
+//! squeezes the next challenge. In an honest proof, the unused coefficients
+//! are zero and the commitment matches the one native verification computes
+//! from the run values. The mask permits nonzero values in those slots,
+//! so the circuit can derive different challenges for the same proof fields.
+//! Both sides' checks use the challenges from that circuit transcript.
+//! The soundness argument for the wallet header must account for adaptive
+//! queries to the transcript in the random oracle model, including trials
+//! with different unused coefficients. A bound covering those choices
+//! across the full verifier remains to be established.
 //!
 //! # The step binding
 //!

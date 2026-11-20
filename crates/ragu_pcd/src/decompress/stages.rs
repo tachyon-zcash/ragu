@@ -1268,12 +1268,11 @@ impl<C: Cycle, K: Rank, N: RunIndex> Len for RunElements<C, K, N> {
 /// proof at rank `K`, as a stage of chunk circuits at rank `R`, after the
 /// run before it: the points' coordinates first, then the elements, each
 /// at one wire, read off the instance's and the messages' positions the
-/// run covers. Committed unblinded, so that its commitment is the one the
-/// compression's transcript absorbed for the run. No constraint holds the
-/// stage to that commitment: its mask leaves the blinding and its gates'
-/// other wires free, and a commitment over them still binds the run's
-/// values, so a prover who fills them only squeezes other challenges over
-/// the same values.
+/// run covers. The honest prover commits the stage unblinded to match the
+/// run commitment computed during native verification. The mask leaves the
+/// blinding and the other wires of its gates free. The transcript absorbs
+/// the actual stage commitment, so those coefficients can change the
+/// challenges for the same run values.
 pub(crate) struct RunStage<C, K, R, N>(PhantomData<fn() -> (C, K, R, N)>);
 
 impl<C, K, R, N> Default for RunStage<C, K, R, N> {

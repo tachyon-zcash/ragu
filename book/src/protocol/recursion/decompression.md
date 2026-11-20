@@ -1,15 +1,14 @@
 # Decompression
 
-Decompression turns a [compressed proof](compression.md) back into an
-accumulator the fuse can take as a child: the decompressing step re-runs
-`Application::verify_compressed` inside the circuits of a new proof over the
-same cycle, so the compressed proof's statement becomes that proof's output
-header. Below is the interactive form of the aggregator profile's
-decompression circuits. P holds a compressed proof $\pi$ of the wallet
-application; V is the verifier of the proof P produces, which the fuse
-accumulates like any proof. V's checks are the chunk circuits' constraints,
-which the accumulation enforces, and three claims the proof's consumer
-checks at the fuse's $k(y)$.
+Decompression uses a [compressed proof](compression.md) as a witness to
+produce a new accumulator proof the fuse can take as a child. The circuits
+check the wallet verifier's equations, and the wallet statement becomes the
+new proof's output header. Below is the interactive form of the aggregator
+profile's decompression circuits. P holds a compressed proof $\pi$ of the
+wallet application. V is the verifier of the proof P produces, which the
+fuse accumulates like any proof. V's checks are the chunk circuits'
+constraints, which the accumulation enforces, and three claims the proof's
+consumer checks at the fuse's $k(y)$.
 
 The chunks sample no challenge of their own. Every challenge they use is
 the compression's, re-derived from the transcript on one side and taken as
@@ -34,7 +33,7 @@ sequenceDiagram
     participant V as Verifier
     Note over P: Native side<br/>The parts of π in the circuit field,<br/>the instance and then the messages
     P->>V: [instance], [messages]
-    Note over P: Nested side<br/>The parts of π in the scalar field,<br/>one unblinded stage per run,<br/>and the nested IPA c on its own
+    Note over P: Nested side<br/>The parts of π in the scalar field,<br/>one stage per run,<br/>and the nested IPA c on its own
     P->>V: [run₁], …, [runₘ], [trailing]
     Note over V: Masks hold each stage to its positions
 ```
@@ -64,11 +63,17 @@ sequenceDiagram
     Note over V: Hold each lift to [lifts]<br/>Native side recomputes this [lifts]<br/>from the squeezed bits
 ```
 
-The native side replays the transcript as `verify_compressed` does, Fuse's
-over the instance's bridge commitments and then the compression's over the
-messages, with each $[\mathrm{run}_i]$ absorbed where compression absorbed it. Every
-challenge is squeezed as an endoscalar, 143 bits that either field reads as
-a scalar, its *lift*. The lift into the circuit field goes to this side's
+The circuit-field side follows the native verifier's absorption order, first
+over the instance's bridge commitments and then over the compression
+messages, absorbing each $[\mathrm{run}_i]$ at the corresponding position.
+The honest prover leaves each run stage's unused coefficients at zero to
+match the commitment `verify_compressed` computes from the run values.
+The mask permits other coefficients in those slots, and the circuit absorbs
+the full stage commitment, so the same proof fields can lead to different
+challenges.
+
+Every challenge is squeezed as an endoscalar, 143 bits that either field reads
+as a scalar, its *lift*. The lift into the circuit field goes to this side's
 [lifts] for its field checks; [transcript] carries the sponge state between
 transcript chunks.
 
@@ -117,8 +122,8 @@ registry, and each curve's $G'$ is held to a commitment the step made
 before its challenge, over round challenges a digest the step committed
 with it fixes.
 
-**Output:** every check of `verify_compressed` enforced in some chunk, and
-each side's recomputation of the other side's [digits].
+**Output:** the verifier's equations checked with the circuit's challenges,
+and each side's recomputation of the other side's [digits].
 
 ## 4. Claims
 
@@ -145,9 +150,14 @@ decider:
   the other's [lifts] and [digits], equals the stage commitment the proof
   carries.
 
-A prover who prepares the two sides from different compressed proofs, or who
-chooses a message after the challenge that depends on it, fails a binding
-claim. The chunk, statement and binding circuits are internal circuits of the
+Each absorbed run commitment binds the values the chunks read before the
+next challenge. Soundness for the wallet header must account for adaptive
+queries to the circuit transcript, including repeated trials with different
+unused coefficients. [Compression](compression.md) gives a bound for a
+single fresh challenge and a fixed false identity. A bound across all
+verifier rounds with these choices remains open.
+
+The chunk, statement and binding circuits are internal circuits of the
 aggregator profile, so every proof of the profile carries their polynomials:
 a step that decompresses nothing runs them over the application's canonical
 compressed proof.
@@ -226,3 +236,17 @@ of the difference: for the nested curve's, whose point is the lift of a
 aggregator rank, and less for the host curve's. A step that decompresses
 nothing stages no digest, and its openings establish nothing about the
 canonical proof's $G'$, whose statement binds nothing.
+
+## Privacy
+
+Compressing the output of `Application::decompress` publishes the
+commitments to its run stages. The first two are unblinded commitments to
+the wallet proof's instance commitments and scalars. Recompressing the
+same underlying wallet proof with fresh randomness leaves those commitments
+unchanged, so observers can link the published decompression proofs even
+when their compression messages differ.
+
+When an ordinary fuse consumes a decompressed child, the parent's own run
+stages use the canonical wallet bootstrap proof. Compressing the parent
+publishes those run commitments. The parent still uses Ragu's non-hiding
+[compression](compression.md).
