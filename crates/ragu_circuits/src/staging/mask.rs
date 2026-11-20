@@ -197,7 +197,7 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
     ///     \cdot \sum_{i=0}^{m-1} (xy)^i$$
     ///
     /// with $g = \text{skip\_gates}$ and $m = \text{num\_gates}$.
-    fn sxy(&self, x: F, y: F, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> F {
+    fn sxy(&self, x: F, y: F) -> F {
         if x == F::ZERO || y == F::ZERO {
             return F::ZERO;
         }
@@ -212,32 +212,25 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         -((F::ONE + xy_2n) * (skip + tail) * gsum)
     }
 
-    fn sx(
-        &self,
-        x: F,
-        _floor_plan: &[crate::floor_planner::ConstraintSegment],
-    ) -> sparse::Polynomial<F, R> {
+    fn sx(&self, x: F) -> sparse::Polynomial<F, R> {
         self.notch_project(x)
     }
 
-    fn sy(
-        &self,
-        y: F,
-        _floor_plan: &[crate::floor_planner::ConstraintSegment],
-    ) -> sparse::Polynomial<F, R> {
+    fn sy(&self, y: F) -> sparse::Polynomial<F, R> {
         self.notch_project(y)
     }
 
     /// Writes down the complete mask, $S\_{\text{global}} - \text{notch}$.
     /// The mask is diagonal, each term being $c_k (XY)^k$, so its restriction
     /// to $X = 1$ lists the coefficients $c_k$.
-    fn monomials(&self, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> Monomials<F> {
+    fn monomials(&self) -> Monomials<F> {
         let mut restriction = global_project::<F, R>(F::ONE);
         restriction += &self.notch_project(F::ONE);
         Monomials::diagonal(restriction.iter_coeffs())
     }
 
-    fn segment_records(&self) -> &[crate::SegmentRecord] {
+    /// A mask is written in closed form, with no segments to place.
+    fn floor_plan(&self) -> &[crate::floor_planner::ConstraintSegment] {
         &[]
     }
 
@@ -271,7 +264,7 @@ mod tests {
         StageMask,
     };
     use crate::{
-        WiringObject, WithAux, floor_planner, into_raw_wiring_object, into_wiring_object, metrics,
+        WiringObject, WithAux, into_raw_wiring_object, into_wiring_object, metrics,
         polynomials::{Rank, sparse},
         staging::StageBuilder,
         tests::SquareCircuit,
@@ -480,7 +473,7 @@ mod tests {
         // sy() now returns -notch; add global_project to recover the full mask.
         let full_sy = |circ: &dyn WiringObject<Fp, R>, y| {
             let mut poly = super::global_project::<Fp, R>(y);
-            poly += &circ.sy(y, &[]);
+            poly += &circ.sy(y);
             poly
         };
 
@@ -515,9 +508,9 @@ mod tests {
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
         // All three return -notch (the global term is factored out by Registry).
-        let sxy = stage_mask.sxy(x, y, &[]);
-        let sx = stage_mask.sx(x, &[]);
-        let sy = stage_mask.sy(y, &[]);
+        let sxy = stage_mask.sxy(x, y);
+        let sx = stage_mask.sx(x);
+        let sy = stage_mask.sy(y);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -537,15 +530,14 @@ mod tests {
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
         let generic = mask_wiring_object(stage.clone());
-        let plan = floor_planner::floor_plan(generic.segment_records());
         let stripped = crate::staging::bonding::Stripped::new(generic);
-        let corrected_sxy = stripped.sxy(x, y, &plan);
+        let corrected_sxy = stripped.sxy(x, y);
 
         // StageMask returns -notch; add global to get the full mask.
-        let full_sxy = stage.sxy(x, y, &[]) + super::global_mask::<Fp, R>(x, y);
+        let full_sxy = stage.sxy(x, y) + super::global_mask::<Fp, R>(x, y);
         assert_eq!(full_sxy, corrected_sxy);
-        assert_eq!(corrected_sxy, stripped.sx(x, &plan).eval(y));
-        assert_eq!(corrected_sxy, stripped.sy(y, &plan).eval(x));
+        assert_eq!(corrected_sxy, stripped.sx(x).eval(y));
+        assert_eq!(corrected_sxy, stripped.sy(y).eval(x));
     }
 
     #[test]
@@ -555,7 +547,7 @@ mod tests {
         // This invariant prevents the `- 1` underflow in sy::eval's initial
         // y-power computation.
         let circuit = into_wiring_object::<_, _, R>(SquareCircuit { times: 0 }).unwrap();
-        let floor_plan = floor_planner::floor_plan(circuit.segment_records());
+        let floor_plan = circuit.floor_plan();
         assert!(
             floor_plan[0].num_constraints >= 1,
             "root segment must have at least 1 constraint (ONE), got {}",
@@ -600,9 +592,9 @@ mod tests {
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
         // All three return -notch (the global term is factored out by Registry).
-        let sxy = stage.sxy(x, y, &[]);
-        let sx = stage.sx(x, &[]);
-        let sy = stage.sy(y, &[]);
+        let sxy = stage.sxy(x, y);
+        let sx = stage.sx(x);
+        let sy = stage.sy(y);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));
@@ -636,24 +628,23 @@ mod tests {
             let generic = mask_wiring_object(
                 StageMask::<R>::new(skip, num).unwrap()
             );
-            let plan = floor_planner::floor_plan(generic.segment_records());
 
             let stripped = crate::staging::bonding::Stripped::new(generic);
 
             let check = |x: Fp, y: Fp| {
-                let sxy = stripped.sxy(x, y, &plan);
-                let sx_eval = stripped.sx(x, &plan).eval(y);
-                let sy_eval = stripped.sy(y, &plan).eval(x);
+                let sxy = stripped.sxy(x, y);
+                let sx_eval = stripped.sx(x).eval(y);
+                let sy_eval = stripped.sy(y).eval(x);
 
                 // Internal consistency of the RawCircuit impl (with correction)
                 prop_assert_eq!(sy_eval, sxy);
                 prop_assert_eq!(sx_eval, sxy);
                 // StageMask returns -notch from all three methods.
-                let notch_sxy = stage_mask.sxy(x, y, &[]);
+                let notch_sxy = stage_mask.sxy(x, y);
                 let global_xy = super::global_mask::<Fp, R>(x, y);
                 prop_assert_eq!(notch_sxy + global_xy, sxy);
-                prop_assert_eq!(stage_mask.sx(x, &[]).eval(y), notch_sxy);
-                prop_assert_eq!(stage_mask.sy(y, &[]).eval(x), notch_sxy);
+                prop_assert_eq!(stage_mask.sx(x).eval(y), notch_sxy);
+                prop_assert_eq!(stage_mask.sy(y).eval(x), notch_sxy);
 
                 // Polynomial decomposition: global_project + notch_project == full project.
                 let mut reconstructed = super::global_project::<Fp, R>(x);
@@ -663,8 +654,8 @@ mod tests {
                 // The monomials read off the restriction to X = 1 are the ones
                 // the generic path writes down.
                 prop_assert_eq!(
-                    WiringObject::<Fp, R>::monomials(&stage_mask, &[]),
-                    stripped.monomials(&plan)
+                    WiringObject::<Fp, R>::monomials(&stage_mask),
+                    stripped.monomials()
                 );
 
                 Ok(())
@@ -700,8 +691,8 @@ mod tests {
             prop_assert_eq!(sum_poly.eval(q), neg_global.eval(q));
 
             // Scalar-level: -notch_a(x,y) + -notch_b(x,y) == -global_mask(x,y)
-            let sxy_a = mask_a.sxy(x, y, &[]);
-            let sxy_b = mask_b.sxy(x, y, &[]);
+            let sxy_a = mask_a.sxy(x, y);
+            let sxy_b = mask_b.sxy(x, y);
             let global_xy = super::global_mask::<Fp, R>(x, y);
             prop_assert_eq!(sxy_a + sxy_b, -global_xy);
         }
@@ -784,7 +775,7 @@ mod tests {
         // sy() returns -notch; add global_project to recover the full mask.
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let mut sy = super::global_project::<Fp, R>(y);
-        sy += &stage_mask.sy(y, &[]);
+        sy += &stage_mask.sy(y);
 
         let check = rx.revdot(&sy);
         assert_eq!(
@@ -855,7 +846,7 @@ mod tests {
         }
 
         let circuit = into_wiring_object::<_, _, R>(TestCircuit).unwrap();
-        let floor_plan = floor_planner::floor_plan(circuit.segment_records());
+        let floor_plan = circuit.floor_plan();
 
         // The child routine (index 1) should have zero constraints.
         assert_eq!(
@@ -867,9 +858,9 @@ mod tests {
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
         // None of these must panic — previously sy would underflow on `- 1`.
-        let sxy = circuit.sxy(x, y, &floor_plan);
-        let sx = circuit.sx(x, &floor_plan);
-        let sy = circuit.sy(y, &floor_plan);
+        let sxy = circuit.sxy(x, y);
+        let sx = circuit.sx(x);
+        let sy = circuit.sy(y);
 
         assert_eq!(sxy, sx.eval(y));
         assert_eq!(sxy, sy.eval(x));

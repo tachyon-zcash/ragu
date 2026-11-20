@@ -30,7 +30,7 @@ use udon::field::Field;
 
 use super::{MultiStage, MultiStageCircuit, StageBuilder};
 use crate::{
-    BondingObject, SegmentRecord, WiringObject,
+    BondingObject, WiringObject,
     floor_planner::ConstraintSegment,
     into_wiring_object,
     polynomials::{Rank, sparse},
@@ -239,13 +239,13 @@ impl<'a, F: Field, R: Rank> Stripped<'a, F, R> {
 }
 
 impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
-    fn sxy(&self, x: F, y: F, floor_plan: &[ConstraintSegment]) -> F {
+    fn sxy(&self, x: F, y: F) -> F {
         // Remove the ONE wire contribution: 1 at y^0 (d[0] maps to degree 0).
-        self.0.sxy(x, y, floor_plan) - F::ONE
+        self.0.sxy(x, y) - F::ONE
     }
 
-    fn sx(&self, x: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
-        let mut poly = self.0.sx(x, floor_plan);
+    fn sx(&self, x: F) -> sparse::Polynomial<F, R> {
+        let mut poly = self.0.sx(x);
         // Horner places the last constraint (enforce_one) at y^0 = coeffs[0].
         // TODO: sparse::Polynomial should support subtracting a field element
         // from the constant term directly.
@@ -255,8 +255,8 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         poly
     }
 
-    fn sy(&self, y: F, floor_plan: &[ConstraintSegment]) -> sparse::Polynomial<F, R> {
-        let mut poly = self.0.sy(y, floor_plan);
+    fn sy(&self, y: F) -> sparse::Polynomial<F, R> {
+        let mut poly = self.0.sy(y);
         // The SYSTEM gate's d-wire holds the ONE wire; remove its y^0 contribution.
         // In the wiring perspective, d[0] maps to degree 0.
         let mut correction = sparse::View::<_, R, _>::wiring();
@@ -265,14 +265,14 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         poly
     }
 
-    fn monomials(&self, floor_plan: &[ConstraintSegment]) -> Monomials<F> {
-        let mut monomials = self.0.monomials(floor_plan);
+    fn monomials(&self) -> Monomials<F> {
+        let mut monomials = self.0.monomials();
         monomials.strip_one();
         monomials
     }
 
-    fn segment_records(&self) -> &[SegmentRecord] {
-        self.0.segment_records()
+    fn floor_plan(&self) -> &[ConstraintSegment] {
+        self.0.floor_plan()
     }
 }
 
@@ -294,7 +294,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        WithAux, floor_planner,
+        WithAux,
         polynomials::TestRank,
         staging::{MultiStageCircuit, Stage, StageBuilder},
     };
@@ -599,29 +599,27 @@ mod tests {
     #[test]
     fn zero_constant_term() {
         let obj = bonding_obj();
-        let floor_plan = floor_planner::floor_plan(obj.segment_records());
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
         // s(0, y) = 0: no constraint on d_0 wires.
-        assert_eq!(obj.sxy(Fp::ZERO, y, &floor_plan), Fp::ZERO);
+        assert_eq!(obj.sxy(Fp::ZERO, y), Fp::ZERO);
         // s(x, 0) = 0: forces k(Y) = 0.
-        assert_eq!(obj.sxy(x, Fp::ZERO, &floor_plan), Fp::ZERO);
+        assert_eq!(obj.sxy(x, Fp::ZERO), Fp::ZERO);
     }
 
     /// sxy(x,y) = sx(x).eval(y) = sy(y).eval(x).
     #[test]
     fn evaluation_consistency() {
         let obj = bonding_obj();
-        let floor_plan = floor_planner::floor_plan(obj.segment_records());
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
-        let sxy = obj.sxy(x, y, &floor_plan);
-        assert_eq!(sxy, obj.sx(x, &floor_plan).eval(y));
-        assert_eq!(sxy, obj.sy(y, &floor_plan).eval(x));
+        let sxy = obj.sxy(x, y);
+        assert_eq!(sxy, obj.sx(x).eval(y));
+        assert_eq!(sxy, obj.sy(y).eval(x));
     }
 
     /// Build a trace with the SYSTEM gate zeroed and gates 1..n from (a, d)
@@ -647,10 +645,9 @@ mod tests {
     #[test]
     fn revdot_bonding_constraint() {
         let obj = bonding_obj();
-        let floor_plan = floor_planner::floor_plan(obj.segment_records());
 
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
-        let sy = obj.sy(y, &floor_plan);
+        let sy = obj.sy(y);
 
         let v = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let w = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -670,21 +667,20 @@ mod tests {
             .into_bonding_object()
             .unwrap()
             .into_inner();
-        let floor_plan = floor_planner::floor_plan(obj.segment_records());
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
-        assert_eq!(obj.sxy(Fp::ZERO, y, &floor_plan), Fp::ZERO);
-        assert_eq!(obj.sxy(x, Fp::ZERO, &floor_plan), Fp::ZERO);
+        assert_eq!(obj.sxy(Fp::ZERO, y), Fp::ZERO);
+        assert_eq!(obj.sxy(x, Fp::ZERO), Fp::ZERO);
 
-        let sxy = obj.sxy(x, y, &floor_plan);
-        assert_eq!(sxy, obj.sx(x, &floor_plan).eval(y));
-        assert_eq!(sxy, obj.sy(y, &floor_plan).eval(x));
+        let sxy = obj.sxy(x, y);
+        assert_eq!(sxy, obj.sx(x).eval(y));
+        assert_eq!(sxy, obj.sy(y).eval(x));
 
         let rx = build_trace(&[(
             Fp::random(|bytes| rand::rng().fill_bytes(bytes)),
             Fp::random(|bytes| rand::rng().fill_bytes(bytes)),
         )]);
-        assert_eq!(rx.revdot(&obj.sy(y, &floor_plan)), Fp::ZERO);
+        assert_eq!(rx.revdot(&obj.sy(y)), Fp::ZERO);
     }
 }

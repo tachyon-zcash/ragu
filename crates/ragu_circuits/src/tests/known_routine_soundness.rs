@@ -22,7 +22,7 @@ use ragu_primitives::{Element, allocator::Standard};
 use udon::field::Field;
 
 use crate::{
-    Circuit, CircuitExt, WithAux, floor_planner, into_wiring_object,
+    Circuit, CircuitExt, WithAux, into_wiring_object,
     polynomials::{Rank, TestRank},
 };
 
@@ -139,14 +139,14 @@ where
     // The fixed, witness-independent constraint structure s(X, Y), built by the
     // always-executing wiring drivers.
     let obj = into_wiring_object::<_, _, MyRank>(circuit).unwrap();
-    let plan = floor_planner::floor_plan(obj.segment_records());
-    let assignment = trace.assemble(&plan, Fp::ZERO).unwrap();
+    let plan = obj.floor_plan();
+    let assignment = trace.assemble(plan, Fp::ZERO).unwrap();
 
     // Sonic identity: <<r, r·z + s(X,y) + t(z)>> == k(y).
     let a = assignment.clone();
     let mut b = assignment.clone();
     b.dilate(z);
-    b.add_assign(&obj.sy(y, &plan));
+    b.add_assign(&obj.sy(y));
     b.add_assign(&MyRank::tz(z));
 
     expected == a.revdot(&b)

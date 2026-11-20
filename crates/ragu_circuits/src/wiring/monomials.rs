@@ -467,7 +467,7 @@ mod tests {
 
     use super::{Evaluator, Monomial, Monomials, Scope, Terms, Wire, canonical, scale};
     use crate::{
-        WiringObject, floor_planner, into_wiring_object,
+        WiringObject, into_wiring_object,
         polynomials::{Rank, TestRank},
         raw::CircuitAdapter,
         tests::SquareCircuit,
@@ -501,7 +501,7 @@ mod tests {
     /// The wiring polynomial of `SquareCircuit { times }`, written down.
     fn monomials(times: usize) -> Monomials<Fp> {
         let obj = object(times);
-        obj.monomials(&floor_planner::floor_plan(obj.segment_records()))
+        obj.monomials()
     }
 
     /// An evaluator over one segment of `num_constraints` constraints.
@@ -807,14 +807,13 @@ mod tests {
     fn agrees_with_the_evaluators() {
         for times in [0, 1, 2, 5, 10] {
             let obj = object(times);
-            let plan = floor_planner::floor_plan(obj.segment_records());
-            let monomials = obj.monomials(&plan);
+            let monomials = obj.monomials();
             for _ in 0..4 {
                 let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
                 let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
-                assert_eq!(monomials.eval(x, y), obj.sxy(x, y, &plan));
-                assert_eq!(monomials.eval(x, y), obj.sx(x, &plan).eval(y));
-                assert_eq!(monomials.eval(x, y), obj.sy(y, &plan).eval(x));
+                assert_eq!(monomials.eval(x, y), obj.sxy(x, y));
+                assert_eq!(monomials.eval(x, y), obj.sx(x).eval(y));
+                assert_eq!(monomials.eval(x, y), obj.sy(y).eval(x));
             }
             // Every monomial lies within the polynomial's degree bounds.
             assert!(monomials.iter().all(|m| m.x < 4 * TestRank::n()));
@@ -836,7 +835,10 @@ mod tests {
     #[test]
     #[should_panic(expected = "root gate count must match floor plan")]
     fn rejects_another_circuits_floor_plan() {
-        let plan = floor_planner::floor_plan(object(5).segment_records());
-        let _ = super::eval::<Fp, _, TestRank>(&CircuitAdapter(SquareCircuit { times: 2 }), &plan);
+        let five = object(5);
+        let _ = super::eval::<Fp, _, TestRank>(
+            &CircuitAdapter(SquareCircuit { times: 2 }),
+            five.floor_plan(),
+        );
     }
 }

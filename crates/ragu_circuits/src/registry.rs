@@ -64,7 +64,6 @@ use udon::{
 
 use crate::{
     BondingObject, Circuit, WiringObject,
-    floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
 };
 
@@ -279,20 +278,13 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .chain(self.application_steps)
             .collect();
 
-        // Compute floor plans for each circuit.
-        let floor_plans: Vec<Vec<ConstraintSegment>> = circuits
-            .iter()
-            .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
-            .collect();
-
-        let tag = Tag::derive(&circuits, &floor_plans);
+        let tag = Tag::derive(&circuits);
         #[cfg(any(test, feature = "test-utils"))]
         let tag = self.tag.map_or(tag, Tag);
 
         Ok(Registry {
             domain,
             circuits,
-            floor_plans,
             tag,
         })
     }
@@ -404,12 +396,9 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 pub struct Tag<F: Field>(F);
 
 impl<F: Field> Tag<F> {
-    /// Derives the tag of the registry holding `circuits`, laid out by
-    /// `floor_plans`: the hash of their wiring polynomials.
-    fn derive<R: Rank>(
-        circuits: &[Box<dyn WiringObject<F, R> + '_>],
-        floor_plans: &[Vec<ConstraintSegment>],
-    ) -> Self {
+    /// Derives the tag of the registry holding `circuits`: the hash of their
+    /// wiring polynomials.
+    fn derive<R: Rank>(circuits: &[Box<dyn WiringObject<F, R> + '_>]) -> Self {
         let mut state = Params::new().personal(b"ragu_registry___").to_state();
         let modulus = F::MODULUS;
         state.update(&(modulus.as_ref().len() as u64).to_le_bytes());
@@ -418,8 +407,8 @@ impl<F: Field> Tag<F> {
         }
         state.update(&(R::n() as u64).to_le_bytes());
         state.update(&(circuits.len() as u64).to_le_bytes());
-        for (circuit, floor_plan) in circuits.iter().zip(floor_plans) {
-            circuit.monomials(floor_plan).hash_into(&mut state);
+        for circuit in circuits {
+            circuit.monomials().hash_into(&mut state);
         }
         Self(F::from_uniform_bytes(state.finalize().as_array()))
     }
@@ -437,9 +426,6 @@ impl<F: Field> Tag<F> {
 pub struct Registry<'params, F: Field, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-
-    /// Per-circuit floor plans computed during finalization.
-    floor_plans: Vec<Vec<ConstraintSegment>>,
 
     /// Registry tag used to bind circuits to this registry.
     tag: Tag<F>,
@@ -516,7 +502,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         circuit: CircuitIndex,
         alpha: F,
     ) -> Result<sparse::Polynomial<F, R>> {
-        trace.assemble(&self.floor_plans[usize::from(circuit)], alpha)
+        trace.assemble(self.circuits[usize::from(circuit)].floor_plan(), alpha)
     }
 
     /// Returns the registry tag value.
@@ -582,7 +568,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         // global term to each mask slot inline.
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = self.bitreversed_index(i);
-            let mut v = circuit.sxy(x, y, &self.floor_plans[i]);
+            let mut v = circuit.sxy(x, y);
             if circuit.is_mask() {
                 v += global_xy;
             }
@@ -616,9 +602,8 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
 
         let mut evals = alloc::vec![tag_scalar; self.domain.size()];
         for (i, circuit) in self.circuits.iter().enumerate() {
-            evals[self.bitreversed_index(i)] += circuit
-                .monomials(&self.floor_plans[i])
-                .eval_at_powers(&x_powers, &y_powers);
+            evals[self.bitreversed_index(i)] +=
+                circuit.monomials().eval_at_powers(&x_powers, &y_powers);
         }
         evals
     }
@@ -634,7 +619,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         ragu_core::for_each_mut(&mut evals, |j, value| {
             let i = self.bitreversed_index(j);
             if let Some(circuit) = self.circuits.get(i) {
-                *value += circuit.sxy_with_powers(x, y, &powers, &self.floor_plans[i]);
+                *value += circuit.sxy_with_powers(x, y, &powers);
                 if circuit.is_mask() {
                     *value += global;
                 }
@@ -663,7 +648,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         ragu_core::for_each_mut(&mut evals, |position, value| {
             let i = usize::from(indices[position]);
             if let Some(circuit) = self.circuits.get(i) {
-                *value += circuit.sxy_with_powers(x, y, &powers, &self.floor_plans[i]);
+                *value += circuit.sxy_with_powers(x, y, &powers);
                 if circuit.is_mask() {
                     *value += global;
                 }
@@ -785,7 +770,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         &self,
         cache: &LagrangeCache<F>,
         init: impl FnOnce() -> T,
-        add_poly: impl Fn(&dyn WiringObject<F, R>, &[ConstraintSegment], F, &mut T),
+        add_poly: impl Fn(&dyn WiringObject<F, R>, F, &mut T),
     ) -> T {
         let mut result = init();
 
@@ -797,13 +782,13 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
                 for (j, coeff) in coeffs.iter().enumerate() {
                     let i = self.bitreversed_index(j);
                     if let Some(circuit) = self.circuits.get(i) {
-                        add_poly(&**circuit, &self.floor_plans[i], *coeff, &mut result);
+                        add_poly(&**circuit, *coeff, &mut result);
                     }
                 }
             }
             LagrangeCache::Assigned(i) => {
                 if let Some(circuit) = self.circuits.get(*i) {
-                    add_poly(&**circuit, &self.floor_plans[*i], F::ONE, &mut result);
+                    add_poly(&**circuit, F::ONE, &mut result);
                 }
             }
             LagrangeCache::Zero => {
@@ -821,7 +806,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         &self,
         cache: &LagrangeCache<F>,
         init: impl Fn() -> T + Sync,
-        add_poly: impl Fn(&dyn WiringObject<F, R>, &[ConstraintSegment], F, &mut T) + Sync,
+        add_poly: impl Fn(&dyn WiringObject<F, R>, F, &mut T) + Sync,
         combine: impl Fn(&mut T, T),
     ) -> T {
         let LagrangeCache::Arbitrary(coeffs) = cache else {
@@ -838,12 +823,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
             let end = (start + CIRCUITS_PER_JOB).min(self.circuits.len());
             for i in start..end {
                 let coefficient = coeffs[self.bitreversed_index(i)];
-                add_poly(
-                    &*self.circuits[i],
-                    &self.floor_plans[i],
-                    coefficient,
-                    result,
-                );
+                add_poly(&*self.circuits[i], coefficient, result);
             }
         });
         let mut result = init();
@@ -954,11 +934,11 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut poly = self.registry.w_cached_parallel(
             &self.cache,
             sparse::Polynomial::default,
-            |circuit, floor_plan, coefficient, result| {
+            |circuit, coefficient, result| {
                 let mut part = if fix_x {
-                    circuit.sx_with_powers(point, &powers, floor_plan)
+                    circuit.sx_with_powers(point, &powers)
                 } else {
-                    circuit.sy_with_powers(point, &powers, floor_plan)
+                    circuit.sy_with_powers(point, &powers)
                 };
                 part.scale(coefficient);
                 result.add_assign(&part);
@@ -987,8 +967,8 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut result = self.registry.w_cached_parallel(
             &self.cache,
             || F::ZERO,
-            |circuit, floor_plan, coefficient, result| {
-                *result += coefficient * circuit.sxy_with_powers(x, y, &powers, floor_plan);
+            |circuit, coefficient, result| {
+                *result += coefficient * circuit.sxy_with_powers(x, y, &powers);
             },
             |result, part| *result += part,
         );
@@ -1001,8 +981,8 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
-            |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sy(y, floor_plan);
+            |circuit, coeff, poly| {
+                let mut tmp = circuit.sy(y);
                 tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
@@ -1032,8 +1012,8 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
-            |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sx(x, floor_plan);
+            |circuit, coeff, poly| {
+                let mut tmp = circuit.sx(x);
                 tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
@@ -1065,8 +1045,8 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut result = self.registry.w_cached(
             &self.cache,
             F::Accumulator::default,
-            |circuit, floor_plan, coeff, result| {
-                F::mul_accumulate(result, &circuit.sxy(x, y, floor_plan), &coeff);
+            |circuit, coeff, result| {
+                F::mul_accumulate(result, &circuit.sxy(x, y), &coeff);
             },
         );
 
@@ -1179,8 +1159,8 @@ mod tests {
         }
         state.update(&(TestRank::n() as u64).to_le_bytes());
         state.update(&2u64.to_le_bytes());
-        for (circuit, plan) in registry.circuits.iter().zip(&registry.floor_plans) {
-            circuit.monomials(plan).hash_into(&mut state);
+        for circuit in &registry.circuits {
+            circuit.monomials().hash_into(&mut state);
         }
         assert_eq!(
             registry.tag(),
@@ -1222,8 +1202,7 @@ mod tests {
         let tag_term = registry.tag() * (x * y).pow_u64(4 * TestRank::n() as u64 - 1);
         let mut expected = alloc::vec![tag_term; registry.domain.size()];
         for (i, circuit) in registry.circuits.iter().enumerate() {
-            expected[registry.bitreversed_index(i)] +=
-                circuit.monomials(&registry.floor_plans[i]).eval(x, y);
+            expected[registry.bitreversed_index(i)] += circuit.monomials().eval(x, y);
         }
         assert_eq!(registry.wxy_over_domain(x, y), expected);
         // The seam other crates' tests use computes the same values.
