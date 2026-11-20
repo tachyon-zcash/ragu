@@ -111,9 +111,12 @@ verification keys.
 
 The combination of IPA commitments and an algebraic hash
 (Poseidon) means Ragu does not require FFTs or polynomial
-multiplications except at uncommon protocol boundaries, as the
-in-circuit verifier only processes succinct accumulator instances
-and field-native hashes. This is in sharp contrast to the
+multiplications of the size of a circuit except at uncommon protocol
+boundaries, as the in-circuit verifier only processes succinct
+accumulator instances and field-native hashes. The only FFTs of a fuse
+interpolate one restriction of each registry over that registry's
+domain, whose size is on the order of the number of registered
+circuits. This is in sharp contrast to the
 hand-optimized PlonK-based arithmetization used in Halo2, which
 relies on FFT-intensive polynomial IOPs.
 

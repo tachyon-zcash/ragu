@@ -2,8 +2,8 @@
 
 A **succinct non-interactive argument of knowledge (SNARK)** is a
 cryptographic proof system that allows a prover to convince a verifier
-that a statement is true, without revealing any information beyond the
-validity of the statement itself. The key properties are:
+that a statement is true with a proof that is short and cheap to check.
+The key properties are:
 
 - **Succinct**: the proof is small (much smaller than the computation
   it attests to) and fast to verify.
@@ -11,6 +11,11 @@ validity of the statement itself. The key properties are:
   verifier; no back-and-forth is needed.
 - **Argument of knowledge**: the prover not only demonstrates that a
   valid witness _exists_, but that they actually _know_ one.
+
+A SNARK need not hide anything. **Zero knowledge**, the property that a
+proof reveals nothing beyond the validity of its statement, is separate,
+and a SNARK that has it is a zk-SNARK. Ragu's proofs do not currently
+[provide it](../protocol/ladder/assumptions.md).
 
 SNARKs are the building blocks of
 [proof-carrying data](../concepts/pcd.md): each step in a PCD computation
@@ -30,15 +35,19 @@ requires the prover to produce a succinct proof at every recursive step,
 which is expensive. A NARK defers that cost: the prover carries the
 proof witness forward in uncompressed form and only compresses at the
 boundary where the proof leaves the recursive pipeline. The
-[split-accumulation](../protocol/core/accumulation/index.md) technique
+[split-accumulation](../protocol/index.md#accumulation-and-folding) technique
 makes this practical — the recursive verifier only processes the
 succinct instance, and the witness is accumulated without compression.
 
 Ragu's internal proof system is a NARK. Its instance contains
-commitments, evaluation claims, and the IPA accumulator state. Its
+commitments and the claims of its
+[accumulator](../protocol/construction/proof.md#accumulator): a revdot
+claim, a batched opening and a registry restriction. Its
 witness contains the full polynomial vectors and auxiliary data needed
-by the decider. When proofs leave the recursive pipeline, they can be
-[compressed](../concepts/pcd.md) to a succinct form for transmission.
+by the decider. No inner product argument runs during recursion. When
+proofs leave the recursive pipeline, they can be
+[compressed](../concepts/pcd.md) to a succinct form for transmission, and
+compression is where an IPA proves the accumulated opening.
 
 ## Trusted setup
 

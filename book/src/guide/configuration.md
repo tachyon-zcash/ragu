@@ -86,13 +86,16 @@ constraint limits:
 - **Gates**: up to 2^(N−2)
 - **Constraints**: up to 2^N
 
-Currently only `R<7>` (testing) and `R<13>` (production) are implemented.
-See the `Rank` trait documentation for how to add new values.
+Currently `R<7>`, `R<13>`, `R<14>` and `R<15>` are implemented. Three of them
+have aliases: `TestRank`, `WalletRank` and `AggregatorRank`. See the `Rank`
+trait documentation for how to add new values.
 
 | Rank | Gate Limit | Constraint Limit | Use Case |
 |------|---------------------|-------------|----------|
-| `R<7>` | 32 | 128 | Unit tests |
-| `R<13>` | 2,048 | 8,192 | Production |
+| `R<7>` (`TestRank`) | 32 | 128 | Unit tests |
+| `R<13>` (`WalletRank`) | 2,048 | 8,192 | Production |
+| `R<14>` | 4,096 | 16,384 | Tests of circuits that exceed `R<13>` |
+| `R<15>` (`AggregatorRank`) | 8,192 | 32,768 | The Aggregator profile |
 
 ### Choosing the Right Rank
 
@@ -137,11 +140,17 @@ Headers are the data that flows through your proof tree. Each proof carries:
 
 ### Sizing Your Headers
 
+The last of the HEADER_SIZE elements is the header type's suffix, so the
+encoding that a header's `Output` writes can hold at most HEADER_SIZE − 1
+elements. A shorter encoding is padded with zeros up to the suffix. A longer
+one is rejected when the header is encoded, with
+`Error::MalformedEncoding`.
+
 The size depends on what data you need to track:
 
-**Simple hash (1 element)**:
+**Simple hash (1 element, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 1>::new()
+ApplicationBuilder::<Pasta, R<13>, 2>::new()
 
 struct MyHeader;
 impl Header<F> for MyHeader {
@@ -149,9 +158,9 @@ impl Header<F> for MyHeader {
 }
 ```
 
-**Merkle root + metadata (4 elements)**:
+**Merkle root + metadata (4 elements, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 4>::new()
+ApplicationBuilder::<Pasta, R<13>, 5>::new()
 
 struct MyHeader;
 impl Header<F> for MyHeader {
@@ -164,9 +173,9 @@ impl Header<F> for MyHeader {
 }
 ```
 
-**Complex state (8+ elements)**:
+**Complex state (8+ elements, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 8>::new()
+ApplicationBuilder::<Pasta, R<13>, 9>::new()
 
 // Multiple values, counters, flags, etc.
 ```
@@ -187,7 +196,7 @@ ApplicationBuilder::<Pasta, R<13>, 8>::new()
 **Rule of thumb**: Use the minimum size that fits your data. Don't
 over-allocate.
 
-**Upper bound**: for the Standard profile at the production rank `R<13>`,
+**Upper bound**: for the Standard profile at the wallet rank `R<13>`,
 the largest header size is 201 elements. Ragu's challenge binder circuits
 load the headers of both children and the step's own beside the online
 openings, and at 201 the largest binder uses all 2048 gates. A larger header fails `finalize` with
@@ -201,13 +210,15 @@ for the selected profile and registered application.
 If you need to change HEADER_SIZE:
 
 1. Update `ApplicationBuilder` parameter
-2. Update all `Header::Output` types to match
+2. Check that every `Header::Output` type still writes at most
+   `NEW_SIZE - 1` elements
 3. Rebuild application:
    ```rust
    let app = ApplicationBuilder::<Pasta, R<13>, NEW_SIZE>::new()
    ```
 
-The type system will catch mismatches at compile time.
+The compiler does not check a header's size against HEADER_SIZE. An encoding
+that is too long fails at runtime, when the header is encoded.
 
 ## Complete Configuration Example
 
@@ -231,8 +242,8 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 **Why these parameters?**
 - `Pasta`: Standard curve cycle for PCD
 - `R<13>`: 2,048 gates — enough for most steps
-- `4`: Four field elements per header - balance between flexibility and
-  performance
+- `4`: Four field elements per header, three of data and the suffix - balance
+  between flexibility and performance
 
 ## Registry Tags
 
@@ -240,8 +251,9 @@ Each of the application's two registries carries a registry tag $\kappa$: one
 field element, injected into every circuit's wiring polynomial at a reserved
 position. The tag exists so that whoever controls the circuit definitions
 cannot adapt them to Fiat-Shamir challenges that have already been derived; the
-[wiring chapter](../protocol/local/wiring.md) shows where it sits, and the
-`Tag` documentation in `ragu_circuits::registry` gives the argument.
+[wiring chapter](../protocol/construction/wiring.md#system-gate) shows where it
+sits, and the `Tag` documentation in `ragu_circuits::registry` gives the
+argument.
 
 `finalize` derives both tags from the registered circuits. Each wiring
 polynomial $s_i(X, Y)$ is written down as the list of its nonzero monomials
@@ -318,21 +330,28 @@ let prod_app = ApplicationBuilder::<Pasta, WalletRank, 8>::new()
 Proofs from different configurations are **not compatible** - they're
 entirely separate proof systems.
 
-### ✗ Header Size Mismatch
+### ✗ Header Too Large
 
 ```rust
-// Application configured for 4 elements
+// Application configured for 4 elements: 3 of data and the suffix
 ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
-// But Header only provides 1!
+// But the header writes 4!
 impl Header<F> for MyHeader {
-    type Output = Kind![F; Element<'_, _>];  // Only 1 element
+    type Output = Kind![F; (
+        Element<'_, _>,
+        Element<'_, _>,
+        Element<'_, _>,
+        Element<'_, _>,
+    )];
 }
 ```
 
-**Error**: Type mismatch at compile time.
+**Error**: `MalformedEncoding` at runtime, when the header is encoded.
 
-**Fix**: Match HEADER_SIZE to your header's actual size.
+**Fix**: Raise HEADER_SIZE to at least one more than the number of elements
+that your largest header writes. A header that writes fewer is padded with
+zeros.
 
 ### ✗ Rank Too Small
 

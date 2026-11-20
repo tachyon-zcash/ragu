@@ -5,10 +5,10 @@
 The diagram below shows the lifecycle of a Ragu proof. The user defines a
 circuit and witness, which are synthesized through the
 [`Driver`](../guide/drivers/index.md) API into a
-[Bootle16 constraint system](../protocol/core/arithmetization.md). Polynomial
-commitments are computed via the IPA scheme, and the proof passes through a
-sequence of stages. Finalizing an application builds its base proof once;
-seeding and fusing are then the same accumulation step over one or two
+[Bootle16 constraint system](../protocol/construction/arithmetization.md).
+Polynomial commitments are computed via the IPA scheme, and the proof passes
+through a sequence of stages. Finalizing an application builds its base proof
+once; seeding and fusing are then the same accumulation step over one or two
 existing proofs, alternating between curves in the Pasta cycle. A proof can be
 [compressed](../protocol/recursion/compression.md) at the end into a terminal
 succinct form.
@@ -154,5 +154,6 @@ APIs that represent, compute, or manipulate them.
 | Seed (first step) | `Application::seed()` | `ragu_pcd` |
 | Fuse (accumulate) | `Application::fuse()` | `ragu_pcd` |
 | [Compression](../protocol/recursion/compression.md) (terminal proof) | `Application::compress()`, `Application::verify_compressed()`, `CompressedProof<C>` | `ragu_pcd` |
+| [Decompression](../protocol/recursion/decompression.md) (a compressed proof continued by a second application) | `profile::Aggregator`, `profile::Decompression`, `Application::decompress()`, behind the `unstable-aggregator` feature | `ragu_pcd` |
 
 [Pasta curve cycle]: https://electriccoin.co/blog/the-pasta-curves-for-halo-2-and-beyond/

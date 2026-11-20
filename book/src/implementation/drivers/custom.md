@@ -56,11 +56,14 @@ Each type controls a specific axis of behavior:
   [`Simulator`]) use `F` itself. The [`Emulator`] in wired mode also uses `F`,
   while wireless mode uses `()`.
 
-* **`MaybeKind`**: determines whether witness-producing closures (on
-  `gate()`/`mul()`) execute. `Empty` means those closures are never called
-  and their bodies are dead-code-eliminated after monomorphization.
-  `Always<()>` means they always execute. Expression-building closures
-  on `add()` and `enforce_zero()` are not gated by `MaybeKind` —
+* **`MaybeKind`**: determines whether witness values exist, and with them
+  whether witness-producing closures (on `gate()`/`mul()`) can execute.
+  `Empty` means those closures are never called and their bodies are
+  dead-code-eliminated after monomorphization. `Always<()>` means the values
+  are available, and the driver calls the closures when it needs their
+  assignments: the [`Simulator`] calls every one, and the wireless
+  [`Emulator`], which tracks no wires, calls none. Expression-building
+  closures on `add()` and `enforce_zero()` are not gated by `MaybeKind` —
   drivers always call them when they need constraint structure.
 
 * **`LCadd`** and **`LCenforce`**: the [`LinearExpression`] types used by
@@ -143,7 +146,8 @@ impl<F: udon::field::Field> DriverTypes for Simulator<F> {
 The key differences from `PhantomData`:
 
 1. **`ImplWire = F`**: wires carry their assigned field values.
-2. **`MaybeKind = Always<()>`**: witness closures always execute.
+2. **`MaybeKind = Always<()>`**: witness values are available, and the
+   simulator calls every witness closure.
 3. **`LCadd` and `LCenforce` = `DirectSum<F>`** — linear expressions
    accumulate terms and evaluate their sum, rather than ignoring them.
 4. **`Extra = bool`**: tracks whether $C$ is zero so that `assign_extra`
@@ -170,7 +174,8 @@ fn gate(
 }
 ```
 
-The closure is called because `MaybeKind = Always<()>`. The returned `bool`
+The simulator calls the closure, which `MaybeKind = Always<()>` permits. The
+returned `bool`
 records whether $C$ is zero—if it is, the $D$ wire is unconstrained and
 `assign_extra` can place an arbitrary value there.
 
@@ -219,20 +224,20 @@ its constraint counter.
 ### `MaybeKind`: `Empty` vs `Always`
 
 `MaybeKind` controls whether witness-producing closures (on
-`gate()`/`mul()`) run. It does not govern expression-building closures
+`gate()`/`mul()`) can run. It does not govern expression-building closures
 on `add()` and `enforce_zero()`; drivers always call those when they
 need constraint structure.
 
 | `MaybeKind` | Witness closures | `DriverValue<D, T>` | Use Case |
 |---|---|---|---|
 | `Empty` | Dead-code-eliminated | `Empty` (zero-size) | Type-level work, counting |
-| `Always<()>` | Always invoked | `Always<T>` (holds value) | Testing, simulation, proving |
+| `Always<()>` | Invoked when the driver needs assignments | `Always<T>` (holds value) | Testing, simulation, proving |
 
 A driver that only needs constraint structure (gate counts, wire
 topology, linear combination shape) should use `Empty`, because witness
 closures are dead-code-eliminated and `DriverValue` collapses to a
 zero-size type. A driver that evaluates circuits and checks constraint
-satisfaction should use `Always<()>`, which invokes witness closures
+satisfaction should use `Always<()>`, which lets it invoke witness closures
 and carries real values through `DriverValue`.
 
 ### `LinearExpression`: `()` vs `DirectSum`

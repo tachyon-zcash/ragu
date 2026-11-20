@@ -27,33 +27,47 @@
   - [Step Capacity and Proving Cost](guide/capacity.md)
 - [Part II: Protocol Design]()
   - [Overview](protocol/index.md) <!-- todo -->
-  - [Preliminaries]()
-    - [Cryptographic Assumptions](protocol/prelim/assumptions.md) <!-- todo -->
-    - [Notation](protocol/prelim/notation.md) <!-- todo -->
-    - [Structured Vectors](protocol/prelim/structured_vectors.md) <!-- todo -->
-    - [Nested Commitment](protocol/prelim/nested_commitment.md) <!-- todo -->
-    - [Bulletproofs IPA](protocol/prelim/bulletproofs.md) <!-- todo -->
-    - [Transcript](protocol/prelim/transcript.md) <!-- todo -->
-  - [Core Construction]()
-    - [Arithmetization](protocol/core/arithmetization.md) <!-- todo -->
-    - [NARK](protocol/core/nark.md) <!-- todo -->
-    - [Split-Accumulation Schemes](protocol/core/accumulation/index.md) <!-- todo -->
-      - [PCS Batched Evaluation](protocol/core/accumulation/pcs.md) <!-- todo -->
-      - [Wiring Consistency](protocol/core/accumulation/wiring.md) <!-- todo -->
-      - [Revdot Product](protocol/core/accumulation/revdot.md) <!-- todo -->
-  - [Extensions]()
-    - [Registry Polynomial](protocol/extensions/registry.md) <!-- todo -->
-    - [Endoscalars](protocol/extensions/endoscalar.md) <!-- todo -->
-    - [Staging](protocol/extensions/staging.md) <!-- todo -->
-  - [Recursion](protocol/recursion/index.md)
-    - [Public Inputs](protocol/recursion/public_inputs.md)
-    - [Compression](protocol/recursion/compression.md)
-    - [Decompression](protocol/recursion/decompression.md)
+  - [Construction](protocol/construction/index.md)
+    - [Arithmetization](protocol/construction/arithmetization.md)
+      - [Wiring and Instance Polynomials](protocol/construction/wiring.md)
+      - [Stages and Bonding Polynomials](protocol/construction/staging.md)
+      - [Registry](protocol/construction/registry.md)
+    - [Curve Cycle](protocol/construction/cycle.md)
+    - [Setup](protocol/construction/setup.md)
+    - [Proof](protocol/construction/proof.md)
+    - [Claims and Fold](protocol/construction/claims.md)
+    - [Batched Opening](protocol/construction/batch.md)
+    - [Walks](protocol/construction/walks.md)
+    - [Stage Contents](protocol/construction/stage_contents.md)
+    - [Internal Circuits](protocol/construction/internal_circuits.md)
+    - [Protocol](protocol/construction/protocol.md)
+    - [Fuse](protocol/construction/fuse.md)
+    - [Base Case](protocol/construction/base_case.md)
+    - [Decider](protocol/construction/decider.md)
+  - [The Refinement Ladder](protocol/ladder/index.md)
+    - [Rung 0: A Verifier of the Whole History](protocol/ladder/rung_00.md)
+    - [Rung 1: One Node, One Equation](protocol/ladder/rung_01.md)
+    - [Rung 2: Commitments and Three Expensive Jobs](protocol/ladder/rung_02.md)
+    - [Rung 3: An Accumulator of Carried Claims](protocol/ladder/rung_03.md)
+    - [Rung 4: A Merge of Two Revdot Claims](protocol/ladder/rung_04.md)
+    - [Rung 5: One Quotient Instead of a Matrix of Cross Terms](protocol/ladder/rung_05.md)
+    - [Rung 6: A Fold in Two Layers](protocol/ladder/rung_06.md)
+    - [Rung 7: Evaluation Checks for the Folded Polynomials](protocol/ladder/rung_07.md)
+    - [Rung 8: The Registry and the Merge of Wiring Claims](protocol/ladder/rung_08.md)
+    - [Rung 9: One Quotient Test for Many Openings](protocol/ladder/rung_09.md)
+    - [Rung 10: One Opening, Carried Forward](protocol/ladder/rung_10.md)
+    - [Rung 11: A Second Curve and a Second Accumulator](protocol/ladder/rung_11.md)
+    - [Rung 12: A Verifier Split Across Circuits by Stages](protocol/ladder/rung_12.md)
+    - [Rung 13: Challenges Hashed Inside the Circuits](protocol/ladder/rung_13.md)
+    - [Rung 14: Bindings of Claims to the Statement](protocol/ladder/rung_14.md)
+    - [Rung 15: The Decider at the Root](protocol/ladder/rung_15.md)
+    - [Rung 16: Compression of the Decider's Checks](protocol/ladder/rung_16.md)
+    - [The Ladder at a Glance](protocol/ladder/glance.md)
+    - [Assumptions of the Argument](protocol/ladder/assumptions.md)
+  - [Compression](protocol/recursion/compression.md)
+  - [Decompression](protocol/recursion/decompression.md)
   - [Analysis](protocol/analysis.md) <!-- todo -->
   - [Poly Oracle](protocol/poly-oracle.md) <!-- todo -->
-  - [Local (Sean's Corner!)]()
-    - [Arithmetization](protocol/local/arithmetization.md)
-    - [Wiring and Instance Polynomials](protocol/local/wiring.md)
 - [Part III: Implementation]()
   - [Architecture Overview](implementation/arch.md) <!-- todo -->
   - [Documenting Circuit Code](implementation/circuit-code-documentation.md)
@@ -64,31 +78,6 @@
   - [Staging](implementation/staging.md) <!-- todo -->
   - [Drivers]()
     - [Writing Custom Drivers](implementation/drivers/custom.md) <!-- todo -->
-- [Part IV: Formal Verification]()
-  - [Scope](fv/index.md)
-  - [The Clean Framework](fv/clean/index.md)
-    - [The Circuit Monad](fv/clean/circuit.md)
-    - [A Tiny Multiplication Circuit](fv/clean/mul.md)
-    - [Provable Types and Structs](fv/clean/provable.md)
-    - [Expressions and Environment](fv/clean/expression.md)
-    - [Operations](fv/clean/operations.md)
-    - [Formal Circuits](fv/clean/formal.md)
-    - [A Full Example](fv/clean/example.md)
-    - [Compile-Time Parameters](fv/clean/parameters.md)
-  - [Verified Circuits](fv/circuits/index.md)
-    - [Extraction](fv/circuits/extraction.md)
-    - [Inputs, Outputs, and Serialization](fv/circuits/serialization.md)
-    - [Composable Gadget Contracts](fv/circuits/contracts.md)
-    - [Fingerprint Equivalence Check](fv/circuits/fingerprint.md)
-    - [Direct Randomized Polynomial Check](fv/circuits/polynomial-fingerprint.md)
-    - [Assumptions](fv/circuits/assumptions.md)
-    - [CI Integration](fv/circuits/ci.md)
-- [Part V: Fuzzing]()
-  - [Overview](fuzzing/index.md) <!-- todo -->
-  - [Oracles](fuzzing/oracles.md) <!-- todo -->
-  - [Targets](fuzzing/targets.md) <!-- todo -->
-  - [Corpus and Triage](fuzzing/corpus.md) <!-- todo -->
-  - [Scheduled Runs](fuzzing/scheduled.md) <!-- todo -->
 
 ---
 
@@ -98,3 +87,14 @@
 - [Related Work](appendix/related.md) <!-- todo -->
 - [SNARKs](appendix/snarks.md) <!-- todo -->
 - [Terminology](appendix/terminology.md) <!-- todo -->
+
+---
+
+# Recycle Bin
+
+- [NARK](recycle/nark.md) <!-- todo -->
+- [Split-Accumulation Schemes](recycle/accumulation.md) <!-- todo -->
+- [Wiring Consistency](recycle/wiring_consistency.md) <!-- todo -->
+- [Nested Commitment](recycle/nested_commitment.md) <!-- todo -->
+- [Bulletproofs IPA](recycle/bulletproofs.md) <!-- todo -->
+- [Endoscalars](recycle/endoscalar.md) <!-- todo -->

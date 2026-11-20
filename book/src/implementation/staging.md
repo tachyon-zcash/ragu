@@ -1,6 +1,6 @@
 # Staging Implementation
 
-The [protocol chapter on staging](../protocol/extensions/staging.md) defines
+The [protocol chapter on staging](../protocol/construction/staging.md) defines
 the math: a trace polynomial $r(X)$ is decomposed into stage polynomials
 $a(X), b(X), \ldots$ plus a final trace $r'(X)$, each independently
 committable and each guaranteed well-formed by a [stage mask][stagemask].

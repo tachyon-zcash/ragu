@@ -559,7 +559,7 @@ fn print_internal_circuit_constraint_counts() {
 }
 
 /// Helper test to print the parameters the book's local degree ledger in
-/// `book/src/protocol/extensions/endoscalar.md` is derived from.
+/// `book/src/recycle/endoscalar.md` is derived from.
 /// Both point counts include the initial F point, so the fold's degree is
 /// one less than the printed count.
 /// Run with: `cargo test -p ragu_pcd --release print_ledger -- --nocapture`
@@ -571,7 +571,7 @@ fn print_ledger_parameters() {
 
     use crate::profile::Standard;
 
-    println!("\n// Ledger parameters for book/src/protocol/extensions/endoscalar.md:");
+    println!("\n// Ledger parameters for book/src/recycle/endoscalar.md:");
     println!(
         "native revdot: M = {}, N = {}",
         native::FOLD_GROUP_SIZE,

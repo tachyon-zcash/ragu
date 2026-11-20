@@ -50,6 +50,11 @@ Chained endoscalar operations added 455 gates per operation:
 
 Four chained endoscalar operations fit.
 
+This sweep predates the current endoscaling, which takes a 143-bit endoscalar
+and costs 480 gates per operation, or 433 with
+[hoisted](../protocol/construction/cycle.md#endoscalars) products. The sweep
+has not been repeated, so the table does not give the current limit.
+
 ### Repeated Squeezes
 
 Squeezing several field elements from one sponge cost less than creating a new

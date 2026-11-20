@@ -141,8 +141,10 @@ configuration is installed, and every proof built on it then fails
 verification, so a stored proof must be keyed by what fixes it. Like every
 uncompressed proof it is not zero-knowledge: for a profile with an extension
 it holds the extension's polynomials over the prover context, so store it
-only if that context holds nothing confidential. The built-in profiles have no
-extension.
+only if that context holds nothing confidential. The bootstrap proofs of the
+built-in profiles reveal nothing: the standard profile has no extension, and
+the aggregator's extension computes over the bootstrap proof of the wallet
+application, which attests nothing.
 
 ### `fuse`
 
@@ -212,7 +214,7 @@ using a dedicated rerandomization step.
 ## Unified Accumulator Structure
 
 Ragu uses an
-_[accumulation scheme](../protocol/core/accumulation/index.md)_
+_[accumulation scheme](../protocol/construction/index.md)_
 (similar to [Halo]) to achieve efficient recursion. Rather than fully
 verifying each child proof inside the circuit,
 proofs are _folded_ together deferring expensive verification work while
@@ -246,7 +248,11 @@ step is performed at certain boundary conditions for bandwidth
 reasons. For instance, in shielded transaction aggregation,
 broadcasting transaction data in compressed mode optimizes for
 bandwidth. A [compressed proof](../protocol/recursion/compression.md) is
-terminal: it can be verified but not folded further.
+terminal for the application that made it: it can be verified but not folded
+further. An application of the aggregator profile, which is unaudited and
+behind the `unstable-aggregator` feature, can
+[decompress](../protocol/recursion/decompression.md) a compressed proof of a
+standard application into a proof of its own, and fold that.
 
 ### Uncompressed (Split-Accumulation Form)
 
@@ -280,6 +286,6 @@ For deeper background, see
 
 The `Proof` type contains the cryptographic data required for
 verification, organized into components that mirror the protocol's
-[staging system](../protocol/extensions/staging.md). Each proof
+[staging system](../protocol/construction/staging.md). Each proof
 component captures polynomials and commitments on both the host and
 nested curves.

@@ -160,7 +160,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
     /// the aggregator rank beside the stages it reserves, which cuts the
     /// walks and with them the proof's polynomials by more than the ratio
     /// to the wallet rank's four, since the sides size each other.
-    pub const ENDOSCALINGS_PER_STEP: usize = 14;
+    pub const ENDOSCALINGS_PER_STEP: usize = 17;
 
     /// Checks that the hooks register at the aggregator rank for the
     /// profile's header size. The hooks are generic over the rank and the

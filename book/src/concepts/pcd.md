@@ -125,11 +125,14 @@ strings because these proofs do not ordinarily take the form of a succinct
 proof. We refer to this as its **uncompressed** mode. With extra computational
 effort, it is possible to create a
 [**compressed**](../protocol/recursion/compression.md) proof that is orders of
-magnitude smaller. Compression is terminal: a compressed proof can be verified
-on its own but cannot be fused further. Like an uncompressed proof, it does
-not yet provide zero knowledge (see below). Due to the extra cost, compression
-should be reserved for the boundaries of application logic, such as when a
-succinct proof must be communicated to a third party.
+magnitude smaller. Compression is terminal for the application that performs
+it: a compressed proof can be verified on its own but cannot be fused further.
+A second application can continue from it only by
+[decompressing](../protocol/recursion/decompression.md) it, through a profile
+that is unaudited and behind an unstable feature. Like an uncompressed proof, a
+compressed proof does not yet provide zero knowledge (see below). Due to the
+extra cost, compression should be reserved for the boundaries of application
+logic, such as when a succinct proof must be communicated to a third party.
 
 In its uncompressed form, a PCD can be passed through [`rerandomize`] to produce
 a fresh proof of the same certified data. The current construction does not yet
