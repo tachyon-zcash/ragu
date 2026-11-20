@@ -162,8 +162,8 @@ where
     Ok(Report { gates, satisfied })
 }
 
-/// The polynomials and masks of side `S`'s online stages, unblinded, which
-/// every circuit of the side loads first.
+/// The polynomials and masks of side `S`'s online stages, with a zero alpha,
+/// which every circuit of the side loads first.
 #[allow(clippy::type_complexity)]
 fn online_stages<S: Side<Pasta>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
@@ -187,8 +187,8 @@ fn online_stages<S: Side<Pasta>, R: Rank>(
 }
 
 /// The polynomials and masks of the stages every circuit of side `S`
-/// loads, unblinded: the online stages, the front, the lifts and the work
-/// stages.
+/// loads, with a zero alpha: the online stages, the front, the lifts and the
+/// work stages.
 #[allow(clippy::type_complexity)]
 fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
@@ -837,7 +837,7 @@ fn scalings_hold_their_digits_to_the_other_sides_stage() {
 /// at that header's $k(y)$ and at no other's.
 /// The step binding holds the host curve's $G'$ in the decompression
 /// step and nothing in any other. The polynomial $s(X)$ over the round
-/// challenges the circuit-field side holds commits, unblinded, to the
+/// challenges the circuit-field side holds commits to the
 /// $G'$ the scalar-field side holds. With the flag set, the circuit-field
 /// side accepts the opening of that polynomial and no other value, and
 /// the transcript's last squeeze as the staged digest and no other value,
@@ -940,7 +940,7 @@ fn the_step_binding_holds_g_prime_to_the_slot() {
 
 /// The nested curve's $G'$ is the commitment of the step's online Fq
 /// polynomial, in every step. The polynomial $s(X)$ over the round
-/// challenges the scalar-field side holds commits, unblinded, to the $G'$
+/// challenges the scalar-field side holds commits to the $G'$
 /// the circuit-field side holds and exposes. The scalar-field side
 /// accepts the opening of that polynomial at a point and no other value,
 /// and exposes the opening it took.
@@ -1052,7 +1052,7 @@ fn statement_circuit_exposes_the_output_header() {
 }
 
 /// The points each side's binding circuit exposes, at the aggregator
-/// rank: the unblinded commitments of the scalar-field side's run stages,
+/// rank: the zero-alpha commitments of the scalar-field side's run stages,
 /// which the transcript absorbed, and of its lifts and digits stages,
 /// which the circuit-field side recomputes, then the nested curve's $G'$
 /// that side holds; and the commitment of the circuit-field side's digits
@@ -1168,7 +1168,7 @@ fn binding_circuits_expose_the_other_sides_commitments() {
 
     // Another compression of the same proof: the sides prepared from it
     // expose its commitments, not this one's. The runs before the first
-    // blinded message are functions of the proof and the challenges the
+    // random message are functions of the proof and the challenges the
     // instance fixes, and agree; from that message on, by the IPA's
     // masking commitment at the latest, every run differs, and so do the
     // lifts and the digits.
@@ -1189,13 +1189,13 @@ fn binding_circuits_expose_the_other_sides_commitments() {
         .position(|run| *run == Run::SCommitment)
         .expect("the IPA's masking commitment is a run");
     assert!(first >= 2, "the instance's runs agree");
-    assert!(first <= masking, "the IPA's masking commitment is blinded");
+    assert!(first <= masking, "the IPA's masking commitment is random");
     assert!(
         ours[first..]
             .iter()
             .zip(&other_nested[first..])
             .all(|(ours, theirs)| ours != theirs),
-        "every run from the first blinded message on, the lifts and the digits differ between compressions"
+        "every run from the first random message on, the lifts and the digits differ between compressions"
     );
     assert_ne!(exposed(&sides.nested), other_native);
 }

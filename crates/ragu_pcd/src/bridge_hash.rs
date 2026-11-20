@@ -7,7 +7,7 @@
 //! anchor, recomputes the same value with [`digest`], without building an
 //! [`Application`](crate::Application).
 //!
-//! [`digest`] is the commitment of the unblinded stage polynomial [`rx`] that
+//! [`digest`] is the commitment of the zero-alpha stage polynomial [`rx`] that
 //! holds the point's two coordinates, so it depends on the rank and the
 //! nested generators. It is the honest prover's encoding: an accepted bridge
 //! digest binds the point but need not use this encoding or be fixed before

@@ -1365,7 +1365,7 @@ fn forged_base_case_under_another_circuit_id_is_rejected() {
 
 /// The `s_prime` bridge carries the commitment of the step's own
 /// application trace, so the trace is fixed before the $y$ its claim is
-/// folded at. A prover that swaps in the same trace under another blinding
+/// folded at. A prover that swaps in the same trace under another alpha
 /// after $y$ is squeezed is rejected. The swapped trace satisfies the
 /// step's circuit as the committed one does, which the same edit made
 /// before the trace is committed shows, so only the `loading` circuit's
@@ -1385,12 +1385,12 @@ fn application_trace_swapped_after_y_is_rejected() {
             )
             .expect("honest seed");
 
-        // The blinding of a trace sits at the `a` wire of its SYSTEM gate,
+        // The alpha of a trace sits at the `a` wire of its SYSTEM gate,
         // which no constraint reads.
-        let blind = ragu_circuits::staging::stage_rx::<_, R>(Fp::from(5), 1, 1, &[])
-            .expect("a blinding-only polynomial");
-        let reblind = |application: &mut crate::fuse::NativeApplication<C, R>| {
-            application.rx.add_assign(&blind);
+        let delta = ragu_circuits::staging::stage_rx::<_, R>(Fp::from(5), 1, 1, &[])
+            .expect("an alpha-only polynomial");
+        let shift_alpha = |application: &mut crate::fuse::NativeApplication<C, R>| {
+            application.rx.add_assign(&delta);
             application.commitment = ReferenceBackend::sparse_commit_to_affine(
                 &application.rx,
                 C::host_generators(app.params),
@@ -1404,12 +1404,12 @@ fn application_trace_swapped_after_y_is_rejected() {
                 Fp::from(7),
                 unit.clone(),
                 unit.clone(),
-                reblind,
+                shift_alpha,
             )
             .expect("the control assembles a proof");
         assert!(
             verifies(app, &control, &mut rng),
-            "the same blinding committed before y verifies"
+            "the same alpha committed before y verifies"
         );
 
         let (swapped, ()) = app
@@ -1419,7 +1419,7 @@ fn application_trace_swapped_after_y_is_rejected() {
                 Fp::from(7),
                 unit.clone(),
                 unit,
-                |_, application| reblind(application),
+                |_, application| shift_alpha(application),
             )
             .expect("the swapping prover assembles a proof");
         assert!(
@@ -1439,7 +1439,7 @@ fn application_trace_swapped_after_y_is_rejected() {
 /// The `s_prime` bridge carries the native preamble's commitment too: the
 /// stage is committed after $w$, but it is fixed before the $y$ the
 /// children's claims are folded at over its wires. A prover that swaps in
-/// the same stage under another blinding after $y$ is squeezed changes no
+/// the same stage under another alpha after $y$ is squeezed changes no
 /// value a circuit reads, so only the nested `collapse` circuit's hold of
 /// the exported commitment to the bridge's copy can reject it.
 #[test]
@@ -1461,10 +1461,10 @@ fn native_preamble_swapped_after_y_is_rejected() {
             "the honest control verifies"
         );
 
-        // The blinding of a stage sits at the `a` wire of the SYSTEM gate,
+        // The alpha of a stage sits at the `a` wire of the SYSTEM gate,
         // outside the stage's values.
-        let blind = ragu_circuits::staging::stage_rx::<_, R>(Fp::from(5), 1, 1, &[])
-            .expect("a blinding-only polynomial");
+        let delta = ragu_circuits::staging::stage_rx::<_, R>(Fp::from(5), 1, 1, &[])
+            .expect("an alpha-only polynomial");
         let (swapped, ()) = app
             .fuse_swapping_after_y(
                 &mut rng,
@@ -1472,7 +1472,7 @@ fn native_preamble_swapped_after_y_is_rejected() {
                 Fp::from(7),
                 unit.clone(),
                 unit,
-                |builder, _| builder.reblind_native_preamble(&blind),
+                |builder, _| builder.shift_native_preamble(&delta),
             )
             .expect("the swapping prover assembles a proof");
         assert!(

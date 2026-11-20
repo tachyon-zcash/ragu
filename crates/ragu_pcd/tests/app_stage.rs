@@ -399,11 +399,11 @@ fn the_stage_holds_exactly_the_staged_values() {
     )
     .unwrap();
     let stage = stage.expect("the step ran");
-    // The SYSTEM gate carries the prover's blinding; read it back from where
+    // The SYSTEM gate carries the prover's alpha; read it back from where
     // an otherwise empty stage places it.
     let probe = staging::stage_rx::<_, R>(Fp::ONE, 1, app.stage_size, &[]).unwrap();
-    let blinding = probe.iter_coeffs().position(|c| c == Fp::ONE).unwrap();
-    let alpha = stage.iter_coeffs().nth(blinding).unwrap();
+    let alpha_degree = probe.iter_coeffs().position(|c| c == Fp::ONE).unwrap();
+    let alpha = stage.iter_coeffs().nth(alpha_degree).unwrap();
     let expected =
         staging::stage_rx::<_, R>(alpha, 1, app.stage_size, &[Fp::from(3), Fp::from(9)]).unwrap();
     assert_eq!(

@@ -873,7 +873,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         .map(|(pcd, ())| pcd)
     }
 
-    /// Computes $H^{bridge}(P)$ from the unblinded stage polynomial the
+    /// Computes $H^{bridge}(P)$ from the zero-alpha stage polynomial the
     /// honest prover constructs for `point`. When `point` is the step's own last
     /// online commitment, this is the honest prover's value of
     /// [`Oracles::bridge_hash`](step::Oracles::bridge_hash). An application
@@ -885,7 +885,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// rests on the commitment's.
     ///
     /// An accepted bridge digest binds the point but need not use this
-    /// canonical unblinded encoding or be fixed before the step's challenge.
+    /// canonical zero-alpha encoding or be fixed before the step's challenge.
     /// Anchor applications must compare natively recomputed advancement
     /// against canonical-chain anchors.
     ///
@@ -898,7 +898,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
 
     /// The commitment of an online polynomial with coefficients `coeffs`, in
     /// ascending degree. When [`Step::prepare`] prepares these coefficients,
-    /// Ragu stores this unblinded commitment in the output proof's slot.
+    /// Ragu stores exactly this commitment in the output proof's slot.
     /// An application that recomputes a commitment outside the circuit, for
     /// instance to recompute a [`bridge_hash`](Self::bridge_hash), calls this.
     ///

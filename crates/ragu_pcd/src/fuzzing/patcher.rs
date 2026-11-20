@@ -644,7 +644,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
 
         // Mirrors `fuse`: `pre_beta` is ground rather than squeezed once, so
-        // each attempt re-blinds the eval commitment and re-derives it from a
+        // each attempt redraws the eval stages' alphas and re-derives it from a
         // fresh transcript clone until it lands in endoscalar range.
         let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
             EndoscalarChallenge::sample(&mut dr, |dr| {

@@ -9,7 +9,7 @@ challenges from a transcript domain-separated by `ragu-ipa-v1` (see
 The transcript runs over the circuit field. It absorbs circuit-field scalars
 and nested-curve points directly. Each run of scalar-field values, the host
 curve's point coordinates and the nested curve's scalars, it commits on the
-nested curve, unblinded, at the generators the run's stage takes in the
+nested curve, with a zero alpha, at the generators the run's stage takes in the
 proof's decompression at the aggregator rank, and absorbs the commitment as
 a point before the next absorption or challenge; a verifier in circuit
 absorbs that point as a witness and holds it to the stage. Every challenge

@@ -385,17 +385,17 @@ fn an_identity_online_eval_stage_is_resampled() -> Result<()> {
     use super::{prepared::PreparationChallenges, prover::State};
 
     #[derive(Default)]
-    struct StageBlindings(u8);
+    struct StageAlphas(u8);
 
-    impl TryRng for StageBlindings {
+    impl TryRng for StageAlphas {
         type Error = Infallible;
 
         fn try_next_u32(&mut self) -> core::result::Result<u32, Infallible> {
-            unreachable!("stage blinders are sampled with fill_bytes")
+            unreachable!("stage alphas are sampled with fill_bytes")
         }
 
         fn try_next_u64(&mut self) -> core::result::Result<u64, Infallible> {
-            unreachable!("stage blinders are sampled with fill_bytes")
+            unreachable!("stage alphas are sampled with fill_bytes")
         }
 
         fn try_fill_bytes(&mut self, dest: &mut [u8]) -> core::result::Result<(), Infallible> {
@@ -406,7 +406,7 @@ fn an_identity_online_eval_stage_is_resampled() -> Result<()> {
         }
     }
 
-    impl TryCryptoRng for StageBlindings {}
+    impl TryCryptoRng for StageAlphas {}
 
     type C = <Pasta as Cycle>::NestedCurve;
     let generators = Pasta::nested_generators(crate::pasta::baked());
@@ -432,9 +432,9 @@ fn an_identity_online_eval_stage_is_resampled() -> Result<()> {
         generators,
         &mut rng,
     )?;
-    let mut blindings = StageBlindings::default();
-    state.commit_eval::<ReferenceBackend, _, _>(Fq::ZERO, generators, &mut blindings)?;
-    assert_eq!(blindings.0, 2);
+    let mut alphas = StageAlphas::default();
+    state.commit_eval::<ReferenceBackend, _, _>(Fq::ZERO, generators, &mut alphas)?;
+    assert_eq!(alphas.0, 2);
     assert!(!state.stage_commitment(2).is_identity());
     Ok(())
 }

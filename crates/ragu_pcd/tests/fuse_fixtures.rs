@@ -25,8 +25,8 @@
 //!   test-local encoding below. The prover must reproduce these bytes, and
 //!   the verifier must accept them as committed, without re-proving. The
 //!   encoding is a fixture format, not a wire format. Compression draws a
-//!   megabyte of blinding per proof, too much to commit as a tape, so its
-//!   randomness comes from the frozen generator under a fixed seed and is
+//!   megabyte of randomness per proof, too much to commit as a tape, so it
+//!   comes from the frozen generator under a fixed seed and is
 //!   pinned by its word count and by these bytes.
 //! - `<scenario>.digests`: one BLAKE2b-256 digest per primary field of the
 //!   uncompressed [`Proof`] the fuse produced, in declaration order, then the

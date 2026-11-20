@@ -117,7 +117,7 @@
 //! fills, and a scalar's digits are allocated once, across the parts of
 //! its one scaling. What holds a witness to the sending side is the fuse's
 //! design. The sending side holds the values in stage wires. The receiving
-//! side recomputes the unblinded commitment from the values it took, or
+//! side recomputes the zero-alpha commitment from the values it took, or
 //! takes the commitment itself as a witness, as the transcript does for a
 //! run. Its binding circuit exposes the point for the proof's consumer to
 //! hold to the stage's actual commitment through the circuit's claim (see
@@ -186,8 +186,8 @@
 //!   consumer holds to the commitment of the proof's first output slot
 //!   ([`Binding::online`](crate::profile::Binding::online)), and under
 //!   the flag the side holds its $G'$ to that point. The slot's
-//!   commitment is unblinded and over the generators the IPA folds, so it
-//!   is $\langle s, G \rangle$.
+//!   commitment is over the generators the IPA folds, with no other term,
+//!   so it is $\langle s, G \rangle$.
 //!
 //! In any other step the flag is zero and nothing is held: the chunks
 //! verify the canonical proof, whose statement is the unit header's and

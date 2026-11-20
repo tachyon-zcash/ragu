@@ -227,7 +227,7 @@ fn an_aggregator_refuses_source_registry_overrides() -> Result<()> {
     Ok(())
 }
 
-/// Zero bridge blinding is a valid wallet proof. Its AB bridge coefficient
+/// A zero bridge alpha is a valid wallet proof. Its AB bridge coefficient
 /// must not force the decompression's affine point stage to hold infinity.
 #[test]
 fn a_zero_bridge_alpha_wallet_proof_decompresses() -> Result<()> {

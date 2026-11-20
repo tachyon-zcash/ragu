@@ -208,7 +208,7 @@ constraint system reject it. The no-execution front end is described in
 `Proof::corrupt` returns `Binding::Unbound` for no-op edits, such as setting a
 challenge to its existing value. Every effective coefficient edit requires
 rejection because it leaves a stale cached commitment, even if the coefficient
-is a blinding term or the derived `c` or `v` is unchanged. The harness asserts
+is a stage's alpha or the derived `c` or `v` is unchanged. The harness asserts
 rejection by both verification paths for `MustReject`. Compression also checks
 stored challenges against the transcript before proving its statement, so
 challenge edits require rejection too. `crates/ragu_pcd/tests/corruption.rs`

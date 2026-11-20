@@ -320,7 +320,7 @@ impl Proofs {
 
 #[derive(Clone, Copy, Debug)]
 struct CorruptionInputs {
-    p_blind_delta: Fp,
+    p_constant_delta: Fp,
     p_eval_delta: Fp,
     ab_c_delta: Fp,
     circuit_id: u32,
@@ -331,7 +331,7 @@ struct CorruptionInputs {
 
 #[derive(Clone, Copy, Debug)]
 enum ProofMutation<F> {
-    PBlind(F),
+    PConstant(F),
     PEval(F),
     AbC(F),
     CircuitId(u32),
@@ -345,7 +345,7 @@ fn apply_proof_mutation<C: Cycle, R: Rank>(
     mutation: ProofMutation<C::CircuitField>,
 ) {
     match mutation {
-        ProofMutation::PBlind(value) => proof
+        ProofMutation::PConstant(value) => proof
             .native_p_poly
             .add_assign(&sparse::Polynomial::from_coeffs(alloc::vec![value])),
         ProofMutation::PEval(value) => {
@@ -382,7 +382,7 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
     )
         .prop_map(
             |(
-                p_blind_delta,
+                p_constant_delta,
                 p_eval_delta,
                 ab_c_delta,
                 circuit_id,
@@ -390,7 +390,7 @@ fn arb_corruption_inputs() -> impl Strategy<Value = CorruptionInputs> {
                 challenge_x_delta,
                 challenge_y_delta,
             )| CorruptionInputs {
-                p_blind_delta,
+                p_constant_delta,
                 p_eval_delta,
                 ab_c_delta,
                 circuit_id,
@@ -444,7 +444,10 @@ fn corruptions(
     inputs: CorruptionInputs,
 ) -> impl IntoIterator<Item = (&'static str, ProofMutation<Fp>)> {
     [
-        ("p blind", ProofMutation::PBlind(inputs.p_blind_delta)),
+        (
+            "p constant",
+            ProofMutation::PConstant(inputs.p_constant_delta),
+        ),
         ("p evaluation", ProofMutation::PEval(inputs.p_eval_delta)),
         ("ab revdot", ProofMutation::AbC(inputs.ab_c_delta)),
         ("circuit id", ProofMutation::CircuitId(inputs.circuit_id)),

@@ -343,7 +343,7 @@ mod challenge_binding {
     }
 }
 
-/// Read a points-only native stage, excluding its SYSTEM blinding coefficient.
+/// Read a points-only native stage, excluding its SYSTEM-gate alpha.
 fn stage_points<S: Stage<Fp, R> + Default>(
     poly: &sparse::Polynomial<Fp, R>,
 ) -> Result<Vec<EpAffine>> {
@@ -429,7 +429,7 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
     }
 }
 
-/// Preserve each stage's blinding while rebuilding the walk and its real circuit
+/// Preserve each stage's alpha while rebuilding the walk and its real circuit
 /// traces. Merely changing input coordinates would leave stale arithmetic in the
 /// endoscaling steps and would not exercise a Horner-preserving substitution.
 /// The endpoint the proof's native walk stage ends at, read from the stage

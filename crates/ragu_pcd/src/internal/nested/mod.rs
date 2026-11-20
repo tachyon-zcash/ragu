@@ -489,7 +489,7 @@ pub enum RxIndex {
     PointsStage,
     /// Bridge `preamble` rx polynomial.
     BridgePreamble,
-    /// Bridge-hash stage rx polynomial: the step's own `O1`, unblinded.
+    /// Bridge-hash stage rx polynomial: the step's own `O1`, with a zero alpha.
     BridgeHash,
     /// Bridge `s_prime` rx polynomial.
     BridgeSPrime,

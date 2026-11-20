@@ -232,7 +232,7 @@ where
     /// or over the canonical decompression without: every chunk circuit's
     /// trace, the statement circuit's and the binding circuit's assembled
     /// against `registry` at their index in `P`'s layout, and the six
-    /// stages' polynomials, each blinded from `rng` but the digits
+    /// stages' polynomials, each with an alpha from `rng` but the digits
     /// stage's, which the scalar-field side recomputes.
     ///
     /// # Errors
@@ -298,9 +298,9 @@ where
         type Digits<C, R, const H: usize> = DigitsStage<C, Native, WalletRank, R, H>;
         let mut stages = front_rxs::<C, Native, R, HEADER_SIZE>(prepared, rng)?;
         stages.extend([
-            Lifts::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.lifts)?,
-            Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
-            Transcript::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.transcript)?,
+            Lifts::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.lifts)?,
+            Work::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.work)?,
+            Transcript::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.transcript)?,
             Digits::<C, R, HEADER_SIZE>::rx(C::CircuitField::ZERO, &prepared.digits)?,
         ]);
         Ok(ExtensionRxs { circuits, stages })
@@ -310,8 +310,8 @@ where
     /// [`native_rxs`](Self::native_rxs): every chunk circuit's, the
     /// binding circuit's and the stages', the run stages', whose
     /// commitments the compression's transcript absorbed, and the lifts
-    /// and digits stages', which the circuit-field side recomputes,
-    /// unblinded.
+    /// and digits stages', which the circuit-field side recomputes, with
+    /// a zero alpha.
     ///
     /// # Errors
     ///
@@ -369,7 +369,7 @@ where
         let mut stages = front_rxs::<C, Nested, R, HEADER_SIZE>(prepared, rng)?;
         stages.extend([
             Lifts::<C, R, HEADER_SIZE>::rx(zero, &prepared.lifts)?,
-            Work::<C, R, HEADER_SIZE>::rx(blinding(rng), &prepared.work)?,
+            Work::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.work)?,
             Digits::<C, R, HEADER_SIZE>::rx(zero, &prepared.digits)?,
         ]);
         Ok(ExtensionRxs { circuits, stages })
@@ -377,8 +377,8 @@ where
 }
 
 /// The polynomials of side `S`'s front stages over `prepared`, in stage
-/// order, each blinded from `rng` unless the other side holds a value to
-/// its commitment.
+/// order, each with an alpha from `rng` unless the other side holds a
+/// value to its commitment.
 fn front_rxs<C, S, R, const HEADER_SIZE: usize>(
     prepared: &Prepared<C, S>,
     rng: &mut impl CryptoRng,
@@ -390,10 +390,10 @@ where
 {
     (0..S::stages())
         .map(|index| {
-            let alpha = if S::unblinded(index) {
+            let alpha = if S::zero_alpha(index) {
                 S::F::ZERO
             } else {
-                blinding(rng)
+                random_alpha(rng)
             };
             S::rx(index, alpha, prepared)
         })
@@ -443,8 +443,8 @@ where
     })
 }
 
-/// A stage polynomial's blinding.
-fn blinding<F: Field>(rng: &mut impl CryptoRng) -> F {
+/// A random alpha for a stage polynomial.
+fn random_alpha<F: Field>(rng: &mut impl CryptoRng) -> F {
     F::random(|bytes| rng.fill_bytes(bytes))
 }
 

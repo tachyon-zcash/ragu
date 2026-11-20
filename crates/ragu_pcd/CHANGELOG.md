@@ -119,8 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   143 bits wide as the fuse's challenges are, so that a circuit over the
   other field can scale points by them. The transcript absorbs what lies in
   the scalar field, the host curve's points and the nested curve's scalars,
-  as one nested-curve commitment per run of them, committed unblinded at the
-  generators the run's stage takes in the proof's decompression at the
+  as one nested-curve commitment per run of them, committed with a zero alpha at
+  the generators the run's stage takes in the proof's decompression at the
   aggregator rank, so that each challenge is a function of every message
   before it and a circuit over the circuit field absorbs the commitment as a
   point its verifier holds to that stage. The Standard fuse fixtures'

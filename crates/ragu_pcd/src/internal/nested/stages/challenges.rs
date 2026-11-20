@@ -5,7 +5,7 @@
 //! ([`challenge`]) of a native one. This stage holds those lifts, one per
 //! native challenge, then the base-case sign and the lift of `pre_beta`, at
 //! the $a$-wire of consecutive gates with the $d$-wire zero, and is committed
-//! **unblinded** (alpha zero). Its commitment is then a fixed linear
+//! with a **zero alpha**. Its commitment is then a fixed linear
 //! combination of the nested-curve generators,
 //!
 //! $$C_s = \sum_i \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)},$$
@@ -39,7 +39,7 @@
 //!   the step's collapse and compute-v claims, and holds the fold of
 //!   its children's claims against its own $A_n(x_n z_n)$.
 //!
-//! The stage is unblinded and the commitment scheme is binding, so the only
+//! The stage's alpha is zero and the commitment scheme is binding, so the only
 //! polynomial that opens the walked point holds the transcript's lifts and
 //! the header-derived sign. A step whose prover traced its nested circuits
 //! against a different sign or lift fails those claims in its parent's fold.

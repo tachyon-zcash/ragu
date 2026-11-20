@@ -1263,7 +1263,8 @@ mod timing {
                     );
 
                     // Rebuild the deterministic AB bridge around the changed stage,
-                    // including its original blinding, rather than leave a stale copy.
+                    // including its original alpha, rather than leave a stale
+                    // copy.
                     let bridge = ab::Stage::<EqAffine, R, crate::profile::Standard>::rx(
                         bridge_alpha_power(changed.bridge_alpha, nested::RxIndex::BridgeAB),
                         &ab::Witness {
@@ -1451,7 +1452,7 @@ mod commitments {
         assert!(verify(parent.clone())?, "the honest parent must verify");
 
         // Change every lift, the base-case sign and their padding wires, then
-        // the system alpha, which is fixed to zero for the unblinded stage.
+        // the system alpha, which is fixed to zero for this stage.
         let coefficients = (0..ChallengeStage::values())
             .map(|slot| {
                 let gate = ChallengeStage::skip_gates() + slot / 2;
@@ -1514,8 +1515,8 @@ mod commitments {
 
         let pasta = app.params;
 
-        // 1. The stored stage is the unblinded stage of the lifts, the sign and
-        //    beta's lift.
+        // 1. The stored stage is the zero-alpha stage of the lifts, the sign
+        //    and beta's lift.
         let lifts = parent.challenges().lifts::<C>()?;
         let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
         let challenges = nested::stages::challenges::Witness::new(

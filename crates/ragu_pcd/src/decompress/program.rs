@@ -142,7 +142,7 @@ pub(crate) enum ElementSrc {
     /// A coordinate of a point, $x$ for 0 and $y$ for 1.
     Coordinate(PointSrc, u8),
     /// The square of an instance stage element: the `ab` bridge's
-    /// blinding.
+    /// alpha.
     InstanceSquared(usize),
 }
 
@@ -1929,16 +1929,16 @@ pub(crate) fn ab_layout<C: ProfiledCycle<Profile = Standard>, K: Rank>()
         .map(wire_degree::<K>)
         .zip(values)
         .collect();
-    // The blinding sits at the SYSTEM gate, before the stage's own gates.
-    terms.push((blinding_degree::<K>(), AbValue::Alpha));
+    // The alpha sits at the SYSTEM gate, before the stage's own gates.
+    terms.push((alpha_degree::<K>(), AbValue::Alpha));
     Ok(terms)
 }
 
-/// The coefficient degree of a stage polynomial's blinding term:
+/// The coefficient degree of a stage polynomial's alpha:
 /// [`StageExt::rx`](ragu_circuits::staging::StageExt::rx) puts it at the
 /// SYSTEM gate alone, gate zero, whose $a$ wire `wire_degree` numbers
 /// $2n - 1$.
-fn blinding_degree<K: Rank>() -> usize {
+fn alpha_degree<K: Rank>() -> usize {
     2 * K::n() - 1
 }
 
@@ -2587,7 +2587,7 @@ fn nested_schedule_with<
 
     // The ab bridge's values, whose digits the other side scales by: the
     // coordinates of the host curve's A, B and points-ab commitments and
-    // the blinding, bridge_alpha squared.
+    // the stage's alpha, bridge_alpha squared.
     let ab_terms = ab_layout::<C, K>()?;
     let extra_digits: Vec<ElementSrc> = {
         let ab_a = commitment(native_position::<Standard>(native::RxComponent::AbA));

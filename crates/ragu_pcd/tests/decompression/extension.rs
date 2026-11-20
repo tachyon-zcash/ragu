@@ -1113,7 +1113,7 @@ fn messages_size<P: udon::curve::Affine>(
 fn compressed_size<C: Cycle>(proof: &crate::CompressedProof<C>) -> (usize, usize) {
     let instance = &proof.instance;
     let points = instance.native.len() + 2 + instance.nested.len() + 3;
-    // The circuit id and the bridge blinding, the four accumulator values,
+    // The circuit id and the bridge alpha, the four accumulator values,
     // each child's x and y on both fields, and a(u) and b(u) on both.
     let _ = instance;
     let scalars = 1 + 1 + 4 + 4 + 4 + 4;

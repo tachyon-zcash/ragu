@@ -21,7 +21,7 @@
 //!   types admit only these: `Hash2` takes two `LeafNode`s, `Merge2` two
 //!   `InternalNode`s.
 //! * **The witnesses**, one per leaf, and the RNG seed every proof is built
-//!   with — which drives all of the blinding.
+//!   with — which drives all of the prover's randomness.
 //!
 //! # Invariants
 //!
@@ -115,7 +115,7 @@ struct Input {
     rerandomize: bool,
     /// The corruptions to apply to the finished root.
     corruptions: Vec<pcd::FuzzCorruption>,
-    /// Seeds every proof's blinding, and the verifier's challenges.
+    /// Seeds every proof's randomness, and the verifier's challenges.
     rng_seed: u64,
 }
 
@@ -205,7 +205,7 @@ fuzz_target!(
 
         let mut rng = StdRng::seed_from_u64(input.rng_seed);
         // A separate seed for the verifier, re-derived at every check, so the
-        // challenges it samples do not shift as the tree's blinding consumes
+        // challenges it samples do not shift as the tree's proving consumes
         // more or less randomness.
         let verify_seed = input.rng_seed ^ 0x5645_5249_4659;
         let mut witnesses = Witnesses {

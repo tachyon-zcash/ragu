@@ -98,7 +98,7 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_registry_xy: C::NestedCurve,
     pub nested_p: C::NestedCurve,
     pub nested_challenges_partial: C::NestedCurve,
-    /// The blinding source of the `ab` bridge stage.
+    /// The source of the `ab` bridge stage's alpha.
     pub bridge_alpha: C::ScalarField,
 
     /// The accumulator values the decider derives.

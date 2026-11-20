@@ -3,7 +3,7 @@
 //! ## Operations
 //!
 //! The nested side reads its challenges from the nested challenge stage,
-//! whose commitment is the unblinded linear combination
+//! whose commitment, with a zero alpha, is the linear combination
 //! $C_s = \sum_i \mathrm{lift}(\mathrm{ch}_i) \cdot G_{\mathrm{idx}(i)}$ of
 //! the nested-curve generators (see [`challenges`]). These native circuits
 //! recompute that point: each takes two challenges from the

@@ -392,7 +392,7 @@ fn rejects_tampered_messages() {
     tamper("nested preamble stage wire", &|p| {
         p.instance.nested_right.y += Fq::ONE
     });
-    tamper("bridge blinding", &|p| p.instance.bridge_alpha += Fq::ONE);
+    tamper("bridge alpha", &|p| p.instance.bridge_alpha += Fq::ONE);
     tamper("native commitment", &|p| {
         p.instance.native[3] = p.instance.native[4]
     });
@@ -477,7 +477,7 @@ fn rejects_tampered_messages() {
     tamper("missing nested round", &|p| {
         p.nested.opening.rounds.pop();
     });
-    tamper("blinding commitment", &|p| {
+    tamper("masking commitment", &|p| {
         p.native.opening.s_commitment = p.native.opening.rounds[0].0
     });
 }

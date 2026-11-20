@@ -44,7 +44,7 @@ use crate::{
 };
 
 /// The step's own application stage, used only during the fuse step: the
-/// staged values after the SYSTEM gate, blinded.
+/// staged values after the SYSTEM gate, with a random alpha.
 pub(crate) struct NativeApplicationStage<C: Cycle, R: Rank> {
     /// The stage polynomial.
     pub(crate) rx: sparse::Polynomial<C::CircuitField, R>,
@@ -140,8 +140,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 "a step must stage exactly NUM_STAGED values".into(),
             ));
         }
-        // The application stage, after the SYSTEM gate, blinded: its values
-        // are the step's secrets. Its commitment joins the preamble bridge.
+        // The application stage, after the SYSTEM gate, with a random alpha.
+        // Its values are the step's secrets. Its commitment joins the
+        // preamble bridge.
         let rx = staging::stage_rx::<_, R>(
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             1,

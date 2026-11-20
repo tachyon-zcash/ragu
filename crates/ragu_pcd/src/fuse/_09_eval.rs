@@ -161,7 +161,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         Ok((native, nested, nested_challenges))
     }
 
-    /// Samples fresh eval-stage blindings and returns the native eval rx
+    /// Samples fresh eval-stage alphas and returns the native eval rx
     /// together with the `eval` bridge stage's rx and commitment.
     ///
     /// The `pre_beta` rejection loop calls this once per attempt, re-deriving
@@ -208,11 +208,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     }
 
     /// Commits the nested challenge stage: the lifts of this step's
-    /// challenges, the base-case sign and the lift of `pre_beta`, unblinded,
-    /// so that its nested-curve commitment is the fixed linear combination
-    /// of generators the binding circuits recompute. Completes the witness
-    /// used for the eval stage's binding partials with beta's lift and returns
-    /// it for the nested circuits that load the stage.
+    /// challenges, the base-case sign and the lift of `pre_beta`, with a zero
+    /// alpha, so that its nested-curve commitment is the fixed linear
+    /// combination of generators the binding circuits recompute. Completes the
+    /// witness used for the eval stage's binding partials with beta's lift and
+    /// returns it for the nested circuits that load the stage.
     pub(super) fn commit_nested_challenges(
         &self,
         mut challenges: nested::stages::challenges::Witness<C::ScalarField>,

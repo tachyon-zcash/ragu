@@ -183,7 +183,7 @@ fn beta_fold<F: Field, R: Rank>(
     })
 }
 
-/// The blinding of a cached bridge polynomial, as a distinct power of the
+/// The alpha of a cached bridge polynomial, as a distinct power of the
 /// proof's `bridge_alpha`; shared by the builder that derives the bridge and
 /// the verifier that rederives it.
 pub(crate) fn bridge_alpha_power<F: Field>(bridge_alpha: F, idx: nested::RxIndex) -> F {
@@ -294,8 +294,8 @@ pub struct Proof<C: Cycle, R: Rank> {
 
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
-    /// The bridge-hash stage: the step's own `O1`, constructed unblinded
-    /// (see `nested::stages::bridge_hash`).
+    /// The bridge-hash stage: the step's own `O1`, constructed with a zero
+    /// alpha (see `nested::stages::bridge_hash`).
     pub(crate) bridge_hash_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
@@ -326,7 +326,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) nested_registry_xy_poly: sparse::Polynomial<C::ScalarField, R>,
     pub(crate) nested_p_poly: sparse::Polynomial<C::ScalarField, R>,
 
-    // Nested challenge stage (ScalarField, unblinded NestedCurve
+    // Nested challenge stage (ScalarField, zero-alpha NestedCurve
     // commitment): the lifts of this step's native challenges, the
     // base-case sign and the lift of `pre_beta`.
     pub(crate) nested_challenges_rx: sparse::Polynomial<C::ScalarField, R>,
@@ -1471,7 +1471,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder.set_nested_p_poly(nested_p_poly, nested_p_commitment);
 
         // Commit the same synthetic challenge witness used for the binding
-        // partials above, without blinding.
+        // partials above, with a zero alpha.
         builder.set_nested_challenges_rx(
             nested::stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
                 C::ScalarField::ZERO,

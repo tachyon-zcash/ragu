@@ -317,7 +317,7 @@ fn check_dummy(app: &support::App) {
 
 /// Read the production stage's stored values directly from its polynomial.
 /// Stage values occupy successive a/d wires after the ancestor stages; the
-/// random blinding is at the system gate.
+/// random alpha is at the system gate.
 fn stage_values<S: Stage<Fq, R>>(rx: &sparse::Polynomial<Fq, R>) -> Vec<Fq> {
     let coefficients: Vec<_> = rx.iter_coeffs().collect();
     (0..S::values())

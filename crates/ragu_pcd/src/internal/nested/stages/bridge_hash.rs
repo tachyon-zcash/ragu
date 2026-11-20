@@ -3,12 +3,12 @@
 //!
 //! The stage sits between the endoscalar stage, whose size the endoscalar
 //! encoding fixes, and the points stage, so its gates do not move when the
-//! walk or the preamble grows. The honest prover constructs an unblinded stage
-//! polynomial with only the point's two coordinates as nonzero
-//! coefficients, giving the commitment
+//! walk or the preamble grows. The honest prover constructs the stage
+//! polynomial with a zero alpha, so the point's two coordinates are its only
+//! nonzero coefficients, giving the commitment
 //! $H^{bridge}(O_1) = x \cdot G_i + y \cdot G_j$ for two fixed generators.
 //! The stage uses the ordinary mask, which does not by itself require
-//! this unblinded encoding.
+//! this zero-alpha encoding.
 //! The nested collapse circuit holds the point to the step's own `O1` in
 //! the preamble, which $w$ absorbs. The unified instance carries the
 //! bridge-hash commitment without absorbing it into the transcript, the
@@ -69,7 +69,8 @@ impl<C: Affine, R: Rank> ragu_circuits::staging::Stage<C::Base, R> for Stage<C> 
     }
 }
 
-/// The unblinded stage polynomial of `o1`, whose commitment is [`digest`].
+/// The stage polynomial of `o1` with a zero alpha, whose commitment is
+/// [`digest`].
 ///
 /// # Errors
 ///
