@@ -308,9 +308,9 @@ After:
 This gives us a digest `bridge_hash_commitment`, exposed to the application circuit by `Oracles::bridge_hash()`, whose coordinates are native on the `Fp` side and can be used to constrain a hash chain that takes polynomial commitments as preimages.
 Importantly, we need to synchronize our outside-the-circuit code to use this non-standard hash function:
 computes the trace `bridge_hash_rx` as a stage polynomial $\in\F_q[X]$, then computes its commitment as a $\E_p$/`NestedCurve` point, and uses its two coordinates as the hash digest.
-The prover constructs the `BridgeHash` stage unblinded (every other stage takes a random blinding), with only $x$ and $y$ of the point as nonzero coefficients.
+The prover constructs the `BridgeHash` stage with a zero alpha (most stages take a random alpha), with only $x$ and $y$ of the point as nonzero coefficients.
 The recomputed digest is then the fixed linear combination $x \cdot G_i + y \cdot G_j$ of two generators.
-`BridgeHash` registers the ordinary stage mask, which checks the stage's support but does not by itself require this unblinded encoding.
+`BridgeHash` registers the ordinary stage mask, which checks the stage's support but does not by itself require this zero-alpha encoding.
 `BridgeHash` comes directly after the endoscalar stage and before the points stage.
 The digest depends on the stage's position.
 The endoscalar stage has a fixed size (the 143-bit endoscalar encoding), thus the position does not move when the walk or `Preamble` grows.
@@ -325,7 +325,7 @@ The digest joins the `unified` instance next to `bridge_preamble_commitment`, an
 The app circuit claims the digest the same way it claims $\zeta$: its public instance gains an `h_O1` slot, which the step's own `collapse` fills from its `unified` value.
 
 This malleability does not weaken the anchor chain, because a prover never chooses which anchors are canonical.
-Validators build the canonical chain themselves: they take the $\acc^\tg$ point the proof binds, compute $H^{bridge}(\acc^\tg)$ with `Application::bridge_hash()`, which fixes the canonical unblinded encoding of $\acc^\tg$ in the `O1` position, and advance $\anchor' = H(\anchor \| e \| H^{bridge}(\acc^\tg))$.
+Validators build the canonical chain themselves: they take the $\acc^\tg$ point the proof binds, compute $H^{bridge}(\acc^\tg)$ with `Application::bridge_hash()`, which fixes the canonical zero-alpha encoding of $\acc^\tg$ in the `O1` position, and advance $\anchor' = H(\anchor \| e \| H^{bridge}(\acc^\tg))$.
 A prover who uses another encoding still produces a valid proof, but its anchor is not in the canonical history.
 So a prover has to use the canonical encoding to produce a `Stamp.anchor` that appears in the canonical history.
 
@@ -503,7 +503,7 @@ A profile's prover supplies the polynomial (`Profile::online_fq_polynomials`), a
 
 - **Placement.**
   $\cm_{f_q}$ goes in `PointsPreamble` because the native walk reads its inputs from the stage they were committed in; `PointsPreamble`'s commitment is absorbed before $w$.
-  It is committed unblinded, so that it can equal a point such as $G'$ that a circuit computes from public data.
+  It is committed with a zero alpha, so that it can equal a point such as $G'$ that a circuit computes from public data.
 - **The point.**
   No stage holds the opening point: `compute_v` folds $y_q$ at $\zeta_q$, which it takes from the challenge stage.
   A prover that opens $f_q$ at another point builds a quotient that does not match that fold, so the batch fails.

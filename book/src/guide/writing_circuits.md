@@ -164,15 +164,15 @@ digests the commitment in the last slot only. A header whose steps read
 the bridge hash keeps the hashed kind last, as in
 `(Padding, TachygramSet)`.
 
-These polynomial commitments are unblinded and deterministic for the
-prepared coefficients. Their opening points and values are public. Stage
-witness values that should stay out of the public instance; the stage
-commitment is blinded, but public openings or header fields can still
-reveal the staged values. The staged values are those the step's checks
-at $\zeta$ read but no header carries, such as the roots it multiplies
-into an accumulator polynomial (see
+These polynomial commitments are deterministic for the prepared
+coefficients. Their opening points and values are public. Witness values
+that should stay out of the public instance belong in the stage, but public
+openings or header fields can still reveal the staged values. The staged
+values are those the step's checks at $\zeta$ read but no header carries,
+such as the roots it multiplies into an accumulator polynomial (see
 [Polynomial Oracles](#polynomial-oracles)). In `witness`, read staged values
-only through `oracles.staged()`, whose wires are bound to that commitment.
+only through `oracles.staged()`, whose wires are bound to the stage's
+commitment.
 
 ## Two Types of Steps
 

@@ -751,20 +751,17 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.forged_left_bridge_header.as_deref()
     }
 
-    /// Adds `blind` to the native preamble polynomial and drops its cached
+    /// Adds `delta` to the native preamble polynomial and drops its cached
     /// commitment, for a test playing a prover that swaps the stage after
-    /// the `s_prime` bridge absorbed its commitment. A `blind` supported on
-    /// the blinding coefficient leaves every value the stage holds as it
+    /// the `s_prime` bridge absorbed its commitment. A `delta` supported on
+    /// the alpha coefficient leaves every value the stage holds as it
     /// was.
     #[cfg(test)]
-    pub(crate) fn reblind_native_preamble(
-        &mut self,
-        blind: &sparse::Polynomial<C::CircuitField, R>,
-    ) {
+    pub(crate) fn shift_native_preamble(&mut self, delta: &sparse::Polynomial<C::CircuitField, R>) {
         self.native_preamble_rx
             .as_mut()
             .expect("native_preamble_rx not set")
-            .add_assign(blind);
+            .add_assign(delta);
         self.native_preamble_commitment = OnceCell::new();
     }
     setter!(set_left_header, left_header, Vec<C::CircuitField>);
@@ -899,7 +896,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     );
 
     /// Lazily computes and caches the commitments of the step's own online
-    /// Fq polynomials. They are unblinded.
+    /// Fq polynomials, deterministic in their coefficients.
     pub(crate) fn online_fq_commitments(&self) -> &[C::NestedCurve] {
         self.online_fq_commitments.get_or_init(|| {
             let nested_gen = C::nested_generators(self.params);

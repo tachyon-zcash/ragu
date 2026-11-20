@@ -4,8 +4,8 @@
 //! The transcript runs over the circuit field, so it absorbs the scalar
 //! field's values, the host curve's points and the nested curve's scalars,
 //! as one nested-curve point per run of them: the run's commitment,
-//! unblinded, at the generators the run's stage lands its values on in the
-//! proof's decompression at the aggregator rank. Every compressed proof
+//! with a zero alpha, at the generators the run's stage lands its values on in
+//! the proof's decompression at the aggregator rank. Every compressed proof
 //! commits its runs there, whether or not an aggregator decompresses it, so
 //! that the aggregator's circuits can hold each absorbed point to its
 //! stage; the Standard tables carry those generators past their end

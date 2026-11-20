@@ -408,11 +408,12 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 
     /// Compute the (partial) $r(X)$ polynomial for this stage.
     ///
-    /// `alpha` is placed at `a[0]` of the resulting polynomial. Stages
-    /// have no ONE wire, so without alpha a stage trace could be all-zero;
-    /// and any predictable wire slot can cancel in linear combinations of
-    /// stage polynomials — either case produces a point-at-infinity
-    /// commitment. A random alpha at `a[0]` prevents both.
+    /// `alpha` is an arbitrary value, not a blinding factor, placed at
+    /// `a[0]` of the resulting polynomial. Stages have no ONE wire, so
+    /// without alpha a stage trace could be all-zero; and any predictable
+    /// wire slot can cancel in linear combinations of stage polynomials —
+    /// either case produces a point-at-infinity commitment. A random alpha
+    /// at `a[0]` prevents both.
     ///
     /// Pass a random field element in production; `F::ZERO` is acceptable
     /// in tests.

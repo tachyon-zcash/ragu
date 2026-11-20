@@ -390,8 +390,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The native extension's polynomials for one proof: each circuit's,
     /// assembled against `registry` at the circuit's index in the layout,
-    /// then each stage's, blinded from `rng`, over `source`, the proof the
-    /// step decompresses, or over the context's canonical proof without.
+    /// then each stage's, with an alpha from `rng`, over `source`, the proof
+    /// the step decompresses, or over the context's canonical proof without.
     /// `online_openings` is the point and value at which the step opened
     /// each online slot, the left input's, the right input's, then its
     /// own output's, for an extension whose statement circuit exposes
@@ -1180,11 +1180,11 @@ pub const STEP_BINDING: usize = 4;
 /// other side's stages hold.
 ///
 /// The circuit recomputes a commitment from the stage's values, so the
-/// other side commits a bound stage unblinded, and the commitment then
-/// hides nothing of the values, or the circuit takes the stage's blinding
-/// as a witness and adds its term. The profile must ensure that the output
-/// order matches `stages` and that each commitment is recomputed from the
-/// values its circuits actually use for that stage. This agreement is part
+/// other side commits a bound stage with a zero alpha, and the commitment
+/// is then deterministic in the values, or the circuit takes the stage's
+/// alpha as a witness and adds its term. The profile must ensure that the
+/// output order matches `stages` and that each commitment is recomputed from
+/// the values its circuits actually use for that stage. This agreement is part
 /// of the trusted setup: a mismatched association can accept unintended
 /// statements even when the exposed commitments match the claim's target.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2722,7 +2722,7 @@ pub(crate) mod testing {
             let circuit = nested::InternalCircuitIndex::ExtensionCircuit(0);
             Ok(ExtensionRxs {
                 circuits: vec![registry.assemble(&trace, circuit.circuit_index::<Self>(), rng)?],
-                // Unblinded, so that the native side can recompute it.
+                // A zero alpha, so that the native side can recompute it.
                 stages: vec![DigitsStage::<Base::ScalarField, R>::rx(
                     Base::ScalarField::ZERO,
                     &digits,
@@ -2838,7 +2838,7 @@ pub(crate) mod testing {
             let circuit = native::InternalCircuitIndex::ExtensionCircuit(0);
             Ok(ExtensionRxs {
                 circuits: vec![registry.assemble(&trace, circuit.circuit_index::<Self>(), rng)?],
-                // Unblinded, so that the nested side can recompute it.
+                // A zero alpha, so that the nested side can recompute it.
                 stages: vec![DigitsStage::<Base::CircuitField, R>::rx(
                     Base::CircuitField::ZERO,
                     &digits,

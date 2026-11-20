@@ -33,12 +33,11 @@ use core::any::TypeId;
 /// circuit; a header whose convention makes a slot padding needs nothing
 /// from the steps that output it.
 ///
-/// The polynomial commitments are unblinded and deterministic for their
-/// coefficients; opening points and values are public. Values intended to
-/// stay out of the public instance belong in
-/// the application stage, staged by
-/// [`Step::prepare`](crate::step::Step::prepare), whose commitment is
-/// blinded; public openings can still reveal those values.
+/// The polynomial commitments are deterministic for their coefficients;
+/// opening points and values are public. Values intended to stay out of
+/// the public instance belong in the application stage, staged by
+/// [`Step::prepare`](crate::step::Step::prepare); public openings can
+/// still reveal those values.
 ///
 /// A compressed proof's statement carries only the header's fields, so a
 /// header type registered at a suffix a decompressed statement can land on

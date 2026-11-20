@@ -640,7 +640,8 @@ fn patcher_captures_internal_circuits() -> Result<()> {
 
 /// Sample one native and one nested circuit per generated tree. Full sweeps
 /// remain in the fixed regression; these cases spend their budget on varying
-/// honest witnesses, blinding, registry width, and coordinated mutations.
+/// honest witnesses, prover randomness, registry width, and coordinated
+/// mutations.
 struct GeneratedChecker<'a> {
     native: &'static str,
     nested: &'static str,

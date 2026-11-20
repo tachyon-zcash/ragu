@@ -59,7 +59,7 @@ sequenceDiagram
     P->>V: [lifts], [transcript]
     Note over V: Replay the Fuse and compression transcripts<br/>over [instance] and [messages], absorbing each [runᵢ]<br/>Range-check each squeeze as an endoscalar<br/>Hold each lift to [lifts]
     Note over P: Nested side<br/>Take the same 143 bits and their scalar<br/>in the scalar field, the lift
-    P->>V: [lifts] (unblinded)
+    P->>V: [lifts] (zero alpha)
     Note over V: Hold each lift to [lifts]<br/>Native side recomputes this [lifts]<br/>from the squeezed bits
 ```
 
@@ -93,7 +93,7 @@ sequenceDiagram
     participant P as Prover
     participant V as Verifier
     Note over P: Both sides<br/>Run the verifier's arithmetic in the side's field<br/>and derive its commitments over the points it holds
-    P->>V: [work], [digits] (digits unblinded)
+    P->>V: [work], [digits] (digits with a zero alpha)
     Note over V: Field identities, in the side's field<br/>Derived commitments, as endoscalar chains<br/>Full-width scalings, by the other side's digits<br/>Equalities with the instance and the IPA final check
     Note over V: Each side recomputes the other side's [digits]
 ```
@@ -101,8 +101,8 @@ sequenceDiagram
 On each side, [work] is the scratch stage, one slot per intermediate result,
 written by the chunk that computes it and read by the chunks that use it;
 [digits] holds the signed digits of the scalars of this side's field that the
-other side scales points by, committed unblinded so that side can recompute
-it.
+other side scales points by, committed with a zero alpha so that side can
+recompute it.
 
 Each side then makes its share of the checks of
 [compression](compression.md) phases 1–3 and the IPA, with phase 2's
@@ -240,7 +240,7 @@ canonical proof's $G'$, whose statement binds nothing.
 ## Privacy
 
 Compressing the output of `Application::decompress` publishes the
-commitments to its run stages. The first two are unblinded commitments to
+commitments to its run stages. The first two are zero-alpha commitments to
 the wallet proof's instance commitments and scalars. Recompressing the
 same underlying wallet proof with fresh randomness leaves those commitments
 unchanged, so observers can link the published decompression proofs even

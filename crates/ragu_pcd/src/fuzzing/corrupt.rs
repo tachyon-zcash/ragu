@@ -41,8 +41,8 @@
 //!   or $v$ stays unchanged. The verifier recomputes commitments from their
 //!   polynomials and compares them in one batch per curve under a fresh
 //!   scalar, so the mismatch is caught unless that scalar is a root of the
-//!   difference. Blinding freedom does not permit changing a polynomial
-//!   while retaining its old commitment.
+//!   difference. That a stage's alpha is arbitrary does not permit
+//!   changing a polynomial while retaining its old commitment.
 //! * **A rescaled accumulator** — $a \mapsto s\,a$, $b \mapsto s^{-1} b$,
 //!   caches updated to match — preserves the derived $c$ and every
 //!   commitment check, and is caught by what the verifier reads off the

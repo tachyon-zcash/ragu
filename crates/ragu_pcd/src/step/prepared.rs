@@ -63,8 +63,8 @@ impl<F: Field, O: Header<F>> Prepared<F, O> {
     /// Sets the output's polynomial of `kind` to `coefficients`, in
     /// ascending degree, replacing whatever its slot held.
     ///
-    /// The commitment is unblinded and deterministic for these
-    /// coefficients, and opening points and values are public. A
+    /// The commitment is deterministic for these coefficients, and
+    /// opening points and values are public. A
     /// polynomial may have at most as many coefficients as the
     /// application's rank holds, and must not be zero; Ragu checks both
     /// before committing.

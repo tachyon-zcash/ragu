@@ -35,8 +35,7 @@
 //!   equal to `alpha_a - alpha_b`. `Registry::assemble_with_alpha`
 //!   documents that `alpha` is written to `a[0]` and used nowhere else;
 //!   this catches any future regression that leaks `alpha` into another
-//!   slot (which would break commit-blinding / point-at-infinity
-//!   protection).
+//!   slot (which would break point-at-infinity protection).
 //!
 //! ## Circuit coverage
 //!

@@ -499,10 +499,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
 
-        // Rejection-sample the eval-stage blinding until the squeezed `pre_beta`
+        // Rejection-sample the eval-stage alphas until the squeezed `pre_beta`
         // lands in range as an endoscalar challenge. Unlike the single-shot
-        // challenges above, `pre_beta` must be ground: each attempt re-blinds the
-        // eval commitment and re-derives `pre_beta` from a fresh transcript
+        // challenges above, `pre_beta` must be ground: each attempt redraws the
+        // eval stages' alphas and re-derives `pre_beta` from a fresh transcript
         // clone, retrying until `EndoscalarChallenge::sample` accepts. Baking the
         // grind into `sample` means a challenge cannot be produced without it.
         //
@@ -512,7 +512,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         // challenge in-circuit from the values recorded on the builder.
         let (pre_beta, (eval_rx, bridge_eval_rx, bridge_eval_commitment)) =
             EndoscalarChallenge::sample(&mut dr, |dr| {
-                // Fresh eval-stage blindings each attempt: re-deriving the eval
+                // Fresh eval-stage alphas each attempt: re-deriving the eval
                 // commitment is what makes `pre_beta` independent across
                 // retries.
                 let (eval_rx, bridge_eval_rx, bridge_eval_commitment) = self
@@ -536,7 +536,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         builder.set_bridge_eval_rx(bridge_eval_rx, bridge_eval_commitment);
 
         // Every nested challenge is now known: commit the nested challenge
-        // stage, unblinded. Its expected commitment is computed by this
+        // stage with a zero alpha. Its expected commitment is computed by this
         // step's native binders and completed with beta by the parent's.
         let nested_challenges = self.commit_nested_challenges(
             nested_challenges_witness,

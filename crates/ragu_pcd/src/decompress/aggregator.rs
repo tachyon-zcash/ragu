@@ -108,7 +108,7 @@ use crate::{
 ///
 /// Compressing the result of [`decompress`](crate::Application::decompress)
 /// publishes its run stage commitments. The first two commit to the wallet
-/// proof's instance commitments and scalars without blinding. They stay the
+/// proof's instance commitments and scalars with a zero alpha. They stay the
 /// same across independent compressions of the same underlying wallet
 /// proof, so observers can link the published decompression proofs.
 ///

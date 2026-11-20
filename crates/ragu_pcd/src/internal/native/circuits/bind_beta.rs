@@ -5,9 +5,9 @@
 //! ## Operations
 //!
 //! A proof's nested [`challenges`] stage holds the lifts of its challenges,
-//! the base-case sign and the lift of its `pre_beta`, committed unblinded,
-//! so its commitment is a fixed combination of nested-curve generators. The
-//! proof's own `bind_challenges` circuits recompute every term but
+//! the base-case sign and the lift of its `pre_beta`, committed with a zero
+//! alpha, so its commitment is a fixed combination of nested-curve generators.
+//! The proof's own `bind_challenges` circuits recompute every term but
 //! $\beta$'s from the transcript challenges and export that partial sum as
 //! the [`nested_challenges_partial`] slot of the unified instance;
 //! `pre_beta` is squeezed after the native `eval` stage is committed, so

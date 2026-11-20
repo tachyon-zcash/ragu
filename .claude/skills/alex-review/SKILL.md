@@ -18,7 +18,7 @@ each challenge. Track commitments and evaluations across stages,
 accumulator updates, and both curves; confirm new state replaces old state.
 Check algebra and implementation independently. A convention can differ from
 the book without breaking correctness. Distinguish public data, binding, hiding,
-and non-identity requirements before removing blinding.
+and non-identity requirements before removing randomness.
 
 ## Test the adversarial argument, including its counterargument
 

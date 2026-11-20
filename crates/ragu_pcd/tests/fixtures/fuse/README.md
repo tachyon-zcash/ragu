@@ -72,8 +72,8 @@ Each scenario has four files in `honest/`.
   encodings, little-endian `u32` lengths. It is a fixture format, not a wire
   format. The prover must reproduce these bytes, and the verifier must accept
   them as committed, without re-proving. Compression draws a megabyte of
-  blinding per proof, too much to commit as a tape, so its randomness comes
-  from the harness's frozen generator under a fixed seed and is pinned by its
+  randomness per proof, too much to commit as a tape, so it comes from the
+  harness's frozen generator under a fixed seed and is pinned by its
   word count and these bytes.
 - `<scenario>.digests`: `key = value` lines. One BLAKE2b-256 digest per
   primary field of the uncompressed proof, in declaration order, over the

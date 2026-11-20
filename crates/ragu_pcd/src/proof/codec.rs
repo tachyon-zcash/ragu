@@ -148,7 +148,7 @@ codec! {
     nested_registry_xy_poly => wire::DefaultEncoding,
     nested_p_poly => wire::DefaultEncoding,
 
-    // Nested challenge stage (ScalarField, unblinded NestedCurve
+    // Nested challenge stage (ScalarField, zero-alpha NestedCurve
     // commitment): the lifts of this step's native challenges, the
     // base-case sign and the lift of `pre_beta`.
     nested_challenges_rx => wire::DefaultEncoding,

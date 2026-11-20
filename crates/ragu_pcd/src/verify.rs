@@ -291,7 +291,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             poly_eval == expected
         };
 
-        // Recompute this proof's unblinded nested challenge stage from its
+        // Recompute this proof's zero-alpha nested challenge stage from its
         // native challenges, base-case sign and `pre_beta`, and compare its
         // coefficients. A parent holds a child's stage to the child's own
         // binders through `bind_beta`, its walk and its nested batch; the
@@ -420,7 +420,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
 
         // The `ab` bridge stage is a function of the native a and b
         // commitments, the native points stage holding the nested ones, and
-        // the proof's bridge blinding: rederive and compare.
+        // the proof's bridge alpha: rederive and compare.
         let ab_bridge_claim = {
             let proof = pcd.proof();
             let expected = nested_ab::Stage::<C::HostCurve, R, C::Profile>::rx(
@@ -693,7 +693,7 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 }
 
 /// Whether the proof's nested challenge stage equals the stage recomputed,
-/// with zero blinding, from `lifts` and the proof's circuit id.
+/// with a zero alpha, from `lifts` and the proof's circuit id.
 ///
 /// `lifts` holds the native challenges' lifts followed by the lift of
 /// `pre_beta`, and the circuit id fixes the base-case sign (see

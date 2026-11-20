@@ -12,7 +12,7 @@
 //! the nested curve and absorbs the commitment as a point, as the fuse's
 //! bridge stages carry the other field's values. The commitment is over
 //! the generators the run's stage of the proof's decompression lands the
-//! values on, unblinded (the transcript is opened with them,
+//! values on, with a zero alpha (the transcript is opened with them,
 //! [`with_runs`](CycleTranscript::with_runs)), so that it is that stage's
 //! commitment: a circuit over the circuit field absorbs it as a witness
 //! point, and the proof's consumer holds the point to the stage, which

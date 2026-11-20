@@ -228,7 +228,7 @@ pub(crate) enum AbValue {
     B(usize),
     /// A coordinate of the native points stage's commitment.
     PointsAb(usize),
-    /// The blinding, `bridge_alpha` squared.
+    /// The `ab` bridge stage's alpha, `bridge_alpha` squared.
     Alpha,
 }
 
@@ -1488,7 +1488,7 @@ where
         let expected_cbz = element(dr, side.cbz)?;
         checks.cbz.enforce_equal(dr, &expected_cbz)?;
 
-        // The ab bridge's coordinates and blinding, whose digits the other
+        // The ab bridge's coordinates and alpha, whose digits the other
         // side scales generators by, bound here to the exported points and
         // the instance's bridge_alpha.
         let [ax, ay] = coordinates(

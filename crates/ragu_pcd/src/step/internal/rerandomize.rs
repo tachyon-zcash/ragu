@@ -115,11 +115,11 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // be populated with some random data, for actual re-randomization
         // (zero-knowledge), though it's not certain at this stage in
         // development. Note that random wires here would only randomize this
-        // step's own application polynomial, which is already blinded; the
-        // folded accumulator of the resulting proof is a deterministic function
-        // of the input proof, cached seeded proof, and public challenges, so
-        // hiding it would need a fold-level randomizer claim rather than extra
-        // witness here.
+        // step's own application polynomial, which already takes a random
+        // alpha; the folded accumulator of the resulting proof is a
+        // deterministic function of the input proof, cached seeded proof, and
+        // public challenges, so hiding it would need a fold-level randomizer
+        // claim rather than extra witness here.
 
         // Return left's data as the output data - this preserves it!
         Ok((

@@ -224,11 +224,11 @@ pub trait Step<C: Cycle>: Sized + Send + Sync {
     /// Prepares the step's output before its challenge is drawn: the output
     /// proof's online polynomials, by kind, and the staged values, computed
     /// from the witness and the inputs' data and polynomials. Ragu commits the
-    /// polynomials, unblinded, and stores them in [`Proof`](crate::Proof),
-    /// where the parent reads them as its input's; it commits the staged
-    /// values, blinded, in the proof's application stage. The default
-    /// prepares nothing: the constant one in every slot and no staged
-    /// value.
+    /// polynomials deterministically and stores them in
+    /// [`Proof`](crate::Proof), where the parent reads them as its input's; it
+    /// commits the staged values, with a random alpha, in the proof's
+    /// application stage. The default prepares nothing: the constant one in
+    /// every slot and no staged value.
     ///
     /// What this returns is prover data, not a constraint. An output
     /// polynomial is held to what was prepared only by the constraints

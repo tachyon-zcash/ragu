@@ -34,15 +34,15 @@
 //! The compression's transcript absorbs the scalar field's values, the
 //! host curve's points and the nested curve's scalars, as one nested-curve
 //! point per run of them before a challenge: the run's commitment at the
-//! generators the run's stage lands its values on, unblinded, at the
+//! generators the run's stage lands its values on, with a zero alpha, at the
 //! aggregator rank ([`run_degrees`](crate::compress::runs::run_degrees); see
 //! [`CycleTranscript`](crate::ipa::CycleTranscript)). The circuit-field
 //! side takes each commitment as a witness point its transcript absorbs
 //! and its binding circuit exposes, which the proof's consumer holds to the
 //! run stage's actual commitment: the values the scalar-field side's
 //! chunks read are then the ones each challenge was squeezed over. Two
-//! further kinds of stage are committed unblinded so that the other side
-//! can recompute their commitments from the values it holds, which its
+//! further kinds of stage are committed with a zero alpha so that the other
+//! side can recompute their commitments from the values it holds, which its
 //! binding circuit exposes the same way (see
 //! [`Binding`](crate::profile::Binding)):
 //!
@@ -118,7 +118,7 @@ pub(crate) const MESSAGE_SCALARS: usize =
 /// The scalar field's values beyond $v$, $c$ and $c b z$ whose digits the
 /// circuit-field side scales generators by: the `ab` bridge stage's
 /// coefficients, the coordinates of three host-curve commitments and the
-/// blinding (see [`ab_layout`](super::program::ab_layout)).
+/// alpha (see [`ab_layout`](super::program::ab_layout)).
 pub(crate) const AB_TERMS: usize = 7;
 
 /// Positions within the circuit-field side's step binding, the instance
@@ -774,8 +774,8 @@ pub(crate) type MessagesStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
 >;
 
 /// The lifts stage of side `S`, after its front: elements only, committed
-/// unblinded on the scalar-field side, whose lifts the circuit-field side
-/// recomputes.
+/// with a zero alpha on the scalar-field side, whose lifts the circuit-field
+/// side recomputes.
 pub(crate) type LiftsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
@@ -807,8 +807,8 @@ pub(crate) type TranscriptStage<C, S, K, R, const HEADER_SIZE: usize> = SideStag
 >;
 
 /// The digits stage of side `S`, after the work stage: elements only,
-/// committed unblinded, loaded by the digits chunks alone and recomputed
-/// by the other side.
+/// committed with a zero alpha, loaded by the digits chunks alone and
+/// recomputed by the other side.
 pub(crate) type DigitsStage<C, S, K, R, const HEADER_SIZE: usize> = SideStage<
     C,
     S,
@@ -980,7 +980,7 @@ impl<'dr, D: Driver<'dr>, P: Affine<Base = D::F>> FrontLoaded<'dr, D, P> {
 /// A side's stages before the lifts stage, as the chain the chunk
 /// circuits load first: the instance and messages stages on the
 /// circuit-field side; on the scalar-field side one stage per run of the
-/// compression's transcript ([`RunStage`]), committed unblinded for the
+/// compression's transcript ([`RunStage`]), committed with a zero alpha for the
 /// circuit-field side's transcript to absorb, then the trailing stage
 /// ([`TrailingStage`]). The hooks and the prover reach each stage by its
 /// index in the chain.
@@ -1042,8 +1042,8 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
     #[cfg(test)]
     fn mask(index: usize) -> Result<BondingObject<'static, Self::F, R>>;
 
-    /// Stage `index`'s polynomial over `prepared`, blinded by `alpha`,
-    /// which a stage committed unblinded ignores.
+    /// Stage `index`'s polynomial over `prepared` with `alpha`, which a
+    /// stage committed with a zero alpha ignores.
     ///
     /// # Errors
     ///
@@ -1054,9 +1054,9 @@ pub(crate) trait Front<C: Cycle, K: Rank, R: Rank, const HEADER_SIZE: usize>:
         prepared: &Prepared<C, Self>,
     ) -> Result<sparse::Polynomial<Self::F, R>>;
 
-    /// Whether stage `index` is committed unblinded, for the other side
-    /// to hold a value to its commitment: the run stages.
-    fn unblinded(index: usize) -> bool;
+    /// Whether stage `index` is committed with a zero alpha, for the other
+    /// side to hold a value to its commitment: the run stages.
+    fn zero_alpha(index: usize) -> bool;
 }
 
 /// The chain's stages past its end.
@@ -1145,7 +1145,7 @@ where
         }
     }
 
-    fn unblinded(_: usize) -> bool {
+    fn zero_alpha(_: usize) -> bool {
         false
     }
 }
@@ -1235,7 +1235,7 @@ where
         }
     }
 
-    fn unblinded(index: usize) -> bool {
+    fn zero_alpha(index: usize) -> bool {
         index < num_runs::<K>()
     }
 }
@@ -1268,10 +1268,10 @@ impl<C: Cycle, K: Rank, N: RunIndex> Len for RunElements<C, K, N> {
 /// proof at rank `K`, as a stage of chunk circuits at rank `R`, after the
 /// run before it: the points' coordinates first, then the elements, each
 /// at one wire, read off the instance's and the messages' positions the
-/// run covers. The honest prover commits the stage unblinded to match the
-/// run commitment computed during native verification. The mask leaves the
-/// blinding and the other wires of its gates free. The transcript absorbs
-/// the actual stage commitment, so those coefficients can change the
+/// run covers. The honest prover commits the stage with a zero alpha to
+/// match the run commitment computed during native verification. The mask
+/// leaves the alpha and the other wires of its gates free. The transcript
+/// absorbs the actual stage commitment, so those coefficients can change the
 /// challenges for the same run values.
 pub(crate) struct RunStage<C, K, R, N>(PhantomData<fn() -> (C, K, R, N)>);
 
@@ -1461,7 +1461,7 @@ pub(crate) trait RunIndex: Copy + Default + Send + Sync + 'static {
         K: Rank,
         R: Rank;
 
-    /// Run `index`'s stage's polynomial over `prepared`, unblinded, for
+    /// Run `index`'s stage's polynomial over `prepared`, with a zero alpha, for
     /// `index` at most this run's.
     fn rx<C, K, R>(
         index: usize,

@@ -158,7 +158,7 @@ impl<'a, 'dr, D: Driver<'dr>, C: Cycle, S: Step<C>> Oracles<'a, 'dr, D, C, S> {
     ///
     /// This digest binds `O1` but is neither unique to it nor fixed before
     /// $\zeta$. [`Application::bridge_hash`](crate::Application::bridge_hash)
-    /// recomputes the honest prover's unblinded encoding. Applications that
+    /// recomputes the honest prover's zero-alpha encoding. Applications that
     /// use it in anchors must recompute advancement natively and compare
     /// against canonical-chain anchors.
     pub fn bridge_hash(&self) -> &BridgeHash<'dr, D> {

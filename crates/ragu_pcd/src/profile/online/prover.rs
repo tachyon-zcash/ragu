@@ -344,8 +344,8 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         generators: &G,
     ) -> Result<()> {
         if Self::active() {
-            // The other field absorbs affine coordinates. Resample the stage
-            // blinder before publishing a commitment that has none.
+            // The other field absorbs affine coordinates. Resample the stage's
+            // alpha before publishing a commitment that has none.
             loop {
                 let polynomial = rx()?;
                 let commitment = B::sparse_commit_to_affine(&polynomial, generators);
