@@ -119,14 +119,12 @@ impl<F: Field> Monomials<F> {
     /// Evaluates the polynomial at the point whose coordinates' powers are
     /// given: `x_powers[e]` is $x^e$ and `y_powers[q]` is $y^q$.
     ///
-    /// A test seam, for comparing what the registry tag hashed with what the
-    /// wiring evaluators compute; see
-    /// [`Registry::hashed_wxy_over_domain`](crate::registry::Registry::hashed_wxy_over_domain).
+    /// Finalization compares this with the wiring object's evaluations; see
+    /// [trusted circuit code](crate::registry::Tag#trusted-circuit-code).
     ///
     /// # Panics
     ///
     /// Panics if a monomial's power is not among the powers given.
-    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn eval_at_powers(&self, x_powers: &[F], y_powers: &[F]) -> F {
         self.0.iter().fold(F::ZERO, |acc, m| {
             acc + m.coeff * x_powers[m.x] * y_powers[m.y]

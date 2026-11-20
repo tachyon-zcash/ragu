@@ -65,6 +65,7 @@ use udon::{
 use crate::{
     BondingObject, Circuit, WiringObject,
     polynomials::{Rank, sparse},
+    wiring::monomials::Monomials,
 };
 
 /// The powers of `point` a registry query shares across its circuits, one
@@ -78,6 +79,33 @@ pub(crate) fn powers<F: Field, R: Rank>(point: F) -> Vec<F> {
             current
         })
         .collect()
+}
+
+/// Whether each evaluation the registry makes of `circuit` equals
+/// `monomials`, its hashed polynomial, at $(x, y)$: $s(x, y)$ and its
+/// restrictions to $X = x$ and to $Y = y$, with and without shared powers.
+/// A mask's evaluations omit the global term the registry adds to them.
+fn evaluations_match<F: Field, R: Rank>(
+    circuit: &dyn WiringObject<F, R>,
+    monomials: &Monomials<F>,
+    x: F,
+    y: F,
+) -> bool {
+    let (x_powers, y_powers) = (powers::<F, R>(x), powers::<F, R>(y));
+    let mut expected = monomials.eval_at_powers(&x_powers, &y_powers);
+    if circuit.is_mask() {
+        expected -= crate::staging::mask::global_mask::<F, R>(x, y);
+    }
+    [
+        circuit.sxy(x, y),
+        circuit.sxy_with_powers(x, y, &x_powers),
+        circuit.sx(x).eval(y),
+        circuit.sx_with_powers(x, &x_powers).eval(y),
+        circuit.sy(y).eval(x),
+        circuit.sy_with_powers(y, &y_powers).eval(x),
+    ]
+    .into_iter()
+    .all(|value| value == expected)
 }
 
 /// Represents a simple numeric index of a circuit in the registry.
@@ -258,7 +286,10 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     /// # Errors
     ///
     /// Returns [`Error::CircuitBoundExceeded`] if the total number of
-    /// registered circuits exceeds the rank capacity.
+    /// registered circuits exceeds the rank capacity, and
+    /// [`Error::Initialization`] if a circuit's evaluations disagree with the
+    /// polynomial the tag hashes for it (see
+    /// [trusted circuit code](Tag#trusted-circuit-code)).
     pub fn finalize(self) -> Result<Registry<'params, F, R>> {
         let total_circuits = self.num_circuits();
         if total_circuits > R::num_coeffs() {
@@ -278,7 +309,7 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .chain(self.application_steps)
             .collect();
 
-        let tag = Tag::derive(&circuits);
+        let tag = Tag::derive(&circuits)?;
         #[cfg(any(test, feature = "test-utils"))]
         let tag = self.tag.map_or(tag, Tag);
 
@@ -330,8 +361,8 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// injective: every item is fixed-width or length-prefixed. Two registries
 /// with the same tag therefore hashed the same polynomials unless their
 /// reduced digests collide, which takes about $|\mathbb{F}|^{1/2}$ hashed
-/// registries. The polynomials hashed are the polynomials evaluated, for
-/// [trusted circuit code](#trusted-circuit-code).
+/// registries. Finalization checks that the polynomials hashed are the
+/// polynomials evaluated; see [trusted circuit code](#trusted-circuit-code).
 /// A tag of zero has probability $1/|\mathbb{F}|$ over the hash; soundness
 /// arguments that assume a nonzero tag must include it.
 ///
@@ -364,17 +395,21 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// The tag relies on one requirement of that code in particular: a circuit
 /// emits the same constraints on every walk, whichever driver performs it
 /// (see [`Circuit`]). Finalization hashes each wiring polynomial as the
-/// `wiring::monomials` driver walks it, and every later evaluation walks the
-/// circuit again, through the `sx`, `sy` and `sxy` drivers. Code that told
-/// those walks apart, by inspecting the driver's type or by keeping state
-/// between walks, could give the hash one polynomial and the evaluations
-/// another under one tag. Nothing enforces the requirement, and code that
-/// breaks it does so in plain sight: it is a backdoor of the kind above,
-/// outside what the tag defends against.
+/// `wiring::monomials` driver walks it, while evaluations run the program
+/// `wiring::compiled` recorded from another walk when the circuit was
+/// registered. Code that told those walks apart, by inspecting the driver's
+/// type or by keeping state between walks, could give the hash one
+/// polynomial and the evaluations another under one tag.
 ///
-/// Tests compare what was hashed with what the three evaluators compute, for
-/// this crate's circuits and for the registries an application builds, which
-/// catches a circuit that breaks the requirement by accident.
+/// Finalization rejects such a circuit. Once the circuit's polynomial is
+/// absorbed, it draws a point $(x, y)$ from the hash state and requires each
+/// evaluation the registry makes of the circuit, $s(x, y)$ and its
+/// restrictions to $X = x$ and to $Y = y$, with and without shared powers, to
+/// equal the hashed polynomial there. Both polynomials are fixed before the
+/// point is drawn, so a circuit whose walks disagree passes with probability
+/// below $8n / |\mathbb{F}|$ per hash evaluation spent searching for one that
+/// passes. Code that breaks the requirement otherwise does so in plain sight:
+/// it is a backdoor of the kind above, outside what the tag defends against.
 ///
 /// # Security scope
 ///
@@ -397,8 +432,15 @@ pub struct Tag<F: Field>(F);
 
 impl<F: Field> Tag<F> {
     /// Derives the tag of the registry holding `circuits`: the hash of their
-    /// wiring polynomials.
-    fn derive<R: Rank>(circuits: &[Box<dyn WiringObject<F, R> + '_>]) -> Self {
+    /// wiring polynomials. Each circuit's evaluations must equal its hashed
+    /// polynomial at a point drawn once that polynomial is absorbed; see
+    /// [trusted circuit code](Self#trusted-circuit-code).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Initialization`] for the first circuit whose
+    /// evaluations differ from its hashed polynomial.
+    fn derive<R: Rank>(circuits: &[Box<dyn WiringObject<F, R> + '_>]) -> Result<Self> {
         let mut state = Params::new().personal(b"ragu_registry___").to_state();
         let modulus = F::MODULUS;
         state.update(&(modulus.as_ref().len() as u64).to_le_bytes());
@@ -407,10 +449,22 @@ impl<F: Field> Tag<F> {
         }
         state.update(&(R::n() as u64).to_le_bytes());
         state.update(&(circuits.len() as u64).to_le_bytes());
-        for circuit in circuits {
-            circuit.monomials().hash_into(&mut state);
+        for (i, circuit) in circuits.iter().enumerate() {
+            let monomials = circuit.monomials();
+            monomials.hash_into(&mut state);
+            let point = |label: u8| {
+                F::from_uniform_bytes(state.clone().update(&[label]).finalize().as_array())
+            };
+            if !evaluations_match(&**circuit, &monomials, point(0), point(1)) {
+                return Err(Error::Initialization(
+                    alloc::format!(
+                        "circuit {i}'s evaluations differ from the polynomial its tag hashes"
+                    )
+                    .into(),
+                ));
+            }
         }
-        Self(F::from_uniform_bytes(state.finalize().as_array()))
+        Ok(Self(F::from_uniform_bytes(state.finalize().as_array())))
     }
 
     /// Returns the registry tag value.
@@ -581,8 +635,8 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// as [`wxy_over_domain`](Self::wxy_over_domain) does, from the monomials
     /// the [`Tag`] hashed rather than through the wiring evaluators.
     ///
-    /// A test seam. The tag hashes one walk of each circuit and the
-    /// evaluators perform others, so this agrees with
+    /// A test seam. The tag hashes one walk of each circuit and evaluations
+    /// run a program recorded from another, so this agrees with
     /// [`wxy_over_domain`](Self::wxy_over_domain) exactly when the two walks
     /// emitted the same polynomial (see
     /// [trusted circuit code](Tag#trusted-circuit-code)); tests assert that
@@ -1282,6 +1336,81 @@ mod tests {
                         assert_eq!(at.xy_parallel(x, y), at.xy(x, y));
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalization rejects a circuit whose evaluations differ from its
+    /// hashed polynomial through any one of the methods the registry uses.
+    #[test]
+    fn finalize_rejects_evaluations_that_differ_from_the_hash() -> Result<()> {
+        use crate::{WiringObject, polynomials::sparse};
+
+        type Poly = sparse::Polynomial<Fp, TestRank>;
+
+        /// A wiring object whose evaluation method `skewed` is off by one.
+        struct Skewed {
+            inner: Box<dyn WiringObject<Fp, TestRank>>,
+            skewed: usize,
+        }
+
+        impl Skewed {
+            fn skew(&self, method: usize) -> Fp {
+                if method == self.skewed {
+                    Fp::ONE
+                } else {
+                    Fp::ZERO
+                }
+            }
+
+            fn skew_poly(&self, method: usize, mut poly: Poly) -> Poly {
+                poly.add_assign(&Poly::from_coeffs(alloc::vec![self.skew(method)]));
+                poly
+            }
+        }
+
+        impl WiringObject<Fp, TestRank> for Skewed {
+            fn sxy(&self, x: Fp, y: Fp) -> Fp {
+                self.inner.sxy(x, y) + self.skew(0)
+            }
+            fn sxy_with_powers(&self, x: Fp, y: Fp, powers: &[Fp]) -> Fp {
+                self.inner.sxy_with_powers(x, y, powers) + self.skew(1)
+            }
+            fn sx(&self, x: Fp) -> Poly {
+                self.skew_poly(2, self.inner.sx(x))
+            }
+            fn sx_with_powers(&self, x: Fp, powers: &[Fp]) -> Poly {
+                self.skew_poly(3, self.inner.sx_with_powers(x, powers))
+            }
+            fn sy(&self, y: Fp) -> Poly {
+                self.skew_poly(4, self.inner.sy(y))
+            }
+            fn sy_with_powers(&self, y: Fp, powers: &[Fp]) -> Poly {
+                self.skew_poly(5, self.inner.sy_with_powers(y, powers))
+            }
+            fn monomials(&self) -> crate::wiring::monomials::Monomials<Fp> {
+                self.inner.monomials()
+            }
+            fn floor_plan(&self) -> &[crate::floor_planner::ConstraintSegment] {
+                self.inner.floor_plan()
+            }
+        }
+
+        // Method 6 skews nothing, so that registry finalizes.
+        for skewed in 0..=6 {
+            let inner = crate::into_wiring_object(SquareCircuit { times: 3 })?;
+            let result = TestRegistryBuilder::new()
+                .register_circuit(SquareCircuit { times: 2 })?
+                .register_bonding(crate::BondingObject::new(Box::new(Skewed {
+                    inner,
+                    skewed,
+                })))
+                .finalize();
+            match result {
+                Ok(_) => assert_eq!(skewed, 6, "method {skewed} was not checked"),
+                Err(ragu_core::Error::Initialization(_)) => assert_ne!(skewed, 6),
+                Err(error) => panic!("unexpected error: {error}"),
             }
         }
         Ok(())
