@@ -2,9 +2,10 @@
 //!
 //! Registries record each circuit once with [`compiled`]. Evaluations then
 //! run that linear program forwards or backwards without re-synthesizing the
-//! circuit. The direct interpreters are built only for tests, as independent
-//! references for the compiled program. Symbolic stage masks keep their
-//! compact closed-form representation.
+//! circuit, and the registry tag hashes the polynomial written down from the
+//! same program. The direct interpreters and the [`monomials`] driver are
+//! built only for tests, as independent references for the compiled program.
+//! Symbolic stage masks keep their compact closed-form representation.
 //!
 //! # Background
 //!
@@ -83,15 +84,18 @@
 //!
 //! * [`compiled`]: Records a circuit's constraint emission once, then
 //!   evaluates $s(X, Y)$ at $X = x$, at $Y = y$, or at $(x, y)$ for some
-//!   $x, y \in \mathbb{F}$. Registries evaluate circuits through it.
-//! * [`monomials`]: Writes out $s(X, Y)$ itself as the list of its nonzero
-//!   terms $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum
-//!   is $s(X, Y)$, for the registry to hash into its tag.
+//!   $x, y \in \mathbb{F}$, and writes the polynomial down for the registry
+//!   tag. Registries evaluate and hash circuits through it.
+//! * [`monomials`]: $s(X, Y)$ itself as the list of its nonzero terms
+//!   $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum is
+//!   $s(X, Y)$: what the registry hashes into its tag.
 //!
 //! Test builds add `sx`, `sy` and `sxy`, which interpret circuit code directly
 //! (via specialized [`Driver`] implementations) at the same three
-//! restrictions, re-running the circuit on every evaluation. They share no
-//! code with [`compiled`], which is checked against them.
+//! restrictions, re-running the circuit on every evaluation, and the
+//! [`monomials`] driver, which writes the polynomial down from a walk of the
+//! circuit. They share no code with [`compiled`], which is checked against
+//! them.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Routine`]: ragu_core::routines::Routine

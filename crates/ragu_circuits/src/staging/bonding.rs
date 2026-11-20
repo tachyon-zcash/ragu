@@ -271,6 +271,13 @@ impl<F: Field, R: Rank> WiringObject<F, R> for Stripped<'_, F, R> {
         monomials
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    fn walked_monomials(&self) -> Option<Monomials<F>> {
+        let mut monomials = self.0.walked_monomials()?;
+        monomials.strip_one();
+        Some(monomials)
+    }
+
     fn floor_plan(&self) -> &[ConstraintSegment] {
         self.0.floor_plan()
     }

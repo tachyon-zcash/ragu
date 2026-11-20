@@ -3,6 +3,11 @@
 //! Virtual wires remain shared nodes rather than expanded sparse matrix rows.
 //! Evaluating X runs the program forwards; evaluating Y distributes constraint
 //! weights backwards. Neither operation executes circuit or routine code.
+//!
+//! The registry hashes the same program into its
+//! [tag](crate::registry::Tag): [`Compiled::monomials`] expands it into the
+//! polynomial's nonzero monomials, so the polynomial the tag binds is the one
+//! every evaluation computes.
 
 use alloc::{vec, vec::Vec};
 
@@ -15,6 +20,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
+use super::monomials::{Monomial, Monomials};
 use crate::{
     DriverScope,
     floor_planner::ConstraintSegment,
@@ -425,6 +431,81 @@ impl<F: Field, R: Rank> Compiled<F, R> {
         view.d = values;
         view.build()
     }
+
+    /// Expands a row into a canonical linear form in the wire monomials of
+    /// $X$: its terms' degrees and coefficients, given the forms of the nodes
+    /// that precede it.
+    fn form(&self, row: core::ops::Range<usize>, nodes: &[Vec<(usize, F)>]) -> Vec<(usize, F)> {
+        let n = R::n();
+        let mut terms = Vec::new();
+        for &(wire, code) in &self.terms[row] {
+            let scale = |value: F| match code {
+                0 => value,
+                1 => -value,
+                2 => value.double(),
+                _ => value * self.constants[code - 3],
+            };
+            match wire.checked_sub(4 * self.gates) {
+                Some(node) => terms.extend(
+                    nodes[node]
+                        .iter()
+                        .map(|&(degree, value)| (degree, scale(value))),
+                ),
+                None => {
+                    // The gate buffers hold the d, b, a and c wires, each in
+                    // increasing degree.
+                    let start = match wire / self.gates {
+                        0 => 0,
+                        1 => 2 * n - self.gates,
+                        2 => 2 * n,
+                        _ => 4 * n - self.gates,
+                    };
+                    terms.push((start + wire % self.gates, scale(F::ONE)));
+                }
+            }
+        }
+        // Sort by degree, merge duplicates and drop zeros. The driver that
+        // tests compare this with keeps its own copy, so the two share no
+        // code.
+        terms.sort_unstable_by_key(|&(degree, _)| degree);
+        let mut form: Vec<(usize, F)> = Vec::with_capacity(terms.len());
+        for (degree, value) in terms {
+            match form.last_mut() {
+                Some((last, sum)) if *last == degree => *sum += value,
+                _ => form.push((degree, value)),
+            }
+        }
+        form.retain(|(_, value)| !value.is_zero());
+        form
+    }
+
+    /// Writes the recorded polynomial down as its nonzero monomials, for the
+    /// registry to hash into its [tag](crate::registry::Tag).
+    ///
+    /// Each node is expanded once into a canonical form, and each constraint's
+    /// form becomes the coefficient of its power of $Y$. The result is a
+    /// function of the polynomial alone, whatever nodes the recording shares
+    /// or inlines: it is what `wiring::monomials` writes from a walk of a
+    /// circuit that emits these constraints, which tests compare it with.
+    pub(crate) fn monomials(&self) -> Monomials<F> {
+        let mut nodes = Vec::with_capacity(self.nodes.len());
+        for row in &self.nodes {
+            let form = self.form(row.clone(), &nodes);
+            nodes.push(form);
+        }
+        // Constraints are held in increasing order of their distinct powers
+        // of Y and each form is canonical, so every (y, x) occurs once, in
+        // order.
+        let mut monomials = Vec::new();
+        for (y, row) in &self.constraints {
+            monomials.extend(
+                self.form(row.clone(), &nodes)
+                    .into_iter()
+                    .map(|(x, coeff)| Monomial { y: *y, x, coeff }),
+            );
+        }
+        Monomials::new(monomials)
+    }
 }
 
 struct Scope {
@@ -575,7 +656,9 @@ pub(crate) mod tests {
     }
 
     /// The compiled wiring agrees with the interpreters at every `x` and `y`,
-    /// both on its own and given the powers table a registry query shares.
+    /// both on its own and given the powers table a registry query shares, and
+    /// the monomials it writes down for the registry tag are the ones an
+    /// independent walk of the circuit writes.
     pub(crate) fn assert_matches_interpreted_at<F: Field, C: Circuit<F>, R: Rank>(
         circuit: &C,
         xs: &[F],
@@ -585,6 +668,11 @@ pub(crate) mod tests {
         let plan = crate::floor_planner::floor_plan(&metrics.segments);
         let raw = CircuitAdapterRef(circuit);
         let compiled = compile::<_, _, R>(&raw, &plan).unwrap();
+        assert_eq!(
+            compiled.monomials(),
+            super::super::monomials::eval::<_, _, R>(&raw, &plan).unwrap(),
+            "monomials"
+        );
         for &y in ys {
             let sy = super::super::sy::eval::<_, _, R>(&raw, y, &plan).unwrap();
             let powers = crate::registry::powers::<F, R>(y);
@@ -684,6 +772,11 @@ pub(crate) mod tests {
             let plan = crate::floor_planner::floor_plan(&metrics.segments);
             let compiled = compile::<F, _, TestRank>(&Duplicates, &plan).unwrap();
             assert_eq!(compiled.nodes.len(), 1, "the three copies share one parent");
+            // Sharing and inlining leave the written polynomial unchanged.
+            assert_eq!(
+                compiled.monomials(),
+                super::super::monomials::eval::<F, _, TestRank>(&Duplicates, &plan).unwrap()
+            );
             for x in [F::ZERO, F::ONE, -F::ONE, F::from(13)] {
                 let expected =
                     super::super::sx::eval::<F, _, TestRank>(&Duplicates, x, &plan).unwrap();
@@ -730,6 +823,11 @@ pub(crate) mod tests {
         let metrics = crate::metrics::eval_raw(&Shared).unwrap();
         let plan = crate::floor_planner::floor_plan(&metrics.segments);
         let compiled = compile::<_, _, crate::polynomials::TestRank>(&Shared, &plan).unwrap();
+        assert_eq!(
+            compiled.monomials(),
+            super::super::monomials::eval::<_, _, crate::polynomials::TestRank>(&Shared, &plan)
+                .unwrap()
+        );
         for x in [Fp::ZERO, Fp::ONE, Fp::from(11)] {
             let expected =
                 super::super::sx::eval::<_, _, crate::polynomials::TestRank>(&Shared, x, &plan)

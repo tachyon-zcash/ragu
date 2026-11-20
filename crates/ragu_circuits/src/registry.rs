@@ -348,23 +348,26 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// The tag is a hash of $m(W, X, Y)$ itself, before the tag is injected.
 /// [`RegistryBuilder::finalize`] writes every registered wiring polynomial
 /// $s_i(X, Y)$ down as its nonzero monomials $c \cdot X^e Y^q$ in canonical
-/// order (the `wiring::monomials` evaluator), one circuit at a time, and
-/// absorbs them, in registration order, into BLAKE2b personalized with
-/// `ragu_registry___`. Ahead of them go the field's modulus (its number of
-/// 64-bit limbs, then each limb, little-endian), the rank's $n$ and the
-/// number of polynomials. The 64-byte digest is reduced to a field element.
-/// The modulus separates the native and nested registries' hashes, so two
-/// registries over different fields never hash the same input.
+/// order, from the wiring recorded when its circuit was registered (the
+/// program `wiring::compiled` runs for every later evaluation), one circuit
+/// at a time, and absorbs them, in registration order, into BLAKE2b
+/// personalized with `ragu_registry___`. Ahead of them go the field's modulus
+/// (its number of 64-bit limbs, then each limb, little-endian), the rank's
+/// $n$ and the number of polynomials. The 64-byte digest is reduced to a
+/// field element. The modulus separates the native and nested registries'
+/// hashes, so two registries over different fields never hash the same
+/// input.
 ///
-/// Each wiring polynomial is a function of its circuit's constraints alone,
-/// not of how the circuit code emitted them, and the byte encoding is
-/// injective: every item is fixed-width or length-prefixed. Two registries
-/// with the same tag therefore hashed the same polynomials unless their
-/// reduced digests collide, which takes about $|\mathbb{F}|^{1/2}$ hashed
-/// registries. Finalization checks that the polynomials hashed are the
-/// polynomials evaluated; see [trusted circuit code](#trusted-circuit-code).
-/// A tag of zero has probability $1/|\mathbb{F}|$ over the hash; soundness
-/// arguments that assume a nonzero tag must include it.
+/// The monomials written are a function of the recorded polynomial alone,
+/// not of how the circuit code emitted its constraints, and the byte
+/// encoding is injective: every item is fixed-width or length-prefixed. Two
+/// registries with the same tag therefore hashed the same polynomials unless
+/// their reduced digests collide, which takes about $|\mathbb{F}|^{1/2}$
+/// hashed registries. The polynomials hashed are the polynomials evaluated,
+/// both being the one recording; see
+/// [trusted circuit code](#trusted-circuit-code). A tag of zero has
+/// probability $1/|\mathbb{F}|$ over the hash; soundness arguments that
+/// assume a nonzero tag must include it.
 ///
 /// # Break self-reference without preprocessing
 ///
@@ -392,24 +395,30 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// accepts, and a backdoor written into them, such as a missing constraint,
 /// is found by reading them.
 ///
-/// The tag relies on one requirement of that code in particular: a circuit
-/// emits the same constraints on every walk, whichever driver performs it
-/// (see [`Circuit`]). Finalization hashes each wiring polynomial as the
-/// `wiring::monomials` driver walks it, while evaluations run the program
-/// `wiring::compiled` recorded from another walk when the circuit was
-/// registered. Code that told those walks apart, by inspecting the driver's
-/// type or by keeping state between walks, could give the hash one
-/// polynomial and the evaluations another under one tag.
+/// The tag does not rely on how that code behaves from one walk to the
+/// next. A circuit's wiring is recorded by one walk, when the circuit is
+/// registered, and its code is not consulted for wiring again: the registry
+/// hashes the polynomial written down from that recording, and every
+/// evaluation runs the same recording. Code that told walks apart, by
+/// inspecting the driver's type or by keeping state between walks, cannot
+/// give the hash one polynomial and the evaluations another under one tag,
+/// because whatever the recording walk emitted is both. A circuit is still
+/// required to emit the same constraints on every walk (see [`Circuit`]):
+/// its traces come from other walks, and satisfy the recorded constraints
+/// only if those walks emit them too.
 ///
-/// Finalization rejects such a circuit. Once the circuit's polynomial is
-/// absorbed, it draws a point $(x, y)$ from the hash state and requires each
-/// evaluation the registry makes of the circuit, $s(x, y)$ and its
-/// restrictions to $X = x$ and to $Y = y$, with and without shared powers, to
-/// equal the hashed polynomial there. Both polynomials are fixed before the
-/// point is drawn, so a circuit whose walks disagree passes with probability
-/// below $8n / |\mathbb{F}|$ per hash evaluation spent searching for one that
-/// passes. Code that breaks the requirement otherwise does so in plain sight:
-/// it is a backdoor of the kind above, outside what the tag defends against.
+/// Finalization compares the two forms the registry holds of each
+/// polynomial. Once a circuit's monomials are absorbed, it draws a point
+/// $(x, y)$ from the hash state and requires each evaluation the registry
+/// makes of the circuit, $s(x, y)$ and its restrictions to $X = x$ and to
+/// $Y = y$, with and without shared powers, to equal the hashed monomials
+/// there. This checks the registry's own arithmetic: the code that writes a
+/// recording down against the code that evaluates it, and the closed forms a
+/// stage mask has for each. It does not defend against hostile circuit code
+/// and has no need to: neither form consults the circuit's code. Tests
+/// compare each recording with an independent walk of its circuit, by the
+/// `wiring::monomials` driver, for this crate's circuits and for the
+/// registries an application builds.
 ///
 /// # Security scope
 ///
@@ -635,12 +644,13 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// as [`wxy_over_domain`](Self::wxy_over_domain) does, from the monomials
     /// the [`Tag`] hashed rather than through the wiring evaluators.
     ///
-    /// A test seam. The tag hashes one walk of each circuit and evaluations
-    /// run a program recorded from another, so this agrees with
-    /// [`wxy_over_domain`](Self::wxy_over_domain) exactly when the two walks
-    /// emitted the same polynomial (see
-    /// [trusted circuit code](Tag#trusted-circuit-code)); tests assert that
-    /// they do.
+    /// A test seam. The tag hashes the monomials written from each circuit's
+    /// recorded wiring and evaluations run the same recording (see
+    /// [trusted circuit code](Tag#trusted-circuit-code)), so this agrees with
+    /// [`wxy_over_domain`](Self::wxy_over_domain) unless the code that writes
+    /// a recording down and the code that evaluates it disagree; tests assert
+    /// that they agree. [`walk_mismatches`](Self::walk_mismatches) compares
+    /// the recordings with independent walks of the circuits.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn hashed_wxy_over_domain(&self, x: F, y: F) -> Vec<F> {
         let powers = |base: F| -> Vec<F> {
@@ -660,6 +670,31 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
                 circuit.monomials().eval_at_powers(&x_powers, &y_powers);
         }
         evals
+    }
+
+    /// The indices of the registered circuits whose hashed polynomial is not
+    /// the one an independent walk of the circuit writes down.
+    ///
+    /// A test seam. The [`Tag`] hashes, and every evaluation runs, the wiring
+    /// one walk of each circuit recorded (see
+    /// [trusted circuit code](Tag#trusted-circuit-code)). This walks each
+    /// circuit again with the `wiring::monomials` driver, which shares no
+    /// code with the recording, and compares the two polynomials monomial by
+    /// monomial. An index is returned when the recording is at fault, or when
+    /// the circuit emits different constraints on different walks. Stage
+    /// masks, which no walk produces, are never returned.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn walk_mismatches(&self) -> Vec<usize> {
+        self.circuits
+            .iter()
+            .enumerate()
+            .filter(|(_, circuit)| {
+                circuit
+                    .walked_monomials()
+                    .is_some_and(|walked| walked != circuit.monomials())
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 
     /// Evaluates the W-domain using independent circuit jobs and shared
@@ -1264,14 +1299,17 @@ mod tests {
         Ok(())
     }
 
-    /// The tag hashes the monomial driver's walk of each circuit, and the
-    /// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
-    /// point drawn afresh on every run, all four agree at every domain point:
-    /// those holding circuits, stage masks and bonding polynomials, and those
-    /// left unassigned.
+    /// The tag hashes the monomials written from each circuit's recorded
+    /// wiring, and the registry's evaluations run the same recording. At a
+    /// point drawn afresh on every run, the hashed monomials and all three
+    /// evaluations agree at every domain point: those holding circuits, stage
+    /// masks and bonding polynomials, and those left unassigned. An
+    /// independent walk of each circuit, by the monomial driver, writes the
+    /// monomials that were hashed.
     #[test]
-    fn monomial_driver_agrees_with_the_wiring_drivers() -> Result<()> {
+    fn hashed_monomials_agree_with_the_evaluations_and_the_walks() -> Result<()> {
         let registry = mixed_registry()?;
+        assert_eq!(registry.walk_mismatches(), []);
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -1413,6 +1451,84 @@ mod tests {
                 Err(error) => panic!("unexpected error: {error}"),
             }
         }
+        Ok(())
+    }
+
+    /// A circuit that tells the walk recording its wiring from every other
+    /// cannot give the tag one polynomial and the evaluations another: the
+    /// tag hashes what was recorded. Only the independent walk that tests
+    /// compare recordings with sees the difference.
+    #[test]
+    fn a_walk_dependent_circuit_cannot_split_the_hash_from_the_evaluations() -> Result<()> {
+        use ragu_core::{
+            Coeff,
+            drivers::{Driver, DriverValue, LinearExpression},
+            gadgets::{Bound, Kind},
+        };
+        use ragu_primitives::{Element, allocator::Standard};
+
+        use crate::{Circuit, WithAux};
+
+        /// Constrains a gate's product wire to zero and, when `split`, adds
+        /// another wire to that constraint on the walk that records the
+        /// wiring.
+        struct Split {
+            split: bool,
+        }
+
+        impl Circuit<Fp> for Split {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, &mut Standard::new(), instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>>
+            {
+                let output = Element::alloc(dr, &mut Standard::new(), witness)?;
+                let (a, _b, c) = dr.mul(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
+                let recording = core::any::type_name::<D>().contains("compiled::Recorder");
+                if self.split && recording {
+                    dr.enforce_zero(|lc| lc.add(&c).add(&a))?;
+                } else {
+                    dr.enforce_zero(|lc| lc.add(&c))?;
+                }
+                Ok(WithAux::new(output, D::unit()))
+            }
+        }
+
+        let registry = |split| {
+            TestRegistryBuilder::new()
+                .register_circuit(Split { split })?
+                .finalize()
+        };
+        let (honest, split) = (registry(false)?, registry(true)?);
+
+        // The hash saw the constraint that was recorded, so the tags differ,
+        // and the evaluations are of the hashed polynomial.
+        assert_ne!(split.tag(), honest.tag());
+        let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        assert_eq!(
+            split.hashed_wxy_over_domain(x, y),
+            split.wxy_over_domain(x, y)
+        );
+
+        // The independent walk differs from the recording for this circuit,
+        // and for no circuit whose walks agree.
+        assert_eq!(split.walk_mismatches(), [0]);
+        assert_eq!(honest.walk_mismatches(), []);
         Ok(())
     }
 

@@ -121,11 +121,12 @@ pub(crate) trait DriverScope<S> {
 /// but not which constraints are emitted.
 ///
 /// The same constraints must be emitted on every walk of the circuit,
-/// whichever driver performs it. Metrics, traces, the evaluations of the
-/// wiring polynomial and the registry's
-/// [tag](registry::Tag#trusted-circuit-code) each come from a separate walk,
-/// and describe one constraint system only if the walks agree. Nothing
-/// enforces this; it is part of what circuit code is trusted for.
+/// whichever driver performs it. Metrics, traces and the recorded wiring
+/// each come from a separate walk, and describe one constraint system only
+/// if the walks agree. Nothing enforces this; it is part of what circuit
+/// code is trusted for. The evaluations of the wiring polynomial and the
+/// registry's [tag](registry::Tag#trusted-circuit-code) both come from the
+/// recorded wiring, so they agree whatever the walks do.
 pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// The type of data that is needed to construct the expected output of this
     /// circuit.
@@ -211,6 +212,11 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 /// built. Its evaluations, the monomials the [`Registry`] hashes into its tag
 /// and the traces the registry assembles all place constraints by that plan.
 ///
+/// A circuit's object records its wiring once, when it is built, and never
+/// consults the circuit's code again: its evaluations run the recording and
+/// its [monomials](Self::monomials) are written from it, so they are one
+/// polynomial however the circuit's code behaves on another walk.
+///
 /// [`Registry`]: registry::Registry
 pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
@@ -230,6 +236,17 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     ///
     /// [`Registry`]: registry::Registry
     fn monomials(&self) -> wiring::monomials::Monomials<F>;
+
+    /// Writes down $s(X, Y)$ from another walk of the circuit this object
+    /// was recorded from, by the `wiring::monomials` driver, or returns
+    /// `None` for an object that no circuit walk produced.
+    ///
+    /// A test seam: the walk shares no code with the recording, so tests
+    /// compare it with [`monomials`](Self::monomials).
+    #[cfg(any(test, feature = "test-utils"))]
+    fn walked_monomials(&self) -> Option<wiring::monomials::Monomials<F>> {
+        None
+    }
 
     /// Evaluates with the powers of X shared by a registry query.
     fn sxy_with_powers(&self, x: F, y: F, _powers: &[F]) -> F {
@@ -299,9 +316,13 @@ where
     R: Rank,
 {
     struct Processed<F: Field, RC: raw::RawCircuit<F>, R: Rank> {
-        circuit: RC,
         wiring: wiring::compiled::Compiled<F, R>,
         floor_plan: alloc::vec::Vec<floor_planner::ConstraintSegment>,
+        /// Test builds keep the circuit, to walk it again.
+        #[cfg(any(test, feature = "test-utils"))]
+        circuit: RC,
+        #[cfg(not(any(test, feature = "test-utils")))]
+        _circuit: core::marker::PhantomData<RC>,
     }
 
     impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<F, RC, R> {
@@ -315,8 +336,14 @@ where
             self.wiring.sy(y)
         }
         fn monomials(&self) -> wiring::monomials::Monomials<F> {
-            wiring::monomials::eval::<_, _, R>(&self.circuit, &self.floor_plan)
-                .expect("should succeed if metrics succeeded")
+            self.wiring.monomials()
+        }
+        #[cfg(any(test, feature = "test-utils"))]
+        fn walked_monomials(&self) -> Option<wiring::monomials::Monomials<F>> {
+            Some(
+                wiring::monomials::eval::<_, _, R>(&self.circuit, &self.floor_plan)
+                    .expect("should succeed if metrics succeeded"),
+            )
         }
         fn sxy_with_powers(&self, x: F, y: F, powers: &[F]) -> F {
             self.wiring.sxy_with_powers(x, y, Some(powers))
@@ -336,9 +363,12 @@ where
     let floor_plan = floor_planner::floor_plan(&metrics.segments);
     let wiring = wiring::compiled::compile::<F, RC, R>(&circuit, &floor_plan)?;
     Ok(Box::new(Processed {
-        circuit,
         wiring,
         floor_plan,
+        #[cfg(any(test, feature = "test-utils"))]
+        circuit,
+        #[cfg(not(any(test, feature = "test-utils")))]
+        _circuit: core::marker::PhantomData::<RC>,
     }))
 }
 

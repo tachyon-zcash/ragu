@@ -1,11 +1,17 @@
 //! The wiring polynomial $s(X, Y)$ itself, as its nonzero monomials.
 //!
-//! This module provides [`eval`], which runs constraint emission with a
-//! [`Driver`] whose wires are linear forms in the wire monomials of $X$ and
-//! returns every nonzero coefficient of $s(X, Y)$ in a canonical order. Where
-//! [`compiled`] evaluates the polynomial at a point, this module writes it
-//! down. The registry hashes the result to derive its
-//! [tag](crate::registry::Tag).
+//! [`Monomials`] is the polynomial written out: every nonzero coefficient of
+//! $s(X, Y)$ in a canonical order. Where [`compiled`] evaluates the polynomial
+//! at a point, this module writes it down, and the registry hashes the result
+//! to derive its [tag](crate::registry::Tag). A registered circuit's monomials
+//! are written from its recorded wiring, the program its evaluations run (see
+//! `Compiled::monomials`), so the polynomial hashed is the polynomial
+//! evaluated.
+//!
+//! Test builds add `eval`, which writes the polynomial down from a walk of the
+//! circuit instead: it runs constraint emission with a [`Driver`] whose wires
+//! are linear forms in the wire monomials of $X$. It shares no code with the
+//! recording, which tests compare it with.
 //!
 //! # Design
 //!
@@ -22,12 +28,14 @@
 //! whatever the shape of the `add` and `enforce_zero` calls that emitted them,
 //! and distinct polynomials yield distinct ones.
 //!
-//! The polynomial written down is the one this walk of the circuit emits.
-//! Circuit code is required to emit the same constraints on every walk,
+//! The polynomial `eval` writes down is the one its walk of the circuit
+//! emits. Circuit code is required to emit the same constraints on every walk,
 //! whichever driver performs it (see [`Circuit`](crate::Circuit)), so it is
-//! also the polynomial [`compiled`] records and evaluates. Nothing in this
-//! driver enforces that: the registry tag relies on it, as the
-//! [`Tag`](crate::registry::Tag#trusted-circuit-code) documentation sets out.
+//! also the polynomial [`compiled`] records and evaluates. Nothing in the
+//! driver enforces that, and the registry tag does not rely on it: the tag
+//! hashes the recording, and the walk is the tests' independent check on it,
+//! as the [`Tag`](crate::registry::Tag#trusted-circuit-code) documentation
+//! sets out.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Driver::add`]: ragu_core::drivers::Driver::add
@@ -35,8 +43,11 @@
 //! [`sparse::View`]: crate::polynomials::sparse::View
 //! [`compiled`]: super::compiled
 
-use alloc::{rc::Rc, vec::Vec};
+#[cfg(any(test, feature = "test-utils"))]
+use alloc::rc::Rc;
+use alloc::vec::Vec;
 
+#[cfg(any(test, feature = "test-utils"))]
 use ragu_core::{
     Coeff, Error, Result,
     drivers::{Driver, DriverTypes, LinearExpression, emulator::Emulator},
@@ -46,6 +57,7 @@ use ragu_core::{
 };
 use udon::field::Field;
 
+#[cfg(any(test, feature = "test-utils"))]
 use crate::{DriverScope, floor_planner::ConstraintSegment, polynomials::Rank, raw::RawCircuit};
 
 /// A nonzero coefficient of $s(X, Y)$: `coeff` times $X^x Y^y$.
@@ -137,8 +149,8 @@ impl<F: Field> Monomials<F> {
     /// # Panics
     ///
     /// Panics if the constant term is anything but that monomial, which cannot
-    /// happen for a polynomial [`eval`] produced: [`orchestrate`] emits the
-    /// `ONE` constraint last, so it occupies $Y^0$ alone.
+    /// happen for a circuit's polynomial: [`orchestrate`] emits the `ONE`
+    /// constraint last, so it occupies $Y^0$ alone.
     ///
     /// [`orchestrate`]: crate::raw::orchestrate
     pub(crate) fn strip_one(&mut self) {
@@ -157,6 +169,7 @@ impl<F: Field> Monomials<F> {
 }
 
 /// A wire: a linear form in the wire monomials of $X$.
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Clone)]
 enum Wire<F> {
     /// A gate wire, the monomial $X^{\text{degree}}$.
@@ -169,6 +182,7 @@ enum Wire<F> {
 
 /// Scales `value` by a coefficient, sparing the multiplication for the unit
 /// coefficients.
+#[cfg(any(test, feature = "test-utils"))]
 fn scale<F: Field>(value: F, coeff: Coeff<F>) -> F {
     match coeff {
         Coeff::One => value,
@@ -178,6 +192,7 @@ fn scale<F: Field>(value: F, coeff: Coeff<F>) -> F {
 }
 
 /// Sorts a form's terms by degree, merges duplicates and drops zeros.
+#[cfg(any(test, feature = "test-utils"))]
 fn canonical<F: Field>(mut terms: Vec<(usize, F)>) -> Vec<(usize, F)> {
     terms.sort_unstable_by_key(|&(x, _)| x);
     let mut form: Vec<(usize, F)> = Vec::with_capacity(terms.len());
@@ -193,11 +208,13 @@ fn canonical<F: Field>(mut terms: Vec<(usize, F)>) -> Vec<(usize, F)> {
 
 /// Collects the terms of a linear combination, expanding virtual wires into
 /// their monomials.
+#[cfg(any(test, feature = "test-utils"))]
 struct Terms<F: Field> {
     terms: Vec<(usize, F)>,
     gain: Coeff<F>,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl<F: Field> Terms<F> {
     fn new() -> Self {
         Self {
@@ -212,6 +229,7 @@ impl<F: Field> Terms<F> {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl<F: Field> LinearExpression<Wire<F>, F> for Terms<F> {
     fn add_term(mut self, wire: &Wire<F>, coeff: Coeff<F>) -> Self {
         let coeff = coeff * self.gain;
@@ -234,6 +252,7 @@ impl<F: Field> LinearExpression<Wire<F>, F> for Terms<F> {
 }
 
 /// Per-routine state saved and restored across routine boundaries.
+#[cfg(any(test, feature = "test-utils"))]
 struct Scope {
     /// Absolute index of the next gate.
     gates: usize,
@@ -244,6 +263,7 @@ struct Scope {
     y: usize,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl Scope {
     fn new(gates: usize, constraints: usize, num_constraints: usize) -> Self {
         Self {
@@ -262,6 +282,7 @@ impl Scope {
 /// coefficient of the power of $Y$ the floor plan assigns it.
 ///
 /// [`Driver`]: ragu_core::drivers::Driver
+#[cfg(any(test, feature = "test-utils"))]
 struct Evaluator<'fp, F, R> {
     /// Per-routine scoped state.
     scope: Scope,
@@ -279,12 +300,14 @@ struct Evaluator<'fp, F, R> {
     _marker: core::marker::PhantomData<(F, R)>,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl<F: Field, R: Rank> DriverScope<Scope> for Evaluator<'_, F, R> {
     fn scope(&mut self) -> &mut Scope {
         &mut self.scope
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     type MaybeKind = Empty;
     type LCadd = Terms<F>;
@@ -327,6 +350,7 @@ impl<F: Field, R: Rank> DriverTypes for Evaluator<'_, F, R> {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
     type F = F;
     type Wire = Wire<F>;
@@ -409,6 +433,7 @@ impl<'dr, F: Field, R: Rank> Driver<'dr> for Evaluator<'_, F, R> {
 /// - `circuit`: The circuit whose wiring polynomial to write down.
 /// - `floor_plan`: Per-segment absolute offsets, computed by
 ///   [`floor_plan()`](crate::floor_planner::floor_plan).
+#[cfg(any(test, feature = "test-utils"))]
 pub fn eval<F: Field, RC: RawCircuit<F>, R: Rank>(
     circuit: &RC,
     floor_plan: &[ConstraintSegment],
