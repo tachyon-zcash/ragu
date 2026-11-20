@@ -75,7 +75,10 @@ use self::{
 use crate::{
     SelectableBackend,
     header::{Header, NUM_ONLINE_FP_POLYS},
-    internal::native::online::StepBindingLen,
+    internal::{
+        native::online::StepBindingLen,
+        nested::online::{BoundCommitmentsLen, BoundOpeningsLen},
+    },
     ipa::{CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript},
     profile::{Profile, ProfiledCycle},
 };
@@ -126,8 +129,9 @@ impl<C: ProfiledCycle> CompressedProof<C> {
 
     /// Whether the messages have the shape the verifier reads: one
     /// commitment per component, the step binding's openings of a profile
-    /// with a statement circuit, one opening per derived polynomial, one
-    /// value per batched polynomial and one IPA round per bit of the rank.
+    /// with a statement circuit, the online Fq commitments and openings its
+    /// bindings name, one opening per derived polynomial, one value per
+    /// batched polynomial and one IPA round per bit of the rank.
     fn well_formed<R: Rank>(&self) -> bool {
         fn side<P: Affine, R: Rank>(messages: &Messages<P>, mesh_polynomials: usize) -> bool {
             let derived = Derived::ALL.len();
@@ -142,6 +146,10 @@ impl<C: ProfiledCycle> CompressedProof<C> {
             && self.instance.nested.len() == nested_components::<C::Profile>().count()
             && self.instance.step_binding.len()
                 == <StepBindingLen<C::Profile> as ragu_primitives::vec::Len>::len()
+            && self.instance.online_fq_commitments.len()
+                == <BoundCommitmentsLen<C::Profile> as ragu_primitives::vec::Len>::len()
+            && self.instance.online_fq_openings.len()
+                == <BoundOpeningsLen<C::Profile> as ragu_primitives::vec::Len>::len()
             && self.instance.native_mesh_claims.len()
                 == C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
             && self.instance.nested_mesh_claims.len()
