@@ -29,7 +29,11 @@ all-features = true
 
 [features]
 alloc = []
-# Udon's AArch64 field assembly; portable Rust is used on other targets and in Miri.
+# Udon's AArch64 field assembly. x86-64 builds include Udon's own assembly
+# regardless, selected at runtime by CPU support, unless Udon's `portable`
+# feature is enabled. Other targets and Miri use portable Rust. There is no
+# `portable` passthrough: `--all-features` would enable it and take every
+# all-features x86-64 job off the assembly.
 asm = ["udon/aarch64-asm"]
 # Embeds the Pasta generators derived at build time; see `pasta`.
 baked = ["alloc", "dep:bento", "dep:lazy_static"]

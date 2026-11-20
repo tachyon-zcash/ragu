@@ -17,11 +17,13 @@ is happy on targets with an allocator but no full `std` runtime —
 WebAssembly and embedded platforms, for example.
 
 `ragu_core`, `ragu_primitives`, and `ragu_circuits` enable only `alloc` by
-default. `ragu_pcd` enables `alloc` and `asm`: Udon's AArch64 field arithmetic,
-with portable Rust on other targets and in Miri. Assembly does not require
-`std`. To use portable arithmetic on AArch64, disable default features and
-retain `alloc`; no dependency may enable Udon's `aarch64-asm` feature in that
-build. The `multicore` feature of `ragu_pcd` is opt-in; it pulls in `std` via
+default. `ragu_pcd` enables `alloc` and `asm`: Udon's AArch64 field arithmetic.
+On x86-64, Udon includes its own assembly in every build and uses it when the
+CPU supports BMI2 and ADX. Other targets and Miri use portable Rust. Assembly
+does not require `std`. To use portable arithmetic on AArch64, disable default
+features and retain `alloc`; no dependency may enable Udon's `aarch64-asm`
+feature in that build. On x86-64, enable Udon's `portable` feature instead. The
+`multicore` feature of `ragu_pcd` is opt-in; it pulls in `std` via
 [maybe-rayon] for multi-threaded parallelism.
 
 [`alloc`]: https://doc.rust-lang.org/alloc/

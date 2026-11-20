@@ -70,7 +70,9 @@ jobs:
   # The general Rust jobs exercise all features together; this checks each
   # backend's distinct feature configuration and end-to-end boundary.
   # The ARM64 runners also check Udon's AArch64 assembly against the portable
-  # build: macOS for Apple's ABI, ubuntu-24.04-arm for the Linux one.
+  # build: macOS for Apple's ABI, ubuntu-24.04-arm for the Linux one. Udon
+  # selects its x86-64 assembly by default, which the fixtures job checks;
+  # ubuntu-latest checks the portable x86-64 build against the same fixtures.
   backend-equivalence:
     name: backend equivalence (${{ matrix.os }})
     needs: changes
@@ -153,6 +155,13 @@ jobs:
           RAGU_FIXTURES: check
         run: >-
           cargo test --release -p ragu_pcd --locked --no-default-features
+          --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
+      - name: Check portable x86-64 fuse and verifier fixtures
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RAGU_FIXTURES: check
+        run: >-
+          cargo test --release -p ragu_pcd --locked --features udon/portable
           --lib proof::fuse_fixture_tests -- --include-ignored --test-threads=1
       - name: Check default ASM fuse and verifier fixtures
         if: runner.arch == 'ARM64'
