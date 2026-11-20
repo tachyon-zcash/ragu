@@ -2192,6 +2192,9 @@ pub(crate) mod testing {
     /// [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
     pub(crate) struct StatementContext<F> {
         header: Mutex<Option<Vec<F>>>,
+        /// Values that replace the step binding's as the circuit exposes
+        /// them, by position; see [`expose_binding`](Self::expose_binding).
+        binding: Mutex<[Option<F>; STEP_BINDING]>,
     }
 
     impl<F> ProverContext for StatementContext<F> {
@@ -2202,6 +2205,7 @@ pub(crate) mod testing {
         fn default() -> Self {
             StatementContext {
                 header: Mutex::new(None),
+                binding: Mutex::new(core::array::from_fn(|_| None)),
             }
         }
     }
@@ -2210,6 +2214,15 @@ pub(crate) mod testing {
         /// Exposes `header` from now on, or the unit header for `None`.
         pub(crate) fn expose(&self, header: Option<Vec<F>>) {
             *self.header.lock().unwrap() = header;
+        }
+
+        /// Replaces, from now on, each value of the step binding the
+        /// statement circuit exposes that `binding` sets: the flag, the
+        /// opening's point and value, and the digest, in that order. A test
+        /// exposes a binding its step did not make this way; all `None`
+        /// restores the step's own.
+        pub(crate) fn expose_binding(&self, binding: [Option<F>; STEP_BINDING]) {
+            *self.binding.lock().unwrap() = binding;
         }
 
         /// What the statement circuit exposes: the header set, then the
@@ -2222,17 +2235,21 @@ pub(crate) mod testing {
             opening: [F; 2],
             digest: F,
         ) -> Result<Vec<F>> {
-            Ok(match self.header.lock().unwrap().clone() {
-                Some(mut header) => {
-                    header.extend([F::ONE, opening[0], opening[1], digest]);
-                    header
-                }
-                None => {
-                    let mut header = ky::output_header::<C, (), HEADER_SIZE>(())?;
-                    header.extend([F::ZERO; STEP_BINDING]);
-                    header
-                }
-            })
+            let (mut header, binding) = match self.header.lock().unwrap().clone() {
+                Some(header) => (header, [F::ONE, opening[0], opening[1], digest]),
+                None => (
+                    ky::output_header::<C, (), HEADER_SIZE>(())?,
+                    [F::ZERO; STEP_BINDING],
+                ),
+            };
+            let replaced = *self.binding.lock().unwrap();
+            header.extend(
+                binding
+                    .into_iter()
+                    .zip(replaced)
+                    .map(|(own, replaced)| replaced.unwrap_or(own)),
+            );
+            Ok(header)
         }
     }
 

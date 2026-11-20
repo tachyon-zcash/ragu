@@ -227,8 +227,8 @@ pub(crate) enum Chunk {
         pairs: Vec<(ChallengeRef, usize)>,
     },
     /// The claims' base targets into work slots: on the circuit-field side
-    /// the application's, the unified bridge's, the unified one's and the
-    /// compute-v bridge's; on the scalar-field side the unified one's alone.
+    /// the unified bridge's and the unified one's; on the scalar-field side
+    /// the unified one's alone.
     Targets {
         out: Vec<usize>,
     },

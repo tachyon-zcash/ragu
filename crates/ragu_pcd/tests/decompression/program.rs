@@ -71,13 +71,18 @@ fn check(schedule: &Schedule) {
     for &slot in &regions.exposed_elements {
         assert!(elements[slot], "exposed element {slot} is supplied");
     }
-    for &slot in regions
+    // The point slots the prover fills. This one list both marks them
+    // written and, below, names what the curve chunks must hold, so that a
+    // prover-supplied point added here cannot go without its curve check.
+    let supplied_points: Vec<usize> = regions
         .inverse_scaled
         .iter()
         .chain([&regions.g_prime])
         .chain(&regions.runs)
         .chain(&regions.slot_commitment)
-    {
+        .copied()
+        .collect();
+    for &slot in &supplied_points {
         points[slot] = true;
     }
     let read_point = |src: &PointSrc, points: &[bool]| match src {
@@ -319,13 +324,7 @@ fn check(schedule: &Schedule) {
             "message point {p} is held to the curve"
         );
     }
-    for &slot in regions
-        .runs
-        .iter()
-        .chain(&regions.inverse_scaled)
-        .chain([&regions.g_prime])
-        .chain(&regions.slot_commitment)
-    {
+    for &slot in &supplied_points {
         assert!(
             on_curve.contains(&PointSrc::Work(slot)),
             "prover-supplied point {slot} is held to the curve"

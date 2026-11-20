@@ -798,8 +798,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Like every uncompressed proof, this one is not zero-knowledge: for a
     /// profile with an extension it holds the extension's polynomials,
     /// computed over the prover context at finalization. Store or ship it
-    /// only if that context holds nothing confidential. The built-in profiles
-    /// have no extension, so their bootstrap proof reveals nothing.
+    /// only if that context holds nothing confidential. The built-in
+    /// profiles' bootstrap proofs reveal nothing: the standard profile has
+    /// no extension, and the aggregator's computes over the wallet
+    /// application's bootstrap proof, which attests nothing.
     pub fn bootstrap_proof(&self) -> &Proof<C, R> {
         self.bootstrap
             .as_ref()

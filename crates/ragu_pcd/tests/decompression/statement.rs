@@ -259,3 +259,138 @@ fn an_ordinary_step_exposing_a_statement_is_rejected() -> Result<()> {
         "rerandomization exposing a statement",
     )
 }
+
+/// The flag is held to the step and not to what the statement circuit
+/// exposes: a decompression whose circuit exposes its own header and
+/// binding under a cleared flag is rejected, and so is a parent over it; an
+/// ordinary step whose circuit exposes the unit header under a set flag is
+/// rejected too.
+#[test]
+fn a_flag_other_than_the_steps_is_rejected() -> Result<()> {
+    let app = application()?;
+    let mut rng = StdRng::seed_from_u64(0x908_dec3);
+    let value = Fp::from(7);
+
+    app.context().expose(Some(statement(value)));
+    app.context()
+        .expose_binding([Some(Fp::ZERO), None, None, None]);
+    let (cleared, ()) = app.fuse(
+        &mut rng,
+        Decompress::<Value>::new(),
+        (value, Vec::new(), digest()),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+    )?;
+    check_both(
+        &app,
+        &cleared,
+        false,
+        &mut rng,
+        "decompression under a cleared flag",
+    )?;
+
+    // The parent's own statement circuit is honest: its child's claim is
+    // what fails.
+    app.context().expose(None);
+    app.context().expose_binding([None; 4]);
+    let (parent, ()) = app.fuse(&mut rng, Consume, (), cleared, app.bootstrap_pcd())?;
+    check_both(
+        &app,
+        &parent,
+        false,
+        &mut rng,
+        "parent of a decompression under a cleared flag",
+    )?;
+
+    app.context().expose(Some(statement(value)));
+    let (decompressed, ()) = app.fuse(
+        &mut rng,
+        Decompress::<Value>::new(),
+        (value, Vec::new(), digest()),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+    )?;
+    check_both(&app, &decompressed, true, &mut rng, "decompression")?;
+
+    app.context().expose(None);
+    app.context()
+        .expose_binding([Some(Fp::ONE), None, None, None]);
+    let (set, ()) = app.fuse(&mut rng, Consume, (), decompressed, app.bootstrap_pcd())?;
+    check_both(
+        &app,
+        &set,
+        false,
+        &mut rng,
+        "ordinary step under a set flag",
+    )
+}
+
+/// The step binding is the step's own: a decompression whose statement
+/// circuit exposes another digest, or another point for the opening, than
+/// the step made is rejected, and so is an ordinary step whose circuit
+/// exposes a digest beside the unit header, where the binding is all zero.
+#[test]
+fn a_step_binding_other_than_the_steps_is_rejected() -> Result<()> {
+    let app = application()?;
+    let mut rng = StdRng::seed_from_u64(0x908_dec4);
+    let value = Fp::from(7);
+
+    app.context().expose(Some(statement(value)));
+    app.context()
+        .expose_binding([None, None, None, Some(digest() + Fp::ONE)]);
+    let (redigested, ()) = app.fuse(
+        &mut rng,
+        Decompress::<Value>::new(),
+        (value, Vec::new(), digest()),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+    )?;
+    check_both(
+        &app,
+        &redigested,
+        false,
+        &mut rng,
+        "decompression exposing another digest",
+    )?;
+
+    // The step opens its slot at its own challenge, which no fixed value
+    // equals but with negligible probability.
+    app.context()
+        .expose_binding([None, Some(Fp::from(3)), None, None]);
+    let (reopened, ()) = app.fuse(
+        &mut rng,
+        Decompress::<Value>::new(),
+        (value, Vec::new(), digest()),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+    )?;
+    check_both(
+        &app,
+        &reopened,
+        false,
+        &mut rng,
+        "decompression exposing another opening point",
+    )?;
+
+    app.context().expose_binding([None; 4]);
+    let (decompressed, ()) = app.fuse(
+        &mut rng,
+        Decompress::<Value>::new(),
+        (value, Vec::new(), digest()),
+        app.bootstrap_pcd(),
+        app.bootstrap_pcd(),
+    )?;
+    check_both(&app, &decompressed, true, &mut rng, "decompression")?;
+
+    app.context().expose(None);
+    app.context()
+        .expose_binding([None, None, None, Some(digest())]);
+    let (bound, ()) = app.fuse(&mut rng, Consume, (), decompressed, app.bootstrap_pcd())?;
+    check_both(
+        &app,
+        &bound,
+        false,
+        &mut rng,
+        "ordinary step exposing a digest",
+    )
+}
