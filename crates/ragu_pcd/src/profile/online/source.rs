@@ -1,7 +1,8 @@
 //! Immutable source-registry operations captured by the enclosing setup.
 //!
-//! A profile chooses an actual registry once during application finalization.
-//! Its prover context cannot replace that registry while preparing a proof.
+//! A profile chooses an actual registry during application finalization.
+//! A context-supplied source must remain the same for the application's
+//! lifetime; see [`Profile::source_registries`](crate::profile::Profile::source_registries).
 
 use alloc::{sync::Arc, vec::Vec};
 use core::marker::PhantomData;
@@ -81,6 +82,11 @@ impl<'a, F: Field> SourceRegistry<'a, F> {
     /// The sampled source setup tag.
     pub fn tag(&self) -> F {
         self.inner.tag()
+    }
+    /// The base-two logarithm of the size of the domain the source
+    /// interpolates its circuits over.
+    pub(crate) fn domain_log2(&self) -> u32 {
+        self.inner.domain_log2()
     }
     /// Checks all source-axis degree bounds against the enclosing rank.
     ///

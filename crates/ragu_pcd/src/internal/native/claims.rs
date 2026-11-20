@@ -465,15 +465,20 @@ pub trait KySource {
     /// Native online helper target, when the profile has an online batch.
     fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
-    /// The unified instance followed by actual nested online walk points.
-    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
-
     /// Base iterator over unified $k(y)$ values.
     ///
     /// Will be repeated [`NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V`] times,
     /// then [`NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V`] times.
     /// The `+ Clone` bound is required for `repeat_n` in [`ky_prefix`].
     fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// One value per proof for the `bind_endoscalar` circuit, after the
+    /// unified circuits: the $k(y)$ of the unified instance followed by the
+    /// online Fq commitments the circuit exports for the profile's native
+    /// binding and the actual nested online walk points, as
+    /// [`bind_endoscalar_ky`](super::stages::preamble::ProofInputs::bind_endoscalar_ky)
+    /// computes it; the unified $k(y)$ for a profile that exports neither.
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// One value of $1$ per proof, for the endoscaling step checks.
     ///
@@ -581,8 +586,10 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
     /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values,
-    /// the step's own application k(y), and the statement and binding
-    /// circuits' k(y) values, `None` for a profile without one.
+    /// the step's own application k(y), the statement and binding circuits'
+    /// k(y) values, `None` for a profile without one, the `bind_endoscalar`
+    /// circuits' k(y) values and the online helpers', `None` for a profile
+    /// without one.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,

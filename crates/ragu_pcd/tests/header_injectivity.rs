@@ -19,7 +19,7 @@
 
 use core::marker::PhantomData;
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -180,7 +180,7 @@ fn assert_relabelled_data_verifies<H: Header<Fp>>(
 ) -> Result<()> {
     let header = output_header::<Pasta, H, HEADER_SIZE>(honest.clone())?;
 
-    let app = ApplicationBuilder::<Pasta, ProductionRank, HEADER_SIZE>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
         .register(Seed::<H>(PhantomData))?
         .finalize(crate::pasta::baked())?;
     let mut rng = StdRng::seed_from_u64(0x908_f1d);

@@ -40,6 +40,7 @@
 //! that declares no batch supplies and commits nothing.
 
 use alloc::{vec, vec::Vec};
+use core::marker::PhantomData;
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
@@ -53,7 +54,7 @@ use ragu_primitives::{
     allocator::Allocator,
     consistent::Consistent,
     io::Write,
-    vec::{ConstLen, FixedVec},
+    vec::{ConstLen, FixedVec, Len},
 };
 use rand::CryptoRng;
 use udon::field::Field;
@@ -62,7 +63,7 @@ pub(crate) use crate::header::NUM_ONLINE_FP_POLYS;
 use crate::{
     Application, Proof, SelectableBackend,
     profile::{
-        Profile, ProfiledCycle,
+        Profile, ProfiledCycle, Source,
         online::{Phase, prepared::PreparationChallenges, prover::State},
     },
     proof::ProofBuilder,
@@ -153,6 +154,65 @@ pub(crate) struct QueryOutput<'dr, D: Driver<'dr>> {
 /// A step's online openings, as wires, in slot order.
 pub(crate) type QueriesOutput<'dr, D> = FixedVec<QueryOutput<'dr, D>, QueriesLen>;
 
+/// The slot whose opening a step exposes for the step binding, the point
+/// and the value: its first output slot, where the decompression step
+/// commits the host IPA's $s(X)$ and opens it at $\zeta$ (see
+/// [`decompress`](crate::step::internal::decompress)).
+pub(crate) const STEP_OPENING: usize =
+    OUTPUT_SLOTS.start + crate::step::internal::decompress::S_SLOT;
+
+/// The slot whose opening's point a step exposes for the step binding: its
+/// left input's first, which the decompression step opens at the transcript
+/// digest it staged.
+pub(crate) const STEP_DIGEST: usize = crate::step::internal::decompress::DIGEST_SLOT;
+
+/// Length type for what a step in profile `P` exposes of its online
+/// openings to the step that consumes its proof: the step binding's
+/// openings, [`STEP_BINDING`](crate::profile::STEP_BINDING) less its flag,
+/// for a profile with a statement circuit, whose claim reads them, and
+/// nothing for a profile without one.
+///
+/// A step folds its own application claim, so its parent does not
+/// otherwise see its openings: `hashes_1` exports these after the step's
+/// output header and circuit id, and the parent holds its copy to that
+/// export (see
+/// [`ProofInputs`](super::stages::preamble::ProofInputs)).
+pub(crate) struct StepBindingLen<P>(PhantomData<P>);
+
+impl<P: Profile> Len for StepBindingLen<P> {
+    fn len() -> usize {
+        if crate::profile::native_extension::<P>().statement.is_some() {
+            crate::profile::STEP_BINDING - 1
+        } else {
+            0
+        }
+    }
+}
+
+/// The step binding's openings among a step's `queries`, in profile `P`:
+/// the [`STEP_OPENING`] slot's point and value, then the [`STEP_DIGEST`]
+/// slot's point; none for a profile without a statement circuit.
+pub(crate) fn step_binding<P: Profile, F: Copy>(queries: &Queries<F>) -> Vec<F> {
+    let binding = [
+        queries[STEP_OPENING].x,
+        queries[STEP_OPENING].y,
+        queries[STEP_DIGEST].x,
+    ];
+    binding[..StepBindingLen::<P>::len()].to_vec()
+}
+
+/// [`step_binding`] over the openings' wires.
+pub(crate) fn step_binding_wires<'dr, D: Driver<'dr>, P: Profile>(
+    queries: &QueriesOutput<'dr, D>,
+) -> FixedVec<Element<'dr, D>, StepBindingLen<P>> {
+    let binding = [
+        &queries[STEP_OPENING].x,
+        &queries[STEP_OPENING].y,
+        &queries[STEP_DIGEST].x,
+    ];
+    FixedVec::from_fn(|i| binding[i].clone())
+}
+
 /// Allocates the openings' wires from their values.
 pub(crate) fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
     dr: &mut D,
@@ -167,8 +227,8 @@ pub(crate) fn alloc_queries<'dr, D: Driver<'dr>, A: Allocator<'dr, D>>(
     })
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Begins the step's native online batch from the profile's inputs,
     /// with the children's $x$ and $y$ in the slots a mesh inherits them at,
@@ -176,12 +236,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub(crate) fn begin_native_online(
         &self,
         children: [&Proof<C, R>; 2],
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder.set_native_online(State::begin(
-            C::Profile::native_online_inputs::<C::Base, R, B>(&self.context)?,
+            C::Profile::native_online_inputs::<C::Base, R, B>(&self.context, source)?,
             || Ok(children.map(|child| [child.x(), child.y()])),
-            self.native_source.as_ref(),
+            self.native_source().as_ref(),
         )?);
         self.supply_native_online(
             Phase::BeforeW,
@@ -221,7 +282,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             phase,
             supplied,
             challenges,
-            self.native_source.as_ref(),
+            self.native_source().as_ref(),
             children.map(|children| children.map(|child| &child.native_source_out[..])),
             C::host_generators(self.params),
         )

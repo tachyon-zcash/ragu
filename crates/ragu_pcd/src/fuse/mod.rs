@@ -41,15 +41,15 @@ use crate::{
     Application, Pcd, RAGU_TAG,
     internal::{nested, transcript::Transcript},
     profile::{
-        ProfiledCycle,
+        ProfiledCycle, Source,
         online::{Phase, prepared::PreparationChallenges},
     },
     proof::ProofBuilder,
     step::Step,
 };
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Fuse two [`Pcd`] into one using a provided [`Step`].
     ///
@@ -84,7 +84,31 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        self.fuse_with(rng, step, witness, left, right, |_, _| {}, |_, _| {})
+        self.fuse_with_source(rng, step, witness, left, right, None)
+    }
+
+    /// [`fuse`](Self::fuse) with `source`, the compressed proof the
+    /// profile's extension decompresses when the step decompresses one;
+    /// without, the extension runs over the context's canonical proof.
+    pub(crate) fn fuse_with_source<'source, RNG: CryptoRng, S: Step<C>>(
+        &self,
+        rng: &mut RNG,
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+        source: Option<&Source<'params, C, R, B>>,
+    ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
+        self.fuse_with(
+            rng,
+            step,
+            witness,
+            left,
+            right,
+            source,
+            |_, _| {},
+            |_, _| {},
+        )
     }
 
     /// [`fuse`](Self::fuse) as a prover that edits its own application
@@ -108,6 +132,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             witness,
             left,
             right,
+            None,
             |_, application| edit(application),
             |_, _| {},
         )
@@ -136,6 +161,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             witness,
             left,
             right,
+            None,
             |builder, application| {
                 builder.forge_dummy_inputs();
                 if let Some(circuit_id) = circuit_id {
@@ -167,6 +193,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             witness,
             left,
             right,
+            None,
             |builder, _| builder.forge_left_header_field(delta),
             |_, _| {},
         )
@@ -194,6 +221,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             witness,
             left,
             right,
+            None,
             |builder, _| builder.forge_left_bridge_header(header),
             |_, _| {},
         )
@@ -213,15 +241,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         right: Pcd<C, R, S::Right>,
         swap: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
-        self.fuse_with(rng, step, witness, left, right, |_, _| {}, swap)
+        self.fuse_with(rng, step, witness, left, right, None, |_, _| {}, swap)
     }
 
-    /// [`fuse`](Self::fuse), with `edit` applied to the step's application
-    /// data after its circuit ran and before anything commits to it, and
-    /// `swap` applied after $y$ is squeezed, once the `s_prime` bridge has
-    /// absorbed the native preamble's and the application trace's
-    /// commitments. Only tests edit or swap anything: `fuse` passes closures
-    /// that do nothing.
+    /// [`fuse`](Self::fuse), with `source` what the step supplies the
+    /// profile's prover (see [`fuse_with_source`](Self::fuse_with_source)),
+    /// `edit` applied to the step's application data after its circuit ran
+    /// and before anything commits to it, and `swap` applied after $y$ is
+    /// squeezed, once the `s_prime` bridge has absorbed the native
+    /// preamble's and the application trace's commitments. Only tests edit
+    /// or swap anything: `fuse` passes closures that do nothing.
     fn fuse_with<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -229,6 +258,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         witness: S::Witness<'source>,
         left: Pcd<C, R, S::Left>,
         right: Pcd<C, R, S::Right>,
+        source: Option<&Source<'params, C, R, B>>,
         edit: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
         swap: impl FnOnce(&mut ProofBuilder<'_, C, R, B>, &mut _01_application::NativeApplication<C, R>),
     ) -> Result<(Pcd<C, R, S::Output>, S::Aux<'source>)> {
@@ -265,12 +295,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // Each field's input stage holds the other field's commitments fixed
         // before w, so both batches supply theirs before either commits.
-        self.begin_native_online([&left, &right], &mut builder)?;
-        self.begin_nested_online([&left, &right], &mut builder)?;
+        self.begin_native_online([&left, &right], source, &mut builder)?;
+        self.begin_nested_online([&left, &right], source, &mut builder)?;
         self.commit_native_online_inputs(rng, &mut builder)?;
         self.commit_nested_online_inputs(rng, &mut builder)?;
         let nested_preamble =
-            self.compute_preamble(rng, &left, &right, &application_stage, &mut builder)?;
+            self.compute_preamble(rng, &left, &right, &application_stage, source, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;
@@ -549,6 +579,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &eval_witness,
             &native_points,
             &native_walk,
+            source,
             &mut builder,
         )?;
 
@@ -600,6 +631,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_f_witness,
             &nested_eval_witness,
             &nested_challenges,
+            source,
             &mut builder,
         )?;
 

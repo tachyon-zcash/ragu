@@ -166,6 +166,19 @@ fn compute_b<F: Field>(x: F, u: &[F]) -> F {
     tmp
 }
 
+/// The coefficients, ascending in degree, of the IPA's challenge polynomial
+/// $s(X) = \prod\limits_{i=0}^{k-1} (1 + u_{k - 1 - i} X^{2^i})$ over the
+/// round challenges `u`, in transcript order: the polynomial whose
+/// commitment over the vector generators, unblinded, is the verifier's
+/// $G'$. The constant one for no rounds.
+pub(crate) fn challenge_polynomial<F: Field>(u: &[F]) -> Vec<F> {
+    if u.is_empty() {
+        vec![F::ONE]
+    } else {
+        compute_s(u, F::ONE)
+    }
+}
+
 /// Computes the coefficients of $g(X) = \prod\limits_{i=0}^{k-1} (1 + u_{k - 1 - i} X^{2^i})$.
 fn compute_s<F: Field>(u: &[F], init: F) -> Vec<F> {
     assert!(!u.is_empty());

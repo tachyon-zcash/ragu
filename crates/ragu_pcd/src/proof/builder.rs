@@ -283,10 +283,14 @@ pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     pub(crate) dummy_nested_online_commitments: Option<Vec<C::NestedCurve>>,
 
     // The step's own online Fq polynomials, with their commitments cached.
-    // The proof does not carry them: only this step's nested batch opens
-    // them.
+    // The proof does not carry the polynomials: only this step's nested
+    // batch opens them. It carries the commitments and openings the step
+    // exports.
     online_fq_polynomials: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
     online_fq_commitments: OnceCell<Vec<C::NestedCurve>>,
+    // The openings the step exports of them: the point then the value of
+    // each slot the profile's nested binding names.
+    online_fq_openings: Option<Vec<C::ScalarField>>,
 
     // Bridge rx polynomials + commitments (set together by caller)
     bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
@@ -609,6 +613,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             nested_online: None,
             online_fq_polynomials: None,
             online_fq_commitments: OnceCell::new(),
+            online_fq_openings: None,
             online_commitments: OnceCell::new(),
             online_openings: None,
             bridge_preamble_rx: None,
@@ -903,6 +908,22 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
                 .map(|poly| B::sparse_commit_to_affine(poly, nested_gen))
                 .collect()
         })
+    }
+    setter!(
+        set_online_fq_openings,
+        online_fq_openings,
+        Vec<C::ScalarField>
+    );
+    slice_getter!(online_fq_openings, online_fq_openings, C::ScalarField);
+
+    /// The commitments of the step's online Fq polynomials it exports: the
+    /// slots the profile's native binding names, in its order.
+    pub(crate) fn exported_online_fq_commitments(&self) -> Vec<C::NestedCurve> {
+        let all = self.online_fq_commitments();
+        nested::online::bound_commitments::<C::Profile>()
+            .iter()
+            .map(|&slot| all[slot as usize])
+            .collect()
     }
     setter!(
         set_native_extension_circuit_rxs,
@@ -1423,6 +1444,19 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
         self.nested_collapse_commitment();
         self.nested_compute_v_commitment();
 
+        let online_fq_commitments = self.exported_online_fq_commitments();
+        // What the step exposes of its online openings for the statement
+        // claim's step binding: nothing for a profile without a statement
+        // circuit. A dummy proof ran no step: its slots are padding, opened
+        // at the all-one challenge to its value one.
+        let step_binding = match &self.online_openings {
+            Some(openings) => online::step_binding::<C::Profile, _>(openings),
+            None => alloc::vec![
+                C::CircuitField::ONE;
+                <online::StepBindingLen<C::Profile> as ragu_primitives::vec::Len>::len()
+            ],
+        };
+
         macro_rules! take {
             ($field:ident) => {
                 self.$field.expect(concat!(stringify!($field), " not set"))
@@ -1527,6 +1561,9 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             native_points_f_rx: take!(native_points_f_rx),
             native_points_walk_rx: take!(native_points_walk_rx),
             online_polynomials: take!(online_polynomials),
+            step_binding,
+            online_fq_commitments,
+            online_fq_openings: take!(online_fq_openings),
 
             bridge_preamble_rx: take!(bridge_preamble_rx),
             bridge_preamble_commitment: take!(bridge_preamble_commitment),

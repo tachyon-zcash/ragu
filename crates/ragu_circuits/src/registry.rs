@@ -929,7 +929,7 @@ mod tests {
 
     use super::{CircuitIndex, Registry, RegistryBuilder};
     use crate::{
-        polynomials::{ProductionRank, Rank, TestRank},
+        polynomials::{Rank, TestRank, WalletRank},
         staging::mask::StageMask,
         tests::SquareCircuit,
     };
@@ -972,10 +972,10 @@ mod tests {
         let small = TestRegistryBuilder::new()
             .register_circuit(SquareCircuit { times: 1 })?
             .finalize()?;
-        let large = RegistryBuilder::<Fp, ProductionRank>::new()
+        let large = RegistryBuilder::<Fp, WalletRank>::new()
             .register_circuit(SquareCircuit { times: 1 })?
             .finalize()?;
-        assert_ne!(TestRank::n(), ProductionRank::n());
+        assert_ne!(TestRank::n(), WalletRank::n());
         assert_ne!(small.tag(), large.tag());
         Ok(())
     }

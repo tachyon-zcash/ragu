@@ -20,7 +20,7 @@ use udon::{curve::Affine, field::Field};
 use super::revdot::OpeningClaim;
 
 mod prover;
-mod verifier;
+pub(crate) mod verifier;
 
 pub(crate) use prover::batch;
 pub(crate) use verifier::verify_openings;
@@ -64,5 +64,5 @@ fn check_claims<F: Field>(claims: &[OpeningClaim<F>]) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/compress_batch.rs"]
+#[path = "../../../tests/compression/batch.rs"]
 mod tests;

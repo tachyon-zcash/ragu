@@ -320,5 +320,5 @@ pub(crate) fn nested_shapes<P: Profile, F: Field>(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/compress_claims.rs"]
+#[path = "../../../tests/compression/claims.rs"]
 mod tests;

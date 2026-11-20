@@ -56,7 +56,7 @@ impl<P: Profile> Len for NumPoints<P> {
 }
 
 /// The endoscalings a native step performs in the standard profile: what
-/// fits a step beside the stages it reserves at the production rank. A
+/// fits a step beside the stages it reserves at the wallet rank. A
 /// profile sets its own ([`Profile::NATIVE_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
@@ -952,39 +952,55 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     log2_circuits: u32,
     stage_size: usize,
     source_tag: Option<C::CircuitField>,
+    source_domain: Option<u32>,
 ) -> Result<RegistryBuilder<'params, C::CircuitField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
     // The application stage follows the SYSTEM gate in every step circuit.
     let stage_gates = ragu_circuits::staging::stage_gates(stage_size);
 
+    let extension = crate::profile::native_extension::<C::Profile>();
+    let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
+    let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
     for id in InternalCircuitIndex::all::<C::Profile>() {
         use InternalCircuitIndex::*;
         registry = match id {
             ExtensionCircuit(k) => {
                 use crate::profile::online::{extension, stages::Native};
                 let slot = CircuitSlot::new(registry);
-                if Some(k) == extension::helper::<C::Profile, Native>() {
-                    extension::register_circuit::<_, R, C::Profile, Native>(slot, source_tag)?
-                } else {
-                    C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
-                        k as usize, slot, params,
-                    )?
-                }
-                .into_registry()
+                let (registry, registration) =
+                    if Some(k) == extension::helper::<C::Profile, Native>() {
+                        extension::register_circuit::<_, R, C::Profile, Native>(
+                            slot,
+                            source_tag,
+                            source_domain,
+                        )?
+                    } else {
+                        C::Profile::register_native_circuit::<C::Base, R, HEADER_SIZE>(
+                            k as usize, slot, params,
+                        )?
+                    }
+                    .into_parts();
+                extension_circuits.push(registration);
+                registry
             }
             ExtensionBonding(j) => {
                 use crate::profile::online::{extension, stages::Native};
                 let slot = BondingSlot::new(registry);
-                match extension::bonding::<_, R, C::Profile, Native>(j as usize)? {
-                    extension::Bonding::Online(mask) => slot.register(mask),
-                    extension::Bonding::User(index) => {
-                        C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
-                            index, slot, params,
-                        )?
+                let (registry, registration) =
+                    match extension::bonding::<C::Profile, Native>(j as usize)? {
+                        extension::Bonding::Online(bonding) => {
+                            bonding.register::<_, R, C::Profile, Native>(slot)?
+                        }
+                        extension::Bonding::User(index) => {
+                            C::Profile::register_native_bonding::<C::Base, R, HEADER_SIZE>(
+                                index, slot, params,
+                            )?
+                        }
                     }
-                }
-                .into_registry()
+                    .into_parts();
+                extension_bondings.push(registration);
+                registry
             }
             PreambleStage => {
                 registry.register_bonding(stages::preamble::Stage::<C, R, HEADER_SIZE>::mask()?)
@@ -1114,6 +1130,7 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
             }
         };
     }
+    extension.check_registered("native", &extension_circuits, &extension_bondings)?;
 
     assert_eq!(
         registry.num_internal_circuits(),

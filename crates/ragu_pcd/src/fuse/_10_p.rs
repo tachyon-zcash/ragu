@@ -115,6 +115,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         Inputs::from_walk(
             &points,
+            [&left.online_fq_commitments, &right.online_fq_commitments],
             FixedVec::from_fn(|_| builder.nested_online_stage_commitment(0)),
         )
     }

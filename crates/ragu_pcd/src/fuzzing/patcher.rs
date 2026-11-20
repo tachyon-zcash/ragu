@@ -447,12 +447,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         // Each field's input stage holds the other field's commitments fixed
         // before w, so both batches supply theirs before either commits.
-        self.begin_native_online([&left, &right], &mut builder)?;
-        self.begin_nested_online([&left, &right], &mut builder)?;
+        self.begin_native_online([&left, &right], None, &mut builder)?;
+        self.begin_nested_online([&left, &right], None, &mut builder)?;
         self.commit_native_online_inputs(rng, &mut builder)?;
         self.commit_nested_online_inputs(rng, &mut builder)?;
         let nested_preamble =
-            self.compute_preamble(rng, &left, &right, &application_stage, &mut builder)?;
+            self.compute_preamble(rng, &left, &right, &application_stage, None, &mut builder)?;
         let bridge_preamble_commitment =
             Point::constant(&mut dr, builder.bridge_preamble_commitment())?;
         bridge_preamble_commitment.write(&mut dr, &mut transcript)?;

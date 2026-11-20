@@ -6,7 +6,7 @@
 use alloc::{string::ToString, vec};
 
 use ragu_backend::{Backend, ReferenceBackend};
-use ragu_circuits::polynomials::{ProductionRank, sparse};
+use ragu_circuits::polynomials::{WalletRank, sparse};
 use ragu_core::{Cycle, Error, Result, pasta::Pasta};
 use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
@@ -14,11 +14,11 @@ use udon::field::Field;
 use super::Proof;
 use crate::{ApplicationBuilder, step::internal::rerandomize::Rerandomize};
 
-type TestProof = Proof<Pasta, ProductionRank>;
+type TestProof = Proof<Pasta, WalletRank>;
 
 fn check(mutate: impl FnOnce(&mut TestProof)) -> Result<()> {
     let params = crate::pasta::baked();
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new().finalize(params)?;
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new().finalize(params)?;
     let mut rng = StdRng::seed_from_u64(0x57a1e);
     let honest = app.rerandomize(app.bootstrap_pcd(), &mut rng)?;
     assert!(app.verify_uncompressed(&honest, &mut rng)?);

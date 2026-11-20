@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Error, Result,
     drivers::{Driver, DriverValue},
@@ -173,14 +173,14 @@ impl<C: ragu_core::Cycle> Step<C> for Step1Dup {
 #[test]
 fn application_builder_stays_small_for_registration_chains() {
     // Each by-value register call can leave a separate builder slot in a debug frame.
-    let bytes = core::mem::size_of::<ApplicationBuilder<'_, Pasta, ProductionRank, 9>>();
+    let bytes = core::mem::size_of::<ApplicationBuilder<'_, Pasta, WalletRank, 9>>();
     assert!(bytes <= 512, "application builder grew to {bytes} bytes");
 }
 
 #[test]
 fn register_steps_success_and_finalize() {
     let pasta = ragu_pcd::pasta::baked();
-    let builder = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let builder = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1)
@@ -191,7 +191,7 @@ fn register_steps_success_and_finalize() {
 #[test]
 #[should_panic(expected = "steps must be registered in sequential order")]
 fn register_steps_out_of_order_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(Step1)
         .unwrap();
 }
@@ -199,7 +199,7 @@ fn register_steps_out_of_order_should_fail() {
 #[test]
 #[should_panic(expected = "two different Header implementations using the same suffix")]
 fn register_steps_duplicate_suffix_should_fail() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(Step0)
         .unwrap()
         .register(Step1Dup)
@@ -261,15 +261,15 @@ impl<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>, const N: usize> Step<Pasta>
 }
 
 // Compile and lint the chain without running application setup at test time.
-const _: fn() -> Result<Application<'static, Pasta, ProductionRank, 9>> = register_long_chain;
+const _: fn() -> Result<Application<'static, Pasta, WalletRank, 9>> = register_long_chain;
 
 #[deny(clippy::large_stack_frames)]
-fn register_long_chain() -> Result<Application<'static, Pasta, ProductionRank, 9>> {
+fn register_long_chain() -> Result<Application<'static, Pasta, WalletRank, 9>> {
     fn step<const N: usize>() -> HeaderStep<(), (), (), N> {
         HeaderStep(PhantomData)
     }
 
-    ApplicationBuilder::<Pasta, ProductionRank, 9>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 9>::new()
         .register(step::<0>())?
         .register(step::<1>())?
         .register(step::<2>())?
@@ -296,9 +296,8 @@ fn register_long_chain() -> Result<Application<'static, Pasta, ProductionRank, 9
 }
 
 fn rejects_reserved_suffix<L: Header<Fp>, R: Header<Fp>, O: Header<Fp>>() {
-    let result =
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
-            .register(HeaderStep::<L, R, O>(PhantomData));
+    let result = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
+        .register(HeaderStep::<L, R, O>(PhantomData));
     assert!(matches!(
         result,
         Err(Error::Initialization(message))
@@ -335,7 +334,7 @@ impl Header<Fp> for DuplicatePolyHeader {
 
 #[test]
 fn register_rejects_a_kind_in_two_polynomial_slots() {
-    let result = ApplicationBuilder::<Pasta, ProductionRank, 4>::new().register(HeaderStep::<
+    let result = ApplicationBuilder::<Pasta, WalletRank, 4>::new().register(HeaderStep::<
         (),
         (),
         DuplicatePolyHeader,
@@ -357,7 +356,7 @@ fn register_rejects_reserved_suffix_in_each_header_position() {
 
 #[test]
 fn register_accepts_unit_in_every_header_position() {
-    ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .register(HeaderStep::<(), (), ()>(PhantomData))
         .unwrap();
 }

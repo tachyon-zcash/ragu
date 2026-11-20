@@ -14,7 +14,7 @@
 //! - [`Proof`] / [`Pcd`] — the proof and proof-carrying-data structures.
 //! - [`CompressedProof`] / [`CompressedPcd`] — their compressed forms.
 //! - [`profile`] — the proof shapes: the standard profile wallets prove in,
-//!   and the aggregator profile that will carry decompression.
+//!   and the aggregator profile, which carries decompression.
 //! - [`pasta`] — Ragu's fixed generators, derived and embedded at build time
 //!   with the `baked` feature.
 //! - [`bridge_hash`] — the bridge hash of a commitment, computed outside the
@@ -53,6 +53,8 @@ extern crate std;
 mod backend;
 pub mod bridge_hash;
 mod compress;
+#[cfg(feature = "unstable-aggregator")]
+mod decompress;
 mod fuse;
 // The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
@@ -91,7 +93,7 @@ mod online_batch_tests;
 mod source_mesh_tests;
 
 #[cfg(test)]
-#[path = "../tests/decompress_statement.rs"]
+#[path = "../tests/decompression/statement.rs"]
 mod decompress_statement_tests;
 
 #[cfg(all(test, feature = "unstable-fuzzing"))]
@@ -168,6 +170,12 @@ pub struct ApplicationBuilder<
     /// which finalization installs instead of building one. Boxed to keep
     /// the builder small across by-value `register` calls.
     bootstrap: Option<Box<Proof<C, R>>>,
+    /// The header type each registered step outputs, by suffix, and
+    /// whether its proofs carry an online polynomial, in a slot its
+    /// [`OnlinePolyCommit`](Header::OnlinePolyCommit) does not leave to
+    /// padding: what a profile's context is checked against (see
+    /// [`Profile::check_context`]).
+    output_headers: BTreeMap<header::Suffix, (TypeId, bool)>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -194,11 +202,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             stage_size: 0,
             header_map: BTreeMap::new(),
             bootstrap: None,
+            output_headers: BTreeMap::new(),
             _marker: PhantomData,
         }
     }
 
-    /// Captures the source registries certified by this profile's meshes.
+    /// Supplies source registries for meshes whose profile context supplies
+    /// none. Finalization rejects two sources for the same field.
     ///
     /// A source can have a different rank from the enclosing application;
     /// finalization checks that its restrictions fit without truncation.
@@ -286,6 +296,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             stage_size: self.stage_size,
             header_map: self.header_map,
             bootstrap: self.bootstrap,
+            output_headers: self.output_headers,
             _marker: PhantomData,
         }
     }
@@ -334,6 +345,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.prevent_duplicate_suffixes::<S::Output>()?;
         self.prevent_duplicate_suffixes::<S::Left>()?;
         self.prevent_duplicate_suffixes::<S::Right>()?;
+        self.output_headers.insert(
+            <S::Output as Header<C::CircuitField>>::SUFFIX,
+            (
+                TypeId::of::<S::Output>(),
+                !<<S::Output as Header<C::CircuitField>>::OnlinePolyCommit as header::OnlinePolyCommit>::is_padding(),
+            ),
+        );
 
         let stage_size = self.stage_size.max(S::NUM_STAGED);
         // Leave room after the SYSTEM gate and the stage.
@@ -403,6 +421,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Like [`finalize`](Self::finalize), with the profile's prover
     /// context: what its prover holds across proofs beyond the proof under
     /// construction (see [`Profile::Context`]).
+    /// An `Aggregator` application takes a `Decompression` of the wallet
+    /// application it aggregates.
     ///
     /// # Errors
     ///
@@ -413,46 +433,89 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         context: <C::Profile as Profile>::Context<'params, C::Base, R, B>,
     ) -> Result<Application<'params, C, R, HEADER_SIZE, B>> {
         C::Profile::check()?;
-        C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
-        C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
-        for (declared, present) in [
-            (
-                C::Profile::NATIVE_MESH.is_some(),
-                self.native_source.is_some(),
-            ),
-            (
-                C::Profile::NESTED_MESH.is_some(),
-                self.nested_source.is_some(),
-            ),
-        ] {
-            if declared != present {
+        C::Profile::check_context(&context, params, &self.header_map)?;
+
+        // The decompression step, which a profile with a statement circuit
+        // registers below, stages a value: the application stage, which
+        // every step circuit reserves, holds it.
+        let decompresses = crate::profile::native_extension::<C::Profile>()
+            .statement
+            .is_some();
+        if decompresses {
+            type Decompress = step::internal::decompress::Decompress<()>;
+            let stage_size = self.stage_size.max(<Decompress as Step<C>>::NUM_STAGED);
+            if 1usize
+                .checked_add(staging::stage_gates(stage_size))
+                .is_none_or(|end| end >= R::n())
+            {
                 return Err(Error::Initialization(
-                    "source registries do not match the profile meshes".into(),
+                    "the application stage does not fit the rank's gates".into(),
                 ));
             }
+            self.stage_size = stage_size;
         }
-        if let Some(source) = &self.native_source {
-            source.check_rank::<R>()?;
-        }
-        if let Some(source) = &self.nested_source {
-            source.check_rank::<R>()?;
-        }
-        // The bootstrap proof commits the mesh's restrictions at its all-one
-        // challenges, the nested ones at their lift.
-        if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &self.native_source) {
-            mesh.check_source::<_, R>(
-                C::Profile::NATIVE_ONLINE,
-                source,
-                <C::CircuitField as udon::field::Field>::ONE,
-            )?;
-        }
-        if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &self.nested_source) {
-            mesh.check_source::<_, R>(
-                C::Profile::NESTED_ONLINE,
-                source,
-                internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
-            )?;
-        }
+        C::Profile::NATIVE_ONLINE.check_circuit_points::<C::CircuitField>()?;
+        C::Profile::NESTED_ONLINE.check_circuit_points::<C::ScalarField>()?;
+        // The sources the meshes certify: one per field, supplied by the
+        // builder or the profile's context. Context sources borrow it and
+        // are read off it again after setup (see `Application::native_source`).
+        // Setup fixes their tags in the helper circuits here.
+        let ((native_tag, native_domain), (nested_tag, nested_domain)) = {
+            let (profile_native, profile_nested) =
+                C::Profile::source_registries::<C::Base, R, B>(&context);
+            if (self.native_source.is_some() && profile_native.is_some())
+                || (self.nested_source.is_some() && profile_nested.is_some())
+            {
+                return Err(Error::Initialization(
+                    "the builder and profile context both supply a source registry for the same field"
+                        .into(),
+                ));
+            }
+            let native_source = self.native_source.clone().or(profile_native);
+            let nested_source = self.nested_source.clone().or(profile_nested);
+            for (declared, present) in [
+                (C::Profile::NATIVE_MESH.is_some(), native_source.is_some()),
+                (C::Profile::NESTED_MESH.is_some(), nested_source.is_some()),
+            ] {
+                if declared != present {
+                    return Err(Error::Initialization(
+                        "source registries do not match the profile meshes".into(),
+                    ));
+                }
+            }
+            if let Some(source) = &native_source {
+                source.check_rank::<R>()?;
+            }
+            if let Some(source) = &nested_source {
+                source.check_rank::<R>()?;
+            }
+            // The bootstrap proof commits the mesh's restrictions at its
+            // all-one challenges, the nested ones at their lift.
+            if let (Some(mesh), Some(source)) = (C::Profile::NATIVE_MESH, &native_source) {
+                mesh.check_source::<_, R>(
+                    C::Profile::NATIVE_ONLINE,
+                    source,
+                    <C::CircuitField as udon::field::Field>::ONE,
+                )?;
+            }
+            if let (Some(mesh), Some(source)) = (C::Profile::NESTED_MESH, &nested_source) {
+                mesh.check_source::<_, R>(
+                    C::Profile::NESTED_ONLINE,
+                    source,
+                    internal::nested::challenge::<C>(<C::CircuitField as udon::field::Field>::ONE)?,
+                )?;
+            }
+            (
+                native_source
+                    .as_ref()
+                    .map(|source| (source.tag(), source.domain_log2()))
+                    .unzip(),
+                nested_source
+                    .as_ref()
+                    .map(|source| (source.tag(), source.domain_log2()))
+                    .unzip(),
+            )
+        };
 
         // Build the native registry:
         // 1. Application circuits (with the final stage size)
@@ -471,7 +534,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             params,
             log2_circuits,
             self.stage_size,
-            self.native_source.as_ref().map(|source| source.tag()),
+            native_tag,
+            native_domain,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -489,10 +553,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // The decompression step, for a profile whose extension verifies a
         // compressed proof: the one step whose output header is that
         // proof's statement (see `step::internal::decompress`).
-        if crate::profile::native_extension::<C::Profile>()
-            .statement
-            .is_some()
-        {
+        if decompresses {
             self =
                 self.register_internal_step(step::internal::decompress::Decompress::<()>::new())?;
         }
@@ -512,7 +573,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.nested_registry = internal::nested::register_all::<C, R>(
             self.nested_registry,
             params,
-            self.nested_source.as_ref().map(|source| source.tag()),
+            nested_tag,
+            nested_domain,
         )?;
 
         let mut app = Application {
@@ -522,6 +584,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             nested_registry: self.nested_registry.finalize()?,
             params,
             num_application_steps: self.num_application_steps,
+            #[cfg(feature = "unstable-aggregator")]
+            output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
             seeded_trivial: OnceCell::new(),
@@ -646,6 +710,10 @@ pub struct Application<
     nested_source: Option<profile::online::source::SourceRegistry<'params, C::ScalarField>>,
     params: &'params C::Params,
     num_application_steps: usize,
+    /// The header type each registered step outputs, by suffix, and
+    /// whether its proofs carry an online polynomial.
+    #[cfg(feature = "unstable-aggregator")]
+    output_headers: BTreeMap<header::Suffix, (TypeId, bool)>,
     /// The application stage's size, in values.
     stage_size: usize,
     /// The profile's prover context: what its prover holds across proofs
@@ -670,9 +738,19 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     Application<'params, C, R, HEADER_SIZE, B>
 {
     /// The profile's prover context, as given to
-    /// [`finalize_with`](ApplicationBuilder::finalize_with).
+    /// [`finalize_with`](ApplicationBuilder::finalize_with): for an
+    /// aggregator application, the `Decompression`
+    /// holding the wallet application it aggregates.
     pub fn context(&self) -> &<C::Profile as Profile>::Context<'params, C::Base, R, B> {
         &self.context
+    }
+
+    /// The header type each registered step outputs, by suffix, and
+    /// whether its proofs carry an online polynomial: the headers the
+    /// application's statements carry.
+    #[cfg(feature = "unstable-aggregator")]
+    pub(crate) fn output_headers(&self) -> &BTreeMap<header::Suffix, (TypeId, bool)> {
+        &self.output_headers
     }
 
     /// Seed a new computation by running a [`Step`] declaring `()` for both of
@@ -720,8 +798,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// Like every uncompressed proof, this one is not zero-knowledge: for a
     /// profile with an extension it holds the extension's polynomials,
     /// computed over the prover context at finalization. Store or ship it
-    /// only if that context holds nothing confidential. The built-in profiles
-    /// have no extension, so their bootstrap proof reveals nothing.
+    /// only if that context holds nothing confidential. The built-in
+    /// profiles' bootstrap proofs reveal nothing: the standard profile has
+    /// no extension, and the aggregator's computes over the wallet
+    /// application's bootstrap proof, which attests nothing.
     pub fn bootstrap_proof(&self) -> &Proof<C, R> {
         self.bootstrap
             .as_ref()
@@ -837,6 +917,26 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             &poly,
             C::host_generators(self.params),
         ))
+    }
+
+    /// The native source registry the profile's mesh certifies: the builder's
+    /// or the profile context's, whichever supplied it at setup (see
+    /// [`Profile::source_registries`]).
+    pub(crate) fn native_source(
+        &self,
+    ) -> Option<profile::online::source::SourceRegistry<'_, C::CircuitField>> {
+        self.native_source
+            .clone()
+            .or_else(|| C::Profile::source_registries::<C::Base, R, B>(&self.context).0)
+    }
+
+    /// The nested source registry, as [`native_source`](Self::native_source).
+    pub(crate) fn nested_source(
+        &self,
+    ) -> Option<profile::online::source::SourceRegistry<'_, C::ScalarField>> {
+        self.nested_source
+            .clone()
+            .or_else(|| C::Profile::source_registries::<C::Base, R, B>(&self.context).1)
     }
 
     /// Returns a reference to the nested [`Registry`].

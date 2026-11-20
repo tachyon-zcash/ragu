@@ -3,10 +3,10 @@
 //!
 //! Most of the generic pipeline was written against `Fp` and [`TestRank`],
 //! and for a good reason: that is the cheap pair. `TestRank` is `R<7>`, so
-//! `n = 32` gates and 128 coefficients; [`ProductionRank`] is `R<13>`, so
+//! `n = 32` gates and 128 coefficients; [`WalletRank`] is `R<13>`, so
 //! `n = 2048` and 8192 coefficients — sixty-four times the vector length,
 //! and the polynomial work scales with it. A target that ran every input at
-//! production rank would lose most of its executions per second, and
+//! wallet rank would lose most of its executions per second, and
 //! execution count is what finds bugs.
 //!
 //! The cost of that choice was that the rank actually shipped to users, and
@@ -40,7 +40,7 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 #[doc(no_inline)]
-pub use ragu_circuits::polynomials::{ProductionRank, TestRank};
+pub use ragu_circuits::polynomials::{TestRank, WalletRank};
 #[doc(no_inline)]
 pub use ragu_core::pasta::Fp;
 pub use ragu_core::pasta::Fq;
@@ -166,7 +166,7 @@ macro_rules! with_rank {
             }
             $crate::params::RankChoice::Production => {
                 #[allow(dead_code)]
-                type $R = $crate::params::ProductionRank;
+                type $R = $crate::params::WalletRank;
                 $body
             }
         }
@@ -251,13 +251,13 @@ mod tests {
         assert_eq!(RankChoice::arbitrary(&mut empty).unwrap(), RankChoice::Test);
     }
 
-    /// Guards the reason the skew exists: production rank really is the
+    /// Guards the reason the skew exists: wallet rank really is the
     /// expensive one, by the factor the module doc claims.
     #[test]
-    fn production_rank_is_sixty_four_times_test_rank() {
+    fn wallet_rank_is_sixty_four_times_test_rank() {
         assert_eq!(TestRank::RANK, 7);
-        assert_eq!(ProductionRank::RANK, 13);
-        assert_eq!(ProductionRank::n() / TestRank::n(), 64);
+        assert_eq!(WalletRank::RANK, 13);
+        assert_eq!(WalletRank::n() / TestRank::n(), 64);
     }
 
     /// Both field arms are reachable from fuzzer bytes.

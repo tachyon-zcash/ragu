@@ -5,7 +5,7 @@ use ragu_core::pasta::Fq;
 use udon::field::Field;
 
 use super::*;
-use crate::profile::testing::{Crossing, CrossingBack, CrossingContext};
+use crate::profile::testing::{Crossing, CrossingBack, CrossingContext, Twin};
 
 fn reject<P: Profile, Rk: Rank>(
     app: &App<P, Rk>,
@@ -81,6 +81,17 @@ fn check_edits<P: Profile, Rk: Rank>(
             p.instance.online_commitments[i] = -p.instance.online_commitments[i]
         });
     }
+    // What a profile with a statement circuit exposes of the step's
+    // online openings, which its `hashes_1` claim takes; a profile without
+    // one carries none, and one more is not the shape the verifier reads.
+    for i in 0..proof.instance.step_binding.len() {
+        edit(&alloc::format!("step binding {i}"), &|p| {
+            p.instance.step_binding[i] += Fp::ONE
+        });
+    }
+    edit("step binding trailing entry", &|p| {
+        p.instance.step_binding.push(Fp::ONE)
+    });
     macro_rules! point {
         ($field:ident) => {
             edit(stringify!($field), &|p| {
@@ -219,6 +230,11 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
         native_registry_xy: native.native_registry_xy,
         native_p: native.native_p,
         online_commitments: native.online_commitments,
+        step_binding: native.step_binding.clone(),
+        // The step's online Fq exports are the nested curve's points and
+        // the scalar field's values.
+        online_fq_commitments: nested.online_fq_commitments.clone(),
+        online_fq_openings: nested.online_fq_openings.clone(),
         c: native.c,
         v: native.v,
         left: native.left,
@@ -246,7 +262,7 @@ fn mix_instance<P: Profile>(native: &Instance<C<P>>, nested: &Instance<C<P>>) ->
 }
 
 fn check_splices<P: Profile>(
-    app: &App<P, ProductionRank>,
+    app: &App<P, WalletRank>,
     local: &CompressedProof<C<P>>,
     local_data: Fp,
     donor: &CompressedProof<C<P>>,
@@ -277,11 +293,11 @@ fn check_profile_packets<S: Profile, T: Profile>(
     edit_fields: bool,
 ) -> Result<()>
 where
-    S::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    S::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let sender = application::<S, ProductionRank>((None, None), source_constraint)?;
-    let receiver = application::<T, ProductionRank>((None, None), Some(Fp::from(7)))?;
+    let sender = application::<S, WalletRank>((None, None), source_constraint)?;
+    let receiver = application::<T, WalletRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c001);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -343,21 +359,20 @@ where
     Ok(())
 }
 
-/// The aggregator declares no extension yet, so its registries are the
-/// standard profile's and the two profiles derive the same tags: a complete
-/// packet of either verifies under the other, while every splice of the two
-/// is rejected, as is every edit. Once the aggregator's decompression circuits
-/// land, the tags diverge and the complete foreign packet is rejected too.
+/// The twin declares no extension, so its registries are the standard
+/// profile's and the two profiles derive the same tags: a complete packet of
+/// either verifies under the other, while every splice of the two is
+/// rejected, as is every edit.
 #[cfg(ragu_pcd_nightly_tests)]
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
-fn compressed_standard_checks_aggregator_packets_and_edits() -> Result<()> {
-    check_profile_packets::<Aggregator, Standard>(Some(Fp::from(7)), Fp::from(7), true)
+fn compressed_standard_checks_twin_packets_and_edits() -> Result<()> {
+    check_profile_packets::<Twin, Standard>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
-fn compressed_aggregator_checks_standard_packets_and_edits() -> Result<()> {
-    check_profile_packets::<Standard, Aggregator>(Some(Fp::from(7)), Fp::from(7), true)
+fn compressed_twin_checks_standard_packets_and_edits() -> Result<()> {
+    check_profile_packets::<Standard, Twin>(Some(Fp::from(7)), Fp::from(7), true)
 }
 
 #[test]
@@ -367,9 +382,9 @@ fn compressed_standard_rejects_weaker_profile_packet_splices() -> Result<()> {
 
 fn check_fresh_weaker_proving<P: Profile>() -> Result<()>
 where
-    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let app = application::<P, ProductionRank>((None, None), Some(Fp::from(7)))?;
+    let app = application::<P, WalletRank>((None, None), Some(Fp::from(7)))?;
     let mut rng = StdRng::seed_from_u64(0x908_c002);
     let (honest, ()) = app.seed(
         &mut rng,
@@ -427,8 +442,8 @@ fn compressed_standard_rejects_fresh_weaker_proving_with_its_own_setup() -> Resu
 }
 
 #[test]
-fn compressed_aggregator_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<()> {
-    check_fresh_weaker_proving::<Aggregator>()
+fn compressed_twin_rejects_fresh_weaker_proving_with_its_own_setup() -> Result<()> {
+    check_fresh_weaker_proving::<Twin>()
 }
 
 fn check_extension_edits<P>() -> Result<()>

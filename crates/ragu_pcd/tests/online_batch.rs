@@ -25,8 +25,8 @@ use crate::{
     Application, ApplicationBuilder, Pcd, Proof, SelectableBackend,
     ipa::IpaCycle,
     profile::{
-        CircuitSlot, Extension, ExtensionRxs, Profile, Profiled, ProfiledCycle, Registered,
-        Standard,
+        CircuitSlot, Extension, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext,
+        Registered, Standard,
         online::{
             Challenge, Layout, Opening, Phase, Point,
             batch::Challenges,
@@ -64,11 +64,14 @@ impl Profile for OnlineBatch {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         assert_eq!(circuit, 0);
-        slot.register(MultiStage::<Base::ScalarField, Rk, _>::new(Consumer))
+        slot.register_staged(MultiStage::<Base::ScalarField, Rk, _>::new(Consumer))
     }
 
     fn nested_extension_rxs_with_online<'params, Base, Rk, const HS: usize, B, RNG>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&core::convert::Infallible>,
+        _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+        _: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, Rk>,
         online: Option<&circuit::Witness<'_, Base::ScalarField, Self, Nested>>,
         rng: &mut RNG,
@@ -137,6 +140,7 @@ impl Profile for OnlineBatch {
 
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -389,6 +393,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
 
     fn native_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -435,6 +440,7 @@ impl<const WITH_NESTED: bool> Profile for NativeBatch<WITH_NESTED> {
     }
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -791,6 +797,7 @@ impl Profile for NativePhases {
         B: SelectableBackend;
     fn native_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -956,6 +963,7 @@ impl Profile for NestedPhases {
         B: SelectableBackend;
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -1081,6 +1089,12 @@ pub(crate) fn mutate_nested_auxiliary_query<P: Affine>(point: P) -> P {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct LegacyMixed;
+/// The test profile's context, a slope its prover reads; no step supplies
+/// anything to its extension.
+impl crate::profile::ProverContext for u64 {
+    type Source = core::convert::Infallible;
+}
+
 impl Profile for LegacyMixed {
     const NAME: &'static str = "legacy-and-multipoint-batch";
     const NATIVE_EXTENSION: usize = 0;

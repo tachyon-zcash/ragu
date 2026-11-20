@@ -15,8 +15,8 @@
 //! [`source_shape`].
 //!
 //! [`params`] holds the fuzzer-chosen field and rank dispatch, so a target
-//! can cover `ProductionRank` and both fields of the cycle without paying
-//! production-rank cost on every input.
+//! can cover `WalletRank` and both fields of the cycle without paying
+//! wallet-rank cost on every input.
 //!
 //! [`pcd`] holds what the proof-level targets share: the application
 //! fixtures, the honest proof shapes, and the `Arbitrary` vocabulary that

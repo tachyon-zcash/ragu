@@ -9,12 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added `Rank` support for `R<14>` for extension circuits that exceed the
-  production rank's capacity. `ProductionRank` remains `R<13>`.
+- Added `Rank` support for `R<14>` and `R<15>`, and the `AggregatorRank`
+  alias for `R<15>`, for extension circuits that exceed the wallet rank's
+  capacity. `WalletRank` remains `R<13>`.
 - Added runtime-sized stages: `staging::stage_gates`, `stage_rx`, `stage_mask`
   and `final_stage_mask` lay out and mask a stage whose size is fixed when the
   registry is built rather than in the type, with the rank's bounds checked.
 - Added iteration over the stored coefficients of sparse polynomials.
+- Added `Stage::gate_ranges`, the gates of a stage and of every stage before
+  it, for a registry to check a circuit's declared stages against.
 - Added `RegistryBuilder::with_tag` under `test-utils`, a test seam that
   installs a tag in place of the derived one.
 - Added `Registry::hashed_wxy_over_domain` under `test-utils`, a test seam
@@ -23,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renamed `ProductionRank` to `WalletRank`, the rank wallets prove at,
+  beside `AggregatorRank`.
 - Registry tags are derived at finalization by hashing every registered
   wiring polynomial, written out as its nonzero monomials in canonical order,
   rather than by evaluating the registry polynomial at a handful of points.

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ragu_core` at its root, where the derive macros already resolve, together
   with the PCD API (`Application`, `ApplicationBuilder`, `Pcd`, `Proof`,
   `CompressedPcd`, `CompressedProof`, `header`, `step`), the sparse
-  `Polynomial`, `Rank`, `ProductionRank` and `AcceleratedProver`.
+  `Polynomial`, `Rank`, `WalletRank` and `AcceleratedProver`.
   `ragu_primitives`, `ragu_circuits`, `ragu_pcd` and `ragu_acceleration` stay
   reachable as the `primitives`, `circuits`, `pcd` and `acceleration` modules.
   Its `baked`, `std`, `multicore` and `test-utils` features forward to the
@@ -52,10 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   most `NUM_ONLINE_FQ_POLYS`, gives each step its own online polynomial over
   the scalar field. The step commits it before its challenge, and the nested
   `compute_v` circuit opens it at the lift of that challenge and folds the
-  opening in the step's own nested batch. The step does not export it.
-  Until decompression lands, the slot holds a fixed placeholder polynomial,
-  no circuit constrains the opened value, and no built-in profile sets the
-  count; the standard profile does not change.
+  opening in the step's own nested batch. The profile's prover supplies the
+  polynomial (`Profile::online_fq_polynomials`), a fixed placeholder by
+  default. The fuse proves the opening and does not constrain its value: a
+  profile's extension does, through the commitment and the opening the step
+  exports to its parent for the slots the profile's bindings name
+  (`Binding::online`, `Binding::openings`). The `Aggregator` profile sets
+  the count to one for the nested IPA's challenge polynomial; the standard
+  profile does not change.
 - Online polynomial batches: a profile can declare a fixed batch of
   online polynomials on each field, each opened at several points, and a
   source-registry mesh that reduces many claimed registry restrictions to one
@@ -97,9 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Header suffix `2` is reserved for the internal `Dummy` header; application
   suffixes begin at `3`.
 - The base proof is built once in `finalize`; `seed` is an ordinary step
-  against it. The bootstrap and decompression steps hold their output
-  header's polynomial slots to the constant one, so the unit header and a
-  decompressed header carry padding a prover cannot choose.
+  against it. The bootstrap step holds its output header's polynomial
+  slots to the constant one, and the decompression step its last, its
+  first holding the host IPA's challenge polynomial, so the unit header
+  and a decompressed header carry slots a prover cannot choose.
 
 ### Removed
 

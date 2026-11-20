@@ -147,7 +147,10 @@ jobs:
           cache-suffix: release
           ci-release-profile: true
           save-dependencies: false
-          cache-compiler: true
+          # Built through sccache, the runner shuts down while compiling the
+          # PCD unit-test target with the decompression tests; the same build
+          # passes without it.
+          cache-compiler: false
       # Compile and run the corruption suite, including the rejection sweeps
       # and controls.
       - name: Run exhaustive corruption coverage
@@ -211,7 +214,10 @@ jobs:
         with:
           cache-suffix: release-default-feature
           ci-release-profile: true
-          cache-compiler: true
+          # Built through sccache, the runner shuts down while compiling the
+          # PCD unit-test target with the decompression tests; the same build
+          # passes without it.
+          cache-compiler: false
       - name: Run tests (default features)
         run: >-
           cargo test --release --all --locked
@@ -235,7 +241,10 @@ jobs:
         with:
           cache-suffix: release
           ci-release-profile: true
-          cache-compiler: ${{ runner.os == 'Linux' }}
+          # Built through sccache, the runner shuts down while compiling the
+          # PCD unit-test target with the decompression tests; the same build
+          # passes without it.
+          cache-compiler: false
           cache-pcd-incremental: ${{ runner.os == 'macOS' || runner.os == 'Windows' }}
       - name: Build tests (all features)
         if: runner.os == 'macOS' || runner.os == 'Windows'

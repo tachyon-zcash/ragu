@@ -126,10 +126,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         }
 
         if let Some(mesh) = <C::Profile as crate::profile::Profile>::NATIVE_MESH {
-            let source = self
-                .native_source
-                .as_ref()
-                .expect("source captured at setup");
+            let source = &self.native_source().expect("source captured at setup");
             let outgoing = &pcd.proof().native_source_out[0];
             let tau = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
             let (x, y) = (pcd.proof().x(), pcd.proof().y());
@@ -142,10 +139,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             }
         }
         if let Some(mesh) = <C::Profile as crate::profile::Profile>::NESTED_MESH {
-            let source = self
-                .nested_source
-                .as_ref()
-                .expect("source captured at setup");
+            let source = &self.nested_source().expect("source captured at setup");
             let outgoing = &pcd.proof().nested_source_out[0];
             let tau = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
             let (x, y) = (
@@ -233,10 +227,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             // the proof (c_n and v_n derived from its polynomials), and the
             // claims bind it to those circuits' traces.
             let nested_ky = proof_check!(ky::nested_ky(pcd.proof(), y_nested));
-            let native_bound =
-                ky::nested_bound::<C::Profile, _>(|index| pcd.proof().native_rx_commitment(index));
+            let native_bound = ky::nested_bound::<C::Profile, _>(
+                |index| pcd.proof().native_rx_commitment(index),
+                |slot| pcd.proof().online_commitments()[slot],
+            );
             let (compute_v, online_helper) = proof_check!(ky::nested_online_ky_of::<C>(
                 &proof_check!(pcd.proof().nested_instance()),
+                &pcd.proof().online_fq_openings,
                 &proof_check!(pcd.proof().nested_online_values()),
                 &ky::native_online_stages::<C::Profile, _>(|index| pcd
                     .proof()
@@ -259,8 +256,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 unified: nested_ky,
                 // The nested binding circuit's claim holds its recomputation
                 // of the native extension stages it names to their
-                // commitments.
-                binding: proof_check!(ky::binding_ky_of(&native_bound, y_nested)),
+                // commitments, and what it took of the step's online
+                // polynomials to their commitments and openings.
+                binding: proof_check!(ky::binding_ky_of(
+                    &native_bound,
+                    &pcd.proof().online_fq_openings,
+                    y_nested,
+                )),
             };
             nested::ky_values::<C::Profile, _>(&ky_source)
                 .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))

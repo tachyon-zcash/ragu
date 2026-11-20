@@ -228,6 +228,23 @@ pub trait Stage<F: Field, R: Rank> {
     fn skip_gates() -> usize {
         Self::Parent::skip_gates() + Self::Parent::num_gates()
     }
+
+    /// The gates of this stage and of every stage before it, in gate
+    /// order: each stage's `skip_gates()..skip_gates() + num_gates()`, the
+    /// base case `()` contributing none. What a circuit with this stage as
+    /// its [`Last`](MultiStageCircuit::Last) loads, for a registry to check
+    /// a declaration of the circuit's stages against. **This should not be
+    /// overridden by implementations except by the base implementation for
+    /// `()`**.
+    fn gate_ranges() -> alloc::vec::Vec<core::ops::Range<usize>>
+    where
+        Self: Sized,
+    {
+        let mut ranges = Self::Parent::gate_ranges();
+        let start = Self::skip_gates();
+        ranges.push(start..start + <Self as StageExt<F, R>>::num_gates());
+        ranges
+    }
 }
 
 impl<F: Field, R: Rank> Stage<F, R> for () {
@@ -252,6 +269,13 @@ impl<F: Field, R: Rank> Stage<F, R> for () {
 
     fn skip_gates() -> usize {
         1
+    }
+
+    fn gate_ranges() -> alloc::vec::Vec<core::ops::Range<usize>>
+    where
+        Self: Sized,
+    {
+        alloc::vec::Vec::new()
     }
 }
 

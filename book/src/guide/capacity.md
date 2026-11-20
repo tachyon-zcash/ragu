@@ -4,7 +4,7 @@ Designing a PCD application means answering two separate questions: how much
 work fits inside a step, and how that work affects proving time. The answers
 are not interchangeable, and the second is less intuitive than the first.
 
-The figures below were measured under `ProductionRank` (`R<13>`), which permits
+The figures below were measured under `WalletRank` (`R<13>`), which permits
 2,048 gates and 8,192 constraints. The capacity sweeps used a two-element
 header; the proving-time and witness sweeps used a four-element header. Gate
 tables report complete registered-circuit counts, including fixed synthesis

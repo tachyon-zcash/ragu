@@ -9,18 +9,21 @@
 //!
 //! Two profiles are foreseen. Wallets prove in [`Standard`]: the fuse alone,
 //! compressed to a few kilobytes and sent over the network. Aggregators prove
-//! in [`Aggregator`]: the fuse plus the circuits that verify a standard
+//! in `Aggregator`: the fuse plus the circuits that verify a standard
 //! compressed proof in circuit. A wallet's proof then enters an aggregator's
 //! fuse as witness data rather than as a child, so the two shapes never have
 //! to agree, and only the aggregator's proofs carry the extra polynomials.
 //! The aggregator's circuits verify proofs of the standard profile, so the
-//! aggregator depends on it; the standard profile knows nothing of the
-//! aggregator.
+//! aggregator depends on it. The standard profile knows nothing of the
+//! aggregator but where its compression commits the transcript's runs: at
+//! the generators the runs' stages take at the aggregator rank, which the
+//! Standard tables carry (`pasta::STAGE_REACH`), so the run layout is part
+//! of the standard profile's wire format (see `compress::runs`).
 //!
 //! A cycle names its profile through [`ProfiledCycle`], so every generic item
 //! in this crate reaches the shape through the cycle it already carries, and
 //! a wallet proof and an aggregator proof over the same curves are different
-//! types. [`Pasta`] proves in the standard profile; [`Profiled`] puts a cycle
+//! types. `Pasta` proves in the standard profile; [`Profiled`] puts a cycle
 //! under any other profile, keeping its curves, generators and Poseidon
 //! instances. The native and nested internal modules size their walks, index
 //! lists and value containers from the profile's [`Shape`], so one binary
@@ -37,7 +40,8 @@
 //! statement circuit, whose claim binds an internal step's output header
 //! to what the extension verified, and a binding circuit, whose claim
 //! binds its side's view of the other side's stages to their commitments.
-//! No profile declares an extension yet; [`Aggregator`] says why.
+//! `Aggregator` declares the decompression circuits, at the rank with
+//! the room for them.
 //!
 //! The extension API is experimental while production decompression is being
 //! integrated. Profile authors must review and test agreement between their
@@ -49,17 +53,19 @@
 
 pub mod online;
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use core::{
     any::{TypeId, type_name},
     fmt,
     marker::PhantomData,
+    ops::Range,
 };
 
 use ragu_circuits::{
-    BondingObject, Circuit, WithAux,
+    Circuit, WithAux,
     polynomials::{Rank, sparse},
     registry::{Registry, RegistryBuilder},
+    staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
 // Without `baked` the module docs are its only use.
 #[cfg_attr(not(feature = "baked"), allow(unused_imports))]
@@ -73,9 +79,16 @@ use ragu_primitives::{Element, WithSuffix};
 use rand::CryptoRng;
 use udon::field::Field;
 
+#[cfg(feature = "unstable-aggregator")]
+pub use crate::decompress::{
+    aggregator::Aggregator,
+    extension::Counts,
+    prover::{Decompressed, Decompression},
+};
 pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
+    header::Suffix,
     internal::{endoscalar, native, nested},
     ipa::IpaCycle,
 };
@@ -128,6 +141,15 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// name on any other profile.
     const NAME: &'static str;
 
+    /// Whether this is one of the crate's own profiles, which carry the
+    /// built-in names [`check`](Self::check) refuses on any other profile.
+    /// [`BuiltIn`] has no public constructor and names the type it was made
+    /// for, which `check` compares with the profile's own: a profile that
+    /// copies a built-in profile's token carries that profile's type, and
+    /// is still refused the built-in names.
+    #[doc(hidden)]
+    const BUILT_IN: Option<BuiltIn> = None;
+
     /// The native rx polynomials the profile adds: its native extension's.
     const NATIVE_EXTENSION: usize;
     /// The nested rx polynomials the profile adds: its nested extension's.
@@ -146,9 +168,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// one point to the native walk, and a full walk then needs another
     /// step on each side.
     ///
-    /// These compatibility slots retain fixed placeholder witnesses. They
-    /// establish opening consistency only. Use [`Self::NESTED_ONLINE`]
-    /// preparation hooks and consumers for a polynomial-specific relation.
+    /// The profile's prover supplies the polynomials
+    /// ([`online_fq_polynomials`](Self::online_fq_polynomials)), a fixed
+    /// placeholder by default. The fuse proves only that the value is an
+    /// opening of the committed polynomial: which polynomial it is, the
+    /// profile's extension circuits constrain, through the commitment and
+    /// the opening the step exports for the slots its bindings name (see
+    /// [`Binding::online`] and [`Binding::openings`]). A slot no binding
+    /// names holds whatever the prover committed.
     ///
     /// The default is zero, which leaves the proof's shape as it is.
     const ONLINE_FQ_POLYS: usize = 0;
@@ -172,6 +199,17 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// Nested counterpart of [`Self::NATIVE_MESH`].
     const NESTED_MESH: Option<online::mesh::Mesh> = None;
 
+    /// Native online inputs the batch helper holds to the source
+    /// registry's domain: each names a wire of the input stage whose value
+    /// must be one of the points the source registry interpolates its
+    /// circuits over. A restriction opened at such an input is then one
+    /// circuit's wiring polynomial, not a combination of several. Needs
+    /// [`Self::NATIVE_MESH`], whose source fixes the domain.
+    const NATIVE_DOMAIN_INPUTS: &'static [usize] = &[];
+
+    /// Nested counterpart of [`Self::NATIVE_DOMAIN_INPUTS`].
+    const NESTED_DOMAIN_INPUTS: &'static [usize] = &[];
+
     /// Native extension circuits that reserve the online input and query
     /// stages before their own stages, indexed in `native_extension`.
     /// A consumer's first own stage must have `online::stages::QueryStage`
@@ -185,7 +223,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// step beside the stages it reserves at the profile's rank. The walk
     /// over the nested batch takes a step per so many points, so more per
     /// step is fewer steps and fewer polynomials, and the other side's walk
-    /// shortens with them. The standard profile's is the production rank's.
+    /// shortens with them. The standard profile's is the wallet rank's.
     /// Both endoscaling counts must be nonzero and their product must exceed
     /// four, so the mutually dependent walk sizes can converge.
     const NATIVE_ENDOSCALINGS_PER_STEP: usize = native::ENDOSCALINGS_PER_STEP;
@@ -197,16 +235,65 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// application takes at
     /// [`finalize_with`](crate::ApplicationBuilder::finalize_with). Nothing
     /// for a profile without an extension.
-    type Context<'params, Base, R, B>
+    type Context<'params, Base, R, B>: ProverContext
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend;
 
+    /// Checks the prover context an application takes at
+    /// [`finalize_with`](crate::ApplicationBuilder::finalize_with) against
+    /// the application: `params` are the parameters it finalizes over and
+    /// `headers` maps each suffix it registers to the header type
+    /// registered at it. The default accepts any context.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the context does not fit the application.
+    fn check_context<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        params: &Base::Params,
+        headers: &BTreeMap<Suffix, TypeId>,
+    ) -> Result<()>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, params, headers);
+        Ok(())
+    }
+
+    /// The source registries the profile's meshes certify, the native then
+    /// the nested, for a profile whose prover context holds them. A builder
+    /// may supply a source only for a field this hook leaves empty
+    /// ([`with_source_registries`](crate::ApplicationBuilder::with_source_registries)).
+    /// Setup fixes the sources' tags in the helper circuits. This hook is
+    /// also called during proving and verification, so it must return the
+    /// same `Some` or `None` choices and the same registries throughout the
+    /// application's lifetime, including when the context contains interior
+    /// mutable state.
+    ///
+    /// The default holds none.
+    fn source_registries<'a, 'params: 'a, Base, R, B>(
+        context: &'a Self::Context<'params, Base, R, B>,
+    ) -> (
+        Option<online::source::SourceRegistry<'a, Base::CircuitField>>,
+        Option<online::source::SourceRegistry<'a, Base::ScalarField>>,
+    )
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = context;
+        (None, None)
+    }
+
     /// The circuits and stages the profile adds on the native side.
     ///
     /// The challenge binders load a native extension's stages, and at the
-    /// production rank their largest variant fills the
+    /// wallet rank their largest variant fills the
     /// gate budget with the census header: an extension stage costing more
     /// needs a smaller header or a cheaper binder. The internal census tests
     /// pin that count.
@@ -303,14 +390,20 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
 
     /// The native extension's polynomials for one proof: each circuit's,
     /// assembled against `registry` at the circuit's index in the layout,
-    /// then each stage's, blinded from `rng`, over the context the
-    /// application holds.
+    /// then each stage's, blinded from `rng`, over `source`, the proof the
+    /// step decompresses, or over the context's canonical proof without.
+    /// `online_openings` is the point and value at which the step opened
+    /// each online slot, the left input's, the right input's, then its
+    /// own output's, for an extension whose statement circuit exposes
+    /// some.
     ///
     /// # Errors
     ///
     /// The default fills an empty extension and fails for any other.
     fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -320,7 +413,7 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, registry, rng);
+        let _ = (context, source, online_openings, registry, rng);
         if Self::native_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -328,14 +421,50 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
+    /// The step's online polynomials over the scalar field,
+    /// [`ONLINE_FQ_POLYS`](Self::ONLINE_FQ_POLYS) of them, which the fuse
+    /// commits before its challenge $w$: the profile's own for the proof
+    /// its extension runs over in this step, `source`'s, the proof the step
+    /// decompresses, or the context's canonical proof without. None may be
+    /// zero, whose commitment the native walk cannot take.
+    ///
+    /// The default supplies a fixed placeholder in every slot, which no
+    /// circuit of such a profile constrains.
+    ///
+    /// # Errors
+    ///
+    /// The default does not fail.
+    fn online_fq_polynomials<'params, Base, R, B>(
+        context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+    ) -> Result<Vec<sparse::Polynomial<Base::ScalarField, R>>>
+    where
+        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+        R: Rank,
+        B: SelectableBackend,
+    {
+        let _ = (context, source);
+        Ok((0..Self::ONLINE_FQ_POLYS)
+            .map(|_| nested::online::placeholder())
+            .collect())
+    }
+
     /// The nested counterpart of
-    /// [`native_extension_rxs`](Self::native_extension_rxs).
+    /// [`native_extension_rxs`](Self::native_extension_rxs), with
+    /// `output_commitments` the commitments of the step's own output
+    /// slots, for an extension whose binding circuit exposes one (see
+    /// [`Binding::online`]), and `online_fq_openings` the openings of its
+    /// own online Fq polynomials the step exports, the point then the
+    /// value of each (see [`Binding::openings`]).
     ///
     /// # Errors
     ///
     /// The default fills an empty extension and fails for any other.
     fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+        online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         rng: &mut RNG,
     ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -345,7 +474,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         B: SelectableBackend,
         RNG: CryptoRng,
     {
-        let _ = (context, registry, rng);
+        let _ = (
+            context,
+            source,
+            output_commitments,
+            online_fq_openings,
+            registry,
+            rng,
+        );
         if Self::nested_extension().is_empty() {
             Ok(ExtensionRxs::default())
         } else {
@@ -353,7 +489,9 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         }
     }
 
-    /// Supplies this step's native online inputs before any fuse challenge.
+    /// Supplies this step's native online inputs before any fuse challenge,
+    /// for the proof its extension runs over in this step: `source`'s, the
+    /// proof the step decompresses, or the context's canonical proof without.
     ///
     /// The returned values are committed once in `online::stages::InputStage`.
     /// Consumers must use those stage wires for data that defines a random test.
@@ -364,13 +502,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// slots require this hook to supply the full input vector.
     fn native_online_inputs<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend,
     {
-        let _ = context;
+        let _ = (context, source);
         online::defaults::inputs::<Self, online::stages::Native, _>()
     }
 
@@ -423,7 +562,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::points::<Self, online::stages::Native, _>()
     }
 
-    /// Traces the user extension with the online batch's immutable stage data.
+    /// Traces the user extension with the online batch's immutable stage
+    /// data, beside what [`Self::native_extension_rxs`] takes.
     ///
     /// Consumer circuits reserve the declared online prefix. Their witnesses
     /// must use `online`'s input and query values, including the opposite
@@ -435,6 +575,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// The default delegates to [`Self::native_extension_rxs`].
     fn native_extension_rxs_with_online<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
         registry: &Registry<'params, Base::CircuitField, R>,
         online: Option<
             &online::circuit::Witness<'_, Base::CircuitField, Self, online::stages::Native>,
@@ -448,10 +590,18 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         RNG: CryptoRng,
     {
         let _ = online;
-        Self::native_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
+        Self::native_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(
+            context,
+            source,
+            online_openings,
+            registry,
+            rng,
+        )
     }
 
-    /// Supplies this step's nested online inputs before any fuse challenge.
+    /// Supplies this step's nested online inputs before any fuse challenge,
+    /// as [`native_online_inputs`](Self::native_online_inputs) does the
+    /// native ones.
     ///
     /// The returned values are committed once in `online::stages::InputStage`.
     /// Consumers must use those stage wires for data that defines a random test.
@@ -462,13 +612,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// slots require this hook to supply the full input vector.
     fn nested_online_inputs<'params, Base, R, B>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         R: Rank,
         B: SelectableBackend,
     {
-        let _ = context;
+        let _ = (context, source);
         online::defaults::inputs::<Self, online::stages::Nested, _>()
     }
 
@@ -521,7 +672,8 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         online::defaults::points::<Self, online::stages::Nested, _>()
     }
 
-    /// Traces the user extension with the online batch's immutable stage data.
+    /// Traces the user extension with the online batch's immutable stage
+    /// data, beside what [`Self::nested_extension_rxs`] takes.
     ///
     /// Consumer circuits reserve the declared online prefix. Their witnesses
     /// must use `online`'s input and query values, including the opposite
@@ -531,8 +683,12 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     /// # Errors
     ///
     /// The default delegates to [`Self::nested_extension_rxs`].
+    #[allow(clippy::too_many_arguments)]
     fn nested_extension_rxs_with_online<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
         context: &Self::Context<'params, Base, R, B>,
+        source: Option<&<Self::Context<'params, Base, R, B> as ProverContext>::Source>,
+        output_commitments: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+        online_fq_openings: &[Base::ScalarField],
         registry: &Registry<'params, Base::ScalarField, R>,
         online: Option<
             &online::circuit::Witness<'_, Base::ScalarField, Self, online::stages::Nested>,
@@ -546,7 +702,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
         RNG: CryptoRng,
     {
         let _ = online;
-        Self::nested_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(context, registry, rng)
+        Self::nested_extension_rxs::<Base, R, HEADER_SIZE, B, RNG>(
+            context,
+            source,
+            output_commitments,
+            online_fq_openings,
+            registry,
+            rng,
+        )
     }
 
     /// Checks that the constants agree with the extensions and that the
@@ -568,12 +731,29 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
     fn check() -> Result<()> {
         Self::NATIVE_ONLINE.check()?;
         Self::NESTED_ONLINE.check()?;
-        for (mesh, layout) in [
-            (Self::NATIVE_MESH, Self::NATIVE_ONLINE),
-            (Self::NESTED_MESH, Self::NESTED_ONLINE),
+        for (mesh, layout, domain) in [
+            (
+                Self::NATIVE_MESH,
+                Self::NATIVE_ONLINE,
+                Self::NATIVE_DOMAIN_INPUTS,
+            ),
+            (
+                Self::NESTED_MESH,
+                Self::NESTED_ONLINE,
+                Self::NESTED_DOMAIN_INPUTS,
+            ),
         ] {
             if let Some(mesh) = mesh {
                 mesh.check(layout)?;
+            }
+            // A domain input is a wire of the input stage, and the domain
+            // is the mesh's source's.
+            if domain.iter().any(|&input| input >= layout.inputs)
+                || (!domain.is_empty() && mesh.is_none())
+            {
+                return Err(Error::Initialization(
+                    "the profile's domain inputs are not inputs of a source-registry mesh".into(),
+                ));
             }
         }
         // Each added step contributes two points to the other side's walk.
@@ -594,14 +774,14 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 "the profile commits more online Fq polynomials than a step can open".into(),
             ));
         }
-        for (name, profile) in [
-            (Standard::NAME, TypeId::of::<Standard>()),
-            (Aggregator::NAME, TypeId::of::<Aggregator>()),
-        ] {
-            if Self::NAME == name && TypeId::of::<Self>() != profile {
-                return Err(Error::Initialization(
-                    alloc::format!("the profile takes the built-in {name} profile's name").into(),
-                ));
+        if !Self::BUILT_IN.is_some_and(BuiltIn::is::<Self>) {
+            for name in [Standard::NAME, AGGREGATOR_NAME] {
+                if Self::NAME == name {
+                    return Err(Error::Initialization(
+                        alloc::format!("the profile takes the built-in {name} profile's name")
+                            .into(),
+                    ));
+                }
             }
         }
         let native = Self::native_extension();
@@ -643,9 +823,43 @@ pub trait Profile: Copy + Default + Eq + fmt::Debug + Send + Sync + 'static {
                 "only the native extension carries a statement circuit".into(),
             ));
         }
+        // A binding's online slots are its side's: the step's online Fq
+        // polynomials on the native side, its output header's on the
+        // nested side, where alone the Fq openings are values of the field.
+        let within =
+            |slots: &[u32], count: usize| slots.iter().all(|&slot| (slot as usize) < count);
+        if let Some(binding) = &native.binding
+            && !(within(&binding.online, Self::ONLINE_FQ_POLYS) && binding.openings.is_empty())
+        {
+            return Err(Error::Initialization(
+                "the native binding circuit exposes commitments of the step's online Fq polynomials alone".into(),
+            ));
+        }
+        if let Some(binding) = &nested.binding
+            && !(within(&binding.online, crate::header::NUM_ONLINE_FP_POLYS)
+                && within(&binding.openings, Self::ONLINE_FQ_POLYS))
+        {
+            return Err(Error::Initialization(
+                "the nested binding circuit names an online slot the step does not have".into(),
+            ));
+        }
         online::extension::check::<Self, online::stages::Native>()?;
         online::extension::check::<Self, online::stages::Nested>()?;
         Ok(())
+    }
+}
+
+/// The token the crate's own profiles carry in [`Profile::BUILT_IN`]: the
+/// type it was made for, as the function that names it. Its field is
+/// private, so only this crate constructs one, and a copy names the type
+/// it was made for rather than the profile that copied it.
+#[derive(Clone, Copy, Debug)]
+pub struct BuiltIn(pub(crate) fn() -> TypeId);
+
+impl BuiltIn {
+    /// Whether the token was made for `P`.
+    fn is<P: 'static>(self) -> bool {
+        (self.0)() == TypeId::of::<P>()
     }
 }
 
@@ -698,7 +912,35 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
     ) -> Result<Registered<'params, F, R>> {
         self.0
             .register_internal_circuit(Suffixed(circuit))
-            .map(Registered)
+            .map(|registry| Registered {
+                registry,
+                registration: Registration::Circuit,
+            })
+    }
+
+    /// Registers the staged `circuit` as [`register`](Self::register) does
+    /// and records the stages it loads, in gate order, for the registry to
+    /// check against the profile's declaration
+    /// ([`Extension::circuits`]): an extension circuit declared to load
+    /// stages must be registered through this method.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the registry's error.
+    pub fn register_staged<X: MultiStageCircuit<F, R>>(
+        self,
+        circuit: MultiStage<F, R, X>,
+    ) -> Result<Registered<'params, F, R>>
+    where
+        MultiStage<F, R, X>: 'params,
+    {
+        let stages = X::Last::gate_ranges();
+        self.0
+            .register_internal_circuit(Suffixed(circuit))
+            .map(|registry| Registered {
+                registry,
+                registration: Registration::Staged(stages),
+            })
     }
 }
 
@@ -706,8 +948,9 @@ impl<'params, F: Field, R: Rank> CircuitSlot<'params, F, R> {
 /// stage's mask or a final mask.
 ///
 /// The hook receives the slot and returns it [`Registered`], which only
-/// [`register`](Self::register) produces, so a hook registers one bonding
-/// and nothing else.
+/// [`register_mask`](Self::register_mask) and
+/// [`register_final_mask`](Self::register_final_mask) produce, so a hook
+/// registers one bonding and nothing else.
 pub struct BondingSlot<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
 
 impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
@@ -716,20 +959,77 @@ impl<'params, F: Field, R: Rank> BondingSlot<'params, F, R> {
         BondingSlot(registry)
     }
 
-    /// Registers `bonding` as the slot's bonding.
-    pub fn register(self, bonding: BondingObject<'params, F, R>) -> Registered<'params, F, R> {
-        Registered(self.0.register_bonding(bonding))
+    /// Registers stage `S`'s mask as the slot's bonding and records the
+    /// stage's gates for the registry to check against the profile's
+    /// declaration ([`Extension::stages`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`StageExt::mask`]'s error.
+    pub fn register_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
+        Ok(Registered {
+            registry: self.0.register_bonding(S::mask()?),
+            registration: Registration::Mask(stage_gates::<F, R, S>()),
+        })
+    }
+
+    /// Registers the final mask of the circuits whose last stage is `S` as
+    /// the slot's bonding and records the gate it starts at for the
+    /// registry to check against the profile's declaration
+    /// ([`Extension::final_masks`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`StageExt::final_mask`]'s error.
+    pub fn register_final_mask<S: Stage<F, R>>(self) -> Result<Registered<'params, F, R>> {
+        Ok(Registered {
+            registry: self.0.register_bonding(S::final_mask()?),
+            registration: Registration::FinalMask(stage_gates::<F, R, S>().end),
+        })
     }
 }
 
-/// A slot a hook filled: the registry with the slot's one entry registered.
-pub struct Registered<'params, F: Field, R: Rank>(RegistryBuilder<'params, F, R>);
+/// Stage `S`'s gates: what its mask covers and its final mask starts after.
+fn stage_gates<F: Field, R: Rank, S: Stage<F, R>>() -> Range<usize> {
+    S::skip_gates()..S::skip_gates() + S::num_gates()
+}
+
+/// A slot a hook filled: the registry with the slot's one entry registered,
+/// and what the entry is, for the registry to check against the profile's
+/// declaration.
+pub struct Registered<'params, F: Field, R: Rank> {
+    registry: RegistryBuilder<'params, F, R>,
+    registration: Registration,
+}
 
 impl<'params, F: Field, R: Rank> Registered<'params, F, R> {
     /// The registry, with the entry.
+    #[cfg(test)]
     pub(crate) fn into_registry(self) -> RegistryBuilder<'params, F, R> {
-        self.0
+        self.registry
     }
+
+    /// The registry, with the entry, and what the entry is.
+    pub(crate) fn into_parts(self) -> (RegistryBuilder<'params, F, R>, Registration) {
+        (self.registry, self.registration)
+    }
+}
+
+/// What a hook registered in its slot, as the registry checks it against
+/// the profile's declaration ([`Extension::check_registered`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Registration {
+    /// A circuit whose stages the registry cannot see
+    /// ([`CircuitSlot::register`]).
+    Circuit,
+    /// A staged circuit, with the gates of each stage it loads in gate
+    /// order ([`CircuitSlot::register_staged`]).
+    Staged(Vec<Range<usize>>),
+    /// A stage's mask, over the stage's gates
+    /// ([`BondingSlot::register_mask`]).
+    Mask(Range<usize>),
+    /// A final mask, from a gate on ([`BondingSlot::register_final_mask`]).
+    FinalMask(usize),
 }
 
 /// A circuit with a constant zero appended to its public output; see
@@ -830,15 +1130,33 @@ pub struct Extension {
     /// $k(y)$ binds the proof's own output header to it. `None` for any
     /// other extension, and always on the nested side.
     ///
+    /// After the header the output carries the step binding,
+    /// [`STEP_BINDING`] elements the same claim sets: a flag, one in a
+    /// proof of the decompression step and zero in any other, then the
+    /// point and the value at which the decompression step opened its
+    /// first output slot, then the point at which it opened its left
+    /// input's first slot, a value it staged, all zero in any other step.
+    /// An extension reads its circuits' own step from them: the flag says
+    /// whether the proof it verified is the one decompressed, the opening
+    /// is of a polynomial that step committed before its challenge, and
+    /// the staged value was committed with it, so that a digest staged
+    /// there fixes, before that challenge, whatever the extension hashes
+    /// to it. The extension's prover is handed the step's openings
+    /// through [`native_extension_rxs`](Profile::native_extension_rxs).
+    ///
     /// The statement binds the header's fields only. A profile that declares
     /// one registers the decompression step, whose output proof carries the
-    /// verified header with the constant one in both online slots, and a
-    /// step consuming that proof cannot tell it from one a registered step
-    /// produced. Before declaring a statement, either every header a
+    /// verified header with none of the compressed proof's polynomials in
+    /// its online slots, the step's own in the first and the constant one
+    /// in the last, and a step consuming that proof cannot tell it from one
+    /// a registered step produced. Before declaring a statement, either every header a
     /// decompressed statement can carry must treat its slots as padding, or
     /// the statement must also expose the compressed proof's online
     /// commitments for the decompression step to hold its output slots to
     /// (see [`NUM_ONLINE_FP_POLYS`](crate::header::NUM_ONLINE_FP_POLYS)).
+    /// The aggregator profile takes the first: its
+    /// [`check_context`](Profile::check_context) refuses a wallet
+    /// application whose steps output a header naming a polynomial.
     pub statement: Option<u32>,
     /// The binding circuit, for an extension whose circuits take values the
     /// other side's extension computes: the circuit whose public output is
@@ -847,6 +1165,10 @@ pub struct Extension {
     /// `None` for an extension that binds nothing.
     pub binding: Option<Binding>,
 }
+
+/// The elements a statement circuit's public output ends with, after the
+/// output header: the step binding (see [`Extension::statement`]).
+pub const STEP_BINDING: usize = 4;
 
 /// An extension's binding circuit: the circuit, by index among the
 /// extension's circuits, whose public output is one point per stage of
@@ -872,6 +1194,32 @@ pub struct Binding {
     /// The other side's extension stages the circuit's output points
     /// recompute, by index among that extension's stages, in output order.
     pub stages: Vec<u32>,
+    /// The slots of the proof's own online polynomials whose commitments
+    /// the circuit's output ends with, after the stages' points, in output
+    /// order: a point per slot, which the claim's $k(y)$ holds to the
+    /// commitment the proof carries for that slot. A binding circuit's
+    /// points are on the curve its side's circuits hold, so the nested
+    /// extension's binding names slots of the step's output header, whose
+    /// polynomials are committed on the host curve, and the native
+    /// extension's names the step's online polynomials over the scalar
+    /// field ([`Profile::ONLINE_FQ_POLYS`]), committed on the nested curve.
+    ///
+    /// A header's slots belong to the application, so a profile whose
+    /// nested binding names one must have its circuits use the point only
+    /// where the profile's own step fills the slot, as the aggregator's
+    /// use it only under the decompression step's flag. An online
+    /// polynomial over the scalar field is the profile's own in every
+    /// step; naming one has the step export its commitment for its parent
+    /// to hold, which a profile that names none does not pay for.
+    pub online: Vec<u32>,
+    /// The step's online polynomials over the scalar field whose openings
+    /// the circuit's output ends with, after its points: for each slot the
+    /// point and the value the step's nested `compute_v` opened it at,
+    /// which the claim's $k(y)$ holds to the opening that circuit folded.
+    /// Naming one has the step export the opening for its parent to hold.
+    /// The openings are values of the scalar field, so only the nested
+    /// extension's binding names any.
+    pub openings: Vec<u32>,
 }
 
 impl Extension {
@@ -953,6 +1301,8 @@ impl Extension {
                     && self.statement != Some(binding.circuit)
                     && !binding.stages.is_empty()
                     && distinct(&binding.stages)
+                    && distinct(&binding.online)
+                    && distinct(&binding.openings)
             });
         // In gate order, which leaves `last()` the stage whose final mask
         // covers the circuit, and names no stage twice.
@@ -976,7 +1326,133 @@ impl Extension {
                     .is_some_and(|first| last.all(|stage| stage == first))
             })
     }
+
+    /// Checks what the profile's hooks registered for this extension
+    /// against the declaration: bonding `j` below [`stages`](Self::stages)
+    /// is stage `j`'s mask and every later one a final mask; a circuit
+    /// declared to load stages was registered as a staged circuit whose
+    /// stages are the declared ones in order, each over the gates its mask
+    /// covers, under the final mask that starts where its last stage ends;
+    /// and a circuit declared to load none loads none. `circuits` and
+    /// `bondings` are the registrations in the declaration's order; `side`
+    /// names the extension in the error.
+    ///
+    /// What a circuit does with its stages, and whether the statement and
+    /// binding circuits expose what their claims assume, is not checked
+    /// here: see [`Binding`].
+    ///
+    /// # Errors
+    ///
+    /// Fails on the first disagreement.
+    pub(crate) fn check_registered(
+        &self,
+        side: &str,
+        circuits: &[Registration],
+        bondings: &[Registration],
+    ) -> Result<()> {
+        let refuse = |what: alloc::string::String| {
+            Err(Error::Initialization(
+                alloc::format!("the profile's {side} extension {what}").into(),
+            ))
+        };
+        if circuits.len() != self.circuits.len() || bondings.len() != self.bondings() {
+            return refuse(alloc::format!(
+                "registers {} circuits and {} bondings but declares {} and {}",
+                circuits.len(),
+                bondings.len(),
+                self.circuits.len(),
+                self.bondings()
+            ));
+        }
+        let mut masks = Vec::with_capacity(self.stages);
+        for (j, registration) in bondings.iter().enumerate() {
+            match registration {
+                Registration::Mask(gates) if j < self.stages => masks.push(gates.clone()),
+                Registration::FinalMask(_) if j >= self.stages => {}
+                _ if j < self.stages => {
+                    return refuse(alloc::format!(
+                        "registers bonding {j} as something other than stage {j}'s mask"
+                    ));
+                }
+                _ => {
+                    return refuse(alloc::format!(
+                        "registers bonding {j} as something other than a final mask"
+                    ));
+                }
+            }
+        }
+        for (k, (registration, declared)) in circuits.iter().zip(&self.circuits).enumerate() {
+            let loaded = match registration {
+                Registration::Staged(loaded) => loaded,
+                Registration::Circuit if declared.is_empty() => continue,
+                Registration::Circuit => {
+                    return refuse(alloc::format!(
+                        "declares that circuit {k} loads stages but registers it as one that loads none"
+                    ));
+                }
+                _ => return refuse(alloc::format!("registers circuit {k} as a bonding")),
+            };
+            let mut expected = Vec::with_capacity(declared.len());
+            for &stage in declared {
+                match masks.get(stage as usize) {
+                    Some(gates) => expected.push(gates.clone()),
+                    None => {
+                        return refuse(alloc::format!(
+                            "declares that circuit {k} loads a stage it does not have"
+                        ));
+                    }
+                }
+            }
+            if *loaded != expected {
+                return refuse(alloc::format!(
+                    "declares that circuit {k} loads the stages over gates {expected:?} but registers one over {loaded:?}"
+                ));
+            }
+            let Some(last) = loaded.last() else {
+                continue;
+            };
+            let Some(mask) = self
+                .final_masks
+                .iter()
+                .position(|mask| mask.contains(&(k as u32)))
+            else {
+                return refuse(alloc::format!("names circuit {k} in no final mask"));
+            };
+            if bondings[self.stages + mask] != Registration::FinalMask(last.end) {
+                return refuse(alloc::format!(
+                    "registers circuit {k}'s final mask elsewhere than at gate {}, where its last stage ends",
+                    last.end
+                ));
+            }
+        }
+        Ok(())
+    }
 }
+
+/// A profile's prover context: what an application of the profile holds
+/// across proofs to build its extension over, and what a step can supply
+/// in its place.
+pub trait ProverContext {
+    /// What a step supplies the extension's prover in place of the
+    /// context's own proof: the compressed proof a decompression step
+    /// decompresses. Uninhabited for a context no step supplies anything
+    /// to.
+    type Source;
+}
+
+/// No context, and nothing a step supplies.
+impl ProverContext for () {
+    type Source = core::convert::Infallible;
+}
+
+/// What a step can supply the extension's prover of an application over
+/// `C` in place of its context's proof ([`ProverContext::Source`]).
+pub(crate) type Source<'params, C, R, B> = <<<C as ProfiledCycle>::Profile as Profile>::Context<
+    'params,
+    <C as ProfiledCycle>::Base,
+    R,
+    B,
+> as ProverContext>::Source;
 
 /// The standard profile: the fuse alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -984,6 +1460,7 @@ pub struct Standard;
 
 impl Profile for Standard {
     const NAME: &'static str = "standard";
+    const BUILT_IN: Option<BuiltIn> = Some(BuiltIn(TypeId::of::<Self>));
     const NATIVE_EXTENSION: usize = 0;
     const NESTED_EXTENSION: usize = 0;
 
@@ -995,36 +1472,9 @@ impl Profile for Standard {
         B: SelectableBackend;
 }
 
-/// The aggregator profile: the fuse plus the circuits that verify a
-/// [`Standard`] compressed proof in circuit.
-///
-/// Those circuits are the decompression's, which lands separately; until
-/// it does, the profile declares nothing and its shape is [`Standard`]'s.
-/// At the production rank every circuit of the fuse sits within a few
-/// percent of the gate budget, and each polynomial a profile adds is one
-/// more commitment its hashing circuits absorb, one more evaluation its
-/// compute-v circuit takes, two more claims its collapse circuits fold and
-/// a longer walk whose every step loads the longer points stage: two
-/// polynomials per side already push a nested endoscaling step past the
-/// budget. The decompression is therefore declared at a larger rank,
-/// where the fuse has room for it; the declaration, registration, claims,
-/// prover hooks, statement and endoscalings per step it needs are in
-/// place.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Aggregator;
-
-impl Profile for Aggregator {
-    const NAME: &'static str = "aggregator";
-    const NATIVE_EXTENSION: usize = 0;
-    const NESTED_EXTENSION: usize = 0;
-
-    type Context<'params, Base, R, B>
-        = ()
-    where
-        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
-        R: Rank,
-        B: SelectableBackend;
-}
+/// The aggregator profile's [`NAME`](Profile::NAME), the same for every
+/// header size.
+pub(crate) const AGGREGATOR_NAME: &str = "aggregator";
 
 /// A cycle with a profile: what every item that lays out a proof is generic
 /// over.
@@ -1062,9 +1512,9 @@ impl ProfiledCycle for Pasta {
 /// A cycle under another profile: `C`'s curves, generators and Poseidon
 /// instances with `P`'s proof shape.
 ///
-/// `Profiled<Pasta, Aggregator>` is the aggregator cycle over the Pasta
-/// curves. It is a distinct type from [`Pasta`], so an application over one
-/// never accepts the other's proofs.
+/// `Profiled<Pasta, Aggregator<H>>` is the aggregator cycle over the Pasta
+/// curves for wallet headers of `H` elements. It is a distinct type from
+/// `Pasta`, so an application over one never accepts the other's proofs.
 pub struct Profiled<C, P>(PhantomData<(C, P)>);
 
 impl<C, P> Clone for Profiled<C, P> {
@@ -1130,6 +1580,10 @@ impl<C: IpaCycle, P: Profile> IpaCycle for Profiled<C, P> {
 
     fn nested_u(params: &Self::Params) -> &Self::NestedCurve {
         C::nested_u(params)
+    }
+
+    fn nested_generator(params: &Self::Params, index: usize) -> Option<Self::NestedCurve> {
+        C::nested_generator(params, index)
     }
 }
 
@@ -1392,6 +1846,25 @@ pub(crate) mod testing {
         }
     }
 
+    /// A second profile with the standard profile's shape and no extension:
+    /// the setup separation tests hold two profiles of one shape apart by
+    /// their tags alone.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Twin;
+
+    impl Profile for Twin {
+        const NAME: &'static str = "twin";
+        const NATIVE_EXTENSION: usize = 0;
+        const NESTED_EXTENSION: usize = 0;
+
+        type Context<'params, Base, R, B>
+            = ()
+        where
+            Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+            R: Rank,
+            B: SelectableBackend;
+    }
+
     /// Two native circuits over two stages, each under its last stage's
     /// final mask, and one nested circuit over one stage under one final
     /// mask, declared but without hooks.
@@ -1477,7 +1950,7 @@ pub(crate) mod testing {
     }
 
     /// One online Fq polynomial per step and no extension: the standard
-    /// layout with the slot on, which proves at the production rank.
+    /// layout with the slot on, which proves at the wallet rank.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Opening;
 
@@ -1496,8 +1969,8 @@ pub(crate) mod testing {
     }
 
     /// `CIRCUITS` native circuits and one nested circuit, each side's over
-    /// one stage under one final mask, with hooks that register the fuse's
-    /// own circuits and stages as stand-ins.
+    /// one stage under one final mask, with hooks that register a one-stage
+    /// test circuit ([`DigitsCircuit`]) and its stage as stand-ins.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Hooked<const CIRCUITS: usize = 1>;
 
@@ -1542,7 +2015,9 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert!(circuit < CIRCUITS);
-            slot.register(native::circuits::bind_endoscalar::Circuit::<Base, R>::new())
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
+                PhantomData,
+            )))
         }
 
         fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
@@ -1553,13 +2028,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            type Stage<C, R, const H: usize> = native::stages::eval::Stage<C, R, H>;
-            let mask = match bonding {
-                0 => Stage::<Base, R, HEADER_SIZE>::mask()?,
-                1 => Stage::<Base, R, HEADER_SIZE>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
 
         fn register_nested_circuit<'params, Base, R: Rank>(
@@ -1571,9 +2044,9 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            let circuit =
-                nested::circuits::collapse::Circuit::<Base::HostCurve, R, Standard>::new();
-            slot.register(MultiStage::new(circuit))
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(
+                PhantomData,
+            )))
         }
 
         fn register_nested_bonding<'params, Base, R: Rank>(
@@ -1584,13 +2057,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            type Stage<C, R> = nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, Standard>;
-            let mask = match bonding {
-                0 => Stage::<Base, R>::mask()?,
-                1 => Stage::<Base, R>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
     }
 
@@ -1648,7 +2119,8 @@ pub(crate) mod testing {
     /// A statement circuit for the tests of the decompression step: its
     /// public output is the header it is given, `HEADER_SIZE` elements
     /// whose suffix it holds nonzero, standing in for the output header of
-    /// the compressed proof a decompression extension verifies.
+    /// the compressed proof a decompression extension verifies, then the
+    /// step binding it is given, which it leaves unconstrained.
     pub(crate) struct StatementCircuit<F, const HEADER_SIZE: usize>(PhantomData<fn() -> F>);
 
     impl<F, const HEADER_SIZE: usize> StatementCircuit<F, HEADER_SIZE> {
@@ -1658,9 +2130,13 @@ pub(crate) mod testing {
     }
 
     impl<F: Field, const HEADER_SIZE: usize> Circuit<F> for StatementCircuit<F, HEADER_SIZE> {
+        /// The header, then the step binding.
         type Instance<'source> = &'source [F];
         type Witness<'source> = &'source [F];
-        type Output = Kind![F; FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>];
+        type Output = Kind![F; (
+            FixedVec<Element<'_, _>, ConstLen<HEADER_SIZE>>,
+            FixedVec<Element<'_, _>, ConstLen<STEP_BINDING>>,
+        )];
         type Aux<'source> = ();
 
         fn instance<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -1668,9 +2144,17 @@ pub(crate) mod testing {
             dr: &mut D,
             instance: DriverValue<D, Self::Instance<'source>>,
         ) -> Result<Bound<'dr, D, Self::Output>> {
-            FixedVec::try_from_fn(|i| {
-                Element::alloc(dr, &mut (), instance.as_ref().map(|header| header[i]))
-            })
+            let header = FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), instance.as_ref().map(|values| values[i]))
+            })?;
+            let step = FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    instance.as_ref().map(|values| values[HEADER_SIZE + i]),
+                )
+            })?;
+            Ok((header, step))
         }
 
         fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = F>>(
@@ -1681,12 +2165,20 @@ pub(crate) mod testing {
         {
             let header: FixedVec<Element<'dr, D>, ConstLen<HEADER_SIZE>> =
                 FixedVec::try_from_fn(|i| {
-                    Element::alloc(dr, &mut (), witness.as_ref().map(|header| header[i]))
+                    Element::alloc(dr, &mut (), witness.as_ref().map(|values| values[i]))
+                })?;
+            let step: FixedVec<Element<'dr, D>, ConstLen<STEP_BINDING>> =
+                FixedVec::try_from_fn(|i| {
+                    Element::alloc(
+                        dr,
+                        &mut (),
+                        witness.as_ref().map(|values| values[HEADER_SIZE + i]),
+                    )
                 })?;
             // One check stands in for what a decompression verifies of its
             // statement: a header's suffix is never zero.
             header[HEADER_SIZE - 1].clone().enforce_nonzero(dr)?;
-            Ok(WithAux::new(header, D::unit()))
+            Ok(WithAux::new((header, step), D::unit()))
         }
     }
 
@@ -1700,12 +2192,20 @@ pub(crate) mod testing {
     /// [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
     pub(crate) struct StatementContext<F> {
         header: Mutex<Option<Vec<F>>>,
+        /// Values that replace the step binding's as the circuit exposes
+        /// them, by position; see [`expose_binding`](Self::expose_binding).
+        binding: Mutex<[Option<F>; STEP_BINDING]>,
+    }
+
+    impl<F> ProverContext for StatementContext<F> {
+        type Source = core::convert::Infallible;
     }
 
     impl<F> Default for StatementContext<F> {
         fn default() -> Self {
             StatementContext {
                 header: Mutex::new(None),
+                binding: Mutex::new(core::array::from_fn(|_| None)),
             }
         }
     }
@@ -1716,13 +2216,40 @@ pub(crate) mod testing {
             *self.header.lock().unwrap() = header;
         }
 
-        /// The header the statement circuit exposes: the one set, or the
-        /// unit header padded to `HEADER_SIZE`.
-        fn header<C: Cycle<CircuitField = F>, const HEADER_SIZE: usize>(&self) -> Result<Vec<F>> {
-            match self.header.lock().unwrap().clone() {
-                Some(header) => Ok(header),
-                None => ky::output_header::<C, (), HEADER_SIZE>(()),
-            }
+        /// Replaces, from now on, each value of the step binding the
+        /// statement circuit exposes that `binding` sets: the flag, the
+        /// opening's point and value, and the digest, in that order. A test
+        /// exposes a binding its step did not make this way; all `None`
+        /// restores the step's own.
+        pub(crate) fn expose_binding(&self, binding: [Option<F>; STEP_BINDING]) {
+            *self.binding.lock().unwrap() = binding;
+        }
+
+        /// What the statement circuit exposes: the header set, then the
+        /// step binding of a decompression that opened its first output
+        /// slot at `opening` and staged `digest`; or the unit header
+        /// padded to `HEADER_SIZE`, then the binding of any other step,
+        /// all zero.
+        fn statement<C: Cycle<CircuitField = F>, const HEADER_SIZE: usize>(
+            &self,
+            opening: [F; 2],
+            digest: F,
+        ) -> Result<Vec<F>> {
+            let (mut header, binding) = match self.header.lock().unwrap().clone() {
+                Some(header) => (header, [F::ONE, opening[0], opening[1], digest]),
+                None => (
+                    ky::output_header::<C, (), HEADER_SIZE>(())?,
+                    [F::ZERO; STEP_BINDING],
+                ),
+            };
+            let replaced = *self.binding.lock().unwrap();
+            header.extend(
+                binding
+                    .into_iter()
+                    .zip(replaced)
+                    .map(|(own, replaced)| replaced.unwrap_or(own)),
+            );
+            Ok(header)
         }
     }
 
@@ -1730,7 +2257,7 @@ pub(crate) mod testing {
     /// header its context holds: the profile that registers the
     /// decompression step, so that the step and the statement claim's
     /// binding of its output header prove and verify without decompression
-    /// circuits. Proves at a rank above the production one, as [`Proving`]
+    /// circuits. Proves at a rank above the wallet's, as [`Proving`]
     /// does.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Decompressing;
@@ -1771,6 +2298,8 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            online_openings: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1780,7 +2309,14 @@ pub(crate) mod testing {
             B: SelectableBackend,
             RNG: CryptoRng,
         {
-            let header = context.header::<Base, HEADER_SIZE>()?;
+            use crate::{
+                header::NUM_ONLINE_FP_POLYS,
+                step::internal::decompress::{DIGEST_SLOT, S_SLOT},
+            };
+            let header = context.statement::<Base, HEADER_SIZE>(
+                online_openings[2 * NUM_ONLINE_FP_POLYS + S_SLOT],
+                online_openings[DIGEST_SLOT][0],
+            )?;
             let (trace, ()) = StatementCircuit::<Base::CircuitField, HEADER_SIZE>::new()
                 .trace(header.as_slice())?
                 .into_parts();
@@ -1794,8 +2330,8 @@ pub(crate) mod testing {
 
     /// One [`Trivial`] circuit and no stage on each side, with the hooks
     /// that register and prove it, and one online Fq polynomial per step:
-    /// the profile whose extension proves, at a rank above the production
-    /// one, where the fuse has room for its two polynomials.
+    /// the profile whose extension proves, at a rank above the wallet's,
+    /// where the fuse has room for its two polynomials.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Proving;
 
@@ -1852,6 +2388,8 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            _: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -1867,6 +2405,9 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             _: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+            _: &[Base::ScalarField],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2040,6 +2581,10 @@ pub(crate) mod testing {
         pub(crate) nested: [bool; DIGITS],
     }
 
+    impl<Base: Cycle> ProverContext for CrossingContext<'_, Base> {
+        type Source = core::convert::Infallible;
+    }
+
     /// The signed digits of `bits`: $2b - 1$ each.
     fn signed<F: Field>(bits: &[bool; DIGITS]) -> [F; DIGITS] {
         bits.map(|bit| if bit { F::ONE } else { -F::ONE })
@@ -2049,7 +2594,7 @@ pub(crate) mod testing {
     /// digits stage's commitment recomputed from the native bits, and one
     /// circuit over the digits stage on the nested side, holding the
     /// nested bits' signed digits: the profile whose two sides a test can
-    /// make agree or disagree, at a rank above the production one.
+    /// make agree or disagree, at a rank above the wallet's.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub(crate) struct Crossing;
 
@@ -2074,6 +2619,8 @@ pub(crate) mod testing {
                 binding: Some(Binding {
                     circuit: 0,
                     stages: vec![0],
+                    online: vec![],
+                    openings: Vec::new(),
                 }),
             }
         }
@@ -2110,7 +2657,7 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            slot.register(MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::ScalarField, R>(
                 PhantomData,
             )))
         }
@@ -2123,16 +2670,17 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            let mask = match bonding {
-                0 => DigitsStage::<Base::ScalarField, R>::mask()?,
-                1 => DigitsStage::<Base::ScalarField, R>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::ScalarField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::ScalarField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            _: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2155,6 +2703,9 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+            _: &[Base::ScalarField],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2219,6 +2770,8 @@ pub(crate) mod testing {
                 binding: Some(Binding {
                     circuit: 0,
                     stages: vec![0],
+                    online: vec![],
+                    openings: Vec::new(),
                 }),
             }
         }
@@ -2232,7 +2785,7 @@ pub(crate) mod testing {
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
             assert_eq!(circuit, 0);
-            slot.register(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
+            slot.register_staged(MultiStage::new(DigitsCircuit::<Base::CircuitField, R>(
                 PhantomData,
             )))
         }
@@ -2245,12 +2798,11 @@ pub(crate) mod testing {
         where
             Base: IpaCycle + ProfiledCycle<Profile = Standard>,
         {
-            let mask = match bonding {
-                0 => DigitsStage::<Base::CircuitField, R>::mask()?,
-                1 => DigitsStage::<Base::CircuitField, R>::final_mask()?,
+            match bonding {
+                0 => slot.register_mask::<DigitsStage<Base::CircuitField, R>>(),
+                1 => slot.register_final_mask::<DigitsStage<Base::CircuitField, R>>(),
                 _ => unreachable!("two bondings"),
-            };
-            Ok(slot.register(mask))
+            }
         }
 
         fn register_nested_circuit<'params, Base, R: Rank>(
@@ -2268,6 +2820,8 @@ pub(crate) mod testing {
 
         fn native_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            _: &[[Base::CircuitField; 2]; 3 * crate::header::NUM_ONLINE_FP_POLYS],
             registry: &Registry<'params, Base::CircuitField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::CircuitField, R>>
@@ -2294,6 +2848,9 @@ pub(crate) mod testing {
 
         fn nested_extension_rxs<'params, Base, R, const HEADER_SIZE: usize, B, RNG>(
             context: &Self::Context<'params, Base, R, B>,
+            _: Option<&core::convert::Infallible>,
+            _: &[Base::HostCurve; crate::header::NUM_ONLINE_FP_POLYS],
+            _: &[Base::ScalarField],
             registry: &Registry<'params, Base::ScalarField, R>,
             rng: &mut RNG,
         ) -> Result<ExtensionRxs<Base::ScalarField, R>>
@@ -2318,12 +2875,13 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use ragu_circuits::polynomials::R;
+    use ragu_circuits::polynomials::{AggregatorRank, R, WalletRank};
 
     use super::{
         testing::{Crossing, CrossingBack, CrossingContext, Mismatched, Opening, Wider},
         *,
     };
+    use crate::{compress::runs::num_runs, decompress::extension};
 
     #[test]
     fn endoscaling_counts_must_allow_convergent_walks() {
@@ -2371,10 +2929,93 @@ mod tests {
         converges::<{ usize::MAX }, { usize::MAX }>();
     }
 
+    /// What the hooks register is held to the declaration: each stage's
+    /// mask at its bonding and a final mask at each later one, each staged
+    /// circuit over its declared stages' gates under the final mask that
+    /// starts where its last stage ends, and no stages for a circuit that
+    /// declares none.
+    #[test]
+    fn registrations_are_held_to_the_declaration() {
+        use alloc::vec;
+
+        use Registration::*;
+        let single = |gates: Range<usize>| Staged(vec![gates]);
+        let extension = Extension {
+            circuits: vec![vec![0, 1], vec![], vec![0]],
+            stages: 2,
+            final_masks: vec![vec![0], vec![2]],
+            statement: None,
+            binding: None,
+        };
+        assert!(extension.is_consistent());
+        let bondings = vec![Mask(1..4), Mask(4..9), FinalMask(9), FinalMask(4)];
+        let circuits = vec![Staged(vec![1..4, 4..9]), Circuit, single(1..4)];
+        assert!(
+            extension
+                .check_registered("native", &circuits, &bondings)
+                .is_ok()
+        );
+        let refused = |circuits: Vec<Registration>, bondings: Vec<Registration>| {
+            matches!(
+                extension.check_registered("native", &circuits, &bondings),
+                Err(Error::Initialization(_))
+            )
+        };
+        // A circuit over other gates than its stages', in another order, or
+        // short of a stage.
+        assert!(refused(
+            vec![Staged(vec![1..4, 4..10]), Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        assert!(refused(
+            vec![Staged(vec![4..9, 1..4]), Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        assert!(refused(
+            vec![single(1..4), Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        // A circuit declared over stages but registered without, and one
+        // declared without but registered over one.
+        assert!(refused(
+            vec![Circuit, Circuit, single(1..4)],
+            bondings.clone()
+        ));
+        assert!(refused(
+            vec![Staged(vec![1..4, 4..9]), single(1..4), single(1..4)],
+            bondings.clone()
+        ));
+        // A final mask elsewhere than where its circuits' last stage ends, a
+        // stage's mask over other gates than its circuits load, and bondings
+        // of the wrong kind.
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), Mask(4..9), FinalMask(10), FinalMask(4)]
+        ));
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), Mask(4..8), FinalMask(9), FinalMask(4)]
+        ));
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), FinalMask(9), FinalMask(9), FinalMask(4)]
+        ));
+        assert!(refused(
+            circuits.clone(),
+            vec![Mask(1..4), Mask(4..9), Mask(9..12), FinalMask(4)]
+        ));
+        // Other counts than the declaration's.
+        assert!(refused(circuits[..2].to_vec(), bondings.clone()));
+        assert!(refused(circuits.clone(), bondings[..3].to_vec()));
+    }
+
     #[test]
     fn declared_extensions_check() {
         Standard::check().unwrap();
-        Aggregator::check().unwrap();
+        Aggregator::<4>::check().unwrap();
+        Aggregator::<201>::check().unwrap();
+        assert!(Aggregator::<4>::native_extension().is_consistent());
+        assert!(Aggregator::<4>::nested_extension().is_consistent());
         Wider::check().unwrap();
         Crossing::check().unwrap();
         CrossingBack::check().unwrap();
@@ -2438,7 +3079,12 @@ mod tests {
             stages: 0,
             final_masks: vec![],
             statement: Some(0),
-            binding: Some(Binding { circuit, stages }),
+            binding: Some(Binding {
+                circuit,
+                stages,
+                online: vec![],
+                openings: Vec::new(),
+            }),
         };
         assert!(binding(1, vec![1, 0]).is_consistent());
         // The binding circuit out of range, or the statement circuit.
@@ -2536,6 +3182,8 @@ mod tests {
                     binding: Some(Binding {
                         circuit: 0,
                         stages: vec![0, 1],
+                        online: vec![],
+                        openings: Vec::new(),
                     }),
                 }
             }
@@ -2575,6 +3223,8 @@ mod tests {
                     binding: Some(Binding {
                         circuit: 0,
                         stages: vec![1],
+                        online: vec![],
+                        openings: Vec::new(),
                     }),
                 }
             }
@@ -2615,12 +3265,40 @@ mod tests {
         named!(AggregatorImpostor, "aggregator");
         named!(Named, "named");
 
+        // A profile that copies a built-in profile's token still carries
+        // that profile's type, and is refused its name.
+        macro_rules! forged {
+            ($profile:ident, $name:expr, $from:ty) => {
+                #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+                struct $profile;
+
+                impl Profile for $profile {
+                    const NAME: &'static str = $name;
+                    const BUILT_IN: Option<BuiltIn> = <$from as Profile>::BUILT_IN;
+                    const NATIVE_EXTENSION: usize = 0;
+                    const NESTED_EXTENSION: usize = 0;
+
+                    type Context<'params, Base, R, B>
+                        = ()
+                    where
+                        Base: IpaCycle + ProfiledCycle<Profile = Standard>,
+                        R: Rank,
+                        B: SelectableBackend;
+                }
+            };
+        }
+        forged!(StandardForger, "standard", Standard);
+        forged!(AggregatorForger, "aggregator", Aggregator<4>);
+        assert!(StandardForger::check().is_err());
+        assert!(AggregatorForger::check().is_err());
+
         assert!(Nameless::check().is_err());
         assert!(StandardImpostor::check().is_err());
         assert!(AggregatorImpostor::check().is_err());
         assert!(Named::check().is_ok());
         assert!(Standard::check().is_ok());
-        assert!(Aggregator::check().is_ok());
+        assert!(Aggregator::<4>::check().is_ok());
+        assert!(testing::Twin::check().is_ok());
         assert!(testing::Decompressing::check().is_ok());
     }
 
@@ -2796,9 +3474,70 @@ mod tests {
         assert!(TooMany::check().is_err());
     }
 
+    /// The aggregator's shape follows its pinned circuits, its one online
+    /// Fq polynomial and its online batches, and grows with the header size
+    /// through the transcript circuits.
     #[test]
-    fn aggregator_matches_standard_until_its_circuits_land() {
-        assert_eq!(Shape::of::<Aggregator>(), Shape::of::<Standard>());
+    fn aggregator_declares_the_decompression() {
+        let shape = Shape::of::<Aggregator<4>>();
+        let per_step = Aggregator::<4>::ENDOSCALINGS_PER_STEP;
+        let nested_stages = extension::nested_stages(num_runs::<WalletRank>());
+        assert_eq!(nested_stages, 27, "a stage per run, then four");
+        // Each field's online batch: its three stages and its helper among
+        // the side's polynomials, the mesh's twenty polynomials among the
+        // points the other side's walk folds, and the outgoing restriction
+        // the proof retains.
+        let batch = online::extension::RXS;
+        let expected = |native_circuits: usize| {
+            let mut shape = Shape::solve_with_online(
+                native_circuits + 2 + 6 + batch,
+                19 + 1 + nested_stages + batch,
+                1 + 20,
+                20,
+                per_step,
+                per_step,
+            );
+            shape.source_polynomials = 2;
+            shape
+        };
+        assert_eq!(shape, expected(32));
+        assert_eq!(Shape::of::<Aggregator<201>>(), expected(34));
+        // The knob: at the wallet rank's four per step the walks are
+        // far longer.
+        assert!(shape.polynomials() < Shape::solve(56 + 2 + 6, 46 + 1 + 5, 1, 4, 4).polynomials());
+        assert!(shape.polynomials() > Shape::of::<Standard>().polynomials());
+        std::println!(
+            "aggregator at header size 4: {shape:?}, {} polynomials",
+            shape.polynomials()
+        );
+    }
+
+    /// The hooks register only at the aggregator rank, and only for the
+    /// profile's header size.
+    #[test]
+    fn aggregator_hooks_refuse_other_parameters() {
+        let params = crate::pasta::baked();
+        let at_wallet_rank = Aggregator::<4>::register_native_circuit::<Pasta, WalletRank, 4>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params,
+        );
+        assert!(matches!(at_wallet_rank, Err(Error::Initialization(_))));
+        let other_header = Aggregator::<4>::register_native_circuit::<Pasta, AggregatorRank, 201>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params,
+        );
+        assert!(matches!(other_header, Err(Error::Initialization(_))));
+        let nested_at_wallet_rank = Aggregator::<4>::register_nested_circuit::<Pasta, WalletRank>(
+            0,
+            CircuitSlot::new(RegistryBuilder::new()),
+            params,
+        );
+        assert!(matches!(
+            nested_at_wallet_rank,
+            Err(Error::Initialization(_))
+        ));
     }
 
     #[test]
@@ -2808,8 +3547,8 @@ mod tests {
             Shape::of::<Standard>()
         );
         assert_eq!(
-            Shape::of::<<Profiled<Pasta, Aggregator> as ProfiledCycle>::Profile>(),
-            Shape::of::<Aggregator>()
+            Shape::of::<<Profiled<Pasta, Aggregator<4>> as ProfiledCycle>::Profile>(),
+            Shape::of::<Aggregator<4>>()
         );
     }
 
@@ -2854,7 +3593,7 @@ mod tests {
     /// An extension proves: an application in the [`Proving`] profile,
     /// one trivial circuit on each side and one online Fq polynomial per
     /// step, seeds, fuses, verifies and compresses at the rank above the
-    /// production one, where the fuse has room for the two polynomials.
+    /// wallet's, where the fuse has room for the two polynomials.
     #[test]
     fn an_extension_proves_verifies_and_compresses() -> Result<()> {
         use rand::{SeedableRng, rngs::StdRng};
@@ -2884,7 +3623,7 @@ mod tests {
     /// The slot proves without an extension: an application in the
     /// [`Opening`] profile, one online Fq polynomial per step and nothing
     /// else beyond the fuse, seeds, fuses, verifies and compresses at the
-    /// production rank.
+    /// wallet rank.
     #[test]
     fn an_online_fq_polynomial_proves_verifies_and_compresses() -> Result<()> {
         use rand::{SeedableRng, rngs::StdRng};

@@ -1,4 +1,4 @@
-//! Complete Fuse at the production rank, with one or all available workers.
+//! Complete Fuse at the wallet rank, with one or all available workers.
 //!
 //! Run with `cargo bench -p ragu_pcd --features multicore --bench criterion_fuse`.
 //! Child construction, cloning, RNG initialization, verification and destruction
@@ -14,7 +14,7 @@ use std::{
 use criterion::Criterion;
 use ragu_acceleration::AcceleratedBackend;
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -26,7 +26,7 @@ use rand::{SeedableRng, rngs::StdRng};
 fn fuse_bench<B: SelectableBackend>(c: &mut Criterion, backend: &str, mode: &str, workers: usize) {
     let pasta = ragu_pcd::pasta::baked();
     let poseidon_params = Pasta::circuit_poseidon(pasta);
-    let app = ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+    let app = ApplicationBuilder::<Pasta, WalletRank, 4>::new()
         .with_backend::<B>()
         .register(nontrivial::WitnessLeaf { poseidon_params })
         .unwrap()

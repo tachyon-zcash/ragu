@@ -122,12 +122,12 @@ mod tests {
     use rand::Rng;
 
     use super::*;
-    use crate::polynomials::ProductionRank;
+    use crate::polynomials::WalletRank;
 
     #[test]
     fn simulate_txz() -> Result<()> {
-        // ProductionRank (R<13>) has log2_n = 11
-        type TestRank = ProductionRank;
+        // WalletRank (R<13>) has log2_n = 11
+        type TestRank = WalletRank;
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let z = Fp::random(|bytes| rand::rng().fill_bytes(bytes));

@@ -47,7 +47,7 @@
 //! platform matrix. CI runs it in the `corruption (exhaustive)` job:
 //! `cargo test --release -p ragu_pcd --all-features --test online_fp_oracles -- --include-ignored`.
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle, Error, Result,
     drivers::{Driver, DriverValue, emulator::Emulator},
@@ -70,7 +70,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use udon::{curve::Affine as _, field::Field};
 
 type C = Pasta;
-type R = ProductionRank;
+type R = WalletRank;
 /// The header size: every header is padded to this many field elements.
 const HEADER_SIZE: usize = 4;
 type App = Application<'static, C, R, HEADER_SIZE>;

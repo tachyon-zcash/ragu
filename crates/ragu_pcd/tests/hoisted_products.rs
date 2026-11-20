@@ -7,7 +7,7 @@
 
 use ragu_circuits::{
     Circuit,
-    polynomials::ProductionRank,
+    polynomials::WalletRank,
     staging::{stage_wire_indices, wires_of},
 };
 use ragu_core::{Result, pasta::Fp};
@@ -101,7 +101,7 @@ impl<C: ProfiledCycle> InternalCircuitVisitor<C> for ProductOwners {
         if spec.name == "bind_endoscalar" {
             let indices = stage_wire_indices::<
                 C::CircuitField,
-                ProductionRank,
+                WalletRank,
                 WalkStage<C::NestedCurve, C::Profile>,
             >(|walk| wires_of(&walk.endoscalar))?;
             check_products(&spec.name, circuit, stage_values, &indices, make_witness)?;
@@ -119,7 +119,7 @@ impl<C: ProfiledCycle> InternalCircuitVisitor<C> for ProductOwners {
     ) -> Result<()> {
         if spec.name == "nested_collapse" {
             let indices =
-                stage_wire_indices::<C::ScalarField, ProductionRank, EndoscalarStage>(|endo| {
+                stage_wire_indices::<C::ScalarField, WalletRank, EndoscalarStage>(|endo| {
                     wires_of(&endo)
                 })?;
             check_products(&spec.name, circuit, stage_values, &indices, make_witness)?;

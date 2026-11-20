@@ -6,7 +6,7 @@
 use std::sync::OnceLock;
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::{ProductionRank, R, Rank};
+use ragu_circuits::polynomials::{AggregatorRank, R, Rank, WalletRank};
 use ragu_core::{
     Cycle, Error, Result,
     drivers::{Driver, DriverValue},
@@ -22,14 +22,17 @@ use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd,
     compress::instance::Instance,
     ipa::IpaCycle,
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle, Shape, Standard, testing::Proving},
+    profile::{
+        Aggregator, Decompression, Profile, Profiled, ProfiledCycle, Shape, Standard,
+        testing::{Proving, Twin},
+    },
     step::{Encoded, Index, Oracles, Step},
 };
 
 const HEADER_SIZE: usize = 4;
 type C<P> = Profiled<Pasta, P>;
 type App<P, R> = Application<'static, C<P>, R, HEADER_SIZE>;
-type TestPcd<P> = Pcd<C<P>, ProductionRank, Value>;
+type TestPcd<P> = Pcd<C<P>, WalletRank, Value>;
 
 #[path = "compressed_profile_attacks.rs"]
 mod compressed_attacks;
@@ -95,6 +98,9 @@ fn copy_proof_payload<
             native_points_f_rx,
             native_points_walk_rx,
             online_polynomials,
+            step_binding,
+            online_fq_commitments,
+            online_fq_openings,
             bridge_preamble_rx,
             bridge_hash_rx,
             bridge_s_prime_rx,
@@ -207,6 +213,9 @@ fn copy_compressed_payload<
             native_registry_xy,
             native_p,
             online_commitments,
+            step_binding,
+            online_fq_commitments,
+            online_fq_openings,
             nested,
             nested_registry_xy,
             nested_p,
@@ -365,11 +374,7 @@ where
     if let Some(nested) = tags.1 {
         builder = builder.with_nested_tag(nested);
     }
-    builder.finalize(if Rk::RANK <= 13 {
-        crate::pasta::baked()
-    } else {
-        crate::pasta::baked_aggregator()
-    })
+    builder.finalize(crate::pasta::baked_aggregator())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -410,9 +415,9 @@ fn sender_fixture<P: Profile>(
     foreign_value: Fp,
 ) -> Result<SenderFixture<P>>
 where
-    P::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    P::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let sender = application::<P, ProductionRank>((None, None), sender_constraint)?;
+    let sender = application::<P, WalletRank>((None, None), sender_constraint)?;
     let mut rng = StdRng::seed_from_u64(0x908_1501);
     let (source, ()) = sender.seed(
         &mut rng,
@@ -449,12 +454,12 @@ fn check_same_shape<S: Profile, T: Profile, const CHECK_GRANDPARENTS: bool>(
     share_registries: bool,
 ) -> Result<()>
 where
-    T::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    T::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
     assert_eq!(Shape::of::<S>(), Shape::of::<T>());
     let (native_tag, nested_tag) = sender.tags;
     let foreign_value = *sender.source.data();
-    let foreign = copy_proof_payload::<C<S>, C<T>, ProductionRank>(sender.source.proof().clone())
+    let foreign = copy_proof_payload::<C<S>, C<T>, WalletRank>(sender.source.proof().clone())
         .carry::<Value>(foreign_value);
     let compressed = copy_compressed_payload::<C<S>, C<T>>(sender.compressed.proof().clone())
         .carry::<Value>(foreign_value);
@@ -464,7 +469,7 @@ where
     // Tags are derived from the registered circuits, so a receiver with its
     // own derived tags holds the sender's registries exactly when the two
     // profiles register the same circuits, and only then accepts the payload.
-    let derived = application::<T, ProductionRank>((None, None), receiver_constraint)?;
+    let derived = application::<T, WalletRank>((None, None), receiver_constraint)?;
     assert_eq!(
         derived.native_registry.tag() == native_tag && derived.nested_registry.tag() == nested_tag,
         share_registries,
@@ -487,7 +492,7 @@ where
             DifferentTags::Native => (Some(native_tag + Fp::ONE), Some(nested_tag)),
             DifferentTags::Nested => (Some(native_tag), Some(nested_tag + Fq::ONE)),
         };
-        let receiver = application::<T, ProductionRank>(tags, receiver_constraint)?;
+        let receiver = application::<T, WalletRank>(tags, receiver_constraint)?;
         assert_eq!(
             receiver.native_registry.tag() == native_tag,
             matches!(changed, DifferentTags::Nested)
@@ -550,24 +555,23 @@ where
     Ok(())
 }
 
-/// The aggregator declares no extension yet, so it registers the standard
-/// profile's circuits and derives its tags: a standard payload verifies under
-/// it. Under any other tags, as once the aggregator's decompression circuits
-/// land, the payload is rejected.
+/// The twin declares no extension, so it registers the standard profile's
+/// circuits and derives its tags: a standard payload verifies under it.
+/// Under any other tags the payload is rejected.
 #[test]
-fn aggregator_accepts_standard_payloads_only_with_the_same_registries() -> Result<()> {
-    check_standard_payloads_in_aggregator::<false>()
+fn twin_accepts_standard_payloads_only_with_the_same_registries() -> Result<()> {
+    check_standard_payloads_in_twin::<false>()
 }
 
 #[cfg(ragu_pcd_nightly_tests)]
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
-fn aggregator_checks_standard_registry_tags_through_two_generations() -> Result<()> {
-    check_standard_payloads_in_aggregator::<true>()
+fn twin_checks_standard_registry_tags_through_two_generations() -> Result<()> {
+    check_standard_payloads_in_twin::<true>()
 }
 
-fn check_standard_payloads_in_aggregator<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
-    check_same_shape::<Standard, Aggregator, CHECK_GRANDPARENTS>(
+fn check_standard_payloads_in_twin<const CHECK_GRANDPARENTS: bool>() -> Result<()> {
+    check_same_shape::<Standard, Twin, CHECK_GRANDPARENTS>(
         standard_sender(),
         Some(Fp::from(7)),
         Fp::from(7),
@@ -576,12 +580,12 @@ fn check_standard_payloads_in_aggregator<const CHECK_GRANDPARENTS: bool>() -> Re
 }
 
 /// The converse of
-/// [`aggregator_accepts_standard_payloads_only_with_the_same_registries`].
+/// [`twin_accepts_standard_payloads_only_with_the_same_registries`].
 #[cfg(ragu_pcd_nightly_tests)]
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
-fn standard_accepts_aggregator_payloads_only_with_the_same_registries() -> Result<()> {
-    check_same_shape::<Aggregator, Standard, true>(
+fn standard_accepts_twin_payloads_only_with_the_same_registries() -> Result<()> {
+    check_same_shape::<Twin, Standard, true>(
         &sender_fixture(Some(Fp::from(7)), Fp::from(7))?,
         Some(Fp::from(7)),
         Fp::from(7),
@@ -675,6 +679,72 @@ where
     let compressed = copy_compressed_payload::<C<S>, C<T>>(compressed.into_parts().0)
         .carry::<Value>(Fp::from(7));
     assert!(!receiver.verify_compressed(&compressed)?);
+    Ok(())
+}
+
+/// The aggregator profile's proofs and Standard's substitute for each
+/// other in neither role, both at the aggregator rank: the aggregator's
+/// extension changes the shape, so a Standard proof is malformed for the
+/// aggregator's verifiers and an aggregator proof for Standard's,
+/// uncompressed and compressed. The inner role, the compressed proof a
+/// decompression verifies, takes a Standard-profile proof by type.
+#[test]
+fn standard_and_aggregator_cannot_substitute_for_each_other() -> Result<()> {
+    type Agg = Aggregator<HEADER_SIZE>;
+    assert_ne!(Shape::of::<Standard>(), Shape::of::<Agg>());
+    let params = crate::pasta::baked_aggregator();
+    let mut rng = StdRng::seed_from_u64(0x908_a660);
+    let seed = || Seed {
+        expected: Some(Fp::from(7)),
+    };
+    let standard = application::<Standard, AggregatorRank>((None, None), Some(Fp::from(7)))?;
+    let wallet = ApplicationBuilder::<Pasta, WalletRank, HEADER_SIZE>::new()
+        .register(seed())?
+        .register(Sum)?
+        .finalize(params)?;
+    let aggregator = ApplicationBuilder::<C<Agg>, AggregatorRank, HEADER_SIZE>::new()
+        .register(seed())?
+        .register(Sum)?
+        .finalize_with(params, Decompression::new(wallet, &mut rng)?)?;
+
+    let (from_standard, ()) = standard.seed(&mut rng, seed(), Fp::from(7))?;
+    let (from_aggregator, ()) = aggregator.seed(&mut rng, seed(), Fp::from(7))?;
+    assert!(standard.verify_uncompressed(&from_standard, &mut rng)?);
+    assert!(aggregator.verify_uncompressed(&from_aggregator, &mut rng)?);
+    let standard_compressed = standard.compress(&from_standard, &mut rng)?;
+    let aggregator_compressed = aggregator.compress(&from_aggregator, &mut rng)?;
+    assert!(standard.verify_compressed(&standard_compressed)?);
+    assert!(aggregator.verify_compressed(&aggregator_compressed)?);
+
+    // Standard's proofs in the aggregator's role.
+    let foreign =
+        copy_proof_payload::<C<Standard>, C<Agg>, AggregatorRank>(from_standard.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!foreign.proof().well_formed());
+    assert!(!aggregator.verify_uncompressed(&foreign, &mut rng)?);
+    assert!(matches!(
+        aggregator.compress(&foreign, &mut rng),
+        Err(Error::InvalidWitness(_))
+    ));
+    let foreign =
+        copy_compressed_payload::<C<Standard>, C<Agg>>(standard_compressed.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!aggregator.verify_compressed(&foreign)?);
+
+    // The aggregator's proofs in Standard's role.
+    let foreign =
+        copy_proof_payload::<C<Agg>, C<Standard>, AggregatorRank>(from_aggregator.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!foreign.proof().well_formed());
+    assert!(!standard.verify_uncompressed(&foreign, &mut rng)?);
+    assert!(matches!(
+        standard.compress(&foreign, &mut rng),
+        Err(Error::InvalidWitness(_))
+    ));
+    let foreign =
+        copy_compressed_payload::<C<Agg>, C<Standard>>(aggregator_compressed.into_parts().0)
+            .carry::<Value>(Fp::from(7));
+    assert!(!standard.verify_compressed(&foreign)?);
     Ok(())
 }
 

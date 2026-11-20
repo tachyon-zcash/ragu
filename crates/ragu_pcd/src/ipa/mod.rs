@@ -33,7 +33,10 @@ mod verifier;
 
 pub use msm::MSM;
 pub use prover::create_proof;
+#[cfg(test)]
+pub(crate) use transcript::convert_challenge;
 pub use transcript::{CycleTranscript, HostSide, IpaTranscript, NestedSide};
+pub(crate) use verifier::challenge_polynomial;
 pub use verifier::{Accumulator, Guard, verify_proof};
 
 /// Domain separation tag for the compression, whose transcript runs from
@@ -69,6 +72,13 @@ pub trait IpaCycle: Cycle {
     fn host_u(params: &Self::Params) -> &Self::HostCurve;
     /// The nested curve's $u$.
     fn nested_u(params: &Self::Params) -> &Self::NestedCurve;
+    /// The nested curve's vector generator at `index`: the parameters' own
+    /// where their table reaches, and past it one of the generators baked
+    /// for the runs of the compression's transcript, which it commits at
+    /// the degrees their stages take in a proof's decompression at the
+    /// aggregator rank, past the Standard tables (see
+    /// [`CycleTranscript`]); `None` past both.
+    fn nested_generator(params: &Self::Params, index: usize) -> Option<Self::NestedCurve>;
 }
 
 /// The vector generators and the generator $U$ that binds the inner

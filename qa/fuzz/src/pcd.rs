@@ -19,7 +19,7 @@
 //! them out.
 
 use arbitrary::Arbitrary;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{Cycle, Result, pasta::Pasta};
 use ragu_pcd::{
     Application, ApplicationBuilder, Proof,
@@ -35,7 +35,7 @@ use udon::field::Field;
 /// The cycle every PCD target works over.
 pub type C = Pasta;
 /// The polynomial rank every PCD target works over.
-pub type R = ProductionRank;
+pub type R = WalletRank;
 /// The header size every PCD target's application is built with.
 pub const HEADER_SIZE: usize = 4;
 

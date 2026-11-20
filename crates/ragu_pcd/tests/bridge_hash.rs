@@ -5,7 +5,7 @@
 
 use alloc::{vec, vec::Vec};
 
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle, FixedGenerators, Result,
     drivers::{Driver, DriverValue},
@@ -27,7 +27,7 @@ use crate::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
-type R = ProductionRank;
+type R = WalletRank;
 const HEADER_SIZE: usize = 4;
 type App = Application<'static, Pasta, R, HEADER_SIZE>;
 

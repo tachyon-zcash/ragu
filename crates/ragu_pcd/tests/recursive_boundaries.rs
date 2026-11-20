@@ -83,7 +83,7 @@ mod registry {
             .register(support::Merge::new())?
             .register(ConstantSeed::<2>(second))?
             .register_dummy_circuits(extra_steps)?
-            .finalize(crate::pasta::baked())
+            .finalize(crate::pasta::baked_aggregator())
     }
 
     /// Exercise the ordinary size and both sides of a registry-domain expansion.

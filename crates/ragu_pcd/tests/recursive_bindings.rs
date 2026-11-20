@@ -379,6 +379,7 @@ fn walk_inputs(
     points.extend([wx[0], wx[1], ab[0], ab[1], ab[2], f[0]]);
     let inputs = points::Inputs::from_walk(
         &points,
+        [&[], &[]],
         ragu_primitives::vec::FixedVec::from_fn(|_| {
             unreachable!("Standard has no online input stage")
         }),
@@ -603,6 +604,7 @@ mod walk_binding {
             assert_eq!(horner(&points, beta), honest.proof().nested_p_commitment());
             let changed_inputs = points::Inputs::from_walk(
                 &points,
+                [&[], &[]],
                 ragu_primitives::vec::FixedVec::from_fn(|_| {
                     unreachable!("Standard has no online input stage")
                 }),
@@ -700,6 +702,7 @@ mod walk_binding {
             &mut proof,
             &points::Inputs::from_walk(
                 &points,
+                [&[], &[]],
                 ragu_primitives::vec::FixedVec::from_fn(|_| {
                     unreachable!("Standard has no online input stage")
                 }),

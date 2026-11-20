@@ -70,13 +70,17 @@
 //! and review the diff: it should name exactly the stages the change was
 //! meant to touch.
 //!
-//! Every scenario runs once per profile, the wallet's [`Standard`] and the
-//! [`Aggregator`]. Both currently produce identical proofs, so they check
-//! the same fixtures in `standard/`. Only the standard prover writes them
-//! when regenerating, the random strings fabricated over the honest proofs
-//! it has just written.
+//! Every scenario runs once per profile, the wallet's [`Standard`] over
+//! the fixtures in `standard/` and the [`Aggregator`] over those in
+//! `aggregator/`: the aggregator's proofs carry the decompression
+//! circuits' polynomials, at the aggregator rank, run over the canonical
+//! compressed proof of the wallet application it holds as its context,
+//! itself compressed under a fixed seed. Each profile's prover writes its
+//! own fixtures when regenerating, the random strings fabricated over the
+//! honest proofs it has just written.
 //!
 //! [`Standard`]: crate::profile::Standard
+//! [`Aggregator`]: crate::profile::Aggregator
 //!
 //! The steps are the fixtures' own: `ragu_testing`'s implement the `Step` of
 //! the dev-dependency copy of this crate and cannot be registered from inside
@@ -95,7 +99,7 @@ use std::{fs, path::PathBuf};
 use blake2b_simd::{Params, State};
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    polynomials::{ProductionRank, Rank, sparse},
+    polynomials::{AggregatorRank, Rank, WalletRank, sparse},
     registry::CircuitIndex,
     staging::StageExt,
 };
@@ -118,7 +122,7 @@ use super::{Proof, bridge_alpha_power};
 use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
     compress::{
-        Messages,
+        Lifted, Messages,
         batch::Batch,
         instance::{Child, Instance, NestedChild},
         revdot::{
@@ -133,38 +137,66 @@ use crate::{
         nested::{self, stages as nested_stages},
     },
     ipa::{
-        CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript,
+        CycleTranscript, IpaCycle, IpaProof, IpaTranscript,
         fingerprint::{self, Event},
     },
-    profile::{Aggregator, Profile, Profiled, ProfiledCycle},
+    profile::{Aggregator, Decompression, Profile, Profiled, ProfiledCycle},
     step::{Encoded, Index, Oracles, Step, internal::bootstrap::Bootstrap},
 };
 
-type R = ProductionRank;
 const HEADER_SIZE: usize = 4;
-type App<C> = Application<'static, C, R, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, R, Value>;
+type App<C> = Application<'static, C, <C as FixtureCycle>::Rank, HEADER_SIZE>;
+type TestPcd<C> = Pcd<C, <C as FixtureCycle>::Rank, Value>;
 
 /// A profile of the Pasta cycle the fixtures prove in.
 trait FixtureCycle: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams> {
-    /// The fixtures' application: their four steps at production rank, on
-    /// the baked parameters.
+    /// The rank the profile proves at.
+    type Rank: Rank;
+    /// The profile's fixture directory, under `tests/fixtures/fuse`.
+    const DIR: &'static str;
+    /// The fixtures' application: their four steps, on the aggregator-rank
+    /// parameters, which the aggregator's decompression needs; their prefix
+    /// is the Standard tables, so the wallet's proofs are the same as over
+    /// those.
     fn app() -> App<Self>;
 }
 
-impl<C> FixtureCycle for C
-where
-    C: IpaCycle + ProfiledCycle + Cycle<CircuitField = Fp, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, C::Base, R, ReferenceBackend>: Default,
-{
-    fn app() -> App<C> {
-        ApplicationBuilder::<C, R, HEADER_SIZE>::new()
-            .register(Seed::new())
-            .and_then(|b| b.register(Merge::new()))
-            .and_then(|b| b.register(UnitLeft::new()))
-            .and_then(|b| b.register(UnitRight::new()))
-            .and_then(|b| b.finalize(crate::pasta::baked()))
-            .expect("the application must build")
+/// The fixtures' four steps, registered.
+fn steps<C: FixtureCycle>(
+    builder: ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE>,
+) -> ApplicationBuilder<'static, C, C::Rank, HEADER_SIZE> {
+    builder
+        .register(Seed::new())
+        .and_then(|b| b.register(Merge::new()))
+        .and_then(|b| b.register(UnitLeft::new()))
+        .and_then(|b| b.register(UnitRight::new()))
+        .expect("the steps register")
+}
+
+impl FixtureCycle for Pasta {
+    type Rank = WalletRank;
+    const DIR: &'static str = "standard";
+
+    fn app() -> App<Self> {
+        steps(ApplicationBuilder::new())
+            .finalize(crate::pasta::baked_aggregator())
+            .expect("the wallet application must build")
+    }
+}
+
+impl FixtureCycle for Profiled<Pasta, Aggregator<HEADER_SIZE>> {
+    type Rank = AggregatorRank;
+    const DIR: &'static str = "aggregator";
+
+    /// The aggregator over the wallet application, whose canonical
+    /// compressed proof is compressed under a fixed seed, so that the
+    /// chunks every fuse runs over it are the same.
+    fn app() -> App<Self> {
+        let decompression = Decompression::new(Pasta::app(), &mut Tape::record(seed(0xa66)))
+            .expect("the canonical decompression prepares");
+        steps(ApplicationBuilder::new())
+            .finalize_with(crate::pasta::baked_aggregator(), decompression)
+            .expect("the aggregator application must build")
     }
 }
 
@@ -542,7 +574,7 @@ impl Lines {
 /// commitments are derived from the polynomials they commit, and the bridge
 /// `ab` polynomial from the commitments it carries, so they are not pinned
 /// separately.
-fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
+fn proof_lines<C: FixtureCycle>(proof: &Proof<C, C::Rank>, lines: &mut Lines) {
     let Proof {
         bridge_alpha,
         circuit_id,
@@ -580,6 +612,9 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
         native_points_f_rx,
         native_points_walk_rx,
         online_polynomials,
+        step_binding,
+        online_fq_commitments,
+        online_fq_openings,
         bridge_preamble_rx,
         bridge_hash_rx,
         bridge_s_prime_rx,
@@ -661,13 +696,32 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     } = proof;
 
     lines.push("circuit_id", usize::from(*circuit_id));
-    assert!(nested_online_commitments.is_empty());
-    assert!(native_online_commitments.is_empty());
-    assert!(native_source_out.is_empty());
-    assert!(nested_source_out.is_empty());
-    assert!(native_mesh_claims.is_empty());
-    assert!(nested_mesh_claims.is_empty());
-    assert!(native_online_fold.is_empty());
+    // The online batches': their polynomials' commitments, the outgoing
+    // source restrictions, the meshes' claims and the folds. A profile
+    // that declares no batch carries none, and has no line for them.
+    for (i, commitment) in nested_online_commitments.iter().enumerate() {
+        lines.point(
+            &alloc::format!("nested_online_commitments[{i}]"),
+            commitment,
+        );
+    }
+    for (i, commitment) in native_online_commitments.iter().enumerate() {
+        lines.point(
+            &alloc::format!("native_online_commitments[{i}]"),
+            commitment,
+        );
+    }
+    lines.polys("native_source_out", native_source_out);
+    lines.polys("nested_source_out", nested_source_out);
+    if !native_mesh_claims.is_empty() {
+        lines.fields("native_mesh_claims", native_mesh_claims);
+    }
+    if !nested_mesh_claims.is_empty() {
+        lines.fields("nested_mesh_claims", nested_mesh_claims);
+    }
+    if !native_online_fold.is_empty() {
+        lines.fields("native_online_fold", native_online_fold);
+    }
     if !nested_online_fold.is_empty() {
         lines.fields("nested_online_fold", nested_online_fold);
     }
@@ -699,6 +753,20 @@ fn proof_lines<C: Cycle>(proof: &Proof<C, R>, lines: &mut Lines) {
     lines.poly("native_points_f_rx", native_points_f_rx);
     lines.poly("native_points_walk_rx", native_points_walk_rx);
     lines.polys("online_polynomials", online_polynomials);
+    // What the step exposes of its online openings for the step binding:
+    // nothing for a profile without a statement circuit, which has no
+    // line for it.
+    if !step_binding.is_empty() {
+        lines.fields("step_binding", step_binding);
+    }
+    // What the step exports of its online Fq polynomials: nothing for a
+    // profile whose bindings name none, which has no line for them.
+    for (i, commitment) in online_fq_commitments.iter().enumerate() {
+        lines.point(&alloc::format!("online_fq_commitments[{i}]"), commitment);
+    }
+    if !online_fq_openings.is_empty() {
+        lines.fields("online_fq_openings", online_fq_openings);
+    }
 
     lines.poly("bridge_preamble_rx", bridge_preamble_rx);
     lines.poly("bridge_hash_rx", bridge_hash_rx);
@@ -873,6 +941,9 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
         native_registry_xy,
         native_p,
         online_commitments,
+        step_binding,
+        online_fq_commitments,
+        online_fq_openings,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -905,13 +976,6 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
     out.field(v);
     out.field(nested_c);
     out.field(nested_v);
-    // These fixtures pin the zero-capability encoding.
-    assert!(nested_online_fold.is_empty());
-    assert!(native_mesh_claims.is_empty());
-    assert!(nested_mesh_claims.is_empty());
-    assert!(native_online_fold.is_empty());
-    assert!(nested_online_commitments.is_empty());
-    assert!(native_online_commitments.is_empty());
     for Child { x, y } in [left, right] {
         out.field(x);
         out.field(y);
@@ -927,6 +991,35 @@ fn encode_compressed<C: Cycle>(proof: &CompressedProof<C>, out: &mut Writer) {
 
     encode_messages(native, out);
     encode_messages(nested, out);
+
+    // What the step exposes for the step binding and exports of its online
+    // Fq polynomials, then its online batches' fields, last and only for a
+    // profile that has any, so that the encoding of a proof that carries
+    // none is what it was. A profile with batches writes its exports first,
+    // even if it has none.
+    let batches = !(nested_online_fold.is_empty()
+        && native_mesh_claims.is_empty()
+        && nested_mesh_claims.is_empty()
+        && native_online_fold.is_empty()
+        && nested_online_commitments.is_empty()
+        && native_online_commitments.is_empty());
+    if batches
+        || !(step_binding.is_empty()
+            && online_fq_commitments.is_empty()
+            && online_fq_openings.is_empty())
+    {
+        out.fields(step_binding);
+        out.points(online_fq_commitments);
+        out.fields(online_fq_openings);
+    }
+    if batches {
+        out.fields(nested_online_fold);
+        out.fields(native_mesh_claims);
+        out.fields(nested_mesh_claims);
+        out.fields(native_online_fold);
+        out.points(nested_online_commitments);
+        out.points(native_online_commitments);
+    }
 }
 
 fn encode_messages<P: Affine>(messages: &Messages<P>, out: &mut Writer) {
@@ -1015,12 +1108,32 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
     let nested_right = nested_child()?;
     let nested_a_at_u = cursor.field()?;
     let nested_b_at_u = cursor.field()?;
-    let nested_online_fold = Vec::new();
-    let native_mesh_claims = Vec::new();
-    let nested_mesh_claims = Vec::new();
-    let native_online_fold = Vec::new();
-    let nested_online_commitments = Vec::new();
-    let native_online_commitments = Vec::new();
+    let native = decode_messages(cursor)?;
+    let nested = decode_messages(cursor)?;
+    let (step_binding, online_fq_commitments, online_fq_openings) = if cursor.finished() {
+        (Vec::new(), Vec::new(), Vec::new())
+    } else {
+        (cursor.fields()?, cursor.points()?, cursor.fields()?)
+    };
+    let (
+        nested_online_fold,
+        native_mesh_claims,
+        nested_mesh_claims,
+        native_online_fold,
+        nested_online_commitments,
+        native_online_commitments,
+    ) = if cursor.finished() {
+        Default::default()
+    } else {
+        (
+            cursor.fields()?,
+            cursor.fields()?,
+            cursor.fields()?,
+            cursor.fields()?,
+            cursor.points()?,
+            cursor.points()?,
+        )
+    };
     let instance = Instance {
         circuit_id,
         nested_online_fold,
@@ -1033,6 +1146,9 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         native_registry_xy,
         native_p,
         online_commitments,
+        step_binding,
+        online_fq_commitments,
+        online_fq_openings,
         nested: nested_commitments,
         nested_registry_xy,
         nested_p,
@@ -1051,8 +1167,6 @@ fn decode_compressed<C: Cycle>(cursor: &mut Cursor<'_>) -> Option<CompressedProo
         nested_a_at_u,
         nested_b_at_u,
     };
-    let native = decode_messages(cursor)?;
-    let nested = decode_messages(cursor)?;
     Some(CompressedProof {
         instance,
         native,
@@ -1124,11 +1238,11 @@ struct Fixtures {
 }
 
 impl Fixtures {
-    fn of<C: ProfiledCycle>() -> Self {
+    fn of<C: FixtureCycle>() -> Self {
         let profile = <C::Profile as Profile>::NAME;
-        // Aggregator currently has the standard layout. Checking the same
-        // snapshots guards that agreement without storing duplicate files.
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fuse/standard");
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/fuse")
+            .join(C::DIR);
         if writing() {
             for family in [Family::Honest, Family::Random] {
                 fs::create_dir_all(dir.join(family.dir()))
@@ -1204,7 +1318,7 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     fixtures: &Fixtures,
     name: &str,
     tag: u64,
-    pcd: &Pcd<C, R, H>,
+    pcd: &Pcd<C, C::Rank, H>,
     tape: &Tape,
     failures: &mut Vec<String>,
 ) {
@@ -1405,7 +1519,7 @@ fn prover_fixtures<C: FixtureCycle>() {
 /// each payload as the wire format encodes it.
 /// These pin the wire format itself, apart from the fixture encoding above.
 fn wire_lines<C: FixtureCycle>(
-    proof: &Proof<C, R>,
+    proof: &Proof<C, C::Rank>,
     compressed: &CompressedProof<C>,
     lines: &mut Lines,
 ) {
@@ -1637,7 +1751,7 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
                     assert!(
                         proof
                             .instance
-                            .stages_match::<R, Checker>(&challenges, generators)
+                            .stages_match::<C::Rank, Checker>(&challenges, generators)
                             .expect("the stages are committed"),
                         "{label}: the verifier rejects the rebuilt stages"
                     );
@@ -1676,16 +1790,17 @@ fn stage_commitments<C: FixtureCycle>(
 ) -> Option<[C::NestedCurve; 2]> {
     let lifts = challenges.lifts::<C>().ok()?;
     let (challenge_lifts, beta_lift) = lifts.split_at(nested_stages::challenges::NUM);
-    let challenge_stage = nested_stages::challenges::Stage::<C::HostCurve, R, C::Profile>::rx(
-        C::ScalarField::ZERO,
-        &nested_stages::challenges::Witness::new(
-            challenge_lifts.try_into().expect("NUM challenge lifts"),
-            nested_stages::challenges::is_bootstrap::<C::Profile>(instance.circuit_id).ok()?,
-            beta_lift[0],
-        ),
-    )
-    .expect("the challenge stage is built");
-    let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, R, C::Profile>::rx(
+    let challenge_stage =
+        nested_stages::challenges::Stage::<C::HostCurve, C::Rank, C::Profile>::rx(
+            C::ScalarField::ZERO,
+            &nested_stages::challenges::Witness::new(
+                challenge_lifts.try_into().expect("NUM challenge lifts"),
+                nested_stages::challenges::is_bootstrap::<C::Profile>(instance.circuit_id).ok()?,
+                beta_lift[0],
+            ),
+        )
+        .expect("the challenge stage is built");
+    let ab_bridge = nested_stages::ab::Stage::<C::HostCurve, C::Rank, C::Profile>::rx(
         bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB),
         &nested_stages::ab::Witness {
             online_points: crate::profile::online::stages::phase_points::<
@@ -1731,26 +1846,19 @@ fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
         ky::output_header::<C, H, HEADER_SIZE>(data.clone()).expect("the output header encodes");
 
     // The statement, then each curve's sampled challenges, as the verifier
-    // absorbs and squeezes them: the nested ones advance the shared sponge.
+    // absorbs, squeezes and lifts them: the nested ones advance the shared
+    // sponge.
     let mut transcript =
-        CycleTranscript::<C, Checker>::new(app.params, IPA_TAG).expect("the transcript starts");
-    instance
-        .absorb(&mut transcript)
-        .expect("the instance is absorbed");
-    for &element in &output_header {
-        transcript
-            .host()
-            .write_scalar(element)
-            .expect("the header is absorbed");
-    }
-    let [_w, y, z, sigma] = squeeze(&mut transcript.host());
-    let [_, _, _, _] = squeeze(&mut transcript.nested());
+        crate::compress::transcript::<C, Checker, C::Rank>(app.params, instance, &output_header)
+            .expect("the statement is absorbed");
+    let [_w, y, z, sigma] = squeeze(&mut Lifted(transcript.host()));
+    let [_, _, _, _] = squeeze(&mut Lifted(transcript.nested()));
 
     let masked = instance
-        .native_bindings::<R, Checker, HEADER_SIZE>(&challenges, registry, sigma)
+        .native_bindings::<C::Rank, Checker, HEADER_SIZE>(&challenges, registry, sigma)
         .expect("the bindings are computed");
     let shapes = claims::native_shapes::<C::Profile, _>(z, &masked).expect("the claims are shaped");
-    let mut host = transcript.host();
+    let mut host = Lifted(transcript.host());
     let weights = reduction.fold.replay(&mut host).expect("the fold replays");
     let [rho] = squeeze(&mut host);
     host.write_point(reduction.p).expect("p is absorbed");
@@ -1764,9 +1872,11 @@ fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
     for (i, shape) in shapes.iter().enumerate() {
         let (a, b) = match shape.kind {
             claims::Kind::Raw => (Fp::ZERO, Fp::ZERO),
-            claims::Kind::Circuit(circuit) => (Fp::ZERO, restriction(circuit) + R::tz(z).eval(r)),
+            claims::Kind::Circuit(circuit) => {
+                (Fp::ZERO, restriction(circuit) + C::Rank::tz(z).eval(r))
+            }
             claims::Kind::Bonding(circuit) => (Fp::ZERO, restriction(circuit)),
-            claims::Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<R>(r)),
+            claims::Kind::Masked(m) => (-masked[m].expected_at(r), masked[m].mask_at::<C::Rank>(r)),
         };
         a_public += weights.a(i) * a;
         b_public += weights.b(i) * b;
@@ -1779,15 +1889,21 @@ fn host_q_at_r<C: FixtureCycle, H: FixtureHeader>(
             opened(Derived::A) + a_public,
             opened(Derived::B) + opened(Derived::Dilated) + b_public,
         ),
-        (opened(Derived::Inner), weights.inner::<R>(&layout).eval(r)),
-        (opened(Derived::Outer), weights.outer::<R>(&layout).eval(r)),
+        (
+            opened(Derived::Inner),
+            weights.inner::<C::Rank>(&layout).eval(r),
+        ),
+        (
+            opened(Derived::Outer),
+            weights.outer::<C::Rank>(&layout).eval(r),
+        ),
     ];
     let (mut combined, mut weight) = (Fp::ZERO, Fp::ONE);
     for (a, b) in evaluated {
         combined += weight * a * b;
         weight *= rho;
     }
-    let n = R::num_coeffs() as u64;
+    let n = C::Rank::num_coeffs() as u64;
     (combined - r.pow_u64(n - 1) * reduction.p_at_inverse_r)
         * r.pow_u64(n).invert().expect("r is nonzero")
 }
@@ -1812,6 +1928,9 @@ fn random_compressed<C: Cycle>(shape: &CompressedProof<C>, tape: &mut Tape) -> C
         native_registry_xy: tape.point(),
         native_p: tape.point(),
         online_commitments: core::array::from_fn(|_| tape.point()),
+        step_binding: tape.fields(lengths.step_binding.len()),
+        online_fq_commitments: tape.points(lengths.online_fq_commitments.len()),
+        online_fq_openings: tape.fields(lengths.online_fq_openings.len()),
         nested: tape.points(lengths.nested.len()),
         nested_registry_xy: tape.point(),
         nested_p: tape.point(),
@@ -2041,7 +2160,7 @@ mod standard {
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "wallet-rank proving is impractically slow without --release"
     )]
     #[test]
     fn prover() {
@@ -2050,7 +2169,7 @@ mod standard {
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "wallet-rank proving is impractically slow without --release"
     )]
     #[test]
     fn verifier() {
@@ -2062,24 +2181,20 @@ mod standard {
 mod aggregator {
     use super::*;
 
-    type C = Profiled<Pasta, Aggregator>;
+    type C = Profiled<Pasta, Aggregator<HEADER_SIZE>>;
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "aggregator-rank proving is impractically slow without --release"
     )]
     #[test]
     fn prover() {
-        // Standard is the only writer of the shared fixtures. In check
-        // mode, both profiles must independently reproduce them.
-        if !writing() {
-            prover_fixtures::<C>();
-        }
+        prover_fixtures::<C>();
     }
 
     #[cfg_attr(
         debug_assertions,
-        ignore = "production-rank proving is impractically slow without --release"
+        ignore = "aggregator-rank proving is impractically slow without --release"
     )]
     #[test]
     fn verifier() {

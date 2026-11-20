@@ -12,7 +12,7 @@
 //! - the PCD API: [`ApplicationBuilder`], [`Application`], the [`step`] and
 //!   [`header`] modules, and the [`Pcd`], [`Proof`], [`CompressedPcd`] and
 //!   [`CompressedProof`] structures;
-//! - the sparse [`Polynomial`], [`Rank`] and [`ProductionRank`];
+//! - the sparse [`Polynomial`], [`Rank`] and [`WalletRank`];
 //! - the [`AcceleratedProver`].
 //!
 //! Each member crate stays reachable as a module for the rest of its API:
@@ -35,7 +35,7 @@
 pub use ragu_acceleration::{self as acceleration, AcceleratedProver};
 pub use ragu_circuits::{
     self as circuits,
-    polynomials::{ProductionRank, Rank, sparse::Polynomial},
+    polynomials::{Rank, WalletRank, sparse::Polynomial},
 };
 pub use ragu_core::*;
 pub use ragu_pcd::{

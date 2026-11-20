@@ -1,5 +1,5 @@
 use ragu_circuits::{
-    polynomials::{ProductionRank, TestRank, sparse},
+    polynomials::{TestRank, WalletRank, sparse},
     registry::{Registry, RegistryBuilder},
 };
 use ragu_core::pasta::Fp;
@@ -53,18 +53,18 @@ pub fn f<F: Field>(rng: &mut StdRng) -> F {
     F::random(|bytes| rng.fill_bytes(bytes))
 }
 
-pub fn rand_sparse_poly(rng: &mut StdRng) -> sparse::Polynomial<Fp, ProductionRank> {
+pub fn rand_sparse_poly(rng: &mut StdRng) -> sparse::Polynomial<Fp, WalletRank> {
     sparse::Polynomial::random(rng)
 }
 
 pub fn rand_sparse_poly_vec<const N: usize>(
     rng: &mut StdRng,
-) -> Vec<sparse::Polynomial<Fp, ProductionRank>> {
+) -> Vec<sparse::Polynomial<Fp, WalletRank>> {
     (0..N).map(|_| sparse::Polynomial::random(rng)).collect()
 }
 
-pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, ProductionRank> {
-    RegistryBuilder::<'a, Fp, ProductionRank>::new()
+pub fn builder_squares<'a>() -> RegistryBuilder<'a, Fp, WalletRank> {
+    RegistryBuilder::<'a, Fp, WalletRank>::new()
         .register_circuit(SquareCircuit { times: 2 })
         .unwrap()
         .register_circuit(SquareCircuit { times: 10 })

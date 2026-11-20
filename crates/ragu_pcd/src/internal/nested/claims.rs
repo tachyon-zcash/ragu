@@ -295,9 +295,9 @@ pub trait KySource {
     fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
 
     /// One value per proof for the binding circuit of the profile's nested
-    /// extension: the $k(y)$ of the native extension stage commitments it
-    /// recomputes, as [`binding_ky`](crate::internal::ky::binding_ky)
-    /// computes it, and none for a profile without one.
+    /// extension: the $k(y)$ of what it exposes, as
+    /// [`binding_ky`](crate::internal::ky::binding_ky) computes it, and
+    /// none for a profile without one.
     fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
     /// Returns 0 for stage checks.
@@ -381,8 +381,9 @@ pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
 
 impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
     /// Create a [`TwoProofKySource`] from the children's raw `c` values,
-    /// unified $k(y)$ values and binding circuit's $k(y)$ values, `None`
-    /// for a profile without one.
+    /// unified $k(y)$ values, `compute_v` circuits' $k(y)$ values, and the
+    /// online helper and binding circuits' $k(y)$ values, `None` for a
+    /// profile without one.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         dr: &mut D,

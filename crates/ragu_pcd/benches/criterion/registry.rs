@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Cycle,
     pasta::{Fp, Pasta},
@@ -15,7 +15,7 @@ fn registry_bench(c: &mut Criterion) {
 
     // Time finalize separately: build the ApplicationBuilder, then bench only finalize.
     let make_builder = || {
-        ApplicationBuilder::<Pasta, ProductionRank, 4>::new()
+        ApplicationBuilder::<Pasta, WalletRank, 4>::new()
             .register(nontrivial::WitnessLeaf { poseidon_params })
             .unwrap()
             .register(nontrivial::Hash2 { poseidon_params })

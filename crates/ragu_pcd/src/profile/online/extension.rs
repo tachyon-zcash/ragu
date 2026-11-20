@@ -2,11 +2,7 @@
 
 use alloc::{vec, vec::Vec};
 
-use ragu_circuits::{
-    BondingObject,
-    polynomials::Rank,
-    staging::{MultiStage, StageExt},
-};
+use ragu_circuits::{polynomials::Rank, staging::MultiStage};
 use ragu_core::{Error, Result};
 use udon::field::Field;
 
@@ -14,7 +10,7 @@ use super::{
     circuit,
     stages::{EvalStage, InputStage, Native, Nested, QueryStage, Side},
 };
-use crate::profile::{CircuitSlot, Extension, Profile, Registered};
+use crate::profile::{BondingSlot, CircuitSlot, Extension, Profile, Registered};
 
 /// The input, query and evaluation stages, before the user extension's stages.
 pub const STAGES: usize = 3;
@@ -113,24 +109,66 @@ pub fn check<P: Profile, S: Side>() -> Result<()> {
 pub fn register_circuit<'params, F: Field, R: Rank, P: Profile, S: Side>(
     slot: CircuitSlot<'params, F, R>,
     source_tag: Option<F>,
+    source_domain: Option<u32>,
 ) -> Result<Registered<'params, F, R>> {
-    slot.register(MultiStage::<F, R, _>::new(
-        circuit::Circuit::<F, P, S>::with_source_tag(source_tag)?,
+    slot.register_staged(MultiStage::<F, R, _>::new(
+        circuit::Circuit::<F, P, S>::with_source(source_tag, source_domain)?,
     ))
 }
 
 /// A bonding belongs to the online batch or to the user's declaration.
-pub enum Bonding<'params, F: Field, R: Rank> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bonding {
     /// An automatically registered online stage mask or final mask.
-    Online(BondingObject<'params, F, R>),
+    Online(OnlineBonding),
     /// The original index passed to the profile's registration hook.
     User(usize),
 }
 
+/// One of the online batch's own bondings: its three stages' masks, the
+/// helper's final mask and the final mask of the consumers that end at the
+/// query stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnlineBonding {
+    /// The input stage's mask.
+    InputMask,
+    /// The query stage's mask.
+    QueryMask,
+    /// The evaluation stage's mask.
+    EvalMask,
+    /// The final mask of the helper, whose last stage is the evaluation stage.
+    HelperFinal,
+    /// The final mask of the consumers whose last stage is the query stage.
+    ConsumersFinal,
+}
+
+impl OnlineBonding {
+    /// Registers this bonding in `slot`, recording its stage's gates for the
+    /// registry to check against the merged declaration.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the mask's construction error.
+    pub fn register<'params, F: Field, R: Rank, P: Profile, S: Side>(
+        self,
+        slot: BondingSlot<'params, F, R>,
+    ) -> Result<Registered<'params, F, R>> {
+        match self {
+            Self::InputMask => slot.register_mask::<InputStage<P, S>>(),
+            Self::QueryMask => slot.register_mask::<QueryStage<P, S>>(),
+            Self::EvalMask => slot.register_mask::<EvalStage<P, S>>(),
+            Self::HelperFinal => slot.register_final_mask::<EvalStage<P, S>>(),
+            Self::ConsumersFinal => slot.register_final_mask::<QueryStage<P, S>>(),
+        }
+    }
+}
+
 /// Resolves a merged bonding index to its online mask or original user index.
-pub fn bonding<'params, F: Field, R: Rank, P: Profile, S: Side>(
-    index: usize,
-) -> Result<Bonding<'params, F, R>> {
+///
+/// # Errors
+///
+/// Rejects an index past the merged declaration's bondings.
+pub fn bonding<P: Profile, S: Side>(index: usize) -> Result<Bonding> {
     let offset = stage_offset::<P, S>();
     let declared = declared::<P, S>();
     if index >= layout::<P, S>().bondings() {
@@ -141,15 +179,12 @@ pub fn bonding<'params, F: Field, R: Rank, P: Profile, S: Side>(
     if offset == 0 {
         return Ok(Bonding::User(index));
     }
-    let mask = match index {
-        0 => <InputStage<P, S> as StageExt<F, R>>::mask()?,
-        1 => <QueryStage<P, S> as StageExt<F, R>>::mask()?,
-        2 => <EvalStage<P, S> as StageExt<F, R>>::mask()?,
+    Ok(Bonding::Online(match index {
+        0 => OnlineBonding::InputMask,
+        1 => OnlineBonding::QueryMask,
+        2 => OnlineBonding::EvalMask,
         j if j < offset + declared.bondings() => return Ok(Bonding::User(j - offset)),
-        j if j == offset + declared.bondings() => {
-            <EvalStage<P, S> as StageExt<F, R>>::final_mask()?
-        }
-        _ => <QueryStage<P, S> as StageExt<F, R>>::final_mask()?,
-    };
-    Ok(Bonding::Online(mask))
+        j if j == offset + declared.bondings() => OnlineBonding::HelperFinal,
+        _ => OnlineBonding::ConsumersFinal,
+    }))
 }

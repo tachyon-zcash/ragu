@@ -41,6 +41,7 @@ pub(crate) type Fold<F, P, S> = FixedVec<F, Present<P, S, 2>>;
 /// the proof; the online polynomials are consumed by this step's PCS fold.
 pub(crate) struct State<C: Affine, R: Rank, P: Profile, S: Side> {
     source_tag: Option<C::Scalar>,
+    source_domain: Option<u32>,
     prepared: Option<Prepared<C::Scalar, R>>,
     polynomials: Vec<sparse::Polynomial<C::Scalar, R>>,
     commitments: Vec<C>,
@@ -81,12 +82,16 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
             }
             None => inputs,
         };
-        Self::new(inputs)?.with_source_tag(source.map(|source| source.tag()))
+        Self::new(inputs)?.with_source(
+            source.map(|source| source.tag()),
+            source.map(|source| source.domain_log2()),
+        )
     }
 
     pub(crate) fn new(inputs: Vec<C::Scalar>) -> Result<Self> {
         Ok(Self {
             source_tag: None,
+            source_domain: None,
             prepared: Some(Prepared::new(S::layout::<P>(), inputs)?),
             polynomials: Vec::new(),
             commitments: Vec::new(),
@@ -100,14 +105,19 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         })
     }
 
-    pub(crate) fn with_source_tag(mut self, tag: Option<C::Scalar>) -> Result<Self> {
-        circuit::Circuit::<C::Scalar, P, S>::with_source_tag(tag)?;
+    pub(crate) fn with_source(
+        mut self,
+        tag: Option<C::Scalar>,
+        domain: Option<u32>,
+    ) -> Result<Self> {
+        circuit::Circuit::<C::Scalar, P, S>::with_source(tag, domain)?;
         self.source_tag = tag;
+        self.source_domain = domain;
         Ok(self)
     }
 
     pub(crate) fn circuit(&self) -> circuit::Circuit<C::Scalar, P, S> {
-        circuit::Circuit::with_source_tag(self.source_tag)
+        circuit::Circuit::with_source(self.source_tag, self.source_domain)
             .expect("source checked at initialization")
     }
 

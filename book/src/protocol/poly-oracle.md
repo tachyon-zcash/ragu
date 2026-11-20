@@ -52,7 +52,7 @@ internal circuits.
   - in a `Step`, we refer to the $6$ total public online poly commitments as `[L0, L1, R0, R1, O0, O1]`
   - a header lists the kinds of polynomial its proofs carry, one unit type per slot or `Padding`, as `Header::OnlinePolyCommit`; a step reads, prepares and opens a polynomial by its kind, so a slot the header leaves to padding cannot be addressed at all
   - Ragu proves that an opening is of the committed polynomial, not which polynomial was committed: what `Step::prepare` returns is prover data, so an output slot whose opening the step's circuit leaves unconstrained holds a polynomial of the prover's choosing. A slot the step does not open is padding: Ragu opens it at $\zeta$ and holds the value to one after the step's circuit; a slot opened and left unconstrained is a hint, as $\cm_g, \cm_h$ are [below](#changes)
-  - a compressed proof's statement carries the header's fields and not these commitments: under a profile that decompresses statements, the decompressed proof keeps the fields and carries padding in both slots, so a header that can pass through decompression must not rely on its slots
+  - a compressed proof's statement carries the header's fields and not these commitments: under a profile that decompresses statements, the decompressed proof keeps the fields and carries none of the original polynomials (the decompression's own $s(X)$ in the first slot, padding in the last), so a header that can pass through decompression must not rely on its slots
 - C2: a two-phase application circuit: an application stage, committed before $\zeta$, holds the staged values a check at $\zeta$ reads but no header carries, such as the roots $\tg_i$ of a private polynomial $\prod_i (X - \tg_i)$; the circuit, synthesized after $\zeta$, evaluates such a polynomial in-circuit from the staged values and relates it to the public slots' openings. Such a polynomial has no commitment slot; profile-internal circuits commit online polynomials through C6 below
 - C3: a random challenge $\zeta$ is sampled after all public and private online polynomials are committed; $\zeta$ becomes available when synthesizing the final stage of app circuit
   - public poly commitments are carried in proofs and associated with their output headers
@@ -75,7 +75,10 @@ internal circuits.
   - public instance $k(Y)$ of the app circuit changes from `[L/R/O header fields]` of size `3*HEADER_SIZE` to: `[zeta, x_0, y_0, ..., x_5, y_5, h_O1, L/R/O header fields]`, where `h_O1` is the two coordinates of $H^{bridge}(\cm_{O_1})$
   - the special hash only commits the step's own `O1` slot, so if the app circuit wants to compute
   $\anchor' = H(\anchor \| e \| \acc^\tg)$ then $\acc^\tg$ must occupy the output polynomial slot `O1`
-- C5: V5's compatibility API gives a profile online $\F_q$ slots, committed before $w$ and opened at $\zeta_q=\mathsf{lift}(w)$ by its nested internal circuits (see [V5](#v5)). No header carries them. A profile has at most one such slot; new consumers use the general batch API.
+- C5: a profile may give each step one online $\F_q$ polynomial $f_q$, committed as an $\E_p$ point, for Ragu's nested internal circuits to open (see [v5](#v5))
+  - it is private to the step: committed before $w$ and opened once, at $\zeta_q = \mathsf{lift}(w)$, by the step's own nested `compute_v`; no header carries it, and C3's rule applies with $\zeta_q$ in place of $\zeta$
+  - application circuits cannot open it; it exists for the `Aggregator` profile's decompression, which commits the nested IPA's $s(X)$ there. A profile's prover supplies the polynomial, a placeholder by default
+  - Ragu proves the opening is of the committed polynomial; which polynomial it is, a profile's extension circuits constrain, through the commitment and the opening the step exports to its parent for the slots the profile's bindings name (see [v5](#v5))
 - C6: a profile may give its internal circuits online polynomial batches over both $\F_p$ and $\F_q$ (see [V6](#v6))
   - the profile fixes distinct polynomial slots, their commitment phases and the opening list; each polynomial may be opened at several points
   - consumers read authenticated staged inputs, opening wires and opposite-field commitment points; the public application API is unchanged
@@ -454,6 +457,7 @@ $G'$ has coordinates in $\F_p$, so it is committed on the native side; $s$ is ov
 V5 adds no IPA challenges and makes no change to the IPA transcript.
 Its random point $\zeta_q$ tests whether the polynomial committed by $G'$ is the expected $s(X)$: V5 proves $f_q(\zeta_q) = y_q$, and decompression must bind $\cm_{f_q} = G'$ and check $y_q = s(\zeta_q)$.
 The last check still uses the original IPA round challenges to compute the expected value; a valid opening of $G'$ alone does not establish that it is the correct folded generator.
+Those challenges must be fixed before $\zeta_q$ as $f_q$ is, which the decompression step's staged transcript digest ensures (see [C3's rule](#v5-soundness) below).
 
 Swapping the fields swaps every role of the $\F_p$ slots:
 
@@ -490,8 +494,10 @@ And since no header carries $f_q$, there is no header-carry check.
   (cm_fq into P_n)           compute_v: folds (zeta_q, y_q)
 ```
 
-A profile sets the compatibility count with `Profile::ONLINE_FQ_POLYS`, zero by default, so Standard does not change.
-A profile has at most `NUM_ONLINE_FQ_POLYS` (one) such slot. V6 shares its batch algebra while retaining this stage placement. Compatibility test profiles use a fixed placeholder polynomial. Future decompression consumers use the general V6 hooks; production `Aggregator` decompression remains disabled.
+A profile sets the compatibility count with `Profile::ONLINE_FQ_POLYS`, zero by default and at most `NUM_ONLINE_FQ_POLYS = 1`, so Standard does not change.
+V6 shares its batch algebra while retaining this stage placement.
+The `Aggregator` profile sets it to one and commits the nested IPA's $s(X)$ there, for the proof its decompression circuits run over in the step.
+A profile's prover supplies the polynomial (`Profile::online_fq_polynomials`), a fixed placeholder by default, and `compute_v` folds $y_q$ without constraining it.
 
 #### Details and soundness notes {#v5-soundness}
 
@@ -505,33 +511,40 @@ A profile has at most `NUM_ONLINE_FQ_POLYS` (one) such slot. V6 shares its batch
 - **The value.**
   A claimant must read $y_q$ from the `Query` stage rather than witness its own, since only the stage's $y_q$ is folded.
   Any nested internal circuit that loads the `Query` and challenge stages, as `collapse` and `compute_v` do, could be the claimant: the step's nested circuits share its stage commitments.
-  A circuit that cannot load them would need v4's binding through its instance.
+  A circuit that cannot load them needs v4's binding through its instance.
   An application circuit is one, and so is a nested extension circuit, whose claim takes only its own polynomial and its extension's stages.
+  A nested extension has that binding for the slots its profile's binding circuit names (`Binding::openings`): `compute_v` appends $(\zeta_q, y_q)$ to its instance, the parent holds the pair once in its bridge `Preamble` and computes both `compute_v`'s $k(y)$ and the extension's binding circuit's from it, so the opening that circuit exposes is the one `compute_v` folded.
+  A profile that names no slot exports nothing and keeps the unified instance for `compute_v`.
 - **$\zeta_q$ is not uniform over $\F_q$.**
   It is the lift of a $k$-bit endoscalar, so a nonzero residual of degree $d$ vanishes at it with probability at most $d/2^k$, not $d/q$.
   Every nested challenge is such a lift, so this matches the nested batch's own error.
 - **C3's rule.**
   Fixed before $\zeta_q$ are $\cm_{f_q}$, the circuit's constants, and whatever the native pre-$w$ stages hold.
-  The values a check at $\zeta_q$ reads, such as decompression's IPA challenges $u_i$, must be witnessed natively before $w$, where the native half of decompression checks them.
-  How they reach `compute_v` bound to that stage is decompression's to add, with the challenge stage's binding as the precedent.
-  The IPA round challenges retain the compression transcript's existing conversion: their canonical integer is preserved across the fields within the common 254-bit range for Pasta.
-  This differs from the 143-bit endoscalar lift used for $\zeta_q$; applying that lift to the IPA challenges would change $s(X)$.
-  If the nested circuit already holds the correctly bound $\F_q$ challenges, no further conversion is needed.
-- **A hint until decompression.**
-  Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; until a check constrains $y_q$, a prover may commit any polynomial.
+  Decompression's check reads the IPA's round challenges $u_i$, which are not witnessed before $w$: its nested circuits hold $y_q$ to $s(\zeta_q)$ over the challenges its native circuits' transcript squeezed from the decompressed proof.
+  This is C3's hash case, and the $u_i$ alone would not be fixed: a prover could choose the IPA's round messages after $\zeta_q$ and search for challenges whose $s$ meets $y_q$ there.
+  The decompression step therefore stages the transcript's last squeeze, taken after every round message of both IPAs, in its application stage, which is committed before $w$; its native circuits hold the staged value to the squeeze they compute.
+  The $u_i$ are then fixed before $\zeta_q$ unless the prover finds a collision or a preimage in the transcript's sponge, and with $f_q$ fixed too, a committed polynomial other than $s$ passes only if $\zeta_q$ is a root of $f_q - s$.
+  A step that decompresses nothing stages no digest, and nothing rests on its check.
+  The IPA round challenges are the compression's, which lifts every challenge it squeezes: a squeeze's canonical integer is preserved across the fields within the common 254-bit range for Pasta, its low 143 bits are read as an endoscalar, and that endoscalar's lift into the IPA's scalar field is the challenge, as $\zeta_q$ is the lift of $w$.
+  $s(X)$ is over those lifts.
+  The nested circuits already hold the $\F_q$ challenges, bound through the lifts stage the native side recomputes, so no further conversion is needed.
+- **A hint unless constrained.**
+  Ragu proves that $y_q$ is an opening of the committed $f_q$, not which polynomial was committed; in a profile whose extension does not constrain $y_q$, a prover may commit any polynomial.
   Every path uses finite points, so its placeholder must not be zero; V6's batches reject the zero polynomial, whose commitment is the identity.
 - **A native consumer of $\cm_{f_q}$.**
   Decompression's native half uses $\cm_{f_q}$ as $G'$, but only the walk's circuits load `PointsPreamble`.
-  V6 provides bound access to its own slots' points through its early input stage, tied to the walk's common point metadata. A future decompression circuit must consume that bound point.
+  For the slots a profile's native binding circuit names (`Binding::online`), `bind_endoscalar`, which loads that stage, appends $\cm_{f_q}$ to its instance; the parent holds the point once in its `PointsBinding` stage and computes both `bind_endoscalar`'s $k(y)$ and the binding circuit's from it, so the $G'$ that circuit exposes is the point the step committed before $w$ and its walk folded.
+  The unified instance does not change, so a profile that names no slot keeps its circuits and proofs.
+  V6 provides bound access to its own slots' points through its early input stage, tied to the walk's common point metadata.
 - **Not a header slot.**
   Letting the parent reopen $f_q$ as an `L` or `R` slot would cost two more native walk points per step, two more stash equalities, and the children's $\F_q$ polynomials in every proof, for a use the aggregator does not have.
 
 ### V6: online batches and source-registry identities {#v6}
 
 V6 gives a profile's internal circuits a polynomial oracle on both fields: several committed polynomials, several openings of each polynomial, and authenticated access to the opening wires and commitment points. It also authenticates polynomials claimed to be restrictions of a registry captured at setup.
-These are the building blocks for future decompression. They do not implement or enable the decompression verifier, and the application's six slots remain unchanged.
+The client is the aggregator's [decompression](recursion/decompression.md), whose chunk circuits read the wallet registry's evaluations from it. The application's six slots remain unchanged.
 
-For future decompression, this makes V5's folded-generator polynomial available on both curves and lets a few registry restrictions answer many public evaluation requests.
+A few registry restrictions answer many public evaluation requests: the decompression reads every evaluation of the wallet registry its verifier takes as an opening of one of nine restrictions per field.
 
 The key distinction is between **opening a polynomial** and **identifying that polynomial**. The online batch proves its openings. A consumer must establish the identity it needs: for example, check the IPA polynomial's product formula, or use the source-registry mesh below.
 
@@ -573,7 +586,7 @@ Profile preparation hooks receive only the enclosing challenges available at the
 
 The last nested copy is bound to the early native query copy, so its later appearance in `PointsF` cannot move its commitment past $\alpha$. All phase copies are bound to the actual walk points. The quotient is fixed before $u$; `EvalStage` fixes the evaluations before `pre_beta`.
 
-C3 applies to every random identity test. In particular, a future decompression consumer must commit the inner proof data, round challenges and restriction coordinates before outer $w$, then constrain transcript replay to those early wires. A separately witnessed late copy does not establish that binding. Inner compression's canonical-integer challenge conversion must also remain distinct from outer fuse endoscalar lifts. Using an online commitment as the IPA's folded generator requires the same ordered generator basis as that IPA.
+C3 applies to every random identity test. In particular, a decompression consumer must commit the restriction coordinates before outer $w$, then constrain transcript replay to those early wires, as the aggregator's chunks hold the input stage's coordinates to the values they derive from the compressed proof. A separately witnessed late copy does not establish that binding. Inner compression's challenges are the endoscalar lifts of its own transcript's squeezes, as the outer fuse's are of its own, and the two must remain distinct. Using an online commitment as the IPA's folded generator requires the same ordered generator basis as that IPA.
 
 Like the application's slots, V6's batches take only finite points. A supplied zero polynomial is rejected, since its commitment is the identity, and setup rejects a source registry whose restrictions vanish at the bootstrap proof's challenges. In the compression transcript, each native online commitment coordinate, nested mesh claim, and nested fold value in the scalar field is absorbed as fixed-width, little-endian 128-bit limbs of its canonical encoding, so these values can be zero. A profile with zero online capacity adds none of these stages or helpers; Standard retains its existing shape and encoding.
 
@@ -638,4 +651,4 @@ Source-mesh preparation adds prover work that the census does not time. Each fus
 
 #### Remaining work {#v6-remaining}
 
-Future decompression work must supply and authenticate its inner transcript data, implement the scalar and point verifier relations, connect the output statement, and measure the complete circuit partition before enabling the production Aggregator. Compression-format optimization is separate work.
+The `Aggregator` profile declares its registry queries as a source mesh of nine introduced restrictions and seven helpers per field (`decompress::online`), and its chunk circuits are the batch's consumers. Using an online commitment as an IPA's folded generator stays with V5's slot and the decompression step's output slot. The profile is unaudited and behind the `unstable-aggregator` feature. Compression-format optimization is separate work.

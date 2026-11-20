@@ -83,7 +83,7 @@ impl<P: Profile> Len for NumPoints<P> {
 
 /// The endoscalings a nested step performs in the standard profile: what
 /// fits a step beside the stages it reserves, which hold every point the
-/// walk consumes, at the production rank. A profile sets its own
+/// walk consumes, at the wallet rank. A profile sets its own
 /// ([`Profile::NESTED_ENDOSCALINGS_PER_STEP`]).
 pub const ENDOSCALINGS_PER_STEP: usize = 4;
 
@@ -650,10 +650,14 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     mut registry: RegistryBuilder<'params, C::ScalarField, R>,
     params: &'params C::Params,
     source_tag: Option<C::ScalarField>,
+    source_domain: Option<u32>,
 ) -> Result<RegistryBuilder<'params, C::ScalarField, R>> {
     C::Profile::check()?;
     let initial_internal_circuits = registry.num_internal_circuits();
 
+    let extension = crate::profile::nested_extension::<C::Profile>();
+    let mut extension_circuits = alloc::vec::Vec::with_capacity(extension.circuits.len());
+    let mut extension_bondings = alloc::vec::Vec::with_capacity(extension.bondings());
     // Circuits first, then masks — matching RegistryBuilder::finalize()
     // concatenation order and InternalCircuitIndex::circuit_index().
     for id in InternalCircuitIndex::all::<C::Profile>() {
@@ -733,26 +737,39 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
             ExtensionCircuit(k) => {
                 use crate::profile::online::{extension, stages::Nested};
                 let slot = CircuitSlot::new(registry);
-                if Some(k) == extension::helper::<C::Profile, Nested>() {
-                    extension::register_circuit::<_, R, C::Profile, Nested>(slot, source_tag)?
-                } else {
-                    C::Profile::register_nested_circuit::<C::Base, R>(k as usize, slot, params)?
-                }
-                .into_registry()
+                let (registry, registration) =
+                    if Some(k) == extension::helper::<C::Profile, Nested>() {
+                        extension::register_circuit::<_, R, C::Profile, Nested>(
+                            slot,
+                            source_tag,
+                            source_domain,
+                        )?
+                    } else {
+                        C::Profile::register_nested_circuit::<C::Base, R>(k as usize, slot, params)?
+                    }
+                    .into_parts();
+                extension_circuits.push(registration);
+                registry
             }
             ExtensionBonding(j) => {
                 use crate::profile::online::{extension, stages::Nested};
                 let slot = BondingSlot::new(registry);
-                match extension::bonding::<_, R, C::Profile, Nested>(j as usize)? {
-                    extension::Bonding::Online(mask) => slot.register(mask),
-                    extension::Bonding::User(index) => {
-                        C::Profile::register_nested_bonding::<C::Base, R>(index, slot, params)?
+                let (registry, registration) =
+                    match extension::bonding::<C::Profile, Nested>(j as usize)? {
+                        extension::Bonding::Online(bonding) => {
+                            bonding.register::<_, R, C::Profile, Nested>(slot)?
+                        }
+                        extension::Bonding::User(index) => {
+                            C::Profile::register_nested_bonding::<C::Base, R>(index, slot, params)?
+                        }
                     }
-                }
-                .into_registry()
+                    .into_parts();
+                extension_bondings.push(registration);
+                registry
             }
         };
     }
+    extension.check_registered("nested", &extension_circuits, &extension_bondings)?;
 
     assert_eq!(
         registry.num_internal_circuits(),

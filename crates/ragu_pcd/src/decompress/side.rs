@@ -1,0 +1,652 @@
+//! The two sides of the decompression proof behind one interface, so that
+//! the stages, the chunk schedule, the chunk executor and the chunk
+//! circuits are written once.
+//!
+//! A side runs in one field of the cycle over the points of the curve
+//! whose base field it is: the circuit-field side ([`Native`]) in the
+//! circuit field over the nested curve, the scalar-field side ([`Nested`])
+//! in the scalar field over the host curve. Each side does the native
+//! verifier's arithmetic in its field, the scalar checks of the other
+//! curve's reduction and the point checks of its own curve's, so the two
+//! sides are mirror images up to how they obtain their inputs: the
+//! circuit-field side replays the transcripts, absorbing the other field's
+//! values as the commitments of their runs, which it holds to the
+//! scalar-field side's run stages; the scalar-field side takes its
+//! challenges from their bits and derives its targets from the nested
+//! unified instance.
+
+use alloc::vec::Vec;
+
+use ragu_circuits::polynomials::Rank;
+use ragu_core::{
+    Cycle, FixedGenerators, PoseidonPermutation, Result,
+    drivers::Driver,
+    gadgets::{Bound, GadgetKind, Kind},
+    maybe::Maybe,
+};
+use ragu_primitives::{Element, GadgetExt, io::Write};
+use udon::{
+    curve::{Affine as _, EndomorphismAffine as Affine},
+    field::Field,
+};
+
+use super::{
+    circuit::{AbValue, NativeTargets, NestedTargets, SideWitness, Witness},
+    program::{self, Schedule, squeezed},
+    run::Ctx,
+    stages::{
+        self, Layout, StageShape, Values, message_points_of, message_scalars, native_scalars,
+        nested_front, nested_scalars, num_runs,
+    },
+};
+use crate::{
+    CompressedProof,
+    compress::{
+        instance::Instance,
+        revdot::{native_components, native_position, nested_components, nested_position},
+    },
+    internal::{
+        native::{
+            self, claims::ky_values as native_ky_values, stages::preamble::ProofInputs,
+            unified as native_unified,
+        },
+        nested::{self, claims::ky_values as nested_ky_values, unified as nested_unified},
+    },
+    ipa::IpaCycle,
+    profile::{ProfiledCycle, Standard},
+    proof::bridge_alpha_power,
+};
+
+/// One side of the decompression proof.
+pub(crate) trait Side<C: Cycle>: Copy + Default + Send + Sync + 'static {
+    /// The side's field: the one its circuits are over.
+    type F: Field;
+    /// The other field of the cycle.
+    type Other: Field;
+    /// The curve whose points the side holds: its base field is `F`.
+    type P: Affine<Base = Self::F, Scalar = Self::Other>;
+    /// The curve whose reduction the side checks in its field: its scalar
+    /// field is `F`.
+    type Q: Affine<Base = Self::Other, Scalar = Self::F>;
+    /// The Poseidon permutation over `F`.
+    type Poseidon: PoseidonPermutation<Self::F>;
+    /// What the side's chunks need beyond the stages: its unified instance
+    /// and what else the targets derive from.
+    type Extra: Send + Sync;
+    /// The chunk circuits' public output: nothing, on either side, since a
+    /// chunk carries no instance. The slot a chunk is registered through
+    /// appends the zero that keeps it from standing in for an application
+    /// circuit (see [`CircuitSlot::register`](crate::profile::CircuitSlot::register)).
+    type Output: GadgetKind<Self::F> + Write<Self::F>;
+
+    #[cfg(test)]
+    const NAME: &'static str;
+
+    /// The wires of the aggregator's online stages of the side's field,
+    /// which every circuit of the side loads first: the wallet registry's
+    /// evaluations the side's chunks read are their query stage's values.
+    const ONLINE: super::online::Values;
+    /// How many flags the side takes from the other side, whose digits
+    /// follow the foreign scalars' in that side's digits stage.
+    const FLAGS: usize;
+    /// The elements the side's binding circuit exposes after its points:
+    /// what it took of the step's own online polynomials' openings.
+    const EXPOSED_ELEMENTS: usize;
+    /// The points the side's binding circuit exposes for a proof at rank
+    /// `K`: the other side's stage commitments it absorbed or recomputed,
+    /// in the order the profile's [`Binding`](crate::profile::Binding)
+    /// names the stages.
+    fn exposed<K: Rank>() -> usize;
+    /// The shapes of the side's front stages, in chain order (see
+    /// [`Front`](super::stages::Front)).
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape>;
+    /// The side's online inputs for the proof `witness` was prepared from
+    /// ([`online::input`](super::online::input)).
+    ///
+    /// # Errors
+    ///
+    /// Fails if a challenge has no lift, which the preparation refuses.
+    fn online_inputs(witness: &Witness<C>) -> Result<Vec<Self::F>>;
+    /// The transcript's run commitments the side's work stage carries,
+    /// prover-supplied, in [`Regions::runs`](program::Regions::runs)
+    /// order: the circuit-field side's; none on the scalar-field side.
+    fn runs(witness: &Witness<C>) -> Vec<Self::P>;
+
+    /// The fixed generators of `P`.
+    fn generators(params: &C::Params) -> &[Self::P];
+    /// The IPA's $U$ on `P`.
+    fn u(params: &C::Params) -> Self::P;
+    fn poseidon(params: &C::Params) -> &Self::Poseidon;
+    /// The side's stage layout for a proof at rank `K`.
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout;
+    /// The side's chunk schedule for a proof at rank `K`, cut for chunk
+    /// circuits at rank `R`.
+    fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule>;
+    /// The side's schedule for its sizes alone, which the stages' lengths
+    /// take (see [`Foreign`](program::Foreign)).
+    fn sizes<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule>;
+    /// The instance stage's values.
+    fn instance(
+        params: &C::Params,
+        instance: &Instance<C>,
+        output_header: &[C::CircuitField],
+    ) -> Values<Self::F, Self::P>;
+    /// The messages stage's values.
+    fn messages(params: &C::Params, proof: &CompressedProof<C>) -> Values<Self::F, Self::P>;
+    /// The transcript stage's values before the prover's run fills the
+    /// sponge states: none.
+    fn transcript() -> Values<Self::F, Self::P> {
+        Values {
+            points: Vec::new(),
+            elements: Vec::new(),
+        }
+    }
+    /// The witness of the reduction the side checks in its field.
+    fn own(witness: &Witness<C>) -> &SideWitness<Self::Q>;
+    /// The witness of the reduction whose points the side checks.
+    fn other(witness: &Witness<C>) -> &SideWitness<Self::P>;
+    /// The other field's full-width scalars the side scales by, in the
+    /// schedule's [`ScalarRef::Bits`](program::ScalarRef::Bits) order.
+    fn foreign(witness: &Witness<C>, schedule: &Schedule) -> Result<Vec<Self::Other>>;
+    fn extra(witness: &Witness<C>) -> Result<Self::Extra>;
+    /// The chunk circuits' public output.
+    fn output<'dr, D: Driver<'dr, F = Self::F>>(dr: &mut D) -> Bound<'dr, D, Self::Output>;
+    /// The targets chunk: allocates the side's unified instance, binds it
+    /// to the stages and returns the claims' base targets in the
+    /// schedule's [`Regions::targets`](program::Regions::targets) order.
+    fn targets<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
+        dr: &mut D,
+        ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
+    ) -> Result<Vec<Element<'dr, D>>>;
+    /// Every claim's target in claim order, from the targets chunk's
+    /// outputs.
+    fn ky_targets<'dr, D: Driver<'dr, F = Self::F>>(
+        dr: &mut D,
+        ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
+    ) -> Vec<Element<'dr, D>>;
+}
+
+/// The circuit-field side.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Native;
+
+/// The scalar-field side.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Nested;
+
+/// What the circuit-field side's targets chunk allocates: the native
+/// unified instance, the output header and the circuit id's domain point.
+pub(crate) struct NativeExtra<C: Cycle> {
+    pub unified: native_unified::Instance<C>,
+    pub output_header: Vec<C::CircuitField>,
+    pub omega_j: C::CircuitField,
+}
+
+/// What the scalar-field side's targets chunk allocates: the nested
+/// unified instance.
+pub(crate) struct NestedExtra<C: Cycle> {
+    pub unified: nested_unified::Instance<C::HostCurve>,
+}
+
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
+    type F = C::CircuitField;
+    type Other = C::ScalarField;
+    type P = C::NestedCurve;
+    type Q = C::HostCurve;
+    type Poseidon = C::CircuitPoseidon;
+    type Extra = NativeExtra<C>;
+    type Output = Kind![C::CircuitField; ()];
+
+    #[cfg(test)]
+    const NAME: &'static str = "circuit-field";
+
+    /// The scalar-field side has no flag for this side to take.
+    const ONLINE: super::online::Values = super::online::Values::NATIVE;
+    const FLAGS: usize = 0;
+    const EXPOSED_ELEMENTS: usize = 0;
+
+    /// The scalar-field side's run stages, then its lifts and digits
+    /// stages, then the commitment of the online Fq polynomial of the
+    /// step that proves the chunks.
+    fn exposed<K: Rank>() -> usize {
+        num_runs::<K>() + 3
+    }
+
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
+        let layout = <Self as Side<C>>::layout::<K, HEADER_SIZE>();
+        alloc::vec![layout.instance_shape(), layout.messages_shape()]
+    }
+
+    fn online_inputs(witness: &Witness<C>) -> Result<Vec<Self::F>> {
+        super::online::native_inputs(witness)
+    }
+
+    fn runs(witness: &Witness<C>) -> Vec<Self::P> {
+        witness.runs.clone()
+    }
+
+    fn generators(params: &C::Params) -> &[Self::P] {
+        C::nested_generators(params).g()
+    }
+
+    fn u(params: &C::Params) -> Self::P {
+        *C::nested_u(params)
+    }
+
+    fn poseidon(params: &C::Params) -> &Self::Poseidon {
+        C::circuit_poseidon(params)
+    }
+
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
+        Layout::native::<C::CircuitField, K, HEADER_SIZE>()
+    }
+
+    fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::native_schedule::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn sizes<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::native_sizes::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn instance(
+        _: &C::Params,
+        instance: &Instance<C>,
+        output_header: &[C::CircuitField],
+    ) -> Values<Self::F, Self::P> {
+        let mut points = instance.nested.clone();
+        points.extend([
+            instance.nested_registry_xy,
+            instance.nested_p,
+            instance.nested_challenges_partial,
+        ]);
+        let (l, r) = (instance.left, instance.right);
+        let mut elements = alloc::vec![
+            instance.circuit_id.omega_j(),
+            instance.c,
+            instance.v,
+            l.x,
+            l.y,
+            r.x,
+            r.y,
+            instance.a_at_u,
+            instance.b_at_u,
+        ];
+        elements.extend_from_slice(output_header);
+        // The step binding, which the step that proves the chunks sets:
+        // zero outside the decompression step.
+        elements.extend([C::CircuitField::ZERO; stages::step::LEN]);
+        Values { points, elements }
+    }
+
+    fn messages(_: &C::Params, proof: &CompressedProof<C>) -> Values<Self::F, Self::P> {
+        Values {
+            points: message_points_of(&proof.nested),
+            elements: message_scalars(&proof.native),
+        }
+    }
+
+    fn own(witness: &Witness<C>) -> &SideWitness<Self::Q> {
+        &witness.native
+    }
+
+    fn other(witness: &Witness<C>) -> &SideWitness<Self::P> {
+        &witness.nested
+    }
+
+    fn foreign(witness: &Witness<C>, schedule: &Schedule) -> Result<Vec<Self::Other>> {
+        let instance = &witness.proof.instance;
+        let other = Self::other(witness);
+        let mut foreign = alloc::vec![other.v, witness.proof.nested.opening.c, other.cbz];
+        let coordinates = |point: C::HostCurve| -> Result<[C::ScalarField; 2]> {
+            let (x, y) = point.coordinates().ok_or_else(|| {
+                ragu_core::Error::InvalidWitness("a commitment is the identity".into())
+            })?;
+            Ok([x, y])
+        };
+        let a = coordinates(instance.native_commitment(native::RxComponent::AbA))?;
+        let b = coordinates(instance.native_commitment(native::RxComponent::AbB))?;
+        let points_ab = coordinates(
+            instance.native_commitment(native::RxComponent::Rx(native::RxIndex::PointsAb)),
+        )?;
+        let alpha = bridge_alpha_power(instance.bridge_alpha, nested::RxIndex::BridgeAB);
+        foreign.extend(schedule.ab_terms.iter().map(|&(_, which)| match which {
+            AbValue::A(i) => a[i],
+            AbValue::B(i) => b[i],
+            AbValue::PointsAb(i) => points_ab[i],
+            AbValue::Alpha => alpha,
+        }));
+        Ok(foreign)
+    }
+
+    fn extra(witness: &Witness<C>) -> Result<Self::Extra> {
+        let instance = &witness.proof.instance;
+        Ok(NativeExtra {
+            unified: instance.unified(&witness.fuse),
+            output_header: witness.header.clone(),
+            omega_j: instance.circuit_id.omega_j(),
+        })
+    }
+
+    fn output<'dr, D: Driver<'dr, F = Self::F>>(_: &mut D) -> Bound<'dr, D, Self::Output> {}
+
+    fn targets<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
+        dr: &mut D,
+        ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
+    ) -> Result<Vec<Element<'dr, D>>> {
+        let witness = &ctx.witness;
+        let inputs = ProofInputs::<D, C, HEADER_SIZE>::alloc_from_parts(
+            dr,
+            witness.as_ref().map(|w| w.extra.output_header.as_slice()),
+            witness.as_ref().map(|w| w.extra.omega_j),
+            // The standard profile has no statement circuit, so its steps
+            // expose no step binding.
+            witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
+            witness.as_ref().map(|w| &w.extra.unified),
+            // Nor has it an online batch: no online commitments, sums or
+            // mesh claims.
+            witness.as_ref().map(|_| -> &[C::NestedCurve] { &[] }),
+            witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
+            witness.as_ref().map(|_| -> &[C::CircuitField] { &[] }),
+        )?;
+        let layout = ctx.schedule.layout.instance;
+        let regions = &ctx.schedule.regions;
+        let points = ctx.loaded.instance.points;
+        let elements = ctx.loaded.instance.elements;
+        let commitment = |component| {
+            &points[layout
+                .commitments
+                .at(nested_position::<Standard>(component))]
+        };
+        let bridge = |index| commitment(nested::RxComponent::Rx(index));
+        let listed = nested_components::<Standard>().count();
+        let unified = &inputs.unified;
+        {
+            use nested::RxIndex::*;
+            for (ours, theirs) in [
+                (bridge(BridgeHash), &unified.bridge_hash_commitment),
+                (bridge(BridgePreamble), &unified.bridge_preamble_commitment),
+                (bridge(BridgeSPrime), &unified.bridge_s_prime_commitment),
+                (
+                    bridge(BridgeInnerError),
+                    &unified.bridge_inner_error_commitment,
+                ),
+                (
+                    bridge(BridgeOuterError),
+                    &unified.bridge_outer_error_commitment,
+                ),
+                (bridge(BridgeAB), &unified.bridge_ab_commitment),
+                (bridge(BridgeQuery), &unified.bridge_query_commitment),
+                (bridge(BridgeF), &unified.bridge_f_commitment),
+                (bridge(BridgeEval), &unified.bridge_eval_commitment),
+                (
+                    &points[layout.commitments.at(listed + 2)],
+                    &unified.nested_challenges_partial,
+                ),
+                (
+                    &points[layout.commitments.at(listed + 1)],
+                    &unified.nested_p_commitment,
+                ),
+                (
+                    commitment(nested::RxComponent::AbA),
+                    &unified.nested_a_commitment,
+                ),
+                (
+                    commitment(nested::RxComponent::AbB),
+                    &unified.nested_b_commitment,
+                ),
+                (
+                    &points[layout.commitments.at(listed)],
+                    &unified.nested_registry_xy_commitment,
+                ),
+            ] {
+                ours.enforce_equal(dr, theirs)?;
+            }
+        }
+        for (slot, theirs) in regions.fuse.iter().zip([
+            &unified.w,
+            &unified.y,
+            &unified.z,
+            &unified.mu,
+            &unified.mu_prime,
+            &unified.x,
+            &unified.alpha,
+            &unified.u,
+            &unified.pre_beta,
+        ]) {
+            ctx.work(*slot).enforce_equal(dr, theirs)?;
+        }
+        elements[layout.scalars.at(native_scalars::C)].enforce_equal(dr, &unified.c)?;
+        elements[layout.scalars.at(native_scalars::V)].enforce_equal(dr, &unified.v)?;
+        elements[layout.scalars.at(native_scalars::OMEGA_J)]
+            .enforce_equal(dr, &inputs.circuit_id)?;
+        for (position, theirs) in layout
+            .output_header
+            .positions()
+            .zip(inputs.output_header.iter())
+        {
+            elements[position].enforce_equal(dr, theirs)?;
+        }
+        // The proof folded its own application claim, so its verifier has
+        // no application target: the `hashes_1` claim's, over the unified
+        // instance, the output header and the circuit id, and the unified
+        // one, which the standard profile's `compute_v` claim takes too,
+        // having no online batch to export for.
+        let y = ctx.lift(regions.lifts[squeezed::Y]);
+        let (unified, bridge) = inputs.unified_ky_values(dr, &y)?;
+        Ok(alloc::vec![bridge, unified])
+    }
+
+    fn ky_targets<'dr, D: Driver<'dr, F = Self::F>>(
+        dr: &mut D,
+        ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
+    ) -> Vec<Element<'dr, D>> {
+        let layout = ctx.schedule.layout.instance;
+        let regions = &ctx.schedule.regions;
+        let targets = NativeTargets {
+            c: ctx.loaded.instance.elements[layout.scalars.at(native_scalars::C)].clone(),
+            unified_bridge: ctx.work(regions.targets[0]),
+            unified: ctx.work(regions.targets[1]),
+            one: Element::one(),
+            zero: Element::zero(dr),
+        };
+        native_ky_values::<Standard, _>(&targets)
+            .take(ctx.schedule.claims.len())
+            .collect()
+    }
+}
+
+impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
+    type F = C::ScalarField;
+    type Other = C::CircuitField;
+    type P = C::HostCurve;
+    type Q = C::NestedCurve;
+    type Poseidon = C::ScalarPoseidon;
+    type Extra = NestedExtra<C>;
+    type Output = Kind![C::ScalarField; ()];
+
+    #[cfg(test)]
+    const NAME: &'static str = "scalar-field";
+
+    /// The decompression flag, which the circuit-field side's statement
+    /// circuit binds.
+    const ONLINE: super::online::Values = super::online::Values::NESTED;
+    const FLAGS: usize = 1;
+    /// The point and the value of the opening of the online Fq polynomial
+    /// of the step that proves the chunks.
+    const EXPOSED_ELEMENTS: usize = 2;
+
+    /// The circuit-field side's digits stage, then the commitment of the
+    /// first output slot of the step that proves the chunks.
+    fn exposed<K: Rank>() -> usize {
+        2
+    }
+
+    fn front_shapes<K: Rank, const HEADER_SIZE: usize>() -> Vec<StageShape> {
+        let layout = <Self as Side<C>>::layout::<K, HEADER_SIZE>();
+        nested_front::<K>(&layout)
+            .iter()
+            .map(|source| source.shape())
+            .collect()
+    }
+
+    fn online_inputs(witness: &Witness<C>) -> Result<Vec<Self::F>> {
+        super::online::nested_inputs(witness)
+    }
+
+    fn runs(_: &Witness<C>) -> Vec<Self::P> {
+        Vec::new()
+    }
+
+    fn generators(params: &C::Params) -> &[Self::P] {
+        C::host_generators(params).g()
+    }
+
+    fn u(params: &C::Params) -> Self::P {
+        *C::host_u(params)
+    }
+
+    fn poseidon(params: &C::Params) -> &Self::Poseidon {
+        C::scalar_poseidon(params)
+    }
+
+    fn layout<K: Rank, const HEADER_SIZE: usize>() -> Layout {
+        Layout::nested::<C::ScalarField, Standard, K>()
+    }
+
+    fn schedule<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::nested_schedule::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn sizes<K: Rank, R: Rank, const HEADER_SIZE: usize>() -> Result<Schedule> {
+        program::nested_sizes::<C, K, R, HEADER_SIZE>()
+    }
+
+    fn instance(
+        _: &C::Params,
+        instance: &Instance<C>,
+        _: &[C::CircuitField],
+    ) -> Values<Self::F, Self::P> {
+        let mut points = instance.native.clone();
+        points.extend([instance.native_registry_xy, instance.native_p]);
+        points.extend(instance.online_commitments);
+        let (l, r) = (instance.nested_left, instance.nested_right);
+        let elements = alloc::vec![
+            instance.bridge_alpha,
+            instance.nested_c,
+            instance.nested_v,
+            l.x,
+            l.y,
+            r.x,
+            r.y,
+            instance.nested_a_at_u,
+            instance.nested_b_at_u,
+        ];
+        assert_eq!(elements.len(), stages::NESTED_SCALARS);
+        Values { points, elements }
+    }
+
+    fn messages(_: &C::Params, proof: &CompressedProof<C>) -> Values<Self::F, Self::P> {
+        Values {
+            points: message_points_of(&proof.native),
+            elements: message_scalars(&proof.nested),
+        }
+    }
+
+    fn own(witness: &Witness<C>) -> &SideWitness<Self::Q> {
+        &witness.nested
+    }
+
+    fn other(witness: &Witness<C>) -> &SideWitness<Self::P> {
+        &witness.native
+    }
+
+    fn foreign(witness: &Witness<C>, _: &Schedule) -> Result<Vec<Self::Other>> {
+        let other = Self::other(witness);
+        Ok(alloc::vec![
+            other.v,
+            witness.proof.native.opening.c,
+            other.cbz
+        ])
+    }
+
+    fn extra(witness: &Witness<C>) -> Result<Self::Extra> {
+        Ok(NestedExtra {
+            unified: witness.proof.instance.nested_unified(&witness.fuse)?,
+        })
+    }
+
+    fn output<'dr, D: Driver<'dr, F = Self::F>>(_: &mut D) -> Bound<'dr, D, Self::Output> {}
+
+    fn targets<'dr, D: Driver<'dr, F = Self::F>, K: Rank, const HEADER_SIZE: usize>(
+        dr: &mut D,
+        ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
+    ) -> Result<Vec<Element<'dr, D>>> {
+        let output = nested_unified::Output::<D, C::HostCurve>::alloc(
+            dr,
+            &mut (),
+            ctx.witness.as_ref().map(|w| &w.extra.unified),
+        )?;
+        let layout = ctx.schedule.layout.instance;
+        let regions = &ctx.schedule.regions;
+        let points = ctx.loaded.instance.points;
+        let elements = ctx.loaded.instance.elements;
+        for (slot, ours) in regions
+            .fuse_lifts
+            .iter()
+            .zip([&output.x, &output.y, &output.u])
+        {
+            ours.enforce_equal(dr, &ctx.lift(*slot))?;
+        }
+        output
+            .c
+            .enforce_equal(dr, &elements[layout.scalars.at(nested_scalars::C)])?;
+        output
+            .v
+            .enforce_equal(dr, &elements[layout.scalars.at(nested_scalars::V)])?;
+        let listed = native_components::<Standard>().count();
+        let exported: [usize; nested_unified::NUM_EXPORTED] = {
+            use native::{RxComponent::*, RxIndex::*};
+            [
+                native_position::<Standard>(Rx(Preamble)),
+                native_position::<Standard>(Rx(InnerError)),
+                native_position::<Standard>(Rx(OuterError)),
+                native_position::<Standard>(Rx(Query)),
+                native_position::<Standard>(Rx(Eval)),
+                native_position::<Standard>(AbA),
+                native_position::<Standard>(AbB),
+                listed,
+                listed + 1,
+                native_position::<Standard>(Rx(PointsBinding)),
+                native_position::<Standard>(Rx(PointsPreamble)),
+                native_position::<Standard>(Rx(PointsRegistryWx)),
+                native_position::<Standard>(Rx(PointsAb)),
+                native_position::<Standard>(Rx(PointsF)),
+                listed + 2,
+                listed + 3,
+            ]
+        };
+        for (position, theirs) in exported.iter().zip(output.exported.iter()) {
+            points[layout.commitments.at(*position)].enforce_equal(dr, theirs)?;
+        }
+        let y = ctx.lift(regions.lifts[squeezed::Y]);
+        Ok(alloc::vec![output.ky(dr, &y)?])
+    }
+
+    fn ky_targets<'dr, D: Driver<'dr, F = Self::F>>(
+        dr: &mut D,
+        ctx: &Ctx<'_, '_, 'dr, D, C, Self>,
+    ) -> Vec<Element<'dr, D>> {
+        let layout = ctx.schedule.layout.instance;
+        let regions = &ctx.schedule.regions;
+        let targets = NestedTargets {
+            c: ctx.loaded.instance.elements[layout.scalars.at(nested_scalars::C)].clone(),
+            unified: ctx.work(regions.targets[0]),
+            one: Element::one(),
+            zero: Element::zero(dr),
+        };
+        nested_ky_values::<Standard, _>(&targets)
+            .take(ctx.schedule.claims.len())
+            .collect()
+    }
+}

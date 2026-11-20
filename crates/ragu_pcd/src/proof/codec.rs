@@ -6,10 +6,10 @@
 //! lives beneath it rather than in `wire`.
 
 #[cfg(test)]
-#[path = "../../tests/wire/malformed_proofs.rs"]
+#[path = "../../tests/serialization/malformed_proofs.rs"]
 mod malformed_proof_tests;
 #[cfg(test)]
-#[path = "../../tests/wire/validation.rs"]
+#[path = "../../tests/serialization/validation.rs"]
 mod wire_validation_tests;
 
 use alloc::vec::Vec;
@@ -109,6 +109,14 @@ codec! {
 
     // The step's own online polynomials (CircuitField, HostCurve commitment)
     online_polynomials => wire::Array<wire::DefaultEncoding>,
+    // What the step exposes of its online openings for the statement
+    // claim's step binding, for a profile with a statement circuit: nothing
+    // on the wire for one without
+    step_binding => wire::FixedSequence<wire::Scalar, native::online::StepBindingLen<C::Profile>>,
+    // What the step exports of its online Fq polynomials, for a profile
+    // whose bindings name any: nothing on the wire for one that names none
+    online_fq_commitments => wire::FixedSequence<wire::Point, nested::online::BoundCommitmentsLen<C::Profile>>,
+    online_fq_openings => wire::FixedSequence<wire::Scalar, nested::online::BoundOpeningsLen<C::Profile>>,
 
     // Bridge rx polynomials (non-cached, set by caller)
     bridge_preamble_rx => wire::DefaultEncoding,

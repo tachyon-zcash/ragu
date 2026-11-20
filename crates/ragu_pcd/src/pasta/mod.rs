@@ -9,8 +9,8 @@
 //! `baked()` always returns the original Standard-profile tables. The optional
 //! `baked-aggregator` feature adds separate larger tables, loaded only by
 //! `baked_aggregator()`. Enabling it does not enlarge or initialize the Standard
-//! parameters. The larger capacity supports extension tests; the production
-//! Aggregator rank will be fixed with its decompression circuits.
+//! parameters. The larger tables are sized for the aggregator rank, at which
+//! the aggregator profile proves.
 
 pub use ragu_core::pasta::{Pasta, PastaParams};
 
@@ -22,12 +22,28 @@ pub const DEFAULT_EP_K: usize = 13;
 /// Log2 of the number of Standard-profile Vesta generators.
 pub const DEFAULT_EQ_K: usize = 13;
 
-/// Log2 of the optional Aggregator Pallas table's capacity.
+/// Log2 of the optional Aggregator Pallas table's capacity: the aggregator
+/// rank's (see [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank)).
+/// The vector generators are derived by index, so the table's first $2^{13}$
+/// are the Standard table's.
 #[cfg(feature = "baked-aggregator")]
-pub const AGGREGATOR_EP_K: usize = 14;
+pub const AGGREGATOR_EP_K: usize = 15;
 /// Log2 of the optional Aggregator Vesta table's capacity.
 #[cfg(feature = "baked-aggregator")]
-pub const AGGREGATOR_EQ_K: usize = 14;
+pub const AGGREGATOR_EQ_K: usize = 15;
+
+/// The gates of a stage trace at the aggregator rank whose nested
+/// generators `baked()` carries past the Standard table: the compression's
+/// transcript commits each run of scalar-field values at the generators the
+/// run's stage lands them on in the proof's decompression, which lie past
+/// the Standard table's $2^{13}$, so the Standard parameters carry the
+/// generators of the first `STAGE_REACH` gates after the SYSTEM gate, far
+/// more than the runs take (see
+/// [`IpaCycle::nested_generator`](crate::ipa::IpaCycle::nested_generator)).
+/// It caps the runs: a profile whose runs take more gates cannot compress
+/// over `baked()`, and the stages tests hold the Standard runs under it.
+/// The build script's derivation carries its own copy.
+pub const STAGE_REACH: usize = 256;
 
 #[cfg(feature = "baked")]
 mod baked;

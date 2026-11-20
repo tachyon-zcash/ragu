@@ -77,6 +77,20 @@ pub(crate) struct Instance<C: Cycle> {
     /// The commitments of the step's own online polynomials, which its
     /// nested instance exports.
     pub online_commitments: [C::HostCurve; NUM_ONLINE_FP_POLYS],
+    /// What the step exposed of its online openings for the statement
+    /// claim's step binding, which its `hashes_1` claim takes after the
+    /// output header and the circuit id; none for a profile without a
+    /// statement circuit.
+    pub step_binding: Vec<C::CircuitField>,
+    /// The commitments of the step's online Fq polynomials it exports,
+    /// which its `bind_endoscalar` and binding circuits' claims take; none
+    /// for a profile whose native binding names none.
+    pub online_fq_commitments: Vec<C::NestedCurve>,
+    /// The openings of the step's online Fq polynomials it exports, a
+    /// point then a value each, which its nested `compute_v` and binding
+    /// circuits' claims take; none for a profile whose nested binding
+    /// names none.
+    pub online_fq_openings: Vec<C::ScalarField>,
 
     /// The nested commitments in [`nested_components`] order, the bridge
     /// stages and the challenge stage among them.
@@ -120,18 +134,18 @@ pub(crate) struct Instance<C: Cycle> {
     pub nested_b_at_u: C::ScalarField,
 }
 
-type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H>;
-type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H>;
-type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H>;
-type NestedPreamble<C, R> =
+pub(crate) type NativePreamble<C, R, const H: usize> = native_stages::preamble::Stage<C, R, H>;
+pub(crate) type NativeQuery<C, R, const H: usize> = native_stages::query::Stage<C, R, H>;
+pub(crate) type NativeEval<C, R, const H: usize> = native_stages::eval::Stage<C, R, H>;
+pub(crate) type NestedPreamble<C, R> =
     nested_stages::preamble::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
-type NestedQuery<C, R> =
+pub(crate) type NestedQuery<C, R> =
     nested_stages::query::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
-type NestedEval<C, R> =
+pub(crate) type NestedEval<C, R> =
     nested_stages::eval::Stage<<C as Cycle>::HostCurve, R, <C as ProfiledCycle>::Profile>;
 
 /// The coefficient degrees of the wires `select` picks from stage `S`.
-fn degrees<F: Field, R: Rank, S: ragu_circuits::staging::Stage<F, R> + Default>(
+pub(crate) fn degrees<F: Field, R: Rank, S: ragu_circuits::staging::Stage<F, R> + Default>(
     select: impl for<'dst> FnOnce(
         ragu_core::gadgets::Bound<'dst, ragu_circuits::staging::Indexed<F>, S::OutputKind>,
     ) -> Result<Vec<usize>>,
@@ -211,6 +225,9 @@ impl<C: ProfiledCycle> Instance<C> {
             native_registry_xy: proof.native_registry_xy_commitment(),
             native_p: proof.native_p_commitment(),
             online_commitments: proof.online_commitments(),
+            step_binding: proof.step_binding.clone(),
+            online_fq_commitments: proof.online_fq_commitments.clone(),
+            online_fq_openings: proof.online_fq_openings.clone(),
             nested: nested_components::<C::Profile>()
                 .map(|component| match component {
                     nested::RxComponent::AbA => proof.nested_a_commitment(),
@@ -264,9 +281,9 @@ impl<C: ProfiledCycle> Instance<C> {
         self.nested_commitment(nested::RxComponent::Rx(index))
     }
 
-    /// Absorbs the instance into `transcript`: the circuit id, then every
-    /// commitment and scalar of each curve, so that every challenge squeezed
-    /// afterwards depends on all of it.
+    /// Absorbs the instance into `transcript`: the circuit id and the step
+    /// binding's openings, then every commitment and scalar of each curve,
+    /// so that every challenge squeezed afterwards depends on all of it.
     pub(crate) fn absorb<B: SelectableBackend>(
         &self,
         transcript: &mut CycleTranscript<'_, C, B>,
@@ -280,6 +297,9 @@ impl<C: ProfiledCycle> Instance<C> {
             host.write_scalar(sum)?;
         }
         host.write_scalar(self.circuit_id.omega_j())?;
+        for &value in &self.step_binding {
+            host.write_scalar(value)?;
+        }
         for &point in self
             .native
             .iter()
@@ -300,11 +320,16 @@ impl<C: ProfiledCycle> Instance<C> {
             }
         }
         let mut nested = transcript.nested();
-        for &point in self.nested.iter().chain([
-            &self.nested_registry_xy,
-            &self.nested_p,
-            &self.nested_challenges_partial,
-        ]) {
+        for &point in self
+            .nested
+            .iter()
+            .chain([
+                &self.nested_registry_xy,
+                &self.nested_p,
+                &self.nested_challenges_partial,
+            ])
+            .chain(&self.online_fq_commitments)
+        {
             nested.write_point(point)?;
         }
         let (l, r) = (self.nested_left, self.nested_right);
@@ -318,7 +343,10 @@ impl<C: ProfiledCycle> Instance<C> {
             r.y,
             self.nested_a_at_u,
             self.nested_b_at_u,
-        ] {
+        ]
+        .into_iter()
+        .chain(self.online_fq_openings.iter().copied())
+        {
             nested.write_scalar(scalar)?;
         }
         // The same coordinates form the nested compute-v target and the
@@ -472,9 +500,10 @@ impl<C: ProfiledCycle> Instance<C> {
         nested_y: C::ScalarField,
     ) -> Result<(NativeKy<C::CircuitField>, NestedKy<C::ScalarField>)> {
         let unified = self.unified(challenges);
-        let nested_bound = ky::native_bound::<C::Profile, _>(|index| {
-            self.nested_commitment(nested::RxComponent::Rx(index))
-        });
+        let nested_bound = ky::native_bound::<C::Profile, _>(
+            |index| self.nested_commitment(nested::RxComponent::Rx(index)),
+            |i| self.online_fq_commitments[i],
+        );
         let nested_online_stages = ky::nested_online_stages::<C::Profile, _>(|index| {
             self.nested_commitment(nested::RxComponent::Rx(index))
         });
@@ -484,8 +513,10 @@ impl<C: ProfiledCycle> Instance<C> {
                 ky::NativeParts {
                     output_header,
                     circuit_id: self.circuit_id,
+                    step_binding: &self.step_binding,
                     unified: &unified,
                     nested_bound: &nested_bound,
+                    online_fq: &self.online_fq_commitments,
                     nested_online_stages: &nested_online_stages,
                     nested_online_commitments: &self.nested_online_commitments,
                     native_online_fold: &self.native_online_fold,
@@ -494,11 +525,13 @@ impl<C: ProfiledCycle> Instance<C> {
                 y,
             )?
         };
-        let native_bound = ky::nested_bound::<C::Profile, _>(|index| {
-            self.native_commitment(native::RxComponent::Rx(index))
-        });
+        let native_bound = ky::nested_bound::<C::Profile, _>(
+            |index| self.native_commitment(native::RxComponent::Rx(index)),
+            |slot| self.online_commitments[slot],
+        );
         let (compute_v, online_helper) = ky::nested_online_ky_of::<C>(
             &self.nested_unified(challenges)?,
+            &self.online_fq_openings,
             &ky::nested_online_values::<C>(challenges, &self.nested_online_fold)?,
             &ky::native_online_stages::<C::Profile, _>(|index| {
                 self.native_commitment(native::RxComponent::Rx(index))
@@ -512,7 +545,7 @@ impl<C: ProfiledCycle> Instance<C> {
             online_helper,
             c: self.nested_c,
             unified: ky::nested_ky_of::<C>(&self.nested_unified(challenges)?, nested_y)?,
-            binding: ky::binding_ky_of(&native_bound, nested_y)?,
+            binding: ky::binding_ky_of(&native_bound, &self.online_fq_openings, nested_y)?,
         };
         Ok((native, nested))
     }
@@ -822,5 +855,5 @@ impl<C: ProfiledCycle> Instance<C> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/compress_instance.rs"]
+#[path = "../../tests/compression/instance.rs"]
 mod tests;

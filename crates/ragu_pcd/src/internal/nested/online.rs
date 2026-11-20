@@ -15,6 +15,25 @@
 //! stage holds a point. Every nested circuit that loads the `query` and
 //! challenge stages reads the same $y_q$ and $\zeta_q$.
 //!
+//! The fuse proves that $y_q$ is an opening of the committed polynomial,
+//! not which polynomial was committed. A profile's extension circuits,
+//! which load none of the fuse's stages, constrain it through what the
+//! step exports to its parent, for the slots the profile's bindings name
+//! (see [`Binding`](crate::profile::Binding)):
+//!
+//! - the commitment, which `bind_endoscalar` appends to its instance from
+//!   the preamble stage the walk takes it from ([`bound_commitments`]),
+//!   and the native binding circuit exposes;
+//! - the opening, the point then the value, which the nested `compute_v`
+//!   appends to its instance ([`bound_openings`]), and the nested binding
+//!   circuit exposes.
+//!
+//! The parent holds each once, in its points binding stage and its bridge
+//! preamble, and computes both claims' $k(y)$ from it, so the point and
+//! the opening an extension took are the ones the fuse committed and
+//! folded. A profile that names no slot exports nothing, and its circuits
+//! and proofs are as they would be without the export.
+//!
 //! The profile's online batch, [`Profile::NESTED_ONLINE`], adds online
 //! polynomials of the step's own on this field, prepared as the native
 //! side's are (see [`online`](crate::internal::native::online)) at the
@@ -32,7 +51,7 @@ use super::challenge;
 use crate::{
     Application, Proof, SelectableBackend,
     profile::{
-        Profile, ProfiledCycle,
+        Profile, ProfiledCycle, Source,
         online::{Phase, prepared::PreparationChallenges, prover::State},
     },
     proof::ProofBuilder,
@@ -44,9 +63,11 @@ use crate::{
 /// Such a polynomial belongs to the step that commits it. The step commits
 /// it before its challenge is drawn, and the step's nested batch opens it.
 /// The step does not export it, so a parent never opens it. Only a profile
-/// that asks for the slot has it; see [`Profile::ONLINE_FQ_POLYS`]. A
-/// profile that needs more pre-w polynomials over the scalar field declares
-/// them in [`Profile::NESTED_ONLINE`] instead.
+/// that asks for the slot has it; see [`Profile::ONLINE_FQ_POLYS`], whose
+/// prover supplies the polynomial
+/// ([`Profile::online_fq_polynomials`]). A profile that needs more pre-w
+/// polynomials over the scalar field declares them in
+/// [`Profile::NESTED_ONLINE`] instead.
 pub const NUM_ONLINE_FQ_POLYS: usize = 1;
 
 /// Compatibility descriptors for pre-w slots opened at the lifted w.
@@ -67,6 +88,44 @@ pub struct FqPolysLen<P: Profile>(PhantomData<P>);
 impl<P: Profile> Len for FqPolysLen<P> {
     fn len() -> usize {
         P::ONLINE_FQ_POLYS
+    }
+}
+
+/// The step's online Fq polynomials whose commitments it exports to its
+/// parent: the slots profile `P`'s native binding circuit names (see
+/// [`Binding::online`](crate::profile::Binding::online)).
+pub fn bound_commitments<P: Profile>() -> alloc::vec::Vec<u32> {
+    crate::profile::native_extension::<P>()
+        .binding
+        .map_or_else(alloc::vec::Vec::new, |binding| binding.online)
+}
+
+/// The step's online Fq polynomials whose openings it exports to its
+/// parent: the slots profile `P`'s nested binding circuit names (see
+/// [`Binding::openings`](crate::profile::Binding::openings)).
+pub fn bound_openings<P: Profile>() -> alloc::vec::Vec<u32> {
+    crate::profile::nested_extension::<P>()
+        .binding
+        .map_or_else(alloc::vec::Vec::new, |binding| binding.openings)
+}
+
+/// Length type for the commitments a step in profile `P` exports: one
+/// per slot of [`bound_commitments`].
+pub struct BoundCommitmentsLen<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for BoundCommitmentsLen<P> {
+    fn len() -> usize {
+        bound_commitments::<P>().len()
+    }
+}
+
+/// Length type for the openings a step in profile `P` exports: a point
+/// and a value per slot of [`bound_openings`].
+pub struct BoundOpeningsLen<P: Profile>(PhantomData<P>);
+
+impl<P: Profile> Len for BoundOpeningsLen<P> {
+    fn len() -> usize {
+        2 * bound_openings::<P>().len()
     }
 }
 
@@ -102,11 +161,14 @@ pub fn point<F: Field>(w: F) -> F {
     w
 }
 
-/// The polynomial that a step commits in each of its online Fq slots.
+/// The polynomial a step commits in each of its online Fq slots unless
+/// its profile's prover supplies another
+/// ([`Profile::online_fq_polynomials`]).
 ///
 /// It is not zero, so its commitment is not the identity, which the native
 /// walk cannot take. It is not constant, so its value at $\zeta_q$ depends
-/// on $\zeta_q$.
+/// on $\zeta_q$. The aggregator's decompression commits the nested IPA's
+/// $s(X)$ instead, whose commitment is that IPA's $G'$.
 ///
 /// This witness is retained for compatibility profiles. New consumers supply
 /// their own polynomials through the online-batch preparation hooks.
@@ -114,8 +176,8 @@ pub fn placeholder<F: Field, R: Rank>() -> sparse::Polynomial<F, R> {
     sparse::Polynomial::from_coeffs(alloc::vec![F::from(1), F::from(2), F::from(3)])
 }
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Begins the step's nested online batch from the profile's inputs,
     /// with the lifts of the children's $x$ and $y$ in the slots a mesh
@@ -123,10 +185,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     pub(crate) fn begin_nested_online(
         &self,
         children: [&Proof<C, R>; 2],
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         builder.set_nested_online(State::begin(
-            C::Profile::nested_online_inputs::<C::Base, R, B>(&self.context)?,
+            C::Profile::nested_online_inputs::<C::Base, R, B>(&self.context, source)?,
             || {
                 let [left, right] = children;
                 Ok([
@@ -134,7 +197,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                     [challenge::<C>(right.x())?, challenge::<C>(right.y())?],
                 ])
             },
-            self.nested_source.as_ref(),
+            self.nested_source().as_ref(),
         )?);
         self.supply_nested_online(
             Phase::BeforeW,
@@ -175,7 +238,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
             phase,
             supplied,
             challenges,
-            self.nested_source.as_ref(),
+            self.nested_source().as_ref(),
             children.map(|children| children.map(|child| &child.nested_source_out[..])),
             C::nested_generators(self.params),
         )

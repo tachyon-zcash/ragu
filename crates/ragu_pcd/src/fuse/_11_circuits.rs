@@ -16,12 +16,12 @@ use crate::{
     Application,
     header::NUM_ONLINE_FP_POLYS,
     internal::{native, native::total_circuit_counts, nested},
-    profile::{Profile, ProfiledCycle, online::batch::Challenges},
+    profile::{Profile, ProfiledCycle, Source, online::batch::Challenges},
     proof::ProofBuilder,
 };
 
-impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
-    Application<'_, C, R, HEADER_SIZE, B>
+impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
+    Application<'params, C, R, HEADER_SIZE, B>
 {
     /// Traces this step's native internal circuits, assembles their Rx
     /// polynomials, and stores them in the proof builder.
@@ -46,6 +46,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         eval_witness: &native::stages::eval::Witness<C>,
         native_points: &NativeInputs<C>,
         native_walk: &NativeWalk<C>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let unified = native::unified::Instance {
@@ -247,9 +248,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // stage's polynomial over the context the application holds, and the
         // online batch completes them with its helper's and stages'.
         let extension = crate::profile::native_extension::<C::Profile>();
+        let openings = builder.online_openings();
+        let online_openings: [[C::CircuitField; 2]; 3 * NUM_ONLINE_FP_POLYS] =
+            core::array::from_fn(|slot| [openings[slot].x, openings[slot].y]);
         let online = builder.native_online().witness(challenges);
         let rxs = C::Profile::native_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
+            source,
+            &online_openings,
             &self.native_registry,
             online.as_ref(),
             rng,
@@ -287,6 +293,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_f_witness: &nested::stages::f::Witness<C::HostCurve>,
         nested_eval_witness: &nested::stages::eval::Witness<C::HostCurve, C::Profile>,
         nested_challenges_witness: &nested::stages::challenges::Witness<C::ScalarField>,
+        source: Option<&Source<'params, C, R, B>>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let instance = nested::unified::Instance {
@@ -387,6 +394,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let online = builder.nested_online().witness(challenges);
         let rxs = C::Profile::nested_extension_rxs_with_online::<C::Base, R, HEADER_SIZE, B, RNG>(
             &self.context,
+            source,
+            &builder.online_commitments(),
+            builder.online_fq_openings(),
             &self.nested_registry,
             online.as_ref(),
             rng,

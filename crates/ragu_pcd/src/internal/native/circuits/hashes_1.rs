@@ -98,6 +98,7 @@ use ragu_primitives::{
 };
 
 use super::super::{
+    online,
     stages::{outer_error as native_outer_error, preamble as native_preamble},
     unified::{self, OutputBuilder},
 };
@@ -114,10 +115,22 @@ use crate::{
 /// the step that consumes this proof can check its copies of them against
 /// the ones this step's application claim was folded with.
 ///
+/// In a profile with a statement circuit the instance ends with the step
+/// binding's openings: what the step's parent needs of the step's online
+/// openings for that circuit's claim, which the step, folding its own
+/// application claim, otherwise keeps to itself (see
+/// [`StepBindingLen`](online::StepBindingLen)). They are the preamble's
+/// wires, the ones the application claim and `compute_v` take.
+///
 /// Other internal circuits use only the [`unified::Output`] to avoid the
 /// overhead of witnessing headers in circuits that do not require them.
 #[derive(Gadget, Write)]
-pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEADER_SIZE: usize> {
+pub struct Output<
+    'dr,
+    D: Driver<'dr>,
+    C: ProfiledCycle<CircuitField = D::F>,
+    const HEADER_SIZE: usize,
+> {
     /// The unified instance shared across internal circuits.
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
@@ -127,6 +140,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>, const HEAD
     /// The step's own circuit ID, as its domain point.
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
+    /// The step binding's openings, empty in a profile without a statement
+    /// circuit.
+    #[ragu(gadget)]
+    pub step_binding: FixedVec<Element<'dr, D>, online::StepBindingLen<C::Profile>>,
 }
 
 /// First hash circuit for Fiat-Shamir challenge derivation.
@@ -303,6 +320,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
         let (unified, updated) = unified_output.finish_no_suffix(dr, allocator)?;
         let output = Output {
             unified,
+            step_binding: online::step_binding_wires::<_, C::Profile>(&preamble.own.online),
             output_header: preamble.own.output_header,
             circuit_id: preamble.own.circuit_id,
         };

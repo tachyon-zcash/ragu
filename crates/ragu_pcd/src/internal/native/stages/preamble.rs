@@ -1,10 +1,11 @@
 //! Preamble stage for native fuse operations.
 //!
 //! Witnesses what each child proof exposes to the step that consumes it
-//! (its output header, its circuit id, its unified instance and, in a
-//! profile with online batches, what its batches export), and the
-//! step's own output header, circuit id and online openings, from which the
-//! step's own application $k(y)$ is computed.
+//! (its output header, its circuit id, its unified instance, in a profile
+//! with a statement circuit the step binding's openings and, in a profile
+//! with online batches, what its batches export), and the step's own output
+//! header, circuit id and online openings, from which the step's own
+//! application $k(y)$ is computed.
 //!
 //! ## Commitment after $w$
 //!
@@ -25,11 +26,12 @@
 //! - The commitments of each child's circuit traces and stages are in the
 //!   nested `preamble` bridge, which $w$ absorbs.
 //! - A committed trace fixes its instance: $k(Y)$ is a function of the
-//!   trace. The child's unified instance, output header and circuit id are
-//!   the instance of its `hashes_1` trace, and its unified instance is the
-//!   instance of its other circuits' traces. In a profile with online
-//!   batches, the child's helper sums, mesh claims and nested online
-//!   commitments are in the instances of its `compute_v`,
+//!   trace. The child's unified instance, output header and circuit id,
+//!   and in a profile with a statement circuit the step binding's
+//!   openings, are the instance of its `hashes_1` trace, and its unified
+//!   instance is the instance of its other circuits' traces. In a profile
+//!   with online batches, the child's helper sums, mesh claims and nested
+//!   online commitments are in the instances of its `compute_v`,
 //!   `bind_endoscalar` and online helper traces.
 //! - This step folds those claims at $y$, with each $k(y)$ computed from
 //!   the wires here, and $y$ is squeezed after this stage is committed. A
@@ -182,6 +184,14 @@ pub struct ProofInputs<
     >,
     #[ragu(gadget)]
     pub circuit_id: Element<'dr, D>,
+    /// What this proof's step exposed of its online openings for the
+    /// statement claim's step binding, in a profile with a statement
+    /// circuit: the point and the value at which it opened its first
+    /// output slot, then the point at which it opened its left input's
+    /// first slot (see [`online::step_binding`]). Empty for a profile
+    /// without one.
+    #[ragu(gadget)]
+    pub step_binding: FixedVec<Element<'dr, D>, online::StepBindingLen<C::Profile>>,
     #[ragu(gadget)]
     pub unified: unified::Output<'dr, D, C>,
 }
@@ -215,8 +225,10 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
     ///
     /// Returns `(unified_ky, unified_bridge_ky)` where:
     /// - `unified_ky` = k(y) for `(unified, 0)`
-    /// - `unified_bridge_ky` = k(y) for `(unified, output_header, circuit_id, 0)`,
-    ///   the instance this proof's `hashes_1` exported
+    /// - `unified_bridge_ky` = k(y) for
+    ///   `(unified, output_header, circuit_id, step_binding, 0)`, the
+    ///   instance this proof's `hashes_1` exported, whose step binding is
+    ///   empty in a profile without a statement circuit
     ///
     /// The Horner evaluation order and trailing zero here define the numerical
     /// values that [`ky_values`](super::super::claims::ky_values) must produce
@@ -238,6 +250,7 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
             ({
                 self.output_header.write(dr, &mut ky)?;
                 self.circuit_id.write(dr, &mut ky)?;
+                self.step_binding.write(dr, &mut ky)?;
                 Element::zero(dr).write(dr, &mut ky)?;
                 ky.finish_ky(dr)?
             }),
@@ -321,19 +334,28 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         ky::finish_extension_ky(target, dr).map(Some)
     }
 
-    /// The actual nested online commitments exported by bind_endoscalar.
+    /// The `bind_endoscalar` circuit's $k(y)$ for this child: k(y) for
+    /// `(unified, online_fq, online_points, 0)`, the unified instance
+    /// followed by the commitments of the step's online Fq polynomials its
+    /// native binding names, `online_fq`, then the actual nested online walk
+    /// points. A profile that exports neither keeps the unified target,
+    /// `unified_ky`.
     pub fn bind_endoscalar_ky(
         &self,
         dr: &mut D,
         y: &Element<'dr, D>,
         unified_ky: &Element<'dr, D>,
+        online_fq: &[Point<'dr, D, C::NestedCurve>],
     ) -> Result<Element<'dr, D>> {
-        // Setup-fixed empty layouts preserve the existing unified target.
-        if C::Profile::NESTED_ONLINE.is_empty() {
+        // Setup-fixed empty exports preserve the existing unified target.
+        if online_fq.is_empty() && C::Profile::NESTED_ONLINE.is_empty() {
             return Ok(unified_ky.clone());
         }
         let mut ky = Horner::new(y);
         self.unified.write(dr, &mut ky)?;
+        for point in online_fq {
+            point.write(dr, &mut ky)?;
+        }
         self.online_points.write(dr, &mut ky)?;
         Element::zero(dr).write(dr, &mut ky)?;
         ky.finish_ky(dr)
@@ -366,15 +388,28 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
         let decompress = InternalStepIndex::Decompress.circuit_index::<P>()?;
         let decompress = Element::constant(dr, decompress.omega_j());
         let is_decompress = self.circuit_id.is_equal(dr, &mut (), &decompress)?;
+        // After the header, the step binding: the flag, one for the
+        // decompression step and zero for any other, that step's opening
+        // of its first output slot, which holds the host IPA's s(X) there
+        // and nothing the chunks read anywhere else, and the point at
+        // which it opened its left input's first slot, the transcript
+        // digest it staged before its challenge. The step folded its own
+        // application claim, so these are what its `hashes_1` exported of
+        // its openings, which `unified_ky_values` holds these wires to.
         let own = {
             let mut ky = Horner::new(y);
             self.output_header.write(dr, &mut ky)?;
+            Element::one().write(dr, &mut ky)?;
+            self.step_binding.write(dr, &mut ky)?;
             ky::finish_extension_ky(ky, dr)?
         };
         let canonical = {
             let mut ky = Horner::new(y);
             for value in ky::output_header::<C, (), HEADER_SIZE>(())? {
                 Element::constant(dr, value).write(dr, &mut ky)?;
+            }
+            for _ in 0..crate::profile::STEP_BINDING {
+                Element::zero(dr).write(dr, &mut ky)?;
             }
             ky::finish_extension_ky(ky, dr)?
         };
@@ -452,17 +487,23 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
                 allocator,
                 proof.as_ref().map(|p| p.circuit_id().omega_j()),
             )?,
+            step_binding: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), proof.as_ref().map(|p| p.step_binding[i]))
+            })?,
             unified: unified::Output::alloc_from_proof(dr, allocator, proof.as_ref().map(|p| *p))?,
         })
     }
 
     /// Allocate ProofInputs from the parts a proof's instance carries: the
-    /// encoded output header, the circuit id as its domain point, the
-    /// unified instance's values and the online batches' exports.
+    /// encoded output header, the circuit id as its domain point, the step
+    /// binding's openings, the unified instance's values and the online
+    /// batches' exports.
+    #[allow(clippy::too_many_arguments)]
     pub fn alloc_from_parts(
         dr: &mut D,
         output_header: DriverValue<D, &[D::F]>,
         circuit_id: DriverValue<D, D::F>,
+        step_binding: DriverValue<D, &[D::F]>,
         unified: DriverValue<D, &unified::Instance<C>>,
         online_points: DriverValue<D, &[C::NestedCurve]>,
         online_fold: DriverValue<D, &[D::F]>,
@@ -497,6 +538,9 @@ impl<'dr, D: Driver<'dr, F = C::CircuitField>, C: ProfiledCycle, const HEADER_SI
                 Element::alloc(dr, &mut (), mesh.as_ref().map(|p| p[i]))
             })?,
             circuit_id: Element::alloc(dr, &mut (), circuit_id)?,
+            step_binding: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), step_binding.as_ref().map(|s| s[i]))
+            })?,
             unified: unified::Output::alloc_from_instance(dr, &mut (), unified)?,
         })
     }
@@ -660,11 +704,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C, HEADER_SIZE>];
 
     fn values() -> usize {
-        // 2 proofs * (output header + 1 circuit_id + unified instance
-        // wires + the online batches' values), then the own output header,
-        // circuit_id and (x, y) per online slot
+        // 2 proofs * (output header + 1 circuit_id + the step binding's
+        // openings + unified instance wires + the online batches' values),
+        // then the own output header, circuit_id and (x, y) per online slot
         2 * (HEADER_SIZE
             + 1
+            + <online::StepBindingLen<C::Profile> as ragu_primitives::vec::Len>::len()
             + unified::NUM_WIRES
             + C::Profile::NATIVE_MESH.map_or(0, |mesh| mesh.claims_len())
             + 2 * C::Profile::NESTED_ONLINE.polynomials.len()

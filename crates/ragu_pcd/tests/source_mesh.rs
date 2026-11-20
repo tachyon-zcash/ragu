@@ -18,7 +18,7 @@ use crate::{
     Application, ApplicationBuilder, Pcd, SelectableBackend,
     ipa::IpaCycle,
     profile::{
-        Profile, Profiled, ProfiledCycle, Standard,
+        Profile, Profiled, ProfiledCycle, ProverContext, Standard,
         online::{
             Challenge, Layout, Opening, Phase, Point,
             mesh::{Helper, Mesh, Restriction},
@@ -382,6 +382,7 @@ impl Profile for SourceCapacity {
 
     fn native_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::CircuitField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
@@ -415,6 +416,7 @@ impl Profile for SourceCapacity {
 
     fn nested_online_inputs<'params, Base, Rk, B>(
         _: &Self::Context<'params, Base, Rk, B>,
+        _: Option<&<Self::Context<'params, Base, Rk, B> as ProverContext>::Source>,
     ) -> Result<Vec<Base::ScalarField>>
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,

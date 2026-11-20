@@ -2,7 +2,7 @@
 
 use core::any::TypeId;
 
-use ragu_circuits::{polynomials::ProductionRank, staging::Stage};
+use ragu_circuits::{polynomials::WalletRank, staging::Stage};
 use ragu_core::{
     Error, Result,
     convert::extract_wires,
@@ -21,33 +21,31 @@ use crate::{
         },
         tests::assert_stage_values,
     },
-    profile::{Aggregator, Profile, Profiled, Standard, testing::Wider},
+    profile::{
+        Aggregator, Profile, Profiled, Standard,
+        testing::{Twin, Wider},
+    },
 };
 
 #[test]
 fn equal_shapes_keep_distinct_gadget_kinds() {
-    type StdQuery =
-        <query::Stage<Pasta, ProductionRank, 4> as Stage<Fp, ProductionRank>>::OutputKind;
-    type AggQuery = <query::Stage<Profiled<Pasta, Aggregator>, ProductionRank, 4> as Stage<
-        Fp,
-        ProductionRank,
-    >>::OutputKind;
-    type StdEval = <eval::Stage<Pasta, ProductionRank, 4> as Stage<Fp, ProductionRank>>::OutputKind;
-    type AggEval = <eval::Stage<Profiled<Pasta, Aggregator>, ProductionRank, 4> as Stage<
-        Fp,
-        ProductionRank,
-    >>::OutputKind;
+    type StdQuery = <query::Stage<Pasta, WalletRank, 4> as Stage<Fp, WalletRank>>::OutputKind;
+    type TwinQuery =
+        <query::Stage<Profiled<Pasta, Twin>, WalletRank, 4> as Stage<Fp, WalletRank>>::OutputKind;
+    type StdEval = <eval::Stage<Pasta, WalletRank, 4> as Stage<Fp, WalletRank>>::OutputKind;
+    type TwinEval =
+        <eval::Stage<Profiled<Pasta, Twin>, WalletRank, 4> as Stage<Fp, WalletRank>>::OutputKind;
 
     assert_eq!(
-        query::Stage::<Pasta, ProductionRank, 4>::values(),
-        query::Stage::<Profiled<Pasta, Aggregator>, ProductionRank, 4>::values()
+        query::Stage::<Pasta, WalletRank, 4>::values(),
+        query::Stage::<Profiled<Pasta, Twin>, WalletRank, 4>::values()
     );
     assert_eq!(
-        eval::Stage::<Pasta, ProductionRank, 4>::values(),
-        eval::Stage::<Profiled<Pasta, Aggregator>, ProductionRank, 4>::values()
+        eval::Stage::<Pasta, WalletRank, 4>::values(),
+        eval::Stage::<Profiled<Pasta, Twin>, WalletRank, 4>::values()
     );
-    assert_ne!(TypeId::of::<StdQuery>(), TypeId::of::<AggQuery>());
-    assert_ne!(TypeId::of::<StdEval>(), TypeId::of::<AggEval>());
+    assert_ne!(TypeId::of::<StdQuery>(), TypeId::of::<TwinQuery>());
+    assert_ne!(TypeId::of::<StdEval>(), TypeId::of::<TwinEval>());
 }
 
 fn check_traversal<P: Profile>() -> Result<()> {
@@ -128,20 +126,17 @@ fn check_traversal<P: Profile>() -> Result<()> {
 #[test]
 fn mapping_and_equality_visit_every_profile_value() -> Result<()> {
     check_traversal::<Standard>()?;
-    check_traversal::<Aggregator>()?;
+    check_traversal::<Twin>()?;
+    check_traversal::<Aggregator<4>>()?;
     check_traversal::<Wider>()
 }
 
 #[test]
 fn allocation_matches_the_profile_stage_sizes() {
-    assert_stage_values(&query::Stage::<Pasta, ProductionRank, 4>::default());
-    assert_stage_values(&eval::Stage::<Pasta, ProductionRank, 4>::default());
-    assert_stage_values(&query::Stage::<
-        Profiled<Pasta, Aggregator>,
-        ProductionRank,
-        4,
-    >::default());
-    assert_stage_values(&eval::Stage::<Profiled<Pasta, Aggregator>, ProductionRank, 4>::default());
-    assert_stage_values(&query::Stage::<Profiled<Pasta, Wider>, ProductionRank, 4>::default());
-    assert_stage_values(&eval::Stage::<Profiled<Pasta, Wider>, ProductionRank, 4>::default());
+    assert_stage_values(&query::Stage::<Pasta, WalletRank, 4>::default());
+    assert_stage_values(&eval::Stage::<Pasta, WalletRank, 4>::default());
+    assert_stage_values(&query::Stage::<Profiled<Pasta, Twin>, WalletRank, 4>::default());
+    assert_stage_values(&eval::Stage::<Profiled<Pasta, Twin>, WalletRank, 4>::default());
+    assert_stage_values(&query::Stage::<Profiled<Pasta, Wider>, WalletRank, 4>::default());
+    assert_stage_values(&eval::Stage::<Profiled<Pasta, Wider>, WalletRank, 4>::default());
 }

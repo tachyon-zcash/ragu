@@ -11,15 +11,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added recursion profiles through `profile::{Profile, ProfiledCycle, Profiled,
   Standard, Aggregator, Shape}`. Profiles declare internal extension circuits,
-  stages, statement and cross-cycle bindings, and endoscaling work.
+  stages, statement and cross-cycle bindings, and endoscaling work, and a
+  prover context (`ProverContext`) whose `Source` a decompression step supplies
+  in place of the context's proof. The `Aggregator` profile, its
+  `Decompression` context and `Application::decompress` sit behind the
+  `unstable-aggregator` feature: the construction is unaudited. The
+  decompression takes the wallet registry's evaluations as claimed values of
+  the profile's online batches, on restrictions its source meshes hold to
+  the wallet application's registries, and holds the proof's circuit to the
+  wallet registry's domain; a verifier of aggregator proofs so builds the
+  aggregator over the wallet application. Both IPAs' final generators are
+  bound, over round challenges fixed before the step's challenge: the
+  decompression step stages the compression transcript's last squeeze, and
+  the extension holds it to the squeeze it computes, through the step
+  binding. The host curve's:
+  the decompression step commits that IPA's challenge polynomial in its
+  first output slot, and the extension holds its opening and commitment
+  through the statement circuit's step binding (`profile::STEP_BINDING`) and
+  the nested binding circuit's online slots (`Binding::online`). The nested
+  curve's: every step commits that IPA's challenge polynomial as its online
+  Fq polynomial (`Profile::online_fq_polynomials`), and exports its
+  commitment and opening for the slots the profile's bindings name
+  (`Binding::online` on the native binding, `Binding::openings` on the
+  nested one), through `bind_endoscalar`'s and the nested `compute_v`'s
+  instances; a proof and a compressed proof of such a profile carry them.
+  `Profile::native_extension_rxs` is handed the step's six online openings.
+  A step folds its own application claim, so in a profile with a statement
+  circuit its `hashes_1` exports the step binding's openings after its
+  output header and circuit id, and a proof and a compressed proof of such
+  a profile carry them.
+  A profile with a statement circuit reserves an application stage of at
+  least one value, which the decompression step stages. A
+  profile that names none, the Standard one included, exports nothing and
+  its proofs are unchanged.
+  `Aggregator` is pinned for 4-element headers alone; other header sizes do
+  not compile. An `Aggregator` application refuses, at `finalize_with`, a
+  wallet application whose steps output a header naming an online
+  polynomial: a decompressed proof's slots hold the host IPA's challenge
+  polynomial and padding, not the compressed proof's polynomials.
 - Added `ApplicationBuilder::finalize_with` and `Application::context` for
   profile-specific prover context. The extension API is experimental while
-  decompression is integrated; the built-in profiles currently add no extensions.
+  decompression is integrated. `finalize` checks a profile's declaration
+  against what its hooks register: a staged circuit through
+  `CircuitSlot::register_staged` and a stage's masks through
+  `BondingSlot::register_mask` and `register_final_mask`; a bonding of another
+  shape cannot be registered.
 - Added optional `baked-aggregator` parameters through
-  `pasta::baked_aggregator()` for `R<14>` extension tests. Standard's `baked()`
-  keeps its original `R<13>` table sizes and generators, including when the
-  additional Aggregator parameters are enabled and loaded. The production
-  Aggregator rank remains to be fixed with its decompression circuits.
+  `pasta::baked_aggregator()`, sized for `AggregatorRank` (`R<15>`), the rank
+  the aggregator profile proves at. Standard's `baked()` keeps its original
+  `R<13>` tables and adds the stage reach past them (`pasta::STAGE_REACH`),
+  including when the additional Aggregator parameters are enabled and loaded.
 - Added sealed, static computational-backend selection between Ragu's reference
   and accelerated implementations, defaulting to
   `ragu_backend::ReferenceBackend`.
@@ -61,12 +102,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added source-registry meshes: `Profile::{NATIVE,NESTED}_MESH` declare a
   `profile::online::mesh::Mesh` over a batch's slots, and
   `ApplicationBuilder::with_source_registries` captures the registries it
-  restricts as `profile::online::source::SourceRegistry`s. Each step carries
-  both children's outgoing restrictions, and compression closes the root's.
+  restricts as `profile::online::source::SourceRegistry`s, or, without them,
+  `Profile::source_registries` reads them off the profile's prover context;
+  finalization refuses a builder and a context that both supply one for the
+  same field.
+  Each step carries both children's outgoing restrictions, and compression
+  closes the root's. `Profile::{NATIVE,NESTED}_DOMAIN_INPUTS` name inputs the
+  helper holds to the source registry's domain, and
+  `Profile::{native,nested}_online_inputs` are handed the step's source.
 - Added `Application::nested_registry`, beside `native_registry`.
 
 ### Changed
 
+- Compressed proofs from earlier versions do not verify, in every profile.
+  Compression challenges are endoscalar lifts of the transcript's squeezes,
+  143 bits wide as the fuse's challenges are, so that a circuit over the
+  other field can scale points by them. The transcript absorbs what lies in
+  the scalar field, the host curve's points and the nested curve's scalars,
+  as one nested-curve commitment per run of them, committed unblinded at the
+  generators the run's stage takes in the proof's decompression at the
+  aggregator rank, so that each challenge is a function of every message
+  before it and a circuit over the circuit field absorbs the commitment as a
+  point its verifier holds to that stage. The Standard fuse fixtures'
+  compressed digests and verifier fingerprints pin both. Those generators lie
+  past the Standard tables, so `baked()` carries the reach of them the runs
+  take (`pasta::STAGE_REACH`), through `IpaCycle::nested_generator`, and
+  serves a Standard application that compresses; the aggregator's own tables
+  hold the same points.
+- `CycleTranscript::new` commits each run of consecutive scalar-field values
+  over the parameters' first nested generators, so a standalone IPA over
+  `ipa` round-trips on either curve; the fuse opens its own transcript without
+  run bases and the compression with its run stages'. Consecutive scalar-field writes share one commitment, where each
+  was committed on its own before, so standalone transcripts from earlier
+  versions do not replay.
 - `ApplicationBuilder`, `Application`, and their proving, verification and
   compression methods now require `ProfiledCycle` rather than only `Cycle`.
   Custom cycles must select a profile; Pasta's implementation requires `baked`.

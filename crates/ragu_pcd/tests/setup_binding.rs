@@ -5,7 +5,7 @@
 //! registered circuits and cannot make such a pair.
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::ProductionRank;
+use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Result,
     pasta::{Pasta, PastaParams},
@@ -14,7 +14,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use udon::field::Field;
 
 #[cfg(ragu_pcd_nightly_tests)]
-use crate::profile::{Aggregator, Profiled};
+use crate::profile::{Profiled, testing::Twin};
 use crate::{
     Application, ApplicationBuilder, Pcd,
     ipa::IpaCycle,
@@ -22,8 +22,8 @@ use crate::{
 };
 
 const HEADER_SIZE: usize = 4;
-type App<C> = Application<'static, C, ProductionRank, HEADER_SIZE>;
-type TestPcd<C> = Pcd<C, ProductionRank, ()>;
+type App<C> = Application<'static, C, WalletRank, HEADER_SIZE>;
+type TestPcd<C> = Pcd<C, WalletRank, ()>;
 
 #[derive(Clone, Copy, Debug)]
 enum ChangedTag {
@@ -34,9 +34,9 @@ enum ChangedTag {
 fn application<C>(changed: Option<ChangedTag>) -> Result<App<C>>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
-    let builder = ApplicationBuilder::<C, ProductionRank, HEADER_SIZE>::new().register(UnitStep)?;
+    let builder = ApplicationBuilder::<C, WalletRank, HEADER_SIZE>::new().register(UnitStep)?;
     match changed {
         Some(ChangedTag::Native) => {
             builder.with_native_tag(C::CircuitField::from_uniform_bytes(&[0x43; 64]))
@@ -46,7 +46,7 @@ where
         }
         None => builder,
     }
-    .finalize(crate::pasta::baked())
+    .finalize(crate::pasta::baked_aggregator())
 }
 
 fn check_both_verifiers<C>(
@@ -77,7 +77,7 @@ where
 fn check_setup_binding<C>(changed: ChangedTag) -> Result<()>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, ProductionRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
 {
     let sender = application::<C>(None)?;
     let receiver = application::<C>(Some(changed))?;
@@ -136,13 +136,13 @@ fn standard_nested_setup_binding() -> Result<()> {
 #[cfg(ragu_pcd_nightly_tests)]
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
-fn aggregator_native_setup_binding() -> Result<()> {
-    check_setup_binding::<Profiled<Pasta, Aggregator>>(ChangedTag::Native)
+fn twin_native_setup_binding() -> Result<()> {
+    check_setup_binding::<Profiled<Pasta, Twin>>(ChangedTag::Native)
 }
 
 #[cfg(ragu_pcd_nightly_tests)]
 #[test]
 #[ignore = "proof regressions run in the scheduled Heavy tests workflow"]
-fn aggregator_nested_setup_binding() -> Result<()> {
-    check_setup_binding::<Profiled<Pasta, Aggregator>>(ChangedTag::Nested)
+fn twin_nested_setup_binding() -> Result<()> {
+    check_setup_binding::<Profiled<Pasta, Twin>>(ChangedTag::Nested)
 }

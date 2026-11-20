@@ -5,7 +5,7 @@ use alloc::{vec, vec::Vec};
 
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    polynomials::{ProductionRank, Rank},
+    polynomials::{Rank, WalletRank},
     staging,
 };
 use ragu_core::{
@@ -26,7 +26,7 @@ use crate::{
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 
-type R = ProductionRank;
+type R = WalletRank;
 const HEADER_SIZE: usize = 4;
 /// The stage holds `x` and `x²`.
 const STAGE: usize = 2;

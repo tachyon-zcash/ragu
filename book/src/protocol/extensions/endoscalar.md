@@ -154,7 +154,7 @@ including masks, with 25 native and 29 nested walk steps once the online
 polynomials of the input and output proofs, the application stage and the
 bridge-hash stage join the batch.
 
-The constraint census uses production rank `R<13>`, a 201-element header,
+The constraint census uses wallet rank `R<13>`, a 201-element header,
 and 6000 placeholder application circuits. In that fixture the largest
 `bind_challenges` variant uses all 2048 gates; the binders load the
 preamble, query and eval stages, and the preamble carries the step's own
