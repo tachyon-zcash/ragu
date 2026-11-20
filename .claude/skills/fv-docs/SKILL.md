@@ -1,19 +1,19 @@
 ---
 name: fv-docs
-description: Explicitly invoked only. Authoritative reference for the Ragu formal-verification project — Clean DSL semantics (Circuit monad, Expression, Operation, ProvableType, FormalCircuit) and Ragu-side concepts (extraction driver, formal instances, input/output serialization, assumptions, CI). Routes to the live in-tree FV docs; the docs are the spec, not opinion. Pair with /fv-review for opinion / pattern-matching guidance. Invoke when the user types `/fv-docs` or asks for the canonical definition of a Clean / Ragu-FV concept.
+description: Explicitly invoked only. Authoritative reference for the Ragu formal-verification project — Clean DSL semantics (Circuit monad, Expression, Operation, ProvableType, FormalCircuit) and Ragu-side concepts (extraction driver, formal instances, input/output serialization, assumptions, CI). Routes to the live FV docs in the `fv` repository's book; the docs are the spec, not opinion. Pair with /fv-review for opinion / pattern-matching guidance. Invoke when the user types `/fv-docs` or asks for the canonical definition of a Clean / Ragu-FV concept.
 ---
 
 # fv-docs: Ragu Formal Verification reference
 
-The FV documentation lives in the repo. This skill is a routing layer: pick the right doc and `Read` it from the live source — don't paraphrase. The docs are authoritative; they define what `FormalCircuit`, formal instances, `ExtractionDriver`, etc. *mean*.
+The FV documentation lives in the mdBook of the `fv` repository. This skill is a routing layer: pick the right doc and `Read` it from the live source — don't paraphrase. The docs are authoritative; they define what `FormalCircuit`, formal instances, `ExtractionDriver`, etc. *mean*.
 
 **Pairing.** For *definitions* → fv-docs (this skill). For *opinion / pitfalls / pattern-matching* (e.g., "should I use `FormalCircuit` or `GeneralFormalCircuit`?", "what's a clean spec style?") → `/fv-review`. Don't compete on the same question.
 
 ## Where the docs live
 
-The FV docs are Part IV of the Ragu book, rooted at **`book/src/fv/`**. Treat `<docs>` below as that path.
+The FV docs are Part I of the mdBook in the separate `fv` repository, rooted at **`src/fv/`** there. Treat `<docs>` below as that path in a local checkout of that repository, such as `../fv/src/fv/` when it sits beside this one.
 
-Older checkouts predate the merge into the book and have the docs as a standalone mdBook at `qa/lean/docs/src/` (or, earlier still, `fv/docs/src/`), with `clean/core/` in place of `clean/`, `ragu/` in place of `circuits/`, and `introduction.md` in place of `index.md`. If unsure, `ls book/src/fv/ 2>/dev/null || ls qa/fv/docs/src/` resolves it.
+Checkouts of this repository from before the split have the docs as Part IV of the Ragu book, at `book/src/fv/`. Still older ones predate the merge into the book and have the docs as a standalone mdBook at `qa/lean/docs/src/` (or, earlier still, `fv/docs/src/`), with `clean/core/` in place of `clean/`, `ragu/` in place of `circuits/`, and `introduction.md` in place of `index.md`. If unsure, `ls ../fv/src/fv/ 2>/dev/null || ls book/src/fv/ 2>/dev/null || ls qa/fv/docs/src/` resolves it.
 
 ## Topic → file (what each doc answers)
 
@@ -36,7 +36,7 @@ Older checkouts predate the merge into the book and have the docs as a standalon
 - `<docs>/circuits/assumptions.md` — what the FV does and does not guarantee; trusted core; axiom dependencies (`propext`, `Classical.choice`, `Quot.sound`, `Lean.ofReduceBool`, `Lean.trustCompiler`, `Ragu.Core.Primes.p_prime`).
 - `<docs>/circuits/ci.md` — `cargo run -p lean_extraction -- check`, `lake build --wfail` (sorry-as-failure) over every module under `qa/fv/Ragu/` via the lib glob, so an unimported file cannot escape; fingerprint comparison step.
 
-The book TOC lives at `book/src/SUMMARY.md` if you want the canonical reading order.
+The book TOC lives at `src/SUMMARY.md` of the `fv` repository if you want the canonical reading order.
 
 ## Term → file (use for definition lookups)
 

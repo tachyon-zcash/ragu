@@ -10,7 +10,7 @@ procedure, not a style essay: run the checks against `git diff main...HEAD`, ans
 question, and fix or justify before handing over. Docstring register and structure are out of
 scope — this skill owns what the prose *claims* and what the Lean *trusts*. Reimplementation
 patterns (circuit type, `Spec` shape, mirroring Rust delegation, heartbeat design signals) are
-owned by the `fv-review` skill; the book's FV part is the spec for every concept named below.
+owned by the `fv-review` skill; the FV part of the `fv` repository's book is the spec for every concept named below.
 
 ## 0. What CI checks — and what it leaves to this audit
 
@@ -268,8 +268,8 @@ typos
 
 Add `cargo clippy -p lean_extraction --all-targets -- -D warnings` and the nightly `rustfmt`
 check when the exporter changed (`just lint` bundles clippy, fmt, rustdoc, the FV source
-checks, and the book build), and `mdbook build ./book` when a page under `book/src/fv/`
-changed. `lake build --wfail` is
+checks, and the book build), and `mdbook build` in the `fv` repository when one of its FV
+pages changed. `lake build --wfail` is
 the default-target build — the one CI runs — not a single-module build, which elaborates less
 than the coverage in §1 demands. Then one pass over the full diff with the coverage,
 trust-surface, computability, vacuity, and claims questions above, reporting per file what was

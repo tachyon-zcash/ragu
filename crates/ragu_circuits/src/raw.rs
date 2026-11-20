@@ -19,7 +19,8 @@
 //!
 //! 1. **SYSTEM gate** — Allocate gate 0 with zero placeholder values. The
 //!    actual SYSTEM-gate wire values ($d_0 = 1$ as the [`Driver::ONE`] wire,
-//!    $a_0 = \alpha$ as the blinding factor) are filled in later by
+//!    and the arbitrary value $a_0 = \alpha$ that keeps commitments away from
+//!    the point at infinity) are filled in later by
 //!    [`Trace::assemble`](crate::Trace::assemble); evaluator drivers don't
 //!    need them filled to compute their results.
 //! 2. **Witness** — Run the circuit's [`witness`](RawCircuit::witness) method.

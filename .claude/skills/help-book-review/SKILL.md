@@ -21,12 +21,12 @@ Three skills, one feedback loop:
 ```
 /book-review                              review uncommitted changes
 /book-review book/src/guide/gadgets/      review a whole section
-/book-review book/src/protocol/core/nark.md   review a specific chapter
-/book-review book/src/protocol/core/nark.md:40-80   focus on specific lines
-/book-review book/src/protocol/prelim/bulletproofs.md book/src/protocol/core/nark.md
+/book-review book/src/protocol/construction/fuse.md   review a specific chapter
+/book-review book/src/protocol/construction/fuse.md:40-80   focus on specific lines
+/book-review book/src/protocol/ladder/rung_09.md book/src/protocol/construction/batch.md
                                           review multiple files + cross-file consistency
 /book-review "accumulation schemes"       find and review a topic wherever it appears
-/book-review "the transition from preliminaries to core construction"
+/book-review "the transition from the refinement ladder to the construction"
                                           review a conceptual boundary across chapters
 ```
 

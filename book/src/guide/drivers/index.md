@@ -57,16 +57,19 @@ routines holding borrowed references can be safely sent to worker threads.
 
 `Driver<'dr>` has a supertrait, [`DriverTypes`], that collects implementation
 details which are agnostic to the `'dr` lifetime. These include associated types
-(`ImplField`, `ImplWire`, `MaybeKind`, `LCadd`, `LCenforce`) and the low-level
-[`gate()`] method.
+(`ImplField`, `ImplWire`, `MaybeKind`, `LCadd`, `LCenforce`, `Extra`) and the
+low-level [`gate()`] method.
 
-The most important item on `DriverTypes` is [`gate()`]. It allocates four wires
+The most important item on `DriverTypes` is [`gate()`]. A gate has four wires
 $(a, b, c, d)$ subject to the constraints $a \cdot b = c$ and $c \cdot d = 0$.
-The second constraint makes $d$ useless in the typical case: whenever $c$ is
-nonzero, $d$ is forced to zero. For this reason [`mul()`] delegates to `gate`
-by default and discards $d$, and circuit code should always prefer `mul`. But
-when $c$ is guaranteed to be zero, $d$ becomes unconstrained—code can call
-`gate` directly and use the returned $d$.
+`gate` returns the wires $a$, $b$ and $c$, and a token of the driver's `Extra`
+type that stands for $d$, which is assigned zero. The second constraint makes
+$d$ useless in the typical case: whenever $c$ is nonzero, $d$ is forced to
+zero. For this reason [`mul()`] delegates to `gate` by default and discards
+the token, and circuit code should always prefer `mul`. But when $c$ is
+guaranteed to be zero, $d$ becomes unconstrained—code can call `gate` directly
+and pass the token to [`assign_extra()`], which assigns $d$ a value and
+returns its wire.
 
 `Driver<'dr>` re-exports the field and wire types as [`F`][driver-f] and
 [`Wire`]; the remaining associated types live only on `DriverTypes` because
@@ -99,6 +102,7 @@ to have the same value by calling [`enforce_zero()`] on their difference.
 
 [`mul()`]: ragu_core::drivers::Driver::mul
 [`gate()`]: ragu_core::drivers::DriverTypes::gate
+[`assign_extra()`]: ragu_core::drivers::DriverTypes::assign_extra
 [`enforce_zero()`]: ragu_core::drivers::Driver::enforce_zero
 [`add()`]: ragu_core::drivers::Driver::add
 [`ONE`]: ragu_core::drivers::Driver::ONE

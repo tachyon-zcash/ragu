@@ -20,9 +20,10 @@ efficient than Orchard's batch verification.
 protocol, which uses [Halo2](https://zcash.github.io/halo2/)—a SNARK system
 based on the Halo construction. Orchard currently uses batch verification of
 Halo2 proofs, achieving verification times of approximately 10–15ms per proof
-on a single thread. Batch verification provides sublinear scaling: verifying
-$n$ proofs costs roughly $O(n / \log n)$ rather than $O(n)$ due to multi-scalar
-multiplication (MSM) batching.
+on a single thread. Batch verification scales sublinearly in its dominant
+cost: the multi-scalar multiplications (MSMs) of $n$ proofs combine into one,
+which costs roughly $O(n / \log n)$ rather than $O(n)$. The rest of each
+proof's verification is not reduced.
 
 Ragu, in contrast, uses proof-carrying data (PCD) to recursively aggregate
 proofs. The verifier only needs to check a single aggregated proof regardless
@@ -35,8 +36,8 @@ Ragu's verification cost is primarily determined by:
 
 1. **Circuit constraint count**: The verifier circuit contains $4N$ linear
    constraints, where $N = 2^K$ and $K$ is the recursion threshold (preferred
-   value: $K = 11$). The factor of 4 arises from the circuit structure across
-   multiple stages.
+   value: $K = 11$). The factor of 4 arises from the four wires of each
+   gate, which give a polynomial $4N$ coefficients.
 
 2. **Multi-scalar multiplication size**: This corresponds to an MSM of size
    $4N = 4 \cdot 2^{11} = 2^{13} = 8192$ group elements, which dominates the
@@ -80,11 +81,14 @@ but this parameter itself presents important design choices.
 The recursion threshold $K$ presents an interesting trade-off space:
 
 - **Larger $K$**: Larger circuits mean higher verification cost per proof, but
-  shallower PCD trees are needed (fewer recursive steps to aggregate many
-  proofs).
+  each step holds more of the application's work, so a computation of a given
+  size needs fewer steps.
 
 - **Smaller $K$**: Smaller circuits mean lower verification cost per proof, but
-  deeper PCD trees are required to aggregate the same number of proofs.
+  the same computation is spread over more steps.
+
+The number of fuses that join a given set of proofs does not depend on $K$,
+since every fuse takes two.
 
 #### Future Work
 
@@ -98,6 +102,6 @@ More rigorous analysis should:
 
 ---
 
-In summary, Ragu's aggregated verification becomes advantageous over Orchard's
-batch verification at roughly 50 transactions for the default $K = 11$
-threshold.
+In summary, by these rough estimates, Ragu's aggregated verification becomes
+advantageous over Orchard's batch verification at roughly 50 transactions for
+the default $K = 11$ threshold.

@@ -4,7 +4,7 @@ Compression replaces witness polynomials with commitments, claimed evaluations,
 and one IPA per curve. Below is the interactive form of
 `Application::verify_compressed`; Fiat–Shamir supplies the verifier's
 challenges from a transcript domain-separated by `ragu-ipa-v1` (see
-[Transcript](../prelim/transcript.md#domain-separation)).
+[Transcript](../construction/cycle.md#transcript)).
 
 The transcript runs over the circuit field. It absorbs circuit-field scalars
 and nested-curve points directly. Each run of scalar-field values, the host

@@ -9,9 +9,10 @@
 //! the registry, to the nested commitments and to its own evaluations. Here
 //! the values are supplied and bound: $c$, $v$, $c_n$ and $v_n$ enter the
 //! $k(y)$ targets the revdot claims must hit, the challenges are rederived
-//! from the bridge commitments on the same transcript the compression
-//! continues, and the wires become [`Masked`] claims that pin them to the
-//! stage commitments, with the evaluations among them also opened.
+//! from the bridge commitments on the fuse's transcript, which is separate
+//! from the compression's own, and the wires become [`Masked`] claims that
+//! pin them to the stage commitments, with the evaluations among them also
+//! opened.
 
 use alloc::{vec, vec::Vec};
 

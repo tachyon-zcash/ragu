@@ -10,7 +10,7 @@
 //! s_i(X, Y)$ for some $\omega \in \mathbb{F}$ of sufficiently high $2^k$ order
 //! to encode all circuits for both PCD and for application circuits. The book's
 //! [registry chapter] gives the full construction, including Lagrange
-//! interpolation at an arbitrary $W$ and the rolling domain extension.
+//! interpolation at an arbitrary $W$ and the assignment of domain points.
 //!
 //! ## Every domain point is a wiring polynomial
 //!
@@ -51,7 +51,7 @@
 //! to compile the added circuits into a registry polynomial representation that can
 //! be efficiently evaluated at different restrictions.
 //!
-//! [registry chapter]: https://tachyon.z.cash/ragu/protocol/extensions/registry.html
+//! [registry chapter]: https://tachyon.z.cash/ragu/protocol/construction/registry.html
 
 use alloc::{boxed::Box, vec::Vec};
 
