@@ -52,7 +52,7 @@ argument rests on.
 
 All arithmetic is over a prime field $\F$. A circuit has $n$ gates, and every
 polynomial that the protocol commits to has $4n$ coefficients, so its degree is
-below $4n$. At the production rank $4n = 2^{13}$.
+below $4n$. At the wallet rank $4n = 2^{13}$.
 
 The **revdot** product of two coefficient vectors is the dot product of one with
 the reversal of the other:

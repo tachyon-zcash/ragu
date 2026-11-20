@@ -22,18 +22,19 @@ chapters do not supply.
   a tag of zero, which has probability about $1 / |\F|$ over the hash for each
   registry. An argument that needs nonzero tags must add that term. The `Tag`
   documentation in `ragu_circuits::registry` bounds what trying many
-  registries gains against the native checks, whose challenges are
-  full-width. It does not extend that bound to the nested checks, whose
-  challenges have $143$ bits: an adaptive choice among nested registries
-  needs further analysis.
+  registries gains against a registry check whose challenges are full-width,
+  as those of a fuse's native side are. The bound does not cover a registry
+  check whose challenges have $143$ bits, as those of a fuse's nested side and
+  of a compression on both curves do: an adaptive choice among registries
+  against such a check needs further analysis.
 
 Each individual test fails to detect an error with probability at most
 $d / |S|$, where $d$ is on the order of $4n$ or of the number of claims. The set
 $S$ depends on the challenge ([rung 11](rung_11.md)). Within a fuse it is nearly
 all of $\F_p$ for the eight native challenges before $\beta$, and a set of
 $2^{143}$ lifts for the native $\beta$ and for every nested challenge. The
-compression's own challenges range over all of $\F_p$ on the native curve and
-over $2^{254}$ values on the nested one.
+compression's own challenges are lifts on both curves
+([rung 16](rung_16.md)), so each of them ranges over $2^{143}$ values.
 
 These are bounds on single tests. They do not by themselves give a security
 level for the scheme. A full soundness statement must combine them across every

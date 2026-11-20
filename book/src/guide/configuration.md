@@ -86,13 +86,16 @@ constraint limits:
 - **Gates**: up to 2^(N−2)
 - **Constraints**: up to 2^N
 
-Currently only `R<7>` (testing) and `R<13>` (production) are implemented.
-See the `Rank` trait documentation for how to add new values.
+Currently `R<7>`, `R<13>`, `R<14>` and `R<15>` are implemented. Three of them
+have aliases: `TestRank`, `WalletRank` and `AggregatorRank`. See the `Rank`
+trait documentation for how to add new values.
 
 | Rank | Gate Limit | Constraint Limit | Use Case |
 |------|---------------------|-------------|----------|
-| `R<7>` | 32 | 128 | Unit tests |
-| `R<13>` | 2,048 | 8,192 | Production |
+| `R<7>` (`TestRank`) | 32 | 128 | Unit tests |
+| `R<13>` (`WalletRank`) | 2,048 | 8,192 | Production |
+| `R<14>` | 4,096 | 16,384 | Tests of circuits that exceed `R<13>` |
+| `R<15>` (`AggregatorRank`) | 8,192 | 32,768 | The Aggregator profile |
 
 ### Choosing the Right Rank
 
@@ -193,7 +196,7 @@ ApplicationBuilder::<Pasta, R<13>, 9>::new()
 **Rule of thumb**: Use the minimum size that fits your data. Don't
 over-allocate.
 
-**Upper bound**: for the Standard profile at the production rank `R<13>`,
+**Upper bound**: for the Standard profile at the wallet rank `R<13>`,
 the largest header size is 201 elements. Ragu's challenge binder circuits
 load the headers of both children and the step's own beside the online
 openings, and at 201 the largest binder uses all 2048 gates. A larger header fails `finalize` with

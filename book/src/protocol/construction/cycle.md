@@ -11,8 +11,9 @@ two uses: commitments, endoscalars and the transcript.
 We write $\F_p$ and $\F_q$ for the two fields. $\E_p$ is the curve over $\F_p$
 whose scalar field is $\F_q$, and $\E_q$ is the curve over $\F_q$ whose scalar
 field is $\F_p$. For the Pasta cycle, $\F_p$ and $\F_q$ are the base and scalar
-fields of Pallas, $\E_p$ is Pallas and $\E_q$ is Vesta. The production rank is
-$13$, so $n = 2^{11}$ and a polynomial has $2^{13}$ coefficients.
+fields of Pallas, $\E_p$ is Pallas and $\E_q$ is Vesta. The wallet rank
+(`WalletRank`) is $13$, so $n = 2^{11}$ and a polynomial has $2^{13}$
+coefficients.
 
 An object over $\F_p$ is **native** and an object over $\F_q$ is **nested**. A
 subscript $q$ marks the nested counterpart of a native object, as in $m_q$,

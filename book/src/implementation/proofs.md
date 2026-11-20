@@ -141,8 +141,10 @@ configuration is installed, and every proof built on it then fails
 verification, so a stored proof must be keyed by what fixes it. Like every
 uncompressed proof it is not zero-knowledge: for a profile with an extension
 it holds the extension's polynomials over the prover context, so store it
-only if that context holds nothing confidential. The built-in profiles have no
-extension.
+only if that context holds nothing confidential. The bootstrap proofs of the
+built-in profiles reveal nothing: the standard profile has no extension, and
+the aggregator's extension computes over the bootstrap proof of the wallet
+application, which attests nothing.
 
 ### `fuse`
 
@@ -246,7 +248,11 @@ step is performed at certain boundary conditions for bandwidth
 reasons. For instance, in shielded transaction aggregation,
 broadcasting transaction data in compressed mode optimizes for
 bandwidth. A [compressed proof](../protocol/recursion/compression.md) is
-terminal: it can be verified but not folded further.
+terminal for the application that made it: it can be verified but not folded
+further. An application of the aggregator profile, which is unaudited and
+behind the `unstable-aggregator` feature, can
+[decompress](../protocol/recursion/decompression.md) a compressed proof of a
+standard application into a proof of its own, and fold that.
 
 ### Uncompressed (Split-Accumulation Form)
 

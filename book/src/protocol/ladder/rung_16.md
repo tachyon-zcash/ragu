@@ -46,7 +46,11 @@ The verifier's group arithmetic is dominated by one multiscalar multiplication
 of size $4n$ on each curve. Like the decider, it also evaluates the registry
 polynomials at the points the claims refer to. In the standard profile a
 compressed proof is terminal: it can be verified, and no step accepts it as a
-child.
+child. An application of the aggregator profile, which is unaudited and behind
+an unstable feature, can continue from one. Its
+[decompression](../recursion/decompression.md) checks this verifier's equations
+in circuits, with a compressed proof of a standard application as the witness,
+and produces a proof that a fuse accepts as a child.
 
 **Why it holds.** Item 2 restores the order of commitment and challenge for the
 statement itself. The decider drew $\tau_y$ after it was handed the header. Here
@@ -69,10 +73,14 @@ The batch is rungs [9](rung_09.md) and [10](rung_10.md), and the verifier
 rejects when its $u$ lands on an evaluation point. The inner product argument is
 where the opening job of [rung 2](rung_02.md) is finally done.
 
-The compression's challenges for the native curve are transcript outputs. Those
-for the nested curve are transcript outputs carried into $\F_q$ over a range of
-size $2^{254}$. The fuse's own challenges, which the verifier replays, keep the
-supports of [rung 11](rung_11.md).
+Every challenge of the compression is a lift, as the nested challenges of a
+fuse are: the low 143 bits of a transcript output, lifted into the scalar field
+of the curve that the challenge is used on. On either curve it ranges over
+$2^{143}$ values, and the verifier rejects a proof if a transcript output is
+$2^{254}$ or more. The verifier of this rung has no need of lifts. They are
+there for decompression, whose circuits multiply curve points by these
+challenges as the walks of [rung 11](rung_11.md) do. The fuse's own challenges,
+which the verifier replays, keep the supports of that rung.
 
 **Still owed.** Nothing. This is the acceptance procedure: `compress` and
 `verify_compressed`.
