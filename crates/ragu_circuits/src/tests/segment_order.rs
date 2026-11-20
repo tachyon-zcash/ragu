@@ -18,7 +18,7 @@ use udon::field::Field;
 
 use crate::{
     Circuit, WithAux,
-    polynomials::{WalletRank, Rank, TestRank},
+    polynomials::{Rank, TestRank, WalletRank},
     wiring::compiled::tests::{assert_matches_interpreted, assert_matches_interpreted_at},
 };
 

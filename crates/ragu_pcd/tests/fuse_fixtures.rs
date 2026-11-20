@@ -210,9 +210,8 @@ impl FixtureCycle for Profiled<Pasta, Aggregator<HEADER_SIZE>> {
     /// compressed proof is compressed under a fixed seed, so that the
     /// chunks every fuse runs over it are the same.
     fn build<B: SelectableBackend>() -> App<Self, B> {
-        let decompression =
-            Decompression::new(Pasta::build::<B>(), &mut Tape::record(seed(0xa66)))
-                .expect("the canonical decompression prepares");
+        let decompression = Decompression::new(Pasta::build::<B>(), &mut Tape::record(seed(0xa66)))
+            .expect("the canonical decompression prepares");
         steps(ApplicationBuilder::new())
             .finalize_with(crate::pasta::baked_aggregator(), decompression)
             .expect("the aggregator application must build")
