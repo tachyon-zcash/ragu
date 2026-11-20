@@ -59,13 +59,15 @@ result in a single step:
 
 ### Routines
 
-Because emulators are not involved in enforcing constraints, they short-circuit
-[routine](../routines.md) execution: if a routine can
+Because an emulator is not involved in enforcing constraints, a [`Wireless`]
+emulator short-circuits [routine](../routines.md) execution: if a routine can
 [predict](ragu_core::routines::Routine::predict) its output, the emulator skips
 [`execute`](ragu_core::routines::Routine::execute) entirely and returns the
-prediction. This contrasts with the [`Simulator`], which always executes even
-for known predictions, so the full routine body contributes to its gate and
-constraint counts and all constraints are enforced.
+prediction. A prediction carries no wires, so a [`Wired`] emulator, which
+tracks wire values, executes the routine body even when the output is
+predicted. The [`Simulator`] also always executes, so the full routine body
+contributes to its gate and constraint counts and all constraints are
+enforced.
 
 ### Wire Extraction {#wire-extraction}
 

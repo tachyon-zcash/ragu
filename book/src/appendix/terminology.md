@@ -6,26 +6,26 @@
 |---------|------|-----------|
 | Computation organized around a transition predicate; each step consumes prior instances and produces a new one | **Proof-carrying data (PCD)** | [Concepts: PCD](../concepts/pcd.md) |
 | Restricted PCD where each step consumes a single predecessor, forming a linear chain | **Incrementally verifiable computation (IVC)** | [Concepts: PCD](../concepts/pcd.md) |
-| Non-interactive argument with a succinct instance but potentially linear-size witness | **NARK** | [NARK chapter](../protocol/core/nark.md) |
+| Non-interactive argument with a succinct instance but potentially linear-size witness | **NARK** | [Appendix: SNARKs](snarks.md#narks) |
 | Succinct non-interactive argument of knowledge; the proof is much smaller than the computation and fast to verify | **SNARK** | [Appendix: SNARKs](snarks.md) |
-| Deferral of expensive verification by folding claims into an accumulator eventually checked by a decider | **Accumulation scheme** | [Accumulation](../protocol/core/accumulation/index.md) |
-| Accumulation variant separating the succinct instance from the linear-size witness | **Split accumulation** | [Accumulation](../protocol/core/accumulation/index.md) |
+| Deferral of expensive verification by folding claims into an accumulator eventually checked by a decider | **Accumulation scheme** | [Overview](../protocol/index.md#accumulation-and-folding) |
+| Accumulation variant separating the succinct instance from the linear-size witness | **Split accumulation** | [Overview](../protocol/index.md#accumulation-and-folding) |
 | Application-defined state carried through PCD steps; specifies the output gadget type | **Header** | [Concepts: PCD](../concepts/pcd.md) |
 | Discriminant allowing headers to be distinguished by semantic value | **Suffix** | [Concepts: PCD](../concepts/pcd.md) |
-| Final verifier that runs the deferred expensive check on accumulated claims | **Decider** | [Accumulation](../protocol/core/accumulation/index.md) |
+| Final verifier that runs the deferred expensive check on accumulated claims | **Decider** | [Decider](../protocol/construction/decider.md) |
 
 ## Arithmetization
 
 | Concept | Term | Reference |
 |---------|------|-----------|
-| Multiplication checks $\v{a}_i \cdot \v{b}_i = \v{c}_i$ and $\v{c}_i \cdot \v{d}_i = 0$ over four wires $(A, B, C, D)$ | **Gate** | [Arithmetization](../protocol/local/arithmetization.md) |
-| Fixed linear form on wires that must equal an instance value | **Constraint** | [Arithmetization](../protocol/local/arithmetization.md) |
-| Value a constraint requires a linear form to equal (zero or public input) | **Instance** | [Arithmetization](../protocol/local/arithmetization.md) |
-| Assignment of field values to wires satisfying all gates and constraints | **Witness** | [Arithmetization](../protocol/local/arithmetization.md) |
-| Assignment of field values to every wire, encoding as polynomial $r(X)$ | **Trace** | [Arithmetization](../protocol/local/arithmetization.md) |
-| Polynomial specified by four vectors $(\v{a}, \v{b}, \v{c}, \v{d})$ with the coefficient layout defined in the [arithmetization chapter](../protocol/local/arithmetization.md) | **Structured polynomial** | [Arithmetization](../protocol/local/arithmetization.md) |
-| Bivariate polynomial $s(X, Y)$ encoding all circuit constraints; fixed by the circuit definition | **Wiring polynomial** | [Wiring](../protocol/local/wiring.md) |
-| First gate; ensures the ONE wire equals 1 | **SYSTEM gate** | [Wiring](../protocol/local/wiring.md) |
+| Multiplication checks $\v{a}_i \cdot \v{b}_i = \v{c}_i$ and $\v{c}_i \cdot \v{d}_i = 0$ over four wires $(A, B, C, D)$ | **Gate** | [Arithmetization](../protocol/construction/arithmetization.md) |
+| Fixed linear form on wires that must equal an instance value | **Constraint** | [Arithmetization](../protocol/construction/arithmetization.md) |
+| Value a constraint requires a linear form to equal (zero or public input) | **Instance** | [Arithmetization](../protocol/construction/arithmetization.md) |
+| Assignment of field values to wires satisfying all gates and constraints | **Witness** | [Arithmetization](../protocol/construction/arithmetization.md) |
+| Assignment of field values to every wire, encoding as polynomial $r(X)$ | **Trace** | [Arithmetization](../protocol/construction/arithmetization.md) |
+| Polynomial specified by four vectors $(\v{a}, \v{b}, \v{c}, \v{d})$ with the coefficient layout defined in the [arithmetization chapter](../protocol/construction/arithmetization.md) | **Structured polynomial** | [Arithmetization](../protocol/construction/arithmetization.md) |
+| Bivariate polynomial $s(X, Y)$ encoding all circuit constraints; fixed by the circuit definition | **Wiring polynomial** | [Wiring](../protocol/construction/wiring.md) |
+| First gate; ensures the ONE wire equals 1 | **SYSTEM gate** | [Wiring](../protocol/construction/wiring.md) |
 
 ## Registry, Stage, and Circuit Terminology Mapping
 
@@ -47,7 +47,7 @@
 | Inner product | **Dot product** | $\dot{\v{a}}{\v{b}}$ |
 | Dot product with one vector reversed: $\dot{\v{a}}{\rv{b}}$ | **Revdot product** | $\revdot{\v{a}}{\v{b}}$ |
 | Reversed coefficient vector | **Reversal** | $\rv{p}$ |
-| Transformation $p(zX)$ via Hadamard product with powers of $z$ | **Dilation** | [Notation](../protocol/prelim/notation.md) |
+| Transformation $p(zX)$ via Hadamard product with powers of $z$ | **Dilation** | [Arithmetization](../protocol/construction/arithmetization.md) |
 
 ## Proof lifecycle
 

@@ -4,7 +4,7 @@
 
 The [`ragu_circuits`] crate turns arithmetic circuit definitions into
 polynomials. For the underlying protocol-level arithmetization see the
-[arithmetization chapter](../protocol/core/arithmetization.md); for the
+[arithmetization chapter](../protocol/construction/arithmetization.md); for the
 multi-stage extension layered on top see the
 [staging implementation](staging.md).
 
@@ -45,29 +45,32 @@ evaluation, metrics, and wiring evaluation without runtime branching.
 ## Witness Structure
 
 The prover's witness $\v{r}$ is defined by
-$\v{a}, \v{b}, \v{c} \in \F^n$, where $n = 2^k$. Individual elements of
+$\v{a}, \v{b}, \v{c}, \v{d} \in \F^n$, where $n = 2^k$. Individual elements of
 this witness are known as _wires_—specifically, _allocated_ wires, because
 the prover must commit to them and thus they exist at a cost. They are
 referred to as "wires," rather than "variables," because they principally
-behave as inputs and outputs to multiplication gates.
+behave as inputs and outputs to multiplication gates: gate $i$ enforces
+$\v{a}_i \v{b}_i = \v{c}_i$ and $\v{c}_i \v{d}_i = 0$.
 
 Ragu defines the witness $\v{r}$ as the concatenation
-$\v{c} || \v{\hat{b}} || \v{a} || \v{0^n}$, which is an example of a
-[structured vector](../protocol/prelim/structured_vectors.md).
+$\v{c} \| \rv{a} \| \v{b} \| \rv{d}$, where $\rv{x}$ is the reversal of
+$\v{x}$. It is the coefficient vector of a
+[structured polynomial](../protocol/construction/arithmetization.md).
 
 ### Virtual Wires
 
 The left-hand side of all constraints are linear combinations of
-elements within $\v{a}, \v{b}, \v{c}$. Any linear combination of wires can
-itself be considered a _virtual_ wire (as opposed to an allocated wire)
+elements within $\v{a}, \v{b}, \v{c}, \v{d}$. Any linear combination of wires
+can itself be considered a _virtual_ wire (as opposed to an allocated wire)
 which imposes no cost on the protocol.
 
 ### `ONE`
 
-Circuits always have the specially-labeled `ONE` wire $\v{c}_0 = 1$. This
-is enforced with the
-[constraint](../protocol/core/arithmetization.md#constraints)
-$\v{c}_0 = \v{k}_0 = 1$.
+Circuits always have the specially-labeled `ONE` wire $\v{d}_0 = 1$, which
+belongs to the
+[`SYSTEM` gate](../protocol/construction/wiring.md#system-gate). It is
+enforced by the constraint whose instance value is $\v{k}_0 = 1$. The gate
+equation $\v{c}_0 \v{d}_0 = 0$ then forces $\v{c}_0 = 0$.
 
 [`ragu_circuits`]: https://docs.rs/ragu_circuits/latest/ragu_circuits/
 [circuit-trait]: https://docs.rs/ragu_circuits/latest/ragu_circuits/trait.Circuit.html

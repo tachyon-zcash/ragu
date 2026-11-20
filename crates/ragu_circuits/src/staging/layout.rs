@@ -1,7 +1,7 @@
 //! Stage wire indices and their locations in rx polynomials.
 //!
-//! A stage's rx polynomial carries its values unblinded:
-//! [`StageExt::rx`](super::StageExt::rx) puts the blinding `alpha` at the
+//! A stage's rx polynomial carries its values as plain coefficients:
+//! [`StageExt::rx`](super::StageExt::rx) puts the `alpha` value at the
 //! SYSTEM gate alone and the values, two per gate, at the $a$ and $d$
 //! wires of the stage's reserved gates in allocation order. A value can be
 //! named by its reservation index (the order the stage's output gadget

@@ -5,10 +5,10 @@
 The diagram below shows the lifecycle of a Ragu proof. The user defines a
 circuit and witness, which are synthesized through the
 [`Driver`](../guide/drivers/index.md) API into a
-[Bootle16 constraint system](../protocol/core/arithmetization.md). Polynomial
-commitments are computed via the IPA scheme, and the proof passes through a
-sequence of stages. Finalizing an application builds its base proof once;
-seeding and fusing are then the same accumulation step over one or two
+[Bootle16 constraint system](../protocol/construction/arithmetization.md).
+Polynomial commitments are computed via the IPA scheme, and the proof passes
+through a sequence of stages. Finalizing an application builds its base proof
+once; seeding and fusing are then the same accumulation step over one or two
 existing proofs, alternating between curves in the Pasta cycle. A proof can be
 [compressed](../protocol/recursion/compression.md) at the end into a terminal
 succinct form.

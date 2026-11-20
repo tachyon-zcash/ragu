@@ -137,11 +137,17 @@ Headers are the data that flows through your proof tree. Each proof carries:
 
 ### Sizing Your Headers
 
+The last of the HEADER_SIZE elements is the header type's suffix, so the
+encoding that a header's `Output` writes can hold at most HEADER_SIZE − 1
+elements. A shorter encoding is padded with zeros up to the suffix. A longer
+one is rejected when the header is encoded, with
+`Error::MalformedEncoding`.
+
 The size depends on what data you need to track:
 
-**Simple hash (1 element)**:
+**Simple hash (1 element, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 1>::new()
+ApplicationBuilder::<Pasta, R<13>, 2>::new()
 
 struct MyHeader;
 impl Header<F> for MyHeader {
@@ -149,9 +155,9 @@ impl Header<F> for MyHeader {
 }
 ```
 
-**Merkle root + metadata (4 elements)**:
+**Merkle root + metadata (4 elements, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 4>::new()
+ApplicationBuilder::<Pasta, R<13>, 5>::new()
 
 struct MyHeader;
 impl Header<F> for MyHeader {
@@ -164,9 +170,9 @@ impl Header<F> for MyHeader {
 }
 ```
 
-**Complex state (8+ elements)**:
+**Complex state (8+ elements, plus the suffix)**:
 ```rust
-ApplicationBuilder::<Pasta, R<13>, 8>::new()
+ApplicationBuilder::<Pasta, R<13>, 9>::new()
 
 // Multiple values, counters, flags, etc.
 ```
@@ -201,13 +207,15 @@ for the selected profile and registered application.
 If you need to change HEADER_SIZE:
 
 1. Update `ApplicationBuilder` parameter
-2. Update all `Header::Output` types to match
+2. Check that every `Header::Output` type still writes at most
+   `NEW_SIZE - 1` elements
 3. Rebuild application:
    ```rust
    let app = ApplicationBuilder::<Pasta, R<13>, NEW_SIZE>::new()
    ```
 
-The type system will catch mismatches at compile time.
+The compiler does not check a header's size against HEADER_SIZE. An encoding
+that is too long fails at runtime, when the header is encoded.
 
 ## Complete Configuration Example
 
@@ -231,8 +239,8 @@ let app = ApplicationBuilder::<Pasta, R<13>, 4>::new()
 **Why these parameters?**
 - `Pasta`: Standard curve cycle for PCD
 - `R<13>`: 2,048 gates — enough for most steps
-- `4`: Four field elements per header - balance between flexibility and
-  performance
+- `4`: Four field elements per header, three of data and the suffix - balance
+  between flexibility and performance
 
 ## Registry Tags
 
@@ -240,8 +248,9 @@ Each of the application's two registries carries a registry tag $\kappa$: one
 field element, injected into every circuit's wiring polynomial at a reserved
 position. The tag exists so that whoever controls the circuit definitions
 cannot adapt them to Fiat-Shamir challenges that have already been derived; the
-[wiring chapter](../protocol/local/wiring.md) shows where it sits, and the
-`Tag` documentation in `ragu_circuits::registry` gives the argument.
+[wiring chapter](../protocol/construction/wiring.md#system-gate) shows where it
+sits, and the `Tag` documentation in `ragu_circuits::registry` gives the
+argument.
 
 `finalize` derives both tags from the registered circuits. Each wiring
 polynomial $s_i(X, Y)$ is written down as the list of its nonzero monomials
@@ -318,21 +327,28 @@ let prod_app = ApplicationBuilder::<Pasta, WalletRank, 8>::new()
 Proofs from different configurations are **not compatible** - they're
 entirely separate proof systems.
 
-### ✗ Header Size Mismatch
+### ✗ Header Too Large
 
 ```rust
-// Application configured for 4 elements
+// Application configured for 4 elements: 3 of data and the suffix
 ApplicationBuilder::<Pasta, R<13>, 4>::new()
 
-// But Header only provides 1!
+// But the header writes 4!
 impl Header<F> for MyHeader {
-    type Output = Kind![F; Element<'_, _>];  // Only 1 element
+    type Output = Kind![F; (
+        Element<'_, _>,
+        Element<'_, _>,
+        Element<'_, _>,
+        Element<'_, _>,
+    )];
 }
 ```
 
-**Error**: Type mismatch at compile time.
+**Error**: `MalformedEncoding` at runtime, when the header is encoded.
 
-**Fix**: Match HEADER_SIZE to your header's actual size.
+**Fix**: Raise HEADER_SIZE to at least one more than the number of elements
+that your largest header writes. A header that writes fewer is padded with
+zeros.
 
 ### ✗ Rank Too Small
 

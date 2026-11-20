@@ -98,7 +98,7 @@ impl<R: Rank> StageMask<R> {
     /// the SYSTEM gate (gate 0) and must be at least 1. Gate wires are
     /// enforced to zero for gates `1..skip_gates` and
     /// `(skip_gates + num_gates)..n`. The SYSTEM gate is not constrained
-    /// here because `a[0]` carries the alpha blinding factor and
+    /// here because `a[0]` carries the arbitrary `alpha` value and
     /// `d[0]` may or may not be set to 1; `b[0]` and `c[0]` are
     /// zero in all cases.
     ///

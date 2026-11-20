@@ -15,7 +15,7 @@ all four stages, including those that normally require named invocation.
 
 Run sequentially, in this exact order:
 
-1. **[fv-docs](../fv-docs/SKILL.md).** Read the authoritative in-tree FV pages
+1. **[fv-docs](../fv-docs/SKILL.md).** Read the authoritative FV pages
    relevant to the task. Ground the formalization and any prose edits in those
    definitions, keeping assumptions and coverage limits explicit.
 2. **[fv-review](../fv-review/SKILL.md).** Apply its reimplementation, interface,

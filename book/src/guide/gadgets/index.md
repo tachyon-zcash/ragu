@@ -78,8 +78,10 @@ gadget can cross thread boundaries safely. This almost always holds because
 gadgets usually contain only wires and witness data (which must be `Send` by
 the definition of [`Maybe<T: Send>`][maybe-trait]).
 
-When the driver's lifetime `'dr` is `'static`, the Rust type system also
-guarantees that the gadget itself is `'static`.
+A gadget's [kind](gadgetkind.md) is always `'static`. A gadget bound to a
+driver is `'static` when everything it stores is, and the `Gadget` trait does
+not promise that, even when the lifetime `'dr` is `'static`. Generic code that
+needs a `'static` gadget must require it as a bound.
 
 ### `num_wires`
 

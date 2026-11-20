@@ -59,13 +59,15 @@
 //! The [`floor_plan`] partitions the global constraint index space so that each
 //! segment owns a contiguous block of $Y$-powers (for constraints) and
 //! gate indices (for gates). If segment $i$ has constraint
-//! offset $\ell\_{i}$ and gate offset $m\_{i}$, then the $j$-th
-//! constraint emitted within that segment is placed at
+//! offset $\ell\_{i}$, constraint count $q\_{i}$ and gate offset $m\_{i}$,
+//! then the $j$-th constraint emitted within that segment is placed at
 //!
-//! $$Y^{\ell\_{i} + j}$$
+//! $$Y^{\ell\_{i} + q\_{i} - 1 - j}$$
 //!
-//! in $s(X, Y)$. Similarly, the $k$-th gate in segment $i$
-//! occupies absolute gate index $m\_{i} + k$.
+//! in $s(X, Y)$, counting $j$ from zero. Within its block, the first
+//! constraint that a segment emits takes the highest power, which is the
+//! order that Horner's rule in [`sxy`] produces. Similarly, the $k$-th gate in
+//! segment $i$ occupies absolute gate index $m\_{i} + k$.
 //!
 //! Because constraint emission interleaves a segment's own constraints with
 //! nested routine calls that belong to *separate* segments, the running
@@ -90,7 +92,7 @@
 //! [`Routine`]: ragu_core::routines::Routine
 //! [`enforce_zero`]: ragu_core::drivers::Driver::enforce_zero
 //! [`floor_plan`]: crate::floor_planner::floor_plan
-//! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/local/wiring.html
+//! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/construction/wiring.html
 
 pub mod monomials;
 pub mod sx;

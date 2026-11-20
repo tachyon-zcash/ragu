@@ -24,11 +24,13 @@ $\v{a}=(a_1, a_2), \v{b}=(b_1,b_2), \v{c}=(c_1, c_2)$,
 the circuit above necessitates the following checks:
 
 - $\v{a}_i \cdot \v{b}_i = \v{c}_i$ for $i\in[2]$
-- $\v{a}_2=4\v{b}_1+\v{c}_1 \land \v{b}_2=4\v{b}_1 \land \v{c}_2=\v{k}_1$: 
-this translates to 3 constraint checks, 2 for circuit wiring, 1 for public input:
-  - $\v{u}_1=(0, 1), \v{v}_1=(-4, 0), \v{w}_1=(0, -1), \v{k}_1=0$
+- $\v{a}_2=4\v{b}_1+\v{c}_1 \land \v{b}_2=4\v{b}_1 \land \v{c}_2=x_1$:
+this translates to 3 constraint checks of the form
+$\dot{\v{u}_j}{\v{a}} + \dot{\v{v}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}} = \v{k}_j$,
+2 for circuit wiring, 1 for public input:
+  - $\v{u}_1=(0, 1), \v{v}_1=(-4, 0), \v{w}_1=(-1, 0), \v{k}_1=0$
   - $\v{u}_2=(0, 0), \v{v}_2=(4, -1), \v{w}_2=(0, 0), \v{k}_2=0$
-  - $\v{u}_3=(0, 0), \v{v}_3=(4, -1), \v{w}_3=(0, 1), \v{k}_3=x_1$
+  - $\v{u}_3=(0, 0), \v{v}_3=(0, 0), \v{w}_3=(0, 1), \v{k}_3=x_1$
 
 Recall that in the standard R1CS, there exists a vector
 $\v{z}=(1, \v{x}, \v{w})$
@@ -67,41 +69,38 @@ equally powerful. Here we provide a generic transformation from Bootle16 to
 R1CS,
 and provide hints for the other direction.
 
-Given the Bootle16 CS, let $\v{z}=(\v{a}\|\v{b}\|\v{c}\|\v{k})$, ignoring
-padding issues, then define matrices $A, B, C\in\F^{(n+q)\times (3n+q)}$as:
+Given a Bootle16 CS with $n$ gates and $q$ constraints, let
+$\v{z}=(1\|\v{k}\|\v{a}\|\v{b}\|\v{c})$, ignoring padding issues. Its first
+entry is the constant one and its next $q$ entries are public, as in
+$\v{z}=(1, \v{x}, \v{w})$ above. Let $U, V, W\in\F^{q\times n}$ be the matrices
+whose $j$-th rows are $\v{u}_j$, $\v{v}_j$ and $\v{w}_j$. Then define matrices
+$A, B, C\in\F^{(n+q)\times (1+q+3n)}$ in blocks, with one column for the
+constant and one block of columns for each of $\v{k}$, $\v{a}$, $\v{b}$ and
+$\v{c}$:
 
 $$
 A=\begin{bmatrix}
-   (1,0,\ldots) & \v{0} & \v{0} & \v{0}\\
-   (0,1,\ldots) & \v{0} & \v{0} & \v{0}\\
-   &&\ldots\\
-   \v{u}_0 & \v{0} & \v{0} & (-1,0,\ldots)\\
-   \v{u}_1 & \v{0} & \v{0} & (0,-1,\ldots)\\
-   &&\ldots
+   \v{0} & 0 & I_n & 0 & 0\\
+   \v{0} & -I_q & U & V & W
 \end{bmatrix}
-,
+,\quad
 B = \begin{bmatrix}
-   \v{0} & (1,0,\ldots) & \v{0} & \v{0}\\
-   \v{0} & (0,1,\ldots) & \v{0} & \v{0}\\
-   &\ldots\\
-   \v{0} & \v{v}_0 & \v{0} & \v{0}\\
-   \v{0} & \v{v}_1 & \v{0} & \v{0}\\
-   &\ldots
+   \v{0} & 0 & 0 & I_n & 0\\
+   \v{1} & 0 & 0 & 0 & 0
 \end{bmatrix}
-,
+,\quad
 C = \begin{bmatrix}
-   \v{0} & \v{0} & (1,0,\ldots) & \v{0}\\
-   \v{0} & \v{0} & (0,1,\ldots) & \v{0}\\
-   &&\ldots\\
-   \v{0} & \v{0} & \v{w}_0 & \v{0}\\
-   \v{0} & \v{0} & \v{w}_1 & \v{0}\\
-   &&\ldots
+   \v{0} & 0 & 0 & 0 & I_n\\
+   \v{0} & 0 & 0 & 0 & 0
 \end{bmatrix}
 $$
 
-It's not hard to verify yourself that the first $n$ rows enforce the gate
-equations, and the last $q$ enforce the constraints.
-This transformation is perfectly complete and sound, but usually wasteful.
+The first $n$ rows enforce the gate equations
+$\v{a}_i \cdot \v{b}_i = \v{c}_i$. Each of the last $q$ rows multiplies
+$\dot{\v{u}_j}{\v{a}} + \dot{\v{v}_j}{\v{b}} + \dot{\v{w}_j}{\v{c}} - \v{k}_j$
+by the constant one and requires the product to be zero, which is the $j$-th
+constraint. This transformation is perfectly complete and sound, but usually
+wasteful.
 
 Now, to see the connection from the other direction (R1CS to Bootle16),
 let $\v{z}_A = Az, \v{z}_B=Bz, \v{z}_C=Cz$, since the final

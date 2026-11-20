@@ -212,7 +212,7 @@ using a dedicated rerandomization step.
 ## Unified Accumulator Structure
 
 Ragu uses an
-_[accumulation scheme](../protocol/core/accumulation/index.md)_
+_[accumulation scheme](../protocol/construction/index.md)_
 (similar to [Halo]) to achieve efficient recursion. Rather than fully
 verifying each child proof inside the circuit,
 proofs are _folded_ together deferring expensive verification work while
@@ -280,6 +280,6 @@ For deeper background, see
 
 The `Proof` type contains the cryptographic data required for
 verification, organized into components that mirror the protocol's
-[staging system](../protocol/extensions/staging.md). Each proof
+[staging system](../protocol/construction/staging.md). Each proof
 component captures polynomials and commitments on both the host and
 nested curves.
