@@ -20,10 +20,22 @@ registry's evaluations are opened under.
 rank $K$ and the aggregator rank $R > K$, and generators of both curves at
 rank $R$, of which the wallet's tables are a prefix.
 
+`Application::decompress` runs the wallet's verifier on $\pi$ first and refuses
+a proof it rejects, before proving anything.
+
+The decompressing step takes the unit header for both inputs, so it fuses two
+bootstrap proofs as a seed does, and takes the wallet proof's header data as
+its witness, with the output suffix a witness held away from `Dummy` and from
+zero. The aggregator registers, at each suffix the wallet's steps output, the
+wallet's own header type, and those headers must leave both online slots to
+padding: a decompressed proof's first slot holds the host IPA's $s(X)$ and its
+last is padding. `finalize_with` checks both.
+
 On each side of the cycle, the checks are cut into chunks that pack into
 chunk circuits at rank $R$. A chunk loads the stages it needs, reads earlier
-chunks' results from a work stage and leaves its own there; a stage is one
-commitment every chunk loads, so later chunks read what earlier ones wrote.
+chunks' results from a work stage and leaves its own there; the work stage is
+one commitment every chunk loads, so later chunks read what earlier ones
+wrote.
 
 ## 1. Compressed proof → stages
 
@@ -44,7 +56,8 @@ witness every chunk loads. [instance] and [messages] are host-curve
 commitments to circuit-field polynomials; $[\mathrm{run}_1], \ldots, [\mathrm{run}_m]$ and [trailing]
 are nested-curve commitments to scalar-field polynomials, a run being a
 stretch of scalar-field values that compression committed as one point
-before a challenge.
+before a challenge. [instance] also holds the output header the chunks verify
+$\pi$ against and the step binding that the statement claim reads (phase 4).
 
 **Output:** every value of $\pi$ as a stage wire, on the side whose field
 holds it.
@@ -63,9 +76,10 @@ sequenceDiagram
     Note over V: Hold each lift to [lifts]<br/>Native side recomputes this [lifts]<br/>from the squeezed bits
 ```
 
-The circuit-field side follows the native verifier's absorption order, first
-over the instance's bridge commitments and then over the compression
-messages, absorbing each $[\mathrm{run}_i]$ at the corresponding position.
+The circuit-field side follows the native verifier's absorption order: the
+fuse's transcript over the instance's bridge commitments, then the
+compression's over the instance, the output header and the messages,
+absorbing each $[\mathrm{run}_i]$ at the corresponding position.
 The honest prover leaves each run stage's unused coefficients at zero to
 match the commitment `verify_compressed` computes from the run values.
 The mask permits other coefficients in those slots, and the circuit absorbs
@@ -73,12 +87,12 @@ the full stage commitment, so the same proof fields can lead to different
 challenges.
 
 Every challenge is squeezed as an endoscalar, 143 bits that either field reads
-as a scalar, its *lift*. The lift into the circuit field goes to this side's
-[lifts] for its field checks; [transcript] carries the sponge state between
-transcript chunks.
+as a scalar, its *lift*. The lifts into the circuit field of the host curve's
+challenges, whose field checks this side makes, go to this side's [lifts];
+[transcript] carries the sponge state between transcript chunks.
 
 The nested side has no transcript. Every challenge it uses, the nested
-curve's, the host curve's and Fuse's $x$, $y$ and $u$, enters as 143 witness
+curve's, the host curve's and Fuse's $x$, $y$, $u$ and $w$, enters as 143 witness
 bits, lifted into the scalar field and held to its [lifts], so every chunk
 reads the same bits. The native side recomputes that commitment by
 endoscaling its generators by the bits it squeezed, and phase 4 holds the two
@@ -112,8 +126,11 @@ two agree. The field arithmetic recomputes the targets, the fold, the split,
 the batch and the IPA's scalars, with inverses as advised witnesses; the
 point arithmetic derives the fold's commitments, batches them into $[H]$ and
 folds $[H]$ through the IPA's rounds to a final multi-scalar multiplication
-that must equal the identity. Every point a side took from P is held to its
-curve before a chain uses it. The native side also recomputes Fuse's
+that must equal the identity. Each $u_j^{-1} L_j$ is a witness point that
+$u_j$ scales back to $L_j$, and the final check's full-width scalars $v$, $c$
+and $c\,b\,z$ scale their points through the other side's digits. The chunks load their stages unenforced, so one
+chunk per side holds every point the side took from P to its curve. The
+native side also recomputes Fuse's
 challenge and AB-bridge stages and holds them to the instance's commitments.
 Two inputs are not arithmetic over $\pi$, and the step that proves the
 chunks binds them (see *Registry evaluations and $G'$*): the registry's
@@ -140,15 +157,26 @@ sequenceDiagram
 **Three $k(y)$ claims,** folded by the consuming fuse and checked by the
 decider:
 
-- **Statement:** the decompressing step's output header equals the header in
-  [instance], the one the chunks verified $\pi$ against. The claim also
-  carries the step binding below; a step folds its own application claim, so
-  it exports the two openings the binding reads beside its output header, in
-  `hashes_1`'s instance.
-- **Binding,** one claim per side: every point a side took from the other as
-  a witness, the absorbed run commitments and each side's recomputation of
-  the other's [lifts] and [digits], equals the stage commitment the proof
-  carries.
+- **Statement:** in a proof of the decompressing step, that step's output
+  header equals the header in [instance], the one the chunks verified $\pi$
+  against; in a proof of any other step, the target is the canonical
+  compressed proof's statement, the unit header with a zero step binding. The
+  claim also carries the step binding below: a flag, one only for the
+  decompressing step, the point and value at which that step opened its first
+  output slot, and the point at which it opened its left input's first slot,
+  the transcript digest it staged. A step folds its own application claim, so
+  its `hashes_1` exports the last three after its output header and index.
+- **Binding,** one claim per side: what a side took from the other, or from
+  the step's own online polynomials, equals the commitment the proof
+  carries. The circuit-field side exposes the run commitments its transcript
+  absorbed, its recomputations of the scalar-field side's [lifts] and
+  [digits], and the nested IPA's $G'$, held to the step's online $\F_q$
+  commitment. The scalar-field side exposes its recomputation of the
+  circuit-field side's [digits], a point held to the step's first output
+  slot, which it holds the host IPA's $G'$ to under the flag, and the opening
+  of the step's online $\F_q$ polynomial that its nested `compute_v` folded.
+  The flag reaches the scalar-field side as a digit of the circuit-field
+  side's [digits].
 
 Each absorbed run commitment binds the values the chunks read before the
 next challenge. Soundness for the wallet header must account for adaptive
@@ -174,14 +202,17 @@ values the wire bindings expect. The chunks read these evaluations from
 - **Nine restrictions.** Every evaluation is a value of one of nine
   restrictions $m(W, a, b)$ of the registry, on each field. The step
   commits the nine before its challenge $w$, with their coordinates and the
-  points they are read at in its online input stage, and claims each
+  points they are read at, other than the internal circuits' fixed domain
+  points, in its online input stage, and claims each
   evaluation as an opening whose value is a wire of its online query stage.
-  Every chunk circuit loads the two stages first, as the fuse's helper
-  does, so the chunks read the wires the fuse committed.
+  Every circuit of the extension, the statement and binding circuits
+  included, loads the two stages first, as the fuse's helper does, so the
+  chunks read the wires the fuse committed.
 - **The coordinates.** The chunks hold the input stage's coordinates and
   points to the values they derive from $\pi$: the lifts of its
   compression's challenges, its fuse's challenges, its children's values
-  and its circuits' domain points. The stage is committed before $w$, so
+  and, on the circuit-field side, its own circuit's domain point. The stage
+  is committed before $w$, so
   the restrictions are fixed before the challenges that test them.
 - **The registry.** The step's fuse batches the openings into its
   accumulator, as it does an application's, and its

@@ -17,7 +17,9 @@ is the endoscalar lift of a squeeze, as Fuse's challenges are: the
 squeeze's low 143 bits read as an endoscalar and lifted into the scalar field
 of the curve the challenge serves, so that a circuit over the other field can
 scale that curve's points by it. A squeeze outside the endoscalar range
-rejects the proof. Each identity a challenge checks is a nonzero polynomial
+rejects the proof, and so does absorbing a point at infinity, including a
+run whose commitment is the identity. Each identity a challenge checks is a
+nonzero polynomial
 in it of degree at most $2D$, with $D = 2^k$ the rank, the largest being a
 product of two polynomials of degree below $D$, so a lift drawn from
 $2^{143}$ values satisfies it with probability at most $2D / 2^{143}$.
@@ -35,11 +37,25 @@ sequenceDiagram
     participant V as Verifier
     Note over P: Circuit id, commitments,<br/>claimed scalars
     P->>V: Instance (both curves)
-    Note over V: Check lengths and circuit domain<br/>Replay Fuse and range-check pre_beta<br/>Check nested challenge and<br/>AB-bridge stage commitments
+    Note over V: Check lengths and circuit domain<br/>Replay Fuse and range-check its nine challenges<br/>Check nested challenge and<br/>AB-bridge stage commitments<br/>Absorb the instance, then the output header
     V->>P: Native w, y, z, σ
     V->>P: Nested w, y, z, σ
     Note over V: Derive ordered claims and targets<br/>from instance and public computations
 ```
+
+On each curve, $w$ is the point at which phase 2 opens the registry
+restriction, $y$ and $z$ are the claims' challenges, and $\sigma$ combines the
+wires of one stage into one selected-wire relation
+$\operatorname{revdot}(Q - E, M) = 0$, with $E = \sum_j e_j X^{d_j}$ the
+expected wire values and $M = \sum_j \sigma^j X^{D-1-d_j}$. This $\sigma$ is not
+the base-case sign of the [construction](../construction/base_case.md).
+
+Before compressing, P refuses $\pi$ if its shape is malformed, its circuit
+index is outside the registry's domain, the replayed fuse transcript draws
+$\text{pre\_beta} \ge 2^{254}$ or other challenges than $\pi$ stores, or its
+online polynomials differ from their commitments. Under the aggregator
+profile P also refuses $\pi$ if a retained source restriction differs from
+the commitment of its outgoing slot.
 
 **Output:** circuit, bonding, accumulator, and selected-wire relations
 $\operatorname{revdot}(a_i,b_i)=k_i$, described by commitments and public terms.
@@ -100,13 +116,21 @@ $$
 $p(0)=K+\rho\varepsilon_1+\rho^2\varepsilon_2$, whose required value V derives.
 V also adds the registry restriction at $w$ and Fuse's $P,A,B$ at replayed
 $u_{\rm Fuse}$, with values from the registry or instance.
+Under the aggregator profile V then adds the
+[source mesh's terminal claims](../poly-oracle.md#v6-terminal) on the step's
+online commitments: both ends of every intersection, with points and values
+from Fuse's challenges and the instance, and the outgoing restriction at $w$,
+whose value $m(w, x, y)$ at Fuse's $x$ and $y$, lifted on the nested curve, V
+evaluates from the source registry.
 These openings still require verification.
 
 ## 3. Opening claims → one batched opening
 
 **Input:** $m>0$ claims $h_{i_j}(x_j)=y_j$ over $n>0$ commitment entries.
-Polynomial order is $A_c,T,B_c,E_1,E_2,p,q$, registry, then Fuse's $P,A,B$;
-the second query of $p$ reuses its index.
+Polynomial order is $A_c,T,B_c,E_1,E_2,p,q$, registry, then Fuse's $P,A,B$,
+then under the aggregator profile the mesh's online polynomials in slot
+order; the second query of $p$ reuses its index. P and V reject two claims on one
+polynomial at one point with different values.
 
 ```mermaid
 sequenceDiagram
@@ -135,4 +159,22 @@ $$
 **Output:** one opening claim $([H],u,v)$.
 
 P and V then run an IPA to verify that $[H]$ commits to a polynomial with
-$H(u)=v$.
+$H(u)=v$. It is halo2's argument without blinding, over $k$ rounds:
+
+- P sends $[\tilde{h}]$ for a random $\tilde{h}$ with $\tilde{h}(u) = 0$; V
+  sends $\xi$ and $z_{\rm IPA}$.
+- In round $j < k$, P sends $L_j$ and $R_j$, the commitments of the cross
+  terms of the halves of $H - v + \xi \tilde{h}$, each plus $z_{\rm IPA}$
+  times the matching inner product with the powers of $u$ at $U$; V sends a
+  nonzero round challenge $u_j$, a different value from the batch point $u$.
+- P sends the folded coefficient $c$.
+
+V accepts when
+
+$$
+[H] - v\,G_0 + \xi[\tilde{h}] + \sum_{j<k}\bigl(u_j^{-1}L_j + u_jR_j\bigr)
+= c\,G' + c\,b\,z_{\rm IPA}\,U,
+$$
+
+with $b = \prod_{i<k}(1 + u_{k-1-i}\,u^{2^i})$ and $G' = [s]$ for
+$s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$.
