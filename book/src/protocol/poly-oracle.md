@@ -105,6 +105,15 @@ While it suffices for the majority of Tachyon's [current steps](https://github.c
 
 ## Mental Model: Ragu's Internal {#ragu}
 
+This model starts from Ragu as of the [commit the design builds on](#design),
+in which a step's parent folds its application trace. Ragu has since adopted
+the variant at the end of this section: the step folds its own application
+trace and stage. Its native `Preamble` holds the six opening pairs, its
+`collapse` computes the application's $k(y)$ over those wires, its
+`compute_v` reads the same wires for the batch, and the parent folds those
+circuits' claims from the step's frontier. The [Fuse PIOP](iop.md) gives the
+implemented rule.
+
 ```mermaid
 flowchart TB
     subgraph A["step A"]
@@ -174,15 +183,15 @@ Effectively, by bridging through public instance, headers are copy-constrained i
 Concretely, the public instance of `hashes_1` internal circuit from the `S.fold` side is `[unified_S, fold.L, fold.R, 0, 1]`; while the public instance of `S.app` is `[app.L, app.R, app.O]`.
 Then in `T.fold`, when we fold the revdot claims, we ensure the `ky` computation for `S.hashes_1` and `S.app` use the same value in the slot of `fold.L/R` and `app.L/R`.
 
-An interesting direction Ragu might consider is directly folding `S.app` in `S.fold`, as [proposed here](https://github.com/tachyon-zcash/ragu/issues/943) (you can view the cost reduction in the [draft PR](https://github.com/tachyon-zcash/ragu/pull/946)).
-In this variant, we will witness the `app_S_rx` through its bridged commitment before drawing challenge `y,z` inside the `S.fold` circuit.
+Ragu now takes the direction of directly folding `S.app` in `S.fold`, as [proposed here](https://github.com/tachyon-zcash/ragu/issues/943) (you can view the cost reduction in the [draft PR](https://github.com/tachyon-zcash/ragu/pull/946)).
+In this variant, `S.fold` witnesses `app_S_rx` through its bridged commitment before drawing the challenges `y,z`.
 
 Interestingly, the second half `S.fold.L/R = S.app.L/R` becomes easy: `S.fold` now computes `S.app`'s `ky` itself, from the `L/R` wires in its own `Preamble` stage, so the match is made inside `S` and nothing needs to be exported for it.
 
 In contrast, matching output `A/B.app.O = S.fold.L/R` becomes the cross-circuit copy-constraint.
 Because `fold` and `app`'s trace are prepared in the same step, the verification/folding circuit for `app`'s output is only in the next step.
 This requires the public instance of `hashes_1` to be `[unified_S, fold.O, id_S, 0, 1]` (the parent also loses the child's `circuit_id`, which the `Aggregator`'s statement `ky` reads, so it is exported too); that of `S.app` stays as `[app.L, app.R, app.O]`.
-Then, in step `T.fold`, again during `ky` computation, we ensure the slot `hashes_1.fold.O` and `S_app.O` uses the same value.
+`S.fold` already holds `S.app.O` to its own `Preamble` wires, which `hashes_1` exports as `fold.O`; then, in step `T.fold`, the `ky` of `S`'s `hashes_1` takes `T`'s preamble copy of `S`'s output header, so `T.fold.L = S.fold.O = S.app.O`.
 Note: the cost of header-carry check decreased as we only need to carry the output header in the public instance (a.k.a. `unified_bridge_ky`) instead of both left and right headers.
 
 We pedantically explain this variant here because it's highly relevant in our decision to fold polynomial queries within the same step rather than deferring it.
@@ -374,7 +383,7 @@ To avoid overcrowding the registry, we enforce a universal, max size at `registr
 In practice, Tachyon's current proof tree only needs degree-$1$ private polynomials: only a single-element stage is needed.
 
 The stage is not a type-level stage of the step circuit: every step circuit reserves $\lceil K/2 \rceil$ gates after the SYSTEM gate for the largest staged count $K$, the committed stage polynomial supplies those wires, and the two bonding polynomials hold the stage to its block and the step's own trace to zero there.
-The step binds its staged values to the first wires of the block; its trace is folded in the parent as before, together with the stage.
+The step binds its staged values to the first wires of the block; its trace is folded in the parent as before, together with the stage, until [v4](#v4) moves both folds into `S` itself and drops the stage's export.
 The extra revdot claims are few, and they fit into the buffer of the native `inner_error`, `outer_error`, and `compute_v` stage.
 
 ### V4: fusing poly queries at current step {#v4}
@@ -385,7 +394,7 @@ The extra revdot claims are few, and they fit into the buffer of the native `inn
 Recall in [v1](#v1), the app circuit can "claim" some challenge received, use it to synthesize the trace which gets copy-constrained in the next folding step.
 Similarly, the second app stage can claim some evaluations of the online polynomials.
 The validity of these evaluation claims is verified separately as the validity of the circuit trace `app_rx` which takes $(x_i, y_i)$ as input.
-The validity of the app trace is exactly as [the last variant](#v3): folded by the step itself, whereas the evaluation claims piggyback on the native `Query/Eval` stages to be folded into the accumulator during `compute_v` circuit.
+The app trace and its stage are folded by the step itself, the variant at the end of the [mental model](#ragu), whereas the evaluation claims piggyback on the native `Query/Eval` stages to be folded into the accumulator during `compute_v` circuit.
 To connect the claims across these two validity checks, we need to further extend the public instance $k(Y)$ to Horner over:
 
 ```
@@ -398,7 +407,7 @@ Solutions for them either involve specifying a $(idx_i, x_i, y_i)$ where $idx_i$
 or a wasteful max-$q$ queries per poly with a system parameter $q$.
 As we explained [before](#changes), this capability is sufficient for Tachyon's proof tree post minor adjustment.
 
-The only decision left is whether we should fold these evaluation claims in the parent step as is with `app_rx`, or in the current step?
+The only decision left is whether we should fold these evaluation claims in the parent step or in the current step, where `app_rx` is folded?
 Recalling our [earlier discussion](#ragu) of "folding `S.app` in `S.fold`" concludes that folding `app_rx` in the same step leads to saving.
 Analogously, we decide to fold poly query claims in the same step.
 
@@ -427,22 +436,26 @@ After:
 
      ERROR           APP           QUERY        NESTED
 
-   Preamble      AppStage                   BridgeHash (copy of O1, not absorbed)
-       │              │                           │
-       │              │                    Preamble (witness L0,L1,R0,R1,O0,O1, app_stage_comm)
-       │              │                           │
+                 AppStage                   BridgeHash (copy of O1, not absorbed)
+                      │                           │
+                      │                    Preamble (witness L0,L1,R0,R1,O0,O1, app_stage_comm)
+                      │                           │
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   w  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-       │              │                           │
-       │         Application                      │
-       │       (claims x_i, y_i)                  │
+                      │                           │
+                 Application                      │
+               (claims x_i, y_i)                  │
+                                                  │
+   Preamble (+ x_i, y_i)                          │
        │                                          │
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  y, z  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+                                  ⋮
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   x  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
-                             Query (+ x_i, y_i)
+                             Query
 ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─   u  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
                              Eval (+ f_i(u))
 ```
 
-`Application` is the native trace synthesized by `Step::witness` and folded in the parent, as in [v3](#v3); only its opening claims are folded here.
+`Application` is the native trace synthesized by `Step::witness`. `S` folds it and the application stage itself, together with its opening claims. The parent folds `S`'s accumulator, the claims of `S`'s internal circuits from its frontier and the bonding claims over `S`'s polynomials, but not `Application`.
 
 ### V5: an online $\F_q$ polynomial for the nested `compute_v` {#v5}
 
@@ -472,7 +485,7 @@ Swapping the fields swaps every role of the $\F_p$ slots:
 | slots per step | 6, `[L0, L1, R0, R1, O0, O1]` | `ONLINE_FQ_POLYS` slots, at most 1 |
 
 The difference that matters is the claimant.
-In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through a public instance: the application's $k(y)$, matched against `compute_v`'s export in the parent.
+In v4 the circuit that uses an opening (the application) and the circuit that folds it (`compute_v`) are different circuits, so the pair $(x_i, y_i)$ crosses between them through `S`'s native `Preamble` stage: `S`'s `collapse` computes the application's $k(y)$ over the pair's wires and `S`'s `compute_v` reads the same wires, and the parent later folds both circuits' claims from `S`'s frontier.
 Here the claimant is `compute_v` itself, which reads $y_q$ from the `Query` stage it folds and takes the point $\zeta_q$ from its challenge stage.
 The pair never leaves the step's stages, so no instance changes, no $k(y)$ is added, and `MultiStageCircuit` needs no oracle input.
 The commitment needs no copy either: the native walk folds $\cm_{f_q}$ into $P_n$, the point the nested batch's opening is checked against, which is how the two sides already agree on every point the step commits.

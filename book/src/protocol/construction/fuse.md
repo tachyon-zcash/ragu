@@ -16,6 +16,9 @@ commitment is computed from its polynomial unless stated otherwise.
 
 ## Procedure {#procedure}
 
+For the prover's messages, transcript challenges, and verifier checks on both
+curves, see the [detailed Fuse PIOP](../iop.md).
+
 ### Before the First Round {#fuse-start}
 
 1. Reject unless both children are [well formed](proof.md#stored-derived).
@@ -26,8 +29,11 @@ commitment is computed from its polynomial unless stated otherwise.
 
 3. Set `circuit_id` to the step's registry index, $\text{hdr}_L$ to
    $\text{hdr}(\delta^{(0)})$ and $\text{hdr}_R$ to $\text{hdr}(\delta^{(1)})$.
-4. Run the step's first phase to obtain $o_0$, $o_1$ and the staged values. Set
-   $r[\texttt{ApplicationStage}]$ to the stage of the staged values.
+4. Run the step's first phase to obtain $o_0$, $o_1$ and the staged values.
+   Reject if either online polynomial is zero or has more than $4n$
+   coefficients, or if the step stages other than the number of values it
+   declares. Set $r[\texttt{ApplicationStage}]$ to the stage of the staged
+   values.
 5. Set $r[\texttt{PointsBinding}]$ and $r[\texttt{PointsPreamble}]$ to the
    stages of the children's nested commitments: $14$ per child in the first and
    $33$ per child in the second.
