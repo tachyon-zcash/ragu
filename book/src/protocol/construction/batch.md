@@ -9,8 +9,9 @@ side gathers its claims into one polynomial $p$ opened at one point.
 
 A side has $Q$ **openings** $(\phi_i, \rho_i, \vartheta_i)$, each claiming
 $\phi_i(\rho_i) = \vartheta_i$, and $J$ **batched polynomials**
-$\psi_0, \dots, \psi_{J-1}$, which are the polynomials that the openings
-name, each listed once. An opening holds exactly when
+$\psi_0, \dots, \psi_{J-1}$: the polynomials that the openings name, each
+listed once, and one [more](#batch-randomizer) that no opening names. An
+opening holds exactly when
 $\phi_i(X) - \vartheta_i$ is divisible by $X - \rho_i$. The prover combines
 the $Q$ quotients into one polynomial $f$ with powers of a challenge $\alpha$,
 and combines $f$ with the batched polynomials into one polynomial $p$ with
@@ -80,14 +81,14 @@ that is alone at its point holds for every nonzero $\alpha_q$.
     $Q - 1$ whose coefficients, the differences $\phi_i(\rho_i) - \vartheta_i$,
     are fixed before $\alpha$ when every opening is, and it is nonzero when an
     opening at $\rho$ is false. On the native side $S_\alpha$ and $S_u$ are the
-    field, and $D$ is at most $70$. On the nested side they have $2^{143}$
-    elements, and $D$ is at most $56$. $S_\beta$ has $2^{143}$ elements on both
+    field, and $D$ is at most $72$. On the nested side they have $2^{143}$
+    elements, and $D$ is at most $58$. $S_\beta$ has $2^{143}$ elements on both
     sides, since $\beta$ and $\beta_q$ are lifts of one endoscalar.
 
 | | Native | Nested |
 |---|---|---|
-| $Q$ | 172 | 150 |
-| $J$ | 114 | 100 |
+| $Q$ | 180 | 158 |
+| $J$ | 121 | 107 |
 | $\alpha$, $u$ | $\alpha$, $u$ | $\alpha_q$, $u_q$ |
 | $\beta$ | $\text{lift}_p(\text{endo}(\text{pre\_beta}))$ | $\beta_q = \text{lift}_q(\text{endo}(\text{pre\_beta}))$ |
 | claimed values $\vartheta_i$ in | `query` stage | `BridgeQuery` stage |
@@ -97,19 +98,36 @@ that is alone at its point holds for every nonzero $\alpha_q$.
 $f$ and $f_q$ are committed as they are: neither is a trace, and no coefficient
 of either is drawn at random.
 
+### Batch Randomizer {#batch-randomizer}
+
+A proof stores $p$ in full. Without a term of its own, $p$ would be a fixed
+combination of $f$ and the polynomials that the openings name. One batched
+polynomial is therefore the **batch randomizer** $p_\star$, whose coefficients
+the prover draws uniformly at random and which no opening names. It enters $p$
+with a power of $\beta$ as its scalar, so $p$ is uniformly random when $\beta$
+is nonzero. The nested side has its own, $p_{q,\star}$.
+
+The batch treats $p_\star$ as it treats every other batched polynomial: its
+commitment is fixed before $u$, with $[f]$, and its evaluation at $u$ is among
+the $\epsilon_j$. The bound above counts it in $J$.
+
+Like the [fold randomizers](claims.md#randomizer), the batch randomizer
+conceals nothing from an observer who knows the other batched polynomials:
+$f$ is a function of them, and subtracting them from $p$ leaves $p_\star$.
+
 ## Native Openings {#native-openings}
 
-The $172$ native openings fall into five groups, by what they establish.
+The $180$ native openings fall into five groups, by what they establish.
 
 - Openings $0$ and $1$ are the children's own batched openings.
 - Openings $2$ to $12$ are the [registry chain](#registry-chain) and the value
   of the registry at the fuse's own step circuit.
-- Openings $13$ to $112$ concern $A$, $B$, the children's $A^{(i)}$ and
-  $B^{(i)}$, the two polynomials of the step circuit's trace and every rx
-  polynomial of the children, at $xz$ or $x$. The circuit [recomputes](#ax-bx)
-  the values of $A$ and $B$ from the others.
-- Openings $113$ to $165$ read the registry at the fixed domain points.
-- Openings $166$ to $171$ are the online openings of the step.
+- Openings $13$ to $118$ concern $A$, $B$, the children's $A^{(i)}$ and
+  $B^{(i)}$, the two polynomials of the step circuit's trace, the two fold
+  randomizers and every rx polynomial of the children, at $xz$ or $x$. The
+  circuit [recomputes](#ax-bx) the values of $A$ and $B$ from the others.
+- Openings $119$ to $173$ read the registry at the fixed domain points.
+- Openings $174$ to $179$ are the online openings of the step.
 
 The claimed values in the last column are fields of the
 [`query` stage](stage_contents.md#native-query) unless stated otherwise.
@@ -128,25 +146,28 @@ The claimed values in the last column are fields of the
 | 15, 16 | $A^{(1)}$, $B^{(1)}$ | $xz$, $x$ | `right.a_poly_at_xz`, `right.b_poly_at_x` |
 | 17, 18 | $A$, $B$ | $xz$, $x$ | $\text{ax}$, $\text{bx}$, [computed in circuit](#ax-bx) |
 | 19, 20 | $r[\texttt{Application}]$, $r[\texttt{ApplicationStage}]$ | $xz$ | `application_at_xz`, `application_stage_at_xz` |
-| $21 + t$, $t < 46$ | $r^{(0)}[\cdot]$ in [rx order](setup.md#rx-order) | $xz$ | `left.rx` |
-| $67 + t$, $t < 46$ | $r^{(1)}[\cdot]$ in rx order | $xz$ | `right.rx` |
-| $113 + j$, $j < 53$ | $m(W, x, y)$ | $\omega_j$ | `fixed_registry` |
-| $166 + s$, $s < 6$ | the online slot polynomial $s$ | $\xi_s$ | $\eta_s$ from `preamble` |
+| 21, 22 | $a_\star$, $b_\star$ | $xz$, $x$ | `randomizer_a_at_xz`, `randomizer_b_at_x` |
+| $23 + t$, $t < 48$ | $r^{(0)}[\cdot]$ in [rx order](setup.md#rx-order) | $xz$ | `left.rx` |
+| $71 + t$, $t < 48$ | $r^{(1)}[\cdot]$ in rx order | $xz$ | `right.rx` |
+| $119 + j$, $j < 55$ | $m(W, x, y)$ | $\omega_j$ | `fixed_registry` |
+| $174 + s$, $s < 6$ | the online slot polynomial $s$ | $\xi_s$ | $\eta_s$ from `preamble` |
 
 ### Native Batched Polynomials {#native-p}
 
 | $j$ | $\psi_j$ |
 |---|---|
-| $50i + t$, $t < 46$ | $r^{(i)}[\cdot]$ in rx order |
-| $50i + 46$, $50i + 47$ | $A^{(i)}$, $B^{(i)}$ |
-| $50i + 48$ | $m(W, x^{(i)}, y^{(i)})$ |
-| $50i + 49$ | $p^{(i)}$ |
-| 100, 101 | $m(w, x^{(0)}, Y)$, $m(w, x^{(1)}, Y)$ |
-| 102, 103 | $r[\texttt{Application}]$, $r[\texttt{ApplicationStage}]$ |
-| 104 | $m(w, X, y)$ |
-| 105, 106 | $A$, $B$ |
-| 107 | $m(W, x, y)$ |
-| 108 to 113 | $o^{(0)}_0, o^{(0)}_1, o^{(1)}_0, o^{(1)}_1, o_0, o_1$ |
+| $52i + t$, $t < 48$ | $r^{(i)}[\cdot]$ in rx order |
+| $52i + 48$, $52i + 49$ | $A^{(i)}$, $B^{(i)}$ |
+| $52i + 50$ | $m(W, x^{(i)}, y^{(i)})$ |
+| $52i + 51$ | $p^{(i)}$ |
+| 104, 105 | $m(w, x^{(0)}, Y)$, $m(w, x^{(1)}, Y)$ |
+| 106, 107 | $r[\texttt{Application}]$, $r[\texttt{ApplicationStage}]$ |
+| 108 | $m(w, X, y)$ |
+| 109, 110 | $A$, $B$ |
+| 111 | $m(W, x, y)$ |
+| 112, 113 | $a_\star$, $b_\star$ |
+| 114 | $p_\star$ |
+| 115 to 120 | $o^{(0)}_0, o^{(0)}_1, o^{(1)}_0, o^{(1)}_1, o_0, o_1$ |
 
 ## Nested Openings {#nested-openings}
 
@@ -165,9 +186,10 @@ The claimed values are fields of the
 | 12, 13 | $A_q^{(0)}$, $B_q^{(0)}$ | $x_q z_q$, $x_q$ | `left.a_poly_at_xz`, `left.b_poly_at_x` |
 | 14, 15 | $A_q^{(1)}$, $B_q^{(1)}$ | $x_q z_q$, $x_q$ | `right.a_poly_at_xz`, `right.b_poly_at_x` |
 | 16, 17 | $A_q$, $B_q$ | $x_q z_q$, $x_q$ | $\text{ax}_q$, $\text{bx}_q$, [computed in circuit](#ax-bx) |
-| $18 + t$, $t < 43$ | $r_q^{(0)}[\cdot]$ in rx order | $x_q z_q$ | `left.rx` |
-| $61 + t$, $t < 43$ | $r_q^{(1)}[\cdot]$ in rx order | $x_q z_q$ | `right.rx` |
-| $104 + j$, $j < 46$ | $m_q(W, x_q, y_q)$ | $\omega_{q,j}$ | `fixed_registry` |
+| 18, 19 | $a_{q,\star}$, $b_{q,\star}$ | $x_q z_q$, $x_q$ | `randomizer_a_at_xz`, `randomizer_b_at_x` |
+| $20 + t$, $t < 45$ | $r_q^{(0)}[\cdot]$ in rx order | $x_q z_q$ | `left.rx` |
+| $65 + t$, $t < 45$ | $r_q^{(1)}[\cdot]$ in rx order | $x_q z_q$ | `right.rx` |
+| $110 + j$, $j < 48$ | $m_q(W, x_q, y_q)$ | $\omega_{q,j}$ | `fixed_registry` |
 
 The nested list has no opening at the index of a step circuit, because every
 nested circuit has a fixed registry index. It also has no online openings.
@@ -176,14 +198,16 @@ nested circuit has a fixed registry index. It also has no online openings.
 
 | $j$ | $\psi_{q,j}$ |
 |---|---|
-| $47i + t$, $t < 43$ | $r_q^{(i)}[\cdot]$ in rx order |
-| $47i + 43$, $47i + 44$ | $A_q^{(i)}$, $B_q^{(i)}$ |
-| $47i + 45$ | $m_q(W, x_q^{(i)}, y_q^{(i)})$ |
-| $47i + 46$ | $p_q^{(i)}$ |
-| 94, 95 | $m_q(w_q, x_q^{(0)}, Y)$, $m_q(w_q, x_q^{(1)}, Y)$ |
-| 96 | $m_q(w_q, X, y_q)$ |
-| 97, 98 | $A_q$, $B_q$ |
-| 99 | $m_q(W, x_q, y_q)$ |
+| $49i + t$, $t < 45$ | $r_q^{(i)}[\cdot]$ in rx order |
+| $49i + 45$, $49i + 46$ | $A_q^{(i)}$, $B_q^{(i)}$ |
+| $49i + 47$ | $m_q(W, x_q^{(i)}, y_q^{(i)})$ |
+| $49i + 48$ | $p_q^{(i)}$ |
+| 98, 99 | $m_q(w_q, x_q^{(0)}, Y)$, $m_q(w_q, x_q^{(1)}, Y)$ |
+| 100 | $m_q(w_q, X, y_q)$ |
+| 101, 102 | $A_q$, $B_q$ |
+| 103 | $m_q(W, x_q, y_q)$ |
+| 104, 105 | $a_{q,\star}$, $b_{q,\star}$ |
+| 106 | $p_{q,\star}$ |
 
 ## Registry Chain {#registry-chain}
 
@@ -215,7 +239,7 @@ committed after $w$. The next fuse opens it at its own $w$, as openings $2$ and
 $3$ do here for the children.
 
 The new restriction $m(W, x, y)$ is then read at the domain points: opening
-$113 + j$ gives $s_j(x, y)$ for each of the $53$ fixed indices, and opening $12$
+$119 + j$ gives $s_j(x, y)$ for each of the $55$ fixed indices, and opening $12$
 gives $s_{\text{id}}(x, y)$ for the fuse's own step circuit. The nested chain is
 the same, with the nested registry.
 
@@ -239,9 +263,10 @@ claim, with $s_j(x, y)$ taken from `fixed_registry`, or from
 
 The two values are
 
-$$\text{ax} = \sum_{k} \text{wt}_k \, \text{ax}_k, \qquad \text{bx} = \sum_{k} \text{wt}_k \, \text{bx}_k,$$
+$$\text{ax} = \sum_{k} \text{wt}_k \, \text{ax}_k + \left( \text{wt}_\star + \text{wt}_{N-1, 0} \right) a_\star(xz), \qquad \text{bx} = \sum_{k} \text{wt}_k \, \text{bx}_k + \text{wt}_\star \, b_\star(x),$$
 
-with the [fold weights](claims.md#fold-layer-2) $\text{wt}_k$. A circuit claim's
-$b$ side at $x$ is $a(xz) + s_j(x, y) + t(x, z)$, so the same opened values are
-used for both sides. The nested circuit does the same over the nested claims,
-with $x_q$, $z_q$, $\mu_q$ and $\mu'_q$.
+with the [fold weights](claims.md#randomizer) of the claims and of the fuse's
+own randomizer, whose two values are those of openings $21$ and $22$. A circuit
+claim's $b$ side at $x$ is $a(xz) + s_j(x, y) + t(x, z)$, so the same opened
+values are used for both sides. The nested circuit does the same over the
+nested claims, with $x_q$, $z_q$, $\mu_q$ and $\mu'_q$.

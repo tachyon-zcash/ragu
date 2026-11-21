@@ -52,13 +52,13 @@ counterpart of a challenge equal to one.
 | $o_0$, $o_1$ | the padding polynomial |
 | the polynomials of the ten native internal circuits other than the endoscaling steps, and the stages `Preamble`, `InnerError`, `OuterError`, `Query` | $\mathbf{1}$ |
 | `Eval` stage | a true stage with $\v{a}_0 = 1$: evaluations zero, and the partial sums of the challenge stage commitment |
-| the five native points input stages, `PointsWalk` and the $25$ native `EndoscalingStep` polynomials | a true native walk over placeholder points |
+| the five native points input stages, `PointsWalk` and the $27$ native `EndoscalingStep` polynomials | a true native walk over placeholder points |
 | $p_q$, $P_q$ | the Horner combination of the polynomials behind those placeholders, and the walk's output |
 | `ChallengeStage` | $\v{a}_0 = 0$, every lift $1_q$, $\sigma = +1$, $\beta_q = 1_q$ |
 | nested `Collapse`, `ComputeV` | $\mathbf{1}$ |
 | `BridgeHash` | the stage of $O_1$ with $\v{a}_0 = 0$ |
-| the other eight bridge stages | true stages with $\v{a}_0 = 1$ over the commitments above, with every quotient coefficient, collapsed value, claimed value and evaluation zero |
-| `EndoscalarStage`, `PointsStage` and the $29$ nested `EndoscalingStep` polynomials | a true nested walk over placeholder points |
+| the other eight bridge stages | true stages with $\v{a}_0 = 1$ over the commitments above, with every quotient coefficient, target, collapsed value, claimed value and evaluation zero |
+| `EndoscalarStage`, `PointsStage` and the $31$ nested `EndoscalingStep` polynomials | a true nested walk over placeholder points |
 | $p$, $P$ | the Horner combination of the polynomials behind those placeholders, and the walk's output |
 
 The placeholder points of each walk are commitments of polynomials that the
@@ -66,8 +66,8 @@ dummy holds: $[\mathbf{1}]$ in every position, with two exceptions. The three
 positions of `registry_xy`, the children's and the proof's own, hold the
 commitment of the dummy's own restriction. In the nested walk, the six online
 slots hold the padding commitments $O_0$ and $O_1$. The dummy has no step
-circuit, and the two positions of a step circuit's trace hold $[\mathbf{1}]$
-like the rest.
+circuit and no randomizers, and the positions of a step circuit's trace and of
+a fuse's randomizers hold $[\mathbf{1}]$ like the rest.
 
 The dummy's circuit claims are false,[^node] but a parent's openings of the
 dummy hold: $p$ and $p_q$ are the polynomials behind $P$ and $P_q$, and the two
@@ -86,7 +86,7 @@ Finalizing an application runs
 $$\pi_{\text{boot}} = \text{fuse}(\texttt{Bootstrap}, (\pi_{\text{dummy}}, \texttt{Dummy}), (\pi_{\text{dummy}}, \texttt{Dummy}))$$
 
 once, with a fixed random seed. `Bootstrap` is an internal step at native
-registry index $54$. Its input headers are both `Dummy`, its output header is
+registry index $56$. Its input headers are both `Dummy`, its output header is
 the unit header, and it has no witness and opens no online slot, so each of its
 output slots is opened at $\zeta$ and constrained to equal one.
 

@@ -9,10 +9,12 @@ the data of its output header, and a source of randomness. The output is a proof
 $\pi$ with the data of the step's output header.
 
 The **stage of** a list of contents is the
-[stage polynomial](staging.md#stage-polynomial) over those contents with a fresh
-uniformly random $\v{a}_0$, unless a value is given. The **trace of** a circuit
-is its assembled polynomial, which also takes a fresh random $\v{a}_0$. A
-commitment is computed from its polynomial unless stated otherwise.
+[stage polynomial](staging.md#stage-polynomial) over those contents with fresh
+uniformly random [free coefficients](wiring.md#blind-gate). When a value of
+$\v{a}_0$ is given instead, the other two free coefficients are zero. The
+**trace of** a circuit is its assembled polynomial, which also takes fresh
+random free coefficients. A commitment is computed from its polynomial unless
+stated otherwise.
 
 ## Procedure {#procedure}
 
@@ -22,7 +24,12 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 ### Before the First Round {#fuse-start}
 
 1. Reject unless both children are [well formed](proof.md#stored-derived).
-2. Sample `bridge_alpha` from $\F_q$ and start the
+2. Sample `bridge_alpha` from $\F_q$. Sample the
+   [fold randomizers](claims.md#randomizer) $a_\star$, $b_\star$, $a_{q,\star}$,
+   $b_{q,\star}$ and the [batch randomizers](batch.md#batch-randomizer)
+   $p_\star$, $p_{q,\star}$, every coefficient uniformly at random, with their
+   commitments and the targets $c_\star = \revdot{a_\star}{b_\star}$ and
+   $c_{q,\star} = \revdot{a_{q,\star}}{b_{q,\star}}$. Start the
    [transcript](cycle.md#transcript).
 
 ### Round 1 {#fuse-round-1}
@@ -36,7 +43,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
    values.
 5. Set $r[\texttt{PointsBinding}]$ and $r[\texttt{PointsPreamble}]$ to the
    stages of the children's nested commitments: $14$ per child in the first and
-   $33$ per child in the second.
+   $35$ per child in the second.
 6. Set $r_q[\texttt{BridgePreamble}]$ to the
    [stage](stage_contents.md#bridge-preamble) of this fuse's native commitments
    so far and of the two children. Set $r_q[\texttt{BridgeHash}]$ to the stage
@@ -54,21 +61,25 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 10. Compute $m(w, x^{(i)}, Y)$ and $m_q(w_q, x_q^{(i)}, Y)$ for both children,
     with their commitments.
 11. Set $r[\texttt{PointsRegistryWx}]$ to the stage of the two nested
-    commitments, and $r_q[\texttt{BridgeSPrime}]$ to the stage of the two native
-    commitments, $R[\texttt{Preamble}]$, $R[\texttt{Application}]$ and
-    $R[\texttt{PointsRegistryWx}]$.
+    commitments, $[a_{q,\star}]$ and $[b_{q,\star}]$. Set
+    $r_q[\texttt{BridgeSPrime}]$ to the stage of the two native commitments,
+    $R[\texttt{Preamble}]$, $R[\texttt{Application}]$,
+    $R[\texttt{PointsRegistryWx}]$, $[a_\star]$ and $[b_\star]$.
 12. Absorb $R_q[\texttt{BridgeSPrime}]$ and squeeze $y$, then $z$.
 
 ### Round 3 {#fuse-round-3}
 
-13. Build the $91$ [native claims](claims.md#native-claims) at $(y, z)$ and the
-    $79$ [nested claims](claims.md#nested-claims) at $(y_q, z_q)$.
+13. Build the $95$ [native claims](claims.md#native-claims) at $(y, z)$ and the
+    $83$ [nested claims](claims.md#nested-claims) at $(y_q, z_q)$, and lay each
+    list out over its [grid](claims.md#randomizer) with the randomizer claim
+    and the half-claim.
 14. Compute the [first-layer quotients](claims.md#fold-layer-1)
     $\text{quo}_{g,k}$ and $\text{quo}_{q,g,k}$.
 15. Compute $m(w, X, y)$ and $m_q(w_q, X, y_q)$, with their commitments.
-16. Set $r[\texttt{InnerError}]$ to the stage of the $\text{quo}_{g,k}$. Set
-    $r_q[\texttt{BridgeInnerError}]$ to the stage of $R[\texttt{InnerError}]$,
-    $[m(w, X, y)]$ and the $\text{quo}_{q,g,k}$.
+16. Set $r[\texttt{InnerError}]$ to the stage of the $\text{quo}_{g,k}$ and
+    $c_\star$. Set $r_q[\texttt{BridgeInnerError}]$ to the stage of
+    $R[\texttt{InnerError}]$, $[m(w, X, y)]$, the $\text{quo}_{q,g,k}$ and
+    $c_{q,\star}$.
 17. Absorb $R_q[\texttt{BridgeInnerError}]$. Save the transcript state. Squeeze
     $\mu$.
 
@@ -90,7 +101,8 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 
 23. Compute $A$ and $B$. Form $[A]$ as the
     [linear combination](claims.md#fold-schedule) of the children's commitments,
-    $R[\texttt{Application}]$ and $R[\texttt{ApplicationStage}]$.
+    $R[\texttt{Application}]$, $R[\texttt{ApplicationStage}]$ and
+    $[a_\star]$.
 24. Compute $A_q$ and $B_q$.
 25. Set $r[\texttt{PointsAb}]$ to the stage of $[m_q(w_q, X, y_q)]$, $[A_q]$ and
     $[B_q]$. Set $r_q[\texttt{BridgeAB}]$ to the stage of $[A]$, $[B]$ and
@@ -112,11 +124,12 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 
 ### Round 7 {#fuse-round-7}
 
-31. Compute $f$ over the $172$ [native openings](batch.md#native-openings) and
-    $f_q$ over the $150$ [nested openings](batch.md#nested-openings), with $[f]$
+31. Compute $f$ over the $180$ [native openings](batch.md#native-openings) and
+    $f_q$ over the $158$ [nested openings](batch.md#nested-openings), with $[f]$
     and $[f_q]$.
-32. Set $r[\texttt{PointsF}]$ to the stage of $[m_q(W, x_q, y_q)]$ and $[f_q]$.
-    Set $r_q[\texttt{BridgeF}]$ to the stage of $[f]$ and $R[\texttt{PointsF}]$.
+32. Set $r[\texttt{PointsF}]$ to the stage of $[m_q(W, x_q, y_q)]$, $[f_q]$ and
+    $[p_{q,\star}]$. Set $r_q[\texttt{BridgeF}]$ to the stage of $[f]$,
+    $R[\texttt{PointsF}]$ and $[p_\star]$.
 33. Absorb $R_q[\texttt{BridgeF}]$ and squeeze $u$.
 
 ### Round 8 {#fuse-round-8}
@@ -125,7 +138,7 @@ curves, see the [detailed Fuse PIOP](../iop.md).
     $\text{hdr}_L$ and $\text{hdr}_R$. Compute the three partial sums and
     `nested_challenges_partial` of the
     [challenge stage commitment](stage_contents.md#challenge-stage).
-35. Evaluate the $114$ native batched polynomials at $u$ and the $100$ nested
+35. Evaluate the $121$ native batched polynomials at $u$ and the $107$ nested
     ones at $u_q$.
 36. Repeat until $\text{pre\_beta} < 2^{254}$: set $r[\texttt{Eval}]$ to the
     stage of the native evaluations and the partial sums; set
@@ -137,12 +150,12 @@ curves, see the [detailed Fuse PIOP](../iop.md).
 
 ### Final Message {#fuse-final}
 
-38. Compute $p$. Run the [nested walk](walks.md#nested-walk) over the $115$
+38. Compute $p$. Run the [nested walk](walks.md#nested-walk) over the $122$
     native commitments: set $r_q[\texttt{EndoscalarStage}]$ and
     $r_q[\texttt{PointsStage}]$ to their stages and
     $r_q[\texttt{EndoscalingStep}(s)]$ to the trace of each endoscaling step.
     Set $P$ to the last interstitial.
-39. Compute $p_q$. Run the [native walk](walks.md#native-walk) over the $101$
+39. Compute $p_q$. Run the [native walk](walks.md#native-walk) over the $108$
     nested commitments: set $r[\texttt{PointsWalk}]$ to its stage and
     $r[\texttt{EndoscalingStep}(s)]$ to the trace of each endoscaling step. Set
     $P_q$ to the last interstitial.
@@ -155,9 +168,10 @@ curves, see the [detailed Fuse PIOP](../iop.md).
     `Collapse` and `ComputeV`.
 42. Compute every commitment not yet computed and output $\pi$. The proof keeps
     the accumulator, the frontier and the auxiliary data of the
-    [proof page](proof.md). It does not keep $r[\texttt{Application}]$ or
-    $r[\texttt{ApplicationStage}]$, and it has no field for the three headers
-    or the openings, which remain only as values of the `preamble` stage.
+    [proof page](proof.md). It does not keep $r[\texttt{Application}]$,
+    $r[\texttt{ApplicationStage}]$ or the six randomizers, and it has no field
+    for the three headers or the openings, which remain only as values of the
+    `preamble` stage.
 
 ## Inputs of the Step Circuit {#step-circuit-inputs}
 
@@ -175,8 +189,8 @@ read, other than the openings and the fields of its input headers.
 
 The bridge hash is the commitment of a stage that holds $O_1$. Item 6 fixes
 $O_1$, but the transcript does not absorb the commitment of that stage, so the
-[$\v{a}_0$ of the stage](stage_contents.md#bridge-hash), and with it the bridge
-hash, is not fixed before $w$. The honest prover sets $\v{a}_0 = 0$.
+[free coefficients of the stage](stage_contents.md#bridge-hash), and with them
+the bridge hash, are not fixed before $w$. The honest prover sets them to zero.
 
 The input headers are committed only in item 9, with the `preamble` stage, but
 [$w$ already fixes them](stage_contents.md#native-preamble): each is the output

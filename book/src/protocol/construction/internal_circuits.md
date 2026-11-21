@@ -114,14 +114,19 @@ the bonding and padding positions.
    $\omega_{\text{id}}$ is the domain point of `Bootstrap`, $\text{hdr}_O$ is
    the encoding of the unit header, and each output slot has $\xi_s = w$ and
    $\eta_s = 1$.
-4. For each group $g < 14$, the wire $\text{col}_g$ of the `outer_error` stage
+4. For each group $g < 15$, the wire $\text{col}_g$ of the `outer_error` stage
    equals
 
-   $$\sum_{j < 7} \ell^{(7)}_j(\mu) \, \text{tgt}_{7g+j} + V^{(7)}(\mu) \sum_{k < 6} \text{quo}_{g,k} \, \mu^k.$$
+   $$\sum_{j < 8} \ell^{(8)}_j(\mu) \, \text{tgt}_{g,j} + V^{(8)}(\mu) \sum_{k < 7} \text{quo}_{g,k} \, \mu^k,$$
+
+   where the targets are laid out over the [grid](claims.md#randomizer): for
+   $g < 14$, $\text{tgt}_{g,j}$ is $\text{tgt}_{7g+j}$ when $j < 7$ and the
+   wire $c_\star$ of the `inner_error` stage when $j = 7$, and every target of
+   the last group is the constant zero.
 
 5. Compute, over those wires,
 
-   $$c^\ast = \sum_{g < 14} \ell^{(14)}_g(\mu') \, \text{col}_g + V^{(14)}(\mu') \sum_{k < 13} \text{quo}'_k \, \mu'^k$$
+   $$c^\ast = \sum_{g < 15} \ell^{(15)}_g(\mu') \, \text{col}_g + V^{(15)}(\mu') \sum_{k < 14} \text{quo}'_k \, \mu'^k$$
 
    and enforce $(1 - \text{base}) \cdot (c - c^\ast) = 0$.
 
@@ -143,12 +148,12 @@ the folded polynomials and computes $v$. Public output:
    the inverses of $x$ and $z$, so the circuit requires $x \ne 0$ and $z \ne 0$.
 4. $\text{ax}$ and $\text{bx}$ are computed as on the
    [batch page](batch.md#ax-bx).
-5. For each of the $70$ opening points $\rho$ an inverse $d_\rho$ is allocated
+5. For each of the $72$ opening points $\rho$ an inverse $d_\rho$ is allocated
    with $d_\rho \cdot (u - \rho) = 1$. The points are $u^{(i)}$, $y^{(i)}$ and
-   $x^{(i)}$ for each child, $w$, $x$, $y$, $xz$, $\omega_{\text{id}}$, the $53$
+   $x^{(i)}$ for each child, $w$, $x$, $y$, $xz$, $\omega_{\text{id}}$, the $55$
    constants $\omega_j$, and the six $\xi_s$.
 6. $v$ is computed by the [batch formula](batch.md#batch-structure) over the
-   $172$ native openings and the $114$ evaluations of the `eval` stage, with
+   $180$ native openings and the $121$ evaluations of the `eval` stage, with
    $\beta = \text{lift}_p(e)$ computed in circuit.
 
 Item 5 makes the circuit unsatisfiable when $u$ equals an opening point.
@@ -201,10 +206,10 @@ The circuit ties the native walk to the unified instance: the walk's endoscalar
 to $\text{pre\_beta}$, and its output and three of its inputs to their slots.
 Public output: $k_{\text{uni}}$.
 
-1. All $101$ points of the [native walk](walks.md#native-walk) are curve points.
+1. All $108$ points of the [native walk](walks.md#native-walk) are curve points.
 2. $\text{pre\_beta}$ is decomposed, its endoscalar is hoisted, and the result
    equals the `endoscalar` of the `WalkStage`, wire by wire.
-3. $I_{q,24}$ equals `nested_p_commitment`. The points `a` and `b` of
+3. $I_{q,26}$ equals `nested_p_commitment`. The points `a` and `b` of
    `points::AbStage` equal `nested_a_commitment` and `nested_b_commitment`. The
    point `registry_xy` of `points::FStage` equals
    `nested_registry_xy_commitment`.
@@ -216,7 +221,8 @@ single zero, so $k(Y) = 1$.
 
 1. Start from $I_{q,s-1}$, or from $[f_q]$ when $s = 0$.
 2. For $t = 0, \dots, 3$, endoscale the running point by the `WalkStage`
-   endoscalar and add $C_{q,4s+t+1}$.
+   endoscalar and add $C_{q,4s+t+1}$. The last circuit, $s = 26$, stops after
+   $t = 2$.
 3. The result equals $I_{q,s}$.
 
 This circuit relies on the bits and the curve membership that `bind_endoscalar`
@@ -227,9 +233,9 @@ enforces.
 | Circuit | Index | Last Stage | Loaded |
 |---|---|---|---|
 | `EndoscalingStep(s)` | $s$ | `PointsStage` | `EndoscalarStage`, `PointsStage` |
-| `Collapse` | 29 | `ChallengeStage` | all twelve stages |
-| `ComputeV` | 30 | `ChallengeStage` | all twelve stages |
-| `Loading` | 45 | `BridgeEval` | `PointsStage`, `BridgePreamble`, `BridgeSPrime`, `BridgeInnerError`, `BridgeAB`, `BridgeQuery`, `BridgeF` |
+| `Collapse` | 31 | `ChallengeStage` | all twelve stages |
+| `ComputeV` | 32 | `ChallengeStage` | all twelve stages |
+| `Loading` | 47 | `BridgeEval` | `PointsStage`, `BridgePreamble`, `BridgeSPrime`, `BridgeInnerError`, `BridgeAB`, `BridgeQuery`, `BridgeF` |
 
 Every nested stage is loaded unenforced. `Collapse` re-emits the two contracts
 that the nested walk depends on, in its items 1 and 2.
@@ -241,8 +247,8 @@ empty, so $k(Y) = 1$.
 
 1. Start from $I_{s-1}$, or from $C_0$ when $s = 0$.
 2. For $t = 0, \dots, 3$, endoscale the running point by the `EndoscalarStage`
-   endoscalar and add $C_{4s+t+1}$. The last circuit, $s = 28$, stops after
-   $t = 1$.
+   endoscalar and add $C_{4s+t+1}$. The last circuit, $s = 30$, stops after
+   $t = 0$.
 3. The result equals $I_s$.
 
 ### `Collapse` {#nested-collapse}
@@ -250,25 +256,30 @@ empty, so $k(Y) = 1$.
 The circuit checks both layers of the nested fold, and ties the exported points
 of the nested unified instance to the stages that hold them. Public output: the
 [nested unified instance](proof.md#nested-unified). Let
-$\text{tgt}_{q,0}, \dots, \text{tgt}_{q,79}$ be the
+$\text{tgt}_{q,0}, \dots, \text{tgt}_{q,87}$ be the
 [nested targets](claims.md#nested-claims) in claim order, computed in circuit
 from the `BridgePreamble` stage at the $y_q$ of the challenge stage.
 
-1. All $144$ points of the `PointsStage` are curve points.
+1. All $153$ points of the `PointsStage` are curve points.
 2. The `EndoscalarStage` holds $143$ bits and the $94$ products of those bits.
 3. The slots `x`, `y` and `u` equal the challenge stage's $x_q$, $y_q$ and
    $u_q$.
 4. The point of the `BridgeHash` stage equals $O_1$ in `BridgePreamble`.
 5. Each exported $E_j$ equals the stage value listed for it on the
    [proof page](proof.md#nested-unified).
-6. For each group $g < 10$, the wire $\text{col}_{q,g}$ of the
+6. For each group $g < 12$, the wire $\text{col}_{q,g}$ of the
    `BridgeOuterError` stage equals
 
-   $$\sum_{j < 8} \ell^{(8)}_j(\mu_q) \, \text{tgt}_{q,8g+j} + V^{(8)}(\mu_q) \sum_{k < 7} \text{quo}_{q,g,k} \, \mu_q^k.$$
+   $$\sum_{j < 9} \ell^{(9)}_j(\mu_q) \, \text{tgt}_{q,g,j} + V^{(9)}(\mu_q) \sum_{k < 8} \text{quo}_{q,g,k} \, \mu_q^k,$$
+
+   with the targets laid out as in the native [`collapse`](#native-collapse):
+   for $g < 11$, $\text{tgt}_{q,g,j}$ is $\text{tgt}_{q,8g+j}$ when $j < 8$ and
+   the wire $c_{q,\star}$ of the `BridgeInnerError` stage when $j = 8$, and
+   every target of the last group is zero.
 
 7. Compute, over those wires,
 
-   $$c_q^\ast = \sum_{g < 10} \ell^{(10)}_g(\mu'_q) \, \text{col}_{q,g} + V^{(10)}(\mu'_q) \sum_{k < 9} \text{quo}'_{q,k} \, {\mu'_q}^k$$
+   $$c_q^\ast = \sum_{g < 12} \ell^{(12)}_g(\mu'_q) \, \text{col}_{q,g} + V^{(12)}(\mu'_q) \sum_{k < 11} \text{quo}'_{q,k} \, {\mu'_q}^k$$
 
    and enforce $(1 - \text{base}_q) \cdot (c_q - c_q^\ast) = 0$.
 
@@ -285,14 +296,14 @@ other slots, and the two claims take [one target](claims.md#nested-targets).
    which requires $x_q \ne 0$ and $z_q \ne 0$.
 2. $\text{ax}_q$ and $\text{bx}_q$ are computed as on the
    [batch page](batch.md#ax-bx).
-3. For each of the $56$ opening points $\rho$ an inverse $d_\rho$ is allocated
+3. For each of the $58$ opening points $\rho$ an inverse $d_\rho$ is allocated
    with $d_\rho \cdot (u_q - \rho) = 1$. The points are $u_q^{(i)}$, $y_q^{(i)}$
-   and $x_q^{(i)}$ for each child, $w_q$, $x_q$, $y_q$, $x_q z_q$, and the $46$
+   and $x_q^{(i)}$ for each child, $w_q$, $x_q$, $y_q$, $x_q z_q$, and the $48$
    constants $\omega_{q,j}$.
 4. The lift of the `EndoscalarStage` endoscalar, computed in circuit, equals the
    challenge stage's $\beta_q$.
 5. $v_q$ is computed by the [batch formula](batch.md#batch-structure) over the
-   $150$ nested openings and the $100$ evaluations of the `BridgeEval` stage.
+   $158$ nested openings and the $107$ evaluations of the `BridgeEval` stage.
 
 Item 4 binds the endoscalar that the nested walk used to $\text{pre\_beta}$: a
 parent's `bind_beta` binds the challenge stage's $\beta_q$, and a lift
@@ -301,7 +312,7 @@ parent's `bind_beta` binds the challenge stage's $\beta_q$, and a lift
 ### `Loading` {#loading}
 
 `Loading` is registered as a [stripped circuit](staging.md#stripped) and has no
-polynomial of its own. Its constraints are the $115$ point equalities in the
+polynomial of its own. Its constraints are the $122$ point equalities in the
 table of the [nested walk](walks.md#nested-walk): each input of the
 `PointsStage` equals its bridge-stage field, and the initial point equals
 `BridgeF.native_f`. It is claimed as a bonding claim over the sum of the seven

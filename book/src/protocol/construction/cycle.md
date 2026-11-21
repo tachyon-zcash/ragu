@@ -42,10 +42,9 @@ given a point $G$ and its multiple $a \cdot G$: for generators that are
 independent and uniformly random, as the outputs of the hash are modeled to be,
 a method that finds relations also finds discrete logarithms.
 
-Commitments have no separate blinding generator. The one coefficient of a trace
-that
-carries an arbitrary value is that of $X^{2n - 1}$, the
-[$\v{a}_0$ of the `SYSTEM` gate](wiring.md#system-gate).
+Commitments have no separate blinding generator. Three coefficients of a trace
+carry arbitrary values instead, those of $X^{2n - 1}$, $X^{n}$ and $X^{3n}$,
+which are its [free coefficients](wiring.md#blind-gate).
 
 ## Endoscalars {#endoscalars}
 
@@ -179,6 +178,7 @@ $R[\texttt{Preamble}]$ and $R_q[\texttt{BridgePreamble}]$.
 | $[\phi]$ | commitment of the polynomial $\phi$ | `sparse_commit_to_affine` |
 | $\revdot{\phi}{\phi'}$ | [revdot product](arithmetization.md) | `Polynomial::revdot` |
 | $\text{Horner}_t[c_1, \dots, c_k]$ | $\sum_{j=1}^{k} c_j \, t^{k - j}$, a [list in the order written](wiring.md#public-inputs) | `Horner`, `Polynomial::fold` |
+| $a_\star$, $b_\star$, $p_\star$ | the fuse's own [fold randomizers](claims.md#randomizer) and [batch randomizer](batch.md#batch-randomizer) | `fuse::randomizer` |
 | $\text{endo}(\chi)$ | endoscalar of a native challenge $\chi$ | `extract_endoscalar` |
 | $\text{lift}_p$, $\text{lift}_q$ | lift of an endoscalar into $\F_p$, $\F_q$ | `lift_endoscalar` |
 

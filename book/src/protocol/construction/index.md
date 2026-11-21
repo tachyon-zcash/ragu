@@ -61,7 +61,7 @@ point $u$, and a restriction $m(W, x, y)$ of the registry polynomial.
 
 The **frontier** holds the polynomials of the fuse that produced the proof:
 those of the circuits that verified the fold and of the stages that those
-circuits read, $46$ on the native side and $43$ on the nested side. A fuse does
+circuits read, $48$ on the native side and $45$ on the nested side. A fuse does
 not check its own frontier. A parent folds it into the next accumulator, and the
 decider checks the frontier of the root directly.
 
@@ -78,12 +78,16 @@ A fuse takes two proofs and a step and produces one proof.
    which covers both children's polynomials. The native side adds the claim of
    the step circuit that the fuse just ran, with its two masks. The nested side
    has one more claim that covers both children, for the
-   [loading relation](internal_circuits.md#loading) of its walk. There are $91$
-   native and $79$ nested claims.
+   [loading relation](internal_circuits.md#loading) of its walk. There are $95$
+   native and $83$ nested claims.
 2. It [folds](claims.md#fold) each list into a new raw claim, in two layers.
+   The fold takes in two claims about a [randomizer](claims.md#randomizer) of
+   the fuse's own, so that the new raw claim is about uniformly random
+   polynomials.
 3. It gathers the evaluations needed to check the fold, to check the children's
    own batched openings and to keep the registry restriction consistent, and
-   [batches](batch.md) them into one opening per side.
+   [batches](batch.md) them into one opening per side, with a
+   [randomizer](batch.md#batch-randomizer) of its own.
 4. It computes the commitment of each batched polynomial by a [walk](walks.md)
    on the other side.
 5. It runs the [circuits](internal_circuits.md) that check items 2 to 4 and the
