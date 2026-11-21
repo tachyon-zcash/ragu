@@ -21,7 +21,7 @@ pub(super) fn record_dispatch() {
     PASTA_DISPATCHES.set(PASTA_DISPATCHES.get() + 1);
 }
 
-fn planned_msms<C: PastaCurve>() {
+fn planned_msms<C: Retained>() {
     let mut rng = StdRng::seed_from_u64(892);
     let sizes = [0, 1, 17, 257, 2049];
     let inputs = sizes.map(|n| {
@@ -140,4 +140,79 @@ fn many_rejects_mismatched_operands() {
         (vec![], vec![]),
         (vec![FieldAdapter::ONE], vec![]),
     ]);
+}
+
+fn random_msm<C: PastaCurve>(
+    n: usize,
+    rng: &mut StdRng,
+) -> (Vec<FieldAdapter<C::Scalar>>, Vec<AffineAdapter<C>>) {
+    let generator = AffineAdapter::<C>::generator();
+    let scalars = (0..n)
+        .map(|_| FieldAdapter::random(|bytes| rng.fill_bytes(bytes)))
+        .collect();
+    let bases = (0..n)
+        .map(|i| AffineAdapter::from(generator.to_projective() * FieldAdapter::from(i as u64 + 1)))
+        .collect();
+    (scalars, bases)
+}
+
+/// Scratch left by one MSM must serve the next whatever their sizes, on
+/// either curve, and whichever thread runs it.
+#[test]
+fn retained_scratch_serves_msms_of_any_size_in_any_order() {
+    fn check<C: Retained>(seed: u64) {
+        let mut rng = StdRng::seed_from_u64(seed);
+        for n in [2049, 3, 513, 0, 2049, 17] {
+            let (scalars, bases) = random_msm::<C>(n, &mut rng);
+            let expected = AffineAdapter::<C>::msm(&scalars, &bases);
+            assert_eq!(
+                crate::msm(scalars.iter().copied(), bases.iter().copied()),
+                expected
+            );
+            let small = random_msm::<C>(33, &mut rng);
+            let sums = crate::msm_many(vec![(scalars, bases), small.clone()]);
+            assert_eq!(
+                sums,
+                [expected, AffineAdapter::<C>::msm(&small.0, &small.1)]
+            );
+        }
+    }
+    std::thread::scope(|scope| {
+        for seed in 0..4 {
+            scope.spawn(move || {
+                check::<Pallas>(seed);
+                check::<Vesta>(seed);
+            });
+        }
+    });
+}
+
+/// Buffers keep what a larger MSM initialized when a smaller one borrows
+/// them, and the smaller one is unaffected by what was left behind.
+#[cfg(feature = "std")]
+#[test]
+fn buffers_grow_to_the_largest_requirement_and_stay_there() {
+    let mut rng = StdRng::seed_from_u64(77);
+    let options = executor::options();
+    let mut buffers = MsmBuffers::<Pallas>::default();
+    let mut largest = 0;
+    for n in [1025, 9, 257, 1025] {
+        let (scalars, bases) = random_msm::<Pallas>(n, &mut rng);
+        let sum = execute_input(
+            Input::new(
+                Bases::Points(AffineAdapter::as_slice(&bases)),
+                FieldAdapter::as_slice(&scalars),
+            ),
+            options,
+            &PoolExecutor,
+            &mut buffers,
+        );
+        assert_eq!(
+            ProjectiveAdapter::new(sum),
+            AffineAdapter::<Pallas>::msm(&scalars, &bases)
+        );
+        assert!(buffers.bytes() >= largest, "buffers shrank");
+        largest = buffers.bytes();
+    }
+    assert!(largest > 0);
 }
