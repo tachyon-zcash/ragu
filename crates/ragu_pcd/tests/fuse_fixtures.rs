@@ -4,8 +4,10 @@
 //! [`Application::fuse`] and [`Application::verify_compressed`]. Changes to
 //! those executions fail the `fuse fixtures` CI job. They follow the
 //! golden-proof harness of zakura-common's `sensei`
-//! crate: the prover replays a committed randomness tape and must reproduce
-//! the committed proof byte for byte, consuming exactly the tape.
+//! crate: the prover runs on a fixed randomness tape and must reproduce the
+//! committed proof byte for byte, drawing exactly the committed number of
+//! words. Sensei commits the tape. Here it is the output of a frozen
+//! generator under the scenario's seed (see [`Tape`]).
 //!
 //! The verifier side follows zakura-common's Halo2 and Orchard verifier
 //! fingerprints: the verifier runs on each committed proof under a recorder
@@ -15,23 +17,20 @@
 //! and at the check they should fail.
 //!
 //! Each scenario is one proof in a fixed tree of fuses. Its honest proof has
-//! four files in `honest/`:
+//! three files in `honest/`:
 //!
-//! - `<scenario>.rng-u64s-le`: the randomness the fuse drew, as little-endian
-//!   `u64` words. Checking replays it and fails if the prover asks for more
-//!   or leaves any unused, so the randomness schedule is pinned along with
-//!   the output.
 //! - `<scenario>.proof`: the header data and the compressed proof, in the
 //!   test-local encoding below. The prover must reproduce these bytes, and
 //!   the verifier must accept them as committed, without re-proving. The
-//!   encoding is a fixture format, not a wire format. Compression draws a
-//!   megabyte of randomness per proof, too much to commit as a tape, so it
-//!   comes from the frozen generator under a fixed seed and is
+//!   encoding is a fixture format, not a wire format. Compression draws its
+//!   randomness from the frozen generator under a seed of its own, and is
 //!   pinned by its word count and by these bytes.
 //! - `<scenario>.digests`: one BLAKE2b-256 digest per primary field of the
 //!   uncompressed [`Proof`] the fuse produced, in declaration order, then the
 //!   word counts the fuse and the compression drew and the `.proof` file's
-//!   length. The uncompressed proof is over ten megabytes at production
+//!   length. A fuse that asks for more randomness or for less changes its
+//!   word count, so the randomness schedule is pinned along with the
+//!   output. The uncompressed proof is over ten megabytes at production
 //!   rank, so this stands in for committing it: a mismatch names the fields
 //!   that drifted, and the file's diff in a pull request reads as the list
 //!   of stages the change touched. The `wire.*` lines then pin the wire
@@ -192,7 +191,7 @@ impl FixtureCycle for Profiled<Pasta, Aggregator<HEADER_SIZE>> {
     /// compressed proof is compressed under a fixed seed, so that the
     /// chunks every fuse runs over it are the same.
     fn app() -> App<Self> {
-        let decompression = Decompression::new(Pasta::app(), &mut Tape::record(seed(0xa66)))
+        let decompression = Decompression::new(Pasta::app(), &mut Tape::new(seed(0xa66)))
             .expect("the canonical decompression prepares");
         steps(ApplicationBuilder::new())
             .finalize_with(crate::pasta::baked_aggregator(), decompression)
@@ -315,74 +314,43 @@ const MERGE_ABCD: &str = "merge_abcd";
 const UNIT_LEFT: &str = "unit_left";
 const RERANDOMIZE: &str = "rerandomize";
 
-/// The seed a scenario's tape is recorded from: a fixed prefix over a small
-/// tag, so the seeds are recognizable and never collide. Retained fixtures
-/// replay their committed tapes; their sibling inputs use this seed directly.
+/// The seed of a scenario's tape: a fixed prefix over a small tag, so the
+/// seeds are recognizable and never collide.
 const fn seed(tag: u64) -> u64 {
     0x5241_4755_4658_0000 | tag
 }
 
-/// A prover's randomness as a tape of `u64` words, in the manner of sensei's
-/// `.rng-u64s-le` goldens.
+/// A prover's randomness as a tape of `u64` words: the output of SplitMix64
+/// under a seed.
 ///
-/// Checking a snapshot replays the committed tape and fails when the prover
-/// asks for a word it does not hold; regenerating appends words from SplitMix64
-/// as they are drawn and writes the result. Sibling inputs also use this
-/// generator, without writing a tape. Either way `fill_bytes` takes whole
-/// words, so a request's word count is fixed by its length, and the number
-/// of words consumed pins the randomness schedule.
+/// Sensei commits each tape as a `.rng-u64s-le` golden. These fixtures do
+/// not: the tape is a function of its seed. A fixture pins the number of
+/// words its fuse drew, and its outputs pin their values. `fill_bytes` takes
+/// whole words, so a request's word count is fixed by its length, and the
+/// number of words consumed pins the randomness schedule.
 ///
 /// The generator is not cryptographically secure and must never produce a
 /// real proof. It serves here only because the fixtures are synthetic test
 /// data whose one requirement is a reproducible, platform-independent
 /// stream that no dependency version can change: `StdRng` is pinned by
-/// `Cargo.lock` but not by `rand`'s API. Changing it changes every tape
-/// regenerated afterwards, and the sibling inputs to the retained parents.
+/// `Cargo.lock` but not by `rand`'s API. Changing it changes every fixture.
 struct Tape {
-    words: Vec<u64>,
-    cursor: usize,
-    /// The generator state the next recorded word comes from, when
-    /// recording.
-    generator: Option<u64>,
+    /// The generator's state.
+    state: u64,
+    /// The number of words drawn so far.
+    consumed: usize,
 }
 
 impl Tape {
-    fn replay(bytes: &[u8]) -> Self {
-        assert!(
-            bytes.len().is_multiple_of(8),
-            "a tape is a whole number of little-endian u64 words"
-        );
+    fn new(seed: u64) -> Self {
         Self {
-            words: bytes
-                .chunks_exact(8)
-                .map(|word| u64::from_le_bytes(word.try_into().unwrap()))
-                .collect(),
-            cursor: 0,
-            generator: None,
-        }
-    }
-
-    fn record(seed: u64) -> Self {
-        Self {
-            words: Vec::new(),
-            cursor: 0,
-            generator: Some(seed),
+            state: seed,
+            consumed: 0,
         }
     }
 
     fn consumed(&self) -> usize {
-        self.cursor
-    }
-
-    fn unused(&self) -> usize {
-        self.words.len() - self.cursor
-    }
-
-    fn bytes(&self) -> Vec<u8> {
-        self.words
-            .iter()
-            .flat_map(|word| word.to_le_bytes())
-            .collect()
+        self.consumed
     }
 
     /// A field element, uniform up to the reduction of 64 bytes.
@@ -411,21 +379,12 @@ impl Tape {
     }
 
     fn word(&mut self) -> u64 {
-        if self.cursor == self.words.len() {
-            let state = self.generator.as_mut().unwrap_or_else(|| {
-                panic!(
-                    "the prover drew more randomness than the fixture's tape holds\nregenerate with\n    {REGENERATE}"
-                )
-            });
-            *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut word = *state;
-            word = (word ^ (word >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            word = (word ^ (word >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            self.words.push(word ^ (word >> 31));
-        }
-        let word = self.words[self.cursor];
-        self.cursor += 1;
-        word
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut word = self.state;
+        word = (word ^ (word >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        word = (word ^ (word >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        self.consumed += 1;
+        word ^ (word >> 31)
     }
 }
 
@@ -1276,15 +1235,6 @@ impl Fixtures {
         fs::write(self.path(family, name, extension), bytes)
             .expect("the fixture directory is writable");
     }
-
-    /// The tape a scenario replays, or a fresh one when regenerating.
-    fn tape(&self, name: &str, tag: u64) -> Tape {
-        if writing() {
-            Tape::record(seed(tag))
-        } else {
-            Tape::replay(&self.read(Family::Honest, name, "rng-u64s-le"))
-        }
-    }
 }
 
 /// The mismatches between the reproduced digests and the committed ones,
@@ -1308,11 +1258,12 @@ fn compare_lines(label: &str, actual: &Lines, committed: &Lines) -> Vec<String> 
     mismatches
 }
 
-/// Checks one scenario after its fuse ran under `tape`: the tape is exactly
-/// consumed, the uncompressed verifier accepts the proof, compressing it
-/// under the fixed seed reproduces the committed `.proof` bytes, and the
-/// digests match. When regenerating, writes the honest files and the random
-/// string fabricated over the honest proof instead.
+/// Checks one scenario after its fuse ran under `tape`: the uncompressed
+/// verifier accepts the proof, compressing it under the fixed seed
+/// reproduces the committed `.proof` bytes, and the digests match, the
+/// number of words the fuse drew from `tape` among them. When regenerating,
+/// writes the honest files and the random string fabricated over the honest
+/// proof instead.
 fn check<C: FixtureCycle, H: FixtureHeader>(
     app: &App<C>,
     fixtures: &Fixtures,
@@ -1327,14 +1278,14 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     proof_lines(pcd.proof(), &mut lines);
 
     // The verifier's randomness is not part of the fixture.
-    let mut verifier = Tape::record(seed(0xff00));
+    let mut verifier = Tape::new(seed(0xff00));
     assert!(
         app.verify_uncompressed(pcd, &mut verifier)
             .expect("verification must not error"),
         "{label}: the uncompressed verifier rejected the reproduced proof"
     );
 
-    let mut compress_rng = Tape::record(seed(0x100 | tag));
+    let mut compress_rng = Tape::new(seed(0x100 | tag));
     let compressed = app
         .compress(pcd, &mut compress_rng)
         .expect("compression must succeed");
@@ -1350,7 +1301,6 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
 
     if writing() {
         use Family::{Honest, Random};
-        fixtures.write(Honest, name, "rng-u64s-le", &tape.bytes());
         fixtures.write(Honest, name, "proof", &proof.0);
         fixtures.write(Honest, name, "digests", lines.render().as_bytes());
         let fingerprint = accepted_fingerprint::<C, H>(app, &label, &proof.0);
@@ -1364,12 +1314,6 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
         return;
     }
 
-    if tape.unused() != 0 {
-        failures.push(format!(
-            "{label}: the fuse left {} words of the tape unused",
-            tape.unused()
-        ));
-    }
     if fixtures.read(Family::Honest, name, "proof") != proof.0 {
         failures.push(format!("{label}: the compressed proof changed"));
     }
@@ -1408,7 +1352,7 @@ fn prover_fixtures<C: FixtureCycle>() {
     let mut app = C::app();
     let mut failures = Vec::new();
 
-    let mut bootstrap_tape = fixtures.tape(BOOTSTRAP, 1);
+    let mut bootstrap_tape = Tape::new(seed(1));
     let (bootstrap, ()) = app
         .fuse(
             &mut bootstrap_tape,
@@ -1429,7 +1373,7 @@ fn prover_fixtures<C: FixtureCycle>() {
         &mut failures,
     );
 
-    let mut seed_tape = fixtures.tape(SEED_A, 2);
+    let mut seed_tape = Tape::new(seed(2));
     let seed_a = seed_scenario(&app, &mut seed_tape, 13);
     check(
         &app,
@@ -1443,11 +1387,11 @@ fn prover_fixtures<C: FixtureCycle>() {
 
     // Keep distinct children and the original tree, but only snapshot one
     // seed and one merge at this depth. Their parents pin these inputs too.
-    let seed_b = seed_scenario(&app, &mut Tape::record(seed(3)), 17);
-    let seed_c = seed_scenario(&app, &mut Tape::record(seed(4)), 19);
-    let seed_d = seed_scenario(&app, &mut Tape::record(seed(5)), 23);
+    let seed_b = seed_scenario(&app, &mut Tape::new(seed(3)), 17);
+    let seed_c = seed_scenario(&app, &mut Tape::new(seed(4)), 19);
+    let seed_d = seed_scenario(&app, &mut Tape::new(seed(5)), 23);
 
-    let mut unit_tape = fixtures.tape(UNIT_LEFT, 6);
+    let mut unit_tape = Tape::new(seed(6));
     let (unit_left, ()) = app
         .fuse(
             &mut unit_tape,
@@ -1467,7 +1411,7 @@ fn prover_fixtures<C: FixtureCycle>() {
         &mut failures,
     );
 
-    let mut merge_tape = fixtures.tape(MERGE_AB, 7);
+    let mut merge_tape = Tape::new(seed(7));
     let merge_ab = merge_scenario(&app, &mut merge_tape, 31, seed_a, seed_b);
     check(
         &app,
@@ -1478,9 +1422,9 @@ fn prover_fixtures<C: FixtureCycle>() {
         &merge_tape,
         &mut failures,
     );
-    let merge_cd = merge_scenario(&app, &mut Tape::record(seed(8)), 37, seed_c, seed_d);
+    let merge_cd = merge_scenario(&app, &mut Tape::new(seed(8)), 37, seed_c, seed_d);
 
-    let mut merge_tape = fixtures.tape(MERGE_ABCD, 9);
+    let mut merge_tape = Tape::new(seed(9));
     let merge_abcd = merge_scenario(&app, &mut merge_tape, 41, merge_ab, merge_cd);
     check(
         &app,
@@ -1494,7 +1438,7 @@ fn prover_fixtures<C: FixtureCycle>() {
 
     // The first rerandomization also proves the seeded trivial proof the
     // step fuses against, so this tape covers both.
-    let mut rerandomize_tape = fixtures.tape(RERANDOMIZE, 10);
+    let mut rerandomize_tape = Tape::new(seed(10));
     let rerandomized = app
         .rerandomize(merge_abcd, &mut rerandomize_tape)
         .expect("rerandomization must succeed");
@@ -1723,7 +1667,7 @@ fn fabricate<C: FixtureCycle, H: FixtureHeader>(
     tag: u64,
 ) -> Vec<u8> {
     let (_, shape) = decode_fixture::<C, H>(bytes).expect("the honest proof decodes");
-    let mut tape = Tape::record(seed(0x200 | tag));
+    let mut tape = Tape::new(seed(0x200 | tag));
     let stage = |index| nested_position::<C::Profile>(nested::RxComponent::Rx(index));
     let (challenge_stage, ab_bridge) = (
         stage(nested::RxIndex::ChallengeStage),
