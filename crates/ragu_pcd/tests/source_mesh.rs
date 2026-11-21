@@ -15,7 +15,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use udon::{curve::Affine, field::Field};
 
 use crate::{
-    Application, ApplicationBuilder, Pcd, SelectableBackend,
+    AcceleratedBackend, Application, ApplicationBuilder, Pcd, SelectableBackend,
     ipa::IpaCycle,
     profile::{
         Profile, Profiled, ProfiledCycle, ProverContext, Standard,
@@ -852,7 +852,7 @@ impl Profile for NestedMeshOnly {
 /// then corrupts that side's mesh claims and outgoing commitment.
 fn one_sided_mesh<P>(native: bool, seed: u64) -> Result<()>
 where
-    P: for<'params> Profile<Context<'params, Pasta, Rk, ReferenceBackend> = ()>,
+    P: for<'params> Profile<Context<'params, Pasta, Rk, AcceleratedBackend> = ()>,
 {
     let source = ApplicationBuilder::<Pasta, R<13>, 2>::new()
         .register(UnitStep)?
@@ -953,7 +953,7 @@ enum Substitution {
 /// commitment the child exported rejects the parent.
 fn substituted_source<P>(native: bool, attempt: Substitution, seed: u64) -> Result<()>
 where
-    P: for<'params> Profile<Context<'params, Pasta, Rk, ReferenceBackend> = ()>,
+    P: for<'params> Profile<Context<'params, Pasta, Rk, AcceleratedBackend> = ()>,
 {
     let wallet = ApplicationBuilder::<Pasta, R<13>, 2>::new()
         .register(UnitStep)?
@@ -1147,7 +1147,7 @@ pub(crate) fn mutate_inherited_coordinates<F: Field>(mut children: [[F; 2]; 2]) 
 /// rejects the parent.
 fn inherited_coordinates_are_the_childs_own<P>(native: bool, seed: u64) -> Result<()>
 where
-    P: for<'params> Profile<Context<'params, Pasta, Rk, ReferenceBackend> = ()>,
+    P: for<'params> Profile<Context<'params, Pasta, Rk, AcceleratedBackend> = ()>,
 {
     let empty_native = RegistryBuilder::<Fp, R<13>>::new()
         .with_tag(Fp::from(7))
