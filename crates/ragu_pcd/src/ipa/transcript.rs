@@ -45,7 +45,7 @@ use udon::{
     field::Field,
 };
 
-use crate::{SelectableBackend, internal::transcript::Transcript};
+use crate::{SelectableBackend, recursion::transcript::Transcript};
 
 /// Preserves the canonical integer on the common power-of-two range of the
 /// two fields. Under an ideal uniform squeeze, accepted challenges are

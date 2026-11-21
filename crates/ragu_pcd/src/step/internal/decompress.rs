@@ -82,7 +82,7 @@
 //! [`Profile::check_context`]: crate::profile::Profile::check_context
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 //! [`Dummy`]: crate::header::Dummy
-//! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+//! [`statement_ky`]: crate::recursion::native::stages::preamble::ProofInputs::statement_ky
 //! [`num_internal_steps`]: crate::step::num_internal_steps
 
 use alloc::vec::Vec;

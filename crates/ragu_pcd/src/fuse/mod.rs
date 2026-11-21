@@ -41,12 +41,12 @@ use udon::field::Field;
 
 use crate::{
     Application, Pcd, RAGU_TAG,
-    internal::{nested, transcript::Transcript},
     profile::{
         ProfiledCycle, Source,
         online::{Phase, prepared::PreparationChallenges},
     },
     proof::ProofBuilder,
+    recursion::{nested, transcript::Transcript},
     step::Step,
 };
 

@@ -32,13 +32,13 @@ use super::{
 };
 use crate::{
     Application, Proof,
-    internal::{
-        native::{self, online},
-        nested,
-    },
     multicore::par_join,
     profile::ProfiledCycle,
     proof::ProofBuilder,
+    recursion::{
+        native::{self, online},
+        nested,
+    },
 };
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>

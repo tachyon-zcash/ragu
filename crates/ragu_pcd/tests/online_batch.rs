@@ -85,7 +85,7 @@ impl Profile for OnlineBatch {
         let online = online.expect("declared consumer has online stages");
         let circuit = MultiStage::<Base::ScalarField, Rk, _>::new(Consumer);
         let trace = circuit.trace((online.inputs, online.query))?.into_parts().0;
-        let index = crate::internal::nested::InternalCircuitIndex::ExtensionCircuit(0)
+        let index = crate::recursion::nested::InternalCircuitIndex::ExtensionCircuit(0)
             .circuit_index::<Self>();
         Ok(ExtensionRxs {
             circuits: vec![registry.assemble(&trace, index, rng)?],

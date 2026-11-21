@@ -14,16 +14,16 @@ use ragu_primitives::{Element, Simulator};
 use udon::field::Field;
 
 use crate::{
-    internal::{
+    profile::{
+        Aggregator, Profile, Profiled, Standard,
+        testing::{Twin, Wider},
+    },
+    recursion::{
         native::{
             InternalCircuitIndex, InternalCircuitValues, RxIndex, RxValues,
             stages::{eval, query},
         },
         tests::assert_stage_values,
-    },
-    profile::{
-        Aggregator, Profile, Profiled, Standard,
-        testing::{Twin, Wider},
     },
 };
 

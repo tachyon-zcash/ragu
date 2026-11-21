@@ -38,7 +38,7 @@ use udon::field::Field;
 use crate::{
     ApplicationBuilder,
     header::{Header, Padding, Suffix},
-    internal::ky::output_header,
+    recursion::ky::output_header,
     step::{Encoded, Index, Oracles, Step},
 };
 

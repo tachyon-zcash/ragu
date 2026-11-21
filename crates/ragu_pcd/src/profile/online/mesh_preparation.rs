@@ -145,7 +145,7 @@ impl Mesh {
             let supplied = layout
                 .phase_range(phase)
                 .filter(|&i| !self.owns(i))
-                .map(|_| crate::internal::native::online::padding())
+                .map(|_| crate::recursion::native::online::padding())
                 .collect();
             result.extend(self.prepare(
                 layout,

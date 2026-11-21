@@ -9,7 +9,7 @@ use ragu_core::{
 use udon::field::Field;
 
 use super::{Instance, TestR, replay, setup};
-use crate::internal::nested;
+use crate::recursion::nested;
 
 #[test]
 fn recomputed_stages_match_across_backends() {

@@ -16,7 +16,7 @@
 //! nested-curve commitment $P_n$ is the Horner walk over the batch's
 //! nested-curve commitments, performed by the native endoscaling steps over
 //! the points stages the earlier phases committed (see
-//! [`native::stages::points`](crate::internal::native::stages::points)).
+//! [`native::stages::points`](crate::recursion::native::stages::points)).
 
 use alloc::vec::Vec;
 use core::ops::AddAssign;
@@ -41,15 +41,15 @@ use super::{
 };
 use crate::{
     Application, Proof,
-    internal::{
+    profile::ProfiledCycle,
+    proof::ProofBuilder,
+    recursion::{
         native::{
             RxComponent, RxIndex, online,
             stages::points::{Inputs, WalkWitness},
         },
         nested::{PointsWitness, pcs},
     },
-    profile::ProfiledCycle,
-    proof::ProofBuilder,
 };
 
 /// The native points stages' witnesses: the nested batch's commitments.
@@ -111,7 +111,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             .collect();
         assert_eq!(
             points.len(),
-            crate::internal::native::NumPoints::<C::Profile>::len()
+            crate::recursion::native::NumPoints::<C::Profile>::len()
         );
         Inputs::from_walk(
             &points,
@@ -262,7 +262,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // sets `nested_endoscalar_rx`, `nested_points_rx`, and
         // `nested_endoscaling_step_rxs` on the builder.
         let mut points =
-            Vec::with_capacity(crate::internal::native::NumPoints::<C::Profile>::len().max(1));
+            Vec::with_capacity(crate::recursion::native::NumPoints::<C::Profile>::len().max(1));
         points.push(f.commitment);
         points.extend_from_slice(&commitments);
 

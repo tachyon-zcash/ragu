@@ -85,12 +85,12 @@ pub use crate::decompress::{
     extension::Counts,
     prover::{Decompressed, Decompression},
 };
-pub use crate::internal::nested::online::NUM_ONLINE_FQ_POLYS;
+pub use crate::recursion::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
     header::Suffix,
-    internal::{endoscalar, native, nested},
     ipa::IpaCycle,
+    recursion::{endoscalar, native, nested},
 };
 
 /// The internal circuits a proof carries beyond the fuse's own: an

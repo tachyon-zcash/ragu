@@ -18,7 +18,7 @@ use super::super::{
     Prepared, Step,
     oracles::{self, OnlineWitness, Oracles},
 };
-use crate::{Header, internal::native::online};
+use crate::{Header, recursion::native::online};
 
 /// The length of an application circuit's instance: $\zeta$, the online
 /// openings, the bridge hash's two coordinates and the three padded headers.

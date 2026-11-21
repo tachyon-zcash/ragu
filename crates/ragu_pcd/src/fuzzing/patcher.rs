@@ -94,14 +94,14 @@ use udon::field::Field;
 use super::claims::{NativeFuseProofSource, NestedFuseProofSource};
 use crate::{
     Application, Pcd, RAGU_TAG,
-    internal::{
+    profile::ProfiledCycle,
+    proof::ProofBuilder,
+    recursion::{
         endoscalar::EndoscalarStage,
         native::{self, online, stages::points as native_points, total_circuit_counts},
         nested::{self, EndoscalingStep, EndoscalingStepWitness, NumSteps, PointsStage},
         transcript::Transcript,
     },
-    profile::ProfiledCycle,
-    proof::ProofBuilder,
     step::Step,
 };
 

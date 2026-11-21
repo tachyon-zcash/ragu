@@ -27,7 +27,7 @@
 //! binding (see the module's *Registry evaluations* and *The step
 //! binding*).
 //!
-//! [`ProofInputs`]: crate::internal::native::stages::preamble::ProofInputs
+//! [`ProofInputs`]: crate::recursion::native::stages::preamble::ProofInputs
 //! [`stages`]: super::stages
 
 use alloc::{vec, vec::Vec};
@@ -76,18 +76,19 @@ use crate::{
         transcript as compression_transcript,
     },
     header::Header,
-    internal::{
+    ipa::{IpaCycle, IpaTranscript, MSM, Params},
+    profile::{ProfiledCycle, Standard},
+    recursion::{
         ky,
         native::claims::KySource as NativeKySource,
         nested::{self, claims::KySource as NestedKySource},
     },
-    ipa::{IpaCycle, IpaTranscript, MSM, Params},
-    profile::{ProfiledCycle, Standard},
 };
 #[cfg(test)]
 use crate::{
     compress::revdot::{OpeningClaim, fold::Derived, native_components, nested_components},
-    internal::{
+    proof::bridge_alpha_power,
+    recursion::{
         native::{
             self,
             stages::{eval::generator_index, preamble::ProofInputs},
@@ -95,7 +96,6 @@ use crate::{
         nested::{stages::challenges as challenge_stage, unified as nested_unified},
         transcript::Transcript,
     },
-    proof::bridge_alpha_power,
 };
 
 /// One curve's challenges as the compression squeezes them, in order.
@@ -573,7 +573,7 @@ fn side_witness<P: Affine, K: Rank, B: SelectableBackend + Backend>(
 }
 
 /// The native targets as elements, for
-/// [`ky_values`](crate::internal::native::claims::ky_values).
+/// [`ky_values`](crate::recursion::native::claims::ky_values).
 pub(crate) struct NativeTargets<'dr, D: Driver<'dr>> {
     pub c: Element<'dr, D>,
     pub unified_bridge: Element<'dr, D>,

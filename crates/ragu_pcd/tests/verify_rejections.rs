@@ -18,12 +18,12 @@ use crate::{
     Application, ApplicationBuilder,
     compress::revdot::{native_position, nested_position},
     header::{Header, Padding, Suffix},
-    internal::{native, nested},
     ipa::IpaCycle,
     profile::{
         Profile, Profiled, ProfiledCycle,
         testing::{Crossing, CrossingBack, CrossingContext},
     },
+    recursion::{native, nested},
 };
 
 const HEADER_SIZE: usize = 4;

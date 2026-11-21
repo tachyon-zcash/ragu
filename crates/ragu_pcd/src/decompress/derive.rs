@@ -6,7 +6,7 @@
 //! squeezed as an endoscalar, so each weighted sum is a Horner chain of
 //! [`group_scale`](ragu_primitives::Endoscalar::group_scale) steps, as the fuse's
 //! endoscaling steps form their sums. The claims' points come from the
-//! same [`build`](crate::internal::native::claims::build) the decider and
+//! same [`build`](crate::recursion::native::claims::build) the decider and
 //! the compressed verifier enumerate the claims through, run over the
 //! components' commitments. The IPA's $u_j^{-1} L_j$ comes as a witness
 //! point that $u_j$ scales back to $L_j$, and the final check's three
@@ -42,12 +42,12 @@ use crate::{
         fold::{Layout, Weights},
         native_position, nested_position,
     },
-    internal::{
+    profile::Standard,
+    recursion::{
         claims::Source,
         native::{self, claims::Processor as NativeProcessor},
         nested::{self, claims::Processor as NestedProcessor},
     },
-    profile::Standard,
 };
 
 /// A claim's points: its $a$, a raw claim's $b$, and its kind.

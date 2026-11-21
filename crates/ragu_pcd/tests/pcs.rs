@@ -25,9 +25,9 @@ use udon::field::Field;
 use crate::{
     Pcd,
     header::Header,
-    internal::nested::{self, InternalCircuitIndex, RxIndex, pcs},
     profile::ProfiledCycle,
     proof::recursive_propagation_tests::support::{self, C, R},
+    recursion::nested::{self, InternalCircuitIndex, RxIndex, pcs},
 };
 
 type Poly = sparse::Polynomial<Fq, R>;
@@ -355,12 +355,12 @@ mod folding {
     };
     use crate::{
         Proof,
-        internal::{
+        profile::ProfiledCycle,
+        recursion::{
             claims,
             fold_revdot::{self, ClaimFolder},
             nested::{self, claims::KySource},
         },
-        profile::ProfiledCycle,
     };
 
     type P = nested::RevdotParameters<crate::profile::Standard>;
@@ -477,7 +477,7 @@ mod folding {
         // Two raw claims, one circuit claim per endoscaling step and per
         // instance circuit per child, and one bonding claim per bonding kind
         // folded across both children.
-        let steps = crate::internal::endoscalar::num_steps(
+        let steps = crate::recursion::endoscalar::num_steps(
             nested::ENDOSCALINGS_PER_STEP,
             nested::NUM_ENDOSCALING_POINTS,
         );
@@ -702,7 +702,7 @@ mod denominators {
     use ragu_testing::strategies;
     use udon::field::Field;
 
-    use crate::internal::inverter::Inverter;
+    use crate::recursion::inverter::Inverter;
 
     #[derive(Clone, Copy)]
     enum Zero {
@@ -919,7 +919,7 @@ mod challenge_stage {
         folding,
         support::{self, C, Cache, R, Value},
     };
-    use crate::internal::nested::stages::challenges;
+    use crate::recursion::nested::stages::challenges;
 
     fn check(app: &support::App, inputs: &support::Inputs, delta: Fq, y: Fq, z: Fq) -> Result<()> {
         let (child, _, _) = support::fused(app, inputs)?;

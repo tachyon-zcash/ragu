@@ -33,15 +33,15 @@ use super::revdot::{
 use crate::{
     Proof, SelectableBackend,
     header::NUM_ONLINE_FP_POLYS,
-    internal::{
+    ipa::{CycleTranscript, IpaTranscript},
+    profile::ProfiledCycle,
+    recursion::{
         ky::{self, NativeKy, NestedKy},
         native::{self, stages as native_stages, unified as native_unified},
         nested::{
             self, challenge as nested_challenge, stages as nested_stages, unified as nested_unified,
         },
     },
-    ipa::{CycleTranscript, IpaTranscript},
-    profile::ProfiledCycle,
 };
 
 /// A child's values the current step's query and eval stages are checked

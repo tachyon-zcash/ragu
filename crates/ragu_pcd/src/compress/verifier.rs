@@ -7,9 +7,9 @@ use super::{Lifted, Sampled, batch, revdot, transcript};
 use crate::{
     Application, CompressedPcd, CompressedProof, RAGU_TAG, SelectableBackend,
     header::Header,
-    internal::{ky, nested},
     ipa::{CycleTranscript, IpaCycle},
     profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
+    recursion::{ky, nested},
 };
 
 /// The backend whose kernels [`Application::verify_compressed`] consults for
@@ -213,9 +213,9 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
             if let Some(mesh) = C::Profile::NESTED_MESH {
                 let source = &self.nested_source().expect("source captured at setup");
                 let coordinates = Coordinates {
-                    w: crate::internal::nested::challenge::<C>(challenges.w)?,
-                    x: crate::internal::nested::challenge::<C>(challenges.x)?,
-                    y: crate::internal::nested::challenge::<C>(challenges.y)?,
+                    w: crate::recursion::nested::challenge::<C>(challenges.w)?,
+                    x: crate::recursion::nested::challenge::<C>(challenges.x)?,
+                    y: crate::recursion::nested::challenge::<C>(challenges.y)?,
                 };
                 openings.claims.extend(proof_check!(mesh.terminal_claims(
                     C::Profile::NESTED_ONLINE,

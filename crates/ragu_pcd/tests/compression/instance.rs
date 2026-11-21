@@ -20,8 +20,8 @@ use crate::{
         claims::{self, Kind, Masked},
         fold::Derived,
     },
-    internal::{ky, native, nested},
     ipa::CycleTranscript,
+    recursion::{ky, native, nested},
 };
 
 type TestR = WalletRank;

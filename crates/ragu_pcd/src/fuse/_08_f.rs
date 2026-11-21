@@ -35,13 +35,13 @@ use super::{
 };
 use crate::{
     Application, Proof,
-    internal::{
+    profile::ProfiledCycle,
+    proof::ProofBuilder,
+    recursion::{
         native,
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery, online},
         nested::{self, pcs},
     },
-    profile::ProfiledCycle,
-    proof::ProofBuilder,
 };
 
 /// Ephemeral native-field data for $f(X)$, used only during the fuse step.

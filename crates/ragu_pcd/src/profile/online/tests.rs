@@ -65,7 +65,7 @@ impl Profile for Batched {
 }
 
 fn check<F: Field, S: Side>() -> Result<()> {
-    use crate::internal::tests::assert_stage_values;
+    use crate::recursion::tests::assert_stage_values;
     assert_stage_values::<F, WalletRank, _>(&stages::InputStage::<Batched, S>::default());
     assert_stage_values::<F, WalletRank, _>(&stages::QueryStage::<Batched, S>::default());
     assert_stage_values::<F, WalletRank, _>(&stages::EvalStage::<Batched, S>::default());
@@ -110,8 +110,8 @@ fn online_stages_and_helper_are_registered_in_claim_order() -> Result<()> {
 
     use super::extension::{self, Bonding};
     use crate::{
-        internal::{native, nested},
         profile::{BondingSlot, CircuitSlot, Shape},
+        recursion::{native, nested},
     };
 
     fn register<F: Field, S: Side>() -> Result<()> {
@@ -446,7 +446,7 @@ fn nested_online_targets_bind_the_actual_helper_output_and_claim_order() -> Resu
     use ragu_primitives::{Element, GadgetExt, vec::Len};
     use udon::curve::Affine;
 
-    use crate::internal::{ky, nested};
+    use crate::recursion::{ky, nested};
 
     type C = <Pasta as Cycle>::HostCurve;
     type S = stages::Nested;
@@ -566,8 +566,8 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
     use ragu_core::{Cycle, pasta::Pasta};
 
     use crate::{
-        internal::{claims::Source, native, tests::assert_stage_values},
         profile::Profiled,
+        recursion::{claims::Source, native, tests::assert_stage_values},
     };
     type C = Profiled<Pasta, NestedOnly>;
     type R = WalletRank;
@@ -634,7 +634,7 @@ fn online_stage_bindings_are_in_the_native_claims() -> Result<()> {
             );
         }
     }
-    use crate::internal::{ky, nested::RxIndex};
+    use crate::recursion::{ky, nested::RxIndex};
     assert_eq!(
         ky::nested_online_stages::<NestedOnly, _>(|index| index),
         [
@@ -659,8 +659,8 @@ fn native_online_targets_share_sums_and_actual_foreign_points() -> Result<()> {
     use udon::curve::Affine;
 
     use crate::{
-        internal::{ky, native},
         profile::Profiled,
+        recursion::{ky, native},
     };
     type C = Profiled<Pasta, Batched>;
     type S = stages::Native;
@@ -848,7 +848,7 @@ fn native_online_stage_targets_use_actual_extension_commitments() -> Result<()> 
     use ragu_primitives::{Element, GadgetExt, Point as CurvePoint};
     use udon::curve::Affine;
 
-    use crate::internal::{ky, native, nested, tests::assert_stage_values};
+    use crate::recursion::{ky, native, nested, tests::assert_stage_values};
     type P = NativeOnly;
     type C = EqAffine;
     assert_stage_values::<Fq, WalletRank, _>(
@@ -939,7 +939,7 @@ fn nested_online_targets_share_the_actual_foreign_commitments() -> Result<()> {
     use ragu_primitives::{Element, GadgetExt, Point as CurvePoint};
     use udon::curve::Affine;
 
-    use crate::internal::{ky, nested};
+    use crate::recursion::{ky, nested};
     type C = EqAffine;
     type P = Batched;
     type S = stages::Nested;
@@ -1213,7 +1213,7 @@ fn source_tag_is_a_constraint_fixed_by_the_helper_setup() -> Result<()> {
         S::mesh::<SourceMesh>()
             .unwrap()
             .check(S::layout::<SourceMesh>())?;
-        crate::internal::tests::assert_stage_values::<F, WalletRank, _>(&stages::InputStage::<
+        crate::recursion::tests::assert_stage_values::<F, WalletRank, _>(&stages::InputStage::<
             SourceMesh,
             S,
         >::default());

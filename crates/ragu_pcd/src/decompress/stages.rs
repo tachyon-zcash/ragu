@@ -100,9 +100,9 @@ pub(crate) use crate::compress::runs::{
 };
 use crate::{
     compress::{Messages, instance::OPENED, revdot::fold::Derived},
-    internal::nested,
     ipa::IpaCycle,
     profile::{BondingSlot, Profile, ProfiledCycle, Registered, Standard},
+    recursion::nested,
 };
 
 /// The nested commitments the instance lists, then the nested registry

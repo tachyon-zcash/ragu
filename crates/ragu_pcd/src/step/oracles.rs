@@ -69,7 +69,7 @@ use super::Step;
 use crate::{
     Header,
     header::{Has, slot},
-    internal::native::online::{self, NUM_ONLINE_FP_POLYS, Queries, QueriesOutput, QueryOutput},
+    recursion::native::online::{self, NUM_ONLINE_FP_POLYS, Queries, QueriesOutput, QueryOutput},
 };
 
 /// Evaluates a step's online polynomials: `evaluate(slot, x)` is the value

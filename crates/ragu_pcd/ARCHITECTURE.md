@@ -13,7 +13,7 @@ on. Paths are relative to `src/`.
 | `profile/` | Proof shapes: the `Profile` trait, the built-in profiles and their extensions. `profile/online/` declares the online batches. |
 | `pasta/` | The Pasta parameters. |
 | `proof/` | Both proof forms: `Proof` and `Pcd` in `mod.rs`, `CompressedProof` and `CompressedPcd` in `compressed.rs`; the uncompressed proof's builder (`builder.rs`) and byte codec (`codec.rs`). |
-| `internal/` | The recursion. Per side (`native/`, `nested/`): the canonical sizes and orders (`mod.rs`), the claim order (`claims.rs`), the unified instance (`unified.rs`), the online slots (`online.rs`), the stages a proof commits to (`stages/`) and the recursive verifier's circuits (`circuits/`). Shared by both sides: revdot claims and their folding, $k(y)$, the transcript, and the endoscalar and inverter gadgets. |
+| `recursion/` | The recursion. Per side (`native/`, `nested/`): the canonical sizes and orders (`mod.rs`), the claim order (`claims.rs`), the unified instance (`unified.rs`), the online slots (`online.rs`), the stages a proof commits to (`stages/`) and the recursive verifier's circuits (`circuits/`). Shared by both sides: revdot claims and their folding, $k(y)$, the transcript, and the endoscalar and inverter gadgets. |
 | `fuse/` | The prover: `Application::fuse` in `mod.rs`, its phases in transcript order (`_01_application.rs` to `_11_circuits.rs`), and the helpers the phases share. |
 | `verify.rs` | The reference decider, `Application::verify_uncompressed`: a test oracle under `test-utils`. |
 | `compress/` | The decider restated over commitments, ending in one IPA opening per curve: `prover.rs` and `verifier.rs`, the shared instance, messages and transcript, and `batch/` and `revdot/`, each with its own `prover.rs` and `verifier.rs`. |
@@ -30,7 +30,7 @@ on. Paths are relative to `src/`.
 | `ApplicationBuilder::finalize` | `application.rs` |
 | `Application::seed`, `Application::rerandomize` | `application.rs` |
 | `Application::fuse` | `fuse/mod.rs`, then `fuse/_01_application.rs` to `fuse/_11_circuits.rs` |
-| Recursive verification | `internal/{native,nested}/circuits/`, registered by `register_all` in `internal/{native,nested}/mod.rs` |
+| Recursive verification | `recursion/{native,nested}/circuits/`, registered by `register_all` in `recursion/{native,nested}/mod.rs` |
 | `Application::compress` | `compress/prover.rs` |
 | `Application::verify_compressed` | `compress/verifier.rs` |
 | `Application::decompress` (aggregator profile) | `decompress/prover.rs` |
@@ -41,7 +41,7 @@ on. Paths are relative to `src/`.
 1. `lib.rs`, `application.rs` and the entry points above.
 2. `header/`, `step/` and `profile/`: what a proof claims and the shapes it
    takes.
-3. `internal/`: each side's `mod.rs`, `claims.rs`, `unified.rs` and `stages/`,
+3. `recursion/`: each side's `mod.rs`, `claims.rs`, `unified.rs` and `stages/`,
    then the shared modules, then `circuits/`.
 4. `verify.rs`: the plainest statement of what an accumulated proof must
    satisfy.
@@ -55,7 +55,7 @@ on. Paths are relative to `src/`.
 Everything except the prover and test-only code. The prover is `fuse/`,
 `proof/builder.rs`, every `prover.rs` (under `compress/`, `ipa/`,
 `decompress/` and `profile/online/`), `multicore.rs`, and the `impl
-Application` blocks in `internal/{native,nested}/online.rs`, which run the
+Application` blocks in `recursion/{native,nested}/online.rs`, which run the
 fuse's online batch phases beside the slots they fill. It matters for
 completeness and zero knowledge, so a soundness review can set it aside.
 `tests/prover_isolation.rs` checks that no other code names prover code, apart
@@ -101,7 +101,7 @@ What each circuit enforces, as its module documents:
 | nested `loading` | The points stage against the bridge stages, mirroring `_10_p.rs`. |
 
 To follow one obligation, go from its phase to its stage in
-`internal/*/stages/`, the challenge after it, the circuit that enforces it,
+`recursion/*/stages/`, the challenge after it, the circuit that enforces it,
 the parent's binding, and the deciders' checks in `verify.rs` and
 `compress/`.
 

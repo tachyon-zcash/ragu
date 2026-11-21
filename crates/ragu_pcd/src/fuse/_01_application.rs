@@ -21,7 +21,7 @@
 //!
 //! [`begin_application_proof`]: Application::begin_application_proof
 //! [`compute_application_proof`]: Application::compute_application_proof
-//! [`preamble`]: crate::internal::native::stages::preamble
+//! [`preamble`]: crate::recursion::native::stages::preamble
 
 use alloc::vec::Vec;
 
@@ -37,9 +37,9 @@ use udon::{curve::Affine as _, field::Field};
 
 use crate::{
     Application, Header, Proof,
-    internal::{ky, native::online},
     profile::ProfiledCycle,
     proof::ProofBuilder,
+    recursion::{ky, native::online},
     step::{HeaderInput, Prepared, Step, internal::adapter::Adapter, oracles::OnlineWitness},
 };
 

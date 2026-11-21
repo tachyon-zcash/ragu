@@ -25,9 +25,9 @@ use super::_01_application::NativeApplicationStage;
 use crate::{
     Application, Proof,
     header::NUM_ONLINE_FP_POLYS,
-    internal::{native, nested},
     profile::ProfiledCycle,
     proof::ProofBuilder,
+    recursion::{native, nested},
 };
 
 impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>

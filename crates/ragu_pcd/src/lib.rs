@@ -66,12 +66,12 @@ mod fuse;
 // here.
 pub mod fuzzing;
 pub mod header;
-mod internal;
 pub mod ipa;
 mod multicore;
 pub mod pasta;
 pub mod profile;
 mod proof;
+mod recursion;
 pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.

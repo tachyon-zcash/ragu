@@ -54,9 +54,9 @@ use super::{
 };
 use crate::{
     Application,
-    internal::{fold_revdot, native, nested},
     profile::ProfiledCycle,
     proof::ProofBuilder,
+    recursion::{fold_revdot, native, nested},
 };
 
 type NativeNumGroups<P> = <native::RevdotParameters<P> as fold_revdot::Parameters>::NumGroups;

@@ -19,12 +19,12 @@ use super::{
 use crate::{
     Proof,
     compress::revdot::claims::{self, Kind, Masked, Shape},
-    internal::{
+    ipa::IpaTranscript,
+    profile::ProfiledCycle,
+    recursion::{
         claims::{Builder, Source},
         native, nested,
     },
-    ipa::IpaTranscript,
-    profile::ProfiledCycle,
 };
 
 /// The product of two coefficient vectors of $n$ coefficients, as its $2n -
@@ -116,7 +116,7 @@ impl<C: Affine, R: Rank> Witness<C, R> {
 
 /// The decider's polynomial [`Source`] over one proof, the raw accumulator
 /// claim included: what the compressor feeds
-/// [`claims::Builder`](crate::internal::claims::Builder).
+/// [`claims::Builder`](crate::recursion::claims::Builder).
 pub(crate) struct NativePolys<'a, C: Cycle, R: Rank>(pub &'a Proof<C, R>);
 
 impl<'a, C: Cycle, R: Rank> Source for NativePolys<'a, C, R> {

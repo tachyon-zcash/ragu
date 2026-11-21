@@ -36,7 +36,6 @@ use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
 use super::circuit::{SideWitness, Witness as Prepared};
 use crate::{
-    internal::{native, nested},
     profile::{
         Profile,
         online::{
@@ -46,6 +45,7 @@ use crate::{
             stages::Side,
         },
     },
+    recursion::{native, nested},
 };
 
 /// The input stage's wires: the two children's inherited coordinates,

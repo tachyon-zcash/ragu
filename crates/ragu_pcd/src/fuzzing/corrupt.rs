@@ -103,7 +103,7 @@ use crate::{
     Application, Proof,
     profile::{Profile, ProfiledCycle},
 };
-pub use crate::{header::NUM_ONLINE_FP_POLYS, internal::native::online::NUM_ONLINE_FP_QUERIES};
+pub use crate::{header::NUM_ONLINE_FP_POLYS, recursion::native::online::NUM_ONLINE_FP_QUERIES};
 
 // The corruption vocabulary names proof components, and the names it uses are
 // the ones `internal` uses. Those enums are *not* re-exported here, and the
@@ -121,7 +121,7 @@ pub use crate::{header::NUM_ONLINE_FP_POLYS, internal::native::online::NUM_ONLIN
 
 /// A native-field polynomial component of a proof.
 ///
-/// Mirrors `internal::native::RxComponent`.
+/// Mirrors `recursion::native::RxComponent`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RxComponent {
     /// The `a` polynomial from the AB proof (revdot claim).
@@ -134,7 +134,7 @@ pub enum RxComponent {
 
 /// Which native-field rx polynomial of a proof to address.
 ///
-/// Mirrors `internal::native::RxIndex`.
+/// Mirrors `recursion::native::RxIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeRx {
     /// The `hashes_1` circuit's rx polynomial.
@@ -184,12 +184,12 @@ pub enum NativeRx {
 impl NativeRx {
     /// The number of native rx polynomial components in the standard
     /// profile.
-    pub const NUM: usize = crate::internal::native::RxIndex::NUM;
+    pub const NUM: usize = crate::recursion::native::RxIndex::NUM;
 
     /// All variants in the standard profile, in the canonical order
     /// `internal` defines.
     ///
-    /// Derived from `internal::native::RxIndex::ALL` rather than restated.
+    /// Derived from `recursion::native::RxIndex::ALL` rather than restated.
     /// That order is not cosmetic — it drives the `Write` impl for `RxValues`
     /// and the evaluation order in `poly_queries` — and a hand-copied list
     /// could drift from it silently, which an exhaustive `match` would not
@@ -199,17 +199,17 @@ impl NativeRx {
     /// All variants in profile `P`, in the canonical order `internal`
     /// defines: [`ALL`](Self::ALL) with the walk resized to the profile's
     /// steps and the extension's circuits' and stages' polynomials appended.
-    /// Derived from `internal::native::RxIndex::all` as [`ALL`](Self::ALL)
+    /// Derived from `recursion::native::RxIndex::all` as [`ALL`](Self::ALL)
     /// is from the constant list.
     pub fn all<P: Profile>() -> Vec<Self> {
-        crate::internal::native::RxIndex::all::<P>()
+        crate::recursion::native::RxIndex::all::<P>()
             .into_iter()
             .map(Self::from_internal)
             .collect()
     }
 
     const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::native::RxIndex::ALL;
+        let src = crate::recursion::native::RxIndex::ALL;
         let mut out = [Self::Hashes1; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
@@ -219,8 +219,8 @@ impl NativeRx {
         out
     }
 
-    const fn from_internal(v: crate::internal::native::RxIndex) -> Self {
-        use crate::internal::native::RxIndex as I;
+    const fn from_internal(v: crate::recursion::native::RxIndex) -> Self {
+        use crate::recursion::native::RxIndex as I;
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),
@@ -249,7 +249,7 @@ impl NativeRx {
 
 /// Which nested-field rx polynomial of a proof to address.
 ///
-/// Mirrors `internal::nested::RxIndex`.
+/// Mirrors `recursion::nested::RxIndex`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NestedRx {
     /// EndoscalingStep circuit rx polynomial (indexed by step number).
@@ -290,7 +290,7 @@ pub enum NestedRx {
 
 /// One of the two nested accumulator polynomials.
 ///
-/// Mirrors the `AbA` / `AbB` variants of `internal::nested::RxComponent`.
+/// Mirrors the `AbA` / `AbB` variants of `recursion::nested::RxComponent`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NestedAccumulator {
     /// The `a` polynomial of the nested accumulator.
@@ -360,7 +360,7 @@ pub enum Challenge {
 
 impl Challenge {
     /// All variants, in the order the unified instance writes them.
-    pub const ALL: [Self; crate::internal::nested::stages::challenges::NUM + 1] = [
+    pub const ALL: [Self; crate::recursion::nested::stages::challenges::NUM + 1] = [
         Self::W,
         Self::Y,
         Self::Z,
@@ -911,7 +911,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
 impl NestedRx {
     /// The number of nested rx components in the standard profile.
-    pub const NUM: usize = crate::internal::nested::RxIndex::NUM;
+    pub const NUM: usize = crate::recursion::nested::RxIndex::NUM;
 
     /// Whether this is a bridge stage's rx, whose commitment
     /// [`BridgeCommitment`] addresses.
@@ -933,7 +933,7 @@ impl NestedRx {
     /// All variants in the standard profile, in the canonical order
     /// `internal` defines.
     ///
-    /// Derived from `internal::nested::RxIndex::ALL` for the same reason as
+    /// Derived from `recursion::nested::RxIndex::ALL` for the same reason as
     /// [`NativeRx::ALL`], and more urgently: this order is pinned by
     /// `test_nested_registry_tag`, so restating it by hand would put a
     /// consensus-relevant ordering in two places.
@@ -943,14 +943,14 @@ impl NestedRx {
     /// defines: [`ALL`](Self::ALL) with the walk resized to the profile's
     /// steps and the extension's circuits' and stages' polynomials appended.
     pub fn all<P: Profile>() -> Vec<Self> {
-        crate::internal::nested::RxIndex::all::<P>()
+        crate::recursion::nested::RxIndex::all::<P>()
             .into_iter()
             .map(Self::from_internal)
             .collect()
     }
 
     const fn derive_all() -> [Self; Self::NUM] {
-        let src = crate::internal::nested::RxIndex::ALL;
+        let src = crate::recursion::nested::RxIndex::ALL;
         let mut out = [Self::EndoscalarStage; Self::NUM];
         let mut i = 0;
         while i < Self::NUM {
@@ -960,8 +960,8 @@ impl NestedRx {
         out
     }
 
-    const fn from_internal(v: crate::internal::nested::RxIndex) -> Self {
-        use crate::internal::nested::RxIndex as I;
+    const fn from_internal(v: crate::recursion::nested::RxIndex) -> Self {
+        use crate::recursion::nested::RxIndex as I;
         match v {
             I::ExtensionCircuit(k) => Self::ExtensionCircuit(k),
             I::ExtensionStage(k) => Self::ExtensionStage(k),

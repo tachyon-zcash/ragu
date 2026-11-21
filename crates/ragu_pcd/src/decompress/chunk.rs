@@ -307,7 +307,7 @@ chunk_circuit!(
 /// bind the header to the proof they verify, so a claim on this circuit's
 /// output is a claim on the decompressed proof's statement, which the
 /// decompression step's verifier makes through the circuit's $k(y)$ (see
-/// [`statement_ky`](crate::internal::native::stages::preamble::ProofInputs::statement_ky)).
+/// [`statement_ky`](crate::recursion::native::stages::preamble::ProofInputs::statement_ky)).
 /// The same claim sets the step binding: the flag to whether the proof is
 /// the decompression step's, and the opening to that step's own, which the
 /// chunks check the IPA's $s(X)$ against.
@@ -428,7 +428,7 @@ impl<C: Cycle, S: Side<C>, K: Rank> Len for Exposed<C, S, K> {
 /// claim on this circuit's output at the $k(y)$ of the other side's actual
 /// stage commitments, which the proof's consumer computes, holds only if
 /// the two sides agree (see [`Binding`](crate::profile::Binding) and
-/// [`binding_ky`](crate::internal::ky::binding_ky)).
+/// [`binding_ky`](crate::recursion::ky::binding_ky)).
 pub(crate) struct BindingCircuit<C: Cycle, S, K, R, const HEADER_SIZE: usize> {
     schedule: Arc<Schedule>,
     _marker: PhantomData<fn() -> (C, S, K, R)>,

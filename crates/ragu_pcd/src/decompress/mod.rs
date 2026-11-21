@@ -150,7 +150,7 @@
 //! `hashes_1` exports these three after its output header and circuit
 //! id, and the step that consumes its proof holds its copy to that
 //! export
-//! ([`StepBindingLen`](crate::internal::native::online::StepBindingLen)).
+//! ([`StepBindingLen`](crate::recursion::native::online::StepBindingLen)).
 //! Through them both IPAs' round challenges are fixed before the step's
 //! challenge $\zeta = w$, and the host curve's $G'$ is bound:
 //!
@@ -235,7 +235,7 @@
 //! the constant one; the header types a decompressed statement can carry
 //! leave their slots to padding, which `finalize_with` checks ([`Decompress`]).
 //!
-//! [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+//! [`statement_ky`]: crate::recursion::native::stages::preamble::ProofInputs::statement_ky
 //! [`Decompress`]: crate::step::internal::decompress
 //!
 //! # Registry evaluations

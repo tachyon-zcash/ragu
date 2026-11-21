@@ -20,9 +20,9 @@ use super::{
 };
 use crate::{
     decompress::{circuit::AbValue, stages::Sizes},
-    internal::nested::{self, stages::ab},
     profile::Standard,
     proof::bridge_alpha_power,
+    recursion::nested::{self, stages::ab},
 };
 
 const HEADER_SIZE: usize = 4;

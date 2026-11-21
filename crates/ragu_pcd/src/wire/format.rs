@@ -342,7 +342,7 @@ mod tests {
     }
 
     // Schema v3 is the standard profile's shape under `ragu-pcd-v1`, with
-    // the online polynomials (see `internal::native::online`) in the batch
+    // the online polynomials (see `recursion::native::online`) in the batch
     // and each step folding its own application claim. A change to either
     // moves the layout or the verifier semantics and needs a new schema or
     // protocol version, not a silent re-pin.

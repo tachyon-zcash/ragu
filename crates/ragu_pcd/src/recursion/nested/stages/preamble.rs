@@ -1,0 +1,631 @@
+//! Preamble stage for nested fuse operations.
+//!
+//! Collects child proof commitments for cross-curve accumulation.
+
+use core::marker::PhantomData;
+
+use ragu_circuits::polynomials::Rank;
+use ragu_core::{
+    Cycle, Result,
+    drivers::{Driver, DriverValue},
+    gadgets::{Bound, Gadget, Kind},
+    maybe::Maybe,
+};
+use ragu_primitives::{
+    Element, Point,
+    io::Write,
+    vec::{ConstLen, FixedVec, Len},
+};
+use udon::curve::EndomorphismAffine as Affine;
+
+use crate::{
+    Proof,
+    profile::{
+        Profile, ProfiledCycle,
+        online::stages::{Native, Nested, PhaseLen, PolynomialsLen, Present},
+    },
+    recursion::{
+        native::{
+            self, NUM_BINDERS, RxIndex,
+            online::{self, NUM_ONLINE_FP_POLYS},
+        },
+        nested::{PointsStage, online as online_fq, unified},
+    },
+};
+
+/// Number of curve points in this stage in profile `P`: those of the two
+/// native points stages committed before $w$, the step's own online
+/// polynomials' (see [`online`]) and its application stage's, then for each
+/// child every native rx commitment, its $a$, $b$, `registry_xy` and $P$,
+/// and its exported online commitments.
+pub fn num_points<P: Profile>() -> usize {
+    2 + NUM_ONLINE_FP_POLYS + 1 + 2 * (RxIndex::num::<P>() + 4 + NUM_ONLINE_FP_POLYS)
+        + 2 * P::NATIVE_ONLINE.polynomials.len()
+        + <PhaseLen<P, Native, 0> as ragu_primitives::vec::Len>::len()
+        + <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len()
+}
+
+/// Witness data for a single child proof in the preamble bridge stage.
+///
+/// The initial fields (hashes_1 through compute_v) are the primary
+/// introduction of child circuit commitments into the nested transcript.
+/// The remaining `stashed_*` fields are copies of values the child's nested
+/// unified instance exports, placed here so that loading can enforce them
+/// against [`PointsStage`] and so that this step can compute the child's
+/// expected instance claim value $k(y_n)$ from them. The collapse circuit binds
+/// the copies to the child's instance circuits: it folds the child's
+/// instance-circuit claims with that expected value, outside the base case.
+#[derive(Clone)]
+pub struct ChildWitness<C: Affine, P: Profile> {
+    // The `_10_p` accumulation order is `RxIndex::all`'s, which the `Index`
+    // impl on `ChildOutput` reads the fields in; the field order itself is
+    // not load-bearing.
+    /// Commitment from the child's first hashes circuit.
+    pub hashes_1: C,
+    /// Commitment from the child's second hashes circuit.
+    pub hashes_2: C,
+    /// Commitment from the child's collapse circuit.
+    pub collapse: C,
+    /// Commitment from the child's compute_v circuit.
+    pub compute_v: C,
+    /// Commitments from the child's nested challenge binding circuits.
+    pub bind_challenges: [C; NUM_BINDERS],
+    /// Commitment from the child's nested beta binding circuit.
+    pub bind_beta: C,
+    /// Commitment from the child's endoscalar binding circuit.
+    pub bind_endoscalar: C,
+    /// Commitments from the child's native endoscaling steps.
+    pub endoscaling_steps: FixedVec<C, native::NumSteps<P>>,
+    /// Commitments from the circuits of the child's native extension.
+    pub extension_circuits: FixedVec<C, native::NumExtensionCircuits<P>>,
+    /// Commitments from the stages of the child's native extension.
+    pub extension_stages: FixedVec<C, native::NumExtensionStages<P>>,
+    /// Commitment from the child's native walk stage.
+    pub points_walk: C,
+
+    /// Stashed commitment from the child's preamble bridge stage.
+    pub stashed_preamble: C,
+    /// Stashed commitment from the child's inner error bridge stage.
+    pub stashed_inner_error: C,
+    /// Stashed commitment from the child's outer error bridge stage.
+    pub stashed_outer_error: C,
+    /// Stashed commitment from the child's query bridge stage.
+    pub stashed_query: C,
+    /// Stashed commitment from the child's eval bridge stage.
+    pub stashed_eval: C,
+    /// Stashed `a` commitment from the child's AB bridge stage.
+    pub stashed_ab_a: C,
+    /// Stashed `b` commitment from the child's AB bridge stage.
+    pub stashed_ab_b: C,
+    /// Stashed registry XY commitment from the child.
+    pub stashed_registry_xy: C,
+    /// Stashed accumulated P commitment from the child.
+    pub stashed_p: C,
+    /// Stashed commitment from the child's native points binding stage.
+    pub stashed_points_binding: C,
+    /// Stashed commitment from the child's native points preamble stage.
+    pub stashed_points_preamble: C,
+    /// Stashed commitment from the child's native `registry_wx` points stage.
+    pub stashed_points_registry_wx: C,
+    /// Stashed commitment from the child's native `ab` points stage.
+    pub stashed_points_ab: C,
+    /// Stashed commitment from the child's native `f` points stage.
+    pub stashed_points_f: C,
+    /// The child's exported polynomial-query commitments, which this step
+    /// opens as its left or right slots.
+    pub stashed_online_commitments: [C; NUM_ONLINE_FP_POLYS],
+
+    /// The scalars of the child's nested unified instance: its nested
+    /// accumulator value and batch evaluation, and the lifts of its $x$, $y$
+    /// and $u$. With the stashed commitments above these make up the child's
+    /// nested instance.
+    pub nested: NestedValues<C::Base>,
+    /// The openings of the child's own online Fq polynomials it exported,
+    /// the point then the value of each, tied to its nested `compute_v`
+    /// and binding circuits.
+    pub online_fq_openings: FixedVec<C::Base, online_fq::BoundOpeningsLen<P>>,
+    /// Lifted w, alpha, beta and the two online helper sums of this child.
+    pub online_values: FixedVec<C::Base, Present<P, Nested, 5>>,
+    /// Common source-mesh coordinates and intersection values.
+    pub mesh: FixedVec<C::Base, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
+    /// Common targets for the child's actual native online walk points.
+    pub online_points: FixedVec<C, PolynomialsLen<P, Native>>,
+}
+
+/// The scalar half of a child's nested unified instance (see
+/// [`unified`]).
+#[derive(Clone, Copy)]
+pub struct NestedValues<F> {
+    pub c: F,
+    pub v: F,
+    pub x: F,
+    pub y: F,
+    pub u: F,
+}
+
+impl<C: Affine, P: Profile> ChildWitness<C, P> {
+    /// Construct from a child proof's commitments and nested instance.
+    ///
+    /// # Errors
+    ///
+    /// Fails if a challenge of the child lies outside the endoscalar range,
+    /// which an honest transcript output does with negligible probability.
+    pub fn from_proof<
+        CC: Cycle<HostCurve = C, ScalarField = C::Base> + ProfiledCycle<Profile = P>,
+        R: Rank,
+    >(
+        proof: &Proof<CC, R>,
+    ) -> Result<Self> {
+        use crate::recursion::native::RxComponent;
+        let instance = proof.nested_instance()?;
+        Ok(Self {
+            hashes_1: proof.native_rx_commitment(RxIndex::Hashes1),
+            hashes_2: proof.native_rx_commitment(RxIndex::Hashes2),
+            collapse: proof.native_rx_commitment(RxIndex::Collapse),
+            compute_v: proof.native_rx_commitment(RxIndex::ComputeV),
+            bind_challenges: core::array::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::BindChallenges(k as u32))
+            }),
+            bind_beta: proof.native_rx_commitment(RxIndex::BindBeta),
+            bind_endoscalar: proof.native_rx_commitment(RxIndex::BindEndoscalar),
+            endoscaling_steps: FixedVec::from_fn(|step| {
+                proof.native_rx_commitment(RxIndex::EndoscalingStep(step as u32))
+            }),
+            extension_circuits: FixedVec::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::ExtensionCircuit(k as u32))
+            }),
+            extension_stages: FixedVec::from_fn(|k| {
+                proof.native_rx_commitment(RxIndex::ExtensionStage(k as u32))
+            }),
+            points_walk: proof.native_rx_commitment(RxIndex::PointsWalk),
+            stashed_preamble: proof.native_rx_commitment(RxIndex::Preamble),
+            stashed_inner_error: proof.native_rx_commitment(RxIndex::InnerError),
+            stashed_outer_error: proof.native_rx_commitment(RxIndex::OuterError),
+            stashed_query: proof.native_rx_commitment(RxIndex::Query),
+            stashed_eval: proof.native_rx_commitment(RxIndex::Eval),
+            stashed_ab_a: proof.native_commitment(RxComponent::AbA),
+            stashed_ab_b: proof.native_commitment(RxComponent::AbB),
+            stashed_registry_xy: proof.native_registry_xy_commitment(),
+            stashed_p: proof.native_p_commitment(),
+            stashed_points_binding: proof.native_rx_commitment(RxIndex::PointsBinding),
+            stashed_points_preamble: proof.native_rx_commitment(RxIndex::PointsPreamble),
+            stashed_points_registry_wx: proof.native_rx_commitment(RxIndex::PointsRegistryWx),
+            stashed_points_ab: proof.native_rx_commitment(RxIndex::PointsAb),
+            stashed_points_f: proof.native_rx_commitment(RxIndex::PointsF),
+            stashed_online_commitments: proof.online_commitments(),
+            mesh: proof.nested_mesh_claims.clone().try_into()?,
+            online_values: proof.nested_online_values()?.try_into()?,
+            online_points: proof.native_online_commitments.clone().try_into()?,
+            nested: NestedValues {
+                c: instance.c,
+                v: instance.v,
+                x: instance.x,
+                y: instance.y,
+                u: instance.u,
+            },
+            online_fq_openings: FixedVec::new(proof.online_fq_openings.clone())
+                .expect("a proof carries the openings its profile exports"),
+        })
+    }
+}
+
+/// Witness data for the preamble bridge stage.
+///
+/// The native preamble stage's commitment is not here: it holds the step's
+/// own output header and online openings, which the step's circuit fixes
+/// after $w$, so the `s_prime` bridge carries it.
+pub struct Witness<C: Affine, P: Profile> {
+    /// This step's native online commitments, fixed before w.
+    pub online_points: FixedVec<C, PhaseLen<P, Native, 0>>,
+    /// This boundary's native online stage commitment.
+    pub online_stage: FixedVec<
+        C,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
+    >,
+    /// Commitment of the native points binding stage, fixed here before
+    /// $w$ is squeezed.
+    pub native_points_binding: C,
+    /// Commitment of the native points preamble stage, fixed here before
+    /// $w$ is squeezed.
+    pub native_points_preamble: C,
+    /// Commitments to this step's output polynomials.
+    /// Nested collapse binds their exported instance values to the points
+    /// in this step's prechallenge Preamble. The parent uses those same
+    /// exported points as its input polynomial commitments.
+    pub online_commitments: [C; NUM_ONLINE_FP_POLYS],
+    /// The commitment of the step's own application stage, fixed here
+    /// before $w$ is squeezed. The step folds the stage's claims itself
+    /// and walks the commitment with its own application trace, so the
+    /// parent never reads it.
+    pub application_stage: C,
+    /// Witness data from the left child proof.
+    pub left: ChildWitness<C, P>,
+    /// Witness data from the right child proof.
+    pub right: ChildWitness<C, P>,
+}
+
+/// Output gadget for a single child proof in the preamble bridge stage.
+#[derive(Gadget, Write)]
+pub struct ChildOutput<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    // Read by `RxIndex` through the `Index` impl below, in the `_10_p`
+    // accumulation order; the field order itself is not load-bearing.
+    /// Point commitment from the child's first hashes circuit.
+    #[ragu(gadget)]
+    pub hashes_1: Point<'dr, D, C>,
+    /// Point commitment from the child's second hashes circuit.
+    #[ragu(gadget)]
+    pub hashes_2: Point<'dr, D, C>,
+    /// Point commitment from the child's collapse circuit.
+    #[ragu(gadget)]
+    pub collapse: Point<'dr, D, C>,
+    /// Point commitment from the child's compute_v circuit.
+    #[ragu(gadget)]
+    pub compute_v: Point<'dr, D, C>,
+    /// Point commitments from the child's nested challenge binding circuits.
+    #[ragu(gadget)]
+    pub bind_challenges: FixedVec<Point<'dr, D, C>, ConstLen<NUM_BINDERS>>,
+    /// Point commitment from the child's nested beta binding circuit.
+    #[ragu(gadget)]
+    pub bind_beta: Point<'dr, D, C>,
+    /// Point commitment from the child's endoscalar binding circuit.
+    #[ragu(gadget)]
+    pub bind_endoscalar: Point<'dr, D, C>,
+    /// Point commitments from the child's native endoscaling steps.
+    #[ragu(gadget)]
+    pub endoscaling_steps: FixedVec<Point<'dr, D, C>, native::NumSteps<P>>,
+    /// Point commitments from the circuits of the child's native extension.
+    #[ragu(gadget)]
+    pub extension_circuits: FixedVec<Point<'dr, D, C>, native::NumExtensionCircuits<P>>,
+    /// Point commitments from the stages of the child's native extension.
+    #[ragu(gadget)]
+    pub extension_stages: FixedVec<Point<'dr, D, C>, native::NumExtensionStages<P>>,
+    /// Point commitment from the child's native walk stage.
+    #[ragu(gadget)]
+    pub points_walk: Point<'dr, D, C>,
+
+    /// Stashed commitment from the child's preamble bridge stage.
+    #[ragu(gadget)]
+    pub stashed_preamble: Point<'dr, D, C>,
+    /// Stashed commitment from the child's inner error bridge stage.
+    #[ragu(gadget)]
+    pub stashed_inner_error: Point<'dr, D, C>,
+    /// Stashed commitment from the child's outer error bridge stage.
+    #[ragu(gadget)]
+    pub stashed_outer_error: Point<'dr, D, C>,
+    /// Stashed commitment from the child's query bridge stage.
+    #[ragu(gadget)]
+    pub stashed_query: Point<'dr, D, C>,
+    /// Stashed commitment from the child's eval bridge stage.
+    #[ragu(gadget)]
+    pub stashed_eval: Point<'dr, D, C>,
+    /// Stashed `a` commitment from the child's AB bridge stage.
+    #[ragu(gadget)]
+    pub stashed_ab_a: Point<'dr, D, C>,
+    /// Stashed `b` commitment from the child's AB bridge stage.
+    #[ragu(gadget)]
+    pub stashed_ab_b: Point<'dr, D, C>,
+    /// Stashed registry XY commitment from the child.
+    #[ragu(gadget)]
+    pub stashed_registry_xy: Point<'dr, D, C>,
+    /// Stashed accumulated P commitment from the child.
+    #[ragu(gadget)]
+    pub stashed_p: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native points binding stage.
+    #[ragu(gadget)]
+    pub stashed_points_binding: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native points preamble stage.
+    #[ragu(gadget)]
+    pub stashed_points_preamble: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native `registry_wx` points stage.
+    #[ragu(gadget)]
+    pub stashed_points_registry_wx: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native `ab` points stage.
+    #[ragu(gadget)]
+    pub stashed_points_ab: Point<'dr, D, C>,
+    /// Stashed commitment from the child's native `f` points stage.
+    #[ragu(gadget)]
+    pub stashed_points_f: Point<'dr, D, C>,
+    /// The child's exported polynomial-query commitments.
+    #[ragu(gadget)]
+    pub stashed_online_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
+
+    /// The scalars of the child's nested unified instance.
+    #[ragu(gadget)]
+    pub nested: NestedValuesOutput<'dr, D>,
+    /// The openings of the child's own online Fq polynomials it exported.
+    #[ragu(gadget)]
+    pub online_fq_openings: FixedVec<Element<'dr, D>, online_fq::BoundOpeningsLen<P>>,
+    /// Public values shared by the child's compute-v and online helper claims.
+    #[ragu(gadget)]
+    pub online_values: FixedVec<Element<'dr, D>, Present<P, Nested, 5>>,
+    /// Common source-mesh coordinates and intersection values.
+    #[ragu(gadget)]
+    pub mesh: FixedVec<Element<'dr, D>, crate::profile::online::stages::MeshClaimsLen<P, Nested>>,
+    /// Common targets for the child's native online commitments.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PolynomialsLen<P, Native>>,
+}
+
+/// Gadget for the scalar half of a child's nested unified instance.
+#[derive(Gadget, Write)]
+pub struct NestedValuesOutput<'dr, D: Driver<'dr>> {
+    #[ragu(gadget)]
+    pub c: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub v: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub x: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub y: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub u: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
+    /// The points the child's nested binding circuit exposes, as this stage
+    /// holds them: the child's native extension stages the profile's
+    /// binding names, then its own online slots the binding names. Empty
+    /// for a profile without a binding.
+    pub fn bound(&self) -> alloc::vec::Vec<Point<'dr, D, C>> {
+        crate::recursion::ky::nested_bound::<P, _>(
+            |index| match index {
+                native::RxIndex::ExtensionStage(j) => self.extension_stages[j as usize].clone(),
+                _ => unreachable!("a binding names extension stages"),
+            },
+            |slot| self.stashed_online_commitments[slot].clone(),
+        )
+    }
+
+    /// The child's nested unified instance, assembled from the values this
+    /// stage holds, in the order the child's circuits serialize it.
+    pub fn nested_instance(&self) -> unified::Output<'dr, D, C> {
+        unified::Output {
+            c: self.nested.c.clone(),
+            v: self.nested.v.clone(),
+            x: self.nested.x.clone(),
+            y: self.nested.y.clone(),
+            u: self.nested.u.clone(),
+            exported: FixedVec::new(alloc::vec![
+                self.stashed_preamble.clone(),
+                self.stashed_inner_error.clone(),
+                self.stashed_outer_error.clone(),
+                self.stashed_query.clone(),
+                self.stashed_eval.clone(),
+                self.stashed_ab_a.clone(),
+                self.stashed_ab_b.clone(),
+                self.stashed_registry_xy.clone(),
+                self.stashed_p.clone(),
+                self.stashed_points_binding.clone(),
+                self.stashed_points_preamble.clone(),
+                self.stashed_points_registry_wx.clone(),
+                self.stashed_points_ab.clone(),
+                self.stashed_points_f.clone(),
+                self.stashed_online_commitments[0].clone(),
+                self.stashed_online_commitments[1].clone(),
+            ])
+            .expect("NUM_EXPORTED commitments"),
+        }
+    }
+}
+
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> core::ops::Index<RxIndex>
+    for ChildOutput<'dr, D, C, P>
+{
+    type Output = Point<'dr, D, C>;
+
+    fn index(&self, idx: RxIndex) -> &Point<'dr, D, C> {
+        use RxIndex::*;
+        match idx {
+            Hashes1 => &self.hashes_1,
+            Hashes2 => &self.hashes_2,
+            Collapse => &self.collapse,
+            ComputeV => &self.compute_v,
+            BindChallenges(k) => &self.bind_challenges[k as usize],
+            BindBeta => &self.bind_beta,
+            BindEndoscalar => &self.bind_endoscalar,
+            EndoscalingStep(step) => &self.endoscaling_steps[step as usize],
+            ExtensionCircuit(k) => &self.extension_circuits[k as usize],
+            ExtensionStage(k) => &self.extension_stages[k as usize],
+            Preamble => &self.stashed_preamble,
+            InnerError => &self.stashed_inner_error,
+            OuterError => &self.stashed_outer_error,
+            Query => &self.stashed_query,
+            Eval => &self.stashed_eval,
+            PointsBinding => &self.stashed_points_binding,
+            PointsPreamble => &self.stashed_points_preamble,
+            PointsRegistryWx => &self.stashed_points_registry_wx,
+            PointsAb => &self.stashed_points_ab,
+            PointsF => &self.stashed_points_f,
+            PointsWalk => &self.points_walk,
+        }
+    }
+}
+
+impl<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> ChildOutput<'dr, D, C, P> {
+    fn alloc(dr: &mut D, witness: DriverValue<D, &ChildWitness<C, P>>) -> Result<Self> {
+        Ok(ChildOutput {
+            online_points: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+            })?,
+            hashes_1: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_1))?,
+            hashes_2: Point::alloc(dr, witness.as_ref().map(|w| w.hashes_2))?,
+            collapse: Point::alloc(dr, witness.as_ref().map(|w| w.collapse))?,
+            compute_v: Point::alloc(dr, witness.as_ref().map(|w| w.compute_v))?,
+            bind_challenges: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.bind_challenges[k]))
+            })?,
+            bind_beta: Point::alloc(dr, witness.as_ref().map(|w| w.bind_beta))?,
+            bind_endoscalar: Point::alloc(dr, witness.as_ref().map(|w| w.bind_endoscalar))?,
+            endoscaling_steps: FixedVec::try_from_fn(|step| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.endoscaling_steps[step]))
+            })?,
+            extension_circuits: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension_circuits[k]))
+            })?,
+            extension_stages: FixedVec::try_from_fn(|k| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.extension_stages[k]))
+            })?,
+            points_walk: Point::alloc(dr, witness.as_ref().map(|w| w.points_walk))?,
+            stashed_preamble: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_preamble))?,
+            stashed_inner_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_inner_error))?,
+            stashed_outer_error: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_outer_error))?,
+            stashed_query: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_query))?,
+            stashed_eval: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_eval))?,
+            stashed_ab_a: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_a))?,
+            stashed_ab_b: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_ab_b))?,
+            stashed_registry_xy: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_registry_xy))?,
+            stashed_p: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_p))?,
+            stashed_points_binding: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.stashed_points_binding),
+            )?,
+            stashed_points_preamble: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.stashed_points_preamble),
+            )?,
+            stashed_points_registry_wx: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.stashed_points_registry_wx),
+            )?,
+            stashed_points_ab: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_ab))?,
+            stashed_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.stashed_points_f))?,
+            stashed_online_commitments: FixedVec::try_from_fn(|i| {
+                Point::alloc(
+                    dr,
+                    witness.as_ref().map(|w| w.stashed_online_commitments[i]),
+                )
+            })?,
+            mesh: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.mesh[i]))
+            })?,
+            online_values: FixedVec::try_from_fn(|i| {
+                Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.online_values[i]))
+            })?,
+            nested: {
+                let value = |dr: &mut D, f: fn(&NestedValues<D::F>) -> D::F| {
+                    Element::alloc(dr, &mut (), witness.as_ref().map(|w| f(&w.nested)))
+                };
+                NestedValuesOutput {
+                    c: value(dr, |n| n.c)?,
+                    v: value(dr, |n| n.v)?,
+                    x: value(dr, |n| n.x)?,
+                    y: value(dr, |n| n.y)?,
+                    u: value(dr, |n| n.u)?,
+                }
+            },
+            online_fq_openings: FixedVec::try_from_fn(|i| {
+                Element::alloc(
+                    dr,
+                    &mut (),
+                    witness.as_ref().map(|w| w.online_fq_openings[i]),
+                )
+            })?,
+        })
+    }
+}
+
+/// Prover-internal output gadget for the preamble bridge stage.
+///
+/// This is stage communication data, not part of the circuit's public instance.
+#[derive(Gadget, Write)]
+pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
+    /// The native online commitments fixed by this bridge and bound to the walk.
+    #[ragu(gadget)]
+    pub online_points: FixedVec<Point<'dr, D, C>, PhaseLen<P, Native, 0>>,
+    /// The native online stage fixed by this bridge's transcript commitment.
+    #[ragu(gadget)]
+    pub online_stage: FixedVec<
+        Point<'dr, D, C>,
+        crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1>,
+    >,
+    /// Point commitment from the native points binding stage.
+    #[ragu(gadget)]
+    pub native_points_binding: Point<'dr, D, C>,
+    /// Point commitment from the native points preamble stage.
+    #[ragu(gadget)]
+    pub native_points_preamble: Point<'dr, D, C>,
+    /// The step's polynomial-query commitments, bound to the nested unified
+    /// instance's exported commitments by nested collapse.
+    #[ragu(gadget)]
+    pub online_commitments: FixedVec<Point<'dr, D, C>, online::PolynomialsLen>,
+    /// The commitment of the step's own application stage, which the
+    /// `loading` circuit walks with the step's own application trace.
+    #[ragu(gadget)]
+    pub application_stage: Point<'dr, D, C>,
+    /// Output gadget for the left child proof.
+    #[ragu(gadget)]
+    pub left: ChildOutput<'dr, D, C, P>,
+    /// Output gadget for the right child proof.
+    #[ragu(gadget)]
+    pub right: ChildOutput<'dr, D, C, P>,
+}
+
+#[derive(Default)]
+pub struct Stage<C: Affine, R, P> {
+    _marker: PhantomData<(C, R, P)>,
+}
+
+impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> for Stage<C, R, P> {
+    type Parent = PointsStage<C, P>;
+    type Witness<'source> = &'source Witness<C, P>;
+    type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
+
+    fn values() -> usize {
+        // (x, y) per point, then the five nested scalars of each child, the
+        // online Fq openings it exported and its online helper values and
+        // mesh claims.
+        num_points::<P>() * 2
+            + 2 * (5
+                + online_fq::BoundOpeningsLen::<P>::len()
+                + <Present<P, Nested, 5> as ragu_primitives::vec::Len>::len()
+                + P::NESTED_MESH.map_or(0, |mesh| mesh.claims_len()))
+    }
+
+    fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
+        &self,
+        dr: &mut D,
+        witness: DriverValue<D, Self::Witness<'source>>,
+    ) -> Result<Bound<'dr, D, Self::OutputKind>>
+    where
+        Self: 'dr,
+    {
+        Ok(Output {
+            online_points: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_points[i]))
+            })?,
+            online_stage: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_stage[i]))
+            })?,
+            native_points_binding: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.native_points_binding),
+            )?,
+            native_points_preamble: Point::alloc(
+                dr,
+                witness.as_ref().map(|w| w.native_points_preamble),
+            )?,
+            online_commitments: FixedVec::try_from_fn(|i| {
+                Point::alloc(dr, witness.as_ref().map(|w| w.online_commitments[i]))
+            })?,
+            application_stage: Point::alloc(dr, witness.as_ref().map(|w| w.application_stage))?,
+            left: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.left))?,
+            right: ChildOutput::alloc(dr, witness.as_ref().map(|w| &w.right))?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ragu_core::pasta::EqAffine;
+
+    use super::*;
+    use crate::{
+        profile::Standard,
+        recursion::tests::{R, assert_stage_values},
+    };
+
+    #[test]
+    fn stage_values_matches_wire_count() {
+        assert_stage_values(&Stage::<EqAffine, R, Standard>::default());
+    }
+}

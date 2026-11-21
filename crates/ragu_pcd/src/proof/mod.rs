@@ -94,11 +94,11 @@ use udon::{
 
 use crate::{
     header::{Header, NUM_ONLINE_FP_POLYS},
-    internal::{
+    profile::{Profile, ProfiledCycle},
+    recursion::{
         native::{self, RxComponent, RxIndex, online},
         nested::{self},
     },
-    profile::{Profile, ProfiledCycle},
 };
 
 /// A newtype marking a field as derived/cacheable.
@@ -244,7 +244,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_points_walk_rx: sparse::Polynomial<C::CircuitField, R>,
 
     /// This step's output polynomials exposed through the polynomial-query API,
-    /// padded with the constant one (see `internal::native::online`). Committed
+    /// padded with the constant one (see `recursion::native::online`). Committed
     /// before `w`; the parent opens them as its left or right slots.
     pub(crate) online_polynomials: [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS],
     /// What the step exposes of its online openings for the statement
@@ -399,7 +399,10 @@ pub struct Proof<C: Cycle, R: Rank> {
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
     /// The helper's public values, deriving challenges from the proof transcript.
     pub(crate) fn nested_online_values(&self) -> Result<Vec<C::ScalarField>> {
-        crate::internal::ky::nested_online_values::<C>(&self.challenges(), &self.nested_online_fold)
+        crate::recursion::ky::nested_online_values::<C>(
+            &self.challenges(),
+            &self.nested_online_fold,
+        )
     }
 
     /// Whether the polynomial vectors and commitment-cache vectors have

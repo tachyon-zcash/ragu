@@ -17,10 +17,10 @@ use super::{
 use crate::{
     Application, CompressedPcd, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
     header::Header,
-    internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
     profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
     proof::commitments_match,
+    recursion::{ky, native, nested},
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the

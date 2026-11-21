@@ -74,12 +74,12 @@ use self::{
 };
 use crate::{
     CompressedProof, SelectableBackend,
-    internal::{
+    ipa::{CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript},
+    profile::{Profile, ProfiledCycle},
+    recursion::{
         native::online::StepBindingLen,
         nested::online::{BoundCommitmentsLen, BoundOpeningsLen},
     },
-    ipa::{CycleTranscript, IPA_TAG, IpaCycle, IpaProof, IpaTranscript},
-    profile::{Profile, ProfiledCycle},
 };
 
 pub(crate) mod batch;

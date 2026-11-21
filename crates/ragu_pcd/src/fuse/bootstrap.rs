@@ -17,12 +17,12 @@ use udon::field::Field;
 use crate::{
     Pcd, Proof,
     header::NUM_ONLINE_FP_POLYS,
-    internal::{
+    profile::{Profile, ProfiledCycle},
+    proof::ProofBuilder,
+    recursion::{
         native::{self, RxIndex, online, stages::points::Inputs},
         nested::{self, NumPoints, online as online_fq},
     },
-    profile::{Profile, ProfiledCycle},
-    proof::ProofBuilder,
 };
 
 impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>

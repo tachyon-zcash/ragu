@@ -391,7 +391,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                 mesh.check_source::<_, R>(
                     C::Profile::NESTED_ONLINE,
                     source,
-                    crate::internal::nested::challenge::<C>(
+                    crate::recursion::nested::challenge::<C>(
                         <C::CircuitField as udon::field::Field>::ONE,
                     )?,
                 )?;
@@ -412,15 +412,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // 1. Application circuits (with the final stage size)
         // 2. Internal circuits and masks
         // 3. Internal steps
-        let (total_circuits, log2_circuits) =
-            crate::internal::native::total_circuit_counts::<C::Profile>(self.num_application_steps);
+        let (total_circuits, log2_circuits) = crate::recursion::native::total_circuit_counts::<
+            C::Profile,
+        >(self.num_application_steps);
 
         for register in core::mem::take(&mut self.application_circuits) {
             self.native_registry = register(self.native_registry, self.stage_size)?;
         }
 
         // Then, register internal circuits and masks.
-        self.native_registry = crate::internal::native::register_all::<C, R, HEADER_SIZE>(
+        self.native_registry = crate::recursion::native::register_all::<C, R, HEADER_SIZE>(
             self.native_registry,
             params,
             log2_circuits,
@@ -463,7 +464,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = crate::internal::nested::register_all::<C, R>(
+        self.nested_registry = crate::recursion::nested::register_all::<C, R>(
             self.nested_registry,
             params,
             nested_tag,

@@ -22,11 +22,11 @@ use udon::{curve::Affine, field::Field};
 use super::{Cached, Proof};
 use crate::{
     header::NUM_ONLINE_FP_POLYS,
-    internal::{native::online, nested},
     profile::{
         Profile, ProfiledCycle,
         online::stages::{Native, Nested, Present},
     },
+    recursion::{native::online, nested},
 };
 
 /// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
@@ -1524,7 +1524,7 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
             } else if let Some(mesh) = C::Profile::NESTED_MESH {
                 let mut values = alloc::vec![C::ScalarField::ZERO;mesh.claims_len()];
                 values[..mesh.coordinate_indices().len()].fill(
-                    crate::internal::nested::challenge::<C>(C::CircuitField::ONE)?,
+                    crate::recursion::nested::challenge::<C>(C::CircuitField::ONE)?,
                 );
                 values
             } else {

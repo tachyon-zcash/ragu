@@ -15,9 +15,9 @@ use super::_10_p::{NativeInputs, NativeWalk};
 use crate::{
     Application,
     header::NUM_ONLINE_FP_POLYS,
-    internal::{native, native::total_circuit_counts, nested},
     profile::{Profile, ProfiledCycle, Source, online::batch::Challenges},
     proof::ProofBuilder,
+    recursion::{native, native::total_circuit_counts, nested},
 };
 
 impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>

@@ -22,7 +22,7 @@ use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use super::_01_application::NativeApplication;
-use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
+use crate::{Application, Proof, profile::ProfiledCycle, proof::ProofBuilder, recursion::nested};
 
 /// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
 pub(super) struct NativeSPrime<C: Cycle, R: Rank> {

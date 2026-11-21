@@ -12,7 +12,7 @@
 //! must equal $\sum_i \rho^i k_i$, and $q$ at $r$.
 //!
 //! Both sides take the claims in the decider's order, the prover through
-//! [`claims::Builder`](crate::internal::claims::Builder) and the verifier
+//! [`claims::Builder`](crate::recursion::claims::Builder) and the verifier
 //! through the [`claims`]' shapes.
 //!
 //! The transcript is assumed to have seen the commitments the claims are
@@ -25,8 +25,8 @@ use udon::{curve::Affine, field::Field};
 
 use self::fold::{Derived, Fold};
 use crate::{
-    internal::{native, nested},
     profile::Profile,
+    recursion::{native, nested},
 };
 
 pub(crate) mod claims;

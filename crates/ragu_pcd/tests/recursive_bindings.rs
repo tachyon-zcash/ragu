@@ -30,7 +30,7 @@ use udon::{
 use super::recursive_propagation_tests::support::{self, C, HEADER_SIZE, R, Value};
 use crate::{
     Proof,
-    internal::{
+    recursion::{
         Side,
         endoscalar::PointsWitness,
         native::{self, stages::points},

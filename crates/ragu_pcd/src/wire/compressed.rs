@@ -22,12 +22,12 @@ use crate::{
             native_components, nested_components,
         },
     },
-    internal::{
+    ipa::IpaProof,
+    profile::{Profile, ProfiledCycle},
+    recursion::{
         native::online::StepBindingLen,
         nested::online::{BoundCommitmentsLen, BoundOpeningsLen},
     },
-    ipa::IpaProof,
-    profile::{Profile, ProfiledCycle},
     wire::{
         Array, Decode, DefaultEncoding, Dimensions, Encode, Error, FixedSequence, Point, Reader,
         Rounds, Scalar, SizedSequence, field_len,

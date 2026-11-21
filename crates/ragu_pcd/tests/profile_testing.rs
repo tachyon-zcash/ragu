@@ -20,7 +20,7 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use super::*;
 use crate::{
-    internal::ky,
+    recursion::ky,
     step::{Encoded, Index, Oracles, Step},
 };
 
@@ -402,7 +402,7 @@ impl<F: Field, const HEADER_SIZE: usize> Circuit<F> for StatementCircuit<F, HEAD
 /// proving, as a decompression prover would be handed the compressed
 /// proof to verify.
 ///
-/// [`statement_ky`]: crate::internal::native::stages::preamble::ProofInputs::statement_ky
+/// [`statement_ky`]: crate::recursion::native::stages::preamble::ProofInputs::statement_ky
 pub(crate) struct StatementContext<F> {
     header: Mutex<Option<Vec<F>>>,
     /// Values that replace the step binding's as the circuit exposes

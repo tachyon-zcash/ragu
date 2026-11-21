@@ -32,7 +32,7 @@ use super::recursive_propagation_tests::support::{
 use crate::{
     ApplicationBuilder, Proof,
     header::{Dummy, Header},
-    internal::{
+    recursion::{
         Side, native,
         nested::{self, stages::challenges},
     },
@@ -1528,7 +1528,7 @@ fn input_header_the_child_did_not_export_is_rejected() {
             "the honest control verifies"
         );
 
-        let exported = crate::internal::ky::output_header::<C, Value, HEADER_SIZE>(*left.data())
+        let exported = crate::recursion::ky::output_header::<C, Value, HEADER_SIZE>(*left.data())
             .expect("the left child's exported header");
         let (proof, data) = left.into_parts();
         let lying = || proof.clone().carry::<Value>(data + Fp::ONE);

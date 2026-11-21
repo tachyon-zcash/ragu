@@ -54,7 +54,7 @@ type P = Aggregator<HEADER_SIZE>;
 #[test]
 fn pinned_layout_is_the_schedules() {
     /// The internal tests' header size.
-    const CENSUS: usize = crate::internal::tests::HEADER_SIZE;
+    const CENSUS: usize = crate::recursion::tests::HEADER_SIZE;
     std::println!(
         "native counts at census header: {:?}",
         native_counts::<Pasta, WalletRank, AggregatorRank, CENSUS>().unwrap()
@@ -267,7 +267,7 @@ fn the_fuse_fits_at_the_aggregator_rank() {
     let app = ApplicationBuilder::<Profiled<Pasta, P>, AggregatorRank, HEADER_SIZE>::new()
         .finalize_with(crate::pasta::baked_aggregator(), decompression)
         .unwrap();
-    crate::internal::tests::assert_only_steps_satisfy_application_instances(&app);
+    crate::recursion::tests::assert_only_steps_satisfy_application_instances(&app);
     let bootstrap = app.bootstrap.clone().expect("finalized").carry::<()>(());
     assert!(app.verify_uncompressed(&bootstrap, &mut rng).unwrap());
 }
@@ -1128,7 +1128,7 @@ fn compressed_size<C: Cycle>(proof: &crate::CompressedProof<C>) -> (usize, usize
 fn stored_coefficients<C: crate::profile::ProfiledCycle, R: Rank>(
     proof: &crate::Proof<C, R>,
 ) -> usize {
-    use crate::internal::{native, nested};
+    use crate::recursion::{native, nested};
     let mut stored = 0;
     for index in native::RxIndex::all::<C::Profile>() {
         stored += proof[index].iter_stored_coeffs().count();

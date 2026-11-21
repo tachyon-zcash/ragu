@@ -132,7 +132,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
         }
         extension_rxs::<_, _, _, REQUIRE_ONE>(
             registry,
-            crate::internal::native::InternalCircuitIndex::ExtensionCircuit(0)
+            crate::recursion::native::InternalCircuitIndex::ExtensionCircuit(0)
                 .circuit_index::<Self>(),
             rng,
         )
@@ -157,7 +157,7 @@ impl<const REQUIRE_ONE: bool, const NATIVE: bool> Profile for ExtensionPolicy<RE
         }
         extension_rxs::<_, _, _, REQUIRE_ONE>(
             registry,
-            crate::internal::nested::InternalCircuitIndex::ExtensionCircuit(0)
+            crate::recursion::nested::InternalCircuitIndex::ExtensionCircuit(0)
                 .circuit_index::<Self>(),
             rng,
         )

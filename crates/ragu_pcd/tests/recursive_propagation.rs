@@ -44,7 +44,7 @@ pub(crate) mod support {
     use crate::{
         Application, ApplicationBuilder, Pcd, Proof,
         header::{Header, Padding, Suffix},
-        internal::{
+        recursion::{
             Side,
             native::{
                 self,
@@ -557,7 +557,7 @@ pub(crate) mod support {
         let circuit_id = stage_wire_indices::<
             _,
             R,
-            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            crate::recursion::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
         >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
@@ -574,7 +574,7 @@ pub(crate) mod support {
         let native_claims = stage_wire_indices::<
             _,
             R,
-            crate::internal::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            crate::recursion::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
         >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
@@ -996,7 +996,7 @@ mod endpoints {
     use rand::{SeedableRng, rngs::StdRng};
 
     use super::support::{self, C, R, Value, coordinates};
-    use crate::internal::{native::stages::points::WalkStage, nested};
+    use crate::recursion::{native::stages::points::WalkStage, nested};
 
     fn check(
         app: &support::App,
@@ -1162,7 +1162,8 @@ mod timing {
     use super::support::{self, C, R, Value, coordinates};
     use crate::{
         Proof, RAGU_TAG,
-        internal::{
+        proof::bridge_alpha_power,
+        recursion::{
             native::{
                 self,
                 stages::points::{AbStage, FStage},
@@ -1173,7 +1174,6 @@ mod timing {
             },
             transcript::Transcript,
         },
-        proof::bridge_alpha_power,
     };
 
     /// Derive expected challenges with the production transcript operations and
@@ -1431,7 +1431,7 @@ mod commitments {
     };
 
     use super::support::{self, C, R};
-    use crate::{Pcd, Proof, header::Header, internal::nested, profile::ProfiledCycle};
+    use crate::{Pcd, Proof, header::Header, profile::ProfiledCycle, recursion::nested};
 
     fn check_coefficients<H: Header<ragu_core::pasta::Fp>>(
         app: &support::App,
@@ -1480,7 +1480,7 @@ mod commitments {
             // it contains every term except beta's. Rejection must still hold
             // after both commitment representations have been repaired.
             if coefficient
-                != crate::internal::native::circuits::bind_beta::generator_index::<C, R>()
+                != crate::recursion::native::circuits::bind_beta::generator_index::<C, R>()
             {
                 changed.nested_challenges_partial =
                     (changed.nested_challenges_partial.to_projective()
@@ -1505,7 +1505,7 @@ mod commitments {
         use ragu_core::{Cycle, FixedGenerators};
         use udon::curve::Projective;
 
-        use crate::internal::native::{
+        use crate::recursion::native::{
             circuits::{
                 bind_beta,
                 bind_challenges::{NUM_BINDERS, NUM_BOUND},
@@ -1602,7 +1602,7 @@ mod commitments {
         use ragu_circuits::staging::{StageReader, stage_wire_indices, wires_of};
         use udon::curve::{Affine, Projective};
 
-        use crate::internal::native::{
+        use crate::recursion::native::{
             RxIndex,
             stages::points::{BindingStage, WalkStage},
         };

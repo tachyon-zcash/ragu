@@ -96,7 +96,7 @@ not by itself prove the protocol's soundness reduction.
 
 The following conservative local degree ledger is derived from the
 implementation's constants, which the `print_ledger_parameters` test in
-`crates/ragu_pcd/src/internal/tests.rs` prints: $D=8192$, nested registry
+`crates/ragu_pcd/src/recursion/tests.rs` prints: $D=8192$, nested registry
 domain size $K=64$, revdot group size and group count $M=7$, $N=14$ on the
 native side and $M=8$, $N=10$ on the nested side, $T=150$ nested PCS
 queries (the 18 static openings, each child's 43 rx polynomials at

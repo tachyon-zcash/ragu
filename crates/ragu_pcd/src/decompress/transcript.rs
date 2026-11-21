@@ -29,8 +29,8 @@ use udon::curve::EndomorphismAffine as Affine;
 
 use crate::{
     compress::{Sampled, revdot::fold::Weights},
-    internal::transcript::Transcript,
     ipa::IPA_TAG,
+    recursion::transcript::Transcript,
 };
 
 /// What the transcript absorbs: an element by value, a point by its

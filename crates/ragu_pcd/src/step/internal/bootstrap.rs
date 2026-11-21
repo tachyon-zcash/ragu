@@ -34,7 +34,7 @@
 //! [`dummy_pcd`]: crate::Application::dummy_pcd
 //! [`finalize`]: crate::ApplicationBuilder::finalize
 //! [`seed`]: crate::Application::seed
-//! [`collapse`]: crate::internal::native::circuits::collapse
+//! [`collapse`]: crate::recursion::native::circuits::collapse
 
 use ragu_core::{
     Cycle, Result,

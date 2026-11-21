@@ -1016,7 +1016,7 @@ where
         P::NESTED_MESH
     }
     .expect("one mesh");
-    let lift = crate::internal::nested::challenge::<Profiled<Pasta, P>>;
+    let lift = crate::recursion::nested::challenge::<Profiled<Pasta, P>>;
     let mut rng = StdRng::seed_from_u64(seed);
     let (forged, ()) = substituted.seed(&mut rng, UnitStep, ())?;
     match attempt {
@@ -1181,7 +1181,7 @@ where
         P::NESTED_MESH
     }
     .expect("one mesh");
-    let lift = crate::internal::nested::challenge::<Profiled<Pasta, P>>;
+    let lift = crate::recursion::nested::challenge::<Profiled<Pasta, P>>;
     let mut rng = StdRng::seed_from_u64(seed);
     let (left, ()) = app.seed(&mut rng, UnitStep, ())?;
     let (right, ()) = app.seed(&mut rng, UnitStep, ())?;

@@ -18,7 +18,9 @@ use udon::field::Field;
 
 use crate::{
     Proof,
-    internal::{
+    profile::{Profile, ProfiledCycle},
+    proof::ProofBuilder,
+    recursion::{
         endoscalar::EndoscalarStage,
         native::{
             self,
@@ -29,8 +31,6 @@ use crate::{
             PointsWitness,
         },
     },
-    profile::{Profile, ProfiledCycle},
-    proof::ProofBuilder,
 };
 
 impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
@@ -293,7 +293,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         let walk = WalkWitness::new(
             beta_endo,
-            crate::internal::endoscalar::PointsWitness::<
+            crate::recursion::endoscalar::PointsWitness::<
                 C::NestedCurve,
                 native::NumPoints<C::Profile>,
                 native::Endoscalings<C::Profile>,

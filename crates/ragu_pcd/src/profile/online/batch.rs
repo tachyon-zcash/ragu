@@ -227,7 +227,7 @@ impl Layout {
                 "online batch wires do not match the layout".into(),
             ));
         }
-        let mut inverter = crate::internal::inverter::Inverter::with_base(challenges.u.clone());
+        let mut inverter = crate::recursion::inverter::Inverter::with_base(challenges.u.clone());
         let mut denominators = Vec::with_capacity(self.openings.len());
         for opening in self.openings {
             let point = match opening.point {

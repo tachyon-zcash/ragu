@@ -132,15 +132,15 @@ use crate::{
         },
     },
     header::{Header, Padding, Suffix},
-    internal::{
-        ky, native,
-        nested::{self, stages as nested_stages},
-    },
     ipa::{
         CycleTranscript, IpaCycle, IpaProof, IpaTranscript,
         fingerprint::{self, Event},
     },
     profile::{Aggregator, Decompression, Profile, Profiled, ProfiledCycle},
+    recursion::{
+        ky, native,
+        nested::{self, stages as nested_stages},
+    },
     step::{Encoded, Index, Oracles, Step, internal::bootstrap::Bootstrap},
 };
 

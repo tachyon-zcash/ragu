@@ -18,4 +18,4 @@
 //! [`AcceleratedProver`](ragu_acceleration::AcceleratedProver) as its backend
 //! `B`, or the backend its [`Application`](crate::Application) uses.
 
-pub use crate::internal::nested::stages::bridge_hash::{digest, rx};
+pub use crate::recursion::nested::stages::bridge_hash::{digest, rx};

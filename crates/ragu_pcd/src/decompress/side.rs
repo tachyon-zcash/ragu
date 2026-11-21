@@ -45,16 +45,16 @@ use crate::{
         instance::Instance,
         revdot::{native_components, native_position, nested_components, nested_position},
     },
-    internal::{
+    ipa::IpaCycle,
+    profile::{ProfiledCycle, Standard},
+    proof::bridge_alpha_power,
+    recursion::{
         native::{
             self, claims::ky_values as native_ky_values, stages::preamble::ProofInputs,
             unified as native_unified,
         },
         nested::{self, claims::ky_values as nested_ky_values, unified as nested_unified},
     },
-    ipa::IpaCycle,
-    profile::{ProfiledCycle, Standard},
-    proof::bridge_alpha_power,
 };
 
 /// One side of the decompression proof.

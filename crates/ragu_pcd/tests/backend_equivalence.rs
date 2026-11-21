@@ -1266,7 +1266,7 @@ mod proof_equivalence {
     use udon::field::Field;
 
     use super::Proof;
-    use crate::internal::{native, nested};
+    use crate::recursion::{native, nested};
 
     fn polynomial_eq<F: Field, R: Rank>(left: &Polynomial<F, R>, right: &Polynomial<F, R>) -> bool {
         left.iter_coeffs().eq(right.iter_coeffs())
@@ -1700,7 +1700,7 @@ mod independent_polynomials {
     /// `RxIndex::ALL` order.
     #[test]
     fn rx_values_fill_slots_in_all_order() {
-        use crate::internal::native::{RxIndex, RxValues};
+        use crate::recursion::native::{RxIndex, RxValues};
 
         let mut visited = Vec::new();
         let values = RxValues::<_, crate::profile::Standard>::from_fn(|id| {

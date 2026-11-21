@@ -15,7 +15,6 @@ use udon::field::Field;
 use super::SourceCapacity;
 use crate::{
     CompressedProof, Proof,
-    internal::{native, nested},
     profile::{
         Profile, Profiled, Shape, Standard,
         online::{
@@ -23,6 +22,7 @@ use crate::{
             stages::{self, Native, Nested},
         },
     },
+    recursion::{native, nested},
 };
 
 fn census<P: Profile, Rk: Rank>(label: &str) -> Result<()> {

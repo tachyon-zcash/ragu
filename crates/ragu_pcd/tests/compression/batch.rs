@@ -21,11 +21,11 @@ use super::{Batch, Batched, prover::batch, verifier::verify};
 use crate::{
     Application, ApplicationBuilder, Proof,
     compress::revdot::{self, OpeningClaim, Openings, Reduction},
-    internal::{
+    ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, MSM, Params},
+    recursion::{
         ky::{self, NativeKy, NestedKy},
         nested,
     },
-    ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, MSM, Params},
 };
 
 type TestR = WalletRank;

@@ -21,9 +21,9 @@ use crate::{
         CircuitSpec, InternalCircuitVisitor, capture_internal_circuits,
         capture_internal_circuits_bootstrap,
     },
-    internal::{endoscalar::EndoscalarStage, native::stages::points::WalkStage},
     profile::ProfiledCycle,
     proof::recursive_propagation_tests::support,
+    recursion::{endoscalar::EndoscalarStage, native::stages::points::WalkStage},
 };
 
 #[derive(Default)]

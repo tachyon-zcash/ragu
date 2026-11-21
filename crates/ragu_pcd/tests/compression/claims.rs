@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     Application, ApplicationBuilder,
-    internal::{claims::Builder, native, nested},
+    recursion::{claims::Builder, native, nested},
 };
 
 type TestR = WalletRank;

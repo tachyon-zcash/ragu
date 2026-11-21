@@ -22,11 +22,11 @@ use super::{
 };
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
-    internal::{
+    ipa::CycleTranscript,
+    recursion::{
         ky::{self, NativeKy, NestedKy},
         nested,
     },
-    ipa::CycleTranscript,
 };
 
 type TestR = WalletRank;
@@ -304,7 +304,7 @@ fn point_restriction_matches_the_materialized_one() {
         registry::{CircuitIndex, Registry},
     };
 
-    use crate::internal::native;
+    use crate::recursion::native;
 
     fn check<F: Field, R: Rank>(
         registry: &Registry<'_, F, R>,

@@ -37,11 +37,11 @@ use super::{
 use crate::{
     Application, CompressedPcd, Pcd, SelectableBackend,
     header::{Header, NUM_ONLINE_FP_POLYS},
-    internal::{native, nested},
     ipa::IpaCycle,
     profile::{
         Aggregator, ExtensionRxs, Profile, Profiled, ProfiledCycle, ProverContext, Standard,
     },
+    recursion::{native, nested},
     step::internal::decompress::{DIGEST_SLOT, Decompress, S_SLOT},
 };
 

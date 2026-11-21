@@ -40,7 +40,7 @@
 //! rederives that stage itself, reading the base case off the root's
 //! circuit id.
 //!
-//! [`challenges`]: crate::internal::nested::stages::challenges
+//! [`challenges`]: crate::recursion::nested::stages::challenges
 
 use alloc::vec::Vec;
 
@@ -58,7 +58,10 @@ use udon::{curve::Affine as _, fft::bit_reverse, field::Field};
 use crate::{
     Application, Pcd, Proof, RAGU_TAG, SelectableBackend,
     header::Header,
-    internal::{
+    ipa::IpaCycle,
+    profile::ProfiledCycle,
+    proof::commitments_match,
+    recursion::{
         claims, ky,
         native::{self as native_internal, RxComponent, claims as native_claims},
         nested::{
@@ -68,9 +71,6 @@ use crate::{
         },
         transcript::Transcript,
     },
-    ipa::IpaCycle,
-    profile::ProfiledCycle,
-    proof::commitments_match,
 };
 
 /// The backend whose kernels [`Application::verify_uncompressed`] consults for
@@ -759,8 +759,8 @@ pub(crate) fn nested_points_match<C: ProfiledCycle, R: Rank>(proof: &Proof<C, R>
 
 mod native {
     use super::*;
-    pub use crate::internal::native::claims::ky_values;
-    use crate::internal::{claims::Source, native::RxComponent};
+    pub use crate::recursion::native::claims::ky_values;
+    use crate::recursion::{claims::Source, native::RxComponent};
 
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {
         pub proof: &'rx Proof<C, R>,
@@ -793,8 +793,8 @@ mod native {
 
 mod nested {
     use super::*;
-    pub use crate::internal::nested::claims::ky_values;
-    use crate::internal::{claims::Source, nested::RxComponent};
+    pub use crate::recursion::nested::claims::ky_values;
+    use crate::recursion::{claims::Source, nested::RxComponent};
 
     /// Source for nested field polynomials for single-proof verification.
     pub struct SingleProofSource<'rx, C: Cycle, R: Rank> {

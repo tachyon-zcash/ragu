@@ -75,22 +75,22 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the aggregator profile's public types",
     ),
     (
-        "internal/native/online.rs",
+        "recursion/native/online.rs",
         "proof::ProofBuilder",
         "holds the fuse's native online batch phases",
     ),
     (
-        "internal/native/online.rs",
+        "recursion/native/online.rs",
         "profile::online::prover::State",
         "holds the fuse's native online batch phases",
     ),
     (
-        "internal/nested/online.rs",
+        "recursion/nested/online.rs",
         "proof::ProofBuilder",
         "holds the fuse's nested online batch phases",
     ),
     (
-        "internal/nested/online.rs",
+        "recursion/nested/online.rs",
         "profile::online::prover::State",
         "holds the fuse's nested online batch phases",
     ),
@@ -145,7 +145,7 @@ fn code_outside_the_prover_does_not_reach_into_it() {
 #[test]
 fn prover_paths_resolve_relative_and_grouped_imports() {
     let source = "
-        use crate::{fuse::Orchestrator, internal::native};
+        use crate::{fuse::Orchestrator, recursion::native};
         use super::{prover::{Witness, reduce as r}, verifier};
         #[cfg(test)]
         mod tests {

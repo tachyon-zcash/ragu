@@ -19,8 +19,8 @@ use ragu_primitives::vec::ConstLen;
 
 use super::{Cached, Proof};
 use crate::{
-    internal::{native, nested},
     profile::ProfiledCycle,
+    recursion::{native, nested},
     wire::{self, Decode, Encode},
 };
 

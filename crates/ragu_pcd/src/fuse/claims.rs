@@ -27,13 +27,13 @@ use udon::field::Field;
 
 use crate::{
     Proof,
-    internal::{
+    profile::Profile,
+    recursion::{
         claims::{Builder, Source},
         fold_revdot::{self, Foldable},
         native::{InternalCircuitIndex, RxComponent, claims::Processor},
         nested,
     },
-    profile::Profile,
 };
 
 /// Tracks how a polynomial decomposes as a linear combination of source
@@ -77,8 +77,8 @@ impl<K: Copy, F: Field> CommitmentDecomposition<K, F> {
 /// during claim building; the fold itself always produces owned results.
 ///
 /// [`Cow`]: alloc::borrow::Cow
-/// [`fold_inner`]: crate::internal::fold_revdot::fold_inner
-/// [`fold_outer`]: crate::internal::fold_revdot::fold_outer
+/// [`fold_inner`]: crate::recursion::fold_revdot::fold_inner
+/// [`fold_outer`]: crate::recursion::fold_revdot::fold_outer
 #[derive(Clone)]
 pub(super) struct TrackedPoly<'a, K, F: Field, R: Rank> {
     pub(super) poly: Cow<'a, sparse::Polynomial<F, R>>,
@@ -171,7 +171,7 @@ impl<K: Copy, F: Field, R: Rank> Clone for Atom<'_, K, F, R> {
 impl<K: Copy, F: Field, R: Rank> Copy for Atom<'_, K, F, R> {}
 
 use super::_01_application::NativeApplication;
-use crate::internal::Side;
+use crate::recursion::Side;
 
 /// Key identifying a polynomial and its corresponding commitment within the
 /// fuse pipeline.

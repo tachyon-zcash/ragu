@@ -18,7 +18,7 @@ use ragu_core::{
 use udon::field::Field;
 
 use super::header::{Has, Header, NUM_ONLINE_FP_POLYS};
-use crate::{internal::native::InternalCircuitIndex, profile::Profile};
+use crate::{profile::Profile, recursion::native::InternalCircuitIndex};
 
 #[derive(Copy, Clone)]
 #[repr(usize)]

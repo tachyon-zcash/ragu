@@ -17,12 +17,12 @@ use super::{
 };
 use crate::{
     compress::revdot::claims::{self, Kind, Masked, Shape},
-    internal::{
+    ipa::IpaTranscript,
+    profile::ProfiledCycle,
+    recursion::{
         ky::{NativeKy, NestedKy},
         native, nested,
     },
-    ipa::IpaTranscript,
-    profile::ProfiledCycle,
 };
 
 /// One claim evaluated at $r$: $a(r)$, $b(r)$ and the target $k(y)$.

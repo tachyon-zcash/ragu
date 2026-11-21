@@ -34,7 +34,7 @@ mod registry {
     use super::support::{self, C, HEADER_SIZE, R, Value};
     use crate::{
         ApplicationBuilder,
-        internal::native::InternalCircuitIndex,
+        recursion::native::InternalCircuitIndex,
         step::{Encoded, Index, Oracles, Step},
     };
 
@@ -88,7 +88,7 @@ mod registry {
 
     /// Exercise the ordinary size and both sides of a registry-domain expansion.
     fn extra_steps() -> impl Strategy<Value = usize> {
-        let base = crate::internal::native::total_circuit_counts::<crate::profile::Standard>(3).0;
+        let base = crate::recursion::native::total_circuit_counts::<crate::profile::Standard>(3).0;
         let boundary = (base + 1).next_power_of_two();
         let gap = boundary - base;
         proptest::sample::select(vec![0, gap - 1, gap, gap + 1])
@@ -332,7 +332,9 @@ mod stages {
     use udon::{curve::EndomorphismAffine as Affine, field::Field};
 
     use super::support::{self, C, R, Value};
-    use crate::internal::{endoscalar::EndoscalarStage, native::stages::points::WalkStage, nested};
+    use crate::recursion::{
+        endoscalar::EndoscalarStage, native::stages::points::WalkStage, nested,
+    };
 
     /// The unsigned value of a radix-3 digit with twist wires `e1`, `e2`:
     /// 1 + (lambda - 1) e1 + (lambda^2 - 1) e2 + (3 - lambda) e1 e2, which is

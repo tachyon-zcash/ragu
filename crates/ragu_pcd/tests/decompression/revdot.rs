@@ -31,8 +31,8 @@ use crate::{
     decompress::support::{
         EpAffine, EqAffine, HEADER_SIZE, Setup, TestR, alloc, alloc_all, replay_reduction,
     },
-    internal::{native, nested},
     profile::Standard,
+    recursion::{native, nested},
 };
 
 /// What the gadget takes on one curve, natively, and the native verifier

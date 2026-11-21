@@ -15,7 +15,7 @@
 //! enumerate the claims through the same `build`, so the order and the
 //! targets line up.
 //!
-//! [`claims::Builder`]: crate::internal::claims::Builder
+//! [`claims::Builder`]: crate::recursion::claims::Builder
 
 use alloc::{vec, vec::Vec};
 use core::iter::{empty, once};
@@ -28,8 +28,8 @@ use ragu_core::Result;
 use udon::field::Field;
 
 use crate::{
-    internal::{claims::Source, native, nested},
     profile::Profile,
+    recursion::{claims::Source, native, nested},
 };
 
 /// A claim pinning wires of a committed stage polynomial $Q$ to expected
@@ -190,7 +190,7 @@ impl Source for NestedIds {
 }
 
 /// The processor over component identities: the structural counterpart of
-/// [`claims::Builder`](crate::internal::claims::Builder).
+/// [`claims::Builder`](crate::recursion::claims::Builder).
 struct Shaper<Id, F> {
     z: F,
     shapes: Vec<Shape<Id, F>>,

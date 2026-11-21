@@ -47,7 +47,7 @@ impl CircuitInstance for ElementEnforceRootOfUnityInstanceK5 {
         // k = 5: enforce `self^32 = 1`. This matches the production
         // `log2_circuits` value used by Applications with up to 17 registered
         // steps (the common case in `ragu_pcd`). See
-        // `crates/ragu_pcd/src/internal/native/mod.rs::total_circuit_counts`
+        // `crates/ragu_pcd/src/recursion/native/mod.rs::total_circuit_counts`
         // for the derivation; with 13 internal circuits + 2 internal steps,
         // any app step count in [1, 17] gives `log2_circuits = 5`.
         input.enforce_root_of_unity(dr, 5)?;

@@ -31,14 +31,14 @@ use super::claims::{
 };
 use crate::{
     Application,
-    internal::{
+    profile::ProfiledCycle,
+    proof::ProofBuilder,
+    recursion::{
         fold_revdot::{self, Parameters},
         ky, native,
         native::stages::outer_error::{ChildKyValues, KyValues},
         nested,
     },
-    profile::ProfiledCycle,
-    proof::ProofBuilder,
 };
 
 /// The bridge $k(y)$ a test's prover stages for its left child: over

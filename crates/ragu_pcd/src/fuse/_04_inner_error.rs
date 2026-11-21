@@ -26,12 +26,12 @@ use super::claims::{
 };
 use crate::{
     Application,
-    internal::{
+    profile::ProfiledCycle,
+    proof::ProofBuilder,
+    recursion::{
         fold_revdot::{self, NumErrorTerms, Parameters},
         native, nested,
     },
-    profile::ProfiledCycle,
-    proof::ProofBuilder,
 };
 
 /// Ephemeral $m(w, X, y)$ registry restriction, used only during the fuse step.

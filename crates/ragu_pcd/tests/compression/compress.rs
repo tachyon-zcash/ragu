@@ -28,8 +28,8 @@ use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof,
     compress::revdot::{native_position, nested_position},
     header::{Header, Padding, Suffix},
-    internal::{native, nested},
     proof::recursive_propagation_tests::support::{self, Cache},
+    recursion::{native, nested},
     step::{Encoded, Index, Oracles, Step},
 };
 

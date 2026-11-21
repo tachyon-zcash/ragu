@@ -23,8 +23,8 @@ use crate::{
         revdot::{self, Openings, Reduction, fold::Weights},
         transcript,
     },
-    internal::{ky, nested},
     ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript},
+    recursion::{ky, nested},
 };
 
 std::thread_local! {

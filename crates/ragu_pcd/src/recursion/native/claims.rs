@@ -1,0 +1,689 @@
+//! Common abstraction for orchestrating revdot claims.
+//!
+//! This module provides a unified interface for assembling `a` and `b`
+//! polynomial vectors for revdot claim verification, used by both verification
+//! and proving. The same abstraction is used to handle consistency evaluation
+//! logic in the recursive circuit.
+//!
+//! The abstraction separates:
+//! - [`Source`]: Provides rx values from proof sources
+//! - [`Processor`]: Processes rx values into accumulated outputs
+//! - [`build`]: Orchestrates claim building in unified order
+
+use alloc::{borrow::Cow, vec::Vec};
+use core::iter::{once, repeat_n};
+
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::CircuitIndex,
+};
+use ragu_core::{Result, drivers::Driver};
+use ragu_primitives::{Element, vec::Len};
+use udon::field::Field;
+
+use super::{InternalCircuitIndex, NUM_BINDERS, NumSteps, RxComponent, RxIndex};
+use crate::{
+    profile::Profile,
+    recursion::claims::{Builder, Source, sum_polynomials},
+};
+
+/// Number of circuits using unified $k(y)$ in [`build`] before
+/// [`compute_v`]: [`hashes_2`] and [`collapse`].
+///
+/// These circuits use [`unified::InternalOutputKind`]. [`hashes_1`] comes
+/// before them and uses `unified_bridge_ky`, because its public inputs
+/// include the step's own output header and circuit id (see
+/// [`hashes_1::Output`]), and [`compute_v`] uses `compute_v_bridge_ky`,
+/// because its public inputs include the profile's online batch exports
+/// (see [`compute_v::Output`]).
+///
+/// [`hashes_1`]: crate::recursion::native::circuits::hashes_1
+/// [`hashes_1::Output`]: crate::recursion::native::circuits::hashes_1::Output
+/// [`hashes_2`]: crate::recursion::native::circuits::hashes_2
+/// [`collapse`]: crate::recursion::native::circuits::collapse
+/// [`compute_v`]: crate::recursion::native::circuits::compute_v
+/// [`compute_v::Output`]: crate::recursion::native::circuits::compute_v::Output
+/// [`unified::InternalOutputKind`]: crate::recursion::native::unified::InternalOutputKind
+const NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V: usize = 2;
+
+/// Number of circuits using unified $k(y)$ in [`build`] after
+/// [`compute_v`]: the [`NUM_BINDERS`] `bind_challenges` circuits,
+/// and `bind_beta`; `bind_endoscalar` exports its own point target.
+///
+/// [`compute_v`]: crate::recursion::native::circuits::compute_v
+const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 1 + NUM_BINDERS;
+
+/// The points stages the walk's inputs are committed in, in chain order.
+const POINTS_INPUT_STAGES: [RxIndex; 5] = [
+    RxIndex::PointsBinding,
+    RxIndex::PointsPreamble,
+    RxIndex::PointsRegistryWx,
+    RxIndex::PointsAb,
+    RxIndex::PointsF,
+];
+
+/// Trait that processes claim values into accumulated outputs.
+///
+/// Defines how to process `rx` values from a [`Source`]. Implementations handle
+/// polynomial and evaluation contexts differently:
+///
+/// - **Polynomial context** ([`Builder`]): `Rx` is a polynomial
+///   reference. The processor accumulates polynomials for error term
+///   construction.
+/// - **Fuse path** ([`Builder`] with `TrackedPoly` `A`): `Rx` is an
+///   `Atom` pairing a polynomial reference with a `FoldKey` key for
+///   commitment decomposition tracking (see `fuse::claims`).
+/// - **Evaluation context**: `Rx` carries a single evaluated field element at
+///   $xz$. Both the `ax` and `bx` vectors derive from this shared evaluation:
+///   `ax` uses $r\_i(xz)$ directly (since $A$ has no dilation), while `bx` adds
+///   $s\_y + t(xz)$.
+pub trait Processor<P: Profile, Rx, AppCircuitId> {
+    /// Processes a raw claim with `a` and `b` traces provided directly.
+    /// ($k(y) = c$).
+    fn raw_claim(&mut self, a: Rx, b: Rx);
+
+    /// Process an application circuit claim whose trace is the sum of the
+    /// given rxs, the step's own polynomial and the application stage's
+    /// ($k(y) = \text{application\_ky}$).
+    fn circuit_claim(&mut self, app_id: AppCircuitId, rxs: impl Iterator<Item = Rx>);
+
+    /// Process an internal circuit claim whose trace is the sum of the given
+    /// rxs ($k(y) = \text{internal\_ky}$).
+    ///
+    /// The processor looks up registry via [`InternalCircuitIndex`] from its
+    /// stored context.
+    fn internal_circuit_claim(&mut self, id: InternalCircuitIndex, rxs: impl Iterator<Item = Rx>);
+
+    /// Process a claim whose trace is the Horner fold (with $z$) of the given
+    /// rxs, with one rx per fold slot ($k(y) = 0$, equivalently
+    /// $\text{revdot}(a, s\_y) = 0$).
+    ///
+    /// The default implementation wraps each rx as a single-element group and
+    /// delegates to [`grouped_bonding_claim`](Self::grouped_bonding_claim).
+    fn bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = Rx>,
+    ) -> Result<()> {
+        self.grouped_bonding_claim(id, rxs.map(core::iter::once))
+    }
+
+    /// Process a claim whose trace is the Horner fold (with $z$) of per-group
+    /// sums, where each fold slot holds the sum of one inner iterator
+    /// ($k(y) = 0$).
+    ///
+    /// Returns `Result<()>` because the evaluation context requires fallible
+    /// fold operations.
+    fn grouped_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        groups: impl Iterator<Item = impl Iterator<Item = Rx>>,
+    ) -> Result<()>;
+}
+
+impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
+    Processor<P, &'rx sparse::Polynomial<F, R>, CircuitIndex>
+    for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>
+{
+    fn raw_claim(&mut self, a: &'rx sparse::Polynomial<F, R>, b: &'rx sparse::Polynomial<F, R>) {
+        self.a.push(Cow::Borrowed(a));
+        self.b.push(Cow::Borrowed(b));
+    }
+
+    fn circuit_claim(
+        &mut self,
+        circuit_id: CircuitIndex,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+    ) {
+        self.circuit_impl(circuit_id, sum_polynomials(rxs));
+    }
+
+    fn internal_circuit_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        rxs: impl Iterator<Item = &'rx sparse::Polynomial<F, R>>,
+    ) {
+        let circuit_id = id.circuit_index::<P>();
+        let rx = sum_polynomials(rxs);
+        self.circuit_impl(circuit_id, rx);
+    }
+
+    fn grouped_bonding_claim(
+        &mut self,
+        id: InternalCircuitIndex,
+        groups: impl Iterator<Item = impl Iterator<Item = &'rx sparse::Polynomial<F, R>>>,
+    ) -> Result<()> {
+        let circuit_id = id.circuit_index::<P>();
+        let folded = self.fold_bonding_groups(groups);
+        self.bonding_impl(circuit_id, folded);
+        Ok(())
+    }
+}
+
+/// Build claims in unified interleaved order from a source.
+///
+/// The ordering is: for each claim type, add claims for all proofs before
+/// moving to the next claim type. This produces an interleaved order:
+/// `[L_raw, R_raw, app, L_h1, R_h1, ...]` for the fuse, whose one
+/// application claim is the step's own.
+///
+/// This ordering must match the $k(y)$ ordering in
+/// [`collapse`](crate::recursion::native::circuits::collapse)
+/// and `compute_outer_error` in the fuse implementation.
+pub fn build<P: Profile, S, Pr>(source: &S, processor: &mut Pr) -> Result<()>
+where
+    S: Source<RxComponent = RxComponent>,
+    Pr: Processor<P, S::Rx, S::AppCircuitId>,
+{
+    use RxComponent::*;
+    use RxIndex::*;
+
+    // Raw claims (interleaved per proof)
+    for (a, b) in source.rx(AbA).zip(source.rx(AbB)) {
+        processor.raw_claim(a, b);
+    }
+
+    // Application circuit claims, each over the step's own polynomial and
+    // its application stage's: the fuse's own, none for a decider.
+    for (app_id, rxs) in source.applications() {
+        processor.circuit_claim(app_id, rxs.into_iter());
+    }
+
+    // Internal circuits and stages in canonical order.
+    for id in InternalCircuitIndex::all::<P>() {
+        use InternalCircuitIndex::*;
+        match id {
+            // hashes_1: Hashes1 + Preamble + OuterError
+            Hashes1Circuit => {
+                for ((h1, pre), en) in source
+                    .rx(Rx(Hashes1))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(OuterError)))
+                {
+                    processor.internal_circuit_claim(id, [h1, pre, en].into_iter());
+                }
+            }
+
+            // hashes_2: Hashes2 + OuterError
+            Hashes2Circuit => {
+                for (h2, en) in source.rx(Rx(Hashes2)).zip(source.rx(Rx(OuterError))) {
+                    processor.internal_circuit_claim(id, [h2, en].into_iter());
+                }
+            }
+
+            // collapse: Collapse + Preamble + InnerError + OuterError,
+            // and PointsBinding when extension targets use child stage points.
+            CollapseCircuit => {
+                let bound = crate::profile::native_extension::<P>().binding.is_some()
+                    || !P::NESTED_ONLINE.is_empty();
+                for ((((pc, pb), pre), em), en) in source
+                    .rx(Rx(Collapse))
+                    .zip(source.rx(Rx(PointsBinding)))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(InnerError)))
+                    .zip(source.rx(Rx(OuterError)))
+                {
+                    let mut rxs = Vec::with_capacity(5);
+                    rxs.push(pc);
+                    if bound {
+                        rxs.push(pb);
+                    }
+                    rxs.extend([pre, em, en]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // compute_v: ComputeV + Preamble + Query + Eval, plus PointsBinding
+            // when it exports the nested online input-stage commitment.
+            ComputeVCircuit => {
+                for ((((cv, pb), pre), q), e) in source
+                    .rx(Rx(ComputeV))
+                    .zip(source.rx(Rx(PointsBinding)))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(Query)))
+                    .zip(source.rx(Rx(Eval)))
+                {
+                    let mut rxs = alloc::vec![cv];
+                    if !P::NESTED_ONLINE.is_empty() {
+                        rxs.push(pb);
+                    }
+                    rxs.extend([pre, q, e]);
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // bind_challenges: BindChallenges(k) + Preamble + Query + Eval
+            BindChallengesCircuit(k) => {
+                for (((bc, pre), q), e) in source
+                    .rx(Rx(BindChallenges(k)))
+                    .zip(source.rx(Rx(Preamble)))
+                    .zip(source.rx(Rx(Query)))
+                    .zip(source.rx(Rx(Eval)))
+                {
+                    processor.internal_circuit_claim(id, [bc, pre, q, e].into_iter());
+                }
+            }
+
+            // bind_beta: BindBeta + PointsBinding + Preamble
+            BindBetaCircuit => {
+                for ((bb, pb), pre) in source
+                    .rx(Rx(BindBeta))
+                    .zip(source.rx(Rx(PointsBinding)))
+                    .zip(source.rx(Rx(Preamble)))
+                {
+                    processor.internal_circuit_claim(id, [bb, pb, pre].into_iter());
+                }
+            }
+
+            // bind_endoscalar: BindEndoscalar + every points input stage +
+            // PointsWalk
+            BindEndoscalarCircuit => {
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [BindEndoscalar]
+                    .into_iter()
+                    .chain(POINTS_INPUT_STAGES)
+                    .chain([PointsWalk])
+                {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // endoscaling step k: its rx + every points input stage +
+            // PointsWalk (k(y) = 1)
+            EndoscalingStep(step) => {
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::EndoscalingStep(step)]
+                    .into_iter()
+                    .chain(POINTS_INPUT_STAGES)
+                    .chain([PointsWalk])
+                {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // An extension circuit: its rx and the extension stages it loads.
+            // Its k(y) is 1, or the statement's for the statement circuit
+            // (see `ky_values`).
+            ExtensionCircuit(k) => {
+                let extension = crate::profile::native_extension::<P>();
+                let mut per_proof: Vec<Vec<S::Rx>> = Vec::new();
+                for index in [RxIndex::ExtensionCircuit(k)].into_iter().chain(
+                    extension.circuits[k as usize]
+                        .iter()
+                        .map(|&stage| RxIndex::ExtensionStage(stage)),
+                ) {
+                    for (i, rx) in source.rx(Rx(index)).enumerate() {
+                        if per_proof.len() <= i {
+                            per_proof.push(Vec::new());
+                        }
+                        per_proof[i].push(rx);
+                    }
+                }
+                for rxs in per_proof {
+                    processor.internal_circuit_claim(id, rxs.into_iter());
+                }
+            }
+
+            // An extension bonding: a stage's mask over its rx, or a final
+            // mask over its circuits' rxs
+            ExtensionBonding(j) => {
+                let extension = crate::profile::native_extension::<P>();
+                if (j as usize) < extension.stages {
+                    processor.bonding_claim(id, source.rx(Rx(RxIndex::ExtensionStage(j))))?;
+                } else {
+                    processor.bonding_claim(
+                        id,
+                        extension
+                            .final_mask(j as usize)
+                            .iter()
+                            .flat_map(|&k| source.rx(Rx(RxIndex::ExtensionCircuit(k)))),
+                    )?;
+                }
+            }
+
+            // Native stages (aggregated across all proofs)
+            PreambleStage => {
+                processor.bonding_claim(id, source.rx(Rx(Preamble)))?;
+            }
+            InnerErrorStage => {
+                processor.bonding_claim(id, source.rx(Rx(InnerError)))?;
+            }
+            OuterErrorStage => {
+                processor.bonding_claim(id, source.rx(Rx(OuterError)))?;
+            }
+            QueryStage => {
+                processor.bonding_claim(id, source.rx(Rx(Query)))?;
+            }
+            EvalStage => {
+                processor.bonding_claim(id, source.rx(Rx(Eval)))?;
+            }
+            PointsBindingStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsBinding)))?;
+            }
+            PointsPreambleStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsPreamble)))?;
+            }
+            PointsRegistryWxStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsRegistryWx)))?;
+            }
+            PointsAbStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsAb)))?;
+            }
+            PointsFStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsF)))?;
+            }
+            PointsWalkStage => {
+                processor.bonding_claim(id, source.rx(Rx(PointsWalk)))?;
+            }
+
+            // Final stage bonding claims
+            InnerErrorFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(Collapse)))?;
+            }
+            OuterErrorFinalStaged => {
+                processor
+                    .bonding_claim(id, source.rx(Rx(Hashes1)).chain(source.rx(Rx(Hashes2))))?;
+            }
+            PreambleFinalStaged => {
+                processor.bonding_claim(id, source.rx(Rx(BindBeta)))?;
+            }
+
+            // The application stage stays in its block, and the step's own
+            // polynomial outside it, so the stage commitment binds exactly
+            // the staged values. Like the application claim, these are the
+            // fuse's own, over its own two polynomials, and a decider has
+            // none.
+            ApplicationStage => {
+                for (_, [_, stage]) in source.applications() {
+                    processor.bonding_claim(id, once(stage))?;
+                }
+            }
+            ApplicationFinalStaged => {
+                for (_, [own, _]) in source.applications() {
+                    processor.bonding_claim(id, once(own))?;
+                }
+            }
+            EvalFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    source.rx(Rx(ComputeV)).chain(
+                        (0..NUM_BINDERS as u32).flat_map(|k| source.rx(Rx(BindChallenges(k)))),
+                    ),
+                )?;
+            }
+            PointsWalkFinalStaged => {
+                processor.bonding_claim(
+                    id,
+                    source.rx(Rx(BindEndoscalar)).chain(
+                        (0..NumSteps::<P>::len() as u32)
+                            .flat_map(|step| source.rx(Rx(RxIndex::EndoscalingStep(step)))),
+                    ),
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Trait for providing $k(y)$ values for claim verification.
+pub trait KySource {
+    /// The $k(y)$ value type.
+    type Ky: Clone;
+
+    /// Iterator over raw_c values (the c from AB proof / preamble unified).
+    fn raw_c(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// Iterator over application circuit $k(y)$ values, one per claim the
+    /// source's [`applications`](crate::recursion::claims::Source::applications)
+    /// yields.
+    fn application_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// Iterator over unified bridge $k(y)$ values.
+    fn unified_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// Iterator over the `compute_v` bridge $k(y)$ values: the unified
+    /// instance followed by the profile's online batch exports.
+    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// Native online helper target, when the profile has an online batch.
+    fn online_helper_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// Base iterator over unified $k(y)$ values.
+    ///
+    /// Will be repeated [`NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V`] times,
+    /// then [`NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V`] times.
+    /// The `+ Clone` bound is required for `repeat_n` in [`ky_prefix`].
+    fn unified_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// One value per proof for the `bind_endoscalar` circuit, after the
+    /// unified circuits: the $k(y)$ of the unified instance followed by the
+    /// online Fq commitments the circuit exports for the profile's native
+    /// binding and the actual nested online walk points, as
+    /// [`bind_endoscalar_ky`](super::stages::preamble::ProofInputs::bind_endoscalar_ky)
+    /// computes it; the unified $k(y)$ for a profile that exports neither.
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Self::Ky>;
+
+    /// One value of $1$ per proof, for the endoscaling step checks.
+    ///
+    /// Repeated once per profile endoscaling step; the `+ Clone` bound is
+    /// required for `repeat_n` in [`ky_prefix`].
+    fn ones(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// One value per proof for the statement circuit of the profile's
+    /// native extension: the $k(y)$ of the output header it exposes, as
+    /// [`statement_ky`](super::stages::preamble::ProofInputs::statement_ky)
+    /// computes it, and none for a profile without one.
+    fn statement_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// One value per proof for the binding circuit of the profile's native
+    /// extension: the $k(y)$ of the nested extension stage commitments it
+    /// recomputes, as [`binding_ky`](crate::recursion::ky::binding_ky)
+    /// computes it, and none for a profile without one.
+    fn binding_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
+
+    /// The zero value for stage claims.
+    fn zero(&self) -> Self::Ky;
+}
+
+/// Build an iterator over $k(y)$ values in claim order: the finite
+/// [`ky_prefix`] followed by infinite zeros for stage claims.
+pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
+    ky_prefix::<P, _>(source).chain(core::iter::repeat(source.zero()))
+}
+
+/// The finite raw and circuit claim targets, in [`build`] order, before
+/// the stage claims' zeros. The endoscaling targets follow profile `P`.
+///
+/// The unified values come from
+/// [`ProofInputs::unified_ky_values`](super::stages::preamble::ProofInputs::unified_ky_values),
+/// and the `compute_v` bridge values from
+/// [`ProofInputs::compute_v_bridge_ky`](super::stages::preamble::ProofInputs::compute_v_bridge_ky).
+pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
+    source
+        .raw_c()
+        .chain(source.application_ky())
+        .chain(source.unified_bridge_ky())
+        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V).flatten())
+        .chain(source.compute_v_bridge_ky())
+        .chain(repeat_n(source.unified_ky(), NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V).flatten())
+        .chain(source.bind_endoscalar_ky())
+        .chain(repeat_n(source.ones(), NumSteps::<P>::len()).flatten())
+        .chain({
+            let extension = crate::profile::native_extension::<P>();
+            let ones: Vec<S::Ky> = source.ones().collect();
+            let statement: Vec<S::Ky> = source.statement_ky().collect();
+            let binding: Vec<S::Ky> = source.binding_ky().collect();
+            assert!(
+                extension.statement.is_none() || statement.len() == ones.len(),
+                "a profile with a statement circuit takes one statement value per proof"
+            );
+            assert!(
+                extension.binding.is_none() || binding.len() == ones.len(),
+                "a profile with a binding circuit takes one binding value per proof"
+            );
+            let helper = crate::profile::online::extension::helper::<
+                P,
+                crate::profile::online::stages::Native,
+            >();
+            let helper_ky: Vec<S::Ky> = source.online_helper_ky().collect();
+            assert!(
+                helper.is_none() || helper_ky.len() == ones.len(),
+                "an online helper takes one target per proof"
+            );
+            let bound = extension.binding.as_ref().map(|binding| binding.circuit);
+            (0..extension.circuits.len() as u32).flat_map(move |circuit| {
+                if helper == Some(circuit) {
+                    helper_ky.clone()
+                } else if extension.statement == Some(circuit) {
+                    statement.clone()
+                } else if bound == Some(circuit) {
+                    binding.clone()
+                } else {
+                    ones.clone()
+                }
+            })
+        })
+}
+
+pub struct TwoProofKySource<'dr, D: Driver<'dr>> {
+    pub left_raw_c: Element<'dr, D>,
+    pub right_raw_c: Element<'dr, D>,
+    pub application: Element<'dr, D>,
+    pub left_bridge: Element<'dr, D>,
+    pub right_bridge: Element<'dr, D>,
+    pub left_compute_v_bridge: Element<'dr, D>,
+    pub right_compute_v_bridge: Element<'dr, D>,
+    pub left_online_helper: Option<Element<'dr, D>>,
+    pub right_online_helper: Option<Element<'dr, D>>,
+    pub left_bind_endoscalar: Element<'dr, D>,
+    pub right_bind_endoscalar: Element<'dr, D>,
+    pub left_unified: Element<'dr, D>,
+    pub right_unified: Element<'dr, D>,
+    pub left_statement: Option<Element<'dr, D>>,
+    pub right_statement: Option<Element<'dr, D>>,
+    pub left_binding: Option<Element<'dr, D>>,
+    pub right_binding: Option<Element<'dr, D>>,
+    pub one: Element<'dr, D>,
+    pub zero: Element<'dr, D>,
+}
+
+impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
+    /// Create a [`TwoProofKySource`] from child k(y) outputs, raw c values,
+    /// the step's own application k(y), the statement and binding circuits'
+    /// k(y) values, `None` for a profile without one, the `bind_endoscalar`
+    /// circuits' k(y) values and the online helpers', `None` for a profile
+    /// without one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        dr: &mut D,
+        left_raw_c: Element<'dr, D>,
+        right_raw_c: Element<'dr, D>,
+        application: Element<'dr, D>,
+        left_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
+        right_ky: &super::stages::outer_error::ChildKyOutputs<'dr, D>,
+        left_statement: Option<Element<'dr, D>>,
+        right_statement: Option<Element<'dr, D>>,
+        left_binding: Option<Element<'dr, D>>,
+        right_binding: Option<Element<'dr, D>>,
+        left_bind_endoscalar: Element<'dr, D>,
+        right_bind_endoscalar: Element<'dr, D>,
+        left_online_helper: Option<Element<'dr, D>>,
+        right_online_helper: Option<Element<'dr, D>>,
+    ) -> Self {
+        Self {
+            left_raw_c,
+            right_raw_c,
+            left_bind_endoscalar,
+            right_bind_endoscalar,
+            left_online_helper,
+            right_online_helper,
+            application,
+            left_bridge: left_ky.unified_bridge.clone(),
+            right_bridge: right_ky.unified_bridge.clone(),
+            left_compute_v_bridge: left_ky.compute_v_bridge.clone(),
+            right_compute_v_bridge: right_ky.compute_v_bridge.clone(),
+            left_unified: left_ky.unified.clone(),
+            right_unified: right_ky.unified.clone(),
+            left_statement,
+            right_statement,
+            left_binding,
+            right_binding,
+            one: Element::one(),
+            zero: Element::zero(dr),
+        }
+    }
+}
+
+impl<'dr, D: Driver<'dr>> KySource for TwoProofKySource<'dr, D> {
+    type Ky = Element<'dr, D>;
+
+    fn raw_c(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_raw_c.clone()).chain(once(self.right_raw_c.clone()))
+    }
+
+    fn application_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.application.clone())
+    }
+
+    fn unified_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_bridge.clone()).chain(once(self.right_bridge.clone()))
+    }
+
+    fn compute_v_bridge_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_compute_v_bridge.clone()).chain(once(self.right_compute_v_bridge.clone()))
+    }
+
+    fn online_helper_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        self.left_online_helper
+            .iter()
+            .chain(self.right_online_helper.iter())
+            .cloned()
+    }
+
+    fn bind_endoscalar_ky(&self) -> impl Iterator<Item = Element<'dr, D>> {
+        once(self.left_bind_endoscalar.clone()).chain(once(self.right_bind_endoscalar.clone()))
+    }
+
+    fn unified_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        once(self.left_unified.clone()).chain(once(self.right_unified.clone()))
+    }
+
+    fn ones(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        once(self.one.clone()).chain(once(self.one.clone()))
+    }
+
+    fn statement_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.left_statement
+            .iter()
+            .chain(self.right_statement.iter())
+            .cloned()
+    }
+
+    fn binding_ky(&self) -> impl Iterator<Item = Element<'dr, D>> + Clone {
+        self.left_binding
+            .iter()
+            .chain(self.right_binding.iter())
+            .cloned()
+    }
+
+    fn zero(&self) -> Element<'dr, D> {
+        self.zero.clone()
+    }
+}

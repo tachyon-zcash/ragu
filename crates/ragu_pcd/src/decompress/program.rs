@@ -89,13 +89,13 @@ use crate::{
             native_components, native_position, nested_components, nested_position,
         },
     },
-    internal::{
+    ipa::{IPA_TAG, IpaCycle},
+    profile::{ProfiledCycle, Standard},
+    recursion::{
         claims::Source,
         native::{self, stages::eval::generator_index},
         nested::{self, stages::challenges as challenge_stage},
     },
-    ipa::{IPA_TAG, IpaCycle},
-    profile::{ProfiledCycle, Standard},
 };
 
 /// A fixed point used as a signed-digit scaling offset.
@@ -870,7 +870,7 @@ pub(crate) mod fuse {
 /// absorbs: the length, then each 16-byte chunk as a little-endian
 /// integer.
 ///
-/// [`Transcript::new`]: crate::internal::transcript::Transcript::new
+/// [`Transcript::new`]: crate::recursion::transcript::Transcript::new
 fn tag_ops(tag: &[u8]) -> Vec<Op> {
     once(Op::AbsorbConst(tag.len() as u128))
         .chain(tag.chunks(16).map(|chunk| {
