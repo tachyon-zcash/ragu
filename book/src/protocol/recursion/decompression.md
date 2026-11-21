@@ -1,31 +1,50 @@
 # Decompression
 
-Decompression uses a [compressed proof](compression.md) as a witness to
-produce a new accumulator proof the fuse can take as a child. The circuits
-check the wallet verifier's equations, and the wallet statement becomes the
-new proof's output header. Below is the interactive form of the aggregator
-profile's decompression circuits. P holds a compressed proof $\pi$ of the
-wallet application. V is the verifier of the proof P produces, which the
-fuse accumulates like any proof. V's checks are the chunk circuits'
-constraints, which the accumulation enforces, and three claims the proof's
-consumer checks at the fuse's $k(y)$.
+Decompression takes a [compressed wallet proof](compression.md) and produces
+an aggregator proof of the same output header. The aggregator runs the wallet
+verifier's equations inside a new [Fuse proof](../iop.md), which can then be
+used as a child.
 
-The chunks sample no challenge of their own. Every challenge they use is
-the compression's, re-derived from the transcript on one side and taken as
-bits on the other; the fuse that consumes the proof supplies the randomness
-its claims are checked under, and the step's own fuse the randomness the
-registry's evaluations are opened under.
+## Preliminaries {#decompression-preliminaries}
 
-**Shared inputs:** the wallet application's registry and header types, its
-rank $K$ and the aggregator rank $R > K$, and generators of both curves at
-rank $R$, of which the wallet's tables are a prefix.
+- The wallet application supplies the two source registries and the header
+  types. The implementation uses wallet rank $K=13$ and aggregator rank
+  $R=15$. Each encoded header has four field elements. Both applications
+  share one parameter instance.
+  On each curve the wallet's generators are a prefix of the aggregator's.
+- For each application-defined output suffix a wallet step uses, the
+  aggregator must register the wallet's own header type. That type must
+  leave both output slots to padding. The decompression step uses the first
+  slot for the host IPA's challenge polynomial and the second for padding.
+  `finalize_with` checks the header types, slot declarations and shared
+  parameters.
+- The aggregator divides the wallet verifier's arithmetic into *chunks* and
+  packs them into internal circuits at rank $R$. Native chunks run over the
+  circuit field $\F_p$, nested chunks over the scalar field $\F_q$.
+  The diagrams show the stage commitments carried by the aggregator proof.
+  The chunks draw no challenges of their own.
 
-On each side of the cycle, the checks are cut into chunks that pack into
-chunk circuits at rank $R$. A chunk loads the stages it needs, reads earlier
-chunks' results from a work stage and leaves its own there; a stage is one
-commitment every chunk loads, so later chunks read what earlier ones wrote.
+## Protocol in Detail {#decompression-protocol}
 
-## 1. Compressed proof → stages
+The prover $\mathcal P$ has a compressed wallet proof $\pi$ and its output
+header data. `Application::decompress` first runs the wallet verifier on
+$\pi$ while preparing the witness. If it succeeds, the decompression step
+fuses two bootstrap proofs with unit input headers. The step encodes the
+wallet proof's output header data and constrains the encoded header's
+type suffix to differ from `Dummy` and zero.
+
+Every aggregator proof carries the chunk, statement and binding circuits.
+For the decompression step the prover supplies $\pi$ to these circuits.
+For any other step the prover reuses witnesses prepared at setup from the
+wallet application's compressed bootstrap proof. The
+[statement check](#4-claims) gives the required header and openings.
+
+The chunks replay the wallet's Fuse and compression transcripts. The
+aggregator step's own Fuse supplies $w_{\rm step}$ for its openings.
+When another Fuse consumes the result, it evaluates the native claim
+targets at its fresh $y$ and the nested targets at the lift $y_q$.
+
+### Phase 1. Commit the wallet proof in stages {#1-compressed-proof--stages}
 
 ```mermaid
 sequenceDiagram
@@ -38,55 +57,63 @@ sequenceDiagram
     Note over V: Masks hold each stage to its positions
 ```
 
-P lays $\pi$ out as stage polynomials, each value at the position the chunks
-read it from, and sends their commitments; the values stay with P as the
-witness every chunk loads. [instance] and [messages] are host-curve
-commitments to circuit-field polynomials; $[\mathrm{run}_1], \ldots, [\mathrm{run}_m]$ and [trailing]
-are nested-curve commitments to scalar-field polynomials, a run being a
-stretch of scalar-field values that compression committed as one point
-before a challenge.
+Stage masks specify where the chunks read each field of $\pi$.
+$\mathcal P$ commits to those stages and keeps the field values as witnesses.
 
-**Output:** every value of $\pi$ as a stage wire, on the side whose field
-holds it.
+1. **Native.** The host commitments $[\mathrm{instance}]$ and
+   $[\mathrm{messages}]$ hold the circuit-field parts of the instance and
+   the compression messages, respectively. The instance stage also holds
+   the wallet proof's encoded output header, followed by a flag and three
+   opening fields for the enclosing step's statement claim.
+2. **Nested.** Each scalar-field run of the compression transcript has its
+   own nested stage commitment $[\mathrm{run}_i]$. The nested IPA's final
+   scalar $c$ is checked after the last squeeze and occupies a separate
+   $[\mathrm{trailing}]$ stage.
 
-## 2. Transcript → challenges
+### Phase 2. Replay the wallet transcripts {#2-transcript--challenges}
 
 ```mermaid
 sequenceDiagram
     participant P as Prover
     participant V as Verifier
-    Note over P: Native side<br/>Squeeze each challenge, keep its 143 bits<br/>and their scalar in the circuit field, the lift
+    Note over P: Native side<br/>Squeeze each challenge and keep its 143 bits<br/>For the host curve's compression challenges,<br/>also their scalar in the circuit field, the lift
     P->>V: [lifts], [transcript]
-    Note over V: Replay the Fuse and compression transcripts<br/>over [instance] and [messages], absorbing each [runᵢ]<br/>Range-check each squeeze as an endoscalar<br/>Hold each lift to [lifts]
+    Note over V: Replay Fuse and compression using the staged fields<br/>Absorb each [runᵢ] at its scheduled position<br/>Range-check each raw squeeze and extract its low 143 bits<br/>Hold each lift to [lifts]
     Note over P: Nested side<br/>Take the same 143 bits and their scalar<br/>in the scalar field, the lift
     P->>V: [lifts] (zero alpha)
     Note over V: Hold each lift to [lifts]<br/>Native side recomputes this [lifts]<br/>from the squeezed bits
 ```
 
-The circuit-field side follows the native verifier's absorption order, first
-over the instance's bridge commitments and then over the compression
-messages, absorbing each $[\mathrm{run}_i]$ at the corresponding position.
-The honest prover leaves each run stage's unused coefficients at zero to
-match the commitment `verify_compressed` computes from the run values.
-The mask permits other coefficients in those slots, and the circuit absorbs
-the full stage commitment, so the same proof fields can lead to different
-challenges.
+1. **Native replay.** Replay wallet Fuse over its eight bridge commitments.
+   For [wallet compression](compression.md#compression-protocol), read the
+   instance fields, the encoded output header and the compression messages
+   in that order.
+   Skip the four enclosing-step fields. Absorb each $[\mathrm{run}_i]$ at
+   its scheduled position. The $[\mathrm{transcript}]$ stage carries sponge
+   states between chunks.
+2. **Challenge extraction.** Range-check each raw squeeze against $2^{254}$
+   and extract its low 143 bits. Both curves use lifts of the compression
+   challenges. Fuse uses the first eight raw squeezes on the native side,
+   their lifts on the nested side, and a lift of the ninth for each $\beta$.
+   The native $[\mathrm{lifts}]$ stage holds the host compression lifts.
+3. **Nested lifts.** The nested chunks receive the challenge bits as
+   witnesses. In order, their zero-alpha $[\mathrm{lifts}]$ stage holds the
+   nested compression lifts, the wallet Fuse lifts of $x,y,u,w$, then the
+   host compression lifts into $\F_q$. Each chunk that uses the bits
+   constrains their lift to the matching stage wire. The native chunks
+   recompute the commitment with the bits from replay. The native binding
+   claim checks it against the nested stage.
 
-Every challenge is squeezed as an endoscalar, 143 bits that either field reads
-as a scalar, its *lift*. The lift into the circuit field goes to this side's
-[lifts] for its field checks; [transcript] carries the sponge state between
-transcript chunks.
+The honest prover zeroes unused run coefficients, reproducing the points
+`verify_compressed` absorbs. The stage masks permit other values there.
+The circuit absorbs the full stage commitment, so the same wallet proof
+fields can produce different challenges across attempts. Each commitment
+binds the run's used wires before the next challenge.
+[Compression's single-challenge bound](compression.md#compression-verifier)
+applies to a fixed false identity. A bound for adaptive queries across all
+rounds of this circuit transcript remains open.
 
-The nested side has no transcript. Every challenge it uses, the nested
-curve's, the host curve's and Fuse's $x$, $y$ and $u$, enters as 143 witness
-bits, lifted into the scalar field and held to its [lifts], so every chunk
-reads the same bits. The native side recomputes that commitment by
-endoscaling its generators by the bits it squeezed, and phase 4 holds the two
-together, which ties the nested side's bits to the transcript.
-
-**Output:** both curves' challenges on both sides.
-
-## 3. Challenges → the verifier's checks
+### Phase 3. Check the wallet verifier's equations {#3-challenges--the-verifiers-checks}
 
 ```mermaid
 sequenceDiagram
@@ -98,34 +125,109 @@ sequenceDiagram
     Note over V: Each side recomputes the other side's [digits]
 ```
 
-On each side, [work] is the scratch stage, one slot per intermediate result,
-written by the chunk that computes it and read by the chunks that use it;
-[digits] holds the signed digits of the scalars of this side's field that the
-other side scales points by, committed with a zero alpha so that side can
-recompute it.
+All chunks on a side load the same committed $[\mathrm{work}]$ stage.
+One chunk constrains an intermediate value at its assigned wire, and a
+later chunk can read that wire.
 
-Each side then makes its share of the checks of
-[compression](compression.md) phases 1–3 and the IPA, with phase 2's
-challenges as the weights throughout: as lifts they weight the field
-arithmetic, as bits they endoscale the points by the same challenges, so the
-two agree. The field arithmetic recomputes the targets, the fold, the split,
-the batch and the IPA's scalars, with inverses as advised witnesses; the
-point arithmetic derives the fold's commitments, batches them into $[H]$ and
-folds $[H]$ through the IPA's rounds to a final multi-scalar multiplication
-that must equal the identity. Every point a side took from P is held to its
-curve before a chain uses it. The native side also recomputes Fuse's
-challenge and AB-bridge stages and holds them to the instance's commitments.
-Two inputs are not arithmetic over $\pi$, and the step that proves the
-chunks binds them (see *Registry evaluations and $G'$*): the registry's
-evaluations are values its fuse opens on restrictions of the wallet
-registry, and each curve's $G'$ is held to a commitment the step made
-before its challenge, over round challenges a digest the step committed
-with it fixes.
+1. **Field equations.** Native chunks check the host scalar equations over
+   $\F_p$ and nested chunks check the nested scalar equations over $\F_q$.
+   Each recomputes the claim targets, fold, split, opening batch and IPA
+   scalars. Inverse checks require the compression challenges $r,z$, every
+   batch denominator $u-x_j$ and every IPA round challenge $u_j$ to be nonzero.
+2. **Curve equations.** Native chunks check nested points. Nested chunks
+   check host points. Each side checks curve membership for every supplied
+   point, derives the folded commitments and $[H]$, and checks that the
+   IPA's final multiscalar multiplication equals the identity. For each
+   round $\mathcal P$ supplies a point $Q_j$. The circuit checks
+   $u_j Q_j=L_j$ before using it as $u_j^{-1}L_j$.
+3. **Scalars used on the other side.** Challenge bits drive endoscaling.
+   For the full-width IPA scalars $v,c,c\,b\,z_{\rm IPA}$, each side writes
+   signed digits to its zero-alpha $[\mathrm{digits}]$ stage. The other
+   side uses the digits for its point scalings and recomputes the stage
+   commitment. Native digits also carry the decompression flag. Nested
+   digits also carry both coordinates of $[A]$, $[B]$ and the `PointsAb`
+   commitment, and $\texttt{bridge\_alpha}^2$. The native chunks use these
+   seven values to rebuild `BridgeAB` and check both `BridgeAB` and
+   `ChallengeStage` against the wallet instance.
 
-**Output:** the verifier's equations checked with the circuit's challenges,
-and each side's recomputation of the other side's [digits].
+#### Registry evaluations {#registry-evaluations-and-g}
 
-## 4. Claims
+The standalone wallet verifier evaluates $m(W,X,Y)$ itself. For the same
+values, the chunks use openings of nine restrictions $m(W,a,b)$ per field.
+In slot order their $(a,b)$ are
+$$
+(r,y_c),\ (x,y),\ (x_l,y_l),\ (x_r,y_r),\ (u,y),\
+(x_l,y),\ (x_r,y),\ (x_l,u),\ (x_r,u).
+$$
+Here $r,y_c$ are wallet compression challenges, $w,x,y,u$ are wallet Fuse
+challenges, and subscripts $l,r$ identify the wallet proof's children.
+
+Open each of the first two restrictions at every internal registry point
+$\omega_j$, including the bonding polynomials' points. Also open $m(W,x,y)$
+at $w$, the wallet proof's own circuit point (native only), $u$, and the
+fresh wallet compression $w_c$. Open each of the other seven restrictions
+at $w$.
+
+1. Before $w_{\rm step}$, the step commits to the two restrictions inherited
+   from its aggregator children, then the nine above. The online input
+   stage fixes their coordinates and nonfixed opening points.
+   Each opening value has a wire in the online query stage. Every extension
+   circuit, including the statement and binding circuits, loads these two
+   stages first, as does the Fuse helper.
+2. The chunks match the coordinates and opening points to the wallet Fuse
+   and compression challenges and the children's values. They bind the
+   evaluations in $[\mathrm{work}]$ to their query wires. The native side
+   also binds the wallet proof's own circuit domain point, which the helper
+   checks belongs to the wallet registry domain.
+3. The step's Fuse batches the openings and both ends of each
+   [mesh intersection](../poly-oracle.md#v6-registry). Seven helper
+   restrictions are fixed before its $y$, one before its $x$ and the
+   outgoing restriction before its $\alpha$. The helpers fix the wallet
+   registries' tags. A parent inherits the outgoing restriction. At the
+   root the [compressed verifier](../poly-oracle.md#v6-terminal) checks it
+   against the wallet registry once per field.
+
+#### IPA generators {#decompression-ipa-generators}
+
+For each wallet IPA, the folded generator is $G'=[s]$, where
+$s(X)=\prod_{i=0}^{K-1}(1+u_{K-1-i}X^{2^i})$. The decompression step uses
+two online polynomials for polynomial oracle access to bind the supplied
+$G'$ points, one on each curve.
+
+1. **Fix the round challenges.** Before $w_{\rm step}$ the decompression
+   step stages the raw squeeze for the nested IPA's last round challenge.
+   This is the wallet compression transcript's final squeeze, after both
+   IPAs' round messages. The step opens its left input's first slot at
+   that digest.
+   Under the decompression flag the native chunks equate the opening point
+   with the last squeeze they replayed. This fixes both IPAs' round
+   challenges before $w_{\rm step}$ under the sponge's collision and
+   preimage resistance.
+2. **Host IPA.** The decompression step commits $s$ in its first output
+   slot before $w_{\rm step}$ and opens it at $w_{\rm step}$. Under
+   the flag, the native chunks check the opened value against
+   $s(w_{\rm step})$ and the nested chunks equate the host $G'$ with the
+   slot commitment.
+3. **Nested IPA.** Every step commits the nested $s$ as its
+   online polynomial for polynomial oracle access over $\F_q$ before
+   $w_{\rm step}$. Its nested `compute_v` folds the opening at the lift
+   $w_{{\rm step},q}$ into its batch. The consumer uses the commitment
+   exported by `bind_endoscalar` and the opening exported by `compute_v`.
+   The native chunks' $G'$ must equal that commitment, and the nested
+   chunks check the opening value against $s(w_{{\rm step},q})$.
+
+For a decompression step, both $s$ and the slot polynomial are fixed before
+$w_{\rm step}$. If they differ, they agree only at a root of their
+difference. At aggregator rank a uniform nested lift hits such a root with
+probability at most $2^{15}/2^{143}=2^{-128}$. The host check uses the
+larger range of the raw challenge.
+
+In an ordinary step the flag disables the host slot check. The nested
+opening check still runs, but the wallet IPA challenges can depend on
+$w_{\rm step}$ because the step stages no digest. The wallet statement in
+this case is the unit header.
+
+### Verifier checks {#4-claims}
 
 ```mermaid
 sequenceDiagram
@@ -137,116 +239,46 @@ sequenceDiagram
     Note over V: Accumulate the chunk circuits<br/>as internal circuits
 ```
 
-**Three $k(y)$ claims,** folded by the consuming fuse and checked by the
-decider:
+Accumulation enforces the chunk circuits. A consuming Fuse folds the three
+claims below. At a root, the decider checks them at its own challenges.
+For each target $k(y)$, Horner-evaluate the listed fields at that side's
+challenge in order, followed by $0,1$. A point contributes its affine $x$
+then $y$ coordinate.
 
-- **Statement:** the decompressing step's output header equals the header in
-  [instance], the one the chunks verified $\pi$ against. The claim also
-  carries the step binding below; a step folds its own application claim, so
-  it exports the two openings the binding reads beside its output header, in
-  `hashes_1`'s instance.
-- **Binding,** one claim per side: every point a side took from the other as
-  a witness, the absorbed run commitments and each side's recomputation of
-  the other's [lifts] and [digits], equals the stage commitment the proof
-  carries.
+1. **Native statement.** The circuit index determines the flag. For the
+   decompression step, start with its encoded output header, then $1$, the
+   first output slot's opening point and value, and the left input's
+   first-slot opening point (the digest).
+   The statement circuit exposes the wallet proof's encoded output header
+   and the four fields from $[\mathrm{instance}]$. The step's `hashes_1`
+   exports the three opening fields after its output header and circuit index.
+   For an ordinary step the extension targets the canonical wallet proof's
+   unit header and four zeros. The application step has its own output header.
+2. **Native binding.** Match the run commitments absorbed in replay and the
+   recomputed nested $[\mathrm{lifts}]$ and $[\mathrm{digits}]$ commitments
+   against the nested stages. Match the nested IPA's $G'$ against the
+   step's exported $\F_q$ commitment.
+3. **Nested binding.** Match the recomputed native $[\mathrm{digits}]$
+   commitment against its stage and the exposed slot point against the
+   first output slot's commitment. Under the flag this point also equals
+   the host IPA's $G'$. Match the exposed $\F_q$ opening point and value
+   against the opening folded by nested `compute_v`.
 
-Each absorbed run commitment binds the values the chunks read before the
-next challenge. Soundness for the wallet header must account for adaptive
-queries to the circuit transcript, including repeated trials with different
-unused coefficients. [Compression](compression.md) gives a bound for a
-single fresh challenge and a fixed false identity. A bound across all
-verifier rounds with these choices remains open.
+### Output {#decompression-output}
 
-The chunk, statement and binding circuits are internal circuits of the
-aggregator profile, so every proof of the profile carries their polynomials:
-a step that decompresses nothing runs them over the application's canonical
-compressed proof.
+`Application::decompress` returns an aggregator-rank proof with the wallet
+proof's output header data. It can be used as a child of Fuse or compressed
+with the aggregator's parameters.
 
-## Registry evaluations and $G'$
+## Privacy {#privacy}
 
-`verify_compressed` evaluates the wallet registry $m(W, X, Y)$ itself: at
-the circuits' domain points for the claims' wiring restrictions, at the
-instance's opening point, and at $\pi$'s and its children's points for the
-values the wire bindings expect. The chunks read these evaluations from
-[work], where P writes them, and hold each to a value of the step's
-[online batch](../poly-oracle.md#v6) of its field:
+Compressing a decompressed proof publishes its run commitments. The first
+binds the wallet instance's host commitment coordinates and the second
+binds its nested scalars, both with zero alpha. These points stay the same
+across fresh compressions of the same underlying wallet proof, so observers
+can link the published proofs.
 
-- **Nine restrictions.** Every evaluation is a value of one of nine
-  restrictions $m(W, a, b)$ of the registry, on each field. The step
-  commits the nine before its challenge $w$, with their coordinates and the
-  points they are read at in its online input stage, and claims each
-  evaluation as an opening whose value is a wire of its online query stage.
-  Every chunk circuit loads the two stages first, as the fuse's helper
-  does, so the chunks read the wires the fuse committed.
-- **The coordinates.** The chunks hold the input stage's coordinates and
-  points to the values they derive from $\pi$: the lifts of its
-  compression's challenges, its fuse's challenges, its children's values
-  and its circuits' domain points. The stage is committed before $w$, so
-  the restrictions are fixed before the challenges that test them.
-- **The registry.** The step's fuse batches the openings into its
-  accumulator, as it does an application's, and its
-  [source-registry mesh](../poly-oracle.md#v6-registry) holds each
-  committed polynomial to the wallet registry's restriction at its
-  coordinates, through the outgoing restriction its parent inherits.
-  [Compression closes the root's](../poly-oracle.md#v6-terminal): the
-  verifier of an aggregator's compressed proof evaluates the wallet
-  registry it holds, once per field.
-- **The domain.** The helper holds $\pi$'s own circuit's domain point to
-  the wallet registry's domain, as `verify_compressed` holds the circuit
-  id.
-
-The wallet application is so part of what V builds: the helper circuits fix
-the wallet registries' tags, and the terminal checks evaluate the wallet
-registries themselves.
-
-Each IPA's $G' = \langle s, G \rangle$ is the commitment to
-$s(X) = \prod_{i<k}(1 + u_{k-1-i} X^{2^i})$ over the same generators, and is
-bound as that: the step commits a polynomial before its challenge $w$, opens
-it at a point derived from $w$, and the chunks hold the opened value to $s$
-there and their $G'$ to the commitment. That shows the polynomial is $s$ only
-if the round challenges $u_i$ were fixed before $w$ too, so the
-decompression step commits to them first:
-
-- **The round challenges.** The decompression step stages the digest of
-  P's compression transcript, its last squeeze, taken after every round
-  message of both IPAs. The application stage is committed before $w$, and
-  the step exposes the staged value as the point at which it opens its left
-  input's first slot. In a proof of that step the native chunks hold it to
-  the last squeeze of the transcript they run. The transcript is one sponge
-  and each round challenge a squeeze of what it absorbed before, so both
-  IPAs' round challenges, and both $s$, are fixed before $w$ unless the
-  prover finds a collision or a preimage in the sponge.
-- **The host curve's.** The decompression step commits $s$ in its first
-  output slot before its challenge and opens it there. The native chunks
-  hold the opened value to $s$ at that point over the round challenges they
-  squeezed, and the nested chunks hold their $G'$ to the slot's commitment,
-  both only in a proof of that step, which a flag the statement circuit's
-  claim sets tells them.
-- **The nested curve's.** Its $s$ is over the other field, so every step
-  commits it as its online $\F_q$ polynomial, for the proof its chunks run
-  over. The step exports the commitment and the opening its nested
-  `compute_v` folded, through `bind_endoscalar`'s and `compute_v`'s
-  instances; the parent holds each once, so the native chunks' $G'$ is that
-  commitment and the opening the nested chunks hold to $s$ is that one.
-
-With the polynomial and the round challenges both fixed before the point, a
-slot holding another polynomial than $s$ passes only if the point is a root
-of the difference: for the nested curve's, whose point is the lift of a
-143-bit endoscalar, with probability at most $2^{15}/2^{143}$ at the
-aggregator rank, and less for the host curve's. A step that decompresses
-nothing stages no digest, and its openings establish nothing about the
-canonical proof's $G'$, whose statement binds nothing.
-
-## Privacy
-
-Compressing the output of `Application::decompress` publishes the
-commitments to its run stages. The first two are zero-alpha commitments to
-the wallet proof's instance commitments and scalars. Recompressing the
-same underlying wallet proof with fresh randomness leaves those commitments
-unchanged, so observers can link the published decompression proofs even
-when their compression messages differ.
-
-When an ordinary fuse consumes a decompressed child, the parent's own run
+When an ordinary Fuse consumes the decompressed proof, the parent's run
 stages use the canonical wallet bootstrap proof. Compressing the parent
-publishes those run commitments. The parent still uses Ragu's non-hiding
+publishes those run commitments and uses Ragu's non-hiding
 [compression](compression.md).
