@@ -28,7 +28,7 @@ use udon::field::Field;
 use crate::{
     Proof,
     internal::{
-        claims::{Builder, Source},
+        claims::{Builder, Claims, Source},
         fold_revdot::{self, Foldable},
         native::{InternalCircuitIndex, RxComponent, claims::Processor},
         nested,
@@ -70,14 +70,14 @@ impl<K: Copy, F: Field> CommitmentDecomposition<K, F> {
 /// corresponding commitments so that `a_commitment` can be computed cheaply.
 /// Rather than materializing the commitment at each fold step, we track the
 /// linear combination of source polynomials and resolve to commitments once
-/// at the end. Implements [`Foldable`] so it flows through [`fold_inner`]
-/// / [`fold_outer`] transparently.
+/// at the end. Implements [`Foldable`] so it flows through
+/// [`fold_inner_with_backend`] / [`fold_outer`] transparently.
 ///
 /// The polynomial is held as a [`Cow`] to avoid cloning borrowed polynomials
 /// during claim building; the fold itself always produces owned results.
 ///
 /// [`Cow`]: alloc::borrow::Cow
-/// [`fold_inner`]: crate::internal::fold_revdot::fold_inner
+/// [`fold_inner_with_backend`]: crate::internal::fold_revdot::fold_inner_with_backend
 /// [`fold_outer`]: crate::internal::fold_revdot::fold_outer
 #[derive(Clone)]
 pub(super) struct TrackedPoly<'a, K, F: Field, R: Rank> {
@@ -142,6 +142,16 @@ impl<K: Copy, F: Field, R: Rank> Foldable<F> for TrackedPoly<'_, K, F, R> {
     fn fold_add_assign(&mut self, other: &Self) {
         self.poly.to_mut().add_assign(&other.poly);
         self.decomp.terms.extend_from_slice(&other.decomp.terms);
+    }
+    fn fold_add_scaled(&mut self, other: &Self, by: F) {
+        self.poly.to_mut().add_scaled_assign(&other.poly, by);
+        self.decomp.terms.extend(
+            other
+                .decomp
+                .terms
+                .iter()
+                .map(|&(key, coeff)| (key, coeff * by)),
+        );
     }
 }
 
@@ -249,6 +259,9 @@ impl<'rx, C: Cycle, R: Rank> Source for NativeFuseProofSource<'rx, C, R> {
 pub(super) type NativeFuseBuilder<'m, 'rx, F, R, B> =
     Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>;
 
+/// The claims a [`NativeFuseBuilder`] finishes with.
+pub(super) type NativeFuseClaims<'rx, F, R> = Claims<'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R>;
+
 /// Fuse-path [`Processor`] implementation.
 ///
 /// Each method pairs the polynomial with a [`CommitmentDecomposition`] that
@@ -260,9 +273,10 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
     for Builder<'m, 'rx, TrackedPoly<'rx, FoldKey, F, R>, F, R, B>
 {
     fn raw_claim(&mut self, a: Atom<'rx, FoldKey, F, R>, b: Atom<'rx, FoldKey, F, R>) {
-        self.a
-            .push(TrackedPoly::single(Cow::Borrowed(a.poly), a.key));
-        self.b.push(Cow::Borrowed(b.poly));
+        self.raw_impl(
+            TrackedPoly::single(Cow::Borrowed(a.poly), a.key),
+            Cow::Borrowed(b.poly),
+        );
     }
 
     fn circuit_claim(
@@ -321,3 +335,6 @@ impl<'rx, C: Cycle, R: Rank> Source for NestedFuseProofSource<'rx, C, R> {
 /// fuse pipeline.
 pub(super) type NestedFuseBuilder<'m, 'rx, F, R, B> =
     Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>;
+
+/// The claims a [`NestedFuseBuilder`] finishes with.
+pub(super) type NestedFuseClaims<'rx, F, R> = Claims<'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R>;

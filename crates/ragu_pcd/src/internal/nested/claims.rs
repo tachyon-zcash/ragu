@@ -70,8 +70,7 @@ impl<'m, 'rx, P: Profile, F: Field, R: Rank, B: ragu_backend::Backend>
     for Builder<'m, 'rx, Cow<'rx, sparse::Polynomial<F, R>>, F, R, B>
 {
     fn raw_claim(&mut self, a: &'rx sparse::Polynomial<F, R>, b: &'rx sparse::Polynomial<F, R>) {
-        self.a.push(Cow::Borrowed(a));
-        self.b.push(Cow::Borrowed(b));
+        self.raw_impl(Cow::Borrowed(a), Cow::Borrowed(b));
     }
 
     fn internal_circuit_claim(

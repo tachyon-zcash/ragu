@@ -4,8 +4,9 @@
 //! for the claimed evaluations in the `query` stage. This also constructs the
 //! `f` bridge stage, which carries the polynomial's commitment.
 //!
-//! Each `udon::polynomial::divide_linear_rev` call below produces the coefficients of $(p\_i(X) - v\_i)
-//! / (X - x\_i)$ for a single query. The static query prefix is defined by
+//! Queries at the same point are combined with their original alpha weights
+//! before division by $X - x_i$. Linearity gives the same quotient sum while
+//! requiring only one division per distinct point. The static query prefix is defined by
 //! [`STATIC_F_QUERIES`] and consumed by both this prover path and the
 //! `compute_v` circuit.
 //!
@@ -40,7 +41,7 @@ use crate::{
         native::{RxComponent, RxIndex, STATIC_F_QUERIES, StaticFQuery, online},
         nested::{self, pcs},
     },
-    profile::ProfiledCycle,
+    profile::{ProfiledCycle, online::batch::alpha_batched_quotients},
     proof::ProofBuilder,
 };
 
@@ -148,8 +149,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     where
         D: Driver<'dr, F = C::CircuitField>,
     {
-        use udon::polynomial::divide_linear_rev;
-
         let w = *w.value().take();
         let y = *y.value().take();
         let z = *z.value().take();
@@ -161,97 +160,55 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             idx.circuit_index::<C::Profile>().omega_j()
         };
 
-        let mut iters: Vec<_> = STATIC_F_QUERIES
+        let mut queries: Vec<_> = STATIC_F_QUERIES
             .into_iter()
             .map(|query| match query {
-                StaticFQuery::LeftP => {
-                    divide_linear_rev(left.native_p_poly().iter_coeffs(), left.u())
-                }
-                StaticFQuery::RightP => {
-                    divide_linear_rev(right.native_p_poly().iter_coeffs(), right.u())
-                }
-                StaticFQuery::LeftRegistryXyAtW => {
-                    divide_linear_rev(left.native_registry_xy_poly().iter_coeffs(), w)
-                }
-                StaticFQuery::RightRegistryXyAtW => {
-                    divide_linear_rev(right.native_registry_xy_poly().iter_coeffs(), w)
-                }
-                StaticFQuery::RegistryWx0AtLeftY => {
-                    divide_linear_rev(s_prime.registry_wx0_poly.iter_coeffs(), left.y())
-                }
-                StaticFQuery::RegistryWx1AtRightY => {
-                    divide_linear_rev(s_prime.registry_wx1_poly.iter_coeffs(), right.y())
-                }
-                StaticFQuery::RegistryWx0AtY => {
-                    divide_linear_rev(s_prime.registry_wx0_poly.iter_coeffs(), y)
-                }
-                StaticFQuery::RegistryWx1AtY => {
-                    divide_linear_rev(s_prime.registry_wx1_poly.iter_coeffs(), y)
-                }
-                StaticFQuery::RegistryWyAtLeftX => {
-                    divide_linear_rev(registry_wy.poly.iter_coeffs(), left.x())
-                }
-                StaticFQuery::RegistryWyAtRightX => {
-                    divide_linear_rev(registry_wy.poly.iter_coeffs(), right.x())
-                }
-                StaticFQuery::RegistryWyAtX => divide_linear_rev(registry_wy.poly.iter_coeffs(), x),
-                StaticFQuery::RegistryXyAtW => {
-                    divide_linear_rev(builder.native_registry_xy_poly().iter_coeffs(), w)
-                }
-                StaticFQuery::RegistryXyAtCircuitId => divide_linear_rev(
-                    builder.native_registry_xy_poly().iter_coeffs(),
+                StaticFQuery::LeftP => (left.native_p_poly(), left.u()),
+                StaticFQuery::RightP => (right.native_p_poly(), right.u()),
+                StaticFQuery::LeftRegistryXyAtW => (left.native_registry_xy_poly(), w),
+                StaticFQuery::RightRegistryXyAtW => (right.native_registry_xy_poly(), w),
+                StaticFQuery::RegistryWx0AtLeftY => (&s_prime.registry_wx0_poly, left.y()),
+                StaticFQuery::RegistryWx1AtRightY => (&s_prime.registry_wx1_poly, right.y()),
+                StaticFQuery::RegistryWx0AtY => (&s_prime.registry_wx0_poly, y),
+                StaticFQuery::RegistryWx1AtY => (&s_prime.registry_wx1_poly, y),
+                StaticFQuery::RegistryWyAtLeftX => (&registry_wy.poly, left.x()),
+                StaticFQuery::RegistryWyAtRightX => (&registry_wy.poly, right.x()),
+                StaticFQuery::RegistryWyAtX => (&registry_wy.poly, x),
+                StaticFQuery::RegistryXyAtW => (builder.native_registry_xy_poly(), w),
+                StaticFQuery::RegistryXyAtCircuitId => (
+                    builder.native_registry_xy_poly(),
                     application.circuit_id.omega_j(),
                 ),
-                StaticFQuery::LeftAbAAtXz => {
-                    divide_linear_rev(left[RxComponent::AbA].iter_coeffs(), xz)
-                }
-                StaticFQuery::LeftAbBAtX => {
-                    divide_linear_rev(left[RxComponent::AbB].iter_coeffs(), x)
-                }
-                StaticFQuery::RightAbAAtXz => {
-                    divide_linear_rev(right[RxComponent::AbA].iter_coeffs(), xz)
-                }
-                StaticFQuery::RightAbBAtX => {
-                    divide_linear_rev(right[RxComponent::AbB].iter_coeffs(), x)
-                }
-                StaticFQuery::CurrentAAtXz => {
-                    divide_linear_rev(builder.native_a_poly().iter_coeffs(), xz)
-                }
-                StaticFQuery::CurrentBAtX => {
-                    divide_linear_rev(builder.native_b_poly().iter_coeffs(), x)
-                }
-                StaticFQuery::CurrentApplicationAtXz => {
-                    divide_linear_rev(application.rx.iter_coeffs(), xz)
-                }
-                StaticFQuery::CurrentApplicationStageAtXz => {
-                    divide_linear_rev(application.stage.rx.iter_coeffs(), xz)
-                }
+                StaticFQuery::LeftAbAAtXz => (&left[RxComponent::AbA], xz),
+                StaticFQuery::LeftAbBAtX => (&left[RxComponent::AbB], x),
+                StaticFQuery::RightAbAAtXz => (&right[RxComponent::AbA], xz),
+                StaticFQuery::RightAbBAtX => (&right[RxComponent::AbB], x),
+                StaticFQuery::CurrentAAtXz => (builder.native_a_poly(), xz),
+                StaticFQuery::CurrentBAtX => (builder.native_b_poly(), x),
+                StaticFQuery::CurrentApplicationAtXz => (&application.rx, xz),
+                StaticFQuery::CurrentApplicationStageAtXz => (&application.stage.rx, xz),
             })
             .collect();
         // Per-rx evaluations at xz only. The same r_i(xz) values feed
         // into both A(xz) (undilated) and B(x) (Z-dilated).
         for proof in [left, right] {
             for id in RxIndex::all::<C::Profile>() {
-                iters.push(divide_linear_rev(proof[id].iter_coeffs(), xz));
+                queries.push((&proof[id], xz));
             }
         }
 
         // m(\omega^j, x, y) evaluations for each internal index j
         for id in native::InternalCircuitIndex::all::<C::Profile>() {
-            iters.push(divide_linear_rev(
-                builder.native_registry_xy_poly().iter_coeffs(),
-                omega_j(id),
-            ));
+            queries.push((builder.native_registry_xy_poly(), omega_j(id)));
         }
 
         // The online openings, in slot order, each at its own point.
         let polys = online::polys(left, right, builder.online_polynomials());
         for (poly, query) in polys.into_iter().zip(builder.online_openings()) {
-            iters.push(divide_linear_rev(poly.iter_coeffs(), query.x));
+            queries.push((poly, query.x));
         }
-
-        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
-        let poly = builder.native_online().append_quotient(poly, alpha)?;
+        let poly = alpha_batched_quotients::<_, R, B>(queries, alpha);
+        let poly = builder.native_online().append_quotient::<B>(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
 
         Ok(NativeF { poly, commitment })
@@ -266,15 +223,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         alpha: C::ScalarField,
         builder: &ProofBuilder<'_, C, R, B>,
     ) -> Result<NestedF<C, R>> {
-        use udon::polynomial::divide_linear_rev;
-
-        let iters: Vec<_> = batch
-            .queries(challenges)
-            .map(|(poly, point)| divide_linear_rev(poly.iter_coeffs(), point))
-            .collect();
-
-        let poly = crate::profile::online::batch::quotient_sum::<_, R>(iters, alpha);
-        let poly = builder.nested_online().append_quotient(poly, alpha)?;
+        let poly = alpha_batched_quotients::<_, R, B>(batch.queries(challenges).collect(), alpha);
+        let poly = builder.nested_online().append_quotient::<B>(poly, alpha)?;
         let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
 
         Ok(NestedF { poly, commitment })

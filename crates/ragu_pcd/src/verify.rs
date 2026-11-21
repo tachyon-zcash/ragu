@@ -202,11 +202,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
         let mut builder =
             claims::Builder::<_, C::CircuitField, R, Verifier<B>>::new(&self.native_registry, y, z);
         native_claims::build::<C::Profile, _, _>(&source, &mut builder)?;
+        let native_polys = builder.finish();
 
         // Check all native revdot claims.
         let native_revdot_claims = {
             native::ky_values::<C::Profile, _>(&native_ky)
-                .zip(builder.a.iter().zip(builder.b.iter()))
+                .zip(native_polys.a.iter().zip(native_polys.b.iter()))
                 .all(|(ky, (a, b))| Verifier::<B>::sparse_revdot(a, b) == ky)
         };
 
@@ -221,6 +222,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 z_nested,
             );
             nested_claims::build::<C::Profile, _, _>(&nested_source, &mut nested_builder)?;
+            let nested_polys = nested_builder.finish();
 
             // The nested unified instance's k(y), at the sampled nested y,
             // for the instance circuits' claims: the instance is read off
@@ -265,7 +267,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 )),
             };
             nested::ky_values::<C::Profile, _>(&ky_source)
-                .zip(nested_builder.a.iter().zip(nested_builder.b.iter()))
+                .zip(nested_polys.a.iter().zip(nested_polys.b.iter()))
                 .all(|(ky, (a, b))| Verifier::<B>::sparse_revdot(a, b) == ky)
         };
 

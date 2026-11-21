@@ -949,22 +949,29 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
 
         let num_steps = NumSteps::<C::Profile>::len();
         let mut step_rxs = Vec::with_capacity(num_steps);
-        for step in 0..num_steps {
-            let step_circuit = EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step);
-            let staged = MultiStage::new(step_circuit);
+        // The steps' traces are independent work for the backend. Each
+        // step's blinding factor is drawn first, in step order, so that no
+        // job touches the RNG.
+        let alphas: Vec<C::ScalarField> = (0..num_steps)
+            .map(|_| C::ScalarField::random(|bytes| rng.fill_bytes(bytes)))
+            .collect();
+        let (registry, points) = (&self.nested_registry, &witness);
+        for step_rx in B::map(alphas.into_iter().enumerate(), |(step, alpha)| {
+            let staged = MultiStage::new(EndoscalingStep::<C::HostCurve, R, C::Profile>::new(step));
             let step_trace = staged
                 .trace(EndoscalingStepWitness {
                     endoscalar: beta_endo,
-                    points: &witness,
+                    points,
                 })?
                 .into_output();
-            let step_rx = self.nested_registry.assemble(
+            registry.assemble_with_alpha(
                 &step_trace,
                 nested::InternalCircuitIndex::EndoscalingStep(step as u32)
                     .circuit_index::<C::Profile>(),
-                rng,
-            )?;
-            step_rxs.push(step_rx);
+                alpha,
+            )
+        }) {
+            step_rxs.push(step_rx?);
         }
 
         builder.set_nested_endoscaling_step_rxs(step_rxs);
@@ -1185,22 +1192,29 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &walk,
         )?;
 
-        let mut step_rxs = Vec::with_capacity(native::NumSteps::<C::Profile>::len());
-        for step in 0..native::NumSteps::<C::Profile>::len() {
+        let num_steps = native::NumSteps::<C::Profile>::len();
+        let mut step_rxs = Vec::with_capacity(num_steps);
+        // As for the nested steps: independent work, with each step's
+        // blinding factor drawn first, in step order.
+        let alphas: Vec<C::CircuitField> = (0..num_steps)
+            .map(|_| C::CircuitField::random(|bytes| rng.fill_bytes(bytes)))
+            .collect();
+        let (registry, walk_ref) = (&self.native_registry, &walk);
+        for step_rx in B::map(alphas.into_iter().enumerate(), |(step, alpha)| {
             let trace = native::circuits::endoscaling_step::Circuit::<C, R>::new(step)
                 .trace(native::circuits::endoscaling_step::Witness {
                     inputs,
-                    walk: &walk,
+                    walk: walk_ref,
                 })?
                 .into_output();
-            step_rxs.push(
-                self.native_registry.assemble(
-                    &trace,
-                    native::InternalCircuitIndex::EndoscalingStep(step as u32)
-                        .circuit_index::<C::Profile>(),
-                    &mut *rng,
-                )?,
-            );
+            registry.assemble_with_alpha(
+                &trace,
+                native::InternalCircuitIndex::EndoscalingStep(step as u32)
+                    .circuit_index::<C::Profile>(),
+                alpha,
+            )
+        }) {
+            step_rxs.push(step_rx?);
         }
 
         builder.set_native_points_walk_rx(walk_rx);
