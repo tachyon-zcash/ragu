@@ -31,10 +31,9 @@ use crate::{
 
 pub(crate) mod claims;
 pub(crate) mod fold;
-mod prover;
+pub(crate) mod prover;
 mod verifier;
 
-pub(crate) use prover::{reduce_native, reduce_nested};
 pub(crate) use verifier::{verify_native, verify_nested};
 
 /// An opening claim: the polynomial at `poly` in an [`Openings`]' list takes

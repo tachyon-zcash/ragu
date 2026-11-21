@@ -17,8 +17,8 @@ type EqAffine = <Pasta as Cycle>::HostCurve;
 use super::{
     Openings, Reduction,
     fold::{Derived, GROUP, Layout},
-    prover::Witness,
-    reduce_native, reduce_nested, verify_native, verify_nested,
+    prover::{Witness, reduce_native, reduce_nested},
+    verify_native, verify_nested,
 };
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
