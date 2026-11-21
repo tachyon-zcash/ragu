@@ -12,11 +12,11 @@ on. Paths are relative to `src/`.
 | `header/`, `step/` | What a proof claims: headers and the online polynomials they name, and the steps that produce them. `step/internal/` holds the internal steps. |
 | `profile/` | Proof shapes: the `Profile` trait, the built-in profiles and their extensions. `profile/online/` declares the online batches. |
 | `pasta/` | The Pasta parameters. |
-| `proof/` | The uncompressed proof (`Proof`, `Pcd`), its builder (`builder.rs`) and its byte codec (`codec.rs`). |
+| `proof/` | Both proof forms: `Proof` and `Pcd` in `mod.rs`, `CompressedProof` and `CompressedPcd` in `compressed.rs`; the uncompressed proof's builder (`builder.rs`) and byte codec (`codec.rs`). |
 | `internal/` | The recursion. Per side (`native/`, `nested/`): the canonical sizes and orders (`mod.rs`), the claim order (`claims.rs`), the unified instance (`unified.rs`), the online slots (`online.rs`), the stages a proof commits to (`stages/`) and the recursive verifier's circuits (`circuits/`). Shared by both sides: revdot claims and their folding, $k(y)$, the transcript, and the endoscalar and inverter gadgets. |
 | `fuse/` | The prover: `Application::fuse` in `mod.rs`, its phases in transcript order (`_01_application.rs` to `_11_circuits.rs`), and the helpers the phases share. |
 | `verify.rs` | The reference decider, `Application::verify_uncompressed`: a test oracle under `test-utils`. |
-| `compress/` | The decider restated over commitments, ending in one IPA opening per curve: `prover.rs` and `verifier.rs`, the shared instance and transcript, and `batch/` and `revdot/`, each with its own `prover.rs` and `verifier.rs`. |
+| `compress/` | The decider restated over commitments, ending in one IPA opening per curve: `prover.rs` and `verifier.rs`, the shared instance, messages and transcript, and `batch/` and `revdot/`, each with its own `prover.rs` and `verifier.rs`. |
 | `ipa/` | The inner product argument: shared definitions, `prover.rs` and `verifier.rs`. |
 | `decompress/` | A compressed proof verified inside a fresh accumulator proof, so that the recursion can continue from it. |
 | `wire/` | Byte encodings of both proof forms, and their decoding from untrusted input. |

@@ -176,7 +176,7 @@ fn flatten(challenges: &Challenges<'static, Dr>) -> (Vec<Fp>, Vec<Fp>) {
 
 /// Replays `proof`'s transcript natively, as raw squeezes, and in the
 /// gadget, and compares every challenge's lift.
-fn check(setup: &Setup, proof: &compress::CompressedProof<Pasta>) {
+fn check(setup: &Setup, proof: &crate::CompressedProof<Pasta>) {
     let mut t = setup.absorbed();
     let native_sampled = Sampled::squeeze(&mut t.host()).unwrap();
     let nested_sampled = Sampled::squeeze(&mut t.nested()).unwrap();

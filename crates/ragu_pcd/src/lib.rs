@@ -107,10 +107,9 @@ mod profile_corruption_tests;
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
 
-pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle};
-pub use proof::{Pcd, Proof};
+pub use proof::{CompressedPcd, CompressedProof, Pcd, Proof};
 use ragu_backend::ReferenceBackend;
 use ragu_circuits::{
     polynomials::Rank,

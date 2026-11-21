@@ -11,6 +11,7 @@
 
 pub(crate) mod builder;
 mod codec;
+mod compressed;
 // These regression suites edit proof fields directly. Keep their sources
 // grouped by subject in tests/ and their access confined to the test build.
 // Their properties prove tens of wallet-rank proofs each, so they are
@@ -78,6 +79,7 @@ mod access;
 use alloc::{sync::Arc, vec::Vec};
 
 pub(crate) use builder::ProofBuilder;
+pub use compressed::{CompressedPcd, CompressedProof};
 use ragu_backend::Backend;
 use ragu_circuits::{
     polynomials::{Rank, sparse},

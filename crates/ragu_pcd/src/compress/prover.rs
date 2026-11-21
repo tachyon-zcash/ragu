@@ -8,14 +8,14 @@ use rand::CryptoRng;
 use udon::{curve::Affine, field::Field};
 
 use super::{
-    CompressedPcd, CompressedProof, Lifted, Messages, Sampled,
+    Lifted, Messages, Sampled,
     batch::{self, Batch},
     instance::Instance,
     revdot::{self, Openings},
     transcript,
 };
 use crate::{
-    Application, Pcd, RAGU_TAG, SelectableBackend,
+    Application, CompressedPcd, CompressedProof, Pcd, RAGU_TAG, SelectableBackend,
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
