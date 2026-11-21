@@ -948,6 +948,45 @@ fn backend_join_runs_each_job_once_and_keeps_their_order() {
     }
 }
 
+/// Commitment tables change how the prover computes its commitments, never
+/// what they are: an application with them proves exactly what one without
+/// them does, and each accepts the other's proofs.
+#[test]
+fn commitment_tables_leave_proofs_unchanged() {
+    fn build<B: SelectableBackend>(tables: bool) -> TestApplication<'static, B> {
+        let builder = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<B>()
+            .register(UnitStep)
+            .unwrap();
+        let builder = if tables {
+            builder.with_commitment_tables()
+        } else {
+            builder
+        };
+        builder
+            .finalize(ragu_pcd::pasta::baked_aggregator())
+            .unwrap()
+    }
+    fn prove<B: SelectableBackend>(app: &TestApplication<'static, B>) -> TestPcd {
+        let mut rng = StdRng::seed_from_u64(41);
+        let (left, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+        let (right, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+        app.fuse(&mut rng, UnitStep, (), left, right).unwrap().0
+    }
+    fn check<B: SelectableBackend>() {
+        let (plain, tabled) = (build::<B>(false), build::<B>(true));
+        let (expected, proved) = (prove(&plain), prove(&tabled));
+        assert!(expected.proof().test_mismatch(proved.proof()).is_none());
+        let mut rng = StdRng::seed_from_u64(42);
+        assert!(plain.verify_uncompressed(&proved, &mut rng).unwrap());
+        assert!(tabled.verify_uncompressed(&expected, &mut rng).unwrap());
+    }
+    // The reference backend prepares no table, so the request changes nothing.
+    check::<ReferenceBackend>();
+    check::<AcceleratedBackend>();
+    check::<AcceleratedProver>();
+}
+
 /// The default iterator must not prepare a parallel work buffer in Fuse.
 #[derive(Clone, Copy, Debug, Default)]
 struct SerialFuseBackend;
@@ -1717,6 +1756,30 @@ mod independent_polynomials {
             (&polys[1], C::Scalar::ONE),
             (&polys[2], C::Scalar::from(2)),
         ];
+
+        // A table of the generators commits to what the generators do, and
+        // only the accelerated backends prepare one.
+        let prefix = &generators.g()[..TestRank::num_coeffs()];
+        assert!(ReferenceBackend::prepare_commitments(prefix).is_none());
+        let table = AcceleratedBackend::prepare_commitments(prefix).unwrap();
+        assert!(AcceleratedProver::prepare_commitments(prefix).is_some());
+        let tabled: Vec<_> = polys.iter().collect();
+        assert_eq!(
+            ReferenceBackend::sparse_commit_tabled(&tabled, generators, &table),
+            expected
+        );
+        assert_eq!(
+            AcceleratedBackend::sparse_commit_tabled(&tabled, generators, &table),
+            expected
+        );
+        assert_eq!(
+            AcceleratedProver::sparse_commit_tabled(&tabled, generators, &table),
+            expected
+        );
+        assert!(
+            AcceleratedBackend::sparse_commit_tabled::<C, TestRank, _>(&[], generators, &table)
+                .is_empty()
+        );
 
         // Scaled copies summed one by one are independent of the dense
         // accumulation, and the split form must build the reference's blocks.

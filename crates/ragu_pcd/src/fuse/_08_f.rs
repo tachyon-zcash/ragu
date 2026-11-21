@@ -126,8 +126,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 native_points_f: builder.native_points_f_commitment(),
             },
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_f_rx(bridge_rx, bridge_commitment);
         Ok(())
     }
@@ -209,7 +208,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         }
         let poly = alpha_batched_quotients::<_, R, B>(queries, alpha);
         let poly = builder.native_online().append_quotient::<B>(poly, alpha)?;
-        let commitment = B::sparse_commit_to_affine(&poly, C::host_generators(self.params));
+        let commitment = self.host().commit(&poly);
 
         Ok(NativeF { poly, commitment })
     }
@@ -225,7 +224,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     ) -> Result<NestedF<C, R>> {
         let poly = alpha_batched_quotients::<_, R, B>(batch.queries(challenges).collect(), alpha);
         let poly = builder.nested_online().append_quotient::<B>(poly, alpha)?;
-        let commitment = B::sparse_commit_to_affine(&poly, C::nested_generators(self.params));
+        let commitment = self.nested().commit(&poly);
 
         Ok(NestedF { poly, commitment })
     }

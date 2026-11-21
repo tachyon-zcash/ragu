@@ -27,6 +27,7 @@ use super::claims::{
 };
 use crate::{
     Application,
+    committer::Committer,
     internal::{
         fold_revdot::{self, NumErrorTerms, Parameters},
         native, nested,
@@ -81,13 +82,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // half would draw it, so that neither job touches the RNG.
         let blind = C::CircuitField::random(|bytes| rng.fill_bytes(bytes));
         // The application is not `Sync`; the jobs borrow only what they use.
-        let (native_circuits, nested_circuits, params) =
-            (&self.native_registry, &self.nested_registry, self.params);
+        let (native_circuits, nested_circuits) = (&self.native_registry, &self.nested_registry);
+        let (host, nested_committer) = (self.host(), self.nested());
         let (native, nested) = B::join(
             || {
                 Self::compute_native_inner_error(
                     native_circuits,
-                    params,
+                    host,
                     blind,
                     native_registry,
                     y,
@@ -98,7 +99,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             || {
                 Self::compute_nested_inner_error(
                     nested_circuits,
-                    params,
+                    nested_committer,
                     nested_registry,
                     y,
                     z,
@@ -127,11 +128,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// `blind` as its blinding factor, along with the $m(w, X, y)$
     /// restriction.
     ///
-    /// This takes the registry and parameters rather than the application so
+    /// This takes the registry and committer rather than the application so
     /// that it can run as a job beside [`Self::compute_nested_inner_error`].
     fn compute_native_inner_error<'rx>(
         registry: &Registry<'_, C::CircuitField, R>,
-        params: &C::Params,
+        host: Committer<'_, C::HostCurve, C::HostGenerators, B>,
         blind: C::CircuitField,
         native_registry: &RegistryAt<'_, C::CircuitField, R>,
         y: C::CircuitField,
@@ -164,8 +165,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >::rx(blind, &native_inner_error_witness)?;
 
         let registry_wy_poly = B::registry_at_y(native_registry, y);
-        let registry_wy_commitment =
-            B::sparse_commit_to_affine(&registry_wy_poly, C::host_generators(params));
+        let registry_wy_commitment = host.commit(&registry_wy_poly);
         let registry_wy = RegistryWy {
             poly: registry_wy_poly,
             commitment: registry_wy_commitment,
@@ -190,7 +190,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     /// challenges, and checking the fold in-circuit (see [`nested::challenge`]).
     fn compute_nested_inner_error<'rx>(
         registry: &Registry<'_, C::ScalarField, R>,
-        params: &C::Params,
+        nested: Committer<'_, C::NestedCurve, C::NestedGenerators, B>,
         nested_registry: &RegistryAt<'_, C::ScalarField, R>,
         native_y: C::CircuitField,
         native_z: C::CircuitField,
@@ -222,8 +222,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >(&nested_claims.a, &nested_claims.b);
 
         let nested_registry_wy_poly = B::registry_at_y(nested_registry, nested_y);
-        let nested_registry_wy_commitment =
-            B::sparse_commit_to_affine(&nested_registry_wy_poly, C::nested_generators(params));
+        let nested_registry_wy_commitment = nested.commit(&nested_registry_wy_poly);
         let nested_registry_wy = NestedRegistryWy {
             poly: nested_registry_wy_poly,
             commitment: nested_registry_wy_commitment,
@@ -256,8 +255,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &nested_inner_error_witness,
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_inner_error_rx(bridge_rx, bridge_commitment);
 
         Ok(nested_inner_error_witness)

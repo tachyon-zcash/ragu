@@ -315,7 +315,7 @@ fn execute_batch<C: Retained, X: Executor, const N: usize>(
 
 /// Executes `inputs` under one batch plan, writing each sum to its slot of
 /// `output`.
-fn execute_plan<C: Retained, X: Executor>(
+pub(super) fn execute_plan<C: Retained, X: Executor>(
     inputs: &[Input<'_, C>],
     output: &mut [ProjectivePoint<C>],
     options: ExecutionOptions,

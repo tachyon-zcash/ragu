@@ -34,7 +34,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::{MsmWorkspace, PreparedMsm};
+use ragu_core::{BaseTable, MsmWorkspace, PreparedMsm};
 use udon::{curve::Affine, field::Field};
 
 pub mod verifier;
@@ -145,6 +145,31 @@ impl_accelerated_backends! {
         let mut affine = alloc::vec![C::identity(); projective.len()];
         C::batch_to_affine(&projective, &mut affine);
         affine
+    }
+
+    fn prepare_commitments<C: Affine>(bases: &[C]) -> Option<BaseTable<C>> {
+        BaseTable::new(bases)
+    }
+
+    fn sparse_commit_tabled<C: Affine, R: Rank, G: ragu_core::FixedGenerators<C>>(
+        polys: &[&sparse::Polynomial<C::Scalar, R>],
+        _generators: &G,
+        table: &BaseTable<C>,
+    ) -> alloc::vec::Vec<C::Projective> {
+        assert!(table.len() >= R::num_coeffs());
+        table.msm_many(
+            polys
+                .iter()
+                .map(|poly| {
+                    poly.iter_stored_coeffs()
+                        .map(|(index, coefficient)| {
+                            let position = u32::try_from(index).expect("a coefficient's index fits");
+                            (*coefficient, position)
+                        })
+                        .unzip()
+                })
+                .collect(),
+        )
     }
 
     fn prepare_msm<C: Affine>(bases: &[C]) -> Option<PreparedMsm<C>> {

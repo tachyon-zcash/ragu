@@ -64,6 +64,7 @@ extern crate std;
 
 mod backend;
 pub mod bridge_hash;
+mod committer;
 mod compress;
 #[cfg(feature = "unstable-aggregator")]
 mod decompress;
@@ -119,6 +120,7 @@ use core::{
     marker::PhantomData,
 };
 
+use committer::Committer;
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
 use profile::{Profile, ProfiledCycle};
@@ -129,7 +131,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
     staging,
 };
-use ragu_core::{Cycle, Error, FixedGenerators, MsmWorkspace, PreparedMsm, Result};
+use ragu_core::{BaseTable, Cycle, Error, FixedGenerators, MsmWorkspace, PreparedMsm, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -195,6 +197,9 @@ pub struct ApplicationBuilder<
     /// padding: what a profile's context is checked against (see
     /// [`Profile::check_context`]).
     output_headers: BTreeMap<header::Suffix, (TypeId, bool)>,
+    /// Whether [`Self::finalize`] prepares tables of the commitment
+    /// generators (see [`Self::with_commitment_tables`]).
+    commitment_tables: bool,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -222,8 +227,25 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: BTreeMap::new(),
             bootstrap: None,
             output_headers: BTreeMap::new(),
+            commitment_tables: false,
             _marker: PhantomData,
         }
+    }
+
+    /// Prepares tables of the commitment generators at [`Self::finalize`],
+    /// for the selected backend's prover.
+    ///
+    /// A backend that supports them, as the accelerated backends do, then
+    /// commits to polynomials with fewer point additions, which makes every
+    /// proof faster. The proofs themselves are unchanged. The tables are
+    /// prepared once and held for the application's life: on each curve, 16
+    /// points of 96 bytes for every coefficient of the rank, about 12.6 MB at
+    /// 8192 coefficients. An application that proves repeatedly recovers the
+    /// preparation within a few proofs; one that proves once, or only
+    /// verifies, should leave them out. Other backends ignore the request.
+    pub fn with_commitment_tables(mut self) -> Self {
+        self.commitment_tables = true;
+        self
     }
 
     /// Supplies source registries for meshes whose profile context supplies
@@ -316,6 +338,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             header_map: self.header_map,
             bootstrap: self.bootstrap,
             output_headers: self.output_headers,
+            commitment_tables: self.commitment_tables,
             _marker: PhantomData,
         }
     }
@@ -618,6 +641,16 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
                     &C::nested_generators(params).g()[..R::num_coeffs()],
                 )
                 .map(Arc::new),
+            host_table: self
+                .commitment_tables
+                .then(|| B::prepare_commitments(&C::host_generators(params).g()[..R::num_coeffs()]))
+                .flatten(),
+            nested_table: self
+                .commitment_tables
+                .then(|| {
+                    B::prepare_commitments(&C::nested_generators(params).g()[..R::num_coeffs()])
+                })
+                .flatten(),
             context,
             verifier_workspace: RefCell::new(MsmWorkspace::default()),
             _marker: PhantomData,
@@ -766,6 +799,11 @@ pub struct Application<
     nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
     /// Scratch for public IPA checks, retained for this application's lifetime.
     verifier_workspace: RefCell<MsmWorkspace>,
+    /// The prover backend's tables of the host and nested commitment
+    /// generators, when the builder asked for them and the backend prepares
+    /// them.
+    host_table: Option<BaseTable<C::HostCurve>>,
+    nested_table: Option<BaseTable<C::NestedCurve>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -948,10 +986,20 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
         let poly =
             ragu_circuits::polynomials::sparse::Polynomial::<_, R>::from_coeffs(coeffs.to_vec());
-        Ok(B::sparse_commit_to_affine(
-            &poly,
-            C::host_generators(self.params),
-        ))
+        Ok(self.host().commit(&poly))
+    }
+
+    /// What the prover commits to host-curve polynomials with.
+    pub(crate) fn host(&self) -> Committer<'_, C::HostCurve, C::HostGenerators, B> {
+        Committer::new(C::host_generators(self.params), self.host_table.as_ref())
+    }
+
+    /// What the prover commits to nested-curve polynomials with.
+    pub(crate) fn nested(&self) -> Committer<'_, C::NestedCurve, C::NestedGenerators, B> {
+        Committer::new(
+            C::nested_generators(self.params),
+            self.nested_table.as_ref(),
+        )
     }
 
     /// The native source registry the profile's mesh certifies: the builder's

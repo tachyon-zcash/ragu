@@ -15,7 +15,7 @@ use ragu_circuits::{
     polynomials::{Rank, sparse},
     registry::{CircuitIndex, Registry, RegistryAt},
 };
-use ragu_core::{FixedGenerators, MsmWorkspace, PreparedMsm};
+use ragu_core::{BaseTable, FixedGenerators, MsmWorkspace, PreparedMsm};
 use udon::{curve::Affine, fft::Domain, field::Field};
 
 /// Scalar evaluation of a registry, independent of its polynomial rank.
@@ -163,6 +163,37 @@ pub trait Backend: Clone + Copy + Debug + Default + Send + Sync + 'static {
         let mut affine = alloc::vec![C::identity(); projective.len()];
         C::batch_to_affine(&projective, &mut affine);
         affine
+    }
+
+    /// Optionally prepares a table of commitment generators' multiples, for
+    /// repeated sparse commitments over them.
+    ///
+    /// Returning `None` retains the ordinary [`Self::sparse_commit`] path.
+    /// A table must describe exactly the given points in the given order.
+    fn prepare_commitments<C: Affine>(_bases: &[C]) -> Option<BaseTable<C>> {
+        None
+    }
+
+    /// Commits to sparse polynomials through a previously prepared table,
+    /// returning results in input order.
+    ///
+    /// `table` is [`Self::prepare_commitments`]'s for a prefix of
+    /// `generators.g()` at least `R::num_coeffs()` long. The default ignores
+    /// it and retains [`Self::sparse_commit`] overrides.
+    ///
+    /// # Correctness
+    ///
+    /// Each output must match [`Self::sparse_commit`] for the corresponding
+    /// polynomial exactly.
+    fn sparse_commit_tabled<C: Affine, R: Rank, G: FixedGenerators<C>>(
+        polys: &[&sparse::Polynomial<C::Scalar, R>],
+        generators: &G,
+        _table: &BaseTable<C>,
+    ) -> Vec<C::Projective> {
+        polys
+            .iter()
+            .map(|poly| Self::sparse_commit(poly, generators))
+            .collect()
     }
 
     /// Commits to a sparse polynomial and normalizes the result to affine.
