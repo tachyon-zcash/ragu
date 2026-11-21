@@ -195,7 +195,7 @@ constraint system reject it. The no-execution front end is described in
 | `fuzz_endoscalar` | Endoscalar (point × scalar) operations; has its own `special_scalar` table with `Fp::ZETA`. |
 | `fuzz_revdot` | Reverse-dot-product primitive, at a fuzzer-chosen field and rank (see [Field and rank dispatch](#field-and-rank-dispatch)). Rank is not incidental here: `View`'s segments are clamped against `R::n()` and `revdot` pairs coefficients against a reversal whose length is the rank's, so a disagreement that only shows up at `n = 2048` was previously unreachable. |
 | `fuzz_fold_revdot` | RevDot folding. |
-| `fuzz_sxy_agreement` | `s(X, Y)` registry consistency (`wxy == wx.eval(y) == wy.eval(x)`) over arbitrary generated circuits. Caught `Tag::new(0)` divide-by-zero. |
+| `fuzz_sxy_agreement` | `s(X, Y)` registry consistency (`wxy == wx.eval(y) == wy.eval(x)`), and each circuit's recorded wiring against an independent walk, over arbitrary generated circuits. Caught `Tag::new(0)` divide-by-zero. |
 
 ### Verifier robustness
 

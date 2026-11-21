@@ -19,7 +19,6 @@
 //! [`native::stages::points`](crate::internal::native::stages::points)).
 
 use alloc::vec::Vec;
-use core::ops::AddAssign;
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{
@@ -63,22 +62,38 @@ pub(super) type NativeWalk<C> =
 /// is sampled from.
 type NativeFuseEmulator<C> = Emulator<Wireless<Always<()>, <C as Cycle>::CircuitField>>;
 
-/// Accumulates polynomials with their commitments.
-struct Accumulator<'a, C: Cycle, R: Rank> {
-    poly: &'a mut sparse::Polynomial<C::CircuitField, R>,
-    commitments: &'a mut Vec<C::HostCurve>,
-    beta: C::CircuitField,
+/// Collects the polynomials of an accumulation with their commitments.
+struct Accumulator<'a, 'c, C: Cycle, R: Rank> {
+    polys: Vec<&'a sparse::Polynomial<C::CircuitField, R>>,
+    commitments: &'c mut Vec<C::HostCurve>,
 }
 
-impl<C: Cycle, R: Rank> Accumulator<'_, C, R> {
-    fn acc<P>(&mut self, poly: &P, commitment: C::HostCurve)
-    where
-        for<'p> sparse::Polynomial<C::CircuitField, R>: AddAssign<&'p P>,
-    {
-        self.poly.scale(self.beta);
-        *self.poly += poly;
+impl<'a, C: Cycle, R: Rank> Accumulator<'a, '_, C, R> {
+    fn acc(&mut self, poly: &'a sparse::Polynomial<C::CircuitField, R>, commitment: C::HostCurve) {
+        self.polys.push(poly);
         self.commitments.push(commitment);
     }
+}
+
+/// The polynomial Horner's rule accumulates from `first` and then each of
+/// `rest` in order: $\beta^k \cdot \text{first} + \sum\_i \beta^{k-1-i} \cdot
+/// \text{rest}\_i$ for the $k$ polynomials of `rest`.
+///
+/// It is formed as one linear combination under those powers, so that the
+/// running sum is never rescaled and the backend can split the work.
+fn accumulate<B: ragu_backend::Backend, F: Field, R: Rank>(
+    first: &sparse::Polynomial<F, R>,
+    rest: &[&sparse::Polynomial<F, R>],
+    beta: F,
+) -> sparse::Polynomial<F, R> {
+    let mut terms = Vec::with_capacity(rest.len() + 1);
+    let mut power = F::ONE;
+    for poly in rest.iter().rev() {
+        terms.push((*poly, power));
+        power *= beta;
+    }
+    terms.push((first, power));
+    B::sparse_linear_combination(&terms)
 }
 
 impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBackend>
@@ -192,8 +207,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         f: &NativeF<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<PointsWitness<C::HostCurve, C::Profile>> {
-        let mut poly = f.poly.clone();
-
         // Collect commitments for PointsWitness construction.
         let mut commitments: Vec<C::HostCurve> = Vec::new();
 
@@ -204,11 +217,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // commitment computation.
         let effective_beta = lift_endoscalar(beta_endo);
 
-        {
-            let mut acc: Accumulator<'_, C, R> = Accumulator {
-                poly: &mut poly,
+        let poly = {
+            let mut acc: Accumulator<'_, '_, C, R> = Accumulator {
+                polys: Vec::new(),
                 commitments: &mut commitments,
-                beta: effective_beta,
             };
 
             for proof in [left, right] {
@@ -255,7 +267,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             for (poly, &point) in online.polynomials().iter().zip(online.commitments()) {
                 acc.acc(poly, point);
             }
-        }
+            accumulate::<B, _, _>(&f.poly, &acc.polys, effective_beta)
+        };
 
         // Build the PointsStage input vector ([f.commitment, commitments..])
         // and delegate to the shared endoscaling helper, which also
@@ -302,22 +315,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let beta: C::ScalarField = lift_endoscalar(beta_endo);
         let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
 
-        let mut poly = nested_f.poly.clone();
-        for evaluated in batch.evaluated() {
-            poly.scale(beta);
-            poly.add_assign(evaluated);
-        }
-
-        for evaluated in builder.nested_online().polynomials() {
-            poly.scale(beta);
-            poly.add_assign(evaluated);
-        }
+        let poly = {
+            let rest: Vec<&sparse::Polynomial<C::ScalarField, R>> = batch
+                .evaluated()
+                .chain(builder.nested_online().polynomials())
+                .collect();
+            accumulate::<B, _, _>(&nested_f.poly, &rest, beta)
+        };
         let (p_commitment, walk) =
             self.compute_native_endoscaling(rng, beta_endo, native_points, builder)?;
         // A child can carry a polynomial inconsistent with its cached point.
         // Keep the debug consistency check fallible for such witnesses.
         #[cfg(debug_assertions)]
-        if B::sparse_commit_to_affine(&poly, C::nested_generators(self.params)) != p_commitment {
+        if self.nested().commit::<R>(&poly) != p_commitment {
             return Err(ragu_core::Error::InvalidWitness(
                 "nested P does not match its accumulated polynomial".into(),
             ));

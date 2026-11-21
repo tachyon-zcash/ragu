@@ -152,6 +152,13 @@ impl<'a, C: Affine> MSM<'a, C> {
 
     /// Perform multiexp through backend `B` and check that it results in zero.
     pub fn eval<B: SelectableBackend>(self) -> bool {
+        self.eval_with_workspace::<B>(&mut ragu_core::MsmWorkspace::default())
+    }
+
+    pub(crate) fn eval_with_workspace<B: SelectableBackend>(
+        self,
+        workspace: &mut ragu_core::MsmWorkspace,
+    ) -> bool {
         let len = self.g_scalars.as_ref().map(|v| v.len()).unwrap_or(0)
             + self.u_scalar.map(|_| 1).unwrap_or(0)
             + self.other.len();
@@ -170,6 +177,7 @@ impl<'a, C: Affine> MSM<'a, C> {
             bases.push(self.params.u);
         }
 
+        let dynamic_len = scalars.len();
         if let Some(g_scalars) = &self.g_scalars {
             scalars.extend(g_scalars);
             bases.extend(self.params.g.iter());
@@ -177,7 +185,18 @@ impl<'a, C: Affine> MSM<'a, C> {
 
         assert_eq!(scalars.len(), len);
 
-        let identity = multiexp::<C, B>(&scalars, &bases).is_identity();
+        let identity = if let (Some(prepared), Some(coeffs)) =
+            (self.params.g.prepared(), self.g_scalars)
+            && len - dynamic_len >= 128
+        {
+            // The fixed generator equation and proof-specific terms are
+            // evaluated separately, then added without changing the equation.
+            let fixed = B::msm_prepared(coeffs, prepared, workspace);
+            let dynamic = multiexp::<C, B>(&scalars[..dynamic_len], &bases[..dynamic_len]);
+            (fixed + dynamic).is_identity()
+        } else {
+            multiexp::<C, B>(&scalars, &bases).is_identity()
+        };
         super::fingerprint::record_msm(&scalars, &bases, self.other.len(), identity);
         identity
     }

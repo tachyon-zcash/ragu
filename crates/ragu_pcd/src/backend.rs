@@ -1,8 +1,10 @@
 //! Sealed selection of the computational backend.
 //!
-//! This is the only file in `ragu_pcd` that names `ragu_acceleration`: the
-//! sealed mapping below decides which backends an application may select and
-//! which kernels the verifier consults for each of them.
+//! The sealed mapping below decides which backends an application may select
+//! and which kernels the verifier consults for each of them; nothing else in
+//! `ragu_pcd` makes either choice. The builder's default backend,
+//! [`AcceleratedBackend`](ragu_acceleration::AcceleratedBackend), is named in
+//! the crate root.
 
 use ragu_backend::Backend;
 
@@ -42,9 +44,12 @@ pub(crate) use sealed::Sealed as TestSealed;
 /// Each selectable backend also fixes [`Verifier`](Self::Verifier), the
 /// backend whose kernels
 /// [`Application::verify_compressed`](crate::Application::verify_compressed)
-/// (and, under `test-utils`, `Application::verify_uncompressed`) consult, so
-/// accelerating verification is an explicit choice rather than a consequence
-/// of accelerating proving.
+/// (and, under `test-utils`, `Application::verify_uncompressed`) consult.
+/// The builder's default, `AcceleratedBackend`, verifies with the accelerated
+/// kernels. An application keeps verification on the reference kernels by
+/// selecting `AcceleratedProver`, which still proves with the accelerated
+/// ones, or `ReferenceBackend`. Either way it chooses among Ragu's kernels:
+/// it cannot supply the code that decides acceptance.
 pub trait SelectableBackend: Backend + sealed::Sealed {
     /// The backend whose kernels the verifier consults.
     ///

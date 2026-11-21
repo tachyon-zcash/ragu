@@ -90,12 +90,7 @@ pub(crate) fn native_position<P: Profile>(component: native::RxComponent) -> usi
     match component {
         native::RxComponent::AbA => 0,
         native::RxComponent::AbB => 1,
-        native::RxComponent::Rx(index) => {
-            2 + native::RxIndex::all::<P>()
-                .iter()
-                .position(|&listed| listed == index)
-                .expect("every native index is listed")
-        }
+        native::RxComponent::Rx(index) => 2 + index.position::<P>(),
     }
 }
 
@@ -116,12 +111,7 @@ pub(crate) fn nested_position<P: Profile>(component: nested::RxComponent) -> usi
     match component {
         nested::RxComponent::AbA => 0,
         nested::RxComponent::AbB => 1,
-        nested::RxComponent::Rx(index) => {
-            2 + nested::RxIndex::all::<P>()
-                .iter()
-                .position(|&listed| listed == index)
-                .expect("every nested index is listed")
-        }
+        nested::RxComponent::Rx(index) => 2 + index.position::<P>(),
     }
 }
 

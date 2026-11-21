@@ -5,9 +5,9 @@
 use alloc::vec::Vec;
 
 use ragu_backend::ReferenceBackend;
-use ragu_circuits::polynomials::WalletRank;
+use ragu_circuits::polynomials::{Rank, WalletRank};
 use ragu_core::{
-    Cycle, Result,
+    Cycle, MsmWorkspace, Result,
     drivers::Driver,
     pasta::{Fp, Fq, Pasta},
 };
@@ -24,7 +24,7 @@ use crate::{
         transcript,
     },
     internal::{ky, nested},
-    ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript},
+    ipa::{CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
 };
 
 std::thread_local! {
@@ -213,12 +213,16 @@ impl Setup {
     pub fn run_native(&self, t: &mut Transcript, sampled: &Sampled<Fp>, nested_y: Fq) {
         let openings = self.native_openings(t, sampled, nested_y);
         assert!(
-            batch::verify_openings::<_, TestR, ReferenceBackend>(
+            batch::verify_openings::<_, ReferenceBackend>(
                 &openings,
                 &self.proof.native.batch,
                 &self.proof.native.opening,
-                Pasta::host_generators(crate::pasta::baked()),
-                *Pasta::host_u(crate::pasta::baked()),
+                &Params::with_k(
+                    Pasta::host_generators(crate::pasta::baked()),
+                    *Pasta::host_u(crate::pasta::baked()),
+                    TestR::RANK,
+                ),
+                &mut MsmWorkspace::default(),
                 &mut Lifted(t.host()),
             )
             .unwrap(),

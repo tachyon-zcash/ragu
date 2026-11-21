@@ -236,6 +236,7 @@ impl Apps {
     fn build(dummy_circuits: usize) -> Self {
         let pasta = ragu_pcd::pasta::baked_aggregator();
         let reference = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<ReferenceBackend>()
             .register(UnitStep)
             .unwrap()
             .register_dummy_circuits(dummy_circuits)
@@ -913,6 +914,77 @@ fn backend_map_preserves_owned_inputs_and_result_order() {
                 }
             });
     }
+}
+
+#[test]
+fn backend_join_runs_each_job_once_and_keeps_their_order() {
+    fn check<B: Backend>() {
+        let calls = [AtomicUsize::new(0), AtomicUsize::new(0)];
+
+        // A non-Copy result exercises ownership across worker threads.
+        let (left, right) = B::join(
+            || {
+                calls[0].fetch_add(1, Ordering::Relaxed);
+                alloc::vec![7_u8]
+            },
+            || {
+                calls[1].fetch_add(1, Ordering::Relaxed);
+                "right"
+            },
+        );
+        assert_eq!((left, right), (alloc::vec![7_u8], "right"));
+        assert!(calls.iter().all(|calls| calls.load(Ordering::Relaxed) == 1));
+    }
+    for workers in [1, 4] {
+        maybe_rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| {
+                check::<ReferenceBackend>();
+                check::<AcceleratedBackend>();
+                check::<AcceleratedProver>();
+            });
+    }
+}
+
+/// Commitment tables change how the prover computes its commitments, never
+/// what they are: an application with them proves exactly what one without
+/// them does, and each accepts the other's proofs.
+#[test]
+fn commitment_tables_leave_proofs_unchanged() {
+    fn build<B: SelectableBackend>(tables: bool) -> TestApplication<'static, B> {
+        let builder = ApplicationBuilder::<Pasta, WalletRank, TEST_HEADER_SIZE>::new()
+            .with_backend::<B>()
+            .register(UnitStep)
+            .unwrap();
+        let builder = if tables {
+            builder.with_commitment_tables()
+        } else {
+            builder
+        };
+        builder
+            .finalize(ragu_pcd::pasta::baked_aggregator())
+            .unwrap()
+    }
+    fn prove<B: SelectableBackend>(app: &TestApplication<'static, B>) -> TestPcd {
+        let mut rng = StdRng::seed_from_u64(41);
+        let (left, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+        let (right, ()) = app.seed(&mut rng, UnitStep, ()).unwrap();
+        app.fuse(&mut rng, UnitStep, (), left, right).unwrap().0
+    }
+    fn check<B: SelectableBackend>() {
+        let (plain, tabled) = (build::<B>(false), build::<B>(true));
+        let (expected, proved) = (prove(&plain), prove(&tabled));
+        assert!(expected.proof().test_mismatch(proved.proof()).is_none());
+        let mut rng = StdRng::seed_from_u64(42);
+        assert!(plain.verify_uncompressed(&proved, &mut rng).unwrap());
+        assert!(tabled.verify_uncompressed(&expected, &mut rng).unwrap());
+    }
+    // The reference backend prepares no table, so the request changes nothing.
+    check::<ReferenceBackend>();
+    check::<AcceleratedBackend>();
+    check::<AcceleratedProver>();
 }
 
 /// The default iterator must not prepare a parallel work buffer in Fuse.
@@ -1654,12 +1726,94 @@ mod independent_polynomials {
             []
         );
 
+        // Cross batch boundaries with mixed dense, sparse and zero inputs;
+        // compare against independent commitments in the original order.
+        for length in [0, 1, 7, 8, 9, 15, 16, 17] {
+            let many: Vec<_> = (0..length)
+                .map(|i| polys[i % polys.len()].clone())
+                .collect();
+            let expected: Vec<_> = many
+                .iter()
+                .map(|poly| ReferenceBackend::sparse_commit_to_affine(poly, generators))
+                .collect();
+            assert_eq!(
+                ReferenceBackend::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+            assert_eq!(
+                AcceleratedBackend::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+            assert_eq!(
+                AcceleratedProver::sparse_commit_many_to_affine(&many, generators),
+                expected
+            );
+        }
+
         let inputs = [
             (&polys[2], C::Scalar::from(7)),
             (&polys[0], C::Scalar::ZERO),
             (&polys[1], C::Scalar::ONE),
             (&polys[2], C::Scalar::from(2)),
         ];
+
+        // A table of the generators commits to what the generators do, and
+        // only the accelerated backends prepare one.
+        let prefix = &generators.g()[..TestRank::num_coeffs()];
+        assert!(ReferenceBackend::prepare_commitments(prefix).is_none());
+        let table = AcceleratedBackend::prepare_commitments(prefix).unwrap();
+        assert!(AcceleratedProver::prepare_commitments(prefix).is_some());
+        let tabled: Vec<_> = polys.iter().collect();
+        assert_eq!(
+            ReferenceBackend::sparse_commit_tabled(&tabled, generators, &table),
+            expected
+        );
+        assert_eq!(
+            AcceleratedBackend::sparse_commit_tabled(&tabled, generators, &table),
+            expected
+        );
+        assert_eq!(
+            AcceleratedProver::sparse_commit_tabled(&tabled, generators, &table),
+            expected
+        );
+        assert!(
+            AcceleratedBackend::sparse_commit_tabled::<C, TestRank, _>(&[], generators, &table)
+                .is_empty()
+        );
+
+        // Scaled copies summed one by one are independent of the dense
+        // accumulation, and the split form must build the reference's blocks.
+        let terms = [
+            (&polys[2], C::Scalar::from(7)),
+            (&polys[0], C::Scalar::ZERO),
+            (&polys[1], C::Scalar::ONE),
+            (&polys[0], -C::Scalar::ONE),
+            (&polys[2], C::Scalar::from(2)),
+        ];
+        let mut expected = sparse::Polynomial::<C::Scalar, TestRank>::default();
+        for (poly, by) in terms {
+            let mut scaled = poly.clone();
+            scaled.scale(by);
+            expected.add_assign(&scaled);
+        }
+        let reference = ReferenceBackend::sparse_linear_combination(&terms);
+        assert!(reference.iter_coeffs().eq(expected.iter_coeffs()));
+        for combined in [
+            AcceleratedBackend::sparse_linear_combination(&terms),
+            AcceleratedProver::sparse_linear_combination(&terms),
+        ] {
+            assert!(
+                combined
+                    .iter_stored_coeffs()
+                    .eq(reference.iter_stored_coeffs())
+            );
+        }
+        assert_eq!(
+            AcceleratedBackend::sparse_linear_combination::<C::Scalar, TestRank>(&[])
+                .iter_stored_coeffs()
+                .count(),
+            0
+        );
 
         // A dense Horner evaluation is independent of the sparse evaluator.
         let expected = inputs.map(|(poly, point)| {

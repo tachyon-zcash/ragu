@@ -39,12 +39,12 @@ carries a requirement worth stating on its own, because nothing in the type
 system enforces it.
 
 A circuit is walked more than once, by different drivers: metrics counts gates
-and constraints, the trace driver computes witness data, the wiring drivers
-evaluate `s(X, Y)`, and the monomial driver writes `s(X, Y)` down for the
-registry tag to hash. Each walk runs the same circuit code and must observe the
+and constraints, the trace driver computes witness data, and the recording
+driver records the wiring that every evaluation of `s(X, Y)` runs and that the
+registry tag hashes. Each walk runs the same circuit code and must observe the
 same sequence of driver operations. When two walks disagree, the artifacts they
-produce no longer describe a single constraint system: the registry tag, for
-one, would bind a polynomial other than the one the verifier evaluates.
+produce no longer describe a single constraint system: a trace, for one, would
+satisfy constraints other than the ones the verifier evaluates.
 
 Circuit code is therefore required to emit the same constraints on every walk,
 and the rest of the system assumes it does. Beyond the `DriverValue` rule above,

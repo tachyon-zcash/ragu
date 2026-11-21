@@ -4,7 +4,7 @@
 //! standing in for another setup; the public API derives both tags from the
 //! registered circuits and cannot make such a pair.
 
-use ragu_backend::ReferenceBackend;
+use ragu_acceleration::AcceleratedBackend;
 use ragu_circuits::polynomials::WalletRank;
 use ragu_core::{
     Result,
@@ -34,7 +34,7 @@ enum ChangedTag {
 fn application<C>(changed: Option<ChangedTag>) -> Result<App<C>>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let builder = ApplicationBuilder::<C, WalletRank, HEADER_SIZE>::new().register(UnitStep)?;
     match changed {
@@ -77,7 +77,7 @@ where
 fn check_setup_binding<C>(changed: ChangedTag) -> Result<()>
 where
     C: IpaCycle + ProfiledCycle<Base = Pasta, Params = PastaParams>,
-    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, ReferenceBackend>: Default,
+    <C::Profile as Profile>::Context<'static, Pasta, WalletRank, AcceleratedBackend>: Default,
 {
     let sender = application::<C>(None)?;
     let receiver = application::<C>(Some(changed))?;

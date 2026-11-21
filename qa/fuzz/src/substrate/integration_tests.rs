@@ -52,7 +52,8 @@ fn identity_lhs(
 
 proptest! {
     /// Honest traces of generated circuits satisfy the revdot identity at
-    /// arbitrary evaluation points.
+    /// arbitrary evaluation points, and each circuit's recorded wiring is
+    /// what an independent walk of it writes down.
     #[test]
     fn proptest_honest_revdot_identity_holds(
         program in program_strategy(OpSet::ALL, Limits::default().max_ops),
@@ -65,13 +66,15 @@ proptest! {
             program: &steered,
             anchors: &honest.anchors,
         };
-        let Ok(registry) = RegistryBuilder::<Fp, TestRank>::new()
-            .register_circuit(circuit)
-            .and_then(|b| b.finalize())
-        else {
+        let Some(registry) = crate::registry::fits(
+            RegistryBuilder::<Fp, TestRank>::new()
+                .register_circuit(circuit)
+                .and_then(|b| b.finalize()),
+        ) else {
             // Rank overflow: the program needs more gates than TestRank has.
             return Ok(());
         };
+        crate::registry::assert_recorded_as_walked(&registry);
         let trace = circuit
             .trace(steered.preamble.values())
             .expect("honest witness must trace")

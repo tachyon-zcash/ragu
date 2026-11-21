@@ -171,32 +171,36 @@ fn special_value(idx: u8) -> Fp {
 }
 
 static BOOL_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> = LazyLock::new(|| {
-    RegistryBuilder::<Fp, TestRank>::new()
-        .register_circuit(BoolCircuit)
-        .and_then(|b| b.finalize())
-        .ok()
+    ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<Fp, TestRank>::new()
+            .register_circuit(BoolCircuit)
+            .and_then(|b| b.finalize()),
+    )
 });
 
 static POINT_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> = LazyLock::new(|| {
-    RegistryBuilder::<Fp, TestRank>::new()
-        .register_circuit(PointCircuit)
-        .and_then(|b| b.finalize())
-        .ok()
+    ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<Fp, TestRank>::new()
+            .register_circuit(PointCircuit)
+            .and_then(|b| b.finalize()),
+    )
 });
 
 static ROUTINE_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> = LazyLock::new(|| {
-    RegistryBuilder::<Fp, TestRank>::new()
-        .register_circuit(RoutineCircuit)
-        .and_then(|b| b.finalize())
-        .ok()
+    ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<Fp, TestRank>::new()
+            .register_circuit(RoutineCircuit)
+            .and_then(|b| b.finalize()),
+    )
 });
 
 static KNOWN_ROUTINE_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
     LazyLock::new(|| {
-        RegistryBuilder::<Fp, TestRank>::new()
-            .register_circuit(KnownRoutineCircuit)
-            .and_then(|b| b.finalize())
-            .ok()
+        ragu_testing_fuzz::registry::fits(
+            RegistryBuilder::<Fp, TestRank>::new()
+                .register_circuit(KnownRoutineCircuit)
+                .and_then(|b| b.finalize()),
+        )
     });
 
 // ---------------------------------------------------------------------------
@@ -535,12 +539,12 @@ fuzz_target!(|input: Input| {
                 program: &program,
                 anchors: &honest.anchors,
             };
-            let registry = match RegistryBuilder::<Fp, TestRank>::new()
-                .register_circuit(circuit)
-                .and_then(|b| b.finalize())
-            {
-                Ok(r) => r,
-                Err(_) => return, // rank overflow
+            let Some(registry) = ragu_testing_fuzz::registry::fits(
+                RegistryBuilder::<Fp, TestRank>::new()
+                    .register_circuit(circuit)
+                    .and_then(|b| b.finalize()),
+            ) else {
+                return; // Rank overflow.
             };
             let witness: [Fp; Preamble::LEN] = program.preamble.values();
 

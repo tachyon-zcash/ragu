@@ -84,8 +84,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 native_points_registry_wx: builder.native_points_registry_wx_commitment(),
             },
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_s_prime_rx(bridge_rx, bridge_commitment);
         Ok(())
     }
@@ -101,10 +100,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let registry_wx0_poly = B::registry_at_x(native_registry, x0);
         let registry_wx1_poly = B::registry_at_x(native_registry, x1);
-        let host_gen = C::host_generators(self.params);
         let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
         <C::HostCurve as Affine>::batch_to_affine(
-            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], host_gen),
+            &self
+                .host()
+                .commit_batch([&registry_wx0_poly, &registry_wx1_poly]),
             &mut commitments,
         );
         let [registry_wx0_commitment, registry_wx1_commitment] = commitments;
@@ -128,10 +128,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let registry_wx0_poly = B::registry_at_x(nested_registry, x0);
         let registry_wx1_poly = B::registry_at_x(nested_registry, x1);
-        let nested_gen = C::nested_generators(self.params);
         let mut commitments = [<C::NestedCurve as Affine>::identity(); 2];
         <C::NestedCurve as Affine>::batch_to_affine(
-            &B::sparse_commit_batch([&registry_wx0_poly, &registry_wx1_poly], nested_gen),
+            &self
+                .nested()
+                .commit_batch([&registry_wx0_poly, &registry_wx1_poly]),
             &mut commitments,
         );
         let [registry_wx0_commitment, registry_wx1_commitment] = commitments;

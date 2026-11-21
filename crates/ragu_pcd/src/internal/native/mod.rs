@@ -98,7 +98,7 @@ pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionCircuits<P> {
     fn len() -> usize {
-        crate::profile::native_extension::<P>().circuits.len()
+        crate::profile::extension_lengths::<P>(false).circuits
     }
 }
 
@@ -107,7 +107,7 @@ pub struct NumExtensionStages<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionStages<P> {
     fn len() -> usize {
-        crate::profile::native_extension::<P>().stages
+        crate::profile::extension_lengths::<P>(false).stages
     }
 }
 
@@ -116,7 +116,7 @@ pub struct NumExtensionBondings<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionBondings<P> {
     fn len() -> usize {
-        crate::profile::native_extension::<P>().bondings()
+        crate::profile::extension_lengths::<P>(false).bondings
     }
 }
 
@@ -156,16 +156,9 @@ pub const FOLD_GROUP_SIZE: usize = 7;
 /// children's raw claims, the step's own application claim, each internal
 /// circuit's claim per child, and each bonding's claim across both.
 pub fn num_claims<P: Profile>() -> usize {
-    let (circuits, bondings) =
-        InternalCircuitIndex::all::<P>()
-            .into_iter()
-            .fold((0, 0), |(circuits, bondings), id| {
-                if id.is_bonding() {
-                    (circuits, bondings + 1)
-                } else {
-                    (circuits + 1, bondings)
-                }
-            });
+    let extension = crate::profile::extension_lengths::<P>(false);
+    let circuits = 6 + NUM_BINDERS + NumSteps::<P>::len() + extension.circuits;
+    let bondings = 18 + extension.bondings;
     2 + 1 + 2 * circuits + bondings
 }
 
@@ -395,15 +388,47 @@ impl InternalCircuitIndex {
 
     /// The registry index of `self` in profile `P`.
     pub fn circuit_index<P: Profile>(self) -> CircuitIndex {
-        let pos = Self::all::<P>()
-            .iter()
-            .position(|&v| v == self)
-            .expect("every variant appears in all");
-        CircuitIndex::from_u32(pos as u32)
+        use InternalCircuitIndex::*;
+        let steps = NumSteps::<P>::len();
+        let extension = crate::profile::extension_lengths::<P>(false);
+        let endoscaling = 6 + NUM_BINDERS;
+        let bonding = endoscaling + steps + extension.circuits;
+        let pos = match self {
+            Hashes1Circuit => 0,
+            Hashes2Circuit => 1,
+            CollapseCircuit => 2,
+            ComputeVCircuit => 3,
+            BindChallengesCircuit(i) => 4 + checked_index(i, NUM_BINDERS),
+            BindBetaCircuit => 4 + NUM_BINDERS,
+            BindEndoscalarCircuit => 5 + NUM_BINDERS,
+            EndoscalingStep(i) => endoscaling + checked_index(i, steps),
+            ExtensionCircuit(i) => endoscaling + steps + checked_index(i, extension.circuits),
+            PreambleStage => bonding,
+            InnerErrorStage => bonding + 1,
+            OuterErrorStage => bonding + 2,
+            QueryStage => bonding + 3,
+            EvalStage => bonding + 4,
+            PointsBindingStage => bonding + 5,
+            PointsPreambleStage => bonding + 6,
+            PointsRegistryWxStage => bonding + 7,
+            PointsAbStage => bonding + 8,
+            PointsFStage => bonding + 9,
+            PointsWalkStage => bonding + 10,
+            InnerErrorFinalStaged => bonding + 11,
+            OuterErrorFinalStaged => bonding + 12,
+            EvalFinalStaged => bonding + 13,
+            PointsWalkFinalStaged => bonding + 14,
+            PreambleFinalStaged => bonding + 15,
+            ApplicationStage => bonding + 16,
+            ApplicationFinalStaged => bonding + 17,
+            ExtensionBonding(i) => bonding + 18 + checked_index(i, extension.bondings),
+        };
+        CircuitIndex::new(pos)
     }
 
     /// Whether `self` is registered as a bonding, a stage's mask or a final
     /// mask, rather than as a circuit.
+    #[cfg(test)]
     pub fn is_bonding(self) -> bool {
         use InternalCircuitIndex::*;
         match self {
@@ -437,6 +462,13 @@ impl InternalCircuitIndex {
             | ExtensionBonding(_) => true,
         }
     }
+}
+
+// Reject out-of-profile variants just as the canonical-list lookup did.
+fn checked_index(index: u32, count: usize) -> usize {
+    let index = index as usize;
+    assert!(index < count, "index is outside the profile");
+    index
 }
 
 /// Per-internal-circuit storage indexed by [`InternalCircuitIndex`].
@@ -720,6 +752,48 @@ impl RxIndex {
         all.extend((0..circuits as u32).map(Self::ExtensionCircuit));
         all.extend((0..stages as u32).map(Self::ExtensionStage));
         all
+    }
+}
+
+impl RxIndex {
+    /// The position of `self` in [`all`](Self::all), for profile `P`.
+    pub fn position<P: Profile>(self) -> usize {
+        use RxIndex::*;
+        let steps = NumSteps::<P>::len();
+        let endoscaling = 6 + NUM_BINDERS;
+        let stages = endoscaling + steps;
+        match self {
+            Hashes1 => 0,
+            Hashes2 => 1,
+            Collapse => 2,
+            ComputeV => 3,
+            BindChallenges(i) => 4 + checked_index(i, NUM_BINDERS),
+            BindBeta => 4 + NUM_BINDERS,
+            BindEndoscalar => 5 + NUM_BINDERS,
+            EndoscalingStep(i) => endoscaling + checked_index(i, steps),
+            Preamble => stages,
+            InnerError => stages + 1,
+            OuterError => stages + 2,
+            Query => stages + 3,
+            Eval => stages + 4,
+            PointsBinding => stages + 5,
+            PointsPreamble => stages + 6,
+            PointsRegistryWx => stages + 7,
+            PointsAb => stages + 8,
+            PointsF => stages + 9,
+            PointsWalk => stages + 10,
+            ExtensionCircuit(i) => {
+                stages
+                    + 11
+                    + checked_index(i, crate::profile::extension_lengths::<P>(false).circuits)
+            }
+            ExtensionStage(i) => {
+                stages
+                    + 11
+                    + crate::profile::extension_lengths::<P>(false).circuits
+                    + checked_index(i, crate::profile::extension_lengths::<P>(false).stages)
+            }
+        }
     }
 }
 
@@ -1139,4 +1213,31 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize
     );
 
     Ok(registry)
+}
+
+#[cfg(test)]
+mod index_positions {
+    use super::*;
+    use crate::profile::Standard;
+
+    fn check<P: Profile>() {
+        let all = InternalCircuitIndex::all::<P>();
+        let circuits = all.iter().filter(|id| !id.is_bonding()).count();
+        assert_eq!(
+            num_claims::<P>(),
+            2 + 1 + 2 * circuits + all.len() - circuits
+        );
+        for (expected, id) in InternalCircuitIndex::all::<P>().into_iter().enumerate() {
+            assert_eq!(usize::from(id.circuit_index::<P>()), expected, "{id:?}");
+        }
+        for (expected, id) in RxIndex::all::<P>().into_iter().enumerate() {
+            assert_eq!(id.position::<P>(), expected, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn arithmetic_positions_match_canonical_lists() {
+        check::<Standard>();
+        check::<crate::profile::testing::Wider>();
+    }
 }

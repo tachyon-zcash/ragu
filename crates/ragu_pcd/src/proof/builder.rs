@@ -7,7 +7,7 @@
 //! already on the builder.
 
 use alloc::{sync::Arc, vec::Vec};
-use core::{cell::OnceCell, marker::PhantomData};
+use core::cell::OnceCell;
 
 use ragu_backend::Backend;
 use ragu_circuits::{
@@ -21,6 +21,7 @@ use udon::{curve::Affine, field::Field};
 
 use super::{Cached, Proof};
 use crate::{
+    committer::Committer,
     header::NUM_ONLINE_FP_POLYS,
     internal::{native::online, nested},
     profile::{
@@ -45,23 +46,22 @@ macro_rules! setter {
 
 /// Produces `pub(crate) fn $getter(&self) -> C::{Host,Nested}Curve` that
 /// lazily computes and caches a commitment from a polynomial via
-/// `commit_to_affine`. The `native` / `nested` prefix selects the curve type
-/// and the corresponding generators source.
+/// the builder's committer. The `native` / `nested` prefix selects the curve
+/// type and the corresponding committer.
 macro_rules! lazy_commitment {
     (native, $getter:ident, $cache:ident, $poly:ident) => {
-        lazy_commitment!(@impl $getter, $cache, $poly, C::HostCurve, C::host_generators);
+        lazy_commitment!(@impl $getter, $cache, $poly, C::HostCurve, host);
     };
     (nested, $getter:ident, $cache:ident, $poly:ident) => {
-        lazy_commitment!(@impl $getter, $cache, $poly, C::NestedCurve, C::nested_generators);
+        lazy_commitment!(@impl $getter, $cache, $poly, C::NestedCurve, nested);
     };
-    (@impl $getter:ident, $cache:ident, $poly:ident, $curve:ty, $gen:path) => {
+    (@impl $getter:ident, $cache:ident, $poly:ident, $curve:ty, $committer:ident) => {
         pub(crate) fn $getter(&self) -> $curve {
             *self.$cache.get_or_init(|| {
-                B::sparse_commit_to_affine(
+                self.$committer.commit(
                     self.$poly
                         .as_ref()
                         .expect(concat!(stringify!($poly), " not set")),
-                    $gen(self.params),
                 )
             })
         }
@@ -205,9 +205,7 @@ macro_rules! cached_bridge {
 
         pub(crate) fn $commitment(&self) -> Result<C::NestedCurve> {
             let rx = self.$rx()?;
-            Ok(*self.$commitment.get_or_init(|| {
-                B::sparse_commit_to_affine(rx, C::nested_generators(self.params))
-            }))
+            Ok(*self.$commitment.get_or_init(|| self.nested.commit(rx)))
         }
     };
 }
@@ -219,7 +217,10 @@ macro_rules! cached_bridge {
 /// because they are computed via non-standard techniques.
 pub(crate) struct ProofBuilder<'params, C: ProfiledCycle, R: Rank, B: Backend> {
     params: &'params C::Params,
-    _backend: PhantomData<B>,
+    /// What the proof's host-curve commitments are computed with.
+    host: Committer<'params, C::HostCurve, C::HostGenerators, B>,
+    /// What the proof's nested-curve commitments are computed with.
+    nested: Committer<'params, C::NestedCurve, C::NestedGenerators, B>,
 
     /// Shared alpha source for the cached `ab` bridge commitment.
     bridge_alpha: C::ScalarField,
@@ -567,11 +568,18 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     }
 
     /// Create a new empty builder with the given `bridge_alpha` source for
-    /// deriving cached bridge polynomial alphas.
-    pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
+    /// deriving cached bridge polynomial alphas, committing with `host` and
+    /// `nested`, which pair `params`'s generators with any tables of them.
+    pub(crate) fn new(
+        params: &'params C::Params,
+        host: Committer<'params, C::HostCurve, C::HostGenerators, B>,
+        nested: Committer<'params, C::NestedCurve, C::NestedGenerators, B>,
+        bridge_alpha: C::ScalarField,
+    ) -> Self {
         Self {
             params,
-            _backend: PhantomData,
+            host,
+            nested,
             bridge_alpha,
             circuit_id: None,
             left_header: None,
@@ -879,9 +887,8 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// polynomials.
     pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
         *self.online_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
             let polys = self.online_polynomials();
-            core::array::from_fn(|i| B::sparse_commit_to_affine(&polys[i], host_gen))
+            core::array::from_fn(|i| self.host.commit(&polys[i]))
         })
     }
     setter!(
@@ -899,10 +906,9 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// Fq polynomials, deterministic in their coefficients.
     pub(crate) fn online_fq_commitments(&self) -> &[C::NestedCurve] {
         self.online_fq_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
             self.online_fq_polynomials()
                 .iter()
-                .map(|poly| B::sparse_commit_to_affine(poly, nested_gen))
+                .map(|poly| self.nested.commit(poly))
                 .collect()
         })
     }
@@ -937,13 +943,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn native_extension_circuit_commitments(&self) -> &[C::HostCurve] {
         self.native_extension_circuit_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_extension_circuit_rxs
-                .as_ref()
-                .expect("native_extension_circuit_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_extension_circuit_rxs
+                    .as_ref()
+                    .expect("native_extension_circuit_rxs not set"),
+            )
         })
     }
 
@@ -951,13 +955,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// stages' rx polynomials. Returns the cached slice.
     pub(crate) fn native_extension_stage_commitments(&self) -> &[C::HostCurve] {
         self.native_extension_stage_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_extension_stage_rxs
-                .as_ref()
-                .expect("native_extension_stage_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_extension_stage_rxs
+                    .as_ref()
+                    .expect("native_extension_stage_rxs not set"),
+            )
         })
     }
 
@@ -965,13 +967,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// steps' rx polynomials. Returns the cached slice.
     pub(crate) fn native_endoscaling_step_commitments(&self) -> &[C::HostCurve] {
         self.native_endoscaling_step_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_endoscaling_step_rxs
-                .as_ref()
-                .expect("native_endoscaling_step_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_endoscaling_step_rxs
+                    .as_ref()
+                    .expect("native_endoscaling_step_rxs not set"),
+            )
         })
     }
 
@@ -979,13 +979,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// binding circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn native_bind_challenges_commitments(&self) -> &[C::HostCurve] {
         self.native_bind_challenges_commitments.get_or_init(|| {
-            let host_gen = C::host_generators(self.params);
-            self.native_bind_challenges_rxs
-                .as_ref()
-                .expect("native_bind_challenges_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
-                .collect()
+            self.host.commit_many(
+                self.native_bind_challenges_rxs
+                    .as_ref()
+                    .expect("native_bind_challenges_rxs not set"),
+            )
         })
     }
 
@@ -1177,13 +1175,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// circuits' rx polynomials. Returns the cached slice.
     pub(crate) fn nested_extension_circuit_commitments(&self) -> &[C::NestedCurve] {
         self.nested_extension_circuit_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
-            self.nested_extension_circuit_rxs
-                .as_ref()
-                .expect("nested_extension_circuit_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            self.nested.commit_many(
+                self.nested_extension_circuit_rxs
+                    .as_ref()
+                    .expect("nested_extension_circuit_rxs not set"),
+            )
         })
     }
 
@@ -1191,13 +1187,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// stages' rx polynomials. Returns the cached slice.
     pub(crate) fn nested_extension_stage_commitments(&self) -> &[C::NestedCurve] {
         self.nested_extension_stage_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
-            self.nested_extension_stage_rxs
-                .as_ref()
-                .expect("nested_extension_stage_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            self.nested.commit_many(
+                self.nested_extension_stage_rxs
+                    .as_ref()
+                    .expect("nested_extension_stage_rxs not set"),
+            )
         })
     }
 
@@ -1219,13 +1213,11 @@ impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R,
     /// polynomials. Returns the cached slice.
     pub(crate) fn nested_endoscaling_step_commitments(&self) -> &[C::NestedCurve] {
         self.nested_endoscaling_step_commitments.get_or_init(|| {
-            let nested_gen = C::nested_generators(self.params);
-            self.nested_endoscaling_step_rxs
-                .as_ref()
-                .expect("nested_endoscaling_step_rxs not set")
-                .iter()
-                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
-                .collect()
+            self.nested.commit_many(
+                self.nested_endoscaling_step_rxs
+                    .as_ref()
+                    .expect("nested_endoscaling_step_rxs not set"),
+            )
         })
     }
 

@@ -145,7 +145,7 @@ APIs that represent, compute, or manipulate them.
 | Domain | `Domain<F>` | `udon` |
 | Polynomial commitment (IPA) | `polynomials::sparse::Polynomial::commit()` | `ragu_circuits` |
 | Transcript (Fiat-Shamir) | internal `Transcript` over `Sponge<'dr, D, P>`, tagged `ragu-pcd-v1`; compression adds `ipa::CycleTranscript`, tagged `ragu-ipa-v1` | `ragu_pcd` |
-| [Registry tag](../guide/configuration.md#registry-tags) | `registry::Tag`, derived by `RegistryBuilder::finalize()` from the `wiring::monomials` of every registered circuit; read through `Registry::tag()` | `ragu_circuits` |
+| [Registry tag](../guide/configuration.md#registry-tags) | `registry::Tag`, derived by `RegistryBuilder::finalize()` from the `wiring::monomials` of every registered circuit's recorded wiring; read through `Registry::tag()` | `ragu_circuits` |
 | Computational backend | `Backend`, `ReferenceBackend`; selected through `ApplicationBuilder::with_backend()` | `ragu_backend`, `ragu_pcd` |
 | PCD step | `Step<C>` | `ragu_pcd` |
 | Recursive proof | `Proof<C, R>` | `ragu_pcd` |

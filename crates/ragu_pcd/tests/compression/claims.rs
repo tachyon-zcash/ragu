@@ -103,6 +103,7 @@ fn native_shapes_match_the_decider() {
     let mut builder = Builder::<_, Fp, TestR, ReferenceBackend>::new(&app.native_registry, y, z);
     native::claims::build::<crate::profile::Standard, _, _>(&NativePolys(proof), &mut builder)
         .unwrap();
+    let built = builder.finish();
 
     let shapes = super::native_shapes::<crate::profile::Standard, _>(z, &[]).unwrap();
     // The proof folded its own application claim, so the raw claim is
@@ -126,8 +127,8 @@ fn native_shapes_match_the_decider() {
         &app.native_registry,
         y,
         z,
-        &builder.a,
-        &builder.b,
+        &built.a,
+        &built.b,
     );
 }
 
@@ -145,6 +146,7 @@ fn nested_shapes_match_the_decider() {
     let mut builder = Builder::<_, Fq, TestR, ReferenceBackend>::new(&app.nested_registry, y, z);
     nested::claims::build::<crate::profile::Standard, _, _>(&NestedPolys(proof), &mut builder)
         .unwrap();
+    let built = builder.finish();
 
     let shapes = super::nested_shapes::<crate::profile::Standard, _>(z, &[]).unwrap();
     assert_eq!(shapes[0].kind, Kind::Raw);
@@ -154,8 +156,8 @@ fn nested_shapes_match_the_decider() {
         &app.nested_registry,
         y,
         z,
-        &builder.a,
-        &builder.b,
+        &built.a,
+        &built.b,
     );
 }
 

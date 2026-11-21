@@ -370,7 +370,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
     /// Appends the batch's quotient to the step's: `poly` moves up one power
     /// of `alpha` per opening and the batch's quotients, in opening order,
     /// take the powers below. A side without a batch returns `poly` as it is.
-    pub(crate) fn append_quotient(
+    pub(crate) fn append_quotient<B: Backend>(
         &self,
         mut poly: sparse::Polynomial<C::Scalar, R>,
         alpha: C::Scalar,
@@ -383,7 +383,7 @@ impl<C: Affine, R: Rank, P: Profile, S: Side> State<C, R, P, S> {
         poly.scale(alpha.pow_u64(layout.openings.len() as u64));
         // Opening descriptors can use w, y and x; u and beta are not sampled
         // yet and are never read by quotient construction.
-        poly += &layout.quotient(
+        poly += &layout.quotient::<_, _, B>(
             &self.polynomials,
             self.early_values(),
             &query.points,

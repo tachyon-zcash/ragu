@@ -150,6 +150,35 @@ fn extend_runs<F: Field>(out: &mut Vec<(usize, Vec<F>)>, base: usize, data: Vec<
     }
 }
 
+/// The number of jobs [`Polynomial::linear_combination_parallel`] splits the
+/// coefficient range into. Stored coefficients are spread unevenly over the
+/// range, so there are more jobs than a pool has workers.
+const LINEAR_COMBINATION_JOBS: usize = 32;
+
+/// Adds the coefficients of $\sum\_i c\_i \cdot p\_i$ at the degrees
+/// `start..start + out.len()` to `out`.
+fn accumulate<F: Field, R: Rank>(terms: &[(&Polynomial<F, R>, F)], start: usize, out: &mut [F]) {
+    let end = start + out.len();
+    for (poly, by) in terms {
+        // Blocks are sorted and disjoint, so those meeting the range are
+        // consecutive.
+        let first = poly
+            .blocks
+            .partition_point(|(block, data)| block + data.len() <= start);
+        for (block, data) in &poly.blocks[first..] {
+            if *block >= end {
+                break;
+            }
+            let from = (*block).max(start);
+            let to = (block + data.len()).min(end);
+            let coefficients = &data[from - block..to - block];
+            for (sum, coefficient) in out[from - start..to - start].iter_mut().zip(coefficients) {
+                *sum = coefficient.mul_add(by, sum);
+            }
+        }
+    }
+}
+
 impl<T, R: Rank> Default for Polynomial<T, R> {
     fn default() -> Self {
         Self::new()
@@ -346,6 +375,42 @@ impl<F: Field, R: Rank> Polynomial<F, R> {
     /// Adds the coefficients of `other` to `self`.
     pub fn add_assign(&mut self, other: &Self) {
         self.combine_assign(other, |a, b| *a += *b);
+    }
+
+    /// Adds `by * other` to `self`.
+    ///
+    /// This is [`add_assign`](Self::add_assign) of `other` scaled by `by`,
+    /// in one pass and without the scaled copy.
+    pub fn add_scaled_assign(&mut self, other: &Self, by: F) {
+        if by.is_zero() {
+            return;
+        }
+        self.combine_assign(other, |a, b| *a = b.mul_add(&by, a));
+    }
+
+    /// Returns $\sum\_i c\_i \cdot p\_i$ over the given $(p\_i, c\_i)$ terms.
+    ///
+    /// The sum is accumulated densely, visiting each term's stored
+    /// coefficients once: unlike a Horner fold, no pass rescales the running
+    /// sum between terms.
+    pub fn linear_combination(terms: &[(&Self, F)]) -> Self {
+        let mut dense = alloc::vec![F::ZERO; R::num_coeffs()];
+        accumulate(terms, 0, &mut dense);
+        Self::from_coeffs(dense)
+    }
+
+    /// Computes the linear combination with the coefficient range split into
+    /// independent jobs. Returns exactly [`Self::linear_combination`].
+    pub fn linear_combination_parallel(terms: &[(&Self, F)]) -> Self {
+        let mut dense = alloc::vec![F::ZERO; R::num_coeffs()];
+        let len = R::num_coeffs().div_ceil(LINEAR_COMBINATION_JOBS).max(1);
+        let mut jobs: Vec<(usize, &mut [F])> = dense
+            .chunks_mut(len)
+            .enumerate()
+            .map(|(job, out)| (job * len, out))
+            .collect();
+        ragu_core::for_each_mut(&mut jobs, |_, (start, out)| accumulate(terms, *start, out));
+        Self::from_coeffs(dense)
     }
 
     /// Subtracts the coefficients of `other` from `self`.

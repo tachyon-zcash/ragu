@@ -78,6 +78,9 @@ pub trait Source {
 ///
 /// Accumulates (a, b) polynomial pairs for each claim type, using
 /// the registry polynomial to transform rx polynomials appropriately.
+/// A claim's `b` that depends on a circuit's restriction is only recorded
+/// here; [`finish`](Self::finish) computes them all and returns the
+/// [`Claims`].
 ///
 /// The type parameter `A` determines what is stored in the `a` vector:
 /// - Verify path: `A = Cow<'rx, Polynomial>` (plain polynomial references)
@@ -89,10 +92,29 @@ pub struct Builder<'m, 'rx, A, F: Field, R: Rank, B: Backend> {
     pub z: F,
     pub tz: sparse::Polynomial<F, R>,
     /// The accumulated `a` polynomials.
-    pub a: Vec<A>,
-    /// The accumulated `b` polynomials for revdot claims.
-    pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
+    a: Vec<A>,
+    /// How to obtain each claim's `b` polynomial, in claim order.
+    b: Vec<Side<'rx, F, R>>,
     backend: PhantomData<B>,
+}
+
+/// A claim's `b` polynomial, or the circuit restriction it is derived from.
+enum Side<'rx, F: Field, R: Rank> {
+    /// The polynomial itself.
+    Given(Cow<'rx, sparse::Polynomial<F, R>>),
+    /// $r(zX) + s\_y + t(z)$ for the claim's own trace $r$ and the circuit's
+    /// restriction $s\_y$.
+    Circuit(CircuitIndex),
+    /// The circuit's restriction $s\_y$.
+    Bonding(CircuitIndex),
+}
+
+/// The polynomial pairs of a list of revdot claims, in claim order.
+pub struct Claims<'rx, A, F: Field, R: Rank> {
+    /// The claims' `a` polynomials.
+    pub a: Vec<A>,
+    /// The claims' `b` polynomials.
+    pub b: Vec<Cow<'rx, sparse::Polynomial<F, R>>>,
 }
 
 impl<'m, 'rx, A, F: Field, R: Rank, B: Backend> Builder<'m, 'rx, A, F, R, B>
@@ -112,24 +134,79 @@ where
         }
     }
 
-    /// Push a circuit claim. Computes `b` from `a.borrow()` (the polynomial).
-    pub fn circuit_impl(&mut self, circuit_id: CircuitIndex, a: A) {
-        let rx = a.borrow();
-        let sy = B::registry_circuit_y(self.registry, circuit_id, self.y);
-        let mut b = rx.clone();
-        b.dilate(self.z);
-        b.add_assign(&sy);
-        b.add_assign(&self.tz);
+    /// Push a claim whose `b` is given directly.
+    pub fn raw_impl(&mut self, a: A, b: Cow<'rx, sparse::Polynomial<F, R>>) {
         self.a.push(a);
-        self.b.push(Cow::Owned(b));
+        self.b.push(Side::Given(b));
+    }
+
+    /// Push a circuit claim, whose `b` is $r(zX) + s\_y + t(z)$ for the
+    /// polynomial $r$ that `a` borrows.
+    pub fn circuit_impl(&mut self, circuit_id: CircuitIndex, a: A) {
+        self.a.push(a);
+        self.b.push(Side::Circuit(circuit_id));
     }
 
     /// Push a bonding claim. There is no dilation and no $t(z)$, so
     /// $b = s\_{y}$ and $k(y) = 0$.
     pub fn bonding_impl(&mut self, circuit_id: CircuitIndex, a: A) {
-        let sy = B::registry_circuit_y(self.registry, circuit_id, self.y);
         self.a.push(a);
-        self.b.push(Cow::Owned(sy));
+        self.b.push(Side::Bonding(circuit_id));
+    }
+
+    /// Computes every claim's `b` and returns the claims.
+    ///
+    /// Each circuit is restricted once, however many claims name it, and
+    /// the restrictions and then the claims are independent work for the
+    /// backend.
+    pub fn finish(self) -> Claims<'rx, A, F, R>
+    where
+        A: Sync,
+    {
+        let Self {
+            registry,
+            y,
+            z,
+            tz,
+            a,
+            b,
+            ..
+        } = self;
+
+        let mut circuits: Vec<usize> = b
+            .iter()
+            .filter_map(|side| match side {
+                Side::Given(_) => None,
+                Side::Circuit(id) | Side::Bonding(id) => Some(usize::from(*id)),
+            })
+            .collect();
+        circuits.sort_unstable();
+        circuits.dedup();
+        let restrictions: Vec<sparse::Polynomial<F, R>> = B::map(circuits.iter(), |&circuit| {
+            B::registry_circuit_y(registry, CircuitIndex::new(circuit), y)
+        })
+        .collect();
+        let restriction = |id: CircuitIndex| {
+            let position = circuits
+                .binary_search(&usize::from(id))
+                .expect("every named circuit was restricted");
+            &restrictions[position]
+        };
+
+        let b = B::map(b.into_iter().zip(&a), |(side, a)| match side {
+            Side::Given(b) => b,
+            Side::Circuit(id) => {
+                let mut b = a.borrow().clone();
+                b.dilate(z);
+                b.add_assign(restriction(id));
+                b.add_assign(&tz);
+                Cow::Owned(b)
+            }
+            Side::Bonding(id) => Cow::Owned(restriction(id).clone()),
+        })
+        .collect();
+
+        Claims { a, b }
     }
 
     /// Horner-fold groups of polynomials. Each group is first summed, then

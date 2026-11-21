@@ -150,7 +150,6 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let b_poly =
             fold_revdot::fold_outer::<_, _, native::RevdotParameters<C::Profile>>(b, mu_prime);
-        let host_gen = C::host_generators(self.params);
 
         // Compute a_commitment from decomposition: small MSM over known
         // commitments, resolved directly from the child proofs rather than
@@ -179,7 +178,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
 
         let mut commitments = [<C::HostCurve as Affine>::identity(); 2];
         <C::HostCurve as Affine>::batch_to_affine(
-            &[a_commitment_proj, B::sparse_commit(&b_poly, host_gen)],
+            &[a_commitment_proj, self.host().commit_projective(&b_poly)],
             &mut commitments,
         );
         let [a_commitment, b_commitment] = commitments;

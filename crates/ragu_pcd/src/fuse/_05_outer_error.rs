@@ -27,7 +27,7 @@ use rand::CryptoRng;
 use udon::field::Field;
 
 use super::claims::{
-    FoldKey, NativeFuseBuilder, NestedFuseBuilder, NestedFuseProofSource, TrackedPoly,
+    FoldKey, NativeFuseClaims, NestedFuseClaims, NestedFuseProofSource, TrackedPoly,
 };
 use crate::{
     Application,
@@ -83,9 +83,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C,
             native::RevdotParameters<C::Profile>,
         >,
-        native_claims: NativeFuseBuilder<'_, 'rx, C::CircuitField, R, B>,
+        native_claims: NativeFuseClaims<'rx, C::CircuitField, R>,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
-        nested_claims: NestedFuseBuilder<'_, 'rx, C::ScalarField, R, B>,
+        nested_claims: NestedFuseClaims<'rx, C::ScalarField, R>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         w: &Element<'dr, D>,
@@ -115,14 +115,16 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // another header than its preamble's copy.
         #[cfg(test)]
         let forged_left_bridge_header = builder.forged_left_bridge_header().map(<[_]>::to_vec);
-        let native_a = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.a,
-            mu,
-        );
-        let native_b = fold_revdot::fold_inner::<_, _, native::RevdotParameters<C::Profile>>(
-            &native_claims.b,
-            mu,
-        );
+        let native_a =
+            fold_revdot::fold_inner_with_backend::<B, _, _, native::RevdotParameters<C::Profile>>(
+                &native_claims.a,
+                mu,
+            );
+        let native_b =
+            fold_revdot::fold_inner_with_backend::<B, _, _, native::RevdotParameters<C::Profile>>(
+                &native_claims.b,
+                mu,
+            );
         drop(native_claims);
 
         let (ky, collapsed) = Emulator::emulate_wireless(
@@ -386,7 +388,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         rng: &mut RNG,
         nested_inner_error_witness: &nested::stages::inner_error::Witness<C::HostCurve, C::Profile>,
-        nested_claims: NestedFuseBuilder<'_, '_, C::ScalarField, R, B>,
+        nested_claims: NestedFuseClaims<'_, C::ScalarField, R>,
         nested_source: &NestedFuseProofSource<'_, C, R>,
         nested_preamble: &nested::stages::preamble::Witness<C::HostCurve, C::Profile>,
         native_y: C::CircuitField,
@@ -400,12 +402,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_y = nested::challenge::<C>(native_y)?;
         let nested_mu = nested::challenge::<C>(native_mu)?;
 
-        let a = fold_revdot::fold_inner::<
+        let a = fold_revdot::fold_inner_with_backend::<
+            B,
             sparse::Polynomial<C::ScalarField, R>,
             _,
             nested::RevdotParameters<C::Profile>,
         >(&nested_claims.a, nested_mu);
-        let b = fold_revdot::fold_inner::<
+        let b = fold_revdot::fold_inner_with_backend::<
+            B,
             sparse::Polynomial<C::ScalarField, R>,
             _,
             nested::RevdotParameters<C::Profile>,
@@ -533,8 +537,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
             &bridge,
         )?;
-        let bridge_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_commitment = self.nested().commit(&bridge_rx);
         builder.set_bridge_outer_error_rx(bridge_rx, bridge_commitment);
 
         Ok((bridge, a, b))

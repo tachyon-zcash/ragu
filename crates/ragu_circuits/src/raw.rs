@@ -2,8 +2,9 @@
 //!
 //! External circuits implement [`Circuit`](crate::Circuit), which hides
 //! the SYSTEM gate (gate 0) behind the framework. Internally, the evaluation
-//! drivers ([`sx`](crate::wiring::sx), [`sy`](crate::wiring::sy),
-//! [`sxy`](crate::wiring::sxy), [`metrics`](crate::metrics)) need to
+//! drivers ([`compiled`](crate::wiring::compiled), [`metrics`](crate::metrics),
+//! and the test-only [`monomials`](crate::wiring::monomials) driver and
+//! interpreters) need to
 //! allocate the SYSTEM gate and then run the circuit body. This module
 //! provides:
 //!

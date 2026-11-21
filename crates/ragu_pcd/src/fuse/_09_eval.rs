@@ -190,8 +190,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
             eval_witness,
         )?;
-        let native_eval_commitment =
-            B::sparse_commit_to_affine(&eval_rx, C::host_generators(self.params));
+        let native_eval_commitment = self.host().commit(&eval_rx);
 
         let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
@@ -201,8 +200,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 nested: nested_eval.clone(),
             },
         )?;
-        let bridge_eval_commitment =
-            B::sparse_commit_to_affine(&bridge_rx, C::nested_generators(self.params));
+        let bridge_eval_commitment = self.nested().commit(&bridge_rx);
 
         Ok((eval_rx, bridge_rx, bridge_eval_commitment))
     }

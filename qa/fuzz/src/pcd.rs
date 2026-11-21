@@ -47,13 +47,17 @@ pub type NestedField = <Pasta as Cycle>::ScalarField;
 /// The application, wrapped so a `LazyLock` can hold it.
 ///
 /// [`Application`] holds a `OnceCell` (`seeded_trivial`, memoizing the
-/// rerandomization fixture), which breaks auto-`Sync`.
+/// rerandomization fixture) and a `RefCell` (`verifier_workspace`, the
+/// verifier's reusable MSM scratch), each of which breaks auto-`Sync`.
 pub struct SyncApp(pub Application<'static, C, R, HEADER_SIZE>);
 
-// SAFETY: libFuzzer drives `fuzz_target!` on a single thread, so the
-// `OnceCell` inside is never touched concurrently — not even on the very
-// first call that initializes it. No PCD target spawns worker threads or
-// hands the application to one. If one ever does, this must be revisited.
+// SAFETY: libFuzzer drives `fuzz_target!` on a single thread, so neither the
+// `OnceCell` nor the `RefCell` inside is ever touched concurrently — not even
+// on the very first call that initializes the `OnceCell`, and the `RefCell`'s
+// non-atomic borrow flag is only ever taken and released on that thread. An
+// MSM may spread the borrowed scratch across the worker pool, but no PCD
+// target hands the application itself to another thread. If one ever does,
+// this must be revisited.
 unsafe impl Sync for SyncApp {}
 
 /// Poseidon parameters for the baked Pasta cycle.

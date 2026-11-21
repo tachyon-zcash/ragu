@@ -18,6 +18,10 @@
 //! can cover `WalletRank` and both fields of the cycle without paying
 //! wallet-rank cost on every input.
 //!
+//! [`registry`] holds what the targets that register circuits share: which
+//! registry errors are a skip, and the check of each recorded circuit
+//! against an independent walk.
+//!
 //! [`pcd`] holds what the proof-level targets share: the application
 //! fixtures, the honest proof shapes, and the `Arbitrary` vocabulary that
 //! decodes fuzzer bytes into a `ragu_pcd::fuzzing::corrupt::Corruption`.
@@ -27,6 +31,7 @@ pub mod params;
 pub mod patcher_analysis;
 pub mod pcd;
 pub mod proof_wire;
+pub mod registry;
 pub mod source_shape;
 pub mod substrate;
 

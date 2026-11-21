@@ -267,10 +267,12 @@ mod tests {
                 program: &steered,
                 anchors: &honest.anchors,
             };
-            let registry = RegistryBuilder::<Fp, TestRank>::new()
-                .register_circuit(circuit)
-                .and_then(|b| b.finalize());
-            if let Ok(registry) = registry {
+            let registry = crate::registry::fits(
+                RegistryBuilder::<Fp, TestRank>::new()
+                    .register_circuit(circuit)
+                    .and_then(|b| b.finalize()),
+            );
+            if let Some(registry) = registry {
                 let trace = circuit
                     .trace(steered.preamble.values())
                     .expect("honest witness must trace")

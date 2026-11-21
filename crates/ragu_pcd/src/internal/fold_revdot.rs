@@ -50,6 +50,16 @@ use udon::field::Field;
 pub trait Foldable<F: Field>: Default + Clone {
     fn fold_scale(&mut self, by: F);
     fn fold_add_assign(&mut self, other: &Self);
+
+    /// Adds `by * other` to `self`.
+    ///
+    /// The default scales a copy of `other`. Implementations may override it
+    /// to add the scaled value in one pass, with the same result.
+    fn fold_add_scaled(&mut self, other: &Self, by: F) {
+        let mut term = other.clone();
+        term.fold_scale(by);
+        self.fold_add_assign(&term);
+    }
 }
 
 impl<F: Field, R: Rank> Foldable<F> for sparse::Polynomial<F, R> {
@@ -59,18 +69,34 @@ impl<F: Field, R: Rank> Foldable<F> for sparse::Polynomial<F, R> {
     fn fold_add_assign(&mut self, other: &Self) {
         self.add_assign(other);
     }
+    fn fold_add_scaled(&mut self, other: &Self, by: F) {
+        self.add_scaled_assign(other, by);
+    }
 }
 
-/// Generic Horner fold over any [`Foldable`] type.
+/// Generic fold over any [`Foldable`] type: the sum Horner's rule forms from
+/// $k$ items, $\sum\_i s^{k-1-i} \cdot \text{item}\_i$ for the scale factor $s$.
+///
+/// Each item is added under its own power, so the running sum is never
+/// rescaled.
 pub(crate) fn fold<T: Foldable<F>, F: Field>(
     items: impl IntoIterator<Item = impl Borrow<T>>,
     scale_factor: F,
 ) -> T {
-    items.into_iter().fold(T::default(), |mut acc, item| {
-        acc.fold_scale(scale_factor);
-        acc.fold_add_assign(item.borrow());
-        acc
-    })
+    let items: Vec<_> = items.into_iter().collect();
+    let mut powers = vec![F::ONE; items.len()];
+    for i in (0..items.len().saturating_sub(1)).rev() {
+        powers[i] = powers[i + 1] * scale_factor;
+    }
+    let mut sum = T::default();
+    for (item, power) in items.iter().zip(powers) {
+        if power == F::ONE {
+            sum.fold_add_assign(item.borrow());
+        } else {
+            sum.fold_add_scaled(item.borrow(), power);
+        }
+    }
+    sum
 }
 
 /// The group count and group size for two-layer revdot folding.
@@ -117,15 +143,28 @@ fn weights<F: Field>(r: F, m: usize) -> Vec<F> {
 fn combine<T: Foldable<F>, F: Field>(source: &[impl Borrow<T>], weights: &[F]) -> T {
     let mut result = T::default();
     for (value, &weight) in source.iter().zip(weights) {
-        let mut term = value.borrow().clone();
-        term.fold_scale(weight);
-        result.fold_add_assign(&term);
+        result.fold_add_scaled(value.borrow(), weight);
     }
     result
 }
 
 /// Interpolates every padded first-layer group at the challenge.
-pub fn fold_inner<T: Foldable<F>, F: Field, P: Parameters>(
+#[cfg(test)]
+pub fn fold_inner<T: Foldable<F> + Send + Sync, F: Field, P: Parameters>(
+    source: &[impl Borrow<T>],
+    challenge: F,
+) -> FixedVec<T, P::NumGroups> {
+    fold_inner_with_backend::<ragu_backend::ReferenceBackend, T, F, P>(source, challenge)
+}
+
+/// Interpolates every padded first-layer group at the challenge, with the
+/// groups as independent work for the selected backend.
+pub fn fold_inner_with_backend<
+    B: ragu_backend::Backend,
+    T: Foldable<F> + Send + Sync,
+    F: Field,
+    P: Parameters,
+>(
     source: &[impl Borrow<T>],
     challenge: F,
 ) -> FixedVec<T, P::NumGroups> {
@@ -134,13 +173,15 @@ pub fn fold_inner<T: Foldable<F>, F: Field, P: Parameters>(
         "too many fold sources"
     );
     let weights = weights(challenge, P::GroupSize::len());
-    source
-        .chunks(P::GroupSize::len())
-        .map(|chunk| combine(chunk, &weights))
-        .chain(core::iter::repeat_with(T::default))
-        .take(P::NumGroups::len())
-        .collect_fixed()
-        .expect("fixed group count")
+    // Borrow before scheduling so callers need not make their wrappers Sync.
+    let source: Vec<&T> = source.iter().map(Borrow::borrow).collect();
+    B::map(source.chunks(P::GroupSize::len()), |chunk| {
+        combine(chunk, &weights)
+    })
+    .chain(core::iter::repeat_with(T::default))
+    .take(P::NumGroups::len())
+    .collect_fixed()
+    .expect("fixed group count")
 }
 
 /// Interpolates the second-layer groups at the challenge.

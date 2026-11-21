@@ -62,7 +62,8 @@ criteria = "safe-to-run"
 
 [[exemptions.cc]]
 version = "1.11.2"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
+notes = "Build dependency added by Udon 0.2. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.constant_time_eq]]
 version = "0.4.2"
@@ -94,7 +95,8 @@ criteria = "safe-to-run"
 
 [[exemptions.find-msvc-tools]]
 version = "0.1.0"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
+notes = "Build dependency added by Udon 0.2. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.getrandom]]
 version = "0.4.1"
@@ -180,6 +182,11 @@ criteria = "safe-to-deploy"
 version = "1.0.229"
 criteria = "safe-to-deploy"
 
+[[exemptions.shlex]]
+version = "1.3.0"
+criteria = "safe-to-deploy"
+notes = "Build dependency added by Udon 0.2. Carries forward the existing exemption; this is not an audit."
+
 [[exemptions.spin]]
 version = "0.9.8"
 criteria = "safe-to-deploy"
@@ -225,8 +232,9 @@ version = "1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zakura-udon]]
-version = "0.1.0"
+version = "0.3.0"
 criteria = "safe-to-deploy"
+notes = "Udon 0.3 dependency update. Carries forward the existing exemption; this is not an audit."
 
 [[exemptions.zerocopy]]
 version = "0.8.48"

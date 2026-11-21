@@ -425,10 +425,11 @@ fn build_registry<C>(circuit: C) -> Option<Registry<'static, Fp, TestRank>>
 where
     C: Circuit<Fp> + 'static,
 {
-    RegistryBuilder::<Fp, TestRank>::new()
-        .register_circuit(circuit)
-        .and_then(|b| b.finalize())
-        .ok()
+    ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<Fp, TestRank>::new()
+            .register_circuit(circuit)
+            .and_then(|b| b.finalize()),
+    )
 }
 
 static SINGLE2W_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
@@ -450,10 +451,11 @@ static CHAIN_REGISTRY: LazyLock<Option<Registry<'static, Fp, TestRank>>> =
 fn build_mask_registry(
     mask: BondingObject<'static, Fp, TestRank>,
 ) -> Option<Registry<'static, Fp, TestRank>> {
-    RegistryBuilder::<Fp, TestRank>::new()
-        .register_bonding(mask)
-        .finalize()
-        .ok()
+    ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<Fp, TestRank>::new()
+            .register_bonding(mask)
+            .finalize(),
+    )
 }
 
 static MASK_REGISTRY_W2: LazyLock<Option<Registry<'static, Fp, TestRank>>> = LazyLock::new(|| {
