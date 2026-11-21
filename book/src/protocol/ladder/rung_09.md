@@ -1,13 +1,14 @@
 # Rung 9: One Quotient Test for Many Openings
 
 **Problem.** By now the native side of a fuse owes
-[172 opening claims](../construction/batch.md#native-openings): each child's
+[180 opening claims](../construction/batch.md#native-openings): each child's
 accumulated opening $p(u) = v$ at that child's own $u$; the ten registry
 openings; the children's $A^{(i)}$ and $B^{(i)}$ and the new $A$ and $B$; every
-child trace and stage polynomial at $xz$, and the two polynomials of the fuse's
-own step circuit; $m(W, x, y)$ at the domain point of every circuit and mask in
-use; and the six openings that a step's circuit may ask for
-([rung 0](rung_00.md)). Claim $i$ says that
+child trace and stage polynomial at $xz$, the two polynomials of the fuse's
+own step circuit and its two fold randomizers ([rung 6](rung_06.md));
+$m(W, x, y)$ at the domain point of every circuit and mask in use; and the six
+openings that a step's circuit may ask for ([rung 0](rung_00.md)). Claim $i$
+says that
 $h_{\sigma(i)}(\xi_i) = v_i$, where $h_0, \ldots, h_{J-1}$ are the polynomials
 that the claims name, each listed once, and $\sigma(i)$ names the one that
 claim $i$ is about.

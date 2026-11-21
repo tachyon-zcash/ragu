@@ -46,6 +46,11 @@ arbitrary value on that gate's $\v{a}$ wire, so the summands do overlap there.
 The overlap is harmless: circuits take nothing from gate $0$ except the constant
 `ONE`, and the circuit claim on the sum fixes that wire.
 
+The $\v{a}$ and $\v{d}$ wires of the last gate are exempt from every mask as
+well. That gate is the [blind gate](../construction/wiring.md#blind-gate),
+which no circuit uses, and each committed polynomial may carry arbitrary values
+on those two wires. The summands overlap there too, and nothing reads the sum.
+
 The mask checks enter the fold as the
 [**bonding claims**](../construction/staging.md#bonding) of
 [rung 7](rung_07.md). They differ from circuit claims in ways that make them

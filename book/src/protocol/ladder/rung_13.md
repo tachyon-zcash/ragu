@@ -15,12 +15,12 @@ that round, together with the scalars the nested side contributes to it.
 | Absorbed Bridge | Objects Fixed | Challenges Squeezed | Use |
 | --- | --- | --- | --- |
 | `BridgePreamble` | the children's commitments; the polynomials the fuse's step circuit may query, and the values it stages | $w$ | registry restriction in $W$ ([rung 8](rung_08.md)); the step circuit's challenge $\zeta$ ([rung 0](rung_00.md)) |
-| `BridgeSPrime` | the step circuit's trace; the `preamble` stage, with the children's public values and the fuse's own output header and openings; $[m(w, x^{(0)}, Y)]$ and $[m(w, x^{(1)}, Y)]$ | $y$, $z$ | every circuit and bonding claim (rungs [1](rung_01.md), [12](rung_12.md)); restriction in $Y$ |
-| `BridgeInnerError` | the inner quotients; $[m(w, X, y)]$ | $\mu$ | first fold layer ([rung 6](rung_06.md)) |
+| `BridgeSPrime` | the step circuit's trace; the `preamble` stage, with the children's public values and the fuse's own output header and openings; $[m(w, x^{(0)}, Y)]$ and $[m(w, x^{(1)}, Y)]$; the fold randomizers | $y$, $z$ | every circuit and bonding claim (rungs [1](rung_01.md), [12](rung_12.md)); restriction in $Y$ |
+| `BridgeInnerError` | the inner quotients and the randomizer claim's target; $[m(w, X, y)]$ | $\mu$ | first fold layer ([rung 6](rung_06.md)) |
 | `BridgeOuterError` | the outer quotient | $\mu'$ | second fold layer |
 | `BridgeAB` | $[A]$ and $[B]$ | $x$ | folded-polynomial check ([rung 7](rung_07.md)); restriction in $X$ |
 | `BridgeQuery` | every claimed evaluation; $[m(W, x, y)]$ | $\alpha$ | weighting the quotients ([rung 9](rung_09.md)) |
-| `BridgeF` | $[f]$ | $u$ | the quotient test |
+| `BridgeF` | $[f]$; the batch randomizer | $u$ | the quotient test |
 | `BridgeEval` | every evaluation at $u$ | `pre_beta` | the final combination ([rung 10](rung_10.md)) |
 
 The second bridge fixes the `preamble` stage after $w$, because that stage
@@ -54,10 +54,10 @@ The nested circuits run no transcript. Their challenges are the lifts of the
 native ones ([rung 11](rung_11.md)), written into a
 [**challenge stage**](../construction/stage_contents.md#challenge-stage) beside
 one other value, the base-case sign of [rung 14](rung_14.md). That stage is
-committed with $\v{a}_0 = 0$, so its commitment is a fixed combination of
-generators weighted by its contents. The native `bind_challenges` circuits
-recompute that combination from the transcript's challenges, which ties the
-nested side's challenges to the hash.
+committed with its free coefficients zero, so its commitment is a fixed
+combination of generators weighted by its contents. The native
+`bind_challenges` circuits recompute that combination from the transcript's
+challenges, which ties the nested side's challenges to the hash.
 
 One challenge cannot be bound this way within the same fuse. The binding
 circuits keep their running sums in the `eval` stage, and `pre_beta` is squeezed
@@ -74,9 +74,9 @@ range with probability about $2^{-129}$. All nine challenges are lifted, so all
 nine must meet the condition, and the circuits cannot be satisfied otherwise.
 For the first eight the prover takes the transcript as it comes, and the fuse
 fails if one of them is out of range. For `pre_beta` the prover commits the
-`eval` stage and its bridge again, each with a fresh $\v{a}_0$, and squeezes
-again until the condition holds. Each attempt is a further hash query and counts
-as one when bounding a cheating prover's chances.
+`eval` stage and its bridge again, each with fresh free coefficients, and
+squeezes again until the condition holds. Each attempt is a further hash query
+and counts as one when bounding a cheating prover's chances.
 
 **Why it holds.** In the random oracle model, each squeezed challenge is uniform
 and independent of everything absorbed before it, which restores the order of

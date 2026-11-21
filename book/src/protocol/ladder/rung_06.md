@@ -12,9 +12,15 @@ accumulator, about polynomials $A$ and $B$ with the value $c$.
 
 The number of quotient coefficients carried is $N (M - 1) + (N - 1) = MN - 1$,
 the same as for a single fold over all $MN$ slots. The prover's revdot products
-drop from $(MN)^2$ to $N M^2 + N^2$. The standard profile uses 14 groups of 7
-for its native claims and 10 groups of 8 for its nested claims
+drop from $(MN)^2$ to $N M^2 + N^2$. The standard profile uses 15 groups of 8
+slots on the native side and 12 groups of 9 on the nested side
 ([rung 11](rung_11.md)).
+
+Not every slot holds a claim of this rung. One slot of each group and one whole
+group hold two claims of the fuse's own, about a
+[randomizer](../construction/claims.md#randomizer) that it draws. Both hold for
+any polynomials, and they are folded like the rest, so the argument below
+covers them.
 
 **Why it holds.** A false claim makes its group's result false unless $\mu$ is a
 root of that group's error polynomial, and a false group result makes the final
