@@ -205,11 +205,20 @@ The `rerandomize` method produces a fresh proof that verifies identically:
 let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 ```
 
-It is intended to support privacy-preserving applications, but the current
-construction does not yet establish zero knowledge or unlinkability.
+It is built so that the fresh proof shows nothing of the proof it was made
+from beyond the header, the data it carries and its online polynomials, even
+to someone who made the input and sees the output in full. The method's
+documentation outlines the argument and lists what the caller must ensure.
+The argument has not been written out as a proof and has not been audited.
+Proofs in general are still not zero-knowledge: a proof shows what its own
+step read of its children.
 
-Internally, rerandomization folds the input proof with a cached seeded `Pcd<()>`
-using a dedicated rerandomization step.
+Internally, rerandomization fuses the input twice through a dedicated
+rerandomization step, each time with the application's bootstrap proof as the
+other child. Every fuse folds and batches randomizer polynomials of its own,
+and every trace and stage polynomial has three free coefficients. One pass
+would leave the input's commitments in the output as stage values. After the
+second pass the output holds the first pass's commitments, which are fresh.
 
 ## Unified Accumulator Structure
 
