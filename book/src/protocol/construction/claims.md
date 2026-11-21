@@ -54,140 +54,6 @@ polynomial belongs to a child, except the two of the fuse's own
 [native](setup.md#native-registry) and [nested](setup.md#nested-registry)
 registries.
 
-## Native Claims {#native-claims}
-
-The native list has the raw claim of each child, then the claim of the fuse's
-own step circuit, then one circuit claim for each of the $37$ internal circuits
-of each child's [frontier](proof.md#frontier). It ends with one bonding claim
-for each of the $18$ native bonding polynomials. Sixteen of these cover both
-children, and the two of the application stage cover the fuse's own polynomials.
-
-In each row, $i$ ranges over the children, left before right. We abbreviate the
-sum of a child's six points stages as
-
-$$r^{(i)}[\text{points}] = r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{PointsPreamble}] + r^{(i)}[\texttt{PointsRegistryWx}] + r^{(i)}[\texttt{PointsAb}] + r^{(i)}[\texttt{PointsF}] + r^{(i)}[\texttt{PointsWalk}].$$
-
-| Position | Kind | Index | $a$ Side | Target |
-|---|---|---|---|---|
-| $i$ | raw | | $A^{(i)}$, with $b$ side $B^{(i)}$ | $c^{(i)}$ |
-| $2$ | circuit | $\text{id}$ | $r[\texttt{Application}] + r[\texttt{ApplicationStage}]$ | $k_{\text{app}}(y)$ |
-| $3 + i$ | circuit | 0 | $r^{(i)}[\texttt{Hashes1}] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{OuterError}]$ | $k^{(i)}_{\text{bridge}}(y)$ |
-| $5 + i$ | circuit | 1 | $r^{(i)}[\texttt{Hashes2}] + r^{(i)}[\texttt{OuterError}]$ | $k^{(i)}_{\text{uni}}(y)$ |
-| $7 + i$ | circuit | 2 | $r^{(i)}[\texttt{Collapse}] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{InnerError}] + r^{(i)}[\texttt{OuterError}]$ | $k^{(i)}_{\text{uni}}(y)$ |
-| $9 + i$ | circuit | 3 | $r^{(i)}[\texttt{ComputeV}] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{Query}] + r^{(i)}[\texttt{Eval}]$ | $k^{(i)}_{\text{cv}}(y)$ |
-| $11 + 2k + i$, $k < 4$ | circuit | $4 + k$ | $r^{(i)}[\texttt{BindChallenges}(k)] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{Query}] + r^{(i)}[\texttt{Eval}]$ | $k^{(i)}_{\text{uni}}(y)$ |
-| $19 + i$ | circuit | 8 | $r^{(i)}[\texttt{BindBeta}] + r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Preamble}]$ | $k^{(i)}_{\text{uni}}(y)$ |
-| $21 + i$ | circuit | 9 | $r^{(i)}[\texttt{BindEndoscalar}] + r^{(i)}[\text{points}]$ | $k^{(i)}_{\text{uni}}(y)$ |
-| $23 + 2s + i$, $s < 27$ | circuit | $10 + s$ | $r^{(i)}[\texttt{EndoscalingStep}(s)] + r^{(i)}[\text{points}]$ | $1$ |
-| $77, \dots, 87$ | bonding | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
-| 88 | bonding | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
-| 89 | bonding | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
-| 90 | bonding | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
-| 91 | bonding | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
-| 92 | bonding | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
-| 93 | bonding | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
-| 94 | bonding | 54 | $r[\texttt{Application}]$ | $0$ |
-| $95, 96, 97$ | padding | | $0$ | $0$ |
-
-In rows $89$ to $91$, each named polynomial contributes its left and then its
-right instance to the Horner list. Row $89$, for example, is
-
-$$z^3 \, r^{(0)}[\texttt{Hashes1}] + z^2 \, r^{(1)}[\texttt{Hashes1}] + z \, r^{(0)}[\texttt{Hashes2}] + r^{(1)}[\texttt{Hashes2}].$$
-
-Rows $88$ to $92$ and $94$ are the [final masks](staging.md#masks). Each is
-claimed over the own polynomials of the circuits whose last stage is the mask's
-stage.
-
-Rows $2$, $93$ and $94$ are the three claims of the fuse's own step: the circuit
-claim of its trace, and the two masks that keep the application stage and the
-step circuit's own polynomial apart. No child brings a claim of this kind,
-because each child folded its own.
-
-The target of an `endoscaling_step` claim is $1$, because the instance
-polynomial of that circuit is the
-[constant one](internal_circuits.md#native-endoscaling-step). Rows $95$ to $97$
-pad the list to the $14 \cdot 7 = 98$ claims that the [fold](#randomizer) has
-room for.
-
-### Native Targets {#native-targets}
-
-The target of a raw claim is the wire $c^{(i)} = U^{(i)}_{16}$. The target of a
-child's circuit claim is the instance polynomial of the child's circuit,
-evaluated at the current $y$ over the wires that the `preamble` stage holds for
-child $i$. We mark such a polynomial with the superscript $(i)$, and write
-$\text{hdr}^{(i)}_O$ for the child's output header and
-$\omega^{(i)}_{\text{id}}$ for the domain point of its `circuit_id`.
-
-The targets $k^{(i)}_{\text{uni}}(y)$, $k^{(i)}_{\text{bridge}}(y)$ and
-$k^{(i)}_{\text{cv}}(y)$ are the polynomials of the
-[native unified instance](proof.md#native-unified) over the wires $U^{(i)}$.
-The second belongs to the child's `hashes_1`, whose output carries the child's
-own output header and index,
-
-$$k^{(i)}_{\text{bridge}}(y) = \text{Horner}_y[U^{(i)}_1, \dots, U^{(i)}_{39}, \text{hdr}^{(i)}_O, \omega^{(i)}_{\text{id}}, 0, 1],$$
-
-and the third is equal to the first.
-
-The target of the step circuit's claim is $k_{\text{app}}(y)$ of the
-[step circuit](setup.md#step-circuit) that this fuse ran. Every entry is a value
-of the current fuse: $\zeta$ is $w$, $(h_x, h_y)$ is $R_q[\texttt{BridgeHash}]$,
-and the openings and $\text{hdr}_O$ are the fuse's own wires of the `preamble`
-stage. The two input headers are the children's output headers:
-
-$$k_{\text{app}}(y) = \text{Horner}_y[w, \xi_0, \eta_0, \dots, \xi_5, \eta_5, h_x, h_y, \text{hdr}^{(0)}_O, \text{hdr}^{(1)}_O, \text{hdr}_O, 1].$$
-
-The targets share wires. The input headers in $k_{\text{app}}(y)$ are the wires
-$\text{hdr}^{(i)}_O$ of $k^{(i)}_{\text{bridge}}(y)$, which binds the headers
-that the step circuit read to the output headers that the children exported.
-The openings in $k_{\text{app}}(y)$ are the wires that
-[`compute_v`](internal_circuits.md#native-compute-v) folds into the batch, which
-binds the step circuit to the openings that the batch proves. And
-$\text{hdr}_O$ is the header that this fuse's own `hashes_1` exports, for a
-parent to bind in the same way.
-
-## Nested Claims {#nested-claims}
-
-The nested list has the same shape: for each child, the raw claim and one
-circuit claim for each of the $33$ nested circuits, and then one bonding claim
-for each of the $15$ nested bonding polynomials.
-
-Here the challenges are $y_q$ and $z_q$ and the registry is $m_q$. We abbreviate
-two sums of a child's stage polynomials.
-
-$$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nested stages } S,$$
-
-$$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\texttt{PointsStage}, \texttt{BridgePreamble}, \texttt{BridgeSPrime}, \texttt{BridgeInnerError}, \texttt{BridgeAB}, \texttt{BridgeQuery}, \texttt{BridgeF}\}.$$
-
-| Position | Kind | Index | $a$ Side | Target |
-|---|---|---|---|---|
-| $i$ | raw | | $A_q^{(i)}$, with $b$ side $B_q^{(i)}$ | $c_q^{(i)}$ |
-| $2 + 2s + i$, $s < 31$ | circuit | $s$ | $r_q^{(i)}[\texttt{EndoscalingStep}(s)] + r_q^{(i)}[\texttt{EndoscalarStage}] + r_q^{(i)}[\texttt{PointsStage}]$ | $1$ |
-| $64 + i$ | circuit | 31 | $r_q^{(i)}[\texttt{Collapse}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
-| $66 + i$ | circuit | 32 | $r_q^{(i)}[\texttt{ComputeV}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
-| 68, 69 | bonding | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
-| 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
-| $71, \dots, 80$ | bonding | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
-| 81 | bonding | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
-| 82 | bonding | 47 | $z_q \, r_q^{(0)}[\text{loading}] + r_q^{(1)}[\text{loading}]$ | $0$ |
-| $83, \dots, 87$ | padding | | $0$ | $0$ |
-
-As on the native side, a Horner list takes the left and then the right instance
-of each named polynomial. Row $70$ is the final mask of the endoscaling steps,
-row $81$ is the final mask of the two instance circuits, and row $82$ is the
-[loading](internal_circuits.md#loading) relation. Rows $83$ to $87$ pad the
-list to $11 \cdot 8 = 88$ claims.
-
-### Nested Targets {#nested-targets}
-
-The two raw targets are the wires $c_q^{(i)}$ of the `BridgePreamble` stage. The
-target of the instance circuits is the child's
-[nested instance polynomial](proof.md#nested-unified) at $y_q$, over the copies
-in that stage:
-
-$$k^{(i)}_{q}(y_q) = \text{Horner}_{y_q}[c_q^{(i)}, v_q^{(i)}, x_q^{(i)}, y_q^{(i)}, u_q^{(i)}, E^{(i)}_0, \dots, E^{(i)}_{15}, 1].$$
-
-Both instance circuits of a child take the same target.
-
 ## Fold {#fold}
 
 The fold takes a list of claims and reduces it to one. A random linear
@@ -372,7 +238,141 @@ proof twice so that the second fuse folds polynomials that no observer holds.
     scalars, these products are the Lagrange basis of the nodes
     $0, \dots, M - 2$.
 
-### Groups {#fold-groups}
+## Native Claims {#native-claims}
+
+The native list has the raw claim of each child, then the claim of the fuse's
+own step circuit, then one circuit claim for each of the $37$ internal circuits
+of each child's [frontier](proof.md#frontier). It ends with one bonding claim
+for each of the $18$ native bonding polynomials. Sixteen of these cover both
+children, and the two of the application stage cover the fuse's own polynomials.
+
+In each row, $i$ ranges over the children, left before right. We abbreviate the
+sum of a child's six points stages as
+
+$$r^{(i)}[\text{points}] = r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{PointsPreamble}] + r^{(i)}[\texttt{PointsRegistryWx}] + r^{(i)}[\texttt{PointsAb}] + r^{(i)}[\texttt{PointsF}] + r^{(i)}[\texttt{PointsWalk}].$$
+
+| Position | Kind | Index | $a$ Side | Target |
+|---|---|---|---|---|
+| $i$ | raw | | $A^{(i)}$, with $b$ side $B^{(i)}$ | $c^{(i)}$ |
+| $2$ | circuit | $\text{id}$ | $r[\texttt{Application}] + r[\texttt{ApplicationStage}]$ | $k_{\text{app}}(y)$ |
+| $3 + i$ | circuit | 0 | $r^{(i)}[\texttt{Hashes1}] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{OuterError}]$ | $k^{(i)}_{\text{bridge}}(y)$ |
+| $5 + i$ | circuit | 1 | $r^{(i)}[\texttt{Hashes2}] + r^{(i)}[\texttt{OuterError}]$ | $k^{(i)}_{\text{uni}}(y)$ |
+| $7 + i$ | circuit | 2 | $r^{(i)}[\texttt{Collapse}] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{InnerError}] + r^{(i)}[\texttt{OuterError}]$ | $k^{(i)}_{\text{uni}}(y)$ |
+| $9 + i$ | circuit | 3 | $r^{(i)}[\texttt{ComputeV}] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{Query}] + r^{(i)}[\texttt{Eval}]$ | $k^{(i)}_{\text{cv}}(y)$ |
+| $11 + 2k + i$, $k < 4$ | circuit | $4 + k$ | $r^{(i)}[\texttt{BindChallenges}(k)] + r^{(i)}[\texttt{Preamble}] + r^{(i)}[\texttt{Query}] + r^{(i)}[\texttt{Eval}]$ | $k^{(i)}_{\text{uni}}(y)$ |
+| $19 + i$ | circuit | 8 | $r^{(i)}[\texttt{BindBeta}] + r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Preamble}]$ | $k^{(i)}_{\text{uni}}(y)$ |
+| $21 + i$ | circuit | 9 | $r^{(i)}[\texttt{BindEndoscalar}] + r^{(i)}[\text{points}]$ | $k^{(i)}_{\text{uni}}(y)$ |
+| $23 + 2s + i$, $s < 27$ | circuit | $10 + s$ | $r^{(i)}[\texttt{EndoscalingStep}(s)] + r^{(i)}[\text{points}]$ | $1$ |
+| $77, \dots, 87$ | bonding | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
+| 88 | bonding | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
+| 89 | bonding | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
+| 90 | bonding | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
+| 91 | bonding | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
+| 92 | bonding | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
+| 93 | bonding | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
+| 94 | bonding | 54 | $r[\texttt{Application}]$ | $0$ |
+| $95, 96, 97$ | padding | | $0$ | $0$ |
+
+In rows $89$ to $91$, each named polynomial contributes its left and then its
+right instance to the Horner list. Row $89$, for example, is
+
+$$z^3 \, r^{(0)}[\texttt{Hashes1}] + z^2 \, r^{(1)}[\texttt{Hashes1}] + z \, r^{(0)}[\texttt{Hashes2}] + r^{(1)}[\texttt{Hashes2}].$$
+
+Rows $88$ to $92$ and $94$ are the [final masks](staging.md#masks). Each is
+claimed over the own polynomials of the circuits whose last stage is the mask's
+stage.
+
+Rows $2$, $93$ and $94$ are the three claims of the fuse's own step: the circuit
+claim of its trace, and the two masks that keep the application stage and the
+step circuit's own polynomial apart. No child brings a claim of this kind,
+because each child folded its own.
+
+The target of an `endoscaling_step` claim is $1$, because the instance
+polynomial of that circuit is the
+[constant one](internal_circuits.md#native-endoscaling-step). Rows $95$ to $97$
+pad the list to the $14 \cdot 7 = 98$ claims that the [fold](#randomizer) has
+room for.
+
+### Native Targets {#native-targets}
+
+The target of a raw claim is the wire $c^{(i)} = U^{(i)}_{16}$. The target of a
+child's circuit claim is the instance polynomial of the child's circuit,
+evaluated at the current $y$ over the wires that the `preamble` stage holds for
+child $i$. We mark such a polynomial with the superscript $(i)$, and write
+$\text{hdr}^{(i)}_O$ for the child's output header and
+$\omega^{(i)}_{\text{id}}$ for the domain point of its `circuit_id`.
+
+The targets $k^{(i)}_{\text{uni}}(y)$, $k^{(i)}_{\text{bridge}}(y)$ and
+$k^{(i)}_{\text{cv}}(y)$ are the polynomials of the
+[native unified instance](proof.md#native-unified) over the wires $U^{(i)}$.
+The second belongs to the child's `hashes_1`, whose output carries the child's
+own output header and index,
+
+$$k^{(i)}_{\text{bridge}}(y) = \text{Horner}_y[U^{(i)}_1, \dots, U^{(i)}_{39}, \text{hdr}^{(i)}_O, \omega^{(i)}_{\text{id}}, 0, 1],$$
+
+and the third is equal to the first.
+
+The target of the step circuit's claim is $k_{\text{app}}(y)$ of the
+[step circuit](setup.md#step-circuit) that this fuse ran. Every entry is a value
+of the current fuse: $\zeta$ is $w$, $(h_x, h_y)$ is $R_q[\texttt{BridgeHash}]$,
+and the openings and $\text{hdr}_O$ are the fuse's own wires of the `preamble`
+stage. The two input headers are the children's output headers:
+
+$$k_{\text{app}}(y) = \text{Horner}_y[w, \xi_0, \eta_0, \dots, \xi_5, \eta_5, h_x, h_y, \text{hdr}^{(0)}_O, \text{hdr}^{(1)}_O, \text{hdr}_O, 1].$$
+
+The targets share wires. The input headers in $k_{\text{app}}(y)$ are the wires
+$\text{hdr}^{(i)}_O$ of $k^{(i)}_{\text{bridge}}(y)$, which binds the headers
+that the step circuit read to the output headers that the children exported.
+The openings in $k_{\text{app}}(y)$ are the wires that
+[`compute_v`](internal_circuits.md#native-compute-v) folds into the batch, which
+binds the step circuit to the openings that the batch proves. And
+$\text{hdr}_O$ is the header that this fuse's own `hashes_1` exports, for a
+parent to bind in the same way.
+
+## Nested Claims {#nested-claims}
+
+The nested list has the same shape: for each child, the raw claim and one
+circuit claim for each of the $33$ nested circuits, and then one bonding claim
+for each of the $15$ nested bonding polynomials.
+
+Here the challenges are $y_q$ and $z_q$ and the registry is $m_q$. We abbreviate
+two sums of a child's stage polynomials.
+
+$$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nested stages } S,$$
+
+$$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\texttt{PointsStage}, \texttt{BridgePreamble}, \texttt{BridgeSPrime}, \texttt{BridgeInnerError}, \texttt{BridgeAB}, \texttt{BridgeQuery}, \texttt{BridgeF}\}.$$
+
+| Position | Kind | Index | $a$ Side | Target |
+|---|---|---|---|---|
+| $i$ | raw | | $A_q^{(i)}$, with $b$ side $B_q^{(i)}$ | $c_q^{(i)}$ |
+| $2 + 2s + i$, $s < 31$ | circuit | $s$ | $r_q^{(i)}[\texttt{EndoscalingStep}(s)] + r_q^{(i)}[\texttt{EndoscalarStage}] + r_q^{(i)}[\texttt{PointsStage}]$ | $1$ |
+| $64 + i$ | circuit | 31 | $r_q^{(i)}[\texttt{Collapse}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
+| $66 + i$ | circuit | 32 | $r_q^{(i)}[\texttt{ComputeV}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
+| 68, 69 | bonding | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
+| 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
+| $71, \dots, 80$ | bonding | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
+| 81 | bonding | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
+| 82 | bonding | 47 | $z_q \, r_q^{(0)}[\text{loading}] + r_q^{(1)}[\text{loading}]$ | $0$ |
+| $83, \dots, 87$ | padding | | $0$ | $0$ |
+
+As on the native side, a Horner list takes the left and then the right instance
+of each named polynomial. Row $70$ is the final mask of the endoscaling steps,
+row $81$ is the final mask of the two instance circuits, and row $82$ is the
+[loading](internal_circuits.md#loading) relation. Rows $83$ to $87$ pad the
+list to $11 \cdot 8 = 88$ claims.
+
+### Nested Targets {#nested-targets}
+
+The two raw targets are the wires $c_q^{(i)}$ of the `BridgePreamble` stage. The
+target of the instance circuits is the child's
+[nested instance polynomial](proof.md#nested-unified) at $y_q$, over the copies
+in that stage:
+
+$$k^{(i)}_{q}(y_q) = \text{Horner}_{y_q}[c_q^{(i)}, v_q^{(i)}, x_q^{(i)}, y_q^{(i)}, u_q^{(i)}, E^{(i)}_0, \dots, E^{(i)}_{15}, 1].$$
+
+Both instance circuits of a child take the same target.
+
+## Groups {#fold-groups}
 
 The position of a claim fixes its slot, as the grids below show. A cell gives
 the registry index of the claim's wiring polynomial, with $\text{id}$ for the

@@ -115,6 +115,68 @@ Like the [fold randomizers](claims.md#randomizer), the batch randomizer
 conceals nothing from an observer who knows the other batched polynomials:
 $f$ is a function of them, and subtracting them from $p$ leaves $p_\star$.
 
+## Registry Chain {#registry-chain}
+
+Each child brings a claim about a restriction of the
+[registry polynomial](registry.md) at its own challenges,
+$m(W, x^{(i)}, y^{(i)})$. The fuse needs the registry at fresh $x$ and $y$, and
+gets there one variable at a time, through restrictions that it commits. The
+code names them.
+
+| Name | Polynomial |
+|---|---|
+| `registry_wx0`, `registry_wx1` | $m(w, x^{(0)}, Y)$, $m(w, x^{(1)}, Y)$ |
+| `registry_wy` | $m(w, X, y)$ |
+| `registry_xy` | $m(W, x, y)$, of degree less than the size of the domain |
+
+Two consecutive restrictions agree at one point, and the batch states the
+agreement by giving two openings the same claimed-value wire.
+
+| Shared By | Common Value | Polynomials Related |
+|---|---|---|
+| 2 and 4, 3 and 5 | $m(w, x^{(i)}, y^{(i)})$ | the child's `registry_xy` and this fuse's `registry_wx` |
+| 6 and 8, 7 and 9 | $m(w, x^{(i)}, y)$ | this fuse's `registry_wx` and `registry_wy` |
+| 10 and 11 | $m(w, x, y)$ | this fuse's `registry_wy` and `registry_xy` |
+
+The chain thus carries a child's claim about $m(W, x^{(i)}, y^{(i)})$ over to a
+claim about $m(W, x, y)$. `registry_wx` is committed before $y$ is drawn, and
+`registry_wy` before $x$. `registry_xy` depends on $x$ and $y$, so it is
+committed after $w$. The next fuse opens it at its own $w$, as openings $2$ and
+$3$ do here for the children.
+
+The new restriction $m(W, x, y)$ is then read at the domain points: opening
+$119 + j$ gives $s_j(x, y)$ for each of the $55$ fixed indices, and opening $12$
+gives $s_{\text{id}}(x, y)$ for the fuse's own step circuit. The nested chain is
+the same, with the nested registry.
+
+## Values of the Folded Polynomials {#ax-bx}
+
+No stage holds a claimed value for openings $17$ and $18$. The `compute_v`
+circuit computes $A(xz)$ and $B(x)$ from the other opened values, which binds
+the folded polynomials to the [claim list](claims.md#native-claims).
+
+For claim $k$, let $\text{ax}_k$ be its $a$ side with each polynomial replaced by
+that polynomial's opened value at $xz$. A sum stays a sum and a Horner list in
+$z$ stays a Horner list. The value $\text{bx}_k$ follows from the kind of the
+claim, with $s_j(x, y)$ taken from `fixed_registry`, or from
+`registry_xy_at_circuit_id` for the step circuit.
+
+| Claim Kind | $\text{ax}_k$ | $\text{bx}_k$ |
+|---|---|---|
+| raw | $A^{(i)}(xz)$ | $B^{(i)}(x)$ |
+| circuit at index $j$ | as above | $\text{ax}_k + s_j(x, y) + t(x, z)$ |
+| bonding at index $j$ | as above | $s_j(x, y)$ |
+
+The two values are
+
+$$\text{ax} = \sum_{k} \text{wt}_k \, \text{ax}_k + \left( \text{wt}_\star + \text{wt}_{N-1, 0} \right) a_\star(xz), \qquad \text{bx} = \sum_{k} \text{wt}_k \, \text{bx}_k + \text{wt}_\star \, b_\star(x),$$
+
+with the [fold weights](claims.md#randomizer) of the claims and of the fuse's
+own randomizer, whose two values are those of openings $21$ and $22$. A circuit
+claim's $b$ side at $x$ is $a(xz) + s_j(x, y) + t(x, z)$, so the same opened
+values are used for both sides. The nested circuit does the same over the
+nested claims, with $x_q$, $z_q$, $\mu_q$ and $\mu'_q$.
+
 ## Native Openings {#native-openings}
 
 The $180$ native openings fall into five groups, by what they establish.
@@ -208,65 +270,3 @@ nested circuit has a fixed registry index. It also has no online openings.
 | 103 | $m_q(W, x_q, y_q)$ |
 | 104, 105 | $a_{q,\star}$, $b_{q,\star}$ |
 | 106 | $p_{q,\star}$ |
-
-## Registry Chain {#registry-chain}
-
-Each child brings a claim about a restriction of the
-[registry polynomial](registry.md) at its own challenges,
-$m(W, x^{(i)}, y^{(i)})$. The fuse needs the registry at fresh $x$ and $y$, and
-gets there one variable at a time, through restrictions that it commits. The
-code names them.
-
-| Name | Polynomial |
-|---|---|
-| `registry_wx0`, `registry_wx1` | $m(w, x^{(0)}, Y)$, $m(w, x^{(1)}, Y)$ |
-| `registry_wy` | $m(w, X, y)$ |
-| `registry_xy` | $m(W, x, y)$, of degree less than the size of the domain |
-
-Two consecutive restrictions agree at one point, and the batch states the
-agreement by giving two openings the same claimed-value wire.
-
-| Shared By | Common Value | Polynomials Related |
-|---|---|---|
-| 2 and 4, 3 and 5 | $m(w, x^{(i)}, y^{(i)})$ | the child's `registry_xy` and this fuse's `registry_wx` |
-| 6 and 8, 7 and 9 | $m(w, x^{(i)}, y)$ | this fuse's `registry_wx` and `registry_wy` |
-| 10 and 11 | $m(w, x, y)$ | this fuse's `registry_wy` and `registry_xy` |
-
-The chain thus carries a child's claim about $m(W, x^{(i)}, y^{(i)})$ over to a
-claim about $m(W, x, y)$. `registry_wx` is committed before $y$ is drawn, and
-`registry_wy` before $x$. `registry_xy` depends on $x$ and $y$, so it is
-committed after $w$. The next fuse opens it at its own $w$, as openings $2$ and
-$3$ do here for the children.
-
-The new restriction $m(W, x, y)$ is then read at the domain points: opening
-$119 + j$ gives $s_j(x, y)$ for each of the $55$ fixed indices, and opening $12$
-gives $s_{\text{id}}(x, y)$ for the fuse's own step circuit. The nested chain is
-the same, with the nested registry.
-
-## Values of the Folded Polynomials {#ax-bx}
-
-No stage holds a claimed value for openings $17$ and $18$. The `compute_v`
-circuit computes $A(xz)$ and $B(x)$ from the other opened values, which binds
-the folded polynomials to the [claim list](claims.md#native-claims).
-
-For claim $k$, let $\text{ax}_k$ be its $a$ side with each polynomial replaced by
-that polynomial's opened value at $xz$. A sum stays a sum and a Horner list in
-$z$ stays a Horner list. The value $\text{bx}_k$ follows from the kind of the
-claim, with $s_j(x, y)$ taken from `fixed_registry`, or from
-`registry_xy_at_circuit_id` for the step circuit.
-
-| Claim Kind | $\text{ax}_k$ | $\text{bx}_k$ |
-|---|---|---|
-| raw | $A^{(i)}(xz)$ | $B^{(i)}(x)$ |
-| circuit at index $j$ | as above | $\text{ax}_k + s_j(x, y) + t(x, z)$ |
-| bonding at index $j$ | as above | $s_j(x, y)$ |
-
-The two values are
-
-$$\text{ax} = \sum_{k} \text{wt}_k \, \text{ax}_k + \left( \text{wt}_\star + \text{wt}_{N-1, 0} \right) a_\star(xz), \qquad \text{bx} = \sum_{k} \text{wt}_k \, \text{bx}_k + \text{wt}_\star \, b_\star(x),$$
-
-with the [fold weights](claims.md#randomizer) of the claims and of the fuse's
-own randomizer, whose two values are those of openings $21$ and $22$. A circuit
-claim's $b$ side at $x$ is $a(xz) + s_j(x, y) + t(x, z)$, so the same opened
-values are used for both sides. The nested circuit does the same over the
-nested claims, with $x_q$, $z_q$, $\mu_q$ and $\mu'_q$.
