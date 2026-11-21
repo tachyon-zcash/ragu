@@ -11,10 +11,13 @@ use crate::{
 /// the point $(x, y)$.
 ///
 /// The global mask enforces all $4n$ wire slots to zero except the four wires
-/// of the SYSTEM gate (gate 0):
+/// of the SYSTEM gate (gate 0) and the $a$ and $d$ wires of the blind gate
+/// (gate $n - 1$), which every trace and stage polynomial may fill (see
+/// [`Blind`](crate::Blind)):
 ///
 /// $$S_{\text{global}}(x, y) = \sum_{i=0}^{4n-1} (xy)^i
-///     - \bigl((xy)^{2n} + 1\bigr)\bigl((xy)^{2n-1} + 1\bigr)$$
+///     - \bigl((xy)^{2n} + 1\bigr)\bigl((xy)^{2n-1} + 1\bigr)
+///     - (xy)^{n-1} - (xy)^{3n-1}$$
 ///
 /// The polynomial depends only on the product $XY$, so both variables
 /// enter only through $xy = x \cdot y$.
@@ -37,13 +40,22 @@ pub(crate) fn global_mask<F: Field, R: Rank>(x: F, y: F) -> F {
     let xy_2n = xy.pow_u64(2 * R::n() as u64);
     let xy_inv = xy.invert().expect("xy is not zero");
 
-    geometric_sum(xy, R::n() << 2) - (xy_2n + F::ONE) * (xy_2n * xy_inv + F::ONE)
+    geometric_sum(xy, R::n() << 2)
+        - (xy_2n + F::ONE) * (xy_2n * xy_inv + F::ONE)
+        - blind_wires::<F, R>(xy)
+}
+
+/// The terms of the blind gate's $a$ and $d$ wires in a diagonal wiring
+/// polynomial, at $XY = xy$: $(xy)^{n-1} + (xy)^{3n-1}$.
+fn blind_wires<F: Field, R: Rank>(xy: F) -> F {
+    let d = xy.pow_u64(R::blind_gate() as u64);
+    d + d * xy.pow_u64(2 * R::n() as u64)
 }
 
 /// Computes the polynomial restriction $S\_{\text{global}}(p, Y)$ (equivalently
 /// $S\_{\text{global}}(X, p)$ by symmetry) as a sparse univariate polynomial.
-/// Populates `4(n - 1)` wire positions — all except the four wires of the
-/// SYSTEM gate (gate 0).
+/// Populates `4(n - 1) - 2` wire positions — all except the four wires of the
+/// SYSTEM gate (gate 0) and the $a$ and $d$ wires of the blind gate.
 ///
 /// Used by [`Registry`](crate::registry::Registry) to add the shared global
 /// contribution once, scaled by the sum of masking circuit Lagrange coefficients.
@@ -82,6 +94,10 @@ pub(crate) fn global_project<F: Field, R: Rank>(p: F) -> sparse::Polynomial<F, R
     view.c[0] = F::ZERO;
     view.d[0] = F::ZERO;
 
+    // So are the blind gate's two free wires.
+    view.a[R::blind_gate()] = F::ZERO;
+    view.d[R::blind_gate()] = F::ZERO;
+
     view.build()
 }
 
@@ -100,19 +116,23 @@ impl<R: Rank> StageMask<R> {
     /// `(skip_gates + num_gates)..n`. The SYSTEM gate is not constrained
     /// here because `a[0]` carries the arbitrary `alpha` value and
     /// `d[0]` may or may not be set to 1; `b[0]` and `c[0]` are
-    /// zero in all cases.
+    /// zero in all cases. The blind gate's `a` and `d` wires are not
+    /// constrained either, and its `b` and `c` wires are enforced to zero:
+    /// the stage must end at or before it.
     ///
     /// # Errors
     ///
-    /// Returns a capacity error if `skip_gates + num_gates` exceeds the rank's
-    /// gate bound.
+    /// Returns a capacity error if `skip_gates + num_gates` reaches past the
+    /// blind gate.
     pub fn new(skip_gates: usize, num_gates: usize) -> Result<Self> {
         assert!(skip_gates > 0, "skip_gates must include the SYSTEM gate");
         if skip_gates
             .checked_add(num_gates)
-            .is_none_or(|end| end > R::n())
+            .is_none_or(|end| end > R::blind_gate())
         {
-            return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
+            return Err(ragu_core::Error::GateBoundExceeded {
+                limit: R::blind_gate(),
+            });
         }
         Ok(Self {
             skip_gates,
@@ -124,16 +144,18 @@ impl<R: Rank> StageMask<R> {
     /// Creates the final staging wiring polynomial with the given
     /// `skip_gates` and maximum possible gates. `skip_gates` must
     /// be at least 1 (it includes the SYSTEM gate). The number
-    /// of gates will be `R::n() - skip_gates`, which is the maximum
-    /// before bounds are reached.
+    /// of gates will be `R::n() - skip_gates`, which is every gate from
+    /// `skip_gates` on, the blind gate included.
     ///
     /// # Errors
     ///
-    /// Returns a capacity error if `skip_gates` exceeds the rank's gate bound.
+    /// Returns a capacity error if `skip_gates` is past the blind gate.
     pub fn new_final(skip_gates: usize) -> Result<Self> {
         assert!(skip_gates > 0, "skip_gates must include the SYSTEM gate");
-        if skip_gates > R::n() {
-            return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
+        if skip_gates > R::blind_gate() {
+            return Err(ragu_core::Error::GateBoundExceeded {
+                limit: R::blind_gate(),
+            });
         }
 
         let num_gates = R::n() - skip_gates;
@@ -147,10 +169,12 @@ impl<R: Rank> StageMask<R> {
 
     /// Returns a sparse polynomial containing the negated notch entries for
     /// the active-stage gate wires at positions `skip_gates..skip_gates + num_gates`.
-    /// The SYSTEM gate is excluded (it is already zero in the global mask).
+    /// The SYSTEM gate is excluded (it is already zero in the global mask),
+    /// and so are the blind gate's `a` and `d` wires when a final mask's
+    /// gates reach it.
     ///
-    /// The result has `4 × num_gates` non-zero entries
-    /// (vs `4(n - 1)` for the full mask projection).
+    /// The result has `4 × num_gates` non-zero entries, two fewer for a
+    /// final mask (vs `4(n - 1) - 2` for the full mask projection).
     fn notch_project<F: Field>(&self, p: F) -> sparse::Polynomial<F, R> {
         if self.num_gates == 0 || p == F::ZERO {
             return sparse::Polynomial::default();
@@ -181,7 +205,18 @@ impl<R: Rank> StageMask<R> {
             c *= p_inv;
         }
 
+        // The global mask already leaves these two wires out.
+        if self.holds_blind_gate() {
+            view.a[R::blind_gate()] = F::ZERO;
+            view.d[R::blind_gate()] = F::ZERO;
+        }
+
         view.build()
+    }
+
+    /// Whether this mask's gates reach the blind gate, as a final mask's do.
+    fn holds_blind_gate(&self) -> bool {
+        self.num_gates > 0 && self.skip_gates + self.num_gates == R::n()
     }
 }
 
@@ -196,7 +231,9 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
     /// $$\text{notch}(x, y) = (1 + (xy)^{2n})\bigl((xy)^g + (xy)^{2n-g-m}\bigr)
     ///     \cdot \sum_{i=0}^{m-1} (xy)^i$$
     ///
-    /// with $g = \text{skip\_gates}$ and $m = \text{num\_gates}$.
+    /// with $g = \text{skip\_gates}$ and $m = \text{num\_gates}$, less the
+    /// blind gate's two free wires $(xy)^{n-1} + (xy)^{3n-1}$ when the gates
+    /// reach it.
     fn sxy(&self, x: F, y: F, _floor_plan: &[crate::floor_planner::ConstraintSegment]) -> F {
         if x == F::ZERO || y == F::ZERO {
             return F::ZERO;
@@ -209,7 +246,12 @@ impl<F: Field, R: Rank> WiringObject<F, R> for StageMask<R> {
         let skip = xy.pow_u64(self.skip_gates as u64);
         let tail = xy.pow_u64((2 * R::n() - self.skip_gates - self.num_gates) as u64);
 
-        -((F::ONE + xy_2n) * (skip + tail) * gsum)
+        let notch = (F::ONE + xy_2n) * (skip + tail) * gsum;
+        if self.holds_blind_gate() {
+            blind_wires::<F, R>(xy) - notch
+        } else {
+            -notch
+        }
     }
 
     fn sx(
@@ -315,6 +357,8 @@ mod tests {
 
             let is_active =
                 |j: usize| j == 0 || (j >= self.skip_gates && j < self.skip_gates + self.num_gates);
+            // The blind gate's a and d wires are free in every mask.
+            let is_free = |j: usize| is_active(j) || j == R::blind_gate();
 
             // Issue 4n-2 enforce_zero in decreasing degree order so that the
             // driver assigns y^k to the constraint at degree k. Dummy (empty
@@ -339,7 +383,7 @@ mod tests {
                         .iter()
                         .enumerate()
                         .rev()
-                        .map(|(i, g)| (!is_active(i + 1)).then_some(&g.a))
+                        .map(|(i, g)| (!is_free(i + 1)).then_some(&g.a))
                         .chain(core::iter::once(None)),
                 )
                 .chain(
@@ -355,7 +399,7 @@ mod tests {
                         .iter()
                         .enumerate()
                         .rev()
-                        .map(|(i, g)| (!is_active(i + 1)).then_some(&g.d)),
+                        .map(|(i, g)| (!is_free(i + 1)).then_some(&g.d)),
                 );
 
             for wire in wires {
@@ -532,7 +576,7 @@ mod tests {
     #[test]
     fn test_stage_mask_all_gates() {
         // Edge case: skip = 1, num = R::n() - 1, reserved = 0.
-        let stage = StageMask::<R>::new(1, R::n() - 1).unwrap();
+        let stage = StageMask::<R>::new_final(1).unwrap();
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
 
@@ -565,11 +609,23 @@ mod tests {
 
     #[test]
     fn test_stage_mask_exact_boundary() {
-        let result = StageMask::<R>::new(R::n() - 1, 1);
-        assert!(result.is_ok(), "Should accept skip + num == R::n()");
+        let result = StageMask::<R>::new(R::blind_gate() - 1, 1);
+        assert!(
+            result.is_ok(),
+            "Should accept a stage ending at the blind gate"
+        );
 
-        let result = StageMask::<R>::new(R::n(), 1);
-        assert!(result.is_err(), "Should reject skip + num > R::n()");
+        let result = StageMask::<R>::new(R::blind_gate(), 1);
+        assert!(
+            result.is_err(),
+            "Should reject a stage holding the blind gate"
+        );
+
+        let result = StageMask::<R>::new_final(R::blind_gate());
+        assert!(result.is_ok(), "A final mask may start at the blind gate");
+
+        let result = StageMask::<R>::new_final(R::n());
+        assert!(result.is_err(), "A final mask must hold the blind gate");
     }
 
     #[test]
@@ -580,11 +636,12 @@ mod tests {
             (usize::MAX, 2),
             (R::n(), 1),
             (R::n() + 1, 0),
+            (R::blind_gate(), 1),
         ] {
             assert!(
                 matches!(
                     StageMask::<R>::new(skip, num),
-                    Err(ragu_core::Error::GateBoundExceeded { limit }) if limit == R::n()
+                    Err(ragu_core::Error::GateBoundExceeded { limit }) if limit == R::blind_gate()
                 ),
                 "should reject out-of-bounds range: skip={skip}, num={num}"
             );
@@ -594,7 +651,7 @@ mod tests {
     #[test]
     fn test_stage_mask_reserved_zero() {
         // When reserved = 0, all gates except the SYSTEM gate are active.
-        let stage = StageMask::<R>::new(1, R::n() - 1).expect("valid stage mask");
+        let stage = StageMask::<R>::new_final(1).expect("valid stage mask");
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -612,7 +669,7 @@ mod tests {
     fn test_stage_mask_reserved_computation() {
         // Check we're computing reserved correctly.
         for skip in 1..10 {
-            for num in 0..(R::n() - skip) {
+            for num in 0..(R::blind_gate() - skip) {
                 let _ = StageMask::<R>::new(skip, num).expect("valid stage mask");
 
                 // The Circuit impl always issues 4n-2 enforce_zero
@@ -631,11 +688,15 @@ mod tests {
         fn test_exy_proptest(skip in 1..R::n(), num in 0..R::n()) {
             prop_assume!(skip + num <= R::n());
 
-            let stage_mask = StageMask::<R>::new(skip, num).unwrap();
-
-            let generic = mask_wiring_object(
+            // A mask whose gates reach the blind gate is a final mask.
+            let make = || if skip + num == R::n() {
+                StageMask::<R>::new_final(skip).unwrap()
+            } else {
                 StageMask::<R>::new(skip, num).unwrap()
-            );
+            };
+            let stage_mask = make();
+
+            let generic = mask_wiring_object(make());
             let plan = floor_planner::floor_plan(generic.segment_records());
 
             let stripped = crate::staging::bonding::Stripped::new(generic);
@@ -685,7 +746,7 @@ mod tests {
         #[test]
         fn test_notch_partition_proptest(split in 1..R::n()) {
             let mask_a = StageMask::<R>::new(1, split - 1).unwrap();
-            let mask_b = StageMask::<R>::new(split, R::n() - split).unwrap();
+            let mask_b = StageMask::<R>::new_final(split).unwrap();
 
             let p = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
             let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -792,6 +853,60 @@ mod tests {
             Fp::ZERO,
             "valid witness should produce well-formed stage polynomial"
         );
+    }
+
+    /// A stage polynomial may hold anything at `a[0]` and at the `a` and `d`
+    /// wires of the blind gate; the mask still holds the blind gate's other
+    /// two wires, and every wire outside the stage, to zero.
+    #[test]
+    fn test_stage_mask_frees_the_blind_wires_alone() {
+        let blind = crate::Blind::<Fp>::random(&mut rand::rng());
+        let rx = ConstrainedStage::rx(blind, (Fp::from(7u64), Fp::from(7u64))).unwrap();
+        let coeffs: alloc::vec::Vec<Fp> = rx.iter_coeffs().collect();
+        assert_eq!(coeffs[2 * R::n() - 1], blind.alpha);
+        assert_eq!(coeffs[R::n()], blind.gate[0]);
+        assert_eq!(coeffs[3 * R::n()], blind.gate[1]);
+
+        let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let full_mask = |mask: &dyn WiringObject<Fp, R>| {
+            let mut sy = super::global_project::<Fp, R>(y);
+            sy += &mask.sy(y, &[]);
+            sy
+        };
+        let stage = full_mask(&*ConstrainedStage::mask::<'_>().unwrap().into_inner());
+        assert_eq!(rx.revdot(&stage), Fp::ZERO);
+
+        // The final mask of a circuit that reserves this stage frees every
+        // wire from the stage's end on, the blind gate's four among them.
+        let last = full_mask(&*ConstrainedStage::final_mask::<'_>().unwrap().into_inner());
+
+        // The trace positions of the blind gate's wires: a, b, c, d.
+        let gate = R::blind_gate();
+        let wires = [
+            2 * R::n() - 1 - gate,
+            2 * R::n() + gate,
+            gate,
+            4 * R::n() - 1 - gate,
+        ];
+        for (wire, (stage_frees, final_frees)) in
+            wires
+                .into_iter()
+                .zip([(true, true), (false, true), (false, true), (true, true)])
+        {
+            let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
+            coeffs[wire] = Fp::ONE;
+            let unit = sparse::Polynomial::<Fp, R>::from_coeffs(coeffs);
+            assert_eq!(unit.revdot(&stage) == Fp::ZERO, stage_frees, "{wire}");
+            assert_eq!(unit.revdot(&last) == Fp::ZERO, final_frees, "{wire}");
+        }
+
+        // A wire of an ordinary gate past the stage is held to zero by the
+        // stage's mask and freed by the final mask.
+        let mut coeffs = alloc::vec![Fp::ZERO; R::num_coeffs()];
+        coeffs[2 * R::n() - 1 - (gate - 1)] = Fp::ONE;
+        let unit = sparse::Polynomial::<Fp, R>::from_coeffs(coeffs);
+        assert_ne!(unit.revdot(&stage), Fp::ZERO);
+        assert_eq!(unit.revdot(&last), Fp::ZERO);
     }
 
     #[test]

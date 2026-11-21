@@ -10,10 +10,11 @@ The prover side follows the golden-proof harness of zakura-common's `sensei`
 crate: the prover runs on a fixed randomness tape and must reproduce the
 committed proof byte for byte, drawing exactly the committed number of words.
 Sensei commits the tape. Here it is the output of the harness's frozen
-generator under the scenario's seed. The verifier side follows
-zakura-common's Halo2 and Orchard verifier fingerprints: the verifier runs on
-each committed proof under a recorder, and its transcript schedule and final
-MSMs must match the committed record.
+generator under the scenario's seed, since a fuse draws megabytes of
+randomness for its randomizers, which are dense polynomials. The verifier side
+follows zakura-common's Halo2 and Orchard verifier fingerprints: the verifier
+runs on each committed proof under a recorder, and its transcript schedule and
+final MSMs must match the committed record.
 
 Each profile's fixtures come in two families:
 
@@ -48,7 +49,7 @@ wallet rank and the aggregator at the aggregator rank:
 | `unit_left`   | `Value` | `UnitLeft` over `bootstrap` and `seed_a`   |
 | `merge_ab`    | `Value` | `Merge` over `seed_a` and `seed_b`         |
 | `merge_abcd`  | `Value` | `Merge` over `merge_ab` and `merge_cd`     |
-| `rerandomize` | `Value` | the rerandomize step over `merge_abcd`     |
+| `rerandomize` | `Value` | the rerandomize step over `merge_abcd`, twice |
 
 The sibling inputs `seed_b`, `seed_c`, `seed_d`, and `merge_cd` are still
 proved from fixed seeds, preserving distinct children and the original tree.
@@ -58,9 +59,8 @@ snapshots; the retained parent fixtures pin their effect on the proof.
 The `bootstrap` scenario re-proves the bootstrap proof under the fixture
 randomness and installs it in the application, since `finalize` proves it
 under `StdRng`, whose output `Cargo.lock` pins but `rand`'s API does not, and
-every seed fuses it as both children. The `rerandomize` tape also covers the
-seeded trivial proof the step fuses against, which the application proves on
-first use.
+every seed fuses it as both children. A rerandomization is two fuses, each
+against the bootstrap proof, and the `rerandomize` tape covers both.
 
 ## Honest files
 

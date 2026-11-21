@@ -100,6 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CryptoRngCore` on `seed`, `fuse`, `rerandomize` and `verify`.
 - Header suffix `2` is reserved for the internal `Dummy` header; application
   suffixes begin at `3`.
+- `Application::rerandomize` fuses its input twice against the bootstrap
+  proof, and every fuse folds and batches randomizers of its own, so that a
+  rerandomized proof shows nothing of its input beyond the header, its data
+  and its online polynomials. The argument is outlined on the method and has
+  not been audited. For the Standard profile, the largest `HEADER_SIZE` the
+  wallet rank fits is 195 elements, and the proof and compressed-proof
+  schemas move to version 4.
 - The base proof is built once in `finalize`; `seed` is an ordinary step
   against it. The bootstrap step holds its output header's polynomial
   slots to the constant one, and the decompression step its last, its

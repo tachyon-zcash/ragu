@@ -7,7 +7,9 @@
 //! transcript absorbs before squeezing the first-layer folding challenge.
 //! Recursive verification additionally requires binding the derived
 //! challenges and checking the fold; storing these terms does not enforce it.
-//! The [`collapse`] circuit checks the fold.
+//! The [`collapse`] circuit checks the fold. The stage also carries the
+//! target of the nested fold randomizer's claim (see
+//! [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)).
 //!
 //! [`collapse`]: crate::internal::nested::circuits::collapse
 
@@ -52,6 +54,8 @@ pub struct Witness<C: Affine, P: Profile> {
     ///
     /// [`inner_error_terms_with_backend`]: crate::internal::fold_revdot::inner_error_terms_with_backend
     pub error_terms: FixedVec<FixedVec<C::Base, NumErrorTerms<GroupSize<P>>>, NumGroups<P>>,
+    /// The revdot product of the step's own nested fold randomizers.
+    pub randomizer_c: C::Base,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -67,6 +71,9 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     /// Layer-1 error terms of the nested revdot fold.
     #[ragu(gadget)]
     pub error_terms: FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<GroupSize<P>>>, NumGroups<P>>,
+    /// The revdot product of the step's own nested fold randomizers.
+    #[ragu(gadget)]
+    pub randomizer_c: Element<'dr, D>,
 }
 
 #[derive(Default)]
@@ -80,8 +87,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point + N * (M - 1) quotient coefficients
-        NUM * 2 + NumGroups::<P>::len() * NumErrorTerms::<GroupSize<P>>::len()
+        // (x, y) per point + N * (M - 1) quotient coefficients + the
+        // randomizer's target
+        NUM * 2 + NumGroups::<P>::len() * NumErrorTerms::<GroupSize<P>>::len() + 1
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -100,11 +108,13 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
                 Element::alloc(dr, allocator, witness.as_ref().map(|w| w.error_terms[i][j]))
             })
         })?;
+        let randomizer_c = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.randomizer_c))?;
 
         Ok(Output {
             native_inner_error,
             registry_wy,
             error_terms,
+            randomizer_c,
         })
     }
 }

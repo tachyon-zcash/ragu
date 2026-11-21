@@ -1,6 +1,9 @@
 //! Inner error stage (layer 1) for fuse operations.
 //!
-//! This stage handles N separate M-sized revdot claim reductions.
+//! This stage handles N separate M-sized revdot claim reductions. It also
+//! holds the target $c_r$ of the fold randomizer's claim (see
+//! [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)), which is
+//! fixed with the quotients, before the first layer's challenge.
 
 use core::marker::PhantomData;
 
@@ -30,6 +33,8 @@ pub struct Witness<C: Cycle, FP: fold_revdot::Parameters> {
     /// Outer: N groups. Inner: M-1 quotient coefficients in ascending power order.
     pub error_terms:
         FixedVec<FixedVec<C::CircuitField, NumErrorTerms<FP::GroupSize>>, FP::NumGroups>,
+    /// The revdot product $c_r$ of the step's own fold randomizers.
+    pub randomizer_c: C::CircuitField,
 }
 
 /// Prover-internal output gadget for the inner error stage.
@@ -42,6 +47,9 @@ pub struct Output<'dr, D: Driver<'dr>, FP: fold_revdot::Parameters> {
     #[ragu(gadget)]
     pub error_terms:
         FixedVec<FixedVec<Element<'dr, D>, NumErrorTerms<FP::GroupSize>>, FP::NumGroups>,
+    /// The revdot product $c_r$ of the step's own fold randomizers.
+    #[ragu(gadget)]
+    pub randomizer_c: Element<'dr, D>,
 }
 
 /// The inner error stage (layer 1) of the fuse witness.
@@ -58,9 +66,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
     type OutputKind = Kind![C::CircuitField; Output<'_, _, FP>];
 
     fn values() -> usize {
-        // N * (M - 1) quotient coefficients
+        // N * (M - 1) quotient coefficients + the randomizer's target
         let error_terms_per_group = NumErrorTerms::<FP::GroupSize>::len();
-        FP::NumGroups::len() * error_terms_per_group
+        FP::NumGroups::len() * error_terms_per_group + 1
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>>(
@@ -77,8 +85,12 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
                 Element::alloc(dr, allocator, witness.as_ref().map(|w| w.error_terms[i][j]))
             })
         })?;
+        let randomizer_c = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.randomizer_c))?;
 
-        Ok(Output { error_terms })
+        Ok(Output {
+            error_terms,
+            randomizer_c,
+        })
     }
 }
 

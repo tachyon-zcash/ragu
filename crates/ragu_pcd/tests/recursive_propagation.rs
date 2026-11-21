@@ -186,11 +186,9 @@ pub(crate) mod support {
 
     impl Drop for AppLease<'_> {
         fn drop(&mut self) {
-            let mut app = self.app.take().unwrap();
-            // This cache consumes the caller's RNG on its first use. Reset it
-            // so a later test sees exactly the same state as a fresh app, while
-            // successive cases and shrinking within one test still share it.
-            app.seeded_trivial.take();
+            // An application holds no state that proving changes, so a later
+            // test sees exactly the same state as a fresh app.
+            let app = self.app.take().unwrap();
             self.pool.0.lock().unwrap().push(app);
         }
     }
@@ -206,8 +204,7 @@ pub(crate) mod support {
     }
 
     /// Run independent mutations after their shared honest control. Each case
-    /// gets its own application with the control's already initialized neutral
-    /// proof, preserving the prover RNG consumption of the sequential checks.
+    /// gets its own application, which proves as the control's does.
     /// A test-only worker pool runs the cases without enabling additional
     /// prover features, including when the library's `multicore` feature is off.
     pub(crate) fn for_each_case<T: Send>(
@@ -215,11 +212,6 @@ pub(crate) mod support {
         cases: impl IntoParallelIterator<Item = T>,
         check: impl Fn(&App, T) -> Result<()> + Send + Sync,
     ) -> Result<()> {
-        let neutral = app
-            .seeded_trivial
-            .get()
-            .expect("run the rerandomized honest control before its mutations")
-            .clone();
         let native_tag = app.native_registry.tag();
         let nested_tag = app.nested_registry.tag();
         cases.into_par_iter().try_for_each(|case| {
@@ -227,7 +219,6 @@ pub(crate) mod support {
             let app = lease.app();
             assert_eq!(app.native_registry.tag(), native_tag);
             assert_eq!(app.nested_registry.tag(), nested_tag);
-            assert!(app.seeded_trivial.set(neutral.clone()).is_ok());
             check(app, case)
         })
     }
@@ -245,12 +236,10 @@ pub(crate) mod support {
             .app()
             .rerandomize(lease.app().bootstrap_pcd(), &mut first_rng)
             .unwrap();
-        assert!(lease.app().seeded_trivial.get().is_some());
         drop(lease);
         assert_eq!(pool.0.lock().unwrap().len(), 1);
 
         let lease = pool.checkout();
-        assert!(lease.app().seeded_trivial.get().is_none());
         let mut second_rng = StdRng::seed_from_u64(873);
         let second = lease
             .app()
@@ -268,8 +257,8 @@ pub(crate) mod support {
                 .unwrap()
         );
 
-        // A mutation following its control must inherit the initialized cache,
-        // without consuming the random bytes used to create it a second time.
+        // A mutation following its control, on another application, consumes
+        // the same random bytes and produces the same proof.
         let mut expected_rng = StdRng::seed_from_u64(875);
         let expected = lease
             .app()
@@ -1452,7 +1441,8 @@ mod commitments {
         assert!(verify(parent.clone())?, "the honest parent must verify");
 
         // Change every lift, the base-case sign and their padding wires, then
-        // the system alpha, which is fixed to zero for this stage.
+        // the system alpha and the blind gate's two wires, which no mask
+        // holds and which are fixed to zero for this stage.
         let coefficients = (0..ChallengeStage::values())
             .map(|slot| {
                 let gate = ChallengeStage::skip_gates() + slot / 2;
@@ -1462,7 +1452,7 @@ mod commitments {
                     4 * R::n() - 1 - gate
                 }
             })
-            .chain(core::iter::once(2 * R::n() - 1));
+            .chain([2 * R::n() - 1, R::n(), 3 * R::n()]);
         for coefficient in coefficients {
             let mut changed = parent.clone();
             let mut coefficients: Vec<_> = changed.nested_challenges_rx.iter_coeffs().collect();

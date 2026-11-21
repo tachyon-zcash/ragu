@@ -17,6 +17,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{
+    Blind,
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
@@ -29,6 +30,7 @@ use super::{
     _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
+    randomizer::Randomizers,
 };
 use crate::{
     Application, Proof,
@@ -54,6 +56,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         registry_wy: &RegistryWy<C, R>,
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
+        randomizers: &Randomizers<C, R>,
         builder: &ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::eval::Witness<C>,
@@ -110,6 +113,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 a_poly: B::sparse_eval(native_a_poly, u),
                 b_poly: B::sparse_eval(native_b_poly, u),
                 registry_xy: B::sparse_eval(native_registry_xy_poly, u),
+                randomizer_a: B::sparse_eval(&randomizers.native.a, u),
+                randomizer_b: B::sparse_eval(&randomizers.native.b, u),
+                mask: B::sparse_eval(&randomizers.native.mask, u),
                 online: online_polynomials.map(|poly| B::sparse_eval(poly, u)),
             },
         );
@@ -134,6 +140,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 a_poly: B::sparse_eval(nested_a_poly, u_nested),
                 b_poly: B::sparse_eval(nested_b_poly, u_nested),
                 registry_xy: B::sparse_eval(nested_registry_xy_poly, u_nested),
+                randomizer_a: B::sparse_eval(&randomizers.nested.a, u_nested),
+                randomizer_b: B::sparse_eval(&randomizers.nested.b, u_nested),
+                mask: B::sparse_eval(&randomizers.nested.mask, u_nested),
             },
         );
 
@@ -186,15 +195,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         sparse::Polynomial<C::ScalarField, R>,
         C::NestedCurve,
     )> {
-        let eval_rx = native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            eval_witness,
-        )?;
+        let eval_rx =
+            native::stages::eval::Stage::<C, R, HEADER_SIZE>::rx(Blind::random(rng), eval_witness)?;
         let native_eval_commitment =
             B::sparse_commit_to_affine(&eval_rx, C::host_generators(self.params));
 
         let bridge_rx = nested::stages::eval::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &nested::stages::eval::Witness {
                 online_stage,
                 native_eval: native_eval_commitment,

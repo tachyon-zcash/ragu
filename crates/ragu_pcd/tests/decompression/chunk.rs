@@ -279,11 +279,11 @@ fn check_side<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(prepared: &Prepar
         match run_circuit::<S, R>(&schedule, index, prepared, &mut rng) {
             Ok(report) => {
                 all.push((index, kind.clone(), report.gates));
-                if report.gates > R::n() {
+                if report.gates > R::blind_gate() {
                     failures.push(format!(
                         "circuit {index} ({kind}) uses {} gates of {}",
                         report.gates,
-                        R::n()
+                        R::blind_gate()
                     ));
                 }
                 if !report.satisfied {
@@ -1005,7 +1005,7 @@ fn statement_circuit_exposes_the_output_header() {
     let gates = ragu_circuits::testing::synthesis_counts(&circuit)
         .unwrap()
         .num_gates;
-    assert!(gates <= AggregatorRank::n());
+    assert!(gates <= AggregatorRank::blind_gate());
 
     let span = schedule.layout.instance.output_header;
     let header: Vec<Fp> = span
@@ -1135,7 +1135,7 @@ fn binding_circuits_expose_the_other_sides_commitments() {
     let gates = ragu_circuits::testing::synthesis_counts(&circuit)
         .unwrap()
         .num_gates;
-    assert!(gates <= R::n());
+    assert!(gates <= R::blind_gate());
     let prepared = &sides.native;
     let trace = circuit.trace(prepared).unwrap().into_parts().0;
     let mut builder = TestRegistryBuilder::<Fp, R>::new();

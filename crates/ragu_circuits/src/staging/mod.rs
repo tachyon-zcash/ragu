@@ -174,7 +174,7 @@ use rx_driver::RxDriver;
 use udon::field::Field;
 
 use crate::{
-    BondingObject, Circuit, WithAux,
+    Blind, BondingObject, Circuit, WithAux,
     polynomials::{Rank, sparse},
 };
 
@@ -408,15 +408,18 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
 
     /// Compute the (partial) $r(X)$ polynomial for this stage.
     ///
-    /// `alpha` is an arbitrary value, not a blinding factor, placed at
-    /// `a[0]` of the resulting polynomial. Stages have no ONE wire, so
-    /// without alpha a stage trace could be all-zero; and any predictable
-    /// wire slot can cancel in linear combinations of stage polynomials —
-    /// either case produces a point-at-infinity commitment. A random alpha
-    /// at `a[0]` prevents both.
+    /// `blind` holds the stage polynomial's three free coefficients (see
+    /// [`Blind`]). Its `alpha` is an arbitrary value placed at `a[0]` of the
+    /// resulting polynomial. Stages have no ONE wire, so without alpha a
+    /// stage trace could be all-zero; and any predictable wire slot can
+    /// cancel in linear combinations of stage polynomials — either case
+    /// produces a point-at-infinity commitment. A random alpha at `a[0]`
+    /// prevents both. Its other two values are placed at the blind gate.
     ///
-    /// Pass a random field element in production; `F::ZERO` is acceptable
-    /// in tests.
+    /// Pass [`Blind::random`] in production. A field element is taken as
+    /// `alpha` with the blind gate left zero, which is what a stage whose
+    /// commitment is recomputed from its values needs; `F::ZERO` is
+    /// acceptable in tests.
     ///
     /// # Errors
     ///
@@ -425,7 +428,7 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
     /// stage witness body cannot produce its output from witness input.
     fn rx_configured(
         &self,
-        alpha: F,
+        blind: impl Into<Blind<F>>,
         witness: Self::Witness<'_>,
     ) -> Result<sparse::Polynomial<F, R>> {
         let values = {
@@ -434,17 +437,20 @@ pub trait StageExt<F: Field, R: Rank>: Stage<F, R> {
             dr.wires(&out)?
         };
 
-        stage_rx(alpha, Self::skip_gates(), Self::values(), &values)
+        stage_rx(blind, Self::skip_gates(), Self::values(), &values)
     }
 
     /// Compute the (partial) $r(X)$ polynomial for this stage, using a
     /// default implementation. See [`rx_configured`](Self::rx_configured)
-    /// for details on the `alpha` parameter.
-    fn rx(alpha: F, witness: Self::Witness<'_>) -> Result<sparse::Polynomial<F, R>>
+    /// for details on the `blind` parameter.
+    fn rx(
+        blind: impl Into<Blind<F>>,
+        witness: Self::Witness<'_>,
+    ) -> Result<sparse::Polynomial<F, R>>
     where
         Self: Default,
     {
-        Self::default().rx_configured(alpha, witness)
+        Self::default().rx_configured(blind, witness)
     }
 
     /// Creates a bonding polynomial that enforces well-formedness checks on
@@ -501,7 +507,7 @@ pub fn stage_gates(values: usize) -> usize {
 
 /// Checks that a stage of `num_gates` gates from gate `skip_gates` fits the
 /// rank: `skip_gates` includes the SYSTEM gate, so it is at least 1, and the
-/// stage ends at or before gate `n`.
+/// stage ends at or before the blind gate, which no stage may hold.
 fn check_stage_bounds<R: Rank>(skip_gates: usize, num_gates: usize) -> Result<()> {
     if skip_gates == 0 {
         return Err(ragu_core::Error::Initialization(
@@ -510,17 +516,20 @@ fn check_stage_bounds<R: Rank>(skip_gates: usize, num_gates: usize) -> Result<()
     }
     if skip_gates
         .checked_add(num_gates)
-        .is_none_or(|end| end > R::n())
+        .is_none_or(|end| end > R::blind_gate())
     {
-        return Err(ragu_core::Error::GateBoundExceeded { limit: R::n() });
+        return Err(ragu_core::Error::GateBoundExceeded {
+            limit: R::blind_gate(),
+        });
     }
     Ok(())
 }
 
 /// The (partial) $r(X)$ polynomial of a stage laid out at runtime: `values`
 /// placed from gate `skip_gates`, in a stage of `capacity` values, with
-/// `alpha` at `a[0]`. This is [`StageExt::rx_configured`] for a stage whose
-/// size is not a type-level constant; see that method for `alpha`.
+/// `blind` at `a[0]` and the blind gate. This is [`StageExt::rx_configured`]
+/// for a stage whose size is not a type-level constant; see that method for
+/// `blind`.
 ///
 /// # Errors
 ///
@@ -528,11 +537,12 @@ fn check_stage_bounds<R: Rank>(skip_gates: usize, num_gates: usize) -> Result<()
 /// the stage does not fit the rank's gates; an initialization error if
 /// `skip_gates` is zero.
 pub fn stage_rx<F: Field, R: Rank>(
-    alpha: F,
+    blind: impl Into<Blind<F>>,
     skip_gates: usize,
     capacity: usize,
     values: &[F],
 ) -> Result<sparse::Polynomial<F, R>> {
+    let blind = blind.into();
     let num_gates = stage_gates(capacity);
     check_stage_bounds::<R>(skip_gates, num_gates)?;
     if values.len() > capacity {
@@ -543,7 +553,7 @@ pub fn stage_rx<F: Field, R: Rank>(
     let mut allocator = Standard::default();
 
     // SYSTEM gate: alpha at a[0], 0 at d[0].
-    allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(alpha)))?;
+    allocator.alloc(&mut dr, || Ok(Coeff::Arbitrary(blind.alpha)))?;
     allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
 
     // Skip gates 1..skip_gates: two zero allocs each.
@@ -559,7 +569,7 @@ pub fn stage_rx<F: Field, R: Rank>(
         allocator.alloc(&mut dr, || Ok(Coeff::Zero))?;
     }
 
-    Ok(dr.build())
+    Ok(dr.build(blind.gate))
 }
 
 /// The well-formedness mask of a stage laid out at runtime over `num_gates`
@@ -586,7 +596,7 @@ pub fn stage_mask<'a, F: Field, R: Rank>(
 ///
 /// # Errors
 ///
-/// Returns a capacity error if `skip_gates` exceeds the rank's gates, or an
+/// Returns a capacity error if `skip_gates` is past the blind gate, or an
 /// initialization error if it is zero.
 pub fn final_stage_mask<'a, F: Field, R: Rank>(
     skip_gates: usize,
@@ -609,13 +619,14 @@ mod runtime_tests {
 
     #[test]
     fn runtime_stage_helpers_reject_stages_outside_the_rank() {
-        let n = R::n();
-        // The rank's last gate is the stage's last gate: still in range.
+        // The blind gate ends the gates a stage may hold.
+        let n = R::blind_gate();
+        // The gate before the blind gate is the stage's last gate: still in range.
         assert!(stage_rx::<Fp, R>(Fp::ZERO, n - 1, 2, &[Fp::ONE, Fp::ONE]).is_ok());
         assert!(stage_mask::<Fp, R>(n - 1, 1).is_ok());
         assert!(final_stage_mask::<Fp, R>(n).is_ok());
 
-        // One gate past the rank, and ranges whose end overflows `usize`.
+        // The blind gate itself, and ranges whose end overflows `usize`.
         for (skip, capacity) in [(n, 1), (1, 2 * n), (usize::MAX, 1), (2, usize::MAX)] {
             assert!(matches!(
                 stage_rx::<Fp, R>(Fp::ZERO, skip, capacity, &[]),

@@ -29,10 +29,10 @@
 //! | 0 | 8 | Magic: `RAGUPCD` and a NUL |
 //! | 8 | 2 | Envelope version: 3 |
 //! | 10 | 2 | Payload kind: 1 proof, 2 compressed proof |
-//! | 12 | 2 | Schema version of that payload kind: 3 |
+//! | 12 | 2 | Schema version of that payload kind: 4 |
 //! | 14 | 2 | Protocol version: 1 (`ragu-pcd-v1`) |
 //! | 16 | 4 | Rank |
-//! | 20 | 8 | Header size, in field elements: 0, as no schema 3 payload carries a header |
+//! | 20 | 8 | Header size, in field elements: 0, as no schema 4 payload carries a header |
 //!
 //! Decoding checks the envelope and its dimensions, then the exact total
 //! length those dimensions imply, before decoding the payload. Compressed

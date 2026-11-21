@@ -11,6 +11,7 @@
 //! challenge is squeezed.
 
 use ragu_circuits::{
+    Blind,
     polynomials::{Rank, sparse},
     staging::{Stage as StageTrait, StageExt},
 };
@@ -24,7 +25,6 @@ use ragu_core::{
 };
 use ragu_primitives::{Element, Point, vec::FixedVec};
 use rand::CryptoRng;
-use udon::field::Field;
 
 use super::claims::{
     FoldKey, NativeFuseBuilder, NestedFuseBuilder, NestedFuseProofSource, TrackedPoly,
@@ -125,6 +125,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         );
         drop(native_claims);
 
+        // The target of the fold randomizer's claim, which the inner error
+        // stage holds for `collapse`.
+        let randomizer_c = native_inner_error_witness.randomizer_c;
         let (ky, collapsed) = Emulator::emulate_wireless(
             (
                 preamble_witness,
@@ -274,7 +277,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     left_online_helper,
                     right_online_helper,
                 );
-                let mut ky = native::claims::ky_values::<C::Profile, _>(&ky_source);
+                // The grid of targets, with the fold randomizer's, as
+                // `collapse` lays it out.
+                let zero = Element::zero(dr);
+                let mut ky = fold_revdot::randomized::<_, native::RevdotParameters<C::Profile>>(
+                    native::claims::ky_values::<C::Profile, _>(&ky_source),
+                    zero.clone(),
+                    Element::constant(dr, randomizer_c),
+                    zero,
+                );
 
                 let fold_products = fold_revdot::ClaimFolder::new(&mu);
 
@@ -359,10 +370,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             R,
             HEADER_SIZE,
             native::RevdotParameters<C::Profile>,
-        >::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            native_outer_error_witness,
-        )?;
+        >::rx(Blind::random(rng), native_outer_error_witness)?;
 
         builder.set_native_outer_error_rx(rx);
 
@@ -412,6 +420,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         >(&nested_claims.b, nested_mu);
         drop(nested_claims);
 
+        let randomizer_c = nested_inner_error_witness.randomizer_c;
         let collapsed = NestedFuseEmulator::<C>::emulate_wireless(
             (
                 (&nested_inner_error_witness.error_terms, nested_y, nested_mu),
@@ -500,7 +509,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     left_binding,
                     right_binding,
                 );
-                let mut ky = nested::claims::ky_values::<C::Profile, _>(&ky_source);
+                // The grid of targets, with the nested fold randomizer's.
+                let zero = Element::zero(dr);
+                let mut ky = fold_revdot::randomized::<_, nested::RevdotParameters<C::Profile>>(
+                    nested::claims::ky_values::<C::Profile, _>(&ky_source),
+                    zero.clone(),
+                    Element::constant(dr, randomizer_c),
+                    zero,
+                );
 
                 let fold_products = fold_revdot::ClaimFolder::new(&nested_mu);
 
@@ -530,7 +546,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             collapsed,
         };
         let bridge_rx = nested::stages::outer_error::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &bridge,
         )?;
         let bridge_commitment =

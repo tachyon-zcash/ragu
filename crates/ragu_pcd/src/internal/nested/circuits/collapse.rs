@@ -246,7 +246,14 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             left_binding,
             right_binding,
         );
-        let mut ky = ky_values::<P, _>(&ky);
+        // The grid holds the claims' targets with the fold randomizer's.
+        let zero = Element::zero(dr);
+        let mut ky = fold_revdot::randomized::<_, RevdotParameters<P>>(
+            ky_values::<P, _>(&ky),
+            zero.clone(),
+            stages.inner_error.randomizer_c.clone(),
+            zero,
+        );
 
         // Layer 1: each group's fold must be the collapsed value witnessed.
         let fold = fold_revdot::ClaimFolder::new(&lifts[challenges::MU].lift);
@@ -256,7 +263,7 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
             .iter()
             .zip(stages.outer_error.collapsed.iter())
         {
-            let ky = FixedVec::from_fn(|_| ky.next().expect("ky_values is infinite"));
+            let ky = FixedVec::from_fn(|_| ky.next().expect("the grid holds every node"));
             fold.fold_inner::<RevdotParameters<P>>(dr, error_terms, &ky)?
                 .enforce_equal(dr, collapsed)?;
         }

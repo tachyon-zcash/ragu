@@ -7,7 +7,8 @@
 //! crate: the prover runs on a fixed randomness tape and must reproduce the
 //! committed proof byte for byte, drawing exactly the committed number of
 //! words. Sensei commits the tape. Here it is the output of a frozen
-//! generator under the scenario's seed (see [`Tape`]).
+//! generator under the scenario's seed (see [`Tape`]), since a fuse draws
+//! megabytes of randomness.
 //!
 //! The verifier side follows zakura-common's Halo2 and Orchard verifier
 //! fingerprints: the verifier runs on each committed proof under a recorder
@@ -324,10 +325,11 @@ const fn seed(tag: u64) -> u64 {
 /// under a seed.
 ///
 /// Sensei commits each tape as a `.rng-u64s-le` golden. These fixtures do
-/// not: the tape is a function of its seed. A fixture pins the number of
-/// words its fuse drew, and its outputs pin their values. `fill_bytes` takes
-/// whole words, so a request's word count is fixed by its length, and the
-/// number of words consumed pins the randomness schedule.
+/// not: a fuse draws megabytes of randomness for its randomizers, which are
+/// dense polynomials, and the tape is a function of its seed. A fixture pins
+/// the number of words its fuse drew, and its outputs pin their values.
+/// `fill_bytes` takes whole words, so a request's word count is fixed by its
+/// length, and the number of words consumed pins the randomness schedule.
 ///
 /// The generator is not cryptographically secure and must never produce a
 /// real proof. It serves here only because the fixtures are synthetic test
@@ -1436,8 +1438,8 @@ fn prover_fixtures<C: FixtureCycle>() {
         &mut failures,
     );
 
-    // The first rerandomization also proves the seeded trivial proof the
-    // step fuses against, so this tape covers both.
+    // A rerandomization is two fuses against the bootstrap proof, and this
+    // tape covers both.
     let mut rerandomize_tape = Tape::new(seed(10));
     let rerandomized = app
         .rerandomize(merge_abcd, &mut rerandomize_tape)

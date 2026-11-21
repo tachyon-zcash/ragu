@@ -1,5 +1,6 @@
-//! F stage for nested fuse operations: the native $f$ commitment, and the
-//! commitment of the native points stage holding $F_n$.
+//! F stage for nested fuse operations: the native $f$ commitment, the
+//! commitment of the step's own native batch randomizer, and the commitment
+//! of the native points stage holding $F_n$.
 
 use core::marker::PhantomData;
 
@@ -16,7 +17,7 @@ use udon::curve::EndomorphismAffine as Affine;
 use crate::profile::Profile;
 
 /// Number of curve points in this stage.
-const NUM: usize = 2;
+const NUM: usize = 3;
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine> {
@@ -25,6 +26,10 @@ pub struct Witness<C: Affine> {
     /// `registry_xy` commitment and $F_n$, fixed here before $u$ is
     /// squeezed.
     pub native_points_f: C,
+    /// Commitment of the step's own native batch randomizer, a polynomial
+    /// with uniformly random coefficients that the batch folds into $p$
+    /// after $f$.
+    pub native_mask: C,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -37,6 +42,8 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>> {
     pub native_f: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub native_points_f: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub native_mask: Point<'dr, D, C>,
 }
 
 #[derive(Default)]
@@ -64,6 +71,7 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
         Ok(Output {
             native_f: Point::alloc(dr, witness.as_ref().map(|w| w.native_f))?,
             native_points_f: Point::alloc(dr, witness.as_ref().map(|w| w.native_points_f))?,
+            native_mask: Point::alloc(dr, witness.as_ref().map(|w| w.native_mask))?,
         })
     }
 }

@@ -93,7 +93,7 @@ fn census<P: Profile, Rk: Rank>(label: &str) -> Result<()> {
             counts.num_constraints
         );
         assert!(
-            counts.num_gates <= Rk::n(),
+            counts.num_gates <= Rk::blind_gate(),
             "{label}: {name} exceeds the gate budget"
         );
         assert!(
@@ -162,7 +162,7 @@ fn census<P: Profile, Rk: Rank>(label: &str) -> Result<()> {
         walk_q,
     ] {
         assert!(
-            gates <= Rk::n(),
+            gates <= Rk::blind_gate(),
             "{label}: {gates} gates exceed the rank budget"
         );
     }
@@ -255,7 +255,7 @@ fn source_oracle_cost_census() -> Result<()> {
         assert_fixture_counts(layout, mesh.expect("fixture mesh"))?;
     }
     let polynomials = Shape::of::<SourceCapacity>().polynomials();
-    assert_eq!(polynomials, 139);
+    assert_eq!(polynomials, 141);
     // Rank only changes the number of coefficients per carried polynomial
     // in the uncompressed encoding.
     type C = Profiled<Pasta, SourceCapacity>;

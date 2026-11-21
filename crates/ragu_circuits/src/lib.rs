@@ -20,6 +20,7 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+mod blind;
 pub mod floor_planner;
 pub mod horner;
 mod ky;
@@ -35,6 +36,7 @@ mod trace;
 mod trivial;
 mod wiring;
 
+pub use blind::Blind;
 pub use metrics::{BaseFingerprint, DeepFingerprint, RoutineIdentity, SegmentRecord};
 pub use trace::Trace;
 
@@ -268,8 +270,11 @@ where
         });
     }
 
-    if metrics.num_gates > R::n() {
-        return Err(Error::GateBoundExceeded { limit: R::n() });
+    // The last gate is the blind gate, which no circuit may use.
+    if metrics.num_gates > R::blind_gate() {
+        return Err(Error::GateBoundExceeded {
+            limit: R::blind_gate(),
+        });
     }
 
     into_raw_wiring_object(raw::CircuitAdapter(circuit), metrics)

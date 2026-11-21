@@ -146,6 +146,9 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
         walker.enforce_equal(dr, &ab.a)?;
         walker.enforce_equal(dr, &ab.b)?;
         walker.enforce_equal(dr, &query.registry_xy)?;
+        walker.enforce_equal(dr, &s_prime.randomizer_a)?;
+        walker.enforce_equal(dr, &s_prime.randomizer_b)?;
+        walker.enforce_equal(dr, &f_stage.native_mask)?;
 
         // The online slots, in slot order: the children's exported
         // polynomials as the left and right slots, then the step's own.

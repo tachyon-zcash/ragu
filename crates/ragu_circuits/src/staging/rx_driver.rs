@@ -26,7 +26,19 @@ impl<F: Field, R: Rank> RxDriver<F, R> {
         Self { view }
     }
 
-    pub(crate) fn build(self) -> sparse::Polynomial<F, R> {
+    /// Builds the polynomial, with `blind_gate` at the `a` and `d` wires of
+    /// the blind gate.
+    pub(crate) fn build(mut self, blind_gate: [F; 2]) -> sparse::Polynomial<F, R> {
+        if blind_gate != [F::ZERO, F::ZERO] {
+            assert!(
+                self.view.a.len() <= R::blind_gate(),
+                "the stage reaches the blind gate"
+            );
+            self.view.a.resize(R::n(), F::ZERO);
+            self.view.d.resize(R::n(), F::ZERO);
+            self.view.a[R::blind_gate()] = blind_gate[0];
+            self.view.d[R::blind_gate()] = blind_gate[1];
+        }
         self.view.build()
     }
 }

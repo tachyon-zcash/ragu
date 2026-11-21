@@ -15,6 +15,7 @@ mod _09_eval;
 mod _10_p;
 mod _11_circuits;
 pub(crate) mod claims;
+pub(crate) mod randomizer;
 // PCS and folding properties use private fuse internals. The proof-binding
 // properties live under `proof` for direct access to cached fields.
 #[cfg(test)]
@@ -59,10 +60,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     /// ## Parameters
     ///
     /// * `rng`: a random number generator used to sample randomness during
-    ///   proof generation. The fact that this method takes a random number
-    ///   generator is not an indication that the resulting proof-carrying data
-    ///   is zero-knowledge. [`Application::rerandomize`] is intended to provide
-    ///   that property, but the current construction does not yet establish it.
+    ///   proof generation: the free coefficients of every polynomial the
+    ///   proof stores, and the step's randomizers. The resulting proof still
+    ///   shows what it read of its two children: their commitments, their
+    ///   challenges and their headers are values of its stages. To hide a
+    ///   proof from whoever made it, use [`Application::rerandomize`].
     /// * `step`: the [`Step`] instance that has been registered in this
     ///   [`Application`].
     /// * `witness`: the witness input for the [`Step`]
@@ -276,6 +278,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
 
+        // The step's own randomizers, which the fold and the batch mix into
+        // the accumulator so that the proof reveals nothing of the
+        // children's polynomials through it (see `randomizer`).
+        let randomizers = self.sample_randomizers(rng);
+        #[cfg(test)]
+        randomizer::observed::record(&randomizers);
+
         // The step's first phase: the own online polynomials and application
         // stage the preamble bridge commits, and the input headers and
         // circuit id the native preamble commits after w.
@@ -342,6 +351,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &left,
             &right,
             &application,
+            &randomizers,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -355,6 +365,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             left: &left,
             right: &right,
             application: &application,
+            randomizer: &randomizers.native,
         };
         let nested_source = NestedFuseProofSource {
             left: &left,
@@ -376,6 +387,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &z,
             &native_source,
             &nested_source,
+            &randomizers,
             &mut builder,
         )?;
         let bridge_inner_error_commitment =
@@ -456,6 +468,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &left,
             &right,
             &application,
+            &randomizers,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -477,6 +490,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &left,
             &right,
             &application,
+            &randomizers,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -495,6 +509,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &registry_wy,
             &nested_s_prime,
             &nested_registry_wy,
+            &randomizers,
             &builder,
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
@@ -556,6 +571,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             &nested_s_prime,
             &nested_registry_wy,
             &nested_f,
+            &randomizers,
             &mut builder,
         )?;
 
@@ -590,6 +606,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             native_preamble: builder.native_preamble_commitment(),
             native_application: application.commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
+            randomizer_a: randomizers.native.a_commitment,
+            randomizer_b: randomizers.native.b_commitment,
         };
         let nested_ab_witness = nested::stages::ab::Witness {
             online_points: builder.native_online_phase::<2>(),
@@ -609,6 +627,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         let nested_f_witness = nested::stages::f::Witness {
             native_f: native_f.commitment,
             native_points_f: builder.native_points_f_commitment(),
+            native_mask: randomizers.native.mask_commitment,
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {

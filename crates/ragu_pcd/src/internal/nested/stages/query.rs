@@ -99,6 +99,10 @@ pub struct Evaluations<F, P: Profile> {
     pub fixed_registry: FixedVec<F, InternalLen<P>>,
     /// $m_n(w_n, x_n, y_n)$.
     pub registry_wxy: F,
+    /// The step's own nested fold randomizer $a_r$ at $x_n z_n$.
+    pub randomizer_a_at_xz: F,
+    /// The step's own nested fold randomizer $b_r$ at $x_n$.
+    pub randomizer_b_at_x: F,
     /// Left child proof evaluations.
     pub left: ChildEvaluationsWitness<F, P>,
     /// Right child proof evaluations.
@@ -126,6 +130,8 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
         Evaluations {
             fixed_registry: FixedVec::from_fn(|_| F::ZERO),
             registry_wxy: F::ZERO,
+            randomizer_a_at_xz: F::ZERO,
+            randomizer_b_at_x: F::ZERO,
             left: child(),
             right: child(),
             online_fq: FixedVec::from_fn(|_| F::ZERO),
@@ -194,6 +200,10 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
     #[ragu(gadget)]
     pub registry_wxy: Element<'dr, D>,
     #[ragu(gadget)]
+    pub randomizer_a_at_xz: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub randomizer_b_at_x: Element<'dr, D>,
+    #[ragu(gadget)]
     pub left: ChildEvaluations<'dr, D, P>,
     #[ragu(gadget)]
     pub right: ChildEvaluations<'dr, D, P>,
@@ -235,11 +245,12 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point + fixed registry + registry_wxy + 2 children
-        // + y per online Fq opening
+        // (x, y) per point + fixed registry + registry_wxy + the two fold
+        // randomizers + 2 children + y per online Fq opening
         2 * (PhaseLen::<P, Native, 3>::len() + Present::<P, Native, 1>::len() + NUM)
             + InternalLen::<P>::len()
             + 1
+            + 2
             + 2 * (OwnRxLen::<P>::len() + 4)
             + P::ONLINE_FQ_POLYS
     }
@@ -267,6 +278,16 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
                 dr,
                 allocator,
                 witness.as_ref().map(|w| w.nested.registry_wxy),
+            )?,
+            randomizer_a_at_xz: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|w| w.nested.randomizer_a_at_xz),
+            )?,
+            randomizer_b_at_x: Element::alloc(
+                dr,
+                allocator,
+                witness.as_ref().map(|w| w.nested.randomizer_b_at_x),
             )?,
             left: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.left))?,
             right: ChildEvaluations::alloc(dr, witness.as_ref().map(|w| &w.nested.right))?,

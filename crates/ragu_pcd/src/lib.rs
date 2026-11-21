@@ -101,7 +101,7 @@ mod decompress_statement_tests;
 mod profile_corruption_tests;
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use core::{any::TypeId, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
@@ -354,10 +354,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         let stage_size = self.stage_size.max(S::NUM_STAGED);
-        // Leave room after the SYSTEM gate and the stage.
+        // Leave room after the SYSTEM gate and the stage, before the blind
+        // gate.
         if 1usize
             .checked_add(staging::stage_gates(stage_size))
-            .is_none_or(|end| end >= R::n())
+            .is_none_or(|end| end >= R::blind_gate())
         {
             return Err(Error::Initialization(
                 "the application stage does not fit the rank's gates".into(),
@@ -446,7 +447,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             let stage_size = self.stage_size.max(<Decompress as Step<C>>::NUM_STAGED);
             if 1usize
                 .checked_add(staging::stage_gates(stage_size))
-                .is_none_or(|end| end >= R::n())
+                .is_none_or(|end| end >= R::blind_gate())
             {
                 return Err(Error::Initialization(
                     "the application stage does not fit the rank's gates".into(),
@@ -588,7 +589,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
-            seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
         };
@@ -728,9 +728,6 @@ pub struct Application<
     /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
     /// `Application`.
     bootstrap: Option<Proof<C, R>>,
-    /// A valid `Pcd<()>` used as the right child during rerandomization.
-    /// Lazily derived from the bootstrap proof and then reused.
-    seeded_trivial: OnceCell<Proof<C, R>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -814,61 +811,83 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.bootstrap_proof().clone().carry(())
     }
 
-    /// Returns the cached valid `Pcd<()>` used as the neutral right child of
-    /// rerandomization.
-    ///
-    /// The proof is lazily created by folding the bootstrap proof with itself
-    /// through the unit instantiation of the rerandomization step. Subsequent
-    /// calls reuse the same proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Result<Pcd<C, R, ()>> {
-        let proof = match self.seeded_trivial.get() {
-            Some(proof) => proof,
-            None => {
-                let (pcd, ()) = self.fuse(
-                    rng,
-                    step::internal::rerandomize::Rerandomize::new(),
-                    (),
-                    self.bootstrap_pcd(),
-                    self.bootstrap_pcd(),
-                )?;
-                self.seeded_trivial.get_or_init(|| pcd.into_parts().0)
-            }
-        };
-        Ok(proof.clone().carry(()))
-    }
-
     /// Rerandomize proof-carrying data.
     ///
-    /// This will internally fold the [`Pcd`] with a cached seeded `Pcd<()>`
-    /// using an internal rerandomization step, producing a
-    /// fresh proof that is valid for the same [`Header`] and carries the same
-    /// data. `Application::verify_uncompressed` produces the same result on
-    /// the provided `pcd` as it would on the output of this method.
+    /// The output is a proof for the same [`Header`], carrying the same data
+    /// and the same online polynomials. It is built so that its distribution
+    /// depends on nothing else about `pcd`: whoever produced `pcd` and later
+    /// sees the output, in full, should learn that it is a rerandomization
+    /// of some proof for that header and no more. The argument for that is
+    /// outlined below. It has not been written out as a proof, and it has
+    /// not been audited. `Application::verify_uncompressed` produces the
+    /// same result on `pcd` as it would on the output.
     ///
-    /// The intent is that the output be unlinkable to the input. Today that is
-    /// not achieved at all: the output embeds the input's commitments and stage
-    /// polynomials in the clear (as its left-child data), and its folded
-    /// accumulator is a deterministic function of the input proof, cached
-    /// seeded proof, and public challenges. Achieving witness-hiding of the
-    /// accumulator needs a fold-level randomizer; unlinkability of an
-    /// uncompressed proof additionally needs the child data hidden (compression,
-    /// or a second randomized pass). Both are future work, tracked separately.
+    /// # How
+    ///
+    /// The input is fused twice through the internal rerandomization step,
+    /// each time with the application's bootstrap proof as the right child.
+    ///
+    /// A fuse stores what it reads of its children as stage values: their
+    /// commitments, their challenges and their accumulators' values. One
+    /// pass would therefore show the input's commitments in the clear. After
+    /// the second pass the output holds only the first pass's commitments,
+    /// which are fresh, and three kinds of value computed from the first
+    /// pass's polynomials:
+    ///
+    /// - A commitment and two evaluations of each polynomial the first
+    ///   pass's proof stores. The three free coefficients of a trace or a
+    ///   stage hide the rest of it (see [`Blind`](ragu_circuits::Blind)),
+    ///   and the first pass's folded $A$ and $B$ and batched $p$ are
+    ///   uniform in every coefficient, by the first pass's randomizers.
+    /// - The second pass's folded $A$ and $B$ and batched $p$, in full,
+    ///   which the second pass's randomizers make uniform.
+    /// - The quotient coefficients of the second pass's fold. With the
+    ///   second pass's $A$ and $B$ fixed, they are functions of the first
+    ///   pass's polynomials, and the fold places its randomizer's claims so
+    ///   that they take every value as the first pass's folded $A$ and $B$
+    ///   vary (see `internal::fold_revdot`). Those two polynomials are
+    ///   uniform, and the first pass's proof is shown to no one.
+    ///
+    /// The right child is the same public proof for every caller. A right
+    /// child of the caller's own would appear in every output and link them
+    /// to one another. An application whose users must not be told apart
+    /// should therefore install one bootstrap proof for all of them, with
+    /// [`ApplicationBuilder::with_bootstrap`].
+    ///
+    /// # What the caller must ensure
+    ///
+    /// - `pcd` verifies. For a proof that does not, the output does not
+    ///   verify either, and what is wrong with it depends on what was wrong
+    ///   with the input. A receiver accepts a proof as described in the
+    ///   [crate documentation](crate) before it rerandomizes it.
+    /// - `rng` is a cryptographically secure source that the producer of
+    ///   `pcd` cannot predict.
+    /// - The header's data and its online polynomials are what the output
+    ///   may reveal. The output carries both unchanged.
+    ///
+    /// This holds for the standard profile. A profile with an extension
+    /// stores polynomials and values of its own in a proof, which this
+    /// method does not account for.
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<C, R, H>> {
-        let seeded_trivial = self.seeded_trivial_pcd(rng)?;
-
-        // The Rerandomize step's witness() returns the left input's data as
-        // output data, preserving it through rerandomization. Its right child
-        // is the valid, cached seeded unit proof.
-        self.fuse(
+        // The step returns the left input's data as its output's, so the
+        // header and its data pass through both fuses unchanged.
+        let (once, ()) = self.fuse(
             rng,
             step::internal::rerandomize::Rerandomize::new(),
             (),
             pcd,
-            seeded_trivial,
+            self.bootstrap_pcd(),
+        )?;
+        self.fuse(
+            rng,
+            step::internal::rerandomize::Rerandomize::new(),
+            (),
+            once,
+            self.bootstrap_pcd(),
         )
         .map(|(pcd, ())| pcd)
     }

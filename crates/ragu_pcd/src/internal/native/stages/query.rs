@@ -14,7 +14,9 @@
 //! Additionally witnesses the $a$/$b$ polynomial evaluations and registry
 //! transition evaluations needed for mesh consistency checks, and the
 //! step's own application claim's evaluations: its registry selector at
-//! its circuit id, and its application trace and stage at $xz$.
+//! its circuit id, and its application trace and stage at $xz$. The step's
+//! own fold randomizers are opened like a child's $a$ and $b$, at $xz$ and
+//! at $x$.
 
 use core::marker::PhantomData;
 
@@ -110,6 +112,10 @@ pub struct Witness<C: ProfiledCycle> {
     pub application_at_xz: C::CircuitField,
     /// The step's own application stage rx evaluated at $xz$.
     pub application_stage_at_xz: C::CircuitField,
+    /// The step's own fold randomizer $a_r$ evaluated at $xz$.
+    pub randomizer_a_at_xz: C::CircuitField,
+    /// The step's own fold randomizer $b_r$ evaluated at $x$.
+    pub randomizer_b_at_x: C::CircuitField,
     /// Left child proof polynomial evaluations.
     pub left: ChildEvaluationsWitness<C::CircuitField, C::Profile>,
     /// Right child proof polynomial evaluations.
@@ -303,6 +309,12 @@ pub struct Output<'dr, D: Driver<'dr>, P: Profile> {
     /// The step's own application stage rx evaluated at $xz$.
     #[ragu(gadget)]
     pub application_stage_at_xz: Element<'dr, D>,
+    /// The step's own fold randomizer $a_r$ evaluated at $xz$.
+    #[ragu(gadget)]
+    pub randomizer_a_at_xz: Element<'dr, D>,
+    /// The step's own fold randomizer $b_r$ evaluated at $x$.
+    #[ragu(gadget)]
+    pub randomizer_b_at_x: Element<'dr, D>,
     /// Left child proof polynomial evaluations.
     #[ragu(gadget)]
     pub left: ChildEvaluations<'dr, D, P>,
@@ -326,11 +338,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
 
     fn values() -> usize {
         // InternalCircuitIndex::num + registry_wxy (1) + the own application
-        // claim's selector, rx and stage rx (3) + 2 * ChildEvaluations (rx + 4
-        // each) + the nested online batch's query stage and auxiliaries
+        // claim's selector, rx and stage rx (3) + the two fold randomizers
+        // (2) + 2 * ChildEvaluations (rx + 4 each) + the nested online
+        // batch's query stage and auxiliaries
         InternalCircuitIndex::num::<C::Profile>()
             + 1
             + 3
+            + 2
             + 2 * (RxIndex::num::<C::Profile>() + 4)
             + Present::<C::Profile, Nested, 2>::len()
             + <crate::profile::online::stages::PhaseCoordinatesLen<C::Profile,Nested,3> as ragu_primitives::vec::Len>::len()
@@ -363,6 +377,13 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             allocator,
             witness.as_ref().map(|w| w.application_stage_at_xz),
         )?;
+        let randomizer_a_at_xz = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.randomizer_a_at_xz),
+        )?;
+        let randomizer_b_at_x =
+            Element::alloc(dr, allocator, witness.as_ref().map(|w| w.randomizer_b_at_x))?;
         let left = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.left))?;
         let right = ChildEvaluations::alloc(dr, allocator, witness.as_ref().map(|w| &w.right))?;
         Ok(Output {
@@ -381,6 +402,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             registry_xy_at_circuit_id,
             application_at_xz,
             application_stage_at_xz,
+            randomizer_a_at_xz,
+            randomizer_b_at_x,
             left,
             right,
         })

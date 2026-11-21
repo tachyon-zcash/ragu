@@ -10,7 +10,7 @@ use alloc::{sync::Arc, vec::Vec};
 use proptest::prelude::*;
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
-    CircuitExt,
+    Blind, CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
     staging::{Stage, StageExt, StageReader, stage_wire_indices, wires_of},
@@ -376,7 +376,9 @@ fn walk_inputs(
     let mut points = alloc::vec![f[1]];
     points.extend(nested::pcs::child_commitments(left));
     points.extend(nested::pcs::child_commitments(right));
-    points.extend([wx[0], wx[1], ab[0], ab[1], ab[2], f[0]]);
+    // The step's own points, in the walk's order: the restrictions and the
+    // accumulator, then the fold randomizers and the batch randomizer.
+    points.extend([wx[0], wx[1], ab[0], ab[1], ab[2], f[0], wx[2], wx[3], f[2]]);
     let inputs = points::Inputs::from_walk(
         &points,
         [&[], &[]],
@@ -429,8 +431,8 @@ fn native_instance(proof: &Proof<C, R>) -> native::unified::Instance<C> {
     }
 }
 
-/// Preserve each stage's alpha while rebuilding the walk and its real circuit
-/// traces. Merely changing input coordinates would leave stale arithmetic in the
+/// Preserve each stage's free coefficients while rebuilding the walk and its
+/// real circuit traces. Merely changing input coordinates would leave stale arithmetic in the
 /// endoscaling steps and would not exercise a Horner-preserving substitution.
 /// The endpoint the proof's native walk stage ends at, read from the stage
 /// polynomial itself rather than from the cached `P_n` commitment, which no
@@ -449,19 +451,24 @@ fn install_walk(
     inputs: &points::Inputs<EpAffine, crate::profile::Standard>,
     rng: &mut StdRng,
 ) -> Result<()> {
-    fn alpha(poly: &sparse::Polynomial<Fp, R>) -> Fp {
-        poly.iter_coeffs().nth(2 * R::n() - 1).unwrap()
+    fn blind(poly: &sparse::Polynomial<Fp, R>) -> Blind<Fp> {
+        let coeffs: Vec<Fp> = poly.iter_coeffs().collect();
+        let n = R::n();
+        Blind {
+            alpha: coeffs[2 * n - 1],
+            gate: [coeffs[n], coeffs[3 * n]],
+        }
     }
     proof.native_points_binding_rx =
         <points::BindingStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
-            alpha(&proof.native_points_binding_rx),
+            blind(&proof.native_points_binding_rx),
             &inputs.binding,
         )?;
     proof.native_points_binding_commitment.0 = native_commit(app, &proof.native_points_binding_rx);
     proof.native_points_f_rx = <points::FStage<EpAffine, crate::profile::Standard> as StageExt<
         Fp,
         R,
-    >>::rx(alpha(&proof.native_points_f_rx), &inputs.f)?;
+    >>::rx(blind(&proof.native_points_f_rx), &inputs.f)?;
     proof.native_points_f_commitment.0 = native_commit(app, &proof.native_points_f_rx);
 
     let binding_copy = stage_wire_indices::<
@@ -504,7 +511,7 @@ fn install_walk(
     );
     proof.native_points_walk_rx =
         <points::WalkStage<EpAffine, crate::profile::Standard> as StageExt<Fp, R>>::rx(
-            alpha(&proof.native_points_walk_rx),
+            blind(&proof.native_points_walk_rx),
             &walk,
         )?;
     proof.native_points_walk_commitment.0 = native_commit(app, &proof.native_points_walk_rx);
@@ -573,25 +580,30 @@ mod walk_binding {
         let original = original_inputs.walk();
         let beta = nested::challenge::<C>(honest.proof().pre_beta())?;
         let change = Ep::generator() * delta;
-        let offset =
-            1 + usize::from(right_side) * points::num_child_points::<crate::profile::Standard>();
+        let num_child_points = points::num_child_points::<crate::profile::Standard>();
+        let offset = 1 + usize::from(right_side) * num_child_points;
+        // The step's own randomizers follow its six other points.
+        let own = 1 + 2 * num_child_points + 6;
         let cases = [
             (
                 "bridge",
-                nested::RxIndex::BRIDGES[bridge].position::<crate::profile::Standard>(),
+                offset + nested::RxIndex::BRIDGES[bridge].position::<crate::profile::Standard>(),
             ),
             (
                 "challenge",
-                nested::RxIndex::ChallengeStage.position::<crate::profile::Standard>(),
+                offset + nested::RxIndex::ChallengeStage.position::<crate::profile::Standard>(),
             ),
-            ("A_n", nested::RxIndex::NUM),
-            ("B_n", nested::RxIndex::NUM + 1),
-            ("registry_xy", nested::RxIndex::NUM + 2),
-            ("P_n", nested::RxIndex::NUM + 3),
+            ("A_n", offset + nested::RxIndex::NUM),
+            ("B_n", offset + nested::RxIndex::NUM + 1),
+            ("registry_xy", offset + nested::RxIndex::NUM + 2),
+            ("P_n", offset + nested::RxIndex::NUM + 3),
+            ("the fold randomizer a_r", own),
+            ("the fold randomizer b_r", own + 1),
+            ("the batch randomizer", own + 2),
         ];
+        assert_eq!(own + 3, original.len());
         let mut mutations = Vec::new();
-        for (name, position) in cases {
-            let index = offset + position;
+        for (name, index) in cases {
             let mut points = original.clone();
             points[index] = (points[index].to_projective() + change).to_affine();
             // beta^(N-1-index) * change is canceled by the initial
@@ -689,13 +701,15 @@ mod walk_binding {
             );
         }
         proof.nested_registry_xy_commitment.0 = nested_commit(app, &proof.nested_registry_xy_poly);
-        let last = points.len() - 1;
-        let difference =
-            proof.nested_registry_xy_commitment().to_projective() - points[last].to_projective();
+        // The restriction is the last of the step's own points before its
+        // two fold randomizers and its batch randomizer.
+        let registry = points.len() - 4;
+        let difference = proof.nested_registry_xy_commitment().to_projective()
+            - points[registry].to_projective();
         assert!(!difference.is_identity());
-        points[last] = proof.nested_registry_xy_commitment();
+        points[registry] = proof.nested_registry_xy_commitment();
         points[0] = (points[0].to_projective()
-            - difference * beta.invert().unwrap().pow_u64(last as u64))
+            - difference * beta.invert().unwrap().pow_u64(registry as u64))
         .to_affine();
         install_walk(
             app,

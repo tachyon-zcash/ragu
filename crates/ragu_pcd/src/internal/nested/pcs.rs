@@ -69,10 +69,14 @@ pub enum StaticFQuery {
     CurrentAAtXz,
     /// Current accumulator $b$ polynomial queried at $x_n$.
     CurrentBAtX,
+    /// The step's own fold randomizer $a_r$ queried at $x_n z_n$.
+    RandomizerAAtXz,
+    /// The step's own fold randomizer $b_r$ queried at $x_n$.
+    RandomizerBAtX,
 }
 
 /// Ordered static prefix for the nested quotient polynomial queries.
-pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
+pub const STATIC_F_QUERIES: [StaticFQuery; 20] = [
     StaticFQuery::LeftP,
     StaticFQuery::RightP,
     StaticFQuery::LeftRegistryXyAtW,
@@ -91,6 +95,8 @@ pub const STATIC_F_QUERIES: [StaticFQuery; 18] = [
     StaticFQuery::RightAbBAtX,
     StaticFQuery::CurrentAAtXz,
     StaticFQuery::CurrentBAtX,
+    StaticFQuery::RandomizerAAtXz,
+    StaticFQuery::RandomizerBAtX,
 ];
 
 /// The number of nested-curve points a child contributes to the batch, for
@@ -102,7 +108,7 @@ pub const fn num_child_points(nested_rx: usize) -> usize {
 
 /// The number of the current step's nested-curve points in the batch: the
 /// fields of [`CurrentCommitments`].
-pub const NUM_CURRENT_POINTS: usize = 6;
+pub const NUM_CURRENT_POINTS: usize = 9;
 
 /// The number of nested-curve points the batch folds into $P_n$, which the
 /// native walk walks, for `nested_rx` rx polynomials and `online_fq` online
@@ -183,6 +189,12 @@ pub struct Batch<'a, C: Cycle, R: Rank> {
     pub a: &'a sparse::Polynomial<C::ScalarField, R>,
     /// Current accumulator $b$.
     pub b: &'a sparse::Polynomial<C::ScalarField, R>,
+    /// The step's own fold randomizer $a_r$.
+    pub randomizer_a: &'a sparse::Polynomial<C::ScalarField, R>,
+    /// The step's own fold randomizer $b_r$.
+    pub randomizer_b: &'a sparse::Polynomial<C::ScalarField, R>,
+    /// The step's own batch randomizer, which no query names.
+    pub mask: &'a sparse::Polynomial<C::ScalarField, R>,
     /// The step's own online Fq polynomials (see
     /// [`online`](super::online)).
     pub online_fq: &'a [sparse::Polynomial<C::ScalarField, R>],
@@ -228,6 +240,8 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                 StaticFQuery::RightAbBAtX => (&right[RxComponent::AbB], ch.x),
                 StaticFQuery::CurrentAAtXz => (self.a, xz),
                 StaticFQuery::CurrentBAtX => (self.b, ch.x),
+                StaticFQuery::RandomizerAAtXz => (self.randomizer_a, xz),
+                StaticFQuery::RandomizerBAtX => (self.randomizer_b, ch.x),
             })
             .chain([left, right].into_iter().flat_map(move |proof| {
                 RxIndex::all::<C::Profile>()
@@ -250,8 +264,9 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
     /// The polynomials the batch evaluates at $u_n$ and folds into $p_n$
     /// after $f_n$, in that order: for each child its rx polynomials,
     /// $a$, $b$, `registry_xy` and $p$; then the current step's
-    /// `registry_wx0`, `registry_wx1`, `registry_wy`, $a$, $b$ and
-    /// `registry_xy`; then the step's own online Fq polynomials.
+    /// `registry_wx0`, `registry_wx1`, `registry_wy`, $a$, $b$,
+    /// `registry_xy`, its two fold randomizers and its batch randomizer;
+    /// then the step's own online Fq polynomials.
     ///
     /// The nested `eval` bridge stage writes its values in this order, and
     /// [`Batch::commitments`] lists the matching commitments.
@@ -278,6 +293,9 @@ impl<'a, C: ProfiledCycle, R: Rank> Batch<'a, C, R> {
                 self.a,
                 self.b,
                 self.registry_xy,
+                self.randomizer_a,
+                self.randomizer_b,
+                self.mask,
             ])
             .chain(self.online_fq)
     }
@@ -308,6 +326,9 @@ pub struct CurrentCommitments<P> {
     pub a: P,
     pub b: P,
     pub registry_xy: P,
+    pub randomizer_a: P,
+    pub randomizer_b: P,
+    pub mask: P,
 }
 
 impl<P> CurrentCommitments<P> {
@@ -320,6 +341,9 @@ impl<P> CurrentCommitments<P> {
             self.a,
             self.b,
             self.registry_xy,
+            self.randomizer_a,
+            self.randomizer_b,
+            self.mask,
         ]
     }
 }

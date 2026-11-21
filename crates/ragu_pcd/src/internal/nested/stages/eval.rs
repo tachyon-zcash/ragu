@@ -96,6 +96,10 @@ pub struct CurrentStepWitness<F> {
     pub a_poly: F,
     pub b_poly: F,
     pub registry_xy: F,
+    /// The step's own nested fold randomizers and batch randomizer.
+    pub randomizer_a: F,
+    pub randomizer_b: F,
+    pub mask: F,
 }
 
 /// The nested evaluations carried by this stage.
@@ -132,6 +136,9 @@ impl<F: Field, P: Profile> Evaluations<F, P> {
                 a_poly: F::ZERO,
                 b_poly: F::ZERO,
                 registry_xy: F::ZERO,
+                randomizer_a: F::ZERO,
+                randomizer_b: F::ZERO,
+                mask: F::ZERO,
             },
             online_fq: FixedVec::from_fn(|_| F::ZERO),
         }
@@ -212,6 +219,12 @@ pub struct EvaluationsOutput<'dr, D: Driver<'dr>, P: Profile> {
     pub b_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub registry_xy: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub randomizer_a: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub randomizer_b: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub mask: Element<'dr, D>,
     /// The step's own online Fq polynomials at $u_n$.
     #[ragu(gadget)]
     pub online_fq: FixedVec<Element<'dr, D>, FqPolysLen<P>>,
@@ -247,9 +260,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
     type OutputKind = Kind![C::Base; Output<'_, _, C, P>];
 
     fn values() -> usize {
-        // (x, y) per point + 2 children + current step elements (6)
+        // (x, y) per point + 2 children + current step elements (9)
         // + the online Fq polynomials
-        2 * <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len() + NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 6 + P::ONLINE_FQ_POLYS
+        2 * <crate::profile::online::stages::Present<P, crate::profile::online::stages::Native, 1> as ragu_primitives::vec::Len>::len() + NUM * 2 + 2 * (OwnRxLen::<P>::len() + 4) + 9 + P::ONLINE_FQ_POLYS
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::Base>>(
@@ -273,6 +286,9 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
             a_poly: current(dr, |c| c.a_poly)?,
             b_poly: current(dr, |c| c.b_poly)?,
             registry_xy: current(dr, |c| c.registry_xy)?,
+            randomizer_a: current(dr, |c| c.randomizer_a)?,
+            randomizer_b: current(dr, |c| c.randomizer_b)?,
+            mask: current(dr, |c| c.mask)?,
             online_fq: FixedVec::try_from_fn(|i| {
                 Element::alloc(dr, &mut (), witness.as_ref().map(|w| w.nested.online_fq[i]))
             })?,

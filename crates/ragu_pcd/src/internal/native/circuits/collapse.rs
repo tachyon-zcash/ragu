@@ -83,7 +83,7 @@ use ragu_core::{
     gadgets::Bound,
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt as _, allocator::Standard, vec::FixedVec};
+use ragu_primitives::{Element, GadgetExt as _, allocator::Standard, vec::FixedVec};
 
 use super::super::{
     claims::{TwoProofKySource, ky_values},
@@ -332,7 +332,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, FP: fold_revdot::Param
             left_online_helper,
             right_online_helper,
         );
-        let mut ky = ky_values::<C::Profile, _>(&ky);
+        // The grid holds the claims' targets with the fold randomizer's: the
+        // target the inner error stage witnessed at the last node of each
+        // group, and zeros in the last group, whose claim holds for any
+        // randomizer.
+        let zero = Element::zero(dr);
+        let mut ky = fold_revdot::randomized::<_, FP>(
+            ky_values::<C::Profile, _>(&ky),
+            zero.clone(),
+            inner_error.randomizer_c.clone(),
+            zero,
+        );
 
         // Verify each group's layer 1 reduction. For each group, fold the
         // inner error terms with the corresponding k(y) values and enforce the

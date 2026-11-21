@@ -1,7 +1,8 @@
 //! S-prime stage for nested fuse operations: the native `registry_wx`
-//! commitments, the commitments of the native preamble stage and of the
-//! step's own application trace, and the commitment of the native points
-//! stage holding the `registry_wx` commitments' nested counterparts.
+//! commitments, the commitments of the native preamble stage, of the
+//! step's own application trace and of its two fold randomizers, and the
+//! commitment of the native points stage holding the `registry_wx`
+//! commitments' and the fold randomizers' nested counterparts.
 //!
 //! The step folds its own application claim at the $y$ squeezed right after
 //! this stage's commitment is absorbed, so the trace, and the preamble that
@@ -36,7 +37,7 @@ use crate::profile::{
 };
 
 /// Number of curve points in this stage.
-const NUM: usize = 5;
+const NUM: usize = 7;
 
 /// Witness data for this bridge stage.
 pub struct Witness<C: Affine, P: Profile> {
@@ -52,6 +53,12 @@ pub struct Witness<C: Affine, P: Profile> {
     /// Commitment of the native points stage holding the nested
     /// `registry_wx` commitments, fixed here before $y$ is squeezed.
     pub native_points_registry_wx: C,
+    /// Commitments of the step's own native fold randomizers $a_r$ and
+    /// $b_r$ (see
+    /// [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)), fixed
+    /// here before the fold's challenges.
+    pub randomizer_a: C,
+    pub randomizer_b: C,
 }
 
 /// Prover-internal output gadget for this bridge stage.
@@ -73,6 +80,10 @@ pub struct Output<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub native_application: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub native_points_registry_wx: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub randomizer_a: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub randomizer_b: Point<'dr, D, C>,
 }
 
 #[derive(Default)]
@@ -109,6 +120,8 @@ impl<C: Affine, R: Rank, P: Profile> ragu_circuits::staging::Stage<C::Base, R> f
                 dr,
                 witness.as_ref().map(|w| w.native_points_registry_wx),
             )?,
+            randomizer_a: Point::alloc(dr, witness.as_ref().map(|w| w.randomizer_a))?,
+            randomizer_b: Point::alloc(dr, witness.as_ref().map(|w| w.randomizer_b))?,
         })
     }
 }

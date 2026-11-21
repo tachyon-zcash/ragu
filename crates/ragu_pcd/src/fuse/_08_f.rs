@@ -20,18 +20,19 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{
+    Blind,
     polynomials::{Rank, sparse},
     staging::StageExt,
 };
 use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::Element;
 use rand::CryptoRng;
-use udon::field::Field;
 
 use super::{
     _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
+    randomizer::{NativeRandomizer, NestedRandomizer, Randomizers},
 };
 use crate::{
     Application, Proof,
@@ -75,6 +76,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         application: &NativeApplication<C, R>,
+        randomizers: &Randomizers<C, R>,
     ) -> Result<(NativeF<C, R>, NestedF<C, R>)>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -91,20 +93,31 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left,
             right,
             application,
+            &randomizers.native,
         )?;
         let nested = {
-            let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+            let batch = self.nested_batch(
+                builder,
+                nested_s_prime,
+                nested_registry_wy,
+                left,
+                right,
+                &randomizers.nested,
+            );
             let challenges = self.nested_challenges(w, x, y, z, left, right)?;
             let alpha = nested::challenge::<C>(*alpha.value().take())?;
             self.compute_nested_f(&batch, challenges, alpha, builder)?
         };
+        // The batch randomizers are fixed here with the quotients, each
+        // side's commitment in the other side's stage.
         self.commit_native_points_f(
             rng,
             builder.nested_registry_xy_commitment(),
             nested.commitment,
+            randomizers.nested.mask_commitment,
             builder,
         )?;
-        self.compute_bridge_f(rng, &native, builder)?;
+        self.compute_bridge_f(rng, &native, &randomizers.native, builder)?;
         Ok((native, nested))
     }
 
@@ -116,13 +129,15 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         &self,
         rng: &mut RNG,
         native: &NativeF<C, R>,
+        randomizer: &NativeRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::f::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &nested::stages::f::Witness {
                 native_f: native.commitment,
                 native_points_f: builder.native_points_f_commitment(),
+                native_mask: randomizer.mask_commitment,
             },
         )?;
         let bridge_commitment =
@@ -144,6 +159,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         application: &NativeApplication<C, R>,
+        randomizer: &NativeRandomizer<C, R>,
     ) -> Result<NativeF<C, R>>
     where
         D: Driver<'dr, F = C::CircuitField>,
@@ -226,6 +242,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 StaticFQuery::CurrentApplicationStageAtXz => {
                     divide_linear_rev(application.stage.rx.iter_coeffs(), xz)
                 }
+                StaticFQuery::RandomizerAAtXz => divide_linear_rev(randomizer.a.iter_coeffs(), xz),
+                StaticFQuery::RandomizerBAtX => divide_linear_rev(randomizer.b.iter_coeffs(), x),
             })
             .collect();
         // Per-rx evaluations at xz only. The same r_i(xz) values feed
@@ -289,6 +307,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &'a NestedRegistryWy<C, R>,
         left: &'a Proof<C, R>,
         right: &'a Proof<C, R>,
+        randomizer: &'a NestedRandomizer<C, R>,
     ) -> pcs::Batch<'a, C, R> {
         pcs::Batch {
             left,
@@ -299,6 +318,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_xy: builder.nested_registry_xy_poly(),
             a: builder.nested_a_poly(),
             b: builder.nested_b_poly(),
+            randomizer_a: &randomizer.a,
+            randomizer_b: &randomizer.b,
+            mask: &randomizer.mask,
             online_fq: builder.online_fq_polynomials(),
         }
     }
