@@ -140,7 +140,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     pub(crate) native_bind_beta_rx: sparse::Polynomial<C::CircuitField, R>,
     // The native endoscaling walk over the nested batch's commitments: the
     // endoscalar binding circuit, the steps, the five points stages holding
-    // the walk's inputs (see `crate::verifier::recursive::native::stages::points`) and the walk stage
+    // the walk's inputs (see `crate::protocol::native::stages::points`) and the walk stage
     // holding the endoscalar's bits and the interstitials.
     pub(crate) native_bind_endoscalar_rx: sparse::Polynomial<C::CircuitField, R>,
     pub(crate) native_endoscaling_step_rxs: Vec<sparse::Polynomial<C::CircuitField, R>>,
@@ -167,7 +167,7 @@ pub struct Proof<C: Cycle, R: Rank> {
     // Bridge rx polynomials (non-cached, set by caller)
     pub(crate) bridge_preamble_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     /// The bridge-hash stage: the step's own `O1`, constructed unblinded
-    /// (see `crate::verifier::recursive::nested::stages::bridge_hash`).
+    /// (see `crate::protocol::nested::stages::bridge_hash`).
     pub(crate) bridge_hash_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_s_prime_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,
     pub(crate) bridge_inner_error_rx: Arc<sparse::Polynomial<C::ScalarField, R>>,

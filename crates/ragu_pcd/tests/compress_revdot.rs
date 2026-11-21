@@ -20,8 +20,8 @@ use super::{
 };
 use crate::{
     Application, ApplicationBuilder, Pcd, Proof,
+    ipa::CycleTranscript,
     protocol::{
-        ipa::CycleTranscript,
         ky,
         ky::{NativeKy, NestedKy},
         nested,
@@ -343,7 +343,7 @@ fn point_restriction_matches_the_materialized_one() {
     );
 }
 
-use crate::{
-    prover::compress::revdot::{Witness, reduce_native, reduce_nested},
-    verifier::decider::revdot::{verify_native, verify_nested},
+use crate::compress::revdot::{
+    prover::{Witness, reduce_native, reduce_nested},
+    verifier::{verify_native, verify_nested},
 };

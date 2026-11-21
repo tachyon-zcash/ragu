@@ -1,32 +1,18 @@
-//! Native curve circuits for recursive verification.
-//!
-//! Besides the circuits that verify the native fold and batch, the native
-//! side walks the nested batch's commitments: the endoscaling steps of
-//! [`circuits::endoscaling_step`] fold the [`NUM_ENDOSCALING_POINTS`]
-//! nested-curve points of [`stages::points`](crate::verifier::recursive::native::stages::points) into $P_n$ by Horner's rule
-//! under $\beta$'s endoscalar, which [`circuits::bind_endoscalar`] ties to
-//! `pre_beta`. The points are committed in stages the transcript absorbs
-//! before the challenges the nested openings are at (see
-//! [`stages::points`](crate::verifier::recursive::native::stages::points)). This mirrors the nested side's walk over the native
-//! batch.
-//!
-//! [`circuits::bind_endoscalar`] emits the bit and curve contracts the steps
-//! share, and pins the walk's endpoint and this step's persistent points to
-//! the unified instance. [`circuits::bind_beta`] holds the children's walked
-//! points against the children's unified instances.
+//! The native side's canonical sizes and orders: the internal circuit
+//! indices, the rx polynomials and their order in a proof, the fold groups of
+//! its revdot claims, the static `f` queries, and the sizes of the
+//! endoscaling walk over the nested batch.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-pub use circuits::bind_challenges::NUM_BINDERS;
 use ragu_circuits::registry::CircuitIndex;
 use ragu_primitives::vec::{ConstLen, FixedVec, Len};
 
 use crate::{
     profile::{Profile, Shape},
-    protocol::{fold_revdot::Parameters, nested},
+    protocol::{gadgets::endoscalar, nested, revdot::fold::Parameters},
     step,
-    verifier::recursive::gadgets::endoscalar,
 };
 
 /// The nested-curve points the native endoscaling walks into $P_n$ in the
@@ -88,6 +74,11 @@ const _: () = assert!(
 /// the batch that fixed point gives. The standard profile's is
 /// [`NUM_ENDOSCALING_STEPS`].
 pub type NumSteps<P> = endoscalar::NumStepsLen<NumPoints<P>, Endoscalings<P>>;
+
+/// The number of binding circuits, with two challenges per circuit.
+pub const NUM_BINDERS: usize = crate::protocol::nested::stages::challenges::NUM / 2;
+
+const _: () = assert!(crate::protocol::nested::stages::challenges::NUM.is_multiple_of(2));
 
 /// Length type for the circuits of the profile's native extension.
 pub struct NumExtensionCircuits<P: Profile>(core::marker::PhantomData<P>);
@@ -204,16 +195,16 @@ pub enum InternalCircuitIndex {
     CollapseCircuit,
     ComputeVCircuit,
     /// Nested challenge binding circuit at the given index (see
-    /// [`bind_challenges`](circuits::bind_challenges)).
+    /// [`bind_challenges`](crate::fuse::circuits::native::bind_challenges)).
     BindChallengesCircuit(u32),
     /// The children's nested beta binding circuit (see
-    /// [`bind_beta`](circuits::bind_beta)).
+    /// [`bind_beta`](crate::fuse::circuits::native::bind_beta)).
     BindBetaCircuit,
     /// The walk stage binding circuit (see
-    /// [`bind_endoscalar`](circuits::bind_endoscalar)).
+    /// [`bind_endoscalar`](crate::fuse::circuits::native::bind_endoscalar)).
     BindEndoscalarCircuit,
     /// A native endoscaling step (see
-    /// [`endoscaling_step`](circuits::endoscaling_step)).
+    /// [`endoscaling_step`](crate::fuse::circuits::native::endoscaling_step)).
     EndoscalingStep(u32),
     /// A circuit of the profile's native extension (see
     /// [`Extension`](crate::profile::Extension)).
@@ -260,7 +251,7 @@ pub fn total_circuit_counts<P: Profile>(num_application_steps: usize) -> (usize,
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`](crate::verifier::recursive::native::register::register_all),
+    /// The number of internal circuits registered by [`register_all`](crate::fuse::circuits::native::register::register_all),
     /// equal to the number of variants in [`InternalCircuitIndex`].
     pub const NUM: usize = NUM_FIXED_INTERNAL + NUM_ENDOSCALING_STEPS;
 
@@ -321,7 +312,7 @@ impl InternalCircuitIndex {
         slots
     }
 
-    /// The number of internal circuits registered by [`register_all`](crate::verifier::recursive::native::register::register_all) in
+    /// The number of internal circuits registered by [`register_all`](crate::fuse::circuits::native::register::register_all) in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
         NUM_FIXED_INTERNAL + NumSteps::<P>::len() + P::native_extension().internal()
@@ -586,7 +577,7 @@ pub enum RxIndex {
     Query,
     Eval,
     /// The points stage holding the children's commitments that must match
-    /// their native unified instances (see [`stages::points`](crate::verifier::recursive::native::stages::points)).
+    /// their native unified instances (see [`stages::points`](crate::protocol::native::stages::points)).
     PointsBinding,
     /// The points stage holding the rest of the children's commitments and
     /// the step's own online Fq commitments.
@@ -612,7 +603,7 @@ impl RxIndex {
     /// All variants in canonical order.
     ///
     /// This order matches the evaluation order in `poly_queries` (compute_v.rs)
-    /// and `prover/fuse/native/f.rs`, and drives the `Write` impl for `RxValues`. This is the
+    /// and `fuse/prover/native/f.rs`, and drives the `Write` impl for `RxValues`. This is the
     /// standard profile's list; [`all`](Self::all) resizes its walk and adds
     /// the extension for any other.
     pub const ALL: [Self; Self::NUM] = crate::protocol::const_fns::unwrap_all(Self::all_slots());
@@ -915,5 +906,3 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 20] = [
     StaticFQuery::CurrentAAtXz,
     StaticFQuery::CurrentBAtX,
 ];
-
-use crate::verifier::recursive::native::circuits;

@@ -6,16 +6,16 @@ use ragu_core::Cycle;
 use udon::curve::Affine;
 
 use crate::{
-    header::{Header, NUM_ONLINE_FP_POLYS},
-    profile::ProfiledCycle,
-    protocol::{
-        compress::{
-            batch::Batch,
-            instance::{self, Instance},
-            revdot::{Reduction, fold::Derived, native_components, nested_components},
+    compress::{
+        batch::Batch,
+        instance::{
+            Instance, {self},
         },
-        ipa::IpaProof,
+        revdot::{Reduction, fold::Derived, native_components, nested_components},
     },
+    header::{Header, NUM_ONLINE_FP_POLYS},
+    ipa::IpaProof,
+    profile::ProfiledCycle,
 };
 
 /// The prover's messages of the compression on one curve.

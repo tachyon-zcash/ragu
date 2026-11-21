@@ -68,12 +68,12 @@ mod proof_shape_tests;
 mod verify_rejection_tests;
 // Mutable component access for the corruption vocabulary (see
 // `crate::fuzzing`). Its source lives with the rest of the fuzzing surface in
-// `src/fuzzing/`, but it is mounted here, as a child of `proof`, so it can
+// `tests/fuzzing/`, but it is mounted here, as a child of `proof`, so it can
 // reach the private `Cached` fields without loosening them. The file gates
 // itself behind `unstable-fuzzing` with an inner `#![cfg]`, so no feature
 // attribute appears here.
 // TODO: Revisit this layout; for now, it keeps the fuzzing surface in one
 // directory without loosening `Proof`'s privacy or adding a feature
 // attribute here.
-#[path = "../fuzzing/access.rs"]
+#[path = "../../tests/fuzzing/access.rs"]
 mod access;

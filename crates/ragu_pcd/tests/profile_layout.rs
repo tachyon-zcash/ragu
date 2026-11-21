@@ -15,9 +15,11 @@ use udon::field::Field;
 
 use crate::{
     profile::{Aggregator, Profile, Profiled, Standard, testing::Wider},
-    protocol::native::{InternalCircuitIndex, InternalCircuitValues, RxIndex, RxValues},
+    protocol::native::{
+        InternalCircuitIndex, InternalCircuitValues, RxIndex, RxValues,
+        stages::{eval, query},
+    },
     test_support::internal::assert_stage_values,
-    verifier::recursive::native::stages::{eval, query},
 };
 
 #[test]

@@ -17,8 +17,7 @@ use udon::field::Field;
 use super::{Kind, Masked, Shape};
 use crate::{
     Application, ApplicationBuilder,
-    protocol::{native, nested},
-    prover::claims::Builder,
+    protocol::{native, nested, revdot::Builder},
 };
 
 type TestR = ProductionRank;
@@ -186,4 +185,4 @@ fn binding_rejects_a_repeated_degree() {
     );
 }
 
-use crate::prover::compress::revdot::{NativePolys, NestedPolys};
+use crate::compress::revdot::prover::{NativePolys, NestedPolys};

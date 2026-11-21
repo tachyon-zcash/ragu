@@ -11,18 +11,18 @@
 //!   `eval`, $a$, $b$, `registry_xy` and $P$, then the five native points
 //!   stages holding the walk's inputs, the native stages besides those whose
 //!   contents must be fixed before a challenge is squeezed (see
-//!   [native points stages](crate::verifier::recursive::native::stages::points)),
+//!   [native points stages](crate::protocol::native::stages::points)),
 //!   and the step's own online polynomials', which the parent opens as its
 //!   left or right slots (see [`online`](crate::protocol::native::online)).
 //!
 //! A parent witnesses all of these in its `preamble` bridge stage. Its
-//! [`collapse`](crate::verifier::recursive::nested::circuits::collapse) circuit computes the expected
+//! [`collapse`](crate::fuse::circuits::nested::collapse) circuit computes the expected
 //! $k(y_n)$ from those copies and checks their use in the nested fold,
 //! binding them to this step's exported values outside the base case.
 //! Each slot is the responsibility of exactly one circuit: the
-//! [`collapse`](crate::verifier::recursive::nested::circuits::collapse) circuit pins $x$, $y$, $u$ and the
+//! [`collapse`](crate::fuse::circuits::nested::collapse) circuit pins $x$, $y$, $u$ and the
 //! commitments to the stages that hold them and checks $c_n$; the
-//! [`compute_v`](crate::verifier::recursive::nested::circuits::compute_v) circuit computes $v_n$. The
+//! [`compute_v`](crate::fuse::circuits::nested::compute_v) circuit computes $v_n$. The
 //! [`OutputBuilder`] tracks that [`Coverage`] the way the native instance's
 //! builder does, and the prover asserts it complete once every circuit is
 //! traced.

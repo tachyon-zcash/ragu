@@ -25,13 +25,11 @@ use super::{
 use crate::{
     Pcd, Proof, RAGU_TAG,
     header::{Header, Padding, Suffix},
+    ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
     proof::recursive_propagation_tests::support::{
         App, HEADER_SIZE, Merge, Seed, TestPcd, UnitLeft, UnitRight, Value, with_app,
     },
-    protocol::{
-        ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
-        ky, native, nested,
-    },
+    protocol::{ky, native, nested},
 };
 
 fn check_targets<H: Header<Fp>>(

@@ -214,10 +214,10 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         assert!(circuit < CIRCUITS);
-        slot.register(
-            crate::verifier::recursive::native::circuits::bind_endoscalar::Circuit::<Base, R>::new(
-            ),
-        )
+        slot.register(crate::fuse::circuits::native::bind_endoscalar::Circuit::<
+            Base,
+            R,
+        >::new())
     }
 
     fn register_native_bonding<'params, Base, R: Rank, const HEADER_SIZE: usize>(
@@ -228,8 +228,7 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        type Stage<C, R, const H: usize> =
-            crate::verifier::recursive::native::stages::eval::Stage<C, R, H>;
+        type Stage<C, R, const H: usize> = crate::protocol::native::stages::eval::Stage<C, R, H>;
         let mask = match bonding {
             0 => Stage::<Base, R, HEADER_SIZE>::mask()?,
             1 => Stage::<Base, R, HEADER_SIZE>::final_mask()?,
@@ -247,11 +246,8 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
         assert_eq!(circuit, 0);
-        let circuit = crate::verifier::recursive::nested::circuits::collapse::Circuit::<
-            Base::HostCurve,
-            R,
-            Standard,
-        >::new();
+        let circuit =
+            crate::fuse::circuits::nested::collapse::Circuit::<Base::HostCurve, R, Standard>::new();
         slot.register(MultiStage::new(circuit))
     }
 
@@ -263,11 +259,8 @@ impl<const CIRCUITS: usize> Profile for Hooked<CIRCUITS> {
     where
         Base: IpaCycle + ProfiledCycle<Profile = Standard>,
     {
-        type Stage<C, R> = crate::verifier::recursive::nested::stages::eval::Stage<
-            <C as Cycle>::HostCurve,
-            R,
-            Standard,
-        >;
+        type Stage<C, R> =
+            crate::protocol::nested::stages::eval::Stage<<C as Cycle>::HostCurve, R, Standard>;
         let mask = match bonding {
             0 => Stage::<Base, R>::mask()?,
             1 => Stage::<Base, R>::final_mask()?,
@@ -378,7 +371,7 @@ impl<F: Field, const HEADER_SIZE: usize> Circuit<F> for StatementCircuit<F, HEAD
 /// proving, as a decompression prover would be handed the compressed
 /// proof to verify.
 ///
-/// [`statement_ky`]: crate::verifier::recursive::native::stages::preamble::ProofInputs::statement_ky
+/// [`statement_ky`]: crate::protocol::native::stages::preamble::ProofInputs::statement_ky
 pub(crate) struct StatementContext<F> {
     header: Mutex<Option<Vec<F>>>,
 }

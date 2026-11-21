@@ -16,15 +16,13 @@ use udon::field::Field;
 use super::Instance;
 use crate::{
     Application, ApplicationBuilder, Pcd, RAGU_TAG,
-    protocol::{
-        compress::revdot::{
-            claims,
-            claims::{Kind, Masked},
-            fold::Derived,
-        },
-        ipa::CycleTranscript,
-        ky, native, nested,
+    compress::revdot::{
+        claims,
+        claims::{Kind, Masked},
+        fold::Derived,
     },
+    ipa::CycleTranscript,
+    protocol::{ky, native, nested},
 };
 
 type TestR = ProductionRank;

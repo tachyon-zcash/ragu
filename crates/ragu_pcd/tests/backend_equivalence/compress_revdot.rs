@@ -235,4 +235,4 @@ fn error_terms_reject_an_uncomputed_product() {
     errors::<_, TestRank, SkippingBackend>(|_| &poly, |_| &poly, [(0, 0), (0, 1)].into_iter());
 }
 
-use crate::prover::compress::revdot::errors;
+use crate::compress::revdot::prover::errors;

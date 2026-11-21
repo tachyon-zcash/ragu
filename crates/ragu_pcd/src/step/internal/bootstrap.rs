@@ -24,7 +24,7 @@
 //! [`dummy_pcd`]: crate::Application::dummy_pcd
 //! [`finalize`]: crate::ApplicationBuilder::finalize
 //! [`seed`]: crate::Application::seed
-//! [`collapse`]: crate::verifier::recursive::native::circuits::collapse
+//! [`collapse`]: crate::fuse::circuits::native::collapse
 
 use ragu_core::{
     Cycle, Result,

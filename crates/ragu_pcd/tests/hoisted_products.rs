@@ -23,9 +23,7 @@ use crate::{
     },
     profile::ProfiledCycle,
     proof::recursive_propagation_tests::support,
-    verifier::recursive::{
-        gadgets::endoscalar::EndoscalarStage, native::stages::points::WalkStage,
-    },
+    protocol::{gadgets::endoscalar::EndoscalarStage, native::stages::points::WalkStage},
 };
 
 #[derive(Default)]

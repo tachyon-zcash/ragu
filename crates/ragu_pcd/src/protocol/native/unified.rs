@@ -14,8 +14,8 @@
 //! internal circuits are fixed by the protocol while application circuits
 //! vary, this distinction is critical for soundness.
 //!
-//! [`hashes_1`]: crate::verifier::recursive::native::circuits::hashes_1
-//! [`hashes_2`]: crate::verifier::recursive::native::circuits::hashes_2
+//! [`hashes_1`]: crate::fuse::circuits::native::hashes_1
+//! [`hashes_2`]: crate::fuse::circuits::native::hashes_2
 
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{
@@ -99,7 +99,7 @@ macro_rules! define_unified_instance {
     ) => {
         /// Shared public instance for internal verification circuits.
         ///
-        /// Unlike stage [`Output`](crate::verifier::recursive::native::stages) types (which are prover-internal
+        /// Unlike stage [`Output`](crate::protocol::native::stages) types (which are prover-internal
         /// communication), this gadget is the verifier-visible instance: its fields
         /// are serialized into the $k(Y)$ instance polynomial that the verifier
         /// checks.
@@ -117,8 +117,8 @@ macro_rules! define_unified_instance {
         /// - **Challenges**: Fiat-Shamir challenges computed by [`hashes_1`] and [`hashes_2`]
         /// - **Final values**: The revdot claim $c$ and expected evaluation $v$
         ///
-        /// [`hashes_1`]: crate::verifier::recursive::native::circuits::hashes_1
-        /// [`hashes_2`]: crate::verifier::recursive::native::circuits::hashes_2
+        /// [`hashes_1`]: crate::fuse::circuits::native::hashes_1
+        /// [`hashes_2`]: crate::fuse::circuits::native::hashes_2
         #[derive(Gadget, Write, Consistent)]
         pub struct Output<'dr, D: Driver<'dr>, C: Cycle<CircuitField = D::F>> {
             $(

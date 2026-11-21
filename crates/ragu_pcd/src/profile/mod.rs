@@ -63,7 +63,8 @@ use rand::CryptoRng;
 pub use crate::protocol::nested::online::NUM_ONLINE_FQ_POLYS;
 use crate::{
     SelectableBackend,
-    protocol::{ipa::IpaCycle, native, nested},
+    ipa::IpaCycle,
+    protocol::{native, nested},
 };
 
 mod extension;

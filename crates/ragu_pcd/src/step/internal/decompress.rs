@@ -55,7 +55,7 @@
 //! [`Rerandomize`]: crate::step::internal::rerandomize::Rerandomize
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
 //! [`Dummy`]: crate::header::Dummy
-//! [`statement_ky`]: crate::verifier::recursive::native::stages::preamble::ProofInputs::statement_ky
+//! [`statement_ky`]: crate::protocol::native::stages::preamble::ProofInputs::statement_ky
 //! [`num_internal_steps`]: crate::step::num_internal_steps
 
 use core::marker::PhantomData;

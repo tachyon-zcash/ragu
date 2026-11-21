@@ -27,15 +27,13 @@ use udon::{
 
 use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof, SelectableBackend,
-    proof::Messages,
-    protocol::{
-        compress::{
-            batch::Batch,
-            instance::{Child, Instance, NestedChild},
-            revdot::{Reduction, fold::Fold},
-        },
-        ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
+    compress::{
+        batch::Batch,
+        instance::{Child, Instance, NestedChild},
+        revdot::{Reduction, fold::Fold},
     },
+    ipa::{CycleTranscript, IPA_TAG, IpaTranscript},
+    proof::Messages,
     step::{Encoded, Index, Oracles, Step},
 };
 

@@ -26,20 +26,17 @@ use udon::field::Field;
 
 use crate::{
     Application, ApplicationBuilder, CompressedPcd, CompressedProof, Pcd, Proof,
+    compress::revdot::{native_position, nested_position},
     header::{Header, Padding, Suffix},
     proof::recursive_propagation_tests::{support, support::Cache},
-    protocol::{
-        compress::revdot::{native_position, nested_position},
-        native, nested,
-    },
+    protocol::{native, nested},
     step::{Encoded, Index, Oracles, Step},
 };
 
 type TestR = ProductionRank;
 const HEADER_SIZE: usize = 4;
 type App = Application<'static, Pasta, TestR, HEADER_SIZE>;
-type NativeEval =
-    crate::verifier::recursive::native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE>;
+type NativeEval = crate::protocol::native::stages::eval::Stage<Pasta, TestR, HEADER_SIZE>;
 
 /// A header carrying one field element.
 struct Value;

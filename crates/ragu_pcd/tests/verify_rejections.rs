@@ -16,16 +16,14 @@ use udon::{curve::Affine, field::Field};
 
 use crate::{
     Application, ApplicationBuilder,
+    compress::revdot::{native_position, nested_position},
     header::{Header, Padding, Suffix},
+    ipa::IpaCycle,
     profile::{
         Profile, Profiled, ProfiledCycle,
         testing::{Crossing, CrossingBack, CrossingContext},
     },
-    protocol::{
-        compress::revdot::{native_position, nested_position},
-        ipa::IpaCycle,
-        native, nested,
-    },
+    protocol::{native, nested},
 };
 
 const HEADER_SIZE: usize = 4;

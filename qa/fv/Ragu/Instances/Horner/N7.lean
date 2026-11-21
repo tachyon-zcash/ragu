@@ -3,7 +3,7 @@ import Ragu.Core
 
 /-!
 `ragu_circuits::horner::Horner` at seven coefficients, the `GroupSize` shape
-`fold_revdot.rs` uses. See `Ragu.Instances.Horner.N3` for why the
+`protocol/revdot/fold.rs` uses. See `Ragu.Instances.Horner.N3` for why the
 reimplementation is `Fold.circuit` itself.
 -/
 

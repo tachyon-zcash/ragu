@@ -12,8 +12,8 @@ use udon::{
 };
 
 use crate::{
+    ipa::IpaCycle,
     pasta::{DEFAULT_EP_K, DEFAULT_EQ_K, PastaParams},
-    protocol::ipa::IpaCycle,
 };
 
 bento::embed_array! {

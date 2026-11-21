@@ -9,7 +9,7 @@
 //! not the header exposed has a false claim, and so does a proof of any other
 //! step whose statement circuit exposes anything but the unit header.
 //!
-//! [`statement_ky`]: crate::verifier::recursive::native::stages::preamble::ProofInputs::statement_ky
+//! [`statement_ky`]: crate::protocol::native::stages::preamble::ProofInputs::statement_ky
 
 use alloc::vec::Vec;
 

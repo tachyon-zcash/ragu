@@ -44,14 +44,15 @@ pub(crate) mod support {
     use crate::{
         Application, ApplicationBuilder, Pcd, Proof,
         header::{Header, Padding, Suffix},
-        protocol::{Side, native, nested},
-        step::{Encoded, Index, Oracles, Step},
-        verifier::recursive::{
+        protocol::{
+            Side, native,
             native::stages::{
                 eval as native_eval, points::BindingStage, preamble as native_preamble,
             },
+            nested,
             nested::stages::{eval as nested_eval, preamble},
         },
+        step::{Encoded, Index, Oracles, Step},
     };
 
     pub(crate) type App = Application<'static, C, R, HEADER_SIZE>;
@@ -553,7 +554,7 @@ pub(crate) mod support {
         let circuit_id = stage_wire_indices::<
             _,
             R,
-            crate::verifier::recursive::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            crate::protocol::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
         >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
@@ -570,7 +571,7 @@ pub(crate) mod support {
         let native_claims = stage_wire_indices::<
             _,
             R,
-            crate::verifier::recursive::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
+            crate::protocol::native::stages::preamble::Stage<C, R, HEADER_SIZE>,
         >(|stage| {
             let child = match side {
                 Side::Left => &stage.left,
@@ -1000,7 +1001,7 @@ mod endpoints {
         support,
         support::{C, R, Value, coordinates},
     };
-    use crate::{protocol::nested, verifier::recursive::native::stages::points::WalkStage};
+    use crate::protocol::{native::stages::points::WalkStage, nested};
 
     fn check(
         app: &support::App,
@@ -1098,7 +1099,7 @@ mod endpoints {
             }
             assert_eq!(changed.v(), native_v);
             assert_eq!(changed.nested_v()?, nested_v);
-            assert!(crate::test_support::decider_uncompressed::nested_points_match(&changed)?);
+            assert!(crate::fuse::decider::nested_points_match(&changed)?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(
@@ -1170,10 +1171,12 @@ mod timing {
     use crate::{
         Proof, RAGU_TAG,
         proof::bridge_alpha_power,
-        protocol::{native, nested, transcript::Transcript},
-        verifier::recursive::{
+        protocol::{
+            native,
             native::stages::points::{AbStage, FStage},
+            nested,
             nested::stages::{ab, f},
+            transcript::Transcript,
         },
     };
 
@@ -1370,7 +1373,7 @@ mod timing {
             }
             assert_eq!(changed.x(), honest.proof().x());
             assert_eq!(changed.u(), honest.proof().u());
-            assert!(crate::test_support::decider_uncompressed::nested_points_match(&changed)?);
+            assert!(crate::fuse::decider::nested_points_match(&changed)?);
             let child = changed.carry::<Value>(data);
             let expected = case == "honest";
             assert_eq!(
@@ -1439,7 +1442,7 @@ mod commitments {
         inputs: &support::Inputs,
         delta: Fq,
     ) -> Result<()> {
-        type ChallengeStage = crate::verifier::recursive::nested::stages::challenges::Stage<
+        type ChallengeStage = crate::protocol::nested::stages::challenges::Stage<
             <C as Cycle>::HostCurve,
             R,
             <C as ProfiledCycle>::Profile,
@@ -1479,10 +1482,7 @@ mod commitments {
             // Keep the exported partial consistent with the edited commitment:
             // it contains every term except beta's. Rejection must still hold
             // after both commitment representations have been repaired.
-            if coefficient
-                != crate::verifier::recursive::native::circuits::bind_beta::generator_index::<C, R>(
-                )
-            {
+            if coefficient != crate::fuse::circuits::native::bind_beta::generator_index::<C, R>() {
                 changed.nested_challenges_partial =
                     (changed.nested_challenges_partial.to_projective()
                         + C::nested_generators(app.params).g()[coefficient] * delta)
@@ -1506,12 +1506,12 @@ mod commitments {
         use ragu_core::{Cycle, FixedGenerators};
         use udon::curve::Projective;
 
-        use crate::verifier::recursive::native::{
-            circuits::{
-                bind_beta,
-                bind_challenges::{NUM_BINDERS, NUM_BOUND},
+        use crate::{
+            fuse::circuits::native::{bind_beta, bind_challenges::NUM_BOUND},
+            protocol::native::{
+                NUM_BINDERS,
+                stages::eval::{BindingPartials, generator_index},
             },
-            stages::eval::{BindingPartials, generator_index},
         };
 
         let pasta = app.params;
@@ -1520,15 +1520,14 @@ mod commitments {
         //    beta's lift.
         let lifts = parent.challenges().lifts::<C>()?;
         let (challenge_lifts, beta_lift) = lifts.split_at(NUM_BOUND);
-        let challenges =
-            crate::verifier::recursive::nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
-                challenge_lifts.try_into().unwrap(),
-                parent.left_header(),
-                parent.right_header(),
-                beta_lift[0],
-            );
+        let challenges = crate::protocol::nested::stages::challenges::Witness::new::<_, HEADER_SIZE>(
+            challenge_lifts.try_into().unwrap(),
+            parent.left_header(),
+            parent.right_header(),
+            beta_lift[0],
+        );
         assert_eq!(challenges.base_case_sign, sign);
-        let expected = crate::verifier::recursive::nested::stages::challenges::Stage::<
+        let expected = crate::protocol::nested::stages::challenges::Stage::<
             ragu_core::pasta::EqAffine,
             R,
             crate::profile::Standard,
@@ -1548,9 +1547,9 @@ mod commitments {
         for (i, lift) in challenge_lifts.iter().enumerate() {
             binding += generators.g()[generator_index::<C, R>(i)] * *lift;
         }
-        binding += generators.g()[generator_index::<C, R>(
-            crate::verifier::recursive::nested::stages::challenges::SIGN_INDEX,
-        )] * sign;
+        binding += generators.g()
+            [generator_index::<C, R>(crate::protocol::nested::stages::challenges::SIGN_INDEX)]
+            * sign;
         let beta_term = generators.g()[bind_beta::generator_index::<C, R>()] * beta_lift[0];
         assert_eq!(
             parent.nested_challenges_commitment(),
@@ -1578,7 +1577,7 @@ mod commitments {
             }
             if k + 1 == NUM_BINDERS {
                 acc += generators.g()[generator_index::<C, R>(
-                    crate::verifier::recursive::nested::stages::challenges::SIGN_INDEX,
+                    crate::protocol::nested::stages::challenges::SIGN_INDEX,
                 )] * sign;
                 assert_eq!(partials.binding, acc.to_affine(), "binding");
             } else {
@@ -1604,9 +1603,9 @@ mod commitments {
         use ragu_circuits::staging::{StageReader, stage_wire_indices, wires_of};
         use udon::curve::{Affine, Projective};
 
-        use crate::{
-            protocol::native::RxIndex,
-            verifier::recursive::native::stages::points::{BindingStage, WalkStage},
+        use crate::protocol::native::{
+            RxIndex,
+            stages::points::{BindingStage, WalkStage},
         };
 
         type Nested = <C as ragu_core::Cycle>::NestedCurve;
@@ -1668,7 +1667,7 @@ mod commitments {
         );
 
         for pcd in [parent_pcd, left_pcd, right_pcd] {
-            assert!(crate::test_support::decider_uncompressed::nested_points_match(pcd.proof())?);
+            assert!(crate::fuse::decider::nested_points_match(pcd.proof())?);
             assert!(app.verify_differential(pcd, inputs.verifier_rng())?);
         }
 
@@ -1691,7 +1690,7 @@ mod commitments {
             ] {
                 *cache(&mut changed) = point;
                 assert!(
-                    !crate::test_support::decider_uncompressed::nested_points_match(&changed)?,
+                    !crate::fuse::decider::nested_points_match(&changed)?,
                     "mismatched {name}"
                 );
             }

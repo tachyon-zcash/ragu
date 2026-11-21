@@ -19,8 +19,8 @@ use ragu_primitives::{Element, vec::Len};
 use crate::{
     profile::Profile,
     protocol::{
-        claims::Source,
         native::{InternalCircuitIndex, NUM_BINDERS, NumSteps, RxComponent, RxIndex},
+        revdot::Source,
     },
 };
 
@@ -33,12 +33,12 @@ use crate::{
 /// [`compute_v`] uses `compute_v_bridge_ky`, because its public inputs
 /// include the step's online openings (see [`compute_v::Output`]).
 ///
-/// [`hashes_1`]: crate::verifier::recursive::native::circuits::hashes_1
-/// [`hashes_1::Output`]: crate::verifier::recursive::native::circuits::hashes_1::Output
-/// [`hashes_2`]: crate::verifier::recursive::native::circuits::hashes_2
-/// [`collapse`]: crate::verifier::recursive::native::circuits::collapse
-/// [`compute_v`]: crate::verifier::recursive::native::circuits::compute_v
-/// [`compute_v::Output`]: crate::verifier::recursive::native::circuits::compute_v::Output
+/// [`hashes_1`]: crate::fuse::circuits::native::hashes_1
+/// [`hashes_1::Output`]: crate::fuse::circuits::native::hashes_1::Output
+/// [`hashes_2`]: crate::fuse::circuits::native::hashes_2
+/// [`collapse`]: crate::fuse::circuits::native::collapse
+/// [`compute_v`]: crate::fuse::circuits::native::compute_v
+/// [`compute_v::Output`]: crate::fuse::circuits::native::compute_v::Output
 /// [`unified::InternalOutputKind`]: crate::protocol::native::unified::InternalOutputKind
 const NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V: usize = 2;
 
@@ -46,7 +46,7 @@ const NUM_UNIFIED_CIRCUITS_BEFORE_COMPUTE_V: usize = 2;
 /// [`compute_v`]: the [`NUM_BINDERS`] `bind_challenges` circuits,
 /// `bind_beta` and `bind_endoscalar`.
 ///
-/// [`compute_v`]: crate::verifier::recursive::native::circuits::compute_v
+/// [`compute_v`]: crate::fuse::circuits::native::compute_v
 const NUM_UNIFIED_CIRCUITS_AFTER_COMPUTE_V: usize = 2 + NUM_BINDERS;
 
 /// The points stages the walk's inputs are committed in, in chain order.
@@ -63,12 +63,12 @@ const POINTS_INPUT_STAGES: [RxIndex; 5] = [
 /// Defines how to process `rx` values from a [`Source`]. Implementations handle
 /// polynomial and evaluation contexts differently:
 ///
-/// - **Polynomial context** ([`Builder`](crate::prover::claims::Builder)): `Rx` is a polynomial
+/// - **Polynomial context** ([`Builder`](crate::protocol::revdot::Builder)): `Rx` is a polynomial
 ///   reference. The processor accumulates polynomials for error term
 ///   construction.
-/// - **Fuse path** ([`Builder`](crate::prover::claims::Builder) with `TrackedPoly` `A`): `Rx` is an
+/// - **Fuse path** ([`Builder`](crate::protocol::revdot::Builder) with `TrackedPoly` `A`): `Rx` is an
 ///   `Atom` pairing a polynomial reference with a `FoldKey` key for
-///   commitment decomposition tracking (see `fuse::claims`).
+///   commitment decomposition tracking (see `fuse::prover::claim_sources`).
 /// - **Evaluation context**: `Rx` carries a single evaluated field element at
 ///   $xz$. Both the `ax` and `bx` vectors derive from this shared evaluation:
 ///   `ax` uses $r\_i(xz)$ directly (since $A$ has no dilation), while `bx` adds
@@ -124,7 +124,7 @@ pub trait Processor<P: Profile, Rx, AppCircuitId> {
 /// `[L_raw, R_raw, L_app, R_app, L_h1, R_h1, ...]` for two-proof sources.
 ///
 /// This ordering must match the $k(y)$ ordering in
-/// [`collapse`](crate::verifier::recursive::native::circuits::collapse)
+/// [`collapse`](crate::fuse::circuits::native::collapse)
 /// and `compute_outer_error` in the fuse implementation.
 pub fn build<P: Profile, S, Pr>(source: &S, processor: &mut Pr) -> Result<()>
 where
@@ -421,7 +421,7 @@ pub trait KySource {
 
     /// One value per proof for the statement circuit of the profile's
     /// native extension: the $k(y)$ of the output header it exposes, as
-    /// [`statement_ky`](crate::verifier::recursive::native::stages::preamble::ProofInputs::statement_ky)
+    /// [`statement_ky`](crate::protocol::native::stages::preamble::ProofInputs::statement_ky)
     /// computes it, and none for a profile without one.
     fn statement_ky(&self) -> impl Iterator<Item = Self::Ky> + Clone;
 
@@ -445,9 +445,9 @@ pub fn ky_values<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S:
 /// the stage claims' zeros. The endoscaling targets follow profile `P`.
 ///
 /// The unified values come from
-/// [`ProofInputs::unified_ky_values`](crate::verifier::recursive::native::stages::preamble::ProofInputs::unified_ky_values),
+/// [`ProofInputs::unified_ky_values`](crate::protocol::native::stages::preamble::ProofInputs::unified_ky_values),
 /// and the `compute_v` bridge values from
-/// [`ProofInputs::compute_v_bridge_ky`](crate::verifier::recursive::native::stages::preamble::ProofInputs::compute_v_bridge_ky).
+/// [`ProofInputs::compute_v_bridge_ky`](crate::protocol::native::stages::preamble::ProofInputs::compute_v_bridge_ky).
 pub fn ky_prefix<P: Profile, S: KySource>(source: &S) -> impl Iterator<Item = S::Ky> {
     source
         .raw_c()
@@ -511,8 +511,8 @@ impl<'dr, D: Driver<'dr>> TwoProofKySource<'dr, D> {
         dr: &mut D,
         left_raw_c: Element<'dr, D>,
         right_raw_c: Element<'dr, D>,
-        left_ky: &crate::verifier::recursive::native::stages::outer_error::ChildKyOutputs<'dr, D>,
-        right_ky: &crate::verifier::recursive::native::stages::outer_error::ChildKyOutputs<'dr, D>,
+        left_ky: &crate::protocol::native::stages::outer_error::ChildKyOutputs<'dr, D>,
+        right_ky: &crate::protocol::native::stages::outer_error::ChildKyOutputs<'dr, D>,
         left_statement: Option<Element<'dr, D>>,
         right_statement: Option<Element<'dr, D>>,
         left_binding: Option<Element<'dr, D>>,

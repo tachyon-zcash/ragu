@@ -338,11 +338,8 @@ mod stages {
         support,
         support::{C, R, Value},
     };
-    use crate::{
-        protocol::nested,
-        verifier::recursive::{
-            gadgets::endoscalar::EndoscalarStage, native::stages::points::WalkStage,
-        },
+    use crate::protocol::{
+        gadgets::endoscalar::EndoscalarStage, native::stages::points::WalkStage, nested,
     };
 
     /// The unsigned value of a radix-3 digit with twist wires `e1`, `e2`:
@@ -586,7 +583,7 @@ mod stages {
                 support::coordinates(honest.proof().native_p_commitment()),
                 "{mutation:?}: the nested walk must still end at the committed P"
             );
-            assert!(crate::test_support::decider_uncompressed::nested_points_match(&changed)?);
+            assert!(crate::fuse::decider::nested_points_match(&changed)?);
             let child = changed.carry::<Value>(data);
             let expected = !native && !nested;
             assert_eq!(

@@ -33,10 +33,13 @@
 //! the envelope layout, version rules and input size limits, including the
 //! limits callers must apply to Serde backends before they allocate buffers.
 //!
-//! Internally, `prover` constructs proofs and witnesses; `verifier::recursive`
-//! defines recursive verification constraints; `verifier::decider` decides final
-//! acceptance using `verifier::ipa`. Shared representations and algebra live in
-//! `protocol`. The uncompressed decider is a test oracle in `test_support`.
+//! Internally, each subprotocol keeps its prover and verifier side by side:
+//! `fuse` constructs proofs (`fuse::prover`), constrains them recursively
+//! (`fuse::circuits`) and holds the reference decider, a test oracle
+//! (`fuse::decider`); `compress` compresses proofs and decides final
+//! acceptance; `ipa` opens their commitments. The definitions they share live
+//! in `protocol`. The crate's `ARCHITECTURE.md` maps each entry point to its
+//! files and gives a reading order for review.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -55,22 +58,25 @@ extern crate std;
 
 mod application;
 mod backend;
-// The fuzzing surface. Gates itself behind `unstable-fuzzing` with an inner
+mod compress;
+mod fuse;
+// The fuzzing surface. Its source lives in `tests/fuzzing/` with the crate's
+// other test code. It gates itself behind `unstable-fuzzing` with an inner
 // `#![cfg]` and hides itself from the docs, so no feature attribute appears
 // here.
+#[path = "../tests/fuzzing/mod.rs"]
 pub mod fuzzing;
 pub mod header;
 pub mod ipa;
+mod multicore;
 pub mod pasta;
 pub mod profile;
 mod proof;
 mod protocol;
-mod prover;
 pub mod step;
 // The uncompressed verifier. Gates itself behind `test-utils` (or the crate's
 // own tests) with an inner `#![cfg]`, like `fuzzing`.
 mod test_support;
-mod verifier;
 pub mod wire;
 
 #[cfg(test)]

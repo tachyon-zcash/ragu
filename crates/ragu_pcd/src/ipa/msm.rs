@@ -1,0 +1,183 @@
+// Reference operands are kept as halo2 writes them so the body stays
+// diffable against upstream.
+#![allow(clippy::op_ref)]
+
+use alloc::{collections::BTreeMap, vec, vec::Vec};
+
+use ragu_backend::Backend;
+use udon::{
+    curve::{Affine, Projective},
+    field::Field,
+};
+
+use crate::{SelectableBackend, ipa::Params};
+
+/// Evaluates an IPA MSM through the selected backend, requiring equal lengths.
+pub(crate) fn multiexp<C: Affine, B: Backend>(scalars: &[C::Scalar], bases: &[C]) -> C::Projective {
+    assert_eq!(
+        scalars.len(),
+        bases.len(),
+        "msm operands must have equal length"
+    );
+    B::msm(scalars, bases)
+}
+
+/// Schedules independent IPA MSMs, requiring equal operand lengths for each.
+pub(crate) fn multiexp_batch<C: Affine, B: Backend, const N: usize>(
+    inputs: [(&[C::Scalar], &[C]); N],
+) -> [C::Projective; N] {
+    for (scalars, bases) in &inputs {
+        assert_eq!(
+            scalars.len(),
+            bases.len(),
+            "msm operands must have equal length"
+        );
+    }
+    B::msm_batch(inputs)
+}
+
+/// A multiscalar multiplication in the polynomial commitment scheme
+#[derive(Debug, Clone)]
+pub struct MSM<'a, C: Affine> {
+    pub(crate) params: &'a Params<C>,
+    g_scalars: Option<Vec<C::Scalar>>,
+    u_scalar: Option<C::Scalar>,
+    // x-coordinate's bytes -> (scalar, x-coordinate, y-coordinate)
+    other: BTreeMap<Vec<u8>, (C::Scalar, C::Base, C::Base)>,
+}
+
+impl<'a, C: Affine> MSM<'a, C> {
+    /// Create a new, empty MSM using the provided parameters.
+    pub fn new(params: &'a Params<C>) -> Self {
+        let g_scalars = None;
+        let u_scalar = None;
+        let other = BTreeMap::new();
+
+        MSM {
+            params,
+            g_scalars,
+            u_scalar,
+            other,
+        }
+    }
+
+    /// Add another multiexp into this one
+    pub fn add_msm(&mut self, other: &Self) {
+        for (key, (scalar, x, y)) in other.other.iter() {
+            self.other
+                .entry(key.clone())
+                .and_modify(|(our_scalar, _, our_y)| {
+                    if our_y == y {
+                        *our_scalar += *scalar;
+                    } else {
+                        assert!(*our_y == -*y);
+                        *our_scalar -= *scalar;
+                    }
+                })
+                .or_insert((*scalar, *x, *y));
+        }
+
+        if let Some(g_scalars) = &other.g_scalars {
+            self.add_to_g_scalars(g_scalars);
+        }
+
+        if let Some(u_scalar) = &other.u_scalar {
+            self.add_to_u_scalar(*u_scalar);
+        }
+    }
+
+    /// Add arbitrary term (the scalar and the point)
+    pub fn append_term(&mut self, scalar: C::Scalar, point: C) {
+        if !point.is_identity() {
+            let (x, y) = point.coordinates().expect("not the identity");
+
+            self.other
+                .entry(x.to_bytes().as_ref().to_vec())
+                .and_modify(|(our_scalar, _, our_y)| {
+                    if *our_y == y {
+                        *our_scalar += scalar;
+                    } else {
+                        assert!(*our_y == -y);
+                        *our_scalar -= scalar;
+                    }
+                })
+                .or_insert((scalar, x, y));
+        }
+    }
+
+    /// Add a value to the first entry of `g_scalars`.
+    pub fn add_constant_term(&mut self, constant: C::Scalar) {
+        if let Some(g_scalars) = self.g_scalars.as_mut() {
+            g_scalars[0] += &constant;
+        } else {
+            let mut g_scalars = vec![C::Scalar::ZERO; self.params.n as usize];
+            g_scalars[0] += &constant;
+            self.g_scalars = Some(g_scalars);
+        }
+    }
+
+    /// Add a vector of scalars to `g_scalars`. This function will panic if the
+    /// caller provides a slice of scalars that is not of length `params.n`.
+    pub fn add_to_g_scalars(&mut self, scalars: &[C::Scalar]) {
+        assert_eq!(scalars.len(), self.params.n as usize);
+        if let Some(g_scalars) = &mut self.g_scalars {
+            for (g_scalar, scalar) in g_scalars.iter_mut().zip(scalars.iter()) {
+                *g_scalar += scalar;
+            }
+        } else {
+            self.g_scalars = Some(scalars.to_vec());
+        }
+    }
+
+    /// Add to `u_scalar`
+    pub fn add_to_u_scalar(&mut self, scalar: C::Scalar) {
+        self.u_scalar = self.u_scalar.map_or(Some(scalar), |a| Some(a + &scalar));
+    }
+
+    /// Scale all scalars in the MSM by some scaling factor
+    pub fn scale(&mut self, factor: C::Scalar) {
+        if let Some(g_scalars) = &mut self.g_scalars {
+            for g_scalar in g_scalars {
+                *g_scalar *= &factor;
+            }
+        }
+
+        for other in self.other.values_mut() {
+            other.0 *= factor;
+        }
+
+        self.u_scalar = self.u_scalar.map(|a| a * &factor);
+    }
+
+    /// Perform multiexp through backend `B` and check that it results in zero.
+    pub fn eval<B: SelectableBackend>(self) -> bool {
+        let len = self.g_scalars.as_ref().map(|v| v.len()).unwrap_or(0)
+            + self.u_scalar.map(|_| 1).unwrap_or(0)
+            + self.other.len();
+        let mut scalars: Vec<C::Scalar> = Vec::with_capacity(len);
+        let mut bases: Vec<C> = Vec::with_capacity(len);
+
+        scalars.extend(self.other.values().map(|(scalar, _, _)| scalar));
+        bases.extend(
+            self.other
+                .values()
+                .map(|(_, x, y)| C::from_xy(*x, *y).expect("a point's own coordinates")),
+        );
+
+        if let Some(u_scalar) = self.u_scalar {
+            scalars.push(u_scalar);
+            bases.push(self.params.u);
+        }
+
+        if let Some(g_scalars) = &self.g_scalars {
+            scalars.extend(g_scalars);
+            bases.extend(self.params.g.iter());
+        }
+
+        assert_eq!(scalars.len(), len);
+
+        let identity = multiexp::<C, B>(&scalars, &bases).is_identity();
+        crate::test_support::fingerprint::record_msm(&scalars, &bases, self.other.len(), identity);
+        identity
+    }
+}

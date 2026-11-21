@@ -1,20 +1,7 @@
-//! Nested field circuits for the scalar field.
-//!
-//! Contains these circuits:
-//!
-//! - **Endoscaling**: verifies that the commitment accumulation
-//!   in `compute_p` was computed correctly via Horner's rule.
-//! - **Loading**: enforces consistency between [`PointsStage`]
-//!   inputs and the bridge stage commitments for the current step.
-//! - **Collapse**: pins the nested [`unified`](crate::protocol::nested::unified) instance to its stages and
-//!   verifies both layers of the children's nested fold.
-//! - **Compute v**: recomputes the nested batch evaluation $v_n$, the mirror
-//!   of the native `compute_v`.
-//!
-//! The collapse and compute-v circuits share the [`unified`](crate::protocol::nested::unified)
-//! instance as their public input, each constraining the slots it owns.
-//!
-//! [`PointsStage`]: crate::verifier::recursive::gadgets::endoscalar::PointsStage
+//! The nested side's canonical sizes and orders: the internal circuit
+//! indices, the rx polynomials and their order in a proof, the fold groups of
+//! its revdot claims, the conversion of native challenges, and the sizes of
+//! the endoscaling walk over the native batch.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -29,8 +16,7 @@ use udon::field::Field;
 
 use crate::{
     profile::{Profile, Shape},
-    protocol::fold_revdot::Parameters,
-    verifier::recursive::gadgets::endoscalar,
+    protocol::{gadgets::endoscalar, revdot::fold::Parameters},
 };
 
 /// The number of curve points the nested walk folds for a native batch of
@@ -44,7 +30,7 @@ pub const fn num_endoscaling_points(native_rx: usize) -> usize {
 
 /// Number of curve points accumulated during `compute_p` for nested field
 /// endoscaling verification: the native batch's commitments, per
-/// [`num_endoscaling_points`]. See `prover/fuse/native/p.rs` for the canonical accumulation
+/// [`num_endoscaling_points`]. See `fuse/prover/native/p.rs` for the canonical accumulation
 /// order.
 ///
 /// The endoscaling circuits process these points across
@@ -233,7 +219,7 @@ impl<P: Profile> Parameters for RevdotParameters<P> {
 ///
 /// This helper performs only the scalar conversion. The native points
 /// stages bind the nested commitments into the native transcript before
-/// each challenge (see [`crate::verifier::recursive::native::stages::points`]), and the consuming
+/// each challenge (see [`crate::protocol::native::stages::points`]), and the consuming
 /// circuits read the lifted values from the challenge stage, which a parent
 /// binds to the transcript (see [`stages::challenges`]).
 ///
@@ -242,7 +228,7 @@ impl<P: Profile> Parameters for RevdotParameters<P> {
 /// Fails when the native challenge lies at or above $2^{\mathtt{CAPACITY}}$,
 /// a $2^{-129}$ event for a transcript output.
 ///
-/// [`crate::verifier::recursive::native::stages::points`]: crate::verifier::recursive::native::stages::points
+/// [`crate::protocol::native::stages::points`]: crate::protocol::native::stages::points
 pub fn challenge<C: Cycle>(native: C::CircuitField) -> Result<C::ScalarField> {
     Ok(lift_endoscalar(extract_endoscalar(native)?))
 }
@@ -296,7 +282,7 @@ impl<F: Copy> Challenges<F> {
 
 /// Index of internal nested circuits registered into the registry.
 ///
-/// These correspond to the wiring objects registered in [`register_all`](crate::verifier::recursive::nested::register::register_all).
+/// These correspond to the wiring objects registered in [`register_all`](crate::fuse::circuits::nested::register::register_all).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InternalCircuitIndex {
     /// `EndoscalingStep` circuit at given step.
@@ -346,7 +332,7 @@ pub enum InternalCircuitIndex {
 }
 
 impl InternalCircuitIndex {
-    /// The number of internal circuits registered by [`register_all`](crate::verifier::recursive::nested::register::register_all),
+    /// The number of internal circuits registered by [`register_all`](crate::fuse::circuits::nested::register::register_all),
     /// equal to the number of entries in [`InternalCircuitIndex::ALL`].
     pub const NUM: usize = NUM_ENDOSCALING_STEPS + NUM_FIXED_INTERNAL;
 
@@ -397,7 +383,7 @@ impl InternalCircuitIndex {
         slots
     }
 
-    /// The number of internal circuits registered by [`register_all`](crate::verifier::recursive::nested::register::register_all) in
+    /// The number of internal circuits registered by [`register_all`](crate::fuse::circuits::nested::register::register_all) in
     /// profile `P`, equal to the length of [`all`](Self::all).
     pub fn num<P: Profile>() -> usize {
         NumSteps::<P>::len() + NUM_FIXED_INTERNAL + P::nested_extension().internal()
@@ -611,4 +597,4 @@ pub enum RxComponent {
     Rx(RxIndex),
 }
 
-use crate::verifier::recursive::nested::stages;
+use crate::protocol::nested::stages;

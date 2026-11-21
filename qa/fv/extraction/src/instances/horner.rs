@@ -34,7 +34,7 @@ impl CircuitInstance for HornerInstanceN7 {
         D: InstanceDriver<'dr, F = Fp>,
     {
         // n = 7: matches `FoldN7` (`RevdotParameters::GroupSize`), so the
-        // Horner and fold shapes used by `fold_revdot.rs` share one digest.
+        // Horner and fold shapes used by `protocol/revdot/fold.rs` share one digest.
         horner_at_length::<D, 7, false>(dr)
     }
 }

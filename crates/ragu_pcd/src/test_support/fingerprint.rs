@@ -10,7 +10,7 @@
 //! Recording is per thread. The recorder and event encoding compile only
 //! for tests; production observation helpers are inline no-ops.
 //!
-//! [`MSM`]: crate::protocol::ipa::MSM
+//! [`MSM`]: crate::ipa::MSM
 
 #[cfg(test)]
 pub(crate) use recorder::Event;

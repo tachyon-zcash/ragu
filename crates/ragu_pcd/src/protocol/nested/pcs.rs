@@ -10,7 +10,7 @@
 //! holds them to their meaning, which is what keeps the prover and the
 //! circuit from drifting.
 //!
-//! [`compute_v`]: crate::verifier::recursive::nested::circuits::compute_v
+//! [`compute_v`]: crate::fuse::circuits::nested::compute_v
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Cycle, Result};

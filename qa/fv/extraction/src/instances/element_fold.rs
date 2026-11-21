@@ -47,7 +47,7 @@ impl CircuitInstance for ElementFoldInstanceN7 {
     {
         // n = 7: the former native `RevdotParameters::GroupSize`, kept as a
         // production-sized Horner shape. The two-layer evaluation fold is now
-        // the Lagrange `EvaluationFolder` in `fold_revdot.rs`; `Element::fold`
+        // the Lagrange `EvaluationFolder` in `protocol/revdot/fold.rs`; `Element::fold`
         // remains the $z$-fold of bonding groups.
         fold_at_length::<D, 7>(dr)
     }

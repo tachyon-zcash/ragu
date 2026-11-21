@@ -1,9 +1,10 @@
 //! The application: [`ApplicationBuilder`] registers the steps and
 //! finalizes into the [`Application`] in which proofs are made and checked.
 //!
-//! The application's operations are implemented by role: `fuse`, `seed`,
-//! `rerandomize` and `compress` in `prover`, `verify_compressed` in
-//! `verifier`, and the `verify_uncompressed` test oracle in `test_support`.
+//! The application's operations are implemented by subprotocol: `fuse`,
+//! `seed` and `rerandomize` in `fuse::prover`, `compress` and
+//! `verify_compressed` in `compress`, and the `verify_uncompressed` test
+//! oracle in `fuse::decider`.
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
@@ -18,12 +19,13 @@ use ragu_core::{Cycle, Error, Result};
 use rand::{SeedableRng, rngs::StdRng};
 
 use crate::{
-    Pcd, Proof, SelectableBackend, header,
+    Pcd, Proof, SelectableBackend,
+    fuse::circuits,
+    header,
     header::Header,
     profile::{Profile, ProfiledCycle},
     protocol, step,
     step::{Step, internal::adapter::Adapter},
-    verifier,
 };
 
 /// A step circuit's registration, held until every step's
@@ -296,12 +298,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         }
 
         // Then, register internal circuits and masks.
-        self.native_registry = verifier::recursive::native::register::register_all::<
-            C,
-            R,
-            HEADER_SIZE,
-        >(
-            self.native_registry, params, log2_circuits, self.stage_size
+        self.native_registry = circuits::native::register::register_all::<C, R, HEADER_SIZE>(
+            self.native_registry,
+            params,
+            log2_circuits,
+            self.stage_size,
         )?;
 
         // Then, register internal steps. `Bootstrap` is registered directly
@@ -336,10 +337,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         // Register nested internal circuits (no application steps, no headers).
-        self.nested_registry = verifier::recursive::nested::register::register_all::<C, R>(
-            self.nested_registry,
-            params,
-        )?;
+        self.nested_registry =
+            circuits::nested::register::register_all::<C, R>(self.nested_registry, params)?;
 
         let mut app = Application {
             native_registry: self.native_registry.finalize()?,
@@ -553,7 +552,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// Fails if `point` is the identity, which the stage cannot hold.
     pub fn bridge_hash(&self, point: C::HostCurve) -> Result<C::NestedCurve> {
-        crate::verifier::recursive::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
+        crate::protocol::nested::stages::bridge_hash::digest::<B, _, _, R, _>(
             point,
             C::nested_generators(self.params),
         )

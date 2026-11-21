@@ -49,7 +49,7 @@
 //! formed by adding `MultiStage::trace`'s output and each stage's
 //! `StageExt::rx(0, witness_i)` polynomial. In
 //! production these are committed separately and summed at verification —
-//! see `crates/ragu_pcd/src/prover/fuse/trace/native.rs` for an
+//! see `crates/ragu_pcd/src/fuse/prover/trace/native.rs` for an
 //! application of this pattern.
 //!
 //! The fuzz target reconstructs the full $r(X)$ that way and runs the
@@ -82,7 +82,7 @@
 //! One additional structural check layers on top of Invariant A:
 //!
 //! - **`final_mask` zero check** (mirrors production proving at
-//!   `crates/ragu_pcd/src/verifier/recursive/gadgets/endoscalar.rs:470`): the *assembled
+//!   `crates/ragu_pcd/src/protocol/gadgets/endoscalar.rs:470`): the *assembled
 //!   `MultiStage` trace polynomial* (before adding any stage `rx_i`) must
 //!   revdot to zero against the last stage's `final_mask()`. The
 //!   `final_mask` is constructed from `StageMask::new_final(skip+num)`
@@ -692,7 +692,7 @@ fn check_stage_slot_range(
 /// the algebraic identity is checked (per the canonical derivation), but
 /// the bare assembled trace alone is checked against `final_mask_registry`
 /// first — this mirrors production proving at
-/// `crates/ragu_pcd/src/verifier/recursive/gadgets/endoscalar.rs:470`.
+/// `crates/ragu_pcd/src/protocol/gadgets/endoscalar.rs:470`.
 ///
 /// Returns `(expected_ky, actual_revdot)` so the caller's panic message can
 /// show both sides of the Invariant B check. All circuits and registries here

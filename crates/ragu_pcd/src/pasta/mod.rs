@@ -45,7 +45,7 @@ mod tests {
     use udon::curve::Affine;
 
     use super::*;
-    use crate::protocol::ipa::IpaCycle;
+    use crate::ipa::IpaCycle;
 
     #[test]
     fn baked_parameters_have_the_expected_shape() {

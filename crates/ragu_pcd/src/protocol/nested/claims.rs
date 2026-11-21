@@ -22,8 +22,8 @@ use ragu_primitives::{Element, vec::Len};
 use crate::{
     profile::Profile,
     protocol::{
-        claims::Source,
         nested::{InternalCircuitIndex, NUM_INSTANCE_CIRCUITS, RxComponent, RxIndex},
+        revdot::Source,
     },
 };
 

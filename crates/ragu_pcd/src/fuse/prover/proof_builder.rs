@@ -1,0 +1,1374 @@
+//! [`ProofBuilder`] for incremental proof construction.
+//!
+//! Polynomial setters store values immediately. Native commitment caches are
+//! computed lazily on first access via [`OnceCell`]-based interior mutability.
+//! The "simple" `ab` bridge commitment is also lazily computed from
+//! [`bridge_alpha`](ProofBuilder::bridge_alpha) and the native commitments
+//! already on the builder.
+
+// This builder previously inherited the proof module's allowance for cached getters.
+#![allow(dead_code)]
+
+use alloc::{sync::Arc, vec::Vec};
+use core::{cell::OnceCell, marker::PhantomData};
+
+use ragu_backend::Backend;
+use ragu_circuits::{
+    polynomials::{Rank, sparse},
+    registry::CircuitIndex,
+    staging::StageExt,
+};
+use ragu_core::{Cycle, Result};
+
+use crate::{
+    header::NUM_ONLINE_FP_POLYS,
+    profile::ProfiledCycle,
+    proof::{Cached, Proof},
+    protocol::{native::online, nested},
+};
+
+/// Produces `pub(crate) fn $name(&mut self, v: $ty)` that sets an `Option`
+/// field, panicking on double-set.
+macro_rules! setter {
+    ($name:ident, $field:ident, $ty:ty) => {
+        pub(crate) fn $name(&mut self, v: $ty) {
+            assert!(
+                self.$field.is_none(),
+                concat!("double-set: ", stringify!($field))
+            );
+            self.$field = Some(v);
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $getter(&self) -> C::{Host,Nested}Curve` that
+/// lazily computes and caches a commitment from a polynomial via
+/// `commit_to_affine`. The `native` / `nested` prefix selects the curve type
+/// and the corresponding generators source.
+macro_rules! lazy_commitment {
+    (native, $getter:ident, $cache:ident, $poly:ident) => {
+        lazy_commitment!(@impl $getter, $cache, $poly, C::HostCurve, C::host_generators);
+    };
+    (nested, $getter:ident, $cache:ident, $poly:ident) => {
+        lazy_commitment!(@impl $getter, $cache, $poly, C::NestedCurve, C::nested_generators);
+    };
+    (@impl $getter:ident, $cache:ident, $poly:ident, $curve:ty, $gen:path) => {
+        pub(crate) fn $getter(&self) -> $curve {
+            *self.$cache.get_or_init(|| {
+                B::sparse_commit_to_affine(
+                    self.$poly
+                        .as_ref()
+                        .expect(concat!(stringify!($poly), " not set")),
+                    $gen(self.params),
+                )
+            })
+        }
+    };
+}
+
+/// Produces a [`setter!`] for `sparse::Polynomial<C::CircuitField, R>`,
+/// eliding the repeated type.
+macro_rules! native_setter {
+    ($name:ident, $field:ident) => {
+        setter!($name, $field, sparse::Polynomial<C::CircuitField, R>);
+    };
+}
+
+/// Produces `pub(crate) fn $name(&self) -> $ty` that unwraps an `Option`
+/// field by value (for `Copy` types like challenge scalars).
+macro_rules! getter {
+    ($name:ident, $field:ident, $ty:ty) => {
+        pub(crate) fn $name(&self) -> $ty {
+            self.$field.expect(concat!(stringify!($field), " not set"))
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $name(&self) -> &$ty` that borrows an `Option`
+/// field via `as_ref()`.
+macro_rules! ref_getter {
+    ($name:ident, $field:ident, $ty:ty) => {
+        pub(crate) fn $name(&self) -> &$ty {
+            self.$field
+                .as_ref()
+                .expect(concat!(stringify!($field), " not set"))
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $name(&self) -> &[$ty]` that borrows an
+/// `Option<Vec>` field as a slice via `as_deref()`.
+macro_rules! slice_getter {
+    ($name:ident, $field:ident, $ty:ty) => {
+        pub(crate) fn $name(&self) -> &[$ty] {
+            self.$field
+                .as_deref()
+                .expect(concat!(stringify!($field), " not set"))
+        }
+    };
+}
+
+/// Produces two methods:
+/// - `pub(crate) fn $setter(&mut self, rx, commitment)` — stores a bridge
+///   polynomial and its pre-computed commitment together.
+/// - `pub(crate) fn $getter(&self) -> C::NestedCurve` — returns the stored
+///   commitment.
+macro_rules! bridge_pair {
+    ($setter:ident, $getter:ident, $rx:ident, $commitment:ident) => {
+        pub(crate) fn $setter(
+            &mut self,
+            rx: sparse::Polynomial<C::ScalarField, R>,
+            commitment: C::NestedCurve,
+        ) {
+            assert!(self.$rx.is_none(), concat!("double-set: ", stringify!($rx)));
+            self.$rx = Some(Arc::new(rx));
+            self.$commitment = Some(commitment);
+        }
+
+        pub(crate) fn $getter(&self) -> C::NestedCurve {
+            self.$commitment
+                .expect(concat!(stringify!($commitment), " not set"))
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $name(&mut self, poly, commitment)` that stores a
+/// native polynomial in an `Option` field and its pre-computed commitment in a
+/// `OnceCell` cache. Used for a/b/p whose commitments are computed via non-standard
+/// techniques rather than lazy evaluation.
+macro_rules! native_poly_with_commitment_setter {
+    ($name:ident, $poly:ident, $cache:ident) => {
+        pub(crate) fn $name(
+            &mut self,
+            poly: sparse::Polynomial<C::CircuitField, R>,
+            commitment: C::HostCurve,
+        ) {
+            assert!(
+                self.$poly.is_none(),
+                concat!("double-set: ", stringify!($poly))
+            );
+            self.$poly = Some(poly);
+            assert!(
+                self.$cache.set(commitment).is_ok(),
+                concat!("double-set: ", stringify!($cache))
+            );
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $getter(&self) -> C::HostCurve` that reads a
+/// pre-computed native commitment from a `OnceCell`. Used for a/b/p whose
+/// commitments are set explicitly via a special setter rather than lazily.
+macro_rules! explicit_commitment_getter {
+    ($getter:ident, $cache:ident, $setter:ident) => {
+        pub(crate) fn $getter(&self) -> C::HostCurve {
+            *self.$cache.get().expect(concat!(
+                stringify!($cache),
+                " not set (call ",
+                stringify!($setter),
+                " first)"
+            ))
+        }
+    };
+}
+
+/// Produces `pub(crate) fn $rx(&self) -> Result<&Arc<sparse::Polynomial<...>>>`
+/// and `pub(crate) fn $commitment(&self) -> Result<C::NestedCurve>` that
+/// lazily derive a cached bridge. On first call, `$rx` builds a
+/// `crate::protocol::nested::stages::$stage::Witness` from the given getter methods, derives
+/// the bridge rx polynomial via `Stage::rx`, and caches it; `$commitment`
+/// then commits the rx and caches the result. Subsequent calls return the
+/// cached values.
+///
+/// Witness fields are specified as `field: getter()` pairs — the macro
+/// prepends `self.` to each getter call so that the generated function's own
+/// `self` is used (avoiding macro hygiene issues with `self` in token trees).
+macro_rules! cached_bridge {
+    ($rx:ident, $commitment:ident,
+     $idx:expr, $stage:ident, { $($wit_field:ident : $getter:ident()),* }) => {
+        pub(crate) fn $rx(&self) -> Result<&Arc<sparse::Polynomial<C::ScalarField, R>>> {
+            if let Some(rx) = self.$rx.get() {
+                return Ok(rx);
+            }
+            let rx = crate::protocol::nested::stages::$stage::Stage::<C::HostCurve, R, C::Profile>::rx(
+                self.bridge_alpha_power($idx),
+                &crate::protocol::nested::stages::$stage::Witness {
+                    $($wit_field: self.$getter()),*
+                },
+            )?;
+            // The early return above guarantees the cell is empty, so
+            // `get_or_init` will always run the closure and store `rx`.
+            Ok(self.$rx.get_or_init(|| Arc::new(rx)))
+        }
+
+        pub(crate) fn $commitment(&self) -> Result<C::NestedCurve> {
+            let rx = self.$rx()?;
+            Ok(*self.$commitment.get_or_init(|| {
+                B::sparse_commit_to_affine(rx, C::nested_generators(self.params))
+            }))
+        }
+    };
+}
+
+/// Builder for incremental [`Proof`] construction.
+///
+/// Native commitment caches are computed lazily from polynomials on first
+/// access. Special commitments (`a`, `b`, `p`) must be provided explicitly
+/// because they are computed via non-standard techniques.
+pub(crate) struct ProofBuilder<'params, C: Cycle, R: Rank, B: Backend> {
+    params: &'params C::Params,
+    _backend: PhantomData<B>,
+
+    /// Shared alpha source for the cached `ab` bridge commitment.
+    bridge_alpha: C::ScalarField,
+
+    // Application metadata
+    circuit_id: Option<CircuitIndex>,
+    left_header: Option<Vec<C::CircuitField>>,
+    right_header: Option<Vec<C::CircuitField>>,
+
+    // Native rx polynomials
+    native_application_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_application_stage_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_inner_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_outer_error_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_a_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_b_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_query_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_registry_xy_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_eval_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_p_poly: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_hashes_1_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_hashes_2_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_collapse_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_compute_v_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_bind_challenges_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_bind_beta_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_bind_endoscalar_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::CircuitField, R>>>,
+    native_points_binding_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_preamble_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_registry_wx_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_ab_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_f_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+    native_points_walk_rx: Option<sparse::Polynomial<C::CircuitField, R>>,
+
+    // The step's own online polynomials, with their commitments cached.
+    online_polynomials: Option<[sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]>,
+    online_commitments: OnceCell<[C::HostCurve; NUM_ONLINE_FP_POLYS]>,
+    online_openings: Option<online::Queries<C::CircuitField>>,
+
+    // The step's own online Fq polynomials, with their commitments cached.
+    // The proof does not carry them: only this step's nested batch opens
+    // them.
+    online_fq_polynomials: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    online_fq_commitments: OnceCell<Vec<C::NestedCurve>>,
+
+    // Bridge rx polynomials + commitments (set together by caller)
+    bridge_preamble_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_preamble_commitment: Option<C::NestedCurve>,
+    bridge_hash_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_hash_commitment: Option<C::NestedCurve>,
+    bridge_s_prime_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_s_prime_commitment: Option<C::NestedCurve>,
+    bridge_inner_error_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_inner_error_commitment: Option<C::NestedCurve>,
+    bridge_outer_error_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_outer_error_commitment: Option<C::NestedCurve>,
+    bridge_query_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_query_commitment: Option<C::NestedCurve>,
+    bridge_f_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_f_commitment: Option<C::NestedCurve>,
+    bridge_eval_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+    bridge_eval_commitment: Option<C::NestedCurve>,
+
+    // Cached bridge rx polynomial (lazily derived from `bridge_alpha` +
+    // native commitments). Parallels the native rx/commitment split: the rx
+    // slot is populated on first access, and the commitment slot is derived
+    // lazily from it.
+    bridge_ab_rx: OnceCell<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+
+    // Nested endoscaling data
+    nested_endoscaling_step_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_extension_circuit_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_extension_stage_rxs: Option<Vec<sparse::Polynomial<C::ScalarField, R>>>,
+    nested_endoscalar_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_points_rx: Option<Arc<sparse::Polynomial<C::ScalarField, R>>>,
+
+    // Nested accumulator polynomials
+    nested_a_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_b_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
+
+    // Nested batch polynomials
+    nested_registry_xy_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_p_poly: Option<sparse::Polynomial<C::ScalarField, R>>,
+
+    // Nested challenge stage, and its commitment without the beta term
+    nested_challenges_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_challenges_partial: Option<C::NestedCurve>,
+
+    // Nested instance circuits
+    nested_collapse_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+    nested_compute_v_rx: Option<sparse::Polynomial<C::ScalarField, R>>,
+
+    // Nested endoscaling commitment caches (lazily computed from polynomials)
+    nested_endoscaling_step_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_extension_circuit_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_extension_stage_commitments: OnceCell<Vec<C::NestedCurve>>,
+    nested_endoscalar_commitment: OnceCell<C::NestedCurve>,
+    nested_points_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested accumulator commitment caches (lazily computed from polynomials)
+    nested_a_commitment: OnceCell<C::NestedCurve>,
+    nested_b_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested batch commitment caches (lazily computed from polynomials)
+    nested_registry_xy_commitment: OnceCell<C::NestedCurve>,
+    nested_p_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested challenge stage commitment cache
+    nested_challenges_commitment: OnceCell<C::NestedCurve>,
+
+    // Nested instance circuit commitment caches
+    nested_collapse_commitment: OnceCell<C::NestedCurve>,
+    nested_compute_v_commitment: OnceCell<C::NestedCurve>,
+
+    // Challenges
+    w: Option<C::CircuitField>,
+    y: Option<C::CircuitField>,
+    z: Option<C::CircuitField>,
+    mu: Option<C::CircuitField>,
+    mu_prime: Option<C::CircuitField>,
+    x: Option<C::CircuitField>,
+    alpha: Option<C::CircuitField>,
+    u: Option<C::CircuitField>,
+    pre_beta: Option<C::CircuitField>,
+
+    // Native commitment caches (lazily computed from polynomials)
+    native_application_commitment: OnceCell<C::HostCurve>,
+    native_application_stage_commitment: OnceCell<C::HostCurve>,
+    native_preamble_commitment: OnceCell<C::HostCurve>,
+    native_inner_error_commitment: OnceCell<C::HostCurve>,
+    native_outer_error_commitment: OnceCell<C::HostCurve>,
+    native_a_commitment: OnceCell<C::HostCurve>,
+    native_b_commitment: OnceCell<C::HostCurve>,
+    native_query_commitment: OnceCell<C::HostCurve>,
+    native_registry_xy_commitment: OnceCell<C::HostCurve>,
+    native_eval_commitment: OnceCell<C::HostCurve>,
+    native_p_commitment: OnceCell<C::HostCurve>,
+    native_hashes_1_commitment: OnceCell<C::HostCurve>,
+    native_hashes_2_commitment: OnceCell<C::HostCurve>,
+    native_collapse_commitment: OnceCell<C::HostCurve>,
+    native_compute_v_commitment: OnceCell<C::HostCurve>,
+    native_bind_challenges_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_bind_beta_commitment: OnceCell<C::HostCurve>,
+    native_bind_endoscalar_commitment: OnceCell<C::HostCurve>,
+    native_endoscaling_step_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_extension_circuit_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_extension_stage_commitments: OnceCell<Vec<C::HostCurve>>,
+    native_points_binding_commitment: OnceCell<C::HostCurve>,
+    native_points_preamble_commitment: OnceCell<C::HostCurve>,
+    native_points_registry_wx_commitment: OnceCell<C::HostCurve>,
+    native_points_ab_commitment: OnceCell<C::HostCurve>,
+    native_points_f_commitment: OnceCell<C::HostCurve>,
+    native_points_walk_commitment: OnceCell<C::HostCurve>,
+
+    // Cached bridge commitment cache (lazily computed from its cached rx)
+    bridge_ab_commitment: OnceCell<C::NestedCurve>,
+}
+
+impl<'params, C: ProfiledCycle, R: Rank, B: Backend> ProofBuilder<'params, C, R, B> {
+    /// Create a new empty builder with the given `bridge_alpha` source for
+    /// deriving cached bridge polynomial alphas.
+    pub(crate) fn new(params: &'params C::Params, bridge_alpha: C::ScalarField) -> Self {
+        Self {
+            params,
+            _backend: PhantomData,
+            bridge_alpha,
+            circuit_id: None,
+            left_header: None,
+            right_header: None,
+            native_application_rx: None,
+            native_application_stage_rx: None,
+            native_preamble_rx: None,
+            native_inner_error_rx: None,
+            native_outer_error_rx: None,
+            native_a_poly: None,
+            native_b_poly: None,
+            native_query_rx: None,
+            native_registry_xy_poly: None,
+            native_eval_rx: None,
+            native_p_poly: None,
+            native_hashes_1_rx: None,
+            native_hashes_2_rx: None,
+            native_collapse_rx: None,
+            native_compute_v_rx: None,
+            native_bind_challenges_rxs: None,
+            native_bind_beta_rx: None,
+            native_bind_endoscalar_rx: None,
+            native_endoscaling_step_rxs: None,
+            native_extension_circuit_rxs: None,
+            native_extension_stage_rxs: None,
+            native_points_binding_rx: None,
+            native_points_preamble_rx: None,
+            native_points_registry_wx_rx: None,
+            native_points_ab_rx: None,
+            native_points_f_rx: None,
+            native_points_walk_rx: None,
+            online_polynomials: None,
+            online_fq_polynomials: None,
+            online_fq_commitments: OnceCell::new(),
+            online_commitments: OnceCell::new(),
+            online_openings: None,
+            bridge_preamble_rx: None,
+            bridge_preamble_commitment: None,
+            bridge_hash_rx: None,
+            bridge_hash_commitment: None,
+            bridge_s_prime_rx: None,
+            bridge_s_prime_commitment: None,
+            bridge_inner_error_rx: None,
+            bridge_inner_error_commitment: None,
+            bridge_outer_error_rx: None,
+            bridge_outer_error_commitment: None,
+            bridge_query_rx: None,
+            bridge_query_commitment: None,
+            bridge_f_rx: None,
+            bridge_f_commitment: None,
+            bridge_eval_rx: None,
+            bridge_eval_commitment: None,
+            bridge_ab_rx: OnceCell::new(),
+            nested_endoscaling_step_rxs: None,
+            nested_extension_circuit_rxs: None,
+            nested_extension_stage_rxs: None,
+            nested_endoscalar_rx: None,
+            nested_points_rx: None,
+            nested_a_poly: None,
+            nested_b_poly: None,
+            nested_registry_xy_poly: None,
+            nested_p_poly: None,
+            nested_challenges_rx: None,
+            nested_challenges_partial: None,
+            nested_collapse_rx: None,
+            nested_compute_v_rx: None,
+            nested_endoscaling_step_commitments: OnceCell::new(),
+            nested_extension_circuit_commitments: OnceCell::new(),
+            nested_extension_stage_commitments: OnceCell::new(),
+            nested_endoscalar_commitment: OnceCell::new(),
+            nested_points_commitment: OnceCell::new(),
+            nested_a_commitment: OnceCell::new(),
+            nested_b_commitment: OnceCell::new(),
+            nested_registry_xy_commitment: OnceCell::new(),
+            nested_p_commitment: OnceCell::new(),
+            nested_challenges_commitment: OnceCell::new(),
+            nested_collapse_commitment: OnceCell::new(),
+            nested_compute_v_commitment: OnceCell::new(),
+            w: None,
+            y: None,
+            z: None,
+            mu: None,
+            mu_prime: None,
+            x: None,
+            alpha: None,
+            u: None,
+            pre_beta: None,
+            native_application_commitment: OnceCell::new(),
+            native_application_stage_commitment: OnceCell::new(),
+            native_preamble_commitment: OnceCell::new(),
+            native_inner_error_commitment: OnceCell::new(),
+            native_outer_error_commitment: OnceCell::new(),
+            native_a_commitment: OnceCell::new(),
+            native_b_commitment: OnceCell::new(),
+            native_query_commitment: OnceCell::new(),
+            native_registry_xy_commitment: OnceCell::new(),
+            native_eval_commitment: OnceCell::new(),
+            native_p_commitment: OnceCell::new(),
+            native_hashes_1_commitment: OnceCell::new(),
+            native_hashes_2_commitment: OnceCell::new(),
+            native_collapse_commitment: OnceCell::new(),
+            native_compute_v_commitment: OnceCell::new(),
+            native_bind_challenges_commitments: OnceCell::new(),
+            native_bind_beta_commitment: OnceCell::new(),
+            native_bind_endoscalar_commitment: OnceCell::new(),
+            native_endoscaling_step_commitments: OnceCell::new(),
+            native_extension_circuit_commitments: OnceCell::new(),
+            native_extension_stage_commitments: OnceCell::new(),
+            native_points_binding_commitment: OnceCell::new(),
+            native_points_preamble_commitment: OnceCell::new(),
+            native_points_registry_wx_commitment: OnceCell::new(),
+            native_points_ab_commitment: OnceCell::new(),
+            native_points_f_commitment: OnceCell::new(),
+            native_points_walk_commitment: OnceCell::new(),
+            bridge_ab_commitment: OnceCell::new(),
+        }
+    }
+
+    /// Returns a reference to the params.
+    pub(crate) fn params(&self) -> &C::Params {
+        self.params
+    }
+
+    setter!(set_circuit_id, circuit_id, CircuitIndex);
+    setter!(set_left_header, left_header, Vec<C::CircuitField>);
+    setter!(set_right_header, right_header, Vec<C::CircuitField>);
+
+    slice_getter!(left_header, left_header, C::CircuitField);
+    slice_getter!(right_header, right_header, C::CircuitField);
+
+    native_setter!(set_native_application_rx, native_application_rx);
+    native_setter!(set_native_application_stage_rx, native_application_stage_rx);
+    native_setter!(set_native_preamble_rx, native_preamble_rx);
+    native_setter!(set_native_inner_error_rx, native_inner_error_rx);
+    native_setter!(set_native_outer_error_rx, native_outer_error_rx);
+    native_setter!(set_native_query_rx, native_query_rx);
+    native_setter!(set_native_registry_xy_poly, native_registry_xy_poly);
+    native_setter!(set_native_eval_rx, native_eval_rx);
+    native_setter!(set_native_hashes_1_rx, native_hashes_1_rx);
+    native_setter!(set_native_hashes_2_rx, native_hashes_2_rx);
+    native_setter!(set_native_collapse_rx, native_collapse_rx);
+    native_setter!(set_native_compute_v_rx, native_compute_v_rx);
+    setter!(
+        set_native_bind_challenges_rxs,
+        native_bind_challenges_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
+    native_setter!(set_native_bind_beta_rx, native_bind_beta_rx);
+    lazy_commitment!(
+        native,
+        native_bind_beta_commitment,
+        native_bind_beta_commitment,
+        native_bind_beta_rx
+    );
+
+    native_setter!(set_native_bind_endoscalar_rx, native_bind_endoscalar_rx);
+    lazy_commitment!(
+        native,
+        native_bind_endoscalar_commitment,
+        native_bind_endoscalar_commitment,
+        native_bind_endoscalar_rx
+    );
+    native_setter!(set_native_points_binding_rx, native_points_binding_rx);
+    lazy_commitment!(
+        native,
+        native_points_binding_commitment,
+        native_points_binding_commitment,
+        native_points_binding_rx
+    );
+    native_setter!(set_native_points_preamble_rx, native_points_preamble_rx);
+    lazy_commitment!(
+        native,
+        native_points_preamble_commitment,
+        native_points_preamble_commitment,
+        native_points_preamble_rx
+    );
+    native_setter!(
+        set_native_points_registry_wx_rx,
+        native_points_registry_wx_rx
+    );
+    lazy_commitment!(
+        native,
+        native_points_registry_wx_commitment,
+        native_points_registry_wx_commitment,
+        native_points_registry_wx_rx
+    );
+    native_setter!(set_native_points_ab_rx, native_points_ab_rx);
+    lazy_commitment!(
+        native,
+        native_points_ab_commitment,
+        native_points_ab_commitment,
+        native_points_ab_rx
+    );
+    native_setter!(set_native_points_f_rx, native_points_f_rx);
+    lazy_commitment!(
+        native,
+        native_points_f_commitment,
+        native_points_f_commitment,
+        native_points_f_rx
+    );
+    native_setter!(set_native_points_walk_rx, native_points_walk_rx);
+    lazy_commitment!(
+        native,
+        native_points_walk_commitment,
+        native_points_walk_commitment,
+        native_points_walk_rx
+    );
+    setter!(
+        set_native_endoscaling_step_rxs,
+        native_endoscaling_step_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+    setter!(
+        set_online_polynomials,
+        online_polynomials,
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]
+    );
+    ref_getter!(
+        online_polynomials,
+        online_polynomials,
+        [sparse::Polynomial<C::CircuitField, R>; NUM_ONLINE_FP_POLYS]
+    );
+
+    setter!(
+        set_online_openings,
+        online_openings,
+        online::Queries<C::CircuitField>
+    );
+    ref_getter!(
+        online_openings,
+        online_openings,
+        online::Queries<C::CircuitField>
+    );
+
+    /// Lazily computes and caches the commitments of the step's own online
+    /// polynomials.
+    pub(crate) fn online_commitments(&self) -> [C::HostCurve; NUM_ONLINE_FP_POLYS] {
+        *self.online_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            let polys = self.online_polynomials();
+            core::array::from_fn(|i| B::sparse_commit_to_affine(&polys[i], host_gen))
+        })
+    }
+    setter!(
+        set_online_fq_polynomials,
+        online_fq_polynomials,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+    slice_getter!(
+        online_fq_polynomials,
+        online_fq_polynomials,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+
+    /// Lazily computes and caches the commitments of the step's own online
+    /// Fq polynomials. They are unblinded.
+    pub(crate) fn online_fq_commitments(&self) -> &[C::NestedCurve] {
+        self.online_fq_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.online_fq_polynomials()
+                .iter()
+                .map(|poly| B::sparse_commit_to_affine(poly, nested_gen))
+                .collect()
+        })
+    }
+    setter!(
+        set_native_extension_circuit_rxs,
+        native_extension_circuit_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+    setter!(
+        set_native_extension_stage_rxs,
+        native_extension_stage_rxs,
+        Vec<sparse::Polynomial<C::CircuitField, R>>
+    );
+
+    /// Lazily computes and caches the commitments of the native extension
+    /// circuits' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_extension_circuit_commitments(&self) -> &[C::HostCurve] {
+        self.native_extension_circuit_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_extension_circuit_rxs
+                .as_ref()
+                .expect("native_extension_circuit_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
+
+    /// Lazily computes and caches the commitments of the native extension
+    /// stages' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_extension_stage_commitments(&self) -> &[C::HostCurve] {
+        self.native_extension_stage_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_extension_stage_rxs
+                .as_ref()
+                .expect("native_extension_stage_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
+
+    /// Lazily computes and caches the commitments of the native endoscaling
+    /// steps' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_endoscaling_step_commitments(&self) -> &[C::HostCurve] {
+        self.native_endoscaling_step_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_endoscaling_step_rxs
+                .as_ref()
+                .expect("native_endoscaling_step_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
+
+    /// Lazily computes and caches the commitments of the nested challenge
+    /// binding circuits' rx polynomials. Returns the cached slice.
+    pub(crate) fn native_bind_challenges_commitments(&self) -> &[C::HostCurve] {
+        self.native_bind_challenges_commitments.get_or_init(|| {
+            let host_gen = C::host_generators(self.params);
+            self.native_bind_challenges_rxs
+                .as_ref()
+                .expect("native_bind_challenges_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, host_gen))
+                .collect()
+        })
+    }
+
+    native_poly_with_commitment_setter!(set_native_a_poly, native_a_poly, native_a_commitment);
+    native_poly_with_commitment_setter!(set_native_b_poly, native_b_poly, native_b_commitment);
+    native_poly_with_commitment_setter!(set_native_p_poly, native_p_poly, native_p_commitment);
+
+    ref_getter!(native_a_poly, native_a_poly, sparse::Polynomial<C::CircuitField, R>);
+    ref_getter!(native_b_poly, native_b_poly, sparse::Polynomial<C::CircuitField, R>);
+    ref_getter!(native_registry_xy_poly, native_registry_xy_poly, sparse::Polynomial<C::CircuitField, R>);
+    ref_getter!(native_p_poly, native_p_poly, sparse::Polynomial<C::CircuitField, R>);
+
+    ref_getter!(
+        nested_points_rx,
+        nested_points_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    ref_getter!(
+        bridge_s_prime_rx,
+        bridge_s_prime_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    ref_getter!(
+        bridge_inner_error_rx,
+        bridge_inner_error_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+
+    lazy_commitment!(
+        native,
+        native_application_commitment,
+        native_application_commitment,
+        native_application_rx
+    );
+    lazy_commitment!(
+        native,
+        native_application_stage_commitment,
+        native_application_stage_commitment,
+        native_application_stage_rx
+    );
+    lazy_commitment!(
+        native,
+        native_preamble_commitment,
+        native_preamble_commitment,
+        native_preamble_rx
+    );
+    lazy_commitment!(
+        native,
+        native_inner_error_commitment,
+        native_inner_error_commitment,
+        native_inner_error_rx
+    );
+    lazy_commitment!(
+        native,
+        native_outer_error_commitment,
+        native_outer_error_commitment,
+        native_outer_error_rx
+    );
+    lazy_commitment!(
+        native,
+        native_query_commitment,
+        native_query_commitment,
+        native_query_rx
+    );
+    lazy_commitment!(
+        native,
+        native_registry_xy_commitment,
+        native_registry_xy_commitment,
+        native_registry_xy_poly
+    );
+    lazy_commitment!(
+        native,
+        native_eval_commitment,
+        native_eval_commitment,
+        native_eval_rx
+    );
+    lazy_commitment!(
+        native,
+        native_hashes_1_commitment,
+        native_hashes_1_commitment,
+        native_hashes_1_rx
+    );
+    lazy_commitment!(
+        native,
+        native_hashes_2_commitment,
+        native_hashes_2_commitment,
+        native_hashes_2_rx
+    );
+    lazy_commitment!(
+        native,
+        native_collapse_commitment,
+        native_collapse_commitment,
+        native_collapse_rx
+    );
+    lazy_commitment!(
+        native,
+        native_compute_v_commitment,
+        native_compute_v_commitment,
+        native_compute_v_rx
+    );
+
+    explicit_commitment_getter!(native_a_commitment, native_a_commitment, set_native_a_poly);
+    explicit_commitment_getter!(native_b_commitment, native_b_commitment, set_native_b_poly);
+    explicit_commitment_getter!(native_p_commitment, native_p_commitment, set_native_p_poly);
+
+    bridge_pair!(
+        set_bridge_preamble_rx,
+        bridge_preamble_commitment,
+        bridge_preamble_rx,
+        bridge_preamble_commitment
+    );
+    bridge_pair!(
+        set_bridge_hash_rx,
+        bridge_hash_commitment,
+        bridge_hash_rx,
+        bridge_hash_commitment
+    );
+    bridge_pair!(
+        set_bridge_s_prime_rx,
+        bridge_s_prime_commitment,
+        bridge_s_prime_rx,
+        bridge_s_prime_commitment
+    );
+    bridge_pair!(
+        set_bridge_inner_error_rx,
+        bridge_inner_error_commitment,
+        bridge_inner_error_rx,
+        bridge_inner_error_commitment
+    );
+    bridge_pair!(
+        set_bridge_outer_error_rx,
+        bridge_outer_error_commitment,
+        bridge_outer_error_rx,
+        bridge_outer_error_commitment
+    );
+    ref_getter!(
+        bridge_outer_error_rx,
+        bridge_outer_error_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    bridge_pair!(
+        set_bridge_query_rx,
+        bridge_query_commitment,
+        bridge_query_rx,
+        bridge_query_commitment
+    );
+    ref_getter!(
+        bridge_query_rx,
+        bridge_query_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    bridge_pair!(
+        set_bridge_eval_rx,
+        bridge_eval_commitment,
+        bridge_eval_rx,
+        bridge_eval_commitment
+    );
+    ref_getter!(
+        bridge_eval_rx,
+        bridge_eval_rx,
+        Arc<sparse::Polynomial<C::ScalarField, R>>
+    );
+    bridge_pair!(
+        set_bridge_f_rx,
+        bridge_f_commitment,
+        bridge_f_rx,
+        bridge_f_commitment
+    );
+
+    /// Returns the derived alpha for a cached bridge, as a distinct power of
+    /// `bridge_alpha`.
+    fn bridge_alpha_power(&self, idx: nested::RxIndex) -> C::ScalarField {
+        crate::proof::bridge_alpha_power(self.bridge_alpha, idx)
+    }
+
+    cached_bridge!(
+        bridge_ab_rx,
+        bridge_ab_commitment,
+        nested::RxIndex::BridgeAB,
+        ab,
+        {
+            a: native_a_commitment(),
+            b: native_b_commitment(),
+            native_points_ab: native_points_ab_commitment()
+        }
+    );
+
+    setter!(
+        set_nested_extension_circuit_rxs,
+        nested_extension_circuit_rxs,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+    setter!(
+        set_nested_extension_stage_rxs,
+        nested_extension_stage_rxs,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+
+    /// Lazily computes and caches the commitments of the nested extension
+    /// circuits' rx polynomials. Returns the cached slice.
+    pub(crate) fn nested_extension_circuit_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_extension_circuit_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.nested_extension_circuit_rxs
+                .as_ref()
+                .expect("nested_extension_circuit_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
+                .collect()
+        })
+    }
+
+    /// Lazily computes and caches the commitments of the nested extension
+    /// stages' rx polynomials. Returns the cached slice.
+    pub(crate) fn nested_extension_stage_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_extension_stage_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.nested_extension_stage_rxs
+                .as_ref()
+                .expect("nested_extension_stage_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
+                .collect()
+        })
+    }
+
+    setter!(
+        set_nested_endoscaling_step_rxs,
+        nested_endoscaling_step_rxs,
+        Vec<sparse::Polynomial<C::ScalarField, R>>
+    );
+    setter!(set_nested_endoscalar_rx, nested_endoscalar_rx, sparse::Polynomial<C::ScalarField, R>);
+    pub(crate) fn set_nested_points_rx(&mut self, v: sparse::Polynomial<C::ScalarField, R>) {
+        assert!(
+            self.nested_points_rx.is_none(),
+            "double-set: nested_points_rx"
+        );
+        self.nested_points_rx = Some(Arc::new(v));
+    }
+
+    /// Lazily computes and caches commitments for all endoscaling step rx
+    /// polynomials. Returns the cached slice.
+    pub(crate) fn nested_endoscaling_step_commitments(&self) -> &[C::NestedCurve] {
+        self.nested_endoscaling_step_commitments.get_or_init(|| {
+            let nested_gen = C::nested_generators(self.params);
+            self.nested_endoscaling_step_rxs
+                .as_ref()
+                .expect("nested_endoscaling_step_rxs not set")
+                .iter()
+                .map(|rx| B::sparse_commit_to_affine(rx, nested_gen))
+                .collect()
+        })
+    }
+
+    lazy_commitment!(
+        nested,
+        nested_endoscalar_commitment,
+        nested_endoscalar_commitment,
+        nested_endoscalar_rx
+    );
+    lazy_commitment!(
+        nested,
+        nested_points_commitment,
+        nested_points_commitment,
+        nested_points_rx
+    );
+
+    setter!(set_nested_a_poly, nested_a_poly, sparse::Polynomial<C::ScalarField, R>);
+    setter!(set_nested_b_poly, nested_b_poly, sparse::Polynomial<C::ScalarField, R>);
+    ref_getter!(nested_a_poly, nested_a_poly, sparse::Polynomial<C::ScalarField, R>);
+    ref_getter!(nested_b_poly, nested_b_poly, sparse::Polynomial<C::ScalarField, R>);
+    lazy_commitment!(
+        nested,
+        nested_a_commitment,
+        nested_a_commitment,
+        nested_a_poly
+    );
+    lazy_commitment!(
+        nested,
+        nested_b_commitment,
+        nested_b_commitment,
+        nested_b_poly
+    );
+
+    setter!(
+        set_nested_registry_xy_poly,
+        nested_registry_xy_poly,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    /// Stores $p_n$ with its commitment $P_n$: the last interstitial of the
+    /// native endoscaling walk, rather than a commitment computed from the
+    /// polynomial.
+    pub(crate) fn set_nested_p_poly(
+        &mut self,
+        poly: sparse::Polynomial<C::ScalarField, R>,
+        commitment: C::NestedCurve,
+    ) {
+        assert!(self.nested_p_poly.is_none(), "double-set: nested_p_poly");
+        self.nested_p_poly = Some(poly);
+        assert!(
+            self.nested_p_commitment.set(commitment).is_ok(),
+            "double-set: nested_p_commitment"
+        );
+    }
+
+    pub(crate) fn nested_p_commitment(&self) -> C::NestedCurve {
+        *self
+            .nested_p_commitment
+            .get()
+            .expect("nested_p_commitment not set (call set_nested_p_poly first)")
+    }
+    ref_getter!(
+        nested_registry_xy_poly,
+        nested_registry_xy_poly,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    ref_getter!(nested_p_poly, nested_p_poly, sparse::Polynomial<C::ScalarField, R>);
+    lazy_commitment!(
+        nested,
+        nested_registry_xy_commitment,
+        nested_registry_xy_commitment,
+        nested_registry_xy_poly
+    );
+    setter!(
+        set_nested_challenges_rx,
+        nested_challenges_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    ref_getter!(
+        nested_challenges_rx,
+        nested_challenges_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_challenges_commitment,
+        nested_challenges_commitment,
+        nested_challenges_rx
+    );
+    setter!(
+        set_nested_challenges_partial,
+        nested_challenges_partial,
+        C::NestedCurve
+    );
+    getter!(
+        nested_challenges_partial,
+        nested_challenges_partial,
+        C::NestedCurve
+    );
+    setter!(
+        set_nested_collapse_rx,
+        nested_collapse_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_collapse_commitment,
+        nested_collapse_commitment,
+        nested_collapse_rx
+    );
+    setter!(
+        set_nested_compute_v_rx,
+        nested_compute_v_rx,
+        sparse::Polynomial<C::ScalarField, R>
+    );
+    lazy_commitment!(
+        nested,
+        nested_compute_v_commitment,
+        nested_compute_v_commitment,
+        nested_compute_v_rx
+    );
+
+    setter!(set_w, w, C::CircuitField);
+    setter!(set_y, y, C::CircuitField);
+    setter!(set_z, z, C::CircuitField);
+    setter!(set_mu, mu, C::CircuitField);
+    setter!(set_mu_prime, mu_prime, C::CircuitField);
+    setter!(set_x, x, C::CircuitField);
+    setter!(set_alpha, alpha, C::CircuitField);
+    setter!(set_u, u, C::CircuitField);
+    setter!(set_pre_beta, pre_beta, C::CircuitField);
+
+    getter!(w, w, C::CircuitField);
+    getter!(y, y, C::CircuitField);
+    getter!(z, z, C::CircuitField);
+    getter!(mu, mu, C::CircuitField);
+    getter!(mu_prime, mu_prime, C::CircuitField);
+    getter!(x, x, C::CircuitField);
+    getter!(alpha, alpha, C::CircuitField);
+    getter!(u, u, C::CircuitField);
+    getter!(pre_beta, pre_beta, C::CircuitField);
+
+    /// Returns the revdot product $c = \text{revdot}(A, B)$.
+    pub(crate) fn native_c(&self) -> C::CircuitField {
+        B::sparse_revdot(self.native_a_poly(), self.native_b_poly())
+    }
+
+    /// Returns the evaluation $v = p(u)$.
+    pub(crate) fn v(&self) -> C::CircuitField {
+        B::sparse_eval(self.native_p_poly(), self.u())
+    }
+
+    /// Returns the nested accumulator's revdot product
+    /// $c = \text{revdot}(a, b)$ in the scalar field.
+    pub(crate) fn nested_c(&self) -> C::ScalarField {
+        B::sparse_revdot(self.nested_a_poly(), self.nested_b_poly())
+    }
+
+    /// Returns the nested batch's evaluation $v_n = p_n(u_n)$, at the nested
+    /// counterpart of $u$.
+    pub(crate) fn nested_v(&self) -> Result<C::ScalarField> {
+        Ok(B::sparse_eval(
+            self.nested_p_poly(),
+            nested::challenge::<C>(self.u())?,
+        ))
+    }
+
+    /// Build the proof. All polynomial fields must have been set. Commitment
+    /// caches that haven't been accessed yet are computed now.
+    pub(crate) fn build(mut self) -> Result<Proof<C, R>> {
+        // Force lazy evaluation of every native commitment cache by invoking
+        // its getter. The a/b/p caches are set externally via their explicit
+        // setters, so they are not touched here.
+        self.native_application_commitment();
+        self.native_application_stage_commitment();
+        self.native_preamble_commitment();
+        self.native_inner_error_commitment();
+        self.native_outer_error_commitment();
+        self.native_query_commitment();
+        self.native_registry_xy_commitment();
+        self.native_eval_commitment();
+        self.native_hashes_1_commitment();
+        self.native_hashes_2_commitment();
+        self.native_collapse_commitment();
+        self.native_compute_v_commitment();
+        self.native_bind_challenges_commitments();
+        self.native_bind_beta_commitment();
+        self.native_bind_endoscalar_commitment();
+        self.native_endoscaling_step_commitments();
+        self.native_extension_circuit_commitments();
+        self.native_extension_stage_commitments();
+        self.native_points_binding_commitment();
+        self.native_points_preamble_commitment();
+        self.native_points_registry_wx_commitment();
+        self.native_points_ab_commitment();
+        self.native_points_f_commitment();
+        self.native_points_walk_commitment();
+        self.online_commitments();
+
+        // Force lazy evaluation of the cached bridge commitment.
+        self.bridge_ab_commitment()?;
+
+        // Ensure nested endoscaling commitment caches are populated.
+        self.nested_endoscaling_step_commitments();
+        self.nested_extension_circuit_commitments();
+        self.nested_extension_stage_commitments();
+        self.nested_endoscalar_commitment();
+        self.nested_points_commitment();
+
+        // Ensure nested accumulator and batch commitment caches are populated.
+        self.nested_a_commitment();
+        self.nested_b_commitment();
+        self.nested_registry_xy_commitment();
+        self.nested_p_commitment();
+        self.nested_challenges_commitment();
+        self.nested_collapse_commitment();
+        self.nested_compute_v_commitment();
+
+        macro_rules! take {
+            ($field:ident) => {
+                self.$field.expect(concat!(stringify!($field), " not set"))
+            };
+        }
+
+        macro_rules! cached {
+            ($field:ident) => {
+                Cached(
+                    self.$field
+                        .take()
+                        .expect(concat!(stringify!($field), " not set")),
+                )
+            };
+        }
+
+        Ok(Proof {
+            bridge_alpha: self.bridge_alpha,
+
+            circuit_id: take!(circuit_id),
+            left_header: take!(left_header),
+            right_header: take!(right_header),
+
+            native_application_rx: take!(native_application_rx),
+            native_application_stage_rx: take!(native_application_stage_rx),
+            native_preamble_rx: take!(native_preamble_rx),
+            native_inner_error_rx: take!(native_inner_error_rx),
+            native_outer_error_rx: take!(native_outer_error_rx),
+            native_a_poly: take!(native_a_poly),
+            native_b_poly: take!(native_b_poly),
+            native_query_rx: take!(native_query_rx),
+            native_registry_xy_poly: take!(native_registry_xy_poly),
+            native_eval_rx: take!(native_eval_rx),
+            native_p_poly: take!(native_p_poly),
+            native_hashes_1_rx: take!(native_hashes_1_rx),
+            native_hashes_2_rx: take!(native_hashes_2_rx),
+            native_collapse_rx: take!(native_collapse_rx),
+            native_compute_v_rx: take!(native_compute_v_rx),
+            native_bind_challenges_rxs: take!(native_bind_challenges_rxs),
+            native_bind_beta_rx: take!(native_bind_beta_rx),
+            native_bind_endoscalar_rx: take!(native_bind_endoscalar_rx),
+            native_endoscaling_step_rxs: take!(native_endoscaling_step_rxs),
+            native_extension_circuit_rxs: take!(native_extension_circuit_rxs),
+            native_extension_stage_rxs: take!(native_extension_stage_rxs),
+            native_points_binding_rx: take!(native_points_binding_rx),
+            native_points_preamble_rx: take!(native_points_preamble_rx),
+            native_points_registry_wx_rx: take!(native_points_registry_wx_rx),
+            native_points_ab_rx: take!(native_points_ab_rx),
+            native_points_f_rx: take!(native_points_f_rx),
+            native_points_walk_rx: take!(native_points_walk_rx),
+            online_polynomials: take!(online_polynomials),
+            online_openings: take!(online_openings),
+
+            bridge_preamble_rx: take!(bridge_preamble_rx),
+            bridge_preamble_commitment: take!(bridge_preamble_commitment),
+            bridge_hash_rx: take!(bridge_hash_rx),
+            bridge_hash_commitment: take!(bridge_hash_commitment),
+            bridge_s_prime_rx: take!(bridge_s_prime_rx),
+            bridge_s_prime_commitment: take!(bridge_s_prime_commitment),
+            bridge_inner_error_rx: take!(bridge_inner_error_rx),
+            bridge_inner_error_commitment: take!(bridge_inner_error_commitment),
+            bridge_outer_error_rx: take!(bridge_outer_error_rx),
+            bridge_outer_error_commitment: take!(bridge_outer_error_commitment),
+            bridge_query_rx: take!(bridge_query_rx),
+            bridge_query_commitment: take!(bridge_query_commitment),
+            bridge_f_rx: take!(bridge_f_rx),
+            bridge_f_commitment: take!(bridge_f_commitment),
+            bridge_eval_rx: take!(bridge_eval_rx),
+            bridge_eval_commitment: take!(bridge_eval_commitment),
+
+            bridge_ab_rx: cached!(bridge_ab_rx),
+            bridge_ab_commitment: cached!(bridge_ab_commitment),
+
+            nested_endoscaling_step_rxs: take!(nested_endoscaling_step_rxs),
+            nested_extension_circuit_rxs: take!(nested_extension_circuit_rxs),
+            nested_extension_stage_rxs: take!(nested_extension_stage_rxs),
+            nested_endoscalar_rx: take!(nested_endoscalar_rx),
+            nested_points_rx: take!(nested_points_rx),
+            nested_a_poly: take!(nested_a_poly),
+            nested_b_poly: take!(nested_b_poly),
+            nested_registry_xy_poly: take!(nested_registry_xy_poly),
+            nested_p_poly: take!(nested_p_poly),
+            nested_challenges_rx: take!(nested_challenges_rx),
+            nested_challenges_partial: take!(nested_challenges_partial),
+            nested_collapse_rx: take!(nested_collapse_rx),
+            nested_compute_v_rx: take!(nested_compute_v_rx),
+
+            nested_endoscaling_step_commitments: self
+                .nested_endoscaling_step_commitments
+                .take()
+                .expect("nested_endoscaling_step_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            nested_extension_circuit_commitments: self
+                .nested_extension_circuit_commitments
+                .take()
+                .expect("nested_extension_circuit_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            nested_extension_stage_commitments: self
+                .nested_extension_stage_commitments
+                .take()
+                .expect("nested_extension_stage_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            nested_endoscalar_commitment: cached!(nested_endoscalar_commitment),
+            nested_points_commitment: cached!(nested_points_commitment),
+            nested_a_commitment: cached!(nested_a_commitment),
+            nested_b_commitment: cached!(nested_b_commitment),
+            nested_registry_xy_commitment: cached!(nested_registry_xy_commitment),
+            nested_p_commitment: cached!(nested_p_commitment),
+            nested_challenges_commitment: cached!(nested_challenges_commitment),
+            nested_collapse_commitment: cached!(nested_collapse_commitment),
+            nested_compute_v_commitment: cached!(nested_compute_v_commitment),
+
+            w: take!(w),
+            y: take!(y),
+            z: take!(z),
+            mu: take!(mu),
+            mu_prime: take!(mu_prime),
+            x: take!(x),
+            alpha: take!(alpha),
+            u: take!(u),
+            pre_beta: take!(pre_beta),
+
+            native_application_commitment: cached!(native_application_commitment),
+            native_application_stage_commitment: cached!(native_application_stage_commitment),
+            native_preamble_commitment: cached!(native_preamble_commitment),
+            native_inner_error_commitment: cached!(native_inner_error_commitment),
+            native_outer_error_commitment: cached!(native_outer_error_commitment),
+            native_a_commitment: cached!(native_a_commitment),
+            native_b_commitment: cached!(native_b_commitment),
+            native_query_commitment: cached!(native_query_commitment),
+            native_registry_xy_commitment: cached!(native_registry_xy_commitment),
+            native_eval_commitment: cached!(native_eval_commitment),
+            native_p_commitment: cached!(native_p_commitment),
+            native_hashes_1_commitment: cached!(native_hashes_1_commitment),
+            native_hashes_2_commitment: cached!(native_hashes_2_commitment),
+            native_collapse_commitment: cached!(native_collapse_commitment),
+            native_compute_v_commitment: cached!(native_compute_v_commitment),
+            native_bind_challenges_commitments: self
+                .native_bind_challenges_commitments
+                .take()
+                .expect("native_bind_challenges_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_bind_beta_commitment: cached!(native_bind_beta_commitment),
+            native_bind_endoscalar_commitment: cached!(native_bind_endoscalar_commitment),
+            native_endoscaling_step_commitments: self
+                .native_endoscaling_step_commitments
+                .take()
+                .expect("native_endoscaling_step_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_extension_circuit_commitments: self
+                .native_extension_circuit_commitments
+                .take()
+                .expect("native_extension_circuit_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_extension_stage_commitments: self
+                .native_extension_stage_commitments
+                .take()
+                .expect("native_extension_stage_commitments not set")
+                .into_iter()
+                .map(Cached)
+                .collect(),
+            native_points_binding_commitment: cached!(native_points_binding_commitment),
+            native_points_preamble_commitment: cached!(native_points_preamble_commitment),
+            native_points_registry_wx_commitment: cached!(native_points_registry_wx_commitment),
+            native_points_ab_commitment: cached!(native_points_ab_commitment),
+            native_points_f_commitment: cached!(native_points_f_commitment),
+            native_points_walk_commitment: cached!(native_points_walk_commitment),
+            online_commitments: self
+                .online_commitments
+                .take()
+                .expect("online_commitments not set")
+                .map(Cached),
+        })
+    }
+}

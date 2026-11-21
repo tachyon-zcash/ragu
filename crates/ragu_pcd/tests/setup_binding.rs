@@ -15,8 +15,8 @@ use udon::field::Field;
 
 use crate::{
     Application, ApplicationBuilder, Pcd,
+    ipa::IpaCycle,
     profile::{Aggregator, Profile, Profiled, ProfiledCycle, testing::UnitStep},
-    protocol::ipa::IpaCycle,
 };
 
 const HEADER_SIZE: usize = 4;

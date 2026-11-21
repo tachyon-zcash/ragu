@@ -22,11 +22,14 @@ use crate::{
     profile::{Binding, Profile, ProfiledCycle},
     protocol::{
         native,
-        native::{online, unified as native_unified},
+        native::{
+            online,
+            stages::preamble::{ProofInputs, encode_output_header},
+            unified as native_unified,
+        },
         nested,
         nested::unified as nested_unified,
     },
-    verifier::recursive::native::stages::preamble::{ProofInputs, encode_output_header},
 };
 
 /// The targets of one proof's native revdot claims at one $y$.

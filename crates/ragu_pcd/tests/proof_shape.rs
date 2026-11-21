@@ -12,11 +12,11 @@ use udon::field::Field;
 use super::Proof;
 use crate::{
     Application, ApplicationBuilder,
+    ipa::IpaCycle,
     profile::{
         Profile, Profiled, ProfiledCycle,
         testing::{Crossing, CrossingBack, CrossingContext},
     },
-    protocol::ipa::IpaCycle,
     step::internal::rerandomize::Rerandomize,
 };
 

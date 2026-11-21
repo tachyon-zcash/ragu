@@ -255,7 +255,7 @@ fn check_batch<H: Header<Fp>>(
     // Check the production eval bridge's stored wires against direct
     // polynomial evaluations. The first two values hold native_eval.
     let values = stage_values::<
-        crate::verifier::recursive::nested::stages::eval::Stage<
+        crate::protocol::nested::stages::eval::Stage<
             <C as Cycle>::HostCurve,
             R,
             <C as ProfiledCycle>::Profile,
@@ -357,12 +357,12 @@ mod folding {
     use support::{C, R};
     use udon::field::Field;
 
-    use super::{super::claims::NestedFuseProofSource, stage_values, support};
+    use super::{super::claim_sources::NestedFuseProofSource, stage_values, support};
     use crate::{
         Proof,
+        fuse::prover::nested::outer_error::NestedFuseEmulator,
         profile::ProfiledCycle,
-        protocol::{fold_revdot, fold_revdot::ClaimFolder, nested, nested::claims::KySource},
-        prover::fuse::nested::outer_error::NestedFuseEmulator,
+        protocol::{nested, nested::claims::KySource, revdot, revdot::fold::ClaimFolder},
     };
 
     type P = nested::RevdotParameters<crate::profile::Standard>;
@@ -399,7 +399,7 @@ mod folding {
         }
     }
 
-    type Claims<'a> = crate::prover::claims::Builder<
+    type Claims<'a> = crate::protocol::revdot::Builder<
         'a,
         'a,
         Cow<'a, sparse::Polynomial<Fq, R>>,
@@ -417,7 +417,7 @@ mod folding {
         y: Fq,
         z: Fq,
     ) -> Result<(Claims<'a>, ChildValues)> {
-        let mut nested_claims = crate::prover::claims::Builder::new(&app.nested_registry, y, z);
+        let mut nested_claims = crate::protocol::revdot::Builder::new(&app.nested_registry, y, z);
         nested::claims::build::<crate::profile::Standard, _, _>(
             &NestedFuseProofSource { left, right },
             &mut nested_claims,
@@ -478,7 +478,7 @@ mod folding {
         // Two raw claims, one circuit claim per endoscaling step and per
         // instance circuit per child, and one bonding claim per bonding kind
         // folded across both children.
-        let steps = crate::verifier::recursive::gadgets::endoscalar::num_steps(
+        let steps = crate::protocol::gadgets::endoscalar::num_steps(
             nested::ENDOSCALINGS_PER_STEP,
             nested::NUM_ENDOSCALING_POINTS,
         );
@@ -496,12 +496,12 @@ mod folding {
 
         // 2. The accumulator is the two-layer fold of those claims.
         let inner_errors =
-            fold_revdot::inner_error_terms::<_, R, P>(&nested_claims.a, &nested_claims.b);
+            revdot::fold::inner_error_terms::<_, R, P>(&nested_claims.a, &nested_claims.b);
         let a_folded =
-            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.a, mu);
+            revdot::fold::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.a, mu);
         let b_folded =
-            fold_revdot::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.b, mu);
-        let outer_errors = fold_revdot::outer_error_terms::<_, R, P>(&a_folded, &b_folded);
+            revdot::fold::fold_inner::<sparse::Polynomial<Fq, R>, _, P>(&nested_claims.b, mu);
+        let outer_errors = revdot::fold::outer_error_terms::<_, R, P>(&a_folded, &b_folded);
         let collapsed: Vec<_> = a_folded
             .iter()
             .zip(b_folded.iter())
@@ -530,7 +530,7 @@ mod folding {
         // The inner stage starts with two curve points (four coordinates),
         // followed by the error terms in group-major order.
         let inner_values = stage_values::<
-            crate::verifier::recursive::nested::stages::inner_error::Stage<
+            crate::protocol::nested::stages::inner_error::Stage<
                 <C as Cycle>::HostCurve,
                 R,
                 <C as ProfiledCycle>::Profile,
@@ -546,7 +546,7 @@ mod folding {
         // The outer stage starts with one curve point, followed by the outer
         // error terms and then one collapsed value per group.
         let outer_values = stage_values::<
-            crate::verifier::recursive::nested::stages::outer_error::Stage<
+            crate::protocol::nested::stages::outer_error::Stage<
                 <C as Cycle>::HostCurve,
                 R,
                 <C as ProfiledCycle>::Profile,
@@ -584,8 +584,8 @@ mod folding {
             );
         }
 
-        let a_final = fold_revdot::fold_outer::<_, _, P>(a_folded, mu_prime);
-        let b_final = fold_revdot::fold_outer::<_, _, P>(b_folded, mu_prime);
+        let a_final = revdot::fold::fold_outer::<_, _, P>(a_folded, mu_prime);
+        let b_final = revdot::fold::fold_outer::<_, _, P>(b_folded, mu_prime);
         assert!(
             a_final.iter_coeffs().eq(parent.nested_a_poly.iter_coeffs()),
             "nested a is not the fold of the children's claims"
@@ -699,7 +699,7 @@ mod denominators {
     use ragu_testing::strategies;
     use udon::field::Field;
 
-    use crate::verifier::recursive::gadgets::inverter::Inverter;
+    use crate::protocol::gadgets::inverter::Inverter;
 
     #[derive(Clone, Copy)]
     enum Zero {
@@ -919,7 +919,7 @@ mod challenge_stage {
         folding, support,
         support::{C, Cache, HEADER_SIZE, R, Value},
     };
-    use crate::verifier::recursive::nested::stages::challenges;
+    use crate::protocol::nested::stages::challenges;
 
     fn check(app: &support::App, inputs: &support::Inputs, delta: Fq, y: Fq, z: Fq) -> Result<()> {
         let (child, _, _) = support::fused(app, inputs)?;
@@ -951,11 +951,10 @@ mod challenge_stage {
                 "{case}: the edit must leave the child's nested claims true"
             );
             assert!(
-                !crate::test_support::decider_uncompressed::nested_challenges_match::<
-                    C,
-                    R,
-                    HEADER_SIZE,
-                >(&forged, &forged.challenges().lifts::<C>()?,)?,
+                !crate::fuse::decider::nested_challenges_match::<C, R, HEADER_SIZE>(
+                    &forged,
+                    &forged.challenges().lifts::<C>()?,
+                )?,
                 "{case}: the edit must break the root's challenge-stage equality"
             );
             let forged = forged.carry::<Value>(*child.data());

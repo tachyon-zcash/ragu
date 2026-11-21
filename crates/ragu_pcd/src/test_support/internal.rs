@@ -6,8 +6,10 @@ use ragu_circuits::{
 use ragu_core::pasta::{Fp, Fq, Pasta};
 
 use crate::{
-    protocol::*,
-    verifier::recursive::native::stages::{eval, inner_error, outer_error, preamble, query},
+    protocol::{
+        native::stages::{eval, inner_error, outer_error, preamble, query},
+        *,
+    },
     *,
 };
 pub type R = ragu_circuits::polynomials::ProductionRank;
@@ -69,30 +71,18 @@ type InnerError =
 type Query = query::Stage<Pasta, R, HEADER_SIZE>;
 type Eval = eval::Stage<Pasta, R, HEADER_SIZE>;
 type NestedCurve = <Pasta as ragu_core::Cycle>::NestedCurve;
-type PointsBinding = crate::verifier::recursive::native::stages::points::BindingStage<
-    NestedCurve,
-    crate::profile::Standard,
->;
-type PointsPreamble = crate::verifier::recursive::native::stages::points::PreambleStage<
-    NestedCurve,
-    crate::profile::Standard,
->;
-type PointsRegistryWx = crate::verifier::recursive::native::stages::points::RegistryWxStage<
-    NestedCurve,
-    crate::profile::Standard,
->;
-type PointsAb = crate::verifier::recursive::native::stages::points::AbStage<
-    NestedCurve,
-    crate::profile::Standard,
->;
-type PointsF = crate::verifier::recursive::native::stages::points::FStage<
-    NestedCurve,
-    crate::profile::Standard,
->;
-type PointsWalk = crate::verifier::recursive::native::stages::points::WalkStage<
-    NestedCurve,
-    crate::profile::Standard,
->;
+type PointsBinding =
+    crate::protocol::native::stages::points::BindingStage<NestedCurve, crate::profile::Standard>;
+type PointsPreamble =
+    crate::protocol::native::stages::points::PreambleStage<NestedCurve, crate::profile::Standard>;
+type PointsRegistryWx =
+    crate::protocol::native::stages::points::RegistryWxStage<NestedCurve, crate::profile::Standard>;
+type PointsAb =
+    crate::protocol::native::stages::points::AbStage<NestedCurve, crate::profile::Standard>;
+type PointsF =
+    crate::protocol::native::stages::points::FStage<NestedCurve, crate::profile::Standard>;
+type PointsWalk =
+    crate::protocol::native::stages::points::WalkStage<NestedCurve, crate::profile::Standard>;
 
 fn synthesis_counts(circuit: impl Circuit<Fp>) -> (usize, usize) {
     let counts = ragu_circuits::testing::synthesis_counts(&circuit).unwrap();
@@ -110,38 +100,58 @@ fn try_internal_circuit_counts(variant: InternalCircuitIndex) -> Result<(usize, 
     let (_, log2_circuits) =
         native::total_circuit_counts::<crate::profile::Standard>(NUM_APP_STEPS);
     match variant {
-        InternalCircuitIndex::Hashes1Circuit => counts(crate::verifier::recursive::native::circuits::hashes_1::Circuit::<
-            Pasta,
-            R,
-            HEADER_SIZE,
-            RevdotParameters<crate::profile::Standard>,
-        >::new(pasta, log2_circuits)),
-        InternalCircuitIndex::Hashes2Circuit => counts(crate::verifier::recursive::native::circuits::hashes_2::Circuit::<
-            Pasta,
-            R,
-            HEADER_SIZE,
-            RevdotParameters<crate::profile::Standard>,
-        >::new(pasta)),
-        InternalCircuitIndex::CollapseCircuit => counts(crate::verifier::recursive::native::circuits::collapse::Circuit::<
-            Pasta,
-            R,
-            HEADER_SIZE,
-            RevdotParameters<crate::profile::Standard>,
-        >::new()),
+        InternalCircuitIndex::Hashes1Circuit => {
+            counts(crate::fuse::circuits::native::hashes_1::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+                RevdotParameters<crate::profile::Standard>,
+            >::new(pasta, log2_circuits))
+        }
+        InternalCircuitIndex::Hashes2Circuit => {
+            counts(crate::fuse::circuits::native::hashes_2::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+                RevdotParameters<crate::profile::Standard>,
+            >::new(pasta))
+        }
+        InternalCircuitIndex::CollapseCircuit => {
+            counts(crate::fuse::circuits::native::collapse::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+                RevdotParameters<crate::profile::Standard>,
+            >::new())
+        }
         InternalCircuitIndex::ComputeVCircuit => {
-            counts(crate::verifier::recursive::native::circuits::compute_v::Circuit::<Pasta, R, HEADER_SIZE>::new())
+            counts(crate::fuse::circuits::native::compute_v::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+            >::new())
         }
         InternalCircuitIndex::BindChallengesCircuit(k) => {
             crate::with_binder!(k, Pasta, R, HEADER_SIZE, pasta, |circuit| counts(circuit))
         }
         InternalCircuitIndex::BindBetaCircuit => {
-            counts(crate::verifier::recursive::native::circuits::bind_beta::Circuit::<Pasta, R, HEADER_SIZE>::new(pasta))
+            counts(crate::fuse::circuits::native::bind_beta::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+            >::new(pasta))
         }
         InternalCircuitIndex::BindEndoscalarCircuit => {
-            counts(crate::verifier::recursive::native::circuits::bind_endoscalar::Circuit::<Pasta, R>::new())
+            counts(crate::fuse::circuits::native::bind_endoscalar::Circuit::<
+                Pasta,
+                R,
+            >::new())
         }
         InternalCircuitIndex::EndoscalingStep(step) => {
-            counts(crate::verifier::recursive::native::circuits::endoscaling_step::Circuit::<Pasta, R>::new(step as usize))
+            counts(crate::fuse::circuits::native::endoscaling_step::Circuit::<
+                Pasta,
+                R,
+            >::new(step as usize))
         }
         _ => panic!("constraint counts only apply to internal circuits"),
     }
@@ -154,7 +164,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
 
     match variant {
         InternalCircuitIndex::Hashes1Circuit => {
-            synthesis_counts(crate::verifier::recursive::native::circuits::hashes_1::Circuit::<
+            synthesis_counts(crate::fuse::circuits::native::hashes_1::Circuit::<
                 Pasta,
                 R,
                 HEADER_SIZE,
@@ -162,7 +172,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
             >::new(pasta, log2_circuits))
         }
         InternalCircuitIndex::Hashes2Circuit => {
-            synthesis_counts(crate::verifier::recursive::native::circuits::hashes_2::Circuit::<
+            synthesis_counts(crate::fuse::circuits::native::hashes_2::Circuit::<
                 Pasta,
                 R,
                 HEADER_SIZE,
@@ -170,7 +180,7 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
             >::new(pasta))
         }
         InternalCircuitIndex::CollapseCircuit => {
-            synthesis_counts(crate::verifier::recursive::native::circuits::collapse::Circuit::<
+            synthesis_counts(crate::fuse::circuits::native::collapse::Circuit::<
                 Pasta,
                 R,
                 HEADER_SIZE,
@@ -178,24 +188,36 @@ fn internal_circuit_counts(variant: InternalCircuitIndex) -> (usize, usize) {
             >::new())
         }
         InternalCircuitIndex::ComputeVCircuit => {
-            synthesis_counts(crate::verifier::recursive::native::circuits::compute_v::Circuit::<Pasta, R, HEADER_SIZE>::new())
+            synthesis_counts(crate::fuse::circuits::native::compute_v::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+            >::new())
         }
         InternalCircuitIndex::BindChallengesCircuit(k) => {
             crate::with_binder!(k, Pasta, R, HEADER_SIZE, crate::pasta::baked(), |circuit| {
                 synthesis_counts(circuit)
             })
         }
-        InternalCircuitIndex::BindBetaCircuit => synthesis_counts(
-            crate::verifier::recursive::native::circuits::bind_beta::Circuit::<Pasta, R, HEADER_SIZE>::new(
-                crate::pasta::baked(),
-            ),
-        ),
-        InternalCircuitIndex::BindEndoscalarCircuit => {
-            synthesis_counts(crate::verifier::recursive::native::circuits::bind_endoscalar::Circuit::<Pasta, R>::new())
+        InternalCircuitIndex::BindBetaCircuit => {
+            synthesis_counts(crate::fuse::circuits::native::bind_beta::Circuit::<
+                Pasta,
+                R,
+                HEADER_SIZE,
+            >::new(crate::pasta::baked()))
         }
-        InternalCircuitIndex::EndoscalingStep(step) => synthesis_counts(
-            crate::verifier::recursive::native::circuits::endoscaling_step::Circuit::<Pasta, R>::new(step as usize),
-        ),
+        InternalCircuitIndex::BindEndoscalarCircuit => {
+            synthesis_counts(crate::fuse::circuits::native::bind_endoscalar::Circuit::<
+                Pasta,
+                R,
+            >::new())
+        }
+        InternalCircuitIndex::EndoscalingStep(step) => {
+            synthesis_counts(crate::fuse::circuits::native::endoscaling_step::Circuit::<
+                Pasta,
+                R,
+            >::new(step as usize))
+        }
         _ => panic!("constraint counts only apply to internal circuits"),
     }
 }
@@ -302,7 +324,7 @@ fn claimed_stages_lie_on_each_circuits_chain() {
     use InternalCircuitIndex::*;
     use native::{RxComponent, claims::Processor};
 
-    use crate::{protocol::claims::Source, verifier::recursive::native::circuits};
+    use crate::{fuse::circuits::native as circuits, protocol::revdot::Source};
 
     /// Yields one marker per component, as a single proof would.
     struct Marks;
@@ -674,27 +696,27 @@ fn nested_circuit_counts(variant: nested::InternalCircuitIndex) -> (usize, usize
                 crate::profile::Standard,
             >::new(step as usize)))
         }
-        nested::InternalCircuitIndex::Collapse => counts(MultiStage::new(
-            crate::verifier::recursive::nested::circuits::collapse::Circuit::<
+        nested::InternalCircuitIndex::Collapse => counts(
+            MultiStage::new(crate::fuse::circuits::nested::collapse::Circuit::<
                 EqAffine,
                 R,
                 crate::profile::Standard,
-            >::new(),
-        )),
+            >::new()),
+        ),
         nested::InternalCircuitIndex::ComputeV => counts(MultiStage::new(
-            crate::verifier::recursive::nested::circuits::compute_v::Circuit::<
+            crate::fuse::circuits::nested::compute_v::Circuit::<
                 EqAffine,
                 R,
                 crate::profile::Standard,
             >::new(),
         )),
-        nested::InternalCircuitIndex::Loading => counts(MultiStage::new(
-            crate::verifier::recursive::nested::circuits::loading::Circuit::<
+        nested::InternalCircuitIndex::Loading => counts(
+            MultiStage::new(crate::fuse::circuits::nested::loading::Circuit::<
                 EqAffine,
                 R,
                 crate::profile::Standard,
-            >::new(),
-        )),
+            >::new()),
+        ),
         _ => panic!("constraint counts only apply to nested circuits"),
     }
 }
@@ -719,7 +741,7 @@ fn nested_circuits() -> impl Iterator<Item = nested::InternalCircuitIndex> {
 #[test]
 fn test_nested_circuit_constraint_counts() {
     // Every nested endoscaling step walks four points and has the same layout.
-    let steps = crate::verifier::recursive::gadgets::endoscalar::num_steps(
+    let steps = crate::protocol::gadgets::endoscalar::num_steps(
         nested::ENDOSCALINGS_PER_STEP,
         nested::NUM_ENDOSCALING_POINTS,
     );
@@ -740,8 +762,8 @@ fn test_nested_circuit_constraint_counts() {
 #[rustfmt::skip]
 #[test]
 fn test_nested_stage_parameters() {
-    use crate::verifier::recursive::gadgets::endoscalar;
-    use crate::verifier::recursive::nested::stages;
+    use crate::protocol::gadgets::endoscalar;
+    use crate::protocol::nested::stages;
     use ragu_core::pasta::EqAffine;
     use ragu_core::pasta::Fq;
 
@@ -775,7 +797,7 @@ fn print_nested_circuit_constraint_counts() {
 
     use ragu_core::pasta::{EqAffine, Fq};
 
-    use crate::verifier::recursive::{gadgets::endoscalar, nested::stages};
+    use crate::protocol::{gadgets::endoscalar, nested::stages};
 
     println!("\n// Copy-paste into test_nested_circuit_constraint_counts:");
     for variant in nested_circuits() {
@@ -1157,7 +1179,6 @@ fn test_extension_claims_follow_the_declaration() {
             testing::{Crossing, CrossingBack, Stated, Wider},
         },
         protocol::{
-            claims::Source,
             native::{
                 RxComponent,
                 RxComponent::Rx,
@@ -1167,6 +1188,7 @@ fn test_extension_claims_follow_the_declaration() {
                 },
                 claims::{KySource, Processor, build, ky_values},
             },
+            revdot::Source,
         },
     };
 
@@ -1538,7 +1560,7 @@ fn test_fold_groups_follow_the_profile() {
 
     use crate::{
         profile::{Standard, testing::Wider},
-        protocol::fold_revdot::Parameters,
+        protocol::revdot::fold::Parameters,
     };
 
     assert_eq!(native::num_claims::<Standard>(), 92);

@@ -1,10 +1,7 @@
 //! The shape a profile gives a proof.
 
 use super::{Profile, Standard};
-use crate::{
-    protocol::{native, nested},
-    verifier::recursive::gadgets::endoscalar,
-};
+use crate::protocol::{gadgets::endoscalar, native, nested};
 
 /// The shape a profile gives a proof: its rx polynomial counts and the sizes
 /// of the two endoscaling walks.

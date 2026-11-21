@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn schema_v2_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
-        assert_eq!(crate::protocol::ipa::IPA_TAG, b"ragu-ipa-v1");
+        assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
         assert_eq!(
             Shape::of::<Standard>(),

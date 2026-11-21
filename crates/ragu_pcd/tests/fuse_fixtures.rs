@@ -97,18 +97,16 @@ use udon::{curve::Affine, field::Field};
 use super::Proof;
 use crate::{
     Application, ApplicationBuilder, CompressedProof, Pcd,
+    compress::{
+        batch::Batch,
+        instance::{Child, Instance, NestedChild},
+        revdot::{Reduction, fold::Fold},
+    },
     header::{Header, Padding, Suffix},
+    ipa::{IpaCycle, IpaProof},
     profile::{Aggregator, Profile, Profiled, ProfiledCycle},
     proof::Messages,
-    protocol::{
-        compress::{
-            batch::Batch,
-            instance::{Child, Instance, NestedChild},
-            revdot::{Reduction, fold::Fold},
-        },
-        ipa::{IpaCycle, IpaProof},
-        native::online,
-    },
+    protocol::native::online,
     step::{Encoded, Index, Oracles, Step, internal::bootstrap::Bootstrap},
     test_support::{fingerprint, fingerprint::Event},
 };

@@ -49,15 +49,15 @@ macro_rules! ipa_tests {
 
             use super::K;
             use super::fresh;
-            use crate::protocol::ipa::CycleTranscript;
-            use crate::verifier::ipa::Guard;
-            use crate::protocol::ipa::IpaCycle;
-            use crate::protocol::ipa::IpaProof;
-            use crate::protocol::ipa::IpaTranscript;
-            use crate::protocol::ipa::MSM;
-            use crate::protocol::ipa::Params;
-            use crate::prover::ipa as prover;
-            use crate::verifier::ipa as verifier;
+            use crate::ipa::CycleTranscript;
+            use crate::ipa::verifier::Guard;
+            use crate::ipa::IpaCycle;
+            use crate::ipa::IpaProof;
+            use crate::ipa::IpaTranscript;
+            use crate::ipa::MSM;
+            use crate::ipa::Params;
+            use crate::ipa::prover as prover;
+            use crate::ipa::verifier as verifier;
 
             type C = $curve;
             type F = $field;
@@ -499,7 +499,7 @@ macro_rules! ipa_tests {
 
             #[test]
             fn msm_matches_serial_adapter() {
-                use crate::protocol::ipa::msm::multiexp;
+                use crate::ipa::msm::multiexp;
 
                 let mut rng = StdRng::seed_from_u64(15);
                 let mut scalars = random_poly(8193, &mut rng);
@@ -569,7 +569,7 @@ macro_rules! ipa_tests {
             #[test]
             #[should_panic(expected = "msm operands must have equal length")]
             fn msm_rejects_mismatched_lengths() {
-                crate::protocol::ipa::msm::multiexp::<_, ReferenceBackend>(&[F::ONE; 256], &[u(); 255]);
+                crate::ipa::msm::multiexp::<_, ReferenceBackend>(&[F::ONE; 256], &[u(); 255]);
             }
 
             #[cfg(feature = "multicore")]
@@ -706,7 +706,7 @@ ipa_tests!(
 fn sides_share_one_transcript() {
     use ragu_core::{Cycle, FixedGenerators};
 
-    use crate::protocol::ipa::IpaTranscript;
+    use crate::ipa::IpaTranscript;
 
     let host_point = Pasta::host_generators(crate::pasta::baked()).g()[0];
     let nested_point = Pasta::nested_generators(crate::pasta::baked()).g()[0];

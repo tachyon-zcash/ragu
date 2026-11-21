@@ -3,7 +3,7 @@ import Ragu.Core
 
 /-!
 `ragu_circuits::horner::Horner` at nineteen coefficients, the `NumGroups`
-shape `fold_revdot.rs` uses for the outer layer. See
+shape `protocol/revdot/fold.rs` uses for the outer layer. See
 `Ragu.Instances.Horner.N3` for why the reimplementation is `Fold.circuit`
 itself.
 -/

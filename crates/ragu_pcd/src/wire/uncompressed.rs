@@ -86,7 +86,7 @@ codec! {
     native_bind_beta_rx => wire::DefaultEncoding,
     // The native endoscaling walk over the nested batch's commitments: the
     // endoscalar binding circuit, the steps, the five points stages holding
-    // the walk's inputs (see `crate::verifier::recursive::native::stages::points`) and the walk stage
+    // the walk's inputs (see `crate::protocol::native::stages::points`) and the walk stage
     // holding the endoscalar's bits and the interstitials.
     native_bind_endoscalar_rx => wire::DefaultEncoding,
     native_endoscaling_step_rxs => wire::FixedSequence<wire::DefaultEncoding, native::NumSteps<C::Profile>>,
