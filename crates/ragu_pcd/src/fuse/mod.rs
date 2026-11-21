@@ -16,7 +16,6 @@ mod _10_p;
 mod _11_circuits;
 mod bootstrap;
 pub(crate) mod claims;
-mod online;
 mod points;
 // PCS and folding properties use private fuse internals. The proof-binding
 // properties live under `proof` for direct access to cached fields.

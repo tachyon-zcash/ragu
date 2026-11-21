@@ -54,7 +54,9 @@ on. Paths are relative to `src/`.
 
 Everything except the prover and test-only code. The prover is `fuse/`,
 `proof/builder.rs`, every `prover.rs` (under `compress/`, `ipa/`,
-`decompress/` and `profile/online/`) and `multicore.rs`; it matters for
+`decompress/` and `profile/online/`), `multicore.rs`, and the `impl
+Application` blocks in `internal/{native,nested}/online.rs`, which run the
+fuse's online batch phases beside the slots they fill. It matters for
 completeness and zero knowledge, so a soundness review can set it aside.
 `tests/prover_isolation.rs` checks that no other code names prover code, apart
 from the public re-exports it lists. It checks paths, not calls: an inherent

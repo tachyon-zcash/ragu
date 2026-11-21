@@ -74,6 +74,26 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "decompress::prover::Decompression",
         "the aggregator profile's public types",
     ),
+    (
+        "internal/native/online.rs",
+        "proof::ProofBuilder",
+        "holds the fuse's native online batch phases",
+    ),
+    (
+        "internal/native/online.rs",
+        "profile::online::prover::State",
+        "holds the fuse's native online batch phases",
+    ),
+    (
+        "internal/nested/online.rs",
+        "proof::ProofBuilder",
+        "holds the fuse's nested online batch phases",
+    ),
+    (
+        "internal/nested/online.rs",
+        "profile::online::prover::State",
+        "holds the fuse's nested online batch phases",
+    ),
 ];
 
 #[test]
