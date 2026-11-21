@@ -11,7 +11,7 @@
 //! The native `eval` stage also carries the running partial sums of the
 //! nested challenge binding (see `bind_challenges`), computed here from the
 //! same witness that will be committed in the nested challenge stage: the
-//! ten lifts and the base-case sign derived from the child headers. Their
+//! eight lifts and the base-case sign derived from the child headers. Their
 //! binding sum goes to the unified instance.
 
 use alloc::vec::Vec;
@@ -66,7 +66,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         for (lift, challenge) in lifts.iter_mut().zip(bound_challenges) {
             *lift = nested::challenge::<C>(*challenge)?;
         }
-        // The binding partials use only the ten lifts and the sign. Beta
+        // The binding partials use only the eight lifts and the sign. Beta
         // is filled after `pre_beta` is squeezed, before this witness is committed.
         let nested_challenges = nested::stages::challenges::Witness::new(
             lifts,

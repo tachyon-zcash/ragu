@@ -200,8 +200,8 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Native {
     #[cfg(test)]
     const NAME: &'static str = "circuit-field";
 
-    /// The scalar-field side has no flag for this side to take.
     const ONLINE: super::online::Values = super::online::Values::NATIVE;
+    /// The scalar-field side has no flag for this side to take.
     const FLAGS: usize = 0;
     const EXPOSED_ELEMENTS: usize = 0;
 
@@ -468,9 +468,9 @@ impl<C: IpaCycle + ProfiledCycle<Profile = Standard>> Side<C> for Nested {
     #[cfg(test)]
     const NAME: &'static str = "scalar-field";
 
+    const ONLINE: super::online::Values = super::online::Values::NESTED;
     /// The decompression flag, which the circuit-field side's statement
     /// circuit binds.
-    const ONLINE: super::online::Values = super::online::Values::NESTED;
     const FLAGS: usize = 1;
     /// The point and the value of the opening of the online Fq polynomial
     /// of the step that proves the chunks.
