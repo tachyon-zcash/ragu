@@ -348,6 +348,54 @@ proptest! {
     }
 
     #[test]
+    fn add_scaled_assign_matches_a_scaled_copy(
+        a in arb_any_poly(),
+        b in arb_any_poly(),
+        by in prop_oneof![
+            Just(Fp::ZERO),
+            Just(Fp::ONE),
+            strategies::prime_field_element::<Fp>(),
+        ],
+    ) {
+        let mut expected = a.clone();
+        let mut scaled = b.clone();
+        scaled.scale(by);
+        expected.add_assign(&scaled);
+
+        let mut sum = a;
+        sum.add_scaled_assign(&b, by);
+        // The stored blocks agree as well as the coefficients.
+        prop_assert!(sum.iter_stored_coeffs().eq(expected.iter_stored_coeffs()));
+    }
+
+    #[test]
+    fn linear_combination_matches_scaled_sums(
+        polys in prop::collection::vec(arb_any_poly(), 0..6),
+        scalars in prop::collection::vec(
+            prop_oneof![
+                Just(Fp::ZERO),
+                Just(Fp::ONE),
+                strategies::prime_field_element::<Fp>(),
+            ],
+            6,
+        ),
+    ) {
+        let mut expected = Polynomial::<Fp, R>::default();
+        for (poly, &by) in polys.iter().zip(&scalars) {
+            let mut scaled = poly.clone();
+            scaled.scale(by);
+            expected.add_assign(&scaled);
+        }
+
+        let terms: Vec<_> = polys.iter().zip(scalars.iter().copied()).collect();
+        let sum = Polynomial::linear_combination(&terms);
+        prop_assert!(sum.iter_coeffs().eq(expected.iter_coeffs()));
+        // The split form builds the same blocks, not only the same values.
+        let split = Polynomial::linear_combination_parallel(&terms);
+        prop_assert!(split.iter_stored_coeffs().eq(sum.iter_stored_coeffs()));
+    }
+
+    #[test]
     fn fold_correct(
         p1 in arb_any_poly(),
         p2 in arb_any_poly(),
