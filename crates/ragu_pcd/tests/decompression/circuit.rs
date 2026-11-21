@@ -23,7 +23,7 @@ fn witness(setup: &Setup) -> Witness<Pasta> {
 
 /// Runs both sides on `witness`; `Ok` with the two sides' gate counts if
 /// both accept.
-fn run(witness: &Witness<Pasta>) -> crate::Result<(usize, usize)> {
+fn run(witness: &Witness<Pasta>) -> ragu_core::Result<(usize, usize)> {
     let circuit = Simulator::simulate((), |dr, _| {
         circuit_field_side::<_, Pasta, TestR, HEADER_SIZE>(
             dr,

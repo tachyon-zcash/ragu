@@ -6,7 +6,10 @@ use ragu_circuits::{
     Circuit,
     staging::{MultiStage, MultiStageCircuit, Stage, StageExt},
 };
-use ragu_core::pasta::{Fp, Fq, Pasta};
+use ragu_core::{
+    Error, Result,
+    pasta::{Fp, Fq, Pasta},
+};
 
 use super::*;
 use crate::*;

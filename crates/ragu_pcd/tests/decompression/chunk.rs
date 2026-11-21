@@ -132,7 +132,7 @@ fn check<S: Side<Pasta>, R: Rank, X>(
     masks: Vec<BondingObject<'static, S::F, R>>,
     final_mask: BondingObject<'static, S::F, R>,
     rng: &mut StdRng,
-) -> crate::Result<Report>
+) -> ragu_core::Result<Report>
 where
     X: MultiStageCircuit<S::F, R> + Clone + 'static,
     for<'s> X: MultiStageCircuit<S::F, R, Witness<'s> = &'s Prepared<Pasta, S>, Instance<'s> = ()>,
@@ -167,7 +167,7 @@ where
 #[allow(clippy::type_complexity)]
 fn online_stages<S: Side<Pasta>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
-) -> crate::Result<(
+) -> ragu_core::Result<(
     Vec<sparse::Polynomial<S::F, R>>,
     Vec<BondingObject<'static, S::F, R>>,
 )> {
@@ -192,7 +192,7 @@ fn online_stages<S: Side<Pasta>, R: Rank>(
 #[allow(clippy::type_complexity)]
 fn common_stages<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     prepared: &Prepared<Pasta, S>,
-) -> crate::Result<(
+) -> ragu_core::Result<(
     Vec<sparse::Polynomial<S::F, R>>,
     Vec<BondingObject<'static, S::F, R>>,
 )> {
@@ -221,7 +221,7 @@ fn run_circuit<S: Front<Pasta, TestR, R, HEADER_SIZE>, R: Rank>(
     index: usize,
     prepared: &Prepared<Pasta, S>,
     rng: &mut StdRng,
-) -> crate::Result<Report> {
+) -> ragu_core::Result<Report> {
     type Work<S, R> = WorkStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Transcript<S, R> = TranscriptStage<Pasta, S, TestR, R, HEADER_SIZE>;
     type Digits<S, R> = DigitsStage<Pasta, S, TestR, R, HEADER_SIZE>;

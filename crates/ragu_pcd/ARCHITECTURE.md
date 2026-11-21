@@ -8,7 +8,7 @@ on. Paths are relative to `src/`.
 
 | Path | Holds |
 | --- | --- |
-| `lib.rs` | `ApplicationBuilder` and `Application`: setup (`finalize`), `seed` and `rerandomize`. |
+| `lib.rs`, `application.rs` | The crate docs, module list and re-exports; `ApplicationBuilder` and `Application` in `application.rs`, with setup (`finalize`), `seed` and `rerandomize`. |
 | `header/`, `step/` | What a proof claims: headers and the online polynomials they name, and the steps that produce them. `step/internal/` holds the internal steps. |
 | `profile/` | Proof shapes: the `Profile` trait, the built-in profiles and their extensions. `profile/online/` declares the online batches. |
 | `pasta/` | The Pasta parameters. |
@@ -27,8 +27,8 @@ on. Paths are relative to `src/`.
 
 | Operation | Where |
 | --- | --- |
-| `ApplicationBuilder::finalize` | `lib.rs` |
-| `Application::seed`, `Application::rerandomize` | `lib.rs` |
+| `ApplicationBuilder::finalize` | `application.rs` |
+| `Application::seed`, `Application::rerandomize` | `application.rs` |
 | `Application::fuse` | `fuse/mod.rs`, then `fuse/_01_application.rs` to `fuse/_11_circuits.rs` |
 | Recursive verification | `internal/{native,nested}/circuits/`, registered by `register_all` in `internal/{native,nested}/mod.rs` |
 | `Application::compress` | `compress/prover.rs` |
@@ -38,7 +38,7 @@ on. Paths are relative to `src/`.
 
 ## Reading order
 
-1. `lib.rs` and the entry points above.
+1. `lib.rs`, `application.rs` and the entry points above.
 2. `header/`, `step/` and `profile/`: what a proof claims and the shapes it
    takes.
 3. `internal/`: each side's `mod.rs`, `claims.rs`, `unified.rs` and `stages/`,
