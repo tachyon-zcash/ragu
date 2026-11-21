@@ -17,7 +17,7 @@
 //! commitment: a circuit over the circuit field absorbs it as a witness
 //! point, and the proof's consumer holds the point to the stage, which
 //! binds the run's values before the challenge that follows them (see
-//! [`stages`](crate::decompress::stages)). A transcript opened with
+//! `decompress::stages`). A transcript opened with
 //! [`new`](CycleTranscript::new) commits each run over the parameters'
 //! first nested generators instead: a standalone IPA's. The fuse's own
 //! transcript takes no scalar-field value

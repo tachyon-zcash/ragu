@@ -377,6 +377,15 @@ jobs:
         run: cargo doc --no-deps --all --locked --all-features --document-private-items
         env:
           RUSTDOCFLAGS: "-D warnings"
+      # The website documents each package on its own with default features,
+      # where a link into a feature-gated module does not resolve.
+      - name: Check intra-doc links per package with default features
+        run: |
+          for pkg in $(cargo metadata --format-version=1 --no-deps --locked | jq -r '.packages[].name'); do
+            cargo doc --no-deps --locked --document-private-items -p "$pkg"
+          done
+        env:
+          RUSTDOCFLAGS: "-D warnings"
 
   book:
     name: ragu book
