@@ -8,18 +8,25 @@
 //! stage the digits chunks load after the work stage instead. Three final
 //! masks bind the chunks by their last stage. After the chunks come the
 //! statement circuit, which loads the instance stage alone and exposes the
-//! output header the chunks verified as its public output, under a fourth
-//! final mask (see [`chunk::StatementCircuit`]), and the binding circuit,
-//! which loads the work stage and exposes the commitments of the
-//! scalar-field side's run stages the transcript absorbed and the side's
-//! recomputations of that side's lifts and digits stages, under the work
-//! stage's final mask (see [`chunk::BindingCircuit`]). On the nested side
-//! it is the scalar-field side's chunks over its stages, one per run of the
+//! output header the chunks verified, then the step binding, as its public
+//! output, under a fourth final mask (see [`chunk::StatementCircuit`]), and
+//! the binding circuit, which loads the instance, messages, lifts and work
+//! stages and exposes the commitments of the scalar-field side's run stages
+//! the transcript absorbed, the side's recomputations of that side's lifts
+//! and digits stages and the nested IPA's $G'$, under the work stage's
+//! final mask (see [`chunk::BindingCircuit`]). On the nested side it is the
+//! scalar-field side's chunks over its stages, one per run of the
 //! compression's transcript, then the trailing, lifts, work and digits
 //! stages (see [`Front`]), the digits chunks last, under two final masks,
 //! and its binding circuit, which exposes its recomputation of the
-//! circuit-field side's digits stage; that side's transcript stage is
-//! empty and stays out.
+//! circuit-field side's digits stage, the commitment of the first output
+//! slot of the step that proves the chunks, and the point and value at
+//! which that step opened its online Fq polynomial; that side's transcript
+//! stage is empty and stays out.
+//!
+//! Every circuit of either side loads the aggregator's two online stages
+//! of the side's field, which the fuse commits, before the extension's
+//! (see [`OnlineInputStage`](super::stages::OnlineInputStage)).
 //!
 //! The chunk circuits verify a standard-profile compressed proof at rank
 //! `K` as circuits at the profile's rank `R`, so the hooks take the base
@@ -148,8 +155,9 @@ impl Counts {
 /// final mask binds each kind by its last stage: the work stage's, the
 /// transcript stage's, the digits stage's, then the instance stage's. The
 /// binding circuit exposes the nested extension's run stages, which the
-/// transcript absorbed, and its recomputations of that extension's lifts
-/// and digits stages, in that order.
+/// transcript absorbed, its recomputations of that extension's lifts and
+/// digits stages, and the nested IPA's $G'$, which the proof's consumer
+/// holds to the step's online Fq commitment, in that order.
 ///
 /// # Panics
 ///
@@ -215,7 +223,8 @@ pub(crate) fn native_layout(counts: Counts, runs: usize) -> Extension {
 /// stage after them, and the binding circuit the same stages as the rest,
 /// under the work stage's final mask then the digits stage's. The binding
 /// circuit recomputes the native extension's digits stage and exposes, after
-/// it, the commitment of the proof's first output slot.
+/// it, the commitment of the proof's first output slot, then, as elements,
+/// the point and value at which the proof opened its online Fq polynomial.
 ///
 /// # Panics
 ///

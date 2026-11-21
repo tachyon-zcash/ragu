@@ -21,7 +21,7 @@ therefore fixes both sides.
 | 5 | $A$, $B$ | $A_q$, $B_q$, $m_q(w_q, X, y_q)$, in `PointsAb` | $R_q[\texttt{BridgeAB}]$ | $x$ |
 | 6 | the claimed values, in `Query`; $m(W, x, y)$ | the nested claimed values, in `BridgeQuery` | $R_q[\texttt{BridgeQuery}]$ | $\alpha$ |
 | 7 | $f$ | $f_q$, $m_q(W, x_q, y_q)$, in `PointsF` | $R_q[\texttt{BridgeF}]$ | $u$ |
-| 8 | the evaluations at $u$, in `Eval` | the evaluations at $u_q$, in `BridgeEval` | $R_q[\texttt{BridgeEval}]$ | $\text{pre\_beta}$ |
+| 8 | the evaluations at $u$ and the three partial sums of the [challenge stage](stage_contents.md#challenge-stage) commitment, in `Eval` | the evaluations at $u_q$, in `BridgeEval` | $R_q[\texttt{BridgeEval}]$ | $\text{pre\_beta}$ |
 
 After the last challenge the prover sends a final message, which no challenge
 follows:

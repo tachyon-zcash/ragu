@@ -4,9 +4,10 @@
 //!
 //! Every chunk circuit of a side has the same shape: the stages loaded
 //! unenforced, as the fuse's endoscaling steps load theirs, then its
-//! chunks' own gates, in order. A [`Circuit`] loads the side's front
-//! stages (see [`Front`]), the lifts stage and the work stage; a
-//! [`TranscriptCircuit`], for transcript chunks, loads the transcript
+//! chunks' own gates, in order. A [`Circuit`] loads the aggregator's two
+//! online stages ([`OnlineInputStage`] and [`OnlineQueryStage`]), then the
+//! side's front stages (see [`Front`]), the lifts stage and the work stage;
+//! a [`TranscriptCircuit`], for transcript chunks, loads the transcript
 //! stage after them as well, so that only those chunks pay for the sponge
 //! states; a [`DigitsCircuit`], for the digits chunks, loads the digits
 //! stage after the work stage instead. Which chunks a circuit runs is
@@ -20,14 +21,18 @@
 //! [`AggregatorRank`](ragu_circuits::polynomials::AggregatorRank) over
 //! wallets' proofs at the wallet rank.
 //!
-//! Beside the chunks, a [`StatementCircuit`] loads the instance stage alone
-//! and exposes the output header the chunks verified as its public output,
-//! the one place the decompressed statement reaches a claim; and a
-//! [`BindingCircuit`] loads the work stage and exposes the other side's
-//! stage commitments the side absorbed or recomputed
-//! ([`Regions::exposed`](super::program::Regions::exposed)) as its public
-//! output, which the proof's consumer holds to those commitments through
-//! the circuit's claim (see [`Binding`](crate::profile::Binding)).
+//! Beside the chunks, a [`StatementCircuit`] loads the online stages and
+//! the instance stage, and no other, and exposes the output header the
+//! chunks verified, then the step binding, as its public output, the one
+//! place the decompressed statement reaches a claim; and a
+//! [`BindingCircuit`] loads the stages a [`Circuit`] does and exposes, off
+//! the work stage, the other side's stage commitments the side absorbed or
+//! recomputed and what it took of the step's own online polynomials
+//! ([`Regions::exposed`](super::program::Regions::exposed) and
+//! [`Regions::exposed_elements`](super::program::Regions::exposed_elements))
+//! as its public output, which the proof's consumer holds to those
+//! commitments and openings through the circuit's claim (see
+//! [`Binding`](crate::profile::Binding)).
 
 use alloc::sync::Arc;
 use core::marker::PhantomData;
