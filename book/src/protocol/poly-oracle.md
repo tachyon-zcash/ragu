@@ -103,7 +103,19 @@ While it suffices for the majority of Tachyon's [current steps](https://github.c
 - QR bucket in an Evidence Tree, affecting `EvidenceTreeOpen`, `EvidenceTreeLeafPair`
   - evidence tree's leaf encoding is another 8-element Poseidon hash including a $\acc^\tg$ preimage, thus use $H^{bridge}(\acc^\tg)$ accordingly
 
-## Mental Model: Ragu's Internal {#ragu}
+## Earlier Model of Ragu's Internals {#ragu}
+
+```admonish warning title="Design history"
+This section and the variants [V1](#v1) to [V4](#v4) record how the design
+was reached. The figure below and its tuples describe Ragu at the
+[commit the design builds on](#design), in which a step's parent folds its
+application trace. They are not the implemented protocol. The
+[capability list](#cap) above is the current interface, and the current
+lifecycle of an application claim is in the
+[figure of one fuse](construction/index.md#accumulator-frontier), the
+[claim list](construction/claims.md#native-claims) and the
+[Fuse PIOP](iop.md).
+```
 
 This model starts from Ragu as of the [commit the design builds on](#design),
 in which a step's parent folds its application trace. Ragu has since adopted
@@ -113,6 +125,14 @@ trace and stage. Its native `Preamble` holds the six opening pairs, its
 `compute_v` reads the same wires for the batch, and the parent folds those
 circuits' claims from the step's frontier. The [Fuse PIOP](iop.md) gives the
 implemented rule.
+
+The tuples of this section, such as `[app.L, app.R, app.O]`, list header
+fields only. They are projections of the public instances and not the
+instances themselves: the application's instance today also holds $\zeta$, the
+six opening pairs and the bridge digest, as [C4](#cap) lists, and the instance
+of `hashes_1` is the $k_{\text{bridge}}$ of
+[Construction](construction/proof.md#native-unified), which holds the
+challenges and the bridge commitments of the unified instance.
 
 ```mermaid
 flowchart TB
@@ -200,6 +220,11 @@ We pedantically explain this variant here because it's highly relevant in our de
 
 We incrementally revise Ragu to build up its capabilities for all [feature requests](#cap) of online polynomial oracles.
 Each variant builds on top of the previous one, v1 builds on [today's Ragu](https://github.com/tachyon-zcash/ragu/tree/3219e0865e8bff1f9d817bfe3850d9e94b64338c), effectively on the Ragu [mental model above](#ragu).
+The variants are kept in the order in which they were designed, and a
+"before" diagram shows a state that no longer exists.
+What a step can rely on is the [capability list](#cap), and the stage contents
+and counts of the implemented protocol are in
+[Construction](construction/stage_contents.md).
 
 A relevant Ragu knowledge we keep referring to is its challenge scheduling among native and nested stages of its folding circuits.
 
