@@ -1,4 +1,11 @@
-//! Modules for evaluating the wiring polynomial $s(X, Y)$.
+//! Recording and evaluating the public wiring polynomial $s(X, Y)$.
+//!
+//! Registries record each circuit once with [`compiled`]. Evaluations then
+//! run that linear program forwards or backwards without re-synthesizing the
+//! circuit, and the registry tag hashes the polynomial written down from the
+//! same program. The direct interpreters and the [`monomials`] driver are
+//! built only for tests, as independent references for the compiled program.
+//! Symbolic stage masks keep their compact closed-form representation.
 //!
 //! # Background
 //!
@@ -66,8 +73,8 @@
 //!
 //! in $s(X, Y)$, counting $j$ from zero. Within its block, the first
 //! constraint that a segment emits takes the highest power, which is the
-//! order that Horner's rule in [`sxy`] produces. Similarly, the $k$-th gate in
-//! segment $i$ occupies absolute gate index $m\_{i} + k$.
+//! order that Horner's rule over the emitted constraints produces. Similarly,
+//! the $k$-th gate in segment $i$ occupies absolute gate index $m\_{i} + k$.
 //!
 //! Because constraint emission interleaves a segment's own constraints with
 //! nested routine calls that belong to *separate* segments, the running
@@ -77,16 +84,20 @@
 //!
 //! # Overview
 //!
-//! This module provides implementations that interpret circuit code directly
-//! (via specialized [`Driver`] implementations) to evaluate $s(X, Y)$ at
-//! specific restrictions more efficiently:
+//! * [`compiled`]: Records a circuit's constraint emission once, then
+//!   evaluates $s(X, Y)$ at $X = x$, at $Y = y$, or at $(x, y)$ for some
+//!   $x, y \in \mathbb{F}$, and writes the polynomial down for the registry
+//!   tag. Registries evaluate and hash circuits through it.
+//! * [`monomials`]: $s(X, Y)$ itself as the list of its nonzero terms
+//!   $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum is
+//!   $s(X, Y)$: what the registry hashes into its tag.
 //!
-//! * [`sx`]: Evaluates $s(X, Y)$ at $X = x$ for some $x \in \mathbb{F}$.
-//! * [`sy`]: Evaluates $s(X, Y)$ at $Y = y$ for some $y \in \mathbb{F}$.
-//! * [`sxy`]: Evaluates $s(X, Y)$ at $(x, y)$ for some $x, y \in \mathbb{F}$.
-//! * [`monomials`]: Writes out $s(X, Y)$ itself as the list of its nonzero
-//!   terms $c X^i Y^j$, ordered by their powers of $Y$ and then $X$, whose sum
-//!   is $s(X, Y)$, for the registry to hash into its tag.
+//! Test builds add `sx`, `sy` and `sxy`, which interpret circuit code directly
+//! (via specialized [`Driver`] implementations) at the same three
+//! restrictions, re-running the circuit on every evaluation, and the
+//! [`monomials`] driver, which writes the polynomial down from a walk of the
+//! circuit. They share no code with [`compiled`], which is checked against
+//! them.
 //!
 //! [`Driver`]: ragu_core::drivers::Driver
 //! [`Routine`]: ragu_core::routines::Routine
@@ -95,6 +106,11 @@
 //! [wiring polynomials]: https://tachyon.z.cash/ragu/protocol/construction/wiring.html
 
 pub mod monomials;
+#[cfg(test)]
 pub mod sx;
+#[cfg(test)]
 pub mod sxy;
+#[cfg(test)]
 pub mod sy;
+
+pub(crate) mod compiled;

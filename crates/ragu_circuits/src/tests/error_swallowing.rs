@@ -23,9 +23,7 @@ use ragu_core::{
 use ragu_primitives::{Element, allocator::Standard};
 use udon::field::Field;
 
-use crate::{
-    Circuit, CircuitExt, WithAux, floor_planner, into_wiring_object, polynomials::TestRank,
-};
+use crate::{Circuit, CircuitExt, WithAux, into_wiring_object, polynomials::TestRank};
 
 /// Well-behaved reference circuit: allocates `a` and `b`, outputs `(a + b, a - b)`.
 ///
@@ -280,7 +278,7 @@ fn test_propagated_routine_error_caught() {
 
     let obj = into_wiring_object::<_, _, TestRank>(RoutineErrorPropagatingCircuit)
         .expect("structure drivers must not evaluate the failing witness closure");
-    assert_eq!(obj.segment_records().len(), 2);
+    assert_eq!(obj.floor_plan().len(), 2);
 }
 
 /// A swallowed routine error leaves the routine trace one gate shorter than the
@@ -301,10 +299,10 @@ fn test_swallowed_routine_error_rejected_during_assembly() {
     assert_eq!(trace.segments[1].a.len(), 1);
 
     let obj = into_wiring_object::<_, _, TestRank>(RoutineErrorSwallowingCircuit).unwrap();
-    let plan = floor_planner::floor_plan(obj.segment_records());
+    let plan = obj.floor_plan();
     assert_eq!(trace.segments[1].a.len() + 1, plan[1].num_gates);
 
-    let _ = trace.assemble::<TestRank>(&plan, Fp::ZERO);
+    let _ = trace.assemble::<TestRank>(plan, Fp::ZERO);
 }
 
 /// The trace driver evaluates a gate's closure before recording anything, so a
@@ -386,8 +384,8 @@ fn test_error_swallowing_trace_assembly_rejected() {
     let witness = (Fp::from(3u64), Fp::from(7u64));
 
     let obj = into_wiring_object::<_, _, TestRank>(ErrorSwallowingCircuit).unwrap();
-    let plan = floor_planner::floor_plan(obj.segment_records());
+    let plan = obj.floor_plan();
     let trace = ErrorSwallowingCircuit.trace(witness).unwrap().into_output();
 
-    let _ = trace.assemble::<TestRank>(&plan, Fp::ZERO);
+    let _ = trace.assemble::<TestRank>(plan, Fp::ZERO);
 }

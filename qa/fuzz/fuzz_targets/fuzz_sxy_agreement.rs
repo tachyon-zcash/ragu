@@ -1,12 +1,20 @@
-//! Fuzz three-way agreement of the registry polynomial at a single circuit.
+//! Fuzz three-way agreement of the registry polynomial at a single circuit,
+//! and the circuit's recorded wiring against an independent walk.
 //!
-//! For circuit $i$ at omega point $w$, three independent evaluators compute
-//! the same registry polynomial:
+//! For circuit $i$ at omega point $w$, three evaluations compute the same
+//! registry polynomial:
 //! - `wxy(w, x, y)` (scalar)
 //! - `wx(w, x)` (polynomial in $Y$, evaluated at $y$)
 //! - `wy(w, y)` (polynomial in $X$, evaluated at $x$)
 //!
 //! Invariant: `wxy(w, x, y) == wx(w, x).eval(y) == wy(w, y).eval(x)`
+//!
+//! All three replay the wiring recorded when the circuit was registered,
+//! which the registry tag also hashes, so they share that recording. The
+//! target therefore also compares the recording with the monomials an
+//! independent walk of the circuit writes down
+//! ([`assert_recorded_as_walked`]): a recording that misses or alters a
+//! constraint fails there, though all three evaluations would agree.
 //!
 //! The identity is a property of the *registry polynomial* — it never
 //! inspects the witness — so any registered circuit is a valid vehicle.
@@ -33,6 +41,7 @@ use ragu_circuits::{
 };
 use ragu_testing_fuzz::{
     params::{FieldChoice, RankChoice},
+    registry::assert_recorded_as_walked,
     substrate::{Limits, OpSet, Overrides, Program, ProgramCircuit, shadow_eval},
     with_field, with_rank,
 };
@@ -81,13 +90,15 @@ fn run<F: Field, R: Rank>(program: &Program, input: &Input) {
         program,
         anchors: &honest.anchors,
     };
-    let registry = match RegistryBuilder::<F, R>::new()
-        .register_circuit(circuit)
-        .and_then(|b| b.finalize())
-    {
-        Ok(r) => r,
-        Err(_) => return, // Circuit too large for rank — skip.
+    let Some(registry) = ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<F, R>::new()
+            .register_circuit(circuit)
+            .and_then(|b| b.finalize()),
+    ) else {
+        return; // Circuit too large for rank: skip.
     };
+
+    assert_recorded_as_walked(&registry);
 
     let w = CircuitIndex::new(0).omega_j::<F>();
     let x = F::from(input.x_seed);

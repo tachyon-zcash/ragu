@@ -121,11 +121,12 @@ pub(crate) trait DriverScope<S> {
 /// but not which constraints are emitted.
 ///
 /// The same constraints must be emitted on every walk of the circuit,
-/// whichever driver performs it. Metrics, traces, the evaluations of the
-/// wiring polynomial and the registry's
-/// [tag](registry::Tag#trusted-circuit-code) each come from a separate walk,
-/// and describe one constraint system only if the walks agree. Nothing
-/// enforces this; it is part of what circuit code is trusted for.
+/// whichever driver performs it. Metrics, traces and the recorded wiring
+/// each come from a separate walk, and describe one constraint system only
+/// if the walks agree. Nothing enforces this; it is part of what circuit
+/// code is trusted for. The evaluations of the wiring polynomial and the
+/// registry's [tag](registry::Tag#trusted-circuit-code) both come from the
+/// recorded wiring, so they agree whatever the walks do.
 pub trait Circuit<F: Field>: Sized + Send + Sync {
     /// The type of data that is needed to construct the expected output of this
     /// circuit.
@@ -207,18 +208,25 @@ impl<F: Field, C: Circuit<F>> CircuitExt<F> for C {}
 /// The registry tag constraint is **not** part of these evaluations; it is
 /// injected at the [`Registry`] level at the fixed $Y^{4n-1}$ position.
 ///
+/// An object fixes its circuit's [floor plan](Self::floor_plan) when it is
+/// built. Its evaluations, the monomials the [`Registry`] hashes into its tag
+/// and the traces the registry assembles all place constraints by that plan.
+///
+/// A circuit's object records its wiring once, when it is built, and never
+/// consults the circuit's code again: its evaluations run the recording and
+/// its [monomials](Self::monomials) are written from it, so they are one
+/// polynomial however the circuit's code behaves on another walk.
+///
 /// [`Registry`]: registry::Registry
 pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// Evaluates the polynomial $s(x, y)$ for some $x, y \in \mathbb{F}$.
-    fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F;
+    fn sxy(&self, x: F, y: F) -> F;
 
     /// Computes the polynomial restriction $s(x, Y)$ for some $x \in \mathbb{F}$.
-    fn sx(&self, x: F, floor_plan: &[floor_planner::ConstraintSegment])
-    -> sparse::Polynomial<F, R>;
+    fn sx(&self, x: F) -> sparse::Polynomial<F, R>;
 
     /// Computes the polynomial restriction $s(X, y)$ for some $y \in \mathbb{F}$.
-    fn sy(&self, y: F, floor_plan: &[floor_planner::ConstraintSegment])
-    -> sparse::Polynomial<F, R>;
+    fn sy(&self, y: F) -> sparse::Polynomial<F, R>;
 
     /// Writes down $s(X, Y)$ itself as its nonzero monomials, for the
     /// [`Registry`] to hash into its tag.
@@ -227,16 +235,37 @@ pub(crate) trait WiringObject<F: Field, R: Rank>: Send + Sync {
     /// polynomial here, shared $S\_{\text{global}}$ term included.
     ///
     /// [`Registry`]: registry::Registry
-    fn monomials(
-        &self,
-        floor_plan: &[floor_planner::ConstraintSegment],
-    ) -> wiring::monomials::Monomials<F>;
+    fn monomials(&self) -> wiring::monomials::Monomials<F>;
 
-    /// Returns per-segment constraint records in DFS emission order.
+    /// Writes down $s(X, Y)$ from another walk of the circuit this object
+    /// was recorded from, by the `wiring::monomials` driver, or returns
+    /// `None` for an object that no circuit walk produced.
     ///
-    /// These records serve as input to [`floor_planner::floor_plan`] for
-    /// computing absolute constraint offsets.
-    fn segment_records(&self) -> &[SegmentRecord];
+    /// A test seam: the walk shares no code with the recording, so tests
+    /// compare it with [`monomials`](Self::monomials).
+    #[cfg(any(test, feature = "test-utils"))]
+    fn walked_monomials(&self) -> Option<wiring::monomials::Monomials<F>> {
+        None
+    }
+
+    /// Evaluates with the powers of X shared by a registry query.
+    fn sxy_with_powers(&self, x: F, y: F, _powers: &[F]) -> F {
+        self.sxy(x, y)
+    }
+
+    /// Restricts X with its powers shared by a registry query.
+    fn sx_with_powers(&self, x: F, _powers: &[F]) -> sparse::Polynomial<F, R> {
+        self.sx(x)
+    }
+
+    /// Restricts Y with its powers shared by a registry query.
+    fn sy_with_powers(&self, y: F, _powers: &[F]) -> sparse::Polynomial<F, R> {
+        self.sy(y)
+    }
+
+    /// Returns each segment's absolute placement, in DFS emission order, as
+    /// [`floor_planner::floor_plan`] computed it when this object was built.
+    fn floor_plan(&self) -> &[floor_planner::ConstraintSegment];
 
     /// Returns `true` if this circuit is a masking polynomial whose
     /// `sxy`/`sx`/`sy` return only the $-\text{notch}$ term, expecting
@@ -286,45 +315,61 @@ where
     RC: raw::RawCircuit<F> + 'a,
     R: Rank,
 {
-    struct Processed<RC> {
+    struct Processed<F: Field, RC: raw::RawCircuit<F>, R: Rank> {
+        wiring: wiring::compiled::Compiled<F, R>,
+        floor_plan: alloc::vec::Vec<floor_planner::ConstraintSegment>,
+        /// Test builds keep the circuit, to walk it again.
+        #[cfg(any(test, feature = "test-utils"))]
         circuit: RC,
-        metrics: metrics::CircuitMetrics,
+        #[cfg(not(any(test, feature = "test-utils")))]
+        _circuit: core::marker::PhantomData<RC>,
     }
 
-    impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<RC> {
-        fn sxy(&self, x: F, y: F, floor_plan: &[floor_planner::ConstraintSegment]) -> F {
-            wiring::sxy::eval::<_, _, R>(&self.circuit, x, y, floor_plan)
-                .expect("should succeed if metrics succeeded")
+    impl<F: Field, RC: raw::RawCircuit<F>, R: Rank> WiringObject<F, R> for Processed<F, RC, R> {
+        fn sxy(&self, x: F, y: F) -> F {
+            self.wiring.sxy(x, y)
         }
-        fn sx(
-            &self,
-            x: F,
-            floor_plan: &[floor_planner::ConstraintSegment],
-        ) -> sparse::Polynomial<F, R> {
-            wiring::sx::eval(&self.circuit, x, floor_plan)
-                .expect("should succeed if metrics succeeded")
+        fn sx(&self, x: F) -> sparse::Polynomial<F, R> {
+            self.wiring.sx(x)
         }
-        fn sy(
-            &self,
-            y: F,
-            floor_plan: &[floor_planner::ConstraintSegment],
-        ) -> sparse::Polynomial<F, R> {
-            wiring::sy::eval(&self.circuit, y, floor_plan)
-                .expect("should succeed if metrics succeeded")
+        fn sy(&self, y: F) -> sparse::Polynomial<F, R> {
+            self.wiring.sy(y)
         }
-        fn monomials(
-            &self,
-            floor_plan: &[floor_planner::ConstraintSegment],
-        ) -> wiring::monomials::Monomials<F> {
-            wiring::monomials::eval::<_, _, R>(&self.circuit, floor_plan)
-                .expect("should succeed if metrics succeeded")
+        fn monomials(&self) -> wiring::monomials::Monomials<F> {
+            self.wiring.monomials()
         }
-        fn segment_records(&self) -> &[SegmentRecord] {
-            &self.metrics.segments
+        #[cfg(any(test, feature = "test-utils"))]
+        fn walked_monomials(&self) -> Option<wiring::monomials::Monomials<F>> {
+            Some(
+                wiring::monomials::eval::<_, _, R>(&self.circuit, &self.floor_plan)
+                    .expect("should succeed if metrics succeeded"),
+            )
+        }
+        fn sxy_with_powers(&self, x: F, y: F, powers: &[F]) -> F {
+            self.wiring.sxy_with_powers(x, y, Some(powers))
+        }
+        fn sx_with_powers(&self, x: F, powers: &[F]) -> sparse::Polynomial<F, R> {
+            self.wiring.sx_with_powers(x, Some(powers))
+        }
+        fn sy_with_powers(&self, y: F, powers: &[F]) -> sparse::Polynomial<F, R> {
+            self.wiring.sy_with_powers(y, Some(powers))
+        }
+        fn floor_plan(&self) -> &[floor_planner::ConstraintSegment] {
+            &self.floor_plan
         }
     }
 
-    Ok(Box::new(Processed { circuit, metrics }))
+    // The compiled wiring is recorded against the plan the object keeps.
+    let floor_plan = floor_planner::floor_plan(&metrics.segments);
+    let wiring = wiring::compiled::compile::<F, RC, R>(&circuit, &floor_plan)?;
+    Ok(Box::new(Processed {
+        wiring,
+        floor_plan,
+        #[cfg(any(test, feature = "test-utils"))]
+        circuit,
+        #[cfg(not(any(test, feature = "test-utils")))]
+        _circuit: core::marker::PhantomData::<RC>,
+    }))
 }
 
 /// An evaluable bonding object $s(X, Y)$ used to enforce well-formedness of a

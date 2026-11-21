@@ -18,7 +18,7 @@ use rand::Rng;
 use udon::field::Field;
 
 use crate::{
-    Circuit, CircuitExt, WiringObject, WithAux, floor_planner, into_wiring_object,
+    Circuit, CircuitExt, WiringObject, WithAux, into_wiring_object,
     polynomials::{Rank, TestRank},
 };
 
@@ -93,17 +93,16 @@ impl Circuit<Fp> for ManyLinearCircuit {
 fn consistency_checks<R: Rank>(obj: &dyn WiringObject<Fp, R>) {
     let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
     let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
-    let plan = floor_planner::floor_plan(obj.segment_records());
 
-    let sxy_eval = obj.sxy(x, y, &plan);
-    let s0y_eval = obj.sxy(Fp::ZERO, y, &plan);
-    let sx0_eval = obj.sxy(x, Fp::ZERO, &plan);
-    let s00_eval = obj.sxy(Fp::ZERO, Fp::ZERO, &plan);
+    let sxy_eval = obj.sxy(x, y);
+    let s0y_eval = obj.sxy(Fp::ZERO, y);
+    let sx0_eval = obj.sxy(x, Fp::ZERO);
+    let s00_eval = obj.sxy(Fp::ZERO, Fp::ZERO);
 
-    let sxY_poly = obj.sx(x, &plan);
-    let sXy_poly = obj.sy(y, &plan);
-    let s0Y_poly = obj.sx(Fp::ZERO, &plan);
-    let sX0_poly = obj.sy(Fp::ZERO, &plan);
+    let sxY_poly = obj.sx(x);
+    let sXy_poly = obj.sy(y);
+    let s0Y_poly = obj.sx(Fp::ZERO);
+    let sX0_poly = obj.sy(Fp::ZERO);
 
     assert_eq!(sxy_eval, sXy_poly.eval(x));
     assert_eq!(sxy_eval, sxY_poly.eval(y));
@@ -116,7 +115,7 @@ fn consistency_checks<R: Rank>(obj: &dyn WiringObject<Fp, R>) {
 
     // The polynomial written out, which the registry hashes into its tag,
     // evaluates like its restrictions.
-    let monomials = obj.monomials(&plan);
+    let monomials = obj.monomials();
     assert_eq!(sxy_eval, monomials.eval(x, y));
     assert_eq!(s0y_eval, monomials.eval(Fp::ZERO, y));
     assert_eq!(sx0_eval, monomials.eval(x, Fp::ZERO));
@@ -194,9 +193,9 @@ fn test_simple_circuit() {
     type MyRank = TestRank;
 
     let obj = into_wiring_object::<_, _, MyRank>(MySimpleCircuit).unwrap();
-    let plan = floor_planner::floor_plan(obj.segment_records());
+    let plan = obj.floor_plan();
 
-    let assignment = trace.assemble(&plan, Fp::ZERO).unwrap();
+    let assignment = trace.assemble(plan, Fp::ZERO).unwrap();
 
     consistency_checks::<MyRank>(&*obj);
 
@@ -206,7 +205,7 @@ fn test_simple_circuit() {
     let a = assignment.clone();
     let mut b = assignment.clone();
     b.dilate(z);
-    b.add_assign(&obj.sy(y, &plan));
+    b.add_assign(&obj.sy(y));
     b.add_assign(&MyRank::tz(z));
 
     let expected = MySimpleCircuit
@@ -403,8 +402,8 @@ fn test_routine_consistency() {
 
     let trace = RoutineCircuit.trace(Fp::from(3u64)).unwrap().into_output();
     let obj = into_wiring_object::<_, _, TestRank>(RoutineCircuit).unwrap();
-    let plan = floor_planner::floor_plan(obj.segment_records());
+    let plan = obj.floor_plan();
 
-    trace.assemble::<TestRank>(&plan, Fp::ZERO).unwrap();
+    trace.assemble::<TestRank>(plan, Fp::ZERO).unwrap();
     consistency_checks(&*obj);
 }

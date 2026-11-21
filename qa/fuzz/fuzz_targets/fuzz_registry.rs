@@ -50,11 +50,22 @@
 //! padding indices above the registered count, which carry the zero
 //! polynomial rather than being absent.
 //!
+//! ## Recorded wiring against an independent walk
+//!
+//! The registry hashes, and every evaluation above replays, the wiring
+//! recorded when each circuit was registered, so the paths can agree with
+//! one another while all being wrong about a circuit. Each registered
+//! circuit's recording is therefore also compared with the monomials an
+//! independent walk of the circuit writes down.
+//!
 //! ## The rank ceiling
 //!
 //! `finalize` returns `Error::CircuitBoundExceeded` when the circuit count
 //! passes `R::num_coeffs()`. The boundary is reachable at test rank (128
 //! coefficients) and is probed exactly there — see `probe_capacity` below.
+//! Only capacity errors are a skip: any other registry error, such as
+//! finalization finding a circuit's evaluations differ from its hashed
+//! polynomial, is a finding.
 
 #![no_main]
 
@@ -68,6 +79,7 @@ use ragu_circuits::{
 };
 use ragu_testing_fuzz::{
     params::{Fp, RankChoice, TestRank},
+    registry::{assert_recorded_as_walked, fits},
     substrate::{Limits, OpSet, Overrides, Program, ProgramCircuit, shadow_eval, steer},
     with_rank,
 };
@@ -201,10 +213,11 @@ fn run<R: Rank>(input: &Input) {
         .collect();
 
     let Some(registry) = build::<R>(regs, &programs, &anchors) else {
-        // Rank overflow or an unsynthesizable program: not a finding.
+        // Rank overflow: not a finding. Any other registry error panics.
         return;
     };
     bump(&BUILT);
+    assert_recorded_as_walked(&registry);
     if regs.iter().any(|r| r.category != regs[0].category) {
         bump(&MULTI_CATEGORY);
     }
@@ -360,9 +373,9 @@ fn build_borrowed<'a, R: Rank>(
             anchors: anchor.as_slice(),
         };
         builder = match reg.category {
-            Category::Internal => builder.register_internal_circuit(circuit).ok()?,
-            Category::InternalStep => builder.register_internal_step(circuit).ok()?,
-            Category::Application => builder.register_circuit(circuit).ok()?,
+            Category::Internal => fits(builder.register_internal_circuit(circuit))?,
+            Category::InternalStep => fits(builder.register_internal_step(circuit))?,
+            Category::Application => fits(builder.register_circuit(circuit))?,
             // A bonding entry is a stage mask, not a generated program: the
             // category exists in the concatenation order and has to be
             // occupied for the ordering oracle to mean anything, but its
@@ -370,7 +383,7 @@ fn build_borrowed<'a, R: Rank>(
             Category::Bonding => builder.register_bonding(bonding_mask::<R>()?),
         };
     }
-    builder.finalize().ok()
+    fits(builder.finalize())
 }
 
 /// A bonding object to occupy `RegistryBuilder`'s bonding bucket.
@@ -415,11 +428,9 @@ fn fill<'a, R: Rank>(
 ) -> Option<ragu_circuits::registry::Registry<'a, Fp, R>> {
     let mut builder = RegistryBuilder::<Fp, R>::new();
     for _ in 0..count {
-        builder = builder
-            .register_circuit(ProgramCircuit { program, anchors })
-            .ok()?;
+        builder = fits(builder.register_circuit(ProgramCircuit { program, anchors }))?;
     }
-    builder.finalize().ok()
+    fits(builder.finalize())
 }
 
 /// A minimal two-wire stage, used only to mint a bonding object.

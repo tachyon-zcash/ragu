@@ -64,9 +64,49 @@ use udon::{
 
 use crate::{
     BondingObject, Circuit, WiringObject,
-    floor_planner::ConstraintSegment,
     polynomials::{Rank, sparse},
+    wiring::monomials::Monomials,
 };
+
+/// The powers of `point` a registry query shares across its circuits, one
+/// per coefficient of the rank.
+pub(crate) fn powers<F: Field, R: Rank>(point: F) -> Vec<F> {
+    let mut power = F::ONE;
+    (0..R::num_coeffs())
+        .map(|_| {
+            let current = power;
+            power *= point;
+            current
+        })
+        .collect()
+}
+
+/// Whether each evaluation the registry makes of `circuit` equals
+/// `monomials`, its hashed polynomial, at $(x, y)$: $s(x, y)$ and its
+/// restrictions to $X = x$ and to $Y = y$, with and without shared powers.
+/// A mask's evaluations omit the global term the registry adds to them.
+fn evaluations_match<F: Field, R: Rank>(
+    circuit: &dyn WiringObject<F, R>,
+    monomials: &Monomials<F>,
+    x: F,
+    y: F,
+) -> bool {
+    let (x_powers, y_powers) = (powers::<F, R>(x), powers::<F, R>(y));
+    let mut expected = monomials.eval_at_powers(&x_powers, &y_powers);
+    if circuit.is_mask() {
+        expected -= crate::staging::mask::global_mask::<F, R>(x, y);
+    }
+    [
+        circuit.sxy(x, y),
+        circuit.sxy_with_powers(x, y, &x_powers),
+        circuit.sx(x).eval(y),
+        circuit.sx_with_powers(x, &x_powers).eval(y),
+        circuit.sy(y).eval(x),
+        circuit.sy_with_powers(y, &y_powers).eval(x),
+    ]
+    .into_iter()
+    .all(|value| value == expected)
+}
 
 /// Represents a simple numeric index of a circuit in the registry.
 ///
@@ -246,7 +286,10 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
     /// # Errors
     ///
     /// Returns [`Error::CircuitBoundExceeded`] if the total number of
-    /// registered circuits exceeds the rank capacity.
+    /// registered circuits exceeds the rank capacity, and
+    /// [`Error::Initialization`] if a circuit's evaluations disagree with the
+    /// polynomial the tag hashes for it (see
+    /// [trusted circuit code](Tag#trusted-circuit-code)).
     pub fn finalize(self) -> Result<Registry<'params, F, R>> {
         let total_circuits = self.num_circuits();
         if total_circuits > R::num_coeffs() {
@@ -266,20 +309,13 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
             .chain(self.application_steps)
             .collect();
 
-        // Compute floor plans for each circuit.
-        let floor_plans: Vec<Vec<ConstraintSegment>> = circuits
-            .iter()
-            .map(|circuit| crate::floor_planner::floor_plan(circuit.segment_records()))
-            .collect();
-
-        let tag = Tag::derive(&circuits, &floor_plans);
+        let tag = Tag::derive(&circuits)?;
         #[cfg(any(test, feature = "test-utils"))]
         let tag = self.tag.map_or(tag, Tag);
 
         Ok(Registry {
             domain,
             circuits,
-            floor_plans,
             tag,
         })
     }
@@ -312,23 +348,26 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// The tag is a hash of $m(W, X, Y)$ itself, before the tag is injected.
 /// [`RegistryBuilder::finalize`] writes every registered wiring polynomial
 /// $s_i(X, Y)$ down as its nonzero monomials $c \cdot X^e Y^q$ in canonical
-/// order (the `wiring::monomials` evaluator), one circuit at a time, and
-/// absorbs them, in registration order, into BLAKE2b personalized with
-/// `ragu_registry___`. Ahead of them go the field's modulus (its number of
-/// 64-bit limbs, then each limb, little-endian), the rank's $n$ and the
-/// number of polynomials. The 64-byte digest is reduced to a field element.
-/// The modulus separates the native and nested registries' hashes, so two
-/// registries over different fields never hash the same input.
+/// order, from the wiring recorded when its circuit was registered (the
+/// program `wiring::compiled` runs for every later evaluation), one circuit
+/// at a time, and absorbs them, in registration order, into BLAKE2b
+/// personalized with `ragu_registry___`. Ahead of them go the field's modulus
+/// (its number of 64-bit limbs, then each limb, little-endian), the rank's
+/// $n$ and the number of polynomials. The 64-byte digest is reduced to a
+/// field element. The modulus separates the native and nested registries'
+/// hashes, so two registries over different fields never hash the same
+/// input.
 ///
-/// Each wiring polynomial is a function of its circuit's constraints alone,
-/// not of how the circuit code emitted them, and the byte encoding is
-/// injective: every item is fixed-width or length-prefixed. Two registries
-/// with the same tag therefore hashed the same polynomials unless their
-/// reduced digests collide, which takes about $|\mathbb{F}|^{1/2}$ hashed
-/// registries. The polynomials hashed are the polynomials evaluated, for
-/// [trusted circuit code](#trusted-circuit-code).
-/// A tag of zero has probability $1/|\mathbb{F}|$ over the hash; soundness
-/// arguments that assume a nonzero tag must include it.
+/// The monomials written are a function of the recorded polynomial alone,
+/// not of how the circuit code emitted its constraints, and the byte
+/// encoding is injective: every item is fixed-width or length-prefixed. Two
+/// registries with the same tag therefore hashed the same polynomials unless
+/// their reduced digests collide, which takes about $|\mathbb{F}|^{1/2}$
+/// hashed registries. The polynomials hashed are the polynomials evaluated,
+/// both being the one recording; see
+/// [trusted circuit code](#trusted-circuit-code). A tag of zero has
+/// probability $1/|\mathbb{F}|$ over the hash; soundness arguments that
+/// assume a nonzero tag must include it.
 ///
 /// # Break self-reference without preprocessing
 ///
@@ -356,20 +395,30 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 /// accepts, and a backdoor written into them, such as a missing constraint,
 /// is found by reading them.
 ///
-/// The tag relies on one requirement of that code in particular: a circuit
-/// emits the same constraints on every walk, whichever driver performs it
-/// (see [`Circuit`]). Finalization hashes each wiring polynomial as the
-/// `wiring::monomials` driver walks it, and every later evaluation walks the
-/// circuit again, through the `sx`, `sy` and `sxy` drivers. Code that told
-/// those walks apart, by inspecting the driver's type or by keeping state
-/// between walks, could give the hash one polynomial and the evaluations
-/// another under one tag. Nothing enforces the requirement, and code that
-/// breaks it does so in plain sight: it is a backdoor of the kind above,
-/// outside what the tag defends against.
+/// The tag does not rely on how that code behaves from one walk to the
+/// next. A circuit's wiring is recorded by one walk, when the circuit is
+/// registered, and its code is not consulted for wiring again: the registry
+/// hashes the polynomial written down from that recording, and every
+/// evaluation runs the same recording. Code that told walks apart, by
+/// inspecting the driver's type or by keeping state between walks, cannot
+/// give the hash one polynomial and the evaluations another under one tag,
+/// because whatever the recording walk emitted is both. A circuit is still
+/// required to emit the same constraints on every walk (see [`Circuit`]):
+/// its traces come from other walks, and satisfy the recorded constraints
+/// only if those walks emit them too.
 ///
-/// Tests compare what was hashed with what the three evaluators compute, for
-/// this crate's circuits and for the registries an application builds, which
-/// catches a circuit that breaks the requirement by accident.
+/// Finalization compares the two forms the registry holds of each
+/// polynomial. Once a circuit's monomials are absorbed, it draws a point
+/// $(x, y)$ from the hash state and requires each evaluation the registry
+/// makes of the circuit, $s(x, y)$ and its restrictions to $X = x$ and to
+/// $Y = y$, with and without shared powers, to equal the hashed monomials
+/// there. This checks the registry's own arithmetic: the code that writes a
+/// recording down against the code that evaluates it, and the closed forms a
+/// stage mask has for each. It does not defend against hostile circuit code
+/// and has no need to: neither form consults the circuit's code. Tests
+/// compare each recording with an independent walk of its circuit, by the
+/// `wiring::monomials` driver, for this crate's circuits and for the
+/// registries an application builds.
 ///
 /// # Security scope
 ///
@@ -391,12 +440,16 @@ impl<'params, F: Field, R: Rank> RegistryBuilder<'params, F, R> {
 pub struct Tag<F: Field>(F);
 
 impl<F: Field> Tag<F> {
-    /// Derives the tag of the registry holding `circuits`, laid out by
-    /// `floor_plans`: the hash of their wiring polynomials.
-    fn derive<R: Rank>(
-        circuits: &[Box<dyn WiringObject<F, R> + '_>],
-        floor_plans: &[Vec<ConstraintSegment>],
-    ) -> Self {
+    /// Derives the tag of the registry holding `circuits`: the hash of their
+    /// wiring polynomials. Each circuit's evaluations must equal its hashed
+    /// polynomial at a point drawn once that polynomial is absorbed; see
+    /// [trusted circuit code](Self#trusted-circuit-code).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Initialization`] for the first circuit whose
+    /// evaluations differ from its hashed polynomial.
+    fn derive<R: Rank>(circuits: &[Box<dyn WiringObject<F, R> + '_>]) -> Result<Self> {
         let mut state = Params::new().personal(b"ragu_registry___").to_state();
         let modulus = F::MODULUS;
         state.update(&(modulus.as_ref().len() as u64).to_le_bytes());
@@ -405,10 +458,22 @@ impl<F: Field> Tag<F> {
         }
         state.update(&(R::n() as u64).to_le_bytes());
         state.update(&(circuits.len() as u64).to_le_bytes());
-        for (circuit, floor_plan) in circuits.iter().zip(floor_plans) {
-            circuit.monomials(floor_plan).hash_into(&mut state);
+        for (i, circuit) in circuits.iter().enumerate() {
+            let monomials = circuit.monomials();
+            monomials.hash_into(&mut state);
+            let point = |label: u8| {
+                F::from_uniform_bytes(state.clone().update(&[label]).finalize().as_array())
+            };
+            if !evaluations_match(&**circuit, &monomials, point(0), point(1)) {
+                return Err(Error::Initialization(
+                    alloc::format!(
+                        "circuit {i}'s evaluations differ from the polynomial its tag hashes"
+                    )
+                    .into(),
+                ));
+            }
         }
-        Self(F::from_uniform_bytes(state.finalize().as_array()))
+        Ok(Self(F::from_uniform_bytes(state.finalize().as_array())))
     }
 
     /// Returns the registry tag value.
@@ -424,9 +489,6 @@ impl<F: Field> Tag<F> {
 pub struct Registry<'params, F: Field, R: Rank> {
     domain: Domain<F>,
     circuits: Vec<Box<dyn WiringObject<F, R> + 'params>>,
-
-    /// Per-circuit floor plans computed during finalization.
-    floor_plans: Vec<Vec<ConstraintSegment>>,
 
     /// Registry tag used to bind circuits to this registry.
     tag: Tag<F>,
@@ -503,7 +565,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         circuit: CircuitIndex,
         alpha: F,
     ) -> Result<sparse::Polynomial<F, R>> {
-        trace.assemble(&self.floor_plans[usize::from(circuit)], alpha)
+        trace.assemble(self.circuits[usize::from(circuit)].floor_plan(), alpha)
     }
 
     /// Returns the registry tag value.
@@ -569,7 +631,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         // global term to each mask slot inline.
         for (i, circuit) in self.circuits.iter().enumerate() {
             let j = self.bitreversed_index(i);
-            let mut v = circuit.sxy(x, y, &self.floor_plans[i]);
+            let mut v = circuit.sxy(x, y);
             if circuit.is_mask() {
                 v += global_xy;
             }
@@ -582,12 +644,13 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// as [`wxy_over_domain`](Self::wxy_over_domain) does, from the monomials
     /// the [`Tag`] hashed rather than through the wiring evaluators.
     ///
-    /// A test seam. The tag hashes one walk of each circuit and the
-    /// evaluators perform others, so this agrees with
-    /// [`wxy_over_domain`](Self::wxy_over_domain) exactly when the two walks
-    /// emitted the same polynomial (see
-    /// [trusted circuit code](Tag#trusted-circuit-code)); tests assert that
-    /// they do.
+    /// A test seam. The tag hashes the monomials written from each circuit's
+    /// recorded wiring and evaluations run the same recording (see
+    /// [trusted circuit code](Tag#trusted-circuit-code)), so this agrees with
+    /// [`wxy_over_domain`](Self::wxy_over_domain) unless the code that writes
+    /// a recording down and the code that evaluates it disagree; tests assert
+    /// that they agree. [`walk_mismatches`](Self::walk_mismatches) compares
+    /// the recordings with independent walks of the circuits.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn hashed_wxy_over_domain(&self, x: F, y: F) -> Vec<F> {
         let powers = |base: F| -> Vec<F> {
@@ -603,10 +666,85 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
 
         let mut evals = alloc::vec![tag_scalar; self.domain.size()];
         for (i, circuit) in self.circuits.iter().enumerate() {
-            evals[self.bitreversed_index(i)] += circuit
-                .monomials(&self.floor_plans[i])
-                .eval_at_powers(&x_powers, &y_powers);
+            evals[self.bitreversed_index(i)] +=
+                circuit.monomials().eval_at_powers(&x_powers, &y_powers);
         }
+        evals
+    }
+
+    /// The indices of the registered circuits whose hashed polynomial is not
+    /// the one an independent walk of the circuit writes down.
+    ///
+    /// A test seam. The [`Tag`] hashes, and every evaluation runs, the wiring
+    /// one walk of each circuit recorded (see
+    /// [trusted circuit code](Tag#trusted-circuit-code)). This walks each
+    /// circuit again with the `wiring::monomials` driver, which shares no
+    /// code with the recording, and compares the two polynomials monomial by
+    /// monomial. An index is returned when the recording is at fault, or when
+    /// the circuit emits different constraints on different walks. Stage
+    /// masks, which no walk produces, are never returned.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn walk_mismatches(&self) -> Vec<usize> {
+        self.circuits
+            .iter()
+            .enumerate()
+            .filter(|(_, circuit)| {
+                circuit
+                    .walked_monomials()
+                    .is_some_and(|walked| walked != circuit.monomials())
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Evaluates the W-domain using independent circuit jobs and shared
+    /// powers of X. Results use the same domain order as
+    /// [`Self::wxy_over_domain`]. Without a worker pool, jobs run serially.
+    pub fn wxy_over_domain_parallel(&self, x: F, y: F) -> Vec<F> {
+        let tag = self.tag_sxy(x, y);
+        let global = crate::staging::mask::global_mask::<F, R>(x, y);
+        let powers = powers::<F, R>(x);
+        let mut evals = alloc::vec![tag; self.domain.size()];
+        ragu_core::for_each_mut(&mut evals, |j, value| {
+            let i = self.bitreversed_index(j);
+            if let Some(circuit) = self.circuits.get(i) {
+                *value += circuit.sxy_with_powers(x, y, &powers);
+                if circuit.is_mask() {
+                    *value += global;
+                }
+            }
+        });
+        evals
+    }
+
+    /// Evaluates the circuits selected by `indices` at the same X and Y,
+    /// preserving the requested order and sharing powers of X between them.
+    ///
+    /// Each result is exactly `wxy(index.omega_j(), x, y)`, including masking,
+    /// the registry tag, padded domain positions, and interpolation when an
+    /// index names a point outside this registry's domain.
+    pub fn circuits_xy_parallel(&self, indices: &[CircuitIndex], x: F, y: F) -> Vec<F> {
+        if indices.is_empty() {
+            return Vec::new();
+        }
+        if let [index] = indices {
+            return alloc::vec![self.wxy(index.omega_j(), x, y)];
+        }
+        let tag = self.tag_sxy(x, y);
+        let global = crate::staging::mask::global_mask::<F, R>(x, y);
+        let powers = powers::<F, R>(x);
+        let mut evals = alloc::vec![tag; indices.len()];
+        ragu_core::for_each_mut(&mut evals, |position, value| {
+            let i = usize::from(indices[position]);
+            if let Some(circuit) = self.circuits.get(i) {
+                *value += circuit.sxy_with_powers(x, y, &powers);
+                if circuit.is_mask() {
+                    *value += global;
+                }
+            } else if i >= self.domain.size() {
+                *value = self.wxy(indices[position].omega_j(), x, y);
+            }
+        });
         evals
     }
 
@@ -721,7 +859,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         &self,
         cache: &LagrangeCache<F>,
         init: impl FnOnce() -> T,
-        add_poly: impl Fn(&dyn WiringObject<F, R>, &[ConstraintSegment], F, &mut T),
+        add_poly: impl Fn(&dyn WiringObject<F, R>, F, &mut T),
     ) -> T {
         let mut result = init();
 
@@ -733,13 +871,13 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
                 for (j, coeff) in coeffs.iter().enumerate() {
                     let i = self.bitreversed_index(j);
                     if let Some(circuit) = self.circuits.get(i) {
-                        add_poly(&**circuit, &self.floor_plans[i], *coeff, &mut result);
+                        add_poly(&**circuit, *coeff, &mut result);
                     }
                 }
             }
             LagrangeCache::Assigned(i) => {
                 if let Some(circuit) = self.circuits.get(*i) {
-                    add_poly(&**circuit, &self.floor_plans[*i], F::ONE, &mut result);
+                    add_poly(&**circuit, F::ONE, &mut result);
                 }
             }
             LagrangeCache::Zero => {
@@ -750,6 +888,37 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
             }
         }
 
+        result
+    }
+
+    fn w_cached_parallel<T: Send>(
+        &self,
+        cache: &LagrangeCache<F>,
+        init: impl Fn() -> T + Sync,
+        add_poly: impl Fn(&dyn WiringObject<F, R>, F, &mut T) + Sync,
+        combine: impl Fn(&mut T, T),
+    ) -> T {
+        let LagrangeCache::Arbitrary(coeffs) = cache else {
+            return self.w_cached(cache, init, add_poly);
+        };
+        // Bound temporary storage while giving the pool more jobs than
+        // workers. Each job reduces four circuits before the final sum.
+        const CIRCUITS_PER_JOB: usize = 4;
+        let mut jobs: Vec<_> = core::iter::repeat_with(&init)
+            .take(self.circuits.len().div_ceil(CIRCUITS_PER_JOB))
+            .collect();
+        ragu_core::for_each_mut(&mut jobs, |job, result| {
+            let start = job * CIRCUITS_PER_JOB;
+            let end = (start + CIRCUITS_PER_JOB).min(self.circuits.len());
+            for i in start..end {
+                let coefficient = coeffs[self.bitreversed_index(i)];
+                add_poly(&*self.circuits[i], coefficient, result);
+            }
+        });
+        let mut result = init();
+        for job in jobs {
+            combine(&mut result, job);
+        }
         result
     }
 
@@ -832,13 +1001,77 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
 }
 
 impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
+    /// Restricts X using independent circuit jobs and shared powers of X.
+    /// Returns exactly [`Self::x`], including tag and masking terms.
+    pub fn x_parallel(&self, x: F) -> sparse::Polynomial<F, R> {
+        self.restriction_parallel(x, true)
+    }
+
+    /// Restricts Y using independent circuit jobs and shared powers of Y.
+    /// Returns exactly [`Self::y`], including tag and masking terms.
+    pub fn y_parallel(&self, y: F) -> sparse::Polynomial<F, R> {
+        self.restriction_parallel(y, false)
+    }
+
+    fn restriction_parallel(&self, point: F, fix_x: bool) -> sparse::Polynomial<F, R> {
+        // A domain point needs at most one circuit, so avoid a shared table
+        // and job storage for this common verifier path.
+        if !matches!(self.cache, LagrangeCache::Arbitrary(_)) {
+            return if fix_x { self.x(point) } else { self.y(point) };
+        }
+        let powers = powers::<F, R>(point);
+        let mut poly = self.registry.w_cached_parallel(
+            &self.cache,
+            sparse::Polynomial::default,
+            |circuit, coefficient, result| {
+                let mut part = if fix_x {
+                    circuit.sx_with_powers(point, &powers)
+                } else {
+                    circuit.sy_with_powers(point, &powers)
+                };
+                part.scale(coefficient);
+                result.add_assign(&part);
+            },
+            |result, part| result.add_assign(&part),
+        );
+        let mut global = crate::staging::mask::global_project::<F, R>(point);
+        global.scale(self.mask_coeff_sum);
+        poly.add_assign(&global);
+        if point != F::ZERO {
+            let mut tag = sparse::View::<_, R, _>::wiring();
+            tag.c
+                .push(self.registry.tag.value() * powers[R::num_coeffs() - 1]);
+            poly.add_assign(&tag.build());
+        }
+        poly
+    }
+
+    /// Evaluates at X and Y with independent circuit jobs and shared X
+    /// powers. Domain points retain [`Self::xy`]'s single-circuit fast path.
+    pub fn xy_parallel(&self, x: F, y: F) -> F {
+        if !matches!(self.cache, LagrangeCache::Arbitrary(_)) {
+            return self.xy(x, y);
+        }
+        let powers = powers::<F, R>(x);
+        let mut result = self.registry.w_cached_parallel(
+            &self.cache,
+            || F::ZERO,
+            |circuit, coefficient, result| {
+                *result += coefficient * circuit.sxy_with_powers(x, y, &powers);
+            },
+            |result, part| *result += part,
+        );
+        result += self.mask_coeff_sum * crate::staging::mask::global_mask::<F, R>(x, y);
+        result + self.registry.tag_sxy(x, y)
+    }
+
     /// Evaluate the registry polynomial restricted at $W$ and $Y$, unrestricted at $X$.
     pub fn y(&self, y: F) -> sparse::Polynomial<F, R> {
         let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
-            |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sy(y, floor_plan);
+            |circuit, coeff, poly| {
+                let mut tmp = circuit.sy(y);
                 tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
@@ -868,8 +1101,8 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut poly = self.registry.w_cached(
             &self.cache,
             sparse::Polynomial::default,
-            |circuit, floor_plan, coeff, poly| {
-                let mut tmp = circuit.sx(x, floor_plan);
+            |circuit, coeff, poly| {
+                let mut tmp = circuit.sx(x);
                 tmp.scale(coeff);
                 poly.add_assign(&tmp);
             },
@@ -901,8 +1134,8 @@ impl<F: Field, R: Rank> RegistryAt<'_, F, R> {
         let mut result = self.registry.w_cached(
             &self.cache,
             F::Accumulator::default,
-            |circuit, floor_plan, coeff, result| {
-                F::mul_accumulate(result, &circuit.sxy(x, y, floor_plan), &coeff);
+            |circuit, coeff, result| {
+                F::mul_accumulate(result, &circuit.sxy(x, y), &coeff);
             },
         );
 
@@ -1015,8 +1248,8 @@ mod tests {
         }
         state.update(&(TestRank::n() as u64).to_le_bytes());
         state.update(&2u64.to_le_bytes());
-        for (circuit, plan) in registry.circuits.iter().zip(&registry.floor_plans) {
-            circuit.monomials(plan).hash_into(&mut state);
+        for circuit in &registry.circuits {
+            circuit.monomials().hash_into(&mut state);
         }
         assert_eq!(
             registry.tag(),
@@ -1058,8 +1291,7 @@ mod tests {
         let tag_term = registry.tag() * (x * y).pow_u64(4 * TestRank::n() as u64 - 1);
         let mut expected = alloc::vec![tag_term; registry.domain.size()];
         for (i, circuit) in registry.circuits.iter().enumerate() {
-            expected[registry.bitreversed_index(i)] +=
-                circuit.monomials(&registry.floor_plans[i]).eval(x, y);
+            expected[registry.bitreversed_index(i)] += circuit.monomials().eval(x, y);
         }
         assert_eq!(registry.wxy_over_domain(x, y), expected);
         // The seam other crates' tests use computes the same values.
@@ -1067,14 +1299,17 @@ mod tests {
         Ok(())
     }
 
-    /// The tag hashes the monomial driver's walk of each circuit, and the
-    /// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
-    /// point drawn afresh on every run, all four agree at every domain point:
-    /// those holding circuits, stage masks and bonding polynomials, and those
-    /// left unassigned.
+    /// The tag hashes the monomials written from each circuit's recorded
+    /// wiring, and the registry's evaluations run the same recording. At a
+    /// point drawn afresh on every run, the hashed monomials and all three
+    /// evaluations agree at every domain point: those holding circuits, stage
+    /// masks and bonding polynomials, and those left unassigned. An
+    /// independent walk of each circuit, by the monomial driver, writes the
+    /// monomials that were hashed.
     #[test]
-    fn monomial_driver_agrees_with_the_wiring_drivers() -> Result<()> {
+    fn hashed_monomials_agree_with_the_evaluations_and_the_walks() -> Result<()> {
         let registry = mixed_registry()?;
+        assert_eq!(registry.walk_mismatches(), []);
 
         let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
         let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
@@ -1087,6 +1322,213 @@ mod tests {
             assert_eq!(*hashed, registry.wy(w, y).eval(x), "sy at omega^{j}");
             w *= registry.domain.root();
         }
+        Ok(())
+    }
+
+    #[test]
+    fn parallel_restrictions_match_serial_with_masks_tags_and_padding() -> Result<()> {
+        for count in [0, 1, 5, 17] {
+            let mut builder = TestRegistryBuilder::new().with_tag(Fp::from(7));
+            for i in 0..count {
+                builder = builder.register_circuit(SquareCircuit { times: i })?;
+            }
+            if count != 0 {
+                builder = builder.register_bonding(crate::BondingObject::new(
+                    alloc::boxed::Box::new(crate::staging::mask::StageMask::<TestRank>::new(2, 3)?),
+                ));
+            }
+            let registry = builder.finalize()?;
+            let ws = [
+                Fp::ZERO,
+                Fp::from(17),
+                CircuitIndex::new(0).omega_j(),
+                CircuitIndex::new(count).omega_j(),
+                CircuitIndex::new(registry.domain.size() - 1).omega_j(),
+            ];
+            for x in [Fp::ZERO, Fp::ONE, Fp::from(13)] {
+                for y in [Fp::ZERO, Fp::ONE, Fp::from(29)] {
+                    assert_eq!(
+                        registry.wxy_over_domain_parallel(x, y),
+                        registry.wxy_over_domain(x, y)
+                    );
+                    let indices = [
+                        CircuitIndex::new(0),
+                        CircuitIndex::new(count),
+                        CircuitIndex::new(0),
+                        CircuitIndex::new(registry.domain.size() - 1),
+                        CircuitIndex::new(registry.domain.size()),
+                    ];
+                    for selected in [&indices[..0], &indices[..1], &indices[..]] {
+                        assert_eq!(
+                            registry.circuits_xy_parallel(selected, x, y),
+                            selected
+                                .iter()
+                                .map(|i| registry.wxy(i.omega_j(), x, y))
+                                .collect::<alloc::vec::Vec<_>>()
+                        );
+                    }
+                    for w in ws {
+                        let at = registry.at(w);
+                        assert!(at.x_parallel(x).iter_coeffs().eq(at.x(x).iter_coeffs()));
+                        assert!(at.y_parallel(y).iter_coeffs().eq(at.y(y).iter_coeffs()));
+                        assert_eq!(at.xy_parallel(x, y), at.xy(x, y));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Finalization rejects a circuit whose evaluations differ from its
+    /// hashed polynomial through any one of the methods the registry uses.
+    #[test]
+    fn finalize_rejects_evaluations_that_differ_from_the_hash() -> Result<()> {
+        use crate::{WiringObject, polynomials::sparse};
+
+        type Poly = sparse::Polynomial<Fp, TestRank>;
+
+        /// A wiring object whose evaluation method `skewed` is off by one.
+        struct Skewed {
+            inner: Box<dyn WiringObject<Fp, TestRank>>,
+            skewed: usize,
+        }
+
+        impl Skewed {
+            fn skew(&self, method: usize) -> Fp {
+                if method == self.skewed {
+                    Fp::ONE
+                } else {
+                    Fp::ZERO
+                }
+            }
+
+            fn skew_poly(&self, method: usize, mut poly: Poly) -> Poly {
+                poly.add_assign(&Poly::from_coeffs(alloc::vec![self.skew(method)]));
+                poly
+            }
+        }
+
+        impl WiringObject<Fp, TestRank> for Skewed {
+            fn sxy(&self, x: Fp, y: Fp) -> Fp {
+                self.inner.sxy(x, y) + self.skew(0)
+            }
+            fn sxy_with_powers(&self, x: Fp, y: Fp, powers: &[Fp]) -> Fp {
+                self.inner.sxy_with_powers(x, y, powers) + self.skew(1)
+            }
+            fn sx(&self, x: Fp) -> Poly {
+                self.skew_poly(2, self.inner.sx(x))
+            }
+            fn sx_with_powers(&self, x: Fp, powers: &[Fp]) -> Poly {
+                self.skew_poly(3, self.inner.sx_with_powers(x, powers))
+            }
+            fn sy(&self, y: Fp) -> Poly {
+                self.skew_poly(4, self.inner.sy(y))
+            }
+            fn sy_with_powers(&self, y: Fp, powers: &[Fp]) -> Poly {
+                self.skew_poly(5, self.inner.sy_with_powers(y, powers))
+            }
+            fn monomials(&self) -> crate::wiring::monomials::Monomials<Fp> {
+                self.inner.monomials()
+            }
+            fn floor_plan(&self) -> &[crate::floor_planner::ConstraintSegment] {
+                self.inner.floor_plan()
+            }
+        }
+
+        // Method 6 skews nothing, so that registry finalizes.
+        for skewed in 0..=6 {
+            let inner = crate::into_wiring_object(SquareCircuit { times: 3 })?;
+            let result = TestRegistryBuilder::new()
+                .register_circuit(SquareCircuit { times: 2 })?
+                .register_bonding(crate::BondingObject::new(Box::new(Skewed {
+                    inner,
+                    skewed,
+                })))
+                .finalize();
+            match result {
+                Ok(_) => assert_eq!(skewed, 6, "method {skewed} was not checked"),
+                Err(ragu_core::Error::Initialization(_)) => assert_ne!(skewed, 6),
+                Err(error) => panic!("unexpected error: {error}"),
+            }
+        }
+        Ok(())
+    }
+
+    /// A circuit that tells the walk recording its wiring from every other
+    /// cannot give the tag one polynomial and the evaluations another: the
+    /// tag hashes what was recorded. Only the independent walk that tests
+    /// compare recordings with sees the difference.
+    #[test]
+    fn a_walk_dependent_circuit_cannot_split_the_hash_from_the_evaluations() -> Result<()> {
+        use ragu_core::{
+            Coeff,
+            drivers::{Driver, DriverValue, LinearExpression},
+            gadgets::{Bound, Kind},
+        };
+        use ragu_primitives::{Element, allocator::Standard};
+
+        use crate::{Circuit, WithAux};
+
+        /// Constrains a gate's product wire to zero and, when `split`, adds
+        /// another wire to that constraint on the walk that records the
+        /// wiring.
+        struct Split {
+            split: bool,
+        }
+
+        impl Circuit<Fp> for Split {
+            type Instance<'instance> = Fp;
+            type Output = Kind![Fp; Element<'_, _>];
+            type Witness<'witness> = Fp;
+            type Aux<'witness> = ();
+
+            fn instance<'dr, 'instance: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                instance: DriverValue<D, Self::Instance<'instance>>,
+            ) -> Result<Bound<'dr, D, Self::Output>> {
+                Element::alloc(dr, &mut Standard::new(), instance)
+            }
+
+            fn witness<'dr, 'witness: 'dr, D: Driver<'dr, F = Fp>>(
+                &self,
+                dr: &mut D,
+                witness: DriverValue<D, Self::Witness<'witness>>,
+            ) -> Result<WithAux<Bound<'dr, D, Self::Output>, DriverValue<D, Self::Aux<'witness>>>>
+            {
+                let output = Element::alloc(dr, &mut Standard::new(), witness)?;
+                let (a, _b, c) = dr.mul(|| Ok((Coeff::Zero, Coeff::Zero, Coeff::Zero)))?;
+                let recording = core::any::type_name::<D>().contains("compiled::Recorder");
+                if self.split && recording {
+                    dr.enforce_zero(|lc| lc.add(&c).add(&a))?;
+                } else {
+                    dr.enforce_zero(|lc| lc.add(&c))?;
+                }
+                Ok(WithAux::new(output, D::unit()))
+            }
+        }
+
+        let registry = |split| {
+            TestRegistryBuilder::new()
+                .register_circuit(Split { split })?
+                .finalize()
+        };
+        let (honest, split) = (registry(false)?, registry(true)?);
+
+        // The hash saw the constraint that was recorded, so the tags differ,
+        // and the evaluations are of the hashed polynomial.
+        assert_ne!(split.tag(), honest.tag());
+        let x = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        let y = Fp::random(|bytes| rand::rng().fill_bytes(bytes));
+        assert_eq!(
+            split.hashed_wxy_over_domain(x, y),
+            split.wxy_over_domain(x, y)
+        );
+
+        // The independent walk differs from the recording for this circuit,
+        // and for no circuit whose walks agree.
+        assert_eq!(split.walk_mismatches(), [0]);
+        assert_eq!(honest.walk_mismatches(), []);
         Ok(())
     }
 

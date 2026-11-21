@@ -947,13 +947,15 @@ fn test_nested_registry_tag() {
     );
 }
 
-/// Asserts that what a registry's tag hashed is what the registry evaluates.
+/// Asserts that what a registry's tag hashed is what the registry evaluates,
+/// and what an independent walk of each circuit writes down.
 ///
-/// The tag hashes the monomial driver's walk of each circuit, and the
-/// registry evaluates the walks of the `sxy`, `sx` and `sy` drivers. At a
-/// point drawn afresh on every run, the hashed monomials with the tag term
-/// equal `sxy` at every domain point, and `sx` and `sy` at the domain point
-/// of every registered circuit.
+/// The tag hashes the monomials written from each circuit's recorded wiring,
+/// which the registry's evaluations run. At a point drawn afresh on every
+/// run, the hashed monomials with the tag term equal `sxy` at every domain
+/// point, and `sx` and `sy` at the domain point of every registered circuit.
+/// The monomial driver's walk of each circuit, which shares no code with the
+/// recording, writes the monomials that were hashed.
 fn assert_hashed_monomials_are_evaluated<F: Field, Rk: Rank>(
     registry: &ragu_circuits::registry::Registry<'_, F, Rk>,
     name: &str,
@@ -966,6 +968,11 @@ fn assert_hashed_monomials_are_evaluated<F: Field, Rk: Rank>(
     let y = F::random(|bytes| rand::rng().fill_bytes(bytes));
     let hashed = registry.hashed_wxy_over_domain(x, y);
 
+    let mismatches = registry.walk_mismatches();
+    assert!(
+        mismatches.is_empty(),
+        "{name} registry, circuits {mismatches:?} recorded differently than walked"
+    );
     assert_eq!(
         hashed,
         registry.wxy_over_domain(x, y),
@@ -988,9 +995,11 @@ fn assert_hashed_monomials_are_evaluated<F: Field, Rk: Rank>(
 }
 
 /// The registries' tags hash the polynomials the registries evaluate: for
-/// every circuit the application registers, native and nested, the monomial
-/// driver's walk agrees with the walks of all three wiring drivers. A circuit
-/// that emitted different constraints on different walks would fail here.
+/// every circuit the application registers, native and nested, the hashed
+/// monomials agree with all three evaluations of its recorded wiring, and
+/// with the monomial driver's own walk of the circuit. A fault in a
+/// recording, or a circuit that emitted different constraints on different
+/// walks, would fail here.
 #[test]
 fn registry_tags_hash_the_evaluated_polynomials() {
     let pasta = crate::pasta::baked();

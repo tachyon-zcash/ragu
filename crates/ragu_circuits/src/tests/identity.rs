@@ -2129,11 +2129,8 @@ fn test_typeid_does_not_affect_polynomial() {
         let obj_pair =
             crate::into_wiring_object::<F, _, TestRank>(PairRoutineCircuit(pair_routine)).unwrap();
 
-        let fp_elem = crate::floor_planner::floor_plan(obj_elem.segment_records());
-        let fp_pair = crate::floor_planner::floor_plan(obj_pair.segment_records());
-
-        let sxy_elem = obj_elem.sxy(x, y, &fp_elem);
-        let sxy_pair = obj_pair.sxy(x, y, &fp_pair);
+        let sxy_elem = obj_elem.sxy(x, y);
+        let sxy_pair = obj_pair.sxy(x, y);
 
         assert_eq!(
             sxy_elem, sxy_pair,

@@ -178,12 +178,12 @@ fuzz_target!(|input: Input| {
         program: &program,
         anchors: &honest_anchors,
     };
-    let registry = match RegistryBuilder::<Fp, TestRank>::new()
-        .register_circuit(circuit)
-        .and_then(|b| b.finalize())
-    {
-        Ok(r) => r,
-        Err(_) => return, // Rank overflow: program too large for TestRank.
+    let Some(registry) = ragu_testing_fuzz::registry::fits(
+        RegistryBuilder::<Fp, TestRank>::new()
+            .register_circuit(circuit)
+            .and_then(|b| b.finalize()),
+    ) else {
+        return; // Rank overflow: program too large for TestRank.
     };
 
     // Completeness sanity: the honest witness verifies and the native
