@@ -93,6 +93,14 @@ fn planned_msms<C: PastaCurve>() {
         "the single MSM must use Udon's Pasta planner"
     );
     let dispatches = PASTA_DISPATCHES.get();
+    assert_eq!(crate::msm_many(inputs.to_vec()), expected);
+    assert_eq!(
+        PASTA_DISPATCHES.get(),
+        dispatches + 1,
+        "a batch sized at run time must use Udon's Pasta planner"
+    );
+    assert!(crate::msm_many::<AffineAdapter<C>>(Vec::new()).is_empty());
+    let dispatches = PASTA_DISPATCHES.get();
     assert_eq!(crate::msm_batch(inputs), expected);
     assert_eq!(
         PASTA_DISPATCHES.get(),
@@ -120,6 +128,15 @@ fn pasta_msm_plans_match_separate_sums() {
 #[should_panic(expected = "msm operands must have equal length")]
 fn batch_rejects_mismatched_operands() {
     crate::msm_batch::<AffineAdapter<Pallas>, 2>([
+        (vec![], vec![]),
+        (vec![FieldAdapter::ONE], vec![]),
+    ]);
+}
+
+#[test]
+#[should_panic(expected = "msm operands must have equal length")]
+fn many_rejects_mismatched_operands() {
+    crate::msm_many::<AffineAdapter<Pallas>>(vec![
         (vec![], vec![]),
         (vec![FieldAdapter::ONE], vec![]),
     ]);
