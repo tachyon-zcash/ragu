@@ -3,8 +3,7 @@
 use alloc::vec::Vec;
 
 use ragu_backend::Backend;
-use ragu_circuits::polynomials::Rank;
-use ragu_core::{Error, FixedGenerators, Result};
+use ragu_core::{Error, MsmWorkspace, Result};
 use udon::{curve::Affine, field::Field};
 
 use super::{Batch, Batched, check_claims};
@@ -16,22 +15,21 @@ use crate::{
 
 /// Derives the batched commitment, point, and value from `openings` and
 /// `batch`, then checks `opening` against that claim through the IPA.
-pub(crate) fn verify_openings<P: Affine, R: Rank, B: SelectableBackend>(
+pub(crate) fn verify_openings<P: Affine, B: SelectableBackend>(
     openings: &Openings<P>,
     batch: &Batch<P>,
     opening: &IpaProof<P>,
-    generators: &impl FixedGenerators<P>,
-    u: P,
+    params: &Params<P>,
+    workspace: &mut MsmWorkspace,
     transcript: &mut impl IpaTranscript<P>,
 ) -> Result<bool> {
     let claim = verify::<_, B, _>(&openings.commitments, &openings.claims, batch, transcript)?;
-    let params = Params::with_k(generators, u, R::RANK);
-    let mut msm = MSM::new(&params);
+    let mut msm = MSM::new(params);
     msm.append_term(P::Scalar::ONE, claim.commitment);
     Ok(
-        ipa::verify_proof(&params, msm, transcript, opening, claim.point, claim.value)?
+        ipa::verify_proof(params, msm, transcript, opening, claim.point, claim.value)?
             .use_challenges()
-            .eval::<B>(),
+            .eval_with_workspace::<B>(workspace),
     )
 }
 
@@ -65,12 +63,32 @@ pub(crate) fn verify<C: Affine, B: Backend, T: IpaTranscript<C>>(
     let beta = transcript.squeeze_challenge()?;
 
     // f(u) from the quotient relation, the first claim weighted highest.
+    // Repeated query points share one inverse. Keep the original claim
+    // order and alpha weights; only the denominator computation is batched.
+    let mut points = Vec::new();
+    let positions: Vec<_> = claims
+        .iter()
+        .map(|claim| {
+            if let Some(index) = points.iter().position(|point| *point == claim.point) {
+                index
+            } else {
+                points.push(claim.point);
+                points.len() - 1
+            }
+        })
+        .collect();
+    let mut inverses: Vec<_> = points.iter().map(|point| u - point).collect();
+    // Batch inversion leaves zero entries unchanged, but this relation
+    // requires every denominator to be invertible.
+    if inverses.contains(&C::Scalar::ZERO) {
+        return Err(Error::InvalidWitness("u lands on a query point".into()));
+    }
+    let mut scratch = alloc::vec![C::Scalar::ZERO; inverses.len()];
+    C::Scalar::batch_invert(&mut inverses, &mut scratch);
     let mut f_at_u = C::Scalar::ZERO;
-    for claim in claims {
-        let denominator = (u - claim.point)
-            .invert()
-            .ok_or_else(|| Error::InvalidWitness("u lands on a query point".into()))?;
-        f_at_u = f_at_u * alpha + (batch.evaluations[claim.poly] - claim.value) * denominator;
+    for (claim, position) in claims.iter().zip(positions) {
+        f_at_u =
+            f_at_u * alpha + (batch.evaluations[claim.poly] - claim.value) * inverses[position];
     }
 
     // v and the commitment to p: f and every polynomial under beta, f

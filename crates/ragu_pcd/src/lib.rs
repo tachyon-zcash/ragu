@@ -112,8 +112,12 @@ mod decompress_statement_tests;
 #[path = "../tests/profile_corruption.rs"]
 mod profile_corruption_tests;
 
-use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
+use core::{
+    any::TypeId,
+    cell::{OnceCell, RefCell},
+    marker::PhantomData,
+};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
@@ -125,7 +129,7 @@ use ragu_circuits::{
     registry::{Registry, RegistryBuilder},
     staging,
 };
-use ragu_core::{Cycle, Error, Result};
+use ragu_core::{Cycle, Error, FixedGenerators, MsmWorkspace, PreparedMsm, Result};
 use rand::{CryptoRng, SeedableRng, rngs::StdRng};
 use step::{Step, internal::adapter::Adapter};
 
@@ -604,7 +608,18 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
             seeded_trivial: OnceCell::new(),
+            native_ipa_generators:
+                <<B as SelectableBackend>::Verifier as ragu_backend::Backend>::prepare_msm(
+                    &C::host_generators(params).g()[..R::num_coeffs()],
+                )
+                .map(Arc::new),
+            nested_ipa_generators:
+                <<B as SelectableBackend>::Verifier as ragu_backend::Backend>::prepare_msm(
+                    &C::nested_generators(params).g()[..R::num_coeffs()],
+                )
+                .map(Arc::new),
             context,
+            verifier_workspace: RefCell::new(MsmWorkspace::default()),
             _marker: PhantomData,
         };
 
@@ -746,6 +761,11 @@ pub struct Application<
     /// A valid `Pcd<()>` used as the right child during rerandomization.
     /// Lazily derived from the bootstrap proof and then reused.
     seeded_trivial: OnceCell<Proof<C, R>>,
+    /// Fixed IPA bases prepared once during application startup.
+    native_ipa_generators: Option<Arc<PreparedMsm<C::HostCurve>>>,
+    nested_ipa_generators: Option<Arc<PreparedMsm<C::NestedCurve>>>,
+    /// Scratch for public IPA checks, retained for this application's lifetime.
+    verifier_workspace: RefCell<MsmWorkspace>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
