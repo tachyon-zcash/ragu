@@ -868,6 +868,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// This holds for the standard profile. A profile with an extension
     /// stores polynomials and values of its own in a proof, which this
     /// method does not account for.
+    ///
+    /// Compression is not hiding. To send a compressed proof, compress the
+    /// output, not `pcd`: the compressed proof is computed from the output,
+    /// so it shows no more of `pcd` than the output does.
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: Pcd<C, R, H>,

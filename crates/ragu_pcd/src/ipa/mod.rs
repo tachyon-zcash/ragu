@@ -1,18 +1,25 @@
 //! Unblinded inner product argument (IPA) for polynomial commitments.
 //!
-//! Adapted from halo2's `halo2_proofs/src/poly/commitment`. Pedersen blinding
-//! with generator `W` is omitted for now because compression currently proves
-//! unblinded relations. An opening proves knowledge of `p` with
-//! `P = <p, G>` and `p(x) = v`.
+//! Adapted from halo2's `halo2_proofs/src/poly/commitment`, without the
+//! Pedersen blinds halo2 puts on `S`, `L` and `R` with its generator `W`. An
+//! opening proves knowledge of `p` with `P = <p, G>` and `p(x) = v`.
+//!
+//! The opening is therefore not hiding, and compression, its one use, does
+//! not need it to be. Blinding it would not make a compressed proof hiding,
+//! since the proof carries evaluations of the compressed proof's polynomials
+//! outside the opening. A proof that must stay private is passed through
+//! [`Application::rerandomize`](crate::Application::rerandomize) before
+//! [`Application::compress`](crate::Application::compress) instead. The
+//! compressed proof is computed from the rerandomized one, so it shows no
+//! more of the proof that was rerandomized than the rerandomized proof does.
 //!
 //! Unblinded round commitments can be the identity for valid openings, which
-//! [`CycleTranscript`] rejects. With two coefficients and `x = 0`, `R` is
-//! necessarily the identity. This is a temporary completeness limitation;
-//! future blinding would need to cover the round commitments to remove this
-//! deterministic failure.
-//!
-//! TODO: Revisit the removal of Pedersen blinds from `S`, `L`, and `R`
-//! during rerandomization work, including the resulting completeness failures.
+//! [`CycleTranscript`] rejects. Only one case is certain: with two
+//! coefficients and `x = 0`, the polynomial the argument folds,
+//! `p - v + ξ s`, has a zero constant coefficient, the one coefficient `R`
+//! commits to. Compression opens over more than one round at a fresh
+//! challenge, where a round commitment is the identity only with negligible
+//! probability.
 //!
 //! The masking polynomial `s`, with `s(x) = 0`, is retained to mask the
 //! coefficients folded by the argument. Fiat-Shamir goes through

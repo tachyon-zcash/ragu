@@ -139,7 +139,10 @@ a fresh proof of the same certified data. The method is built so that the fresh
 proof shows nothing else of the proof it was made from: it fuses the proof
 twice with a public proof, and every fuse folds and batches randomizers of its
 own. The argument for that has not been audited. Proofs in general are still
-not zero-knowledge: a proof exposes its children's commitments.
+not zero-knowledge: a proof exposes its children's commitments. To compress a
+proof that must stay private, rerandomize it first: the compressed proof is
+computed from the rerandomized proof, so it shows no more of the original than
+the rerandomized proof does.
 
 [`Header`]: ragu_pcd::header::Header
 [`Data`]: ragu_pcd::header::Header::Data
