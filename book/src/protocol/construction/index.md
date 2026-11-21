@@ -5,6 +5,11 @@ contents of an uncompressed proof, the protocol of a fuse operation, the base
 case and the decider. Every object is given a name and an order, so that each
 check can be written as an equation.
 
+The section is a reference for representations, orders and the contract of each
+circuit. [The Refinement Ladder](../ladder/index.md) gives the reason for each
+component, and the [Fuse PIOP](../iop.md) follows one fuse round by round as an
+interactive protocol. Both link here for the exact statements.
+
 The scheme is built from [arithmetic circuits](arithmetization.md) over one
 field at a time. The [wiring polynomials](wiring.md) of the circuits over a
 field are collected in a [registry](registry.md), and parts of their traces are
@@ -65,9 +70,56 @@ circuits read, $48$ on the native side and $45$ on the nested side. A fuse does
 not check its own frontier. A parent folds it into the next accumulator, and the
 decider checks the frontier of the root directly.
 
-The step's own circuit is not part of the frontier. Its trace is fixed before
-any challenge of the fold is drawn, so the fuse that runs a step folds the
-claim about it into its own accumulator.
+The step's own circuit is not part of the frontier. The step circuit runs
+after $w$ is drawn, and its trace is committed before $y$ and $z$ and depends
+on no later challenge. The fuse that runs a step therefore folds the claim
+about it into its own accumulator, and keeps neither polynomial of that trace.
+
+```mermaid
+flowchart TB
+    accTitle: What crosses a fuse
+    accDescr: Each child proof brings an accumulator and a frontier. The fuse folds the children's raw claims, the claims of the children's frontiers, the claims of its own step and its randomizer claims into a new raw claim, and batches the openings into a new batched opening with a new registry restriction. The polynomials of the step and of the randomizers are discarded. The circuits that check the fold and the batch are not checked by this fuse, and their polynomials are the frontier of the output proof. A parent fuse consumes the output proof in the same way, and the decider or compression discharges it at the root.
+    subgraph CH["Each child proof"]
+        CA["Accumulator<br/>raw claim (A, B; c)<br/>batched opening of p at u<br/>registry restriction"]
+        CF["Frontier<br/>polynomials of the child's<br/>checking circuits and stages"]
+    end
+    subgraph FU["This fuse"]
+        OWN["Used now, then discarded<br/>step circuit and application stage,<br/>randomizers"]
+        FO["Fold"]
+        BA["Batched opening<br/>and registry chain"]
+        CK["Checking circuits and stages<br/>for the fold, the batch,<br/>the walks and the transcript"]
+    end
+    subgraph OUT["Output proof"]
+        OA["Accumulator<br/>raw claim (A, B; c)<br/>batched opening of p at u<br/>registry restriction"]
+        OF["Frontier<br/>claims that no fuse<br/>has folded yet"]
+    end
+    PA["Parent fuse<br/>takes this proof as a child"]
+    RT["Root<br/>decider, or compression<br/>and its verifier"]
+    CA -->|"raw claim"| FO
+    CF -->|"frontier claims"| FO
+    OWN -.->|"own claims"| FO
+    CA --> BA
+    CF --> BA
+    OWN -.-> BA
+    FO --> OA
+    BA --> OA
+    BA ~~~ CK
+    CK --> OF
+    OA --> PA
+    OF --> PA
+    OA --> RT
+    OF --> RT
+```
+
+The figure shows one side of one fuse, and both sides advance in the same fuse.
+A solid arrow carries what a proof stores. A dotted arrow carries the fuse's
+own polynomials, which exist only during the fuse: the two polynomials of the
+step circuit's trace, which the native side alone has, and the fuse's
+[randomizers](claims.md#randomizer). The parent of a proof does not verify what
+it takes in. It folds the raw claim and the claims of the frontier and opens
+$p$ and the restriction, which leaves an accumulator and a frontier of its own.
+What remains is settled once, for the root, by the [decider](decider.md) or by
+[compression](../recursion/compression.md).
 
 ## Outline of a Fuse {#one-fuse}
 

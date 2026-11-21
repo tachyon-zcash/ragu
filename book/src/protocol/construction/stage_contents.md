@@ -19,17 +19,21 @@ the role of each.
 The native stages form a tree rooted at `points::BindingStage`, with three
 chains from the root to a leaf. On the gate axis the chains are as follows,
 where $h = \lceil (3H + 93) / 2 \rceil$ is the number of gates of the
-`preamble` stage.
+`preamble` stage. Under each stage is the [round](protocol.md#rounds) in which
+the fuse commits it.
 
 ```text
-gate  0       1..28                 29..28+h  29+h..48+h   49+h..101+h
-      SYSTEM  points::BindingStage  preamble  outer_error  inner_error
+gate   0       1..28                 29..28+h  29+h..48+h   49+h..101+h
+       SYSTEM  points::BindingStage  preamble  outer_error  inner_error
+round          1                     2         4            3
 
-gate  0       1..28                 29..28+h  29+h..111+h  112+h..175+h
-      SYSTEM  points::BindingStage  preamble  query        eval
+gate   0       1..28                 29..28+h  29+h..111+h  112+h..175+h
+       SYSTEM  points::BindingStage  preamble  query        eval
+round          1                     2         6            8
 
-gate  0       1..28                 29..98                 99..102          103..105  106..108  109..254
-      SYSTEM  points::BindingStage  points::PreambleStage  RegistryWxStage  AbStage   FStage    WalkStage
+gate   0       1..28                 29..98                 99..102          103..105  106..108  109..254
+       SYSTEM  points::BindingStage  points::PreambleStage  RegistryWxStage  AbStage   FStage    WalkStage
+round          1                     1                      2                5         7         final
 ```
 
 A circuit reserves the gates of one chain, as far as its last stage, and its own
@@ -37,7 +41,11 @@ polynomial begins at the next gate. Two stages that no chain shares, such as
 `preamble` and `points::PreambleStage`, are never reserved by the same circuit,
 so they may occupy the same gates.
 
-| Stage | Parent | Values | First Gate |
+The order of the gates is the order of the [parents](staging.md#stages), and it
+is not the order of commitment. `points::WalkStage` is committed with the final
+message, after $\text{pre\_beta}$ is drawn.
+
+| Stage | Parent Stage | Values | First Gate |
 |---|---|---|---|
 | `points::BindingStage` | none | 56 | 1 |
 | `preamble` | `points::BindingStage` | $3H + 93$ | 29 |
@@ -195,24 +203,28 @@ and its interstitials.
 
 The nested stages form one chain.
 
-| Stage | Values | First Gate | Free Coefficients |
-|---|---|---|---|
-| `EndoscalarStage` | 237 | 1 | random |
-| `BridgeHash` | 2 | 120 | zero |
-| `PointsStage` | 306 | 121 | random |
-| `BridgePreamble` | 236 | 274 | random |
-| `BridgeSPrime` | 14 | 392 | random |
-| `BridgeInnerError` | 101 | 399 | random |
-| `BridgeOuterError` | 25 | 450 | random |
-| `BridgeAB` | 6 | 463 | $\v{a}_0 = \texttt{bridge\_alpha}^2$, the blind gate zero |
-| `BridgeQuery` | 153 | 466 | random |
-| `BridgeF` | 6 | 543 | random |
-| `BridgeEval` | 109 | 546 | random, drawn again on each attempt at $\text{pre\_beta}$ |
-| `ChallengeStage` | 20 | 601 | zero |
+| Stage | Values | First Gate | Committed In | Free Coefficients |
+|---|---|---|---|---|
+| `EndoscalarStage` | 237 | 1 | final message | random |
+| `BridgeHash` | 2 | 120 | round 1, not absorbed | zero |
+| `PointsStage` | 306 | 121 | final message | random |
+| `BridgePreamble` | 236 | 274 | round 1 | random |
+| `BridgeSPrime` | 14 | 392 | round 2 | random |
+| `BridgeInnerError` | 101 | 399 | round 3 | random |
+| `BridgeOuterError` | 25 | 450 | round 4 | random |
+| `BridgeAB` | 6 | 463 | round 5 | $\v{a}_0 = \texttt{bridge\_alpha}^2$, the blind gate zero |
+| `BridgeQuery` | 153 | 466 | round 6 | random |
+| `BridgeF` | 6 | 543 | round 7 | random |
+| `BridgeEval` | 109 | 546 | round 8 | random, drawn again on each attempt at $\text{pre\_beta}$ |
+| `ChallengeStage` | 20 | 601 | final message | zero |
 
 The parent of each stage is the stage above it in the table. The nine stages
 named `Bridge...` are the **bridge stages**. They hold native commitments, and
 the transcript absorbs the commitment of each of them except `BridgeHash`.
+
+Here too the gates do not follow the order of commitment. The two stages of the
+nested walk have the first gates of the chain and are committed last, with the
+`ChallengeStage`, after $\text{pre\_beta}$ is drawn.
 
 ### `EndoscalarStage` and `PointsStage` {#nested-points}
 
@@ -383,6 +395,51 @@ $$\texttt{nested\_challenges\_partial} = \sum_{\iota=0}^{7} \chi_{\iota,q} \cdot
 
 The three partial sums are in the `eval` stage. The last sum is a slot of the
 native unified instance.
+
+The figure shows which fuse does each part. The box with a dashed border is
+the stage itself, which a fuse commits after $\text{pre\_beta}$ is drawn, when
+no challenge is left to depend on it.
+
+```mermaid
+flowchart TB
+    accTitle: Binding of the challenge stage across generations
+    accDescr: This fuse's bind_challenges circuits recompute three partial sums held in its eval stage and export nested_challenges_partial, which has the eight lifts and the sign and no term for beta. The parent holds this fuse's unified instance in its preamble stage. The parent's bind_beta adds the term for this fuse's beta and equates the sum with a point of its points binding stage. The parent's native walk folds that point into its nested batched commitment, the parent's nested batch opens this fuse's challenge stage polynomial against it, and the opened value enters this fuse's Collapse and ComputeV claims in the parent's fold. At the root, the decider or the compressed verifier rebuilds the challenge stage polynomial instead.
+    subgraph F["This fuse"]
+        CH["challenges w, y, z, mu,<br/>mu', x, alpha, u<br/>in the unified instance"]
+        EV["eval stage<br/>partial sums after<br/>2, 4 and 6 lifts"]
+        BC["bind_challenges, four circuits<br/>recompute the sums,<br/>add the sign"]
+        NP["nested_challenges_partial<br/>8 lifts and the sign,<br/>no term for beta"]
+        CS["ChallengeStage<br/>8 lifts, the sign and<br/>the lift of pre_beta"]
+        NC["Collapse and ComputeV<br/>read their challenges<br/>from ChallengeStage"]
+    end
+    subgraph P["Parent fuse"]
+        PR["preamble stage<br/>holds this fuse's<br/>unified instance"]
+        BB["bind_beta<br/>adds this fuse's beta term,<br/>equates the sum with a point<br/>of points::BindingStage"]
+        WK["native walk<br/>folds that point into<br/>the parent's P_q"]
+        NB["nested batch<br/>opens ChallengeStage's<br/>polynomial against P_q"]
+        FD["fold<br/>the opened value enters<br/>this fuse's Collapse and<br/>ComputeV claims"]
+    end
+    RT["Root, in place of a parent<br/>the decider or the compressed<br/>verifier rebuilds ChallengeStage<br/>and compares"]
+    CH --> BC
+    EV --> BC
+    BC --> NP
+    CH -.->|"lifts"| CS
+    CS --> NC
+    NP -->|"bound by the targets of<br/>this fuse's native claims"| PR
+    PR --> BB
+    BB --> WK
+    WK --> NB
+    CS --> NB
+    NB --> FD
+    NC --> FD
+    CH --> RT
+    CS --> RT
+    style CS stroke-dasharray: 6 4
+```
+
+No circuit of a fuse uses that fuse's own $\beta_q$ to bind the stage. The
+term of $\beta_q$ is added one level up, from the $\text{pre\_beta}$ that the
+parent reads in this fuse's unified instance.
 
 The stage's contents are bound by the following chain.
 

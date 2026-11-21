@@ -27,6 +27,19 @@ $j$ as a string of $32$ bits. Bit reversal gives each index the point of
 smallest order that no earlier index has taken, so the point of an index does
 not depend on the size of the domain.
 
+A fuse commits a restriction such as $m(W, x, y)$ as it commits any other
+polynomial, with $4n$ coefficients, and the degree of $m$ in $W$ is less than
+the size of $D$. The domain must therefore fit in the coefficients of one
+polynomial:
+
+$$
+L \le 4n, \qquad |D| \le 4n.
+$$
+
+Since $4n$ is a power of two, the first bound gives the second.
+[`RegistryBuilder::finalize`](ragu_circuits::registry::RegistryBuilder::finalize)
+rejects a registry with more than $4n$ entries.
+
 ## Registry Polynomial {#registry-polynomial}
 
 Let $\ell^D_j(W)$ be the Lagrange basis polynomial of $D$ that is one at

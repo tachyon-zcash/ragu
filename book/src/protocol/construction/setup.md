@@ -106,9 +106,9 @@ not check that $\eta_s$ is the slot polynomial's value at $\xi_s$; the
 Every slot therefore has exactly one opening $(\xi_s, \eta_s)$ per step.
 
 The circuit also allocates two wires $(h_x, h_y)$ for the
-[bridge hash](stage_contents.md#bridge-hash). They are the coordinates of the commitment
-of the stage that holds $O_1$, and a step that hashes its own second online
-commitment reads them.
+[bridge hash](stage_contents.md#bridge-hash). They are the coordinates of the
+commitment of the stage that holds $O_1$, and a step that hashes its own second
+online commitment reads them.
 
 The public output is $\zeta$, the six openings, the two wires of the bridge hash
 and the three headers, which is $1 + 12 + 2 + 3H = 15 + 3H$ elements, so
@@ -167,7 +167,7 @@ then runs in this order.
 Many lists in this section run over the [rx polynomials](cycle.md#notation) of
 one side in the order of `RxIndex::ALL`.
 
-| Position | Native `RxIndex` | Position | Nested `RxIndex` |
+| Rx Position | Native `RxIndex` | Rx Position | Nested `RxIndex` |
 |---|---|---|---|
 | 0 | `Hashes1` | 0 to 30 | `EndoscalingStep(0..=30)` |
 | 1 | `Hashes2` | 31 | `Collapse` |
@@ -184,6 +184,13 @@ one side in the order of `RxIndex::ALL`.
 | 41 | `Eval` | 42 | `BridgeF` |
 | 42 to 47 | `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | 43 | `BridgeEval` |
 | | | 44 | `ChallengeStage` |
+
+A position in these orders is not a registry index. The two numberings agree on
+the native side, where the mask of each stage has the
+[index](#native-registry) that the stage's polynomial has here. They part on
+the nested side: `BridgePreamble` is at position $35$, and its mask is at index
+$36$ of the [nested registry](#nested-registry), behind the final mask of the
+`PointsStage`.
 
 A native circuit or stage appears under three names. A circuit is named after
 its module and a polynomial after its `RxIndex` variant. The registry entry of a
@@ -203,7 +210,7 @@ Each entry is a circuit or a [bonding polynomial](registry.md#registry-kinds),
 and the steps are circuits. Each [mask](staging.md#masks) belongs to the
 [stage](stage_contents.md) that it is named after.
 
-| Index | Entry | Kind |
+| Registry Index | Entry | Kind |
 |---|---|---|
 | 0 | `Hashes1Circuit` | circuit |
 | 1 | `Hashes2Circuit` | circuit |
@@ -236,10 +243,12 @@ and the steps are circuits. Each [mask](staging.md#masks) belongs to the
 | $57 + i$ | application step $i$, for $i < K$ | application step |
 
 The domain has $64$ points for $K \le 7$ and $128$ points for $8 \le K \le 71$.
+A registry holds [at most $4n$ polynomials](registry.md#registry-domain), so
+$57 + K \le 4n$, and an application can register at most $4n - 57$ steps.
 
 ## Nested Registry {#nested-registry}
 
-| Index | Entry | Kind |
+| Registry Index | Entry | Kind |
 |---|---|---|
 | 0 to 30 | `EndoscalingStep(0..=30)` | circuit |
 | 31 | `Collapse` | circuit |
@@ -291,3 +300,14 @@ The terms of the other sums are explained with the [walks](walks.md), the
 [claim lists](claims.md) and the [opening lists](batch.md). The places for
 claims are those that the [fold's grid](claims.md#randomizer) leaves beside the
 fuse's own randomizer.
+
+The walk of each side is sized by the batch of the other side. The nested walk
+has $122$ points because the native batch has $121$ polynomials beside $f$, and
+the native walk has $108$ because the nested batch has $107$.
+
+In the code these counts are constants of the `internal::native` and
+`internal::nested` modules of `ragu_pcd`. The number of native endoscaling
+steps is pinned, and a compile-time assertion holds it to the size of the
+native walk. The nested counts are derived from the native ones. The tests of
+`internal` assert the claim counts, the index orders and the stage positions of
+[Stage Contents](stage_contents.md).

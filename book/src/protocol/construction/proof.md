@@ -15,6 +15,11 @@ three components.
 | batched opening | $p \in \F_p[X]$ with $P \in \E_q$, opened at $u$ | $p_q \in \F_q[X]$ with $P_q \in \E_p$, opened at $u_q$ |
 | registry restriction | $m(W, x, y)$ and its commitment | $m_q(W, x_q, y_q)$ and its commitment |
 
+The third component is stored as a polynomial. The fuse that made the proof
+does not establish that it is the registry's restriction, so until a parent or
+the decider tests it, it is a [candidate](batch.md#registry-candidates) for
+that restriction.
+
 The values that the accumulator claims are derived from the polynomials and are
 not stored:
 

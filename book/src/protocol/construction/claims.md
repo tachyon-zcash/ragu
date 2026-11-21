@@ -47,13 +47,6 @@ $(4n - 2 + L)/|S|$.[^bonding-bound]
 A **raw claim** $(A, B;\ c)$ has no such structure. It is what a fold leaves
 behind, and each child brings one.
 
-On this page, $y$ and $z$ are the challenges of the current fuse. Every
-polynomial belongs to a child, except the two of the fuse's own
-[step circuit](setup.md#step-circuit) and its two
-[fold randomizers](#randomizer). Indices refer to the
-[native](setup.md#native-registry) and [nested](setup.md#nested-registry)
-registries.
-
 ## Fold {#fold}
 
 The fold takes a list of claims and reduces it to one. A random linear
@@ -66,16 +59,19 @@ products before the challenge that combines the sides is drawn.[^protogalaxy]
 [^protogalaxy]: This specializes to revdot claims the Lagrange and vanishing
     polynomial identity of [ProtoGalaxy](https://eprint.iacr.org/2023/1106).
 
-The claims are placed in a grid of $N$ groups of $M$ **slots**, and the grid is
-folded in two layers: each group is reduced to one claim, and the $N$ results
-are then reduced to one. We write $(a_{g,j}, b_{g,j};\ \text{tgt}_{g,j})$ for
-the claim in slot $j < M$ of group $g < N$. The native fold has
-$(M, N) = (8, 15)$ and uses $\mu, \mu'$. The nested fold has $(M, N) = (9, 12)$
-and uses $\mu_q, \mu'_q$, and its objects carry a subscript $q$.[^whysplit]
+One such reduction takes $M$ claims to one, and the prover commits $M - 1$
+quotient coefficients for it. The fold applies it in two layers. The claims are
+placed in a grid of $N$ groups of $M$ **slots**: each group is reduced to one
+claim, and the $N$ results are then reduced to one. We write
+$(a_{g,j}, b_{g,j};\ \text{tgt}_{g,j})$ for the claim in slot $j < M$ of group
+$g < N$. The native fold has $(M, N) = (8, 15)$ and uses $\mu, \mu'$. The
+nested fold has $(M, N) = (9, 12)$ and uses $\mu_q, \mu'_q$, and its objects
+carry a subscript $q$.[^whysplit]
 
 [^whysplit]: For $MN$ slots, the two layers commit $N(M - 1) + (N - 1) = MN - 1$
-    quotient coefficients whatever the split. The prover's count of revdot
-    products, $N M^2 + N^2$, is smallest near $M = (2MN)^{1/3}$, and the native
+    quotient coefficients whatever the split. Over the whole grid the prover
+    forms $N M^2 + N^2$ revdot products, counting those with a zero side, which
+    are trivial. This count is smallest near $M = (2MN)^{1/3}$, and the native
     split of fifteen groups of eight sits near that minimum.
 
 Each layer interpolates over integer nodes: $0, \dots, M - 1$ in the first layer
@@ -240,6 +236,12 @@ proof twice so that the second fuse folds polynomials that no observer holds.
 
 ## Native Claims {#native-claims}
 
+In the two lists, $y$ and $z$ are the challenges of the current fuse. Every
+polynomial belongs to a child, except the two of the fuse's own
+[step circuit](setup.md#step-circuit). A registry index refers to the
+[native](setup.md#native-registry) or the [nested](setup.md#nested-registry)
+registry, and a position is a claim's place in its list.
+
 The native list has the raw claim of each child, then the claim of the fuse's
 own step circuit, then one circuit claim for each of the $37$ internal circuits
 of each child's [frontier](proof.md#frontier). It ends with one bonding claim
@@ -251,7 +253,7 @@ sum of a child's six points stages as
 
 $$r^{(i)}[\text{points}] = r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{PointsPreamble}] + r^{(i)}[\texttt{PointsRegistryWx}] + r^{(i)}[\texttt{PointsAb}] + r^{(i)}[\texttt{PointsF}] + r^{(i)}[\texttt{PointsWalk}].$$
 
-| Position | Kind | Index | $a$ Side | Target |
+| Position $k$ | Kind | Registry Index | $a$ Side | Target |
 |---|---|---|---|---|
 | $i$ | raw | | $A^{(i)}$, with $b$ side $B^{(i)}$ | $c^{(i)}$ |
 | $2$ | circuit | $\text{id}$ | $r[\texttt{Application}] + r[\texttt{ApplicationStage}]$ | $k_{\text{app}}(y)$ |
@@ -342,7 +344,7 @@ $$r_q^{(i)}[\text{all}] = \sum_{S} r_q^{(i)}[S] \quad \text{over all twelve nest
 
 $$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\texttt{PointsStage}, \texttt{BridgePreamble}, \texttt{BridgeSPrime}, \texttt{BridgeInnerError}, \texttt{BridgeAB}, \texttt{BridgeQuery}, \texttt{BridgeF}\}.$$
 
-| Position | Kind | Index | $a$ Side | Target |
+| Position $k$ | Kind | Registry Index | $a$ Side | Target |
 |---|---|---|---|---|
 | $i$ | raw | | $A_q^{(i)}$, with $b$ side $B_q^{(i)}$ | $c_q^{(i)}$ |
 | $2 + 2s + i$, $s < 31$ | circuit | $s$ | $r_q^{(i)}[\texttt{EndoscalingStep}(s)] + r_q^{(i)}[\texttt{EndoscalarStage}] + r_q^{(i)}[\texttt{PointsStage}]$ | $1$ |
@@ -377,10 +379,14 @@ Both instance circuits of a child take the same target.
 The position of a claim fixes its slot, as the grids below show. A cell gives
 the registry index of the claim's wiring polynomial, with $\text{id}$ for the
 fuse's own step circuit. An index that appears twice is an internal circuit,
-which is claimed once for each child. The step circuit and each bonding
-polynomial appear once. A cell marked $\star$ holds the randomizer claim, the
-cell marked half holds the half-claim, and a cell marked pad holds the zero
-claim.
+which is claimed once for each child: the first cell is the claim of child $0$
+and the second that of child $1$, as the two cells marked raw are the raw
+claims of child $0$ and of child $1$. The step circuit and each bonding
+polynomial appear once. The circuits are the indices $0$ to $36$ of the native
+grid and $0$ to $32$ of the nested grid, and the bonding polynomials are the
+indices $37$ to $54$ and $33$ to $47$. A cell marked $\star$ holds the
+randomizer claim, the cell marked half holds the half-claim, and a cell marked
+pad holds the zero claim.
 
 The native grid has $15$ groups of $8$.
 

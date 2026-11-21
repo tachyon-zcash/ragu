@@ -1,9 +1,13 @@
 # Protocol {#protocol}
 
 A fuse is a public-coin protocol of eight rounds, made non-interactive by the
-[transcript](cycle.md#transcript).
+[transcript](cycle.md#transcript). The [Fuse PIOP](../iop.md) gives the
+messages and checks of each round in full, and the
+[fuse procedure](fuse.md#procedure) gives the prover's steps. Here they are
+reduced to a schedule.
 
-In each round the prover's message is one point of $\E_p$, the commitment of a
+In each round the prover fixes objects on both sides, and the transcript
+absorbs one point of $\E_p$ that commits to all of them: the commitment of a
 [bridge stage](stage_contents.md#nested-stages). The bridge stage holds the
 commitments of the native objects of the round. It holds the round's nested
 objects directly when they are scalars. When they are commitments, it holds the
@@ -22,6 +26,14 @@ therefore fixes both sides.
 | 6 | the claimed values, in `Query`; $m(W, x, y)$ | the nested claimed values, in `BridgeQuery` | $R_q[\texttt{BridgeQuery}]$ | $\alpha$ |
 | 7 | $f$, $p_\star$ | $f_q$, $m_q(W, x_q, y_q)$, $p_{q,\star}$, in `PointsF` | $R_q[\texttt{BridgeF}]$ | $u$ |
 | 8 | the evaluations at $u$ and the three partial sums of the [challenge stage](stage_contents.md#challenge-stage) commitment, in `Eval` | the evaluations at $u_q$, in `BridgeEval` | $R_q[\texttt{BridgeEval}]$ | $\text{pre\_beta}$ |
+
+A row gives three things that should be kept apart. The objects of its second
+and third columns are fixed before its challenge is drawn. The transcript
+absorbs the one point of its fourth column and nothing else. Whether an object
+is still in the proof afterwards is a separate question, which the
+[proof page](proof.md#stored-derived) answers: a fuse discards the two
+polynomials of its step circuit's trace, the restrictions in $Y$ and in $X$,
+$f$, $f_q$ and its randomizers.
 
 After the last challenge the prover sends a final message, which no challenge
 follows:
