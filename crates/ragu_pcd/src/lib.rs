@@ -34,6 +34,10 @@
 //! [`verify_compressed`](Application::verify_compressed). See [`wire`] for
 //! the envelope layout, version rules and input size limits, including the
 //! limits callers must apply to Serde backends before they allocate buffers.
+//!
+//! The crate's `ARCHITECTURE.md` maps each operation to its files, gives an
+//! order to read the code in, and names the code a proof's soundness rests
+//! on.
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
