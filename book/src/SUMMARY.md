@@ -64,6 +64,7 @@
     - [Rung 16: Compression of the Decider's Checks](protocol/ladder/rung_16.md)
     - [The Ladder at a Glance](protocol/ladder/glance.md)
     - [Assumptions of the Argument](protocol/ladder/assumptions.md)
+  - [Fuse IOP](protocol/iop.md)
   - [Compression](protocol/recursion/compression.md)
   - [Decompression](protocol/recursion/decompression.md)
   - [Analysis](protocol/analysis.md) <!-- todo -->
