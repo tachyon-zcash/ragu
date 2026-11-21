@@ -111,7 +111,7 @@ pub struct NumExtensionCircuits<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionCircuits<P> {
     fn len() -> usize {
-        crate::profile::nested_extension::<P>().circuits.len()
+        crate::profile::extension_lengths::<P>(true).circuits
     }
 }
 
@@ -120,7 +120,7 @@ pub struct NumExtensionStages<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumExtensionStages<P> {
     fn len() -> usize {
-        crate::profile::nested_extension::<P>().stages
+        crate::profile::extension_lengths::<P>(true).stages
     }
 }
 
@@ -186,16 +186,9 @@ pub const FOLD_GROUP_SIZE: usize = 8;
 /// raw claims, each internal circuit's claim per child, and each bonding's
 /// claim across both.
 pub fn num_claims<P: Profile>() -> usize {
-    let (circuits, bondings) =
-        InternalCircuitIndex::all::<P>()
-            .into_iter()
-            .fold((0, 0), |(circuits, bondings), id| {
-                if id.is_bonding() {
-                    (circuits, bondings + 1)
-                } else {
-                    (circuits + 1, bondings)
-                }
-            });
+    let extension = crate::profile::extension_lengths::<P>(true);
+    let circuits = 2 + NumSteps::<P>::len() + extension.circuits;
+    let bondings = 15 + extension.bondings;
     2 + 2 * circuits + bondings
 }
 
@@ -447,15 +440,38 @@ impl InternalCircuitIndex {
     /// Circuit indices follow the `RegistryBuilder::finalize()` concatenation
     /// order: internal circuits first, then internal masks.
     pub fn circuit_index<P: Profile>(self) -> CircuitIndex {
-        let pos = Self::all::<P>()
-            .iter()
-            .position(|&v| v == self)
-            .expect("every variant appears in all");
+        use InternalCircuitIndex::*;
+        let steps = NumSteps::<P>::len();
+        let extension = crate::profile::extension_lengths::<P>(true);
+        let bonding = steps + 2 + extension.circuits;
+        let pos = match self {
+            EndoscalingStep(i) => checked_index(i, steps),
+            Collapse => steps,
+            ComputeV => steps + 1,
+            ExtensionCircuit(i) => steps + 2 + checked_index(i, extension.circuits),
+            EndoscalarStage => bonding,
+            PointsStage => bonding + 1,
+            PointsFinalStaged => bonding + 2,
+            BridgePreamble => bonding + 3,
+            BridgeHash => bonding + 4,
+            BridgeSPrime => bonding + 5,
+            BridgeInnerError => bonding + 6,
+            BridgeOuterError => bonding + 7,
+            BridgeAB => bonding + 8,
+            BridgeQuery => bonding + 9,
+            BridgeF => bonding + 10,
+            BridgeEval => bonding + 11,
+            ChallengeStage => bonding + 12,
+            ChallengeFinalStaged => bonding + 13,
+            Loading => bonding + 14,
+            ExtensionBonding(i) => bonding + 15 + checked_index(i, extension.bondings),
+        };
         CircuitIndex::new(pos)
     }
 
     /// Whether `self` is registered as a bonding, a stage's mask, a final
     /// mask or the loading circuit's, rather than as a circuit.
+    #[cfg(test)]
     pub fn is_bonding(self) -> bool {
         use InternalCircuitIndex::*;
         match self {
@@ -466,6 +482,13 @@ impl InternalCircuitIndex {
             | ExtensionBonding(_) => true,
         }
     }
+}
+
+// Reject variants that do not exist in this profile.
+fn checked_index(index: u32, count: usize) -> usize {
+    let index = index as usize;
+    assert!(index < count, "index is outside the profile");
+    index
 }
 
 /// Enum identifying which nested field rx polynomial to retrieve from a proof.
@@ -604,10 +627,34 @@ impl RxIndex {
 
     /// The position of `self` in [`all`](Self::all), for profile `P`.
     pub fn position<P: Profile>(self) -> usize {
-        Self::all::<P>()
-            .iter()
-            .position(|&v| v == self)
-            .expect("every variant appears in all")
+        use RxIndex::*;
+        let steps = NumSteps::<P>::len();
+        match self {
+            EndoscalingStep(i) => checked_index(i, steps),
+            Collapse => steps,
+            ComputeV => steps + 1,
+            EndoscalarStage => steps + 2,
+            PointsStage => steps + 3,
+            BridgePreamble => steps + 4,
+            BridgeHash => steps + 5,
+            BridgeSPrime => steps + 6,
+            BridgeInnerError => steps + 7,
+            BridgeOuterError => steps + 8,
+            BridgeAB => steps + 9,
+            BridgeQuery => steps + 10,
+            BridgeF => steps + 11,
+            BridgeEval => steps + 12,
+            ChallengeStage => steps + 13,
+            ExtensionCircuit(i) => {
+                steps + 14 + checked_index(i, crate::profile::extension_lengths::<P>(true).circuits)
+            }
+            ExtensionStage(i) => {
+                steps
+                    + 14
+                    + crate::profile::extension_lengths::<P>(true).circuits
+                    + checked_index(i, crate::profile::extension_lengths::<P>(true).stages)
+            }
+        }
     }
 }
 
@@ -778,4 +825,28 @@ pub fn register_all<'params, C: ProfiledCycle, R: Rank>(
     );
 
     Ok(registry)
+}
+
+#[cfg(test)]
+mod index_positions {
+    use super::*;
+    use crate::profile::Standard;
+
+    fn check<P: Profile>() {
+        let all = InternalCircuitIndex::all::<P>();
+        let circuits = all.iter().filter(|id| !id.is_bonding()).count();
+        assert_eq!(num_claims::<P>(), 2 + 2 * circuits + all.len() - circuits);
+        for (expected, id) in InternalCircuitIndex::all::<P>().into_iter().enumerate() {
+            assert_eq!(usize::from(id.circuit_index::<P>()), expected, "{id:?}");
+        }
+        for (expected, id) in RxIndex::all::<P>().into_iter().enumerate() {
+            assert_eq!(id.position::<P>(), expected, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn arithmetic_positions_match_canonical_lists() {
+        check::<Standard>();
+        check::<crate::profile::testing::Wider>();
+    }
 }
