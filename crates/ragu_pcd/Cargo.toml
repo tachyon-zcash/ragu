@@ -137,6 +137,9 @@ name = "pasta_parameters"
 name = "profiles"
 
 [[test]]
+name = "prover_isolation"
+
+[[test]]
 name = "registration_errors"
 
 [[test]]
