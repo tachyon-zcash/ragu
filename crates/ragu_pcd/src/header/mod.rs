@@ -12,7 +12,7 @@ use ragu_primitives::{allocator::Allocator, io::Write};
 use udon::field::Field;
 
 #[cfg(all(test, not(ragu_pcd_targeted_tests)))]
-#[path = "../tests/header_injectivity.rs"]
+#[path = "../../tests/header_injectivity.rs"]
 mod injectivity_tests;
 mod online;
 

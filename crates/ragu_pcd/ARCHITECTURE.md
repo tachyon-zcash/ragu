@@ -9,7 +9,7 @@ on. Paths are relative to `src/`.
 | Path | Holds |
 | --- | --- |
 | `lib.rs` | `ApplicationBuilder` and `Application`: setup (`finalize`), `seed` and `rerandomize`. |
-| `header.rs`, `header/`, `step/` | What a proof claims: headers and the online polynomials they name, and the steps that produce them. `step/internal/` holds the internal steps. |
+| `header/`, `step/` | What a proof claims: headers and the online polynomials they name, and the steps that produce them. `step/internal/` holds the internal steps. |
 | `profile/` | Proof shapes: the `Profile` trait, the built-in profiles and their extensions. `profile/online/` declares the online batches. |
 | `pasta/` | The Pasta parameters. |
 | `proof/` | The uncompressed proof (`Proof`, `Pcd`), its builder (`builder.rs`) and its byte codec (`codec.rs`). |
@@ -39,7 +39,7 @@ on. Paths are relative to `src/`.
 ## Reading order
 
 1. `lib.rs` and the entry points above.
-2. `header.rs`, `step/` and `profile/`: what a proof claims and the shapes it
+2. `header/`, `step/` and `profile/`: what a proof claims and the shapes it
    takes.
 3. `internal/`: each side's `mod.rs`, `claims.rs`, `unified.rs` and `stages/`,
    then the shared modules, then `circuits/`.
