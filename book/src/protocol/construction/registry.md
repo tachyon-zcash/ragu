@@ -36,20 +36,20 @@ its values on $D$:
 
 $$
 m(\omega_j, X, Y) = s_j(X, Y) \quad (j < L), \qquad
-m(\omega, X, Y) = \color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}
+m(\omega, X, Y) = \textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1}
 \quad \text{at every other } \omega \in D.
 $$
 
 Every $s_j$ carries the [registry constraint](wiring.md#system-gate)
-$\color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}$, so the polynomial at a point with
-nothing registered is a wiring polynomial with that constraint and no other. The
-basis polynomials of $D$ sum to one, which makes the constraint a term of $m$
-with no factor of $W$:
+$\textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1}$, so the polynomial at a point
+with nothing registered is a wiring polynomial with that constraint and no
+other. The basis polynomials of $D$ sum to one, which makes the constraint a
+term of $m$ with no factor of $W$:
 
 $$
 m(W, X, Y) = \sum_{j=0}^{L-1} \ell^D_j(W)
-  \left( s_j(X, Y) - \color{#7e22ce}{\kappa} \cdot (XY)^{4n-1} \right)
-  + \color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}.
+  \left( s_j(X, Y) - \textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1} \right)
+  + \textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1}.
 $$
 
 ## Kinds of Registered Polynomial {#registry-kinds}

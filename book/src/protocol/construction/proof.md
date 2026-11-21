@@ -31,8 +31,8 @@ stage polynomials.
 
 | Side | Circuit Polynomials | Stage Polynomials |
 |---|---|---|
-| native, 48 | `Hashes1`, `Hashes2`, `Collapse`, `ComputeV`, `BindChallenges(0..3)`, `BindBeta`, `BindEndoscalar`, `EndoscalingStep(0..26)` | `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` |
-| nested, 45 | `EndoscalingStep(0..30)`, `Collapse`, `ComputeV` | `EndoscalarStage`, `PointsStage`, `BridgePreamble`, `BridgeHash`, `BridgeSPrime`, `BridgeInnerError`, `BridgeOuterError`, `BridgeAB`, `BridgeQuery`, `BridgeF`, `BridgeEval`, `ChallengeStage` |
+| native, 48 | `Hashes1`, `Hashes2`, `Collapse`, `ComputeV`, `BindChallenges(0..=3)`, `BindBeta`, `BindEndoscalar`, `EndoscalingStep(0..=26)` | `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` |
+| nested, 45 | `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV` | `EndoscalarStage`, `PointsStage`, `BridgePreamble`, `BridgeHash`, `BridgeSPrime`, `BridgeInnerError`, `BridgeOuterError`, `BridgeAB`, `BridgeQuery`, `BridgeF`, `BridgeEval`, `ChallengeStage` |
 
 Each polynomial is stored with its commitment, $R[\cdot] \in \E_q$ for a native
 one and $R_q[\cdot] \in \E_p$ for a nested one. A fuse draws the

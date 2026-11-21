@@ -183,7 +183,7 @@ and its interstitials.
 
 | Stage | Field | Value |
 |---|---|---|
-| `points::PreambleStage` | `points` | per child, $35$ points: $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` |
+| `points::PreambleStage` | `points` | per child, $35$ points: $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` |
 | `points::RegistryWxStage` | `registry_wx0`, `registry_wx1` | $[m_q(w_q, x_q^{(0)}, Y)]$, $[m_q(w_q, x_q^{(1)}, Y)]$ |
 | | `randomizer_a`, `randomizer_b` | $[a_{q,\star}]$, $[b_{q,\star}]$ |
 | `points::AbStage` | `registry_wy`, `a`, `b` | $[m_q(w_q, X, y_q)]$, $[A_q]$, $[B_q]$ |

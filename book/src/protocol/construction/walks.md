@@ -83,7 +83,7 @@ opened at $w_q$. A parent opens that commitment at its own $w_q$ instead.
 | $k$ | $C_{q,k}$ | Held In |
 |---|---|---|
 | 0 | $[f_q]$ | `points::FStage` |
-| $1 + 49i + t$, $t < 35$ | $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` | `points::PreambleStage` |
+| $1 + 49i + t$, $t < 35$ | $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` | `points::PreambleStage` |
 | $36 + 49i + t$, $t < 9$ | $R_q^{(i)}[\cdot]$ of the nine bridge stages | `points::BindingStage` |
 | $45 + 49i$ | $R_q^{(i)}[\texttt{ChallengeStage}]$ | `points::BindingStage` |
 | $46 + 49i$, $47 + 49i$ | $[A_q^{(i)}]$, $[B_q^{(i)}]$ | `points::BindingStage` |

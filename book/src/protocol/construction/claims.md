@@ -82,8 +82,8 @@ $$r^{(i)}[\text{points}] = r^{(i)}[\texttt{PointsBinding}] + r^{(i)}[\texttt{Poi
 | $77, \dots, 87$ | bonding | $37, \dots, 47$ | $z \, r^{(0)}[S] + r^{(1)}[S]$ for the stage $S$ of the mask: `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | $0$ |
 | 88 | bonding | 48 | $z \, r^{(0)}[\texttt{Collapse}] + r^{(1)}[\texttt{Collapse}]$ | $0$ |
 | 89 | bonding | 49 | $\text{Horner}_z$ of `Hashes1` then `Hashes2` | $0$ |
-| 90 | bonding | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..3)` | $0$ |
-| 91 | bonding | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..26)` | $0$ |
+| 90 | bonding | 50 | $\text{Horner}_z$ of `ComputeV`, then `BindChallenges(0..=3)` | $0$ |
+| 91 | bonding | 51 | $\text{Horner}_z$ of `BindEndoscalar`, then `EndoscalingStep(0..=26)` | $0$ |
 | 92 | bonding | 52 | $z \, r^{(0)}[\texttt{BindBeta}] + r^{(1)}[\texttt{BindBeta}]$ | $0$ |
 | 93 | bonding | 53 | $r[\texttt{ApplicationStage}]$ | $0$ |
 | 94 | bonding | 54 | $r[\texttt{Application}]$ | $0$ |
@@ -165,7 +165,7 @@ $$r_q^{(i)}[\text{loading}] = \sum_{S} r_q^{(i)}[S] \quad \text{over } S \in \{\
 | $64 + i$ | circuit | 31 | $r_q^{(i)}[\texttt{Collapse}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
 | $66 + i$ | circuit | 32 | $r_q^{(i)}[\texttt{ComputeV}] + r_q^{(i)}[\text{all}]$ | $k^{(i)}_{q}(y_q)$ |
 | 68, 69 | bonding | 33, 34 | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for `EndoscalarStage`, `PointsStage` | $0$ |
-| 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..30)` | $0$ |
+| 70 | bonding | 35 | $\text{Horner}_{z_q}$ of `EndoscalingStep(0..=30)` | $0$ |
 | $71, \dots, 80$ | bonding | $36, \dots, 45$ | $z_q \, r_q^{(0)}[S] + r_q^{(1)}[S]$ for the nine bridge stages in registry order, then `ChallengeStage` | $0$ |
 | 81 | bonding | 46 | $\text{Horner}_{z_q}$ of `Collapse` then `ComputeV` | $0$ |
 | 82 | bonding | 47 | $z_q \, r_q^{(0)}[\text{loading}] + r_q^{(1)}[\text{loading}]$ | $0$ |

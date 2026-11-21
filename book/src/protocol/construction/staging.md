@@ -46,11 +46,11 @@ $\color{#dc2626}{\v{a}_{n-1}}$ and $\color{#dc2626}{\v{d}_{n-1}}$ of the blind
 gate.
 
 $$
-\color{#dc2626}{\v{a}_0} \, X^{2n-1}
+\textcolor{#dc2626}{\v{a}_0} \, X^{2n-1}
 + \sum_{k \text{ even}} \nu_k \, X^{2n-1-g-k/2}
 + \sum_{k \text{ odd}} \nu_k \, X^{4n-1-g-(k-1)/2}
-+ \color{#dc2626}{\v{a}_{n-1}} \, X^{n}
-+ \color{#dc2626}{\v{d}_{n-1}} \, X^{3n}.
++ \textcolor{#dc2626}{\v{a}_{n-1}} \, X^{n}
++ \textcolor{#dc2626}{\v{d}_{n-1}} \, X^{3n}.
 $$
 
 All of its other coefficients are zero. In particular $\v{d}_0 = 0$: a stage has

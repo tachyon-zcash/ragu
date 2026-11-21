@@ -80,7 +80,7 @@ $(g, m) = (1, \lceil \texttt{stage\_size} / 2 \rceil)$. The stage has this one
 size in every step circuit of the application, and a step that stages fewer
 values leaves the rest of the stage unused.
 
-$$r[\texttt{ApplicationStage}] = \color{#dc2626}{\v{a}_0} \, X^{2n-1} + \sum_{k \text{ even}} \nu_k \, X^{2n-2-k/2} + \sum_{k \text{ odd}} \nu_k \, X^{4n-2-(k-1)/2} + \color{#dc2626}{\v{a}_{n-1}} \, X^{n} + \color{#dc2626}{\v{d}_{n-1}} \, X^{3n}$$
+$$r[\texttt{ApplicationStage}] = \textcolor{#dc2626}{\v{a}_0} \, X^{2n-1} + \sum_{k \text{ even}} \nu_k \, X^{2n-2-k/2} + \sum_{k \text{ odd}} \nu_k \, X^{4n-2-(k-1)/2} + \textcolor{#dc2626}{\v{a}_{n-1}} \, X^{n} + \textcolor{#dc2626}{\v{d}_{n-1}} \, X^{3n}$$
 
 The three [free coefficients](wiring.md#blind-gate) are uniformly random. The
 stage mask at [native index](#native-registry) $53$ confines this polynomial to
@@ -169,14 +169,14 @@ one side in the order of `RxIndex::ALL`.
 
 | Position | Native `RxIndex` | Position | Nested `RxIndex` |
 |---|---|---|---|
-| 0 | `Hashes1` | 0 to 30 | `EndoscalingStep(0..30)` |
+| 0 | `Hashes1` | 0 to 30 | `EndoscalingStep(0..=30)` |
 | 1 | `Hashes2` | 31 | `Collapse` |
 | 2 | `Collapse` | 32 | `ComputeV` |
 | 3 | `ComputeV` | 33 | `EndoscalarStage` |
-| 4 to 7 | `BindChallenges(0..3)` | 34 | `PointsStage` |
+| 4 to 7 | `BindChallenges(0..=3)` | 34 | `PointsStage` |
 | 8 | `BindBeta` | 35 | `BridgePreamble` |
 | 9 | `BindEndoscalar` | 36 | `BridgeHash` |
-| 10 to 36 | `EndoscalingStep(0..26)` | 37 | `BridgeSPrime` |
+| 10 to 36 | `EndoscalingStep(0..=26)` | 37 | `BridgeSPrime` |
 | 37 | `Preamble` | 38 | `BridgeInnerError` |
 | 38 | `InnerError` | 39 | `BridgeOuterError` |
 | 39 | `OuterError` | 40 | `BridgeAB` |
@@ -209,10 +209,10 @@ and the steps are circuits. Each [mask](staging.md#masks) belongs to the
 | 1 | `Hashes2Circuit` | circuit |
 | 2 | `CollapseCircuit` | circuit |
 | 3 | `ComputeVCircuit` | circuit |
-| 4 to 7 | `BindChallengesCircuit(0..3)` | circuit |
+| 4 to 7 | `BindChallengesCircuit(0..=3)` | circuit |
 | 8 | `BindBetaCircuit` | circuit |
 | 9 | `BindEndoscalarCircuit` | circuit |
-| 10 to 36 | `EndoscalingStep(0..26)` | circuit |
+| 10 to 36 | `EndoscalingStep(0..=26)` | circuit |
 | 37 | `PreambleStage` | stage mask |
 | 38 | `InnerErrorStage` | stage mask |
 | 39 | `OuterErrorStage` | stage mask |
@@ -241,7 +241,7 @@ The domain has $64$ points for $K \le 7$ and $128$ points for $8 \le K \le 71$.
 
 | Index | Entry | Kind |
 |---|---|---|
-| 0 to 30 | `EndoscalingStep(0..30)` | circuit |
+| 0 to 30 | `EndoscalingStep(0..=30)` | circuit |
 | 31 | `Collapse` | circuit |
 | 32 | `ComputeV` | circuit |
 | 33 | `EndoscalarStage` | stage mask |
