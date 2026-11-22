@@ -1,7 +1,10 @@
 //! The verifier's side of the compression: [`Application::verify_compressed`].
 
+use core::any::TypeId;
+
 use ragu_circuits::polynomials::Rank;
 use ragu_core::{Error, Result};
+use udon::field::Field;
 
 use super::{CompressedPcd, CompressedProof, Lifted, Sampled, batch, revdot, transcript};
 use crate::{
@@ -9,7 +12,7 @@ use crate::{
     header::Header,
     internal::{ky, nested},
     ipa::{CycleTranscript, IpaCycle},
-    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
+    profile::{Profile, ProfiledCycle, Standard, online::mesh_terminal::Coordinates},
 };
 
 /// The backend whose kernels [`Application::verify_compressed`] consults for
@@ -86,6 +89,10 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// commitments go through the sealed [`SelectableBackend::Verifier`] of
     /// the selected backend, as in `verify_uncompressed`. This also applies to
     /// batch commitment combinations and IPA MSMs.
+    /// A [`Published`](crate::header::Published) header additionally requires
+    /// the final rerandomization circuit and commitments to the constant one
+    /// in both online slots. Its reserved suffixes attest both publication
+    /// passes through that circuit.
     pub fn verify_compressed<H: Header<C::CircuitField>>(
         &self,
         pcd: &CompressedPcd<C, H>,
@@ -106,6 +113,17 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
 
         let proof = pcd.proof();
         let instance = &proof.instance;
+        if H::SUFFIX.is_publication() {
+            let ready = H::SUFFIX.is_published()
+                && TypeId::of::<C::Profile>() == TypeId::of::<Standard>()
+                && instance.circuit_id
+                    == crate::step::InternalStepIndex::Rerandomize.circuit_index::<C::Profile>()?
+                && instance.online_commitments
+                    == [self.commit(&[C::CircuitField::ONE])?; crate::header::NUM_ONLINE_FP_POLYS];
+            if !ready {
+                return Ok(false);
+            }
+        }
         let challenges = proof_check!(self.admit_compressed(proof));
 
         let output_header = ky::output_header::<C, H, HEADER_SIZE>(pcd.data().clone())?;

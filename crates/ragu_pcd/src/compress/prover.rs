@@ -1,6 +1,7 @@
 //! The prover's side of the compression: [`Application::compress`].
 
 use alloc::{borrow::Cow, vec::Vec};
+use core::any::TypeId;
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::{Error, FixedGenerators, Result};
@@ -19,7 +20,7 @@ use crate::{
     header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
-    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
+    profile::{Profile, ProfiledCycle, Standard, online::mesh_terminal::Coordinates},
     proof::commitments_match,
 };
 
@@ -53,6 +54,11 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// after [`verify_compressed`](Self::verify_compressed) succeeds.
     /// Together these checks also validate the original proof for reuse as a
     /// child.
+    /// Compression retains deterministic commitments to the input's online
+    /// polynomials. To publish without them, first call
+    /// [`rerandomize_for_publication`](Self::rerandomize_for_publication).
+    /// For that result, compression also requires the final publication
+    /// circuit and commitments to the constant one in both slots.
     ///
     /// The commitment check batches the online polynomials under a scalar
     /// drawn from `rng`, so it vouches for the polynomials stored in `pcd`
@@ -73,6 +79,19 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         rng: &mut RNG,
     ) -> Result<CompressedPcd<C, H>> {
         let proof = pcd.proof();
+        if H::SUFFIX.is_publication() {
+            let ready = H::SUFFIX.is_published()
+                && TypeId::of::<C::Profile>() == TypeId::of::<Standard>()
+                && proof.circuit_id()
+                    == crate::step::InternalStepIndex::Rerandomize.circuit_index::<C::Profile>()?
+                && proof.online_commitments()
+                    == [self.commit(&[C::CircuitField::ONE])?; crate::header::NUM_ONLINE_FP_POLYS];
+            if !ready {
+                return Err(Error::InvalidWitness(
+                    "publication requires two rerandomization passes and padded slots".into(),
+                ));
+            }
+        }
         if !proof.well_formed() {
             return Err(Error::InvalidWitness("malformed proof shape".into()));
         }

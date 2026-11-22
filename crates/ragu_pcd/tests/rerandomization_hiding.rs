@@ -476,7 +476,7 @@ fn input(app: &support::App, rng: &mut StdRng) -> TestPcd {
 
 /// One pass of `Application::rerandomize`.
 fn pass(app: &support::App, rng: &mut StdRng, pcd: TestPcd) -> TestPcd {
-    app.fuse(rng, Rerandomize::new(), (), pcd, app.bootstrap_pcd())
+    app.fuse(rng, Rerandomize::<_>::new(), (), pcd, app.bootstrap_pcd())
         .unwrap()
         .0
 }

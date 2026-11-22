@@ -1292,7 +1292,7 @@ fn rerandomize_forging_dummy_inputs_is_rejected() {
         let (forged, ()) = app
             .fuse_forging_dummy_inputs(
                 &mut rng,
-                crate::step::internal::rerandomize::Rerandomize::new(),
+                crate::step::internal::rerandomize::Rerandomize::<_>::new(),
                 (),
                 honest.clone(),
                 unit,

@@ -332,13 +332,13 @@ its fields describe.
 
 A proof's own online polynomials are part of the state it carries. Rerandomizing
 it preserves them, and compression publishes their deterministic commitments.
-To keep the input's polynomials out of the published proof's online slots,
-`Application::fuse` a final step that can query them but outputs a
-`(Padding, Padding)` header.
-Then call `Application::rerandomize` and `Application::compress`. The recipient
-calls `Application::verify_compressed` and, to enforce padding, compares the
-proof's online commitments with the commitment to the constant one. Hiding of
-the other fields and the compression transcript remains unproved.
+After the last application step that needs those polynomials, call
+`Application::rerandomize_for_publication` on its proof. Ragu runs two fuses
+that preserve the public header data and replace both online slots with the
+constant one. Then call `Application::compress`; the recipient calls
+`Application::verify_compressed`. The verifier checks the publication header,
+the rerandomization circuit, and both padding commitments. Hiding of the other
+fields and the compression transcript remains unproved.
 
 ## Working with Headers
 

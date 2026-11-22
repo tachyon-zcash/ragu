@@ -57,7 +57,7 @@ use ragu_core::{
 };
 use ragu_pcd::{
     Application, ApplicationBuilder, CompressedProof, Pcd, Proof,
-    header::{Header, NUM_ONLINE_FP_POLYS, OnlinePoly, Padding, Suffix},
+    header::{Header, NUM_ONLINE_FP_POLYS, OnlinePoly, Padding, Published, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
 use ragu_primitives::{
@@ -966,8 +966,8 @@ fn sets_prove_and_verify() -> Result<()> {
     Ok(())
 }
 
-/// The membership step consumes a set polynomial and leaves both output
-/// slots padded. The published proof retains only their padding commitments.
+/// Publication replaces the seed's non-padding online polynomial with
+/// padding without requiring a final application step.
 #[test]
 #[ignore = "proves at production rank; run in the PR job"]
 fn padded_publication() -> Result<()> {
@@ -979,18 +979,30 @@ fn padded_publication() -> Result<()> {
     assert_ne!(set.commitments()[0], padding_commitment);
     assert_ne!(set.commitments()[0], other_set.commitments()[0]);
 
-    let unit = app.bootstrap_proof().clone().carry::<()>(());
-    let (padded, ()) = app.fuse(&mut rng, ProveMember, Fp::ONE, set, unit)?;
-    let rerandomized = app.rerandomize(padded, &mut rng)?;
+    // Merely attaching the publication header to a working proof cannot
+    // make it publishable, either before or after compression.
+    let falsely_published = set
+        .proof()
+        .clone()
+        .carry::<Published<TgSetHeader>>(*set.data());
+    assert!(app.compress(&falsely_published, &mut rng).is_err());
+    let raw = app.compress(&set, &mut rng)?;
+    let falsely_received = raw
+        .proof()
+        .clone()
+        .carry::<Published<TgSetHeader>>(*raw.data());
+    assert!(!app.verify_compressed(&falsely_received)?);
+
+    let original_data = *set.data();
+    let rerandomized = app.rerandomize_for_publication(set, &mut rng)?;
+    assert_eq!(*rerandomized.data(), original_data);
     let published = app.compress(&rerandomized, &mut rng)?;
-    let unit = app.bootstrap_proof().clone().carry::<()>(());
-    let (other_padded, ()) = app.fuse(&mut rng, ProveMember, Fp::from(20), other_set, unit)?;
-    let other_rerandomized = app.rerandomize(other_padded, &mut rng)?;
+    let other_rerandomized = app.rerandomize_for_publication(other_set, &mut rng)?;
     let other_published = app.compress(&other_rerandomized, &mut rng)?;
     let bytes = published.proof().to_bytes().unwrap();
     let received = CompressedProof::<C>::from_bytes(&bytes)
         .unwrap()
-        .carry::<()>(());
+        .carry::<Published<TgSetHeader>>(*published.data());
     assert!(app.verify_compressed(&received)?);
     assert_eq!(
         received.online_commitments(),

@@ -4,7 +4,8 @@
 //!
 //! - [`ApplicationBuilder`] / [`Application`] — configure, build, then
 //!   [`seed`](Application::seed), [`fuse`](Application::fuse) and
-//!   [`rerandomize`](Application::rerandomize) proofs, and
+//!   [`rerandomize`](Application::rerandomize) proofs or
+//!   [`rerandomize_for_publication`](Application::rerandomize_for_publication), and
 //!   [`compress`](Application::compress) them to check the result with
 //!   [`verify_compressed`](Application::verify_compressed).
 //!   `Application::verify_uncompressed` is a test oracle behind the
@@ -671,6 +672,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     }
 
     fn prevent_duplicate_suffixes<H: Header<C::CircuitField>>(&mut self) -> Result<()> {
+        if H::SUFFIX.is_publication() {
+            return Err(Error::Initialization(
+                "application steps cannot use publication headers".into(),
+            ));
+        }
         if H::SUFFIX.get() < header::NUM_INTERNAL_SUFFIXES as u64
             && TypeId::of::<H>() != TypeId::of::<()>()
         {
@@ -877,16 +883,58 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // header and its data pass through both fuses unchanged.
         let (once, ()) = self.fuse(
             rng,
-            step::internal::rerandomize::Rerandomize::new(),
+            step::internal::rerandomize::Rerandomize::<H>::new(),
             (),
             pcd,
             self.bootstrap_pcd(),
         )?;
         self.fuse(
             rng,
-            step::internal::rerandomize::Rerandomize::new(),
+            step::internal::rerandomize::Rerandomize::<H>::new(),
             (),
             once,
+            self.bootstrap_pcd(),
+        )
+        .map(|(pcd, ())| pcd)
+    }
+
+    /// Replaces a proof's online polynomials with padding while
+    /// rerandomizing it for publication. Both fuses are library steps: the
+    /// first advances the header to an internal publishing state and sets
+    /// both output slots to one; the second advances it to [`header::Published`].
+    /// The public header data is preserved. Compress the result separately.
+    ///
+    /// The same validity and unpredictable-RNG requirements as
+    /// [`rerandomize`](Self::rerandomize) apply. Hiding of the other proof
+    /// fields after compression remains unproved.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from either fuse.
+    pub fn rerandomize_for_publication<RNG: CryptoRng, H: Header<C::CircuitField>>(
+        &self,
+        pcd: Pcd<C, R, H>,
+        rng: &mut RNG,
+    ) -> Result<Pcd<C, R, header::Published<H>>>
+    where
+        C: ProfiledCycle<Profile = profile::Standard>,
+    {
+        let (first, ()) = self.fuse(
+            rng,
+            step::internal::rerandomize::Rerandomize::<H, header::Publishing<H>, true>::new(),
+            (),
+            pcd,
+            self.bootstrap_pcd(),
+        )?;
+        self.fuse(
+            rng,
+            step::internal::rerandomize::Rerandomize::<
+                header::Publishing<H>,
+                header::Published<H>,
+                true,
+            >::new(),
+            (),
+            first,
             self.bootstrap_pcd(),
         )
         .map(|(pcd, ())| pcd)

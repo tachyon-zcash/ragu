@@ -1,32 +1,25 @@
 //! Rerandomization step for PCDs.
 //!
-//! This is a simple step: it takes a header-carrying proof and folds it with the
-//! application's bootstrap proof, producing the same header. To keep
-//! the circuit identical no matter what the left header is, we use a _uniform_
-//! encoding — which makes every left/output header slot, including the suffix,
-//! a witness wire rather than a constant. The right header is the unit header
-//! carried by the bootstrap proof.
+//! This step folds a header-carrying proof with the application's bootstrap
+//! proof. Ordinary rerandomization preserves the header and online polynomials.
+//! Publication advances the suffix one reserved range and outputs two constant
+//! one polynomials. The same circuit handles both modes and all header types.
+//! Its uniform encoding makes the header fields witness wires; the output
+//! shares the input's data wires and adds a Boolean-gated suffix offset.
 //!
 //! The step's circuit hides nothing by itself: its witness is the header,
 //! which the output shows. What keeps the output from revealing its input
 //! is the fuse around the step, run twice (see
 //! [`Application::rerandomize`](crate::Application::rerandomize)).
 //!
-//! The output proof's polynomials are copies of the left input proof's, which
-//! the circuit holds equal at $\zeta$ slot by slot: the parent sees only
-//! the output slots, so a copy alone would let a rerandomizing prover swap
-//! the polynomial.
+//! At $\zeta$, the circuit holds each output polynomial equal to the left
+//! input's in ordinary mode or to one in publication mode. The suffix
+//! difference binds the mode to the public input and output headers.
 //!
-//! That witnessed suffix is the one input suffix outside the bootstrap step
-//! that a prover chooses, and so the one place a prover could try to
-//! present the [`Dummy`] suffix and take the base case: the decompression
-//! step witnesses its output's suffix, but its inputs are constants. Two
-//! things stop it. The left input and output are the *same* wires, so the
-//! output header is pinned equal to the input (no relabelling on the way
-//! through); `test_rerandomize_consistency` pins that structurally. And the
-//! right input is the constant unit header, so both inputs cannot be `Dummy`.
-//! [`Encoded::new_uniform`] additionally constrains the witnessed suffix away
-//! from `Dummy`, and from zero; its documentation says why.
+//! A witnessed input suffix could try to present [`Dummy`] and take the base
+//! case. [`Encoded::new_uniform`] constrains it away from `Dummy` and zero,
+//! and the right input has the constant unit suffix, so both inputs cannot be
+//! `Dummy`. A publication suffix cannot be made by an application step.
 //!
 //! [`Dummy`]: crate::header::Dummy
 //! [`Encoded::new_uniform`]: crate::step::Encoded::new_uniform
@@ -34,21 +27,24 @@
 use core::marker::PhantomData;
 
 use ragu_core::{
-    Cycle, Result,
+    Coeff, Cycle, Result,
     drivers::{Driver, DriverValue},
     maybe::Maybe,
 };
-use ragu_primitives::{GadgetExt, allocator::Standard};
+use ragu_primitives::{Element, GadgetExt, allocator::Standard};
 
 use super::super::{Encoded, HeaderInput, Index, Oracles, Prepared, Step};
 pub(crate) use crate::step::InternalStepIndex::Rerandomize as INTERNAL_ID;
-use crate::{Header, header::NUM_ONLINE_FP_POLYS};
+use crate::{
+    Header,
+    header::{NUM_ONLINE_FP_POLYS, PUBLICATION_OFFSET},
+};
 
-pub(crate) struct Rerandomize<H> {
-    _marker: PhantomData<H>,
+pub(crate) struct Rerandomize<H, O = H, const ADVANCE: bool = false> {
+    _marker: PhantomData<(H, O)>,
 }
 
-impl<H> Rerandomize<H> {
+impl<H, O, const ADVANCE: bool> Rerandomize<H, O, ADVANCE> {
     pub fn new() -> Self {
         Rerandomize {
             _marker: PhantomData,
@@ -56,7 +52,13 @@ impl<H> Rerandomize<H> {
     }
 }
 
-impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
+impl<
+    C: Cycle,
+    H: Header<C::CircuitField>,
+    O: Header<C::CircuitField, Data = H::Data>,
+    const ADVANCE: bool,
+> Step<C> for Rerandomize<H, O, ADVANCE>
+{
     const INDEX: Index = Index::internal(INTERNAL_ID);
 
     type Witness<'source> = ();
@@ -64,20 +66,22 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
 
     type Left = H;
     type Right = ();
-    type Output = H;
+    type Output = O;
 
-    /// The output carries copies of the left input's polynomials, every
-    /// slot's, whatever the header names. A copy here is prover data, not
-    /// a constraint: the parent sees only the output slots, so
-    /// [`witness`](Step::witness) proves each output polynomial equals the
-    /// left one at $\zeta$.
+    /// Ordinary mode copies the left input's polynomials. Publication mode
+    /// prepares constant one in each output slot. The circuit checks both
+    /// modes at $\zeta$.
     fn prepare<'source>(
         &self,
         _: &Self::Witness<'source>,
         left: HeaderInput<'_, C::CircuitField, H>,
         _: HeaderInput<'_, C::CircuitField, ()>,
-    ) -> Result<Prepared<C::CircuitField, H>> {
-        Ok(Prepared::from_polynomials(left.polynomials().clone()))
+    ) -> Result<Prepared<C::CircuitField, O>> {
+        if ADVANCE {
+            Ok(Prepared::new())
+        } else {
+            Ok(Prepared::from_polynomials(left.polynomials().clone()))
+        }
     }
 
     fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = C::CircuitField>, const HEADER_SIZE: usize>(
@@ -106,19 +110,37 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
         let right_encoded = Encoded::new(dr, allocator, right)?;
 
-        // The output polynomials are the left input's: open both slots of
-        // each at zeta and hold them equal. The right input's slots, the
-        // unit header's, go unqueried.
+        // The mode is a witness wire in both versions of this step. Its
+        // Boolean constraint and the public suffix difference bind it to
+        // zero for ordinary rerandomization or one for publication.
+        let advance = Element::alloc(
+            dr,
+            &mut (),
+            D::just(|| C::CircuitField::from(u64::from(ADVANCE))),
+        )?;
+        let advance_minus_one = advance.sub(dr, &Element::one());
+        advance.mul(dr, &advance_minus_one)?.enforce_zero(dr)?;
+        let suffix_offset = advance.scale(
+            dr,
+            Coeff::Arbitrary(C::CircuitField::from(PUBLICATION_OFFSET)),
+        );
+        let output_encoded = left_encoded.with_suffix_offset::<O>(dr, &suffix_offset);
+
+        // Each output slot copies the left slot when mode is zero and is one
+        // when mode is one. Both modes emit exactly the same circuit.
         let zeta = oracles.zeta().clone();
         for i in 0..NUM_ONLINE_FP_POLYS {
             let left = oracles.left_at(i).open(dr, &zeta)?;
             let output = oracles.output_at(i).open(dr, &zeta)?;
-            output.enforce_equal(dr, &left)?;
+            let difference = Element::one().sub(dr, &left);
+            let delta = advance.mul(dr, &difference)?;
+            let expected = left.add(dr, &delta);
+            output.enforce_equal(dr, &expected)?;
         }
 
         // Return left's data as the output data - this preserves it!
         Ok((
-            (left_encoded.clone(), right_encoded, left_encoded),
+            (left_encoded, right_encoded, output_encoded),
             left,
             D::unit(),
         ))
@@ -195,61 +217,25 @@ mod tests {
             super::super::adapter::Adapter::<Pasta, Rerandomize<()>, R, HEADER_SIZE>::new(
                 Rerandomize::new(),
             );
-
-        // A frozen twin of `Rerandomize`, written from primitives: one uniform
-        // wire set shared by the left input and output, plus the standard unit
-        // encoding for the right input. `Rerandomize` must stay
-        // wiring-identical to this; separately encoding the output would let a
-        // prover relabel the header on the way through.
-        struct UnitRight;
-        impl Step<Pasta> for UnitRight {
-            const INDEX: Index = Index::internal(INTERNAL_ID);
-            type Witness<'source> = ();
-            type Aux<'source> = ();
-            type Left = ();
-            type Right = ();
-            type Output = ();
-            fn witness<'dr, 'source: 'dr, D: Driver<'dr, F = Fp>, const HS: usize>(
-                &self,
-                dr: &mut D,
-                oracles: &mut Oracles<'_, 'dr, D, Pasta, Self>,
-                _: DriverValue<D, ()>,
-                left: DriverValue<D, ()>,
-                right: DriverValue<D, ()>,
-            ) -> Result<(
-                (
-                    Encoded<'dr, D, (), HS>,
-                    Encoded<'dr, D, (), HS>,
-                    Encoded<'dr, D, (), HS>,
-                ),
-                DriverValue<D, ()>,
-                DriverValue<D, ()>,
-            )> {
-                let allocator = &mut ragu_primitives::allocator::Standard::new();
-                let left_encoded =
-                    Encoded::<'dr, D, (), HS>::new_uniform(dr, allocator, left.clone())?;
-                let right_encoded = Encoded::<'dr, D, (), HS>::new(dr, allocator, right)?;
-                let zeta = oracles.zeta().clone();
-                for i in 0..NUM_ONLINE_FP_POLYS {
-                    let left = oracles.left_at(i).open(dr, &zeta)?;
-                    let output = oracles.output_at(i).open(dr, &zeta)?;
-                    output.enforce_equal(dr, &left)?;
-                }
-                Ok((
-                    (left_encoded.clone(), right_encoded, left_encoded),
-                    left,
-                    D::unit(),
-                ))
-            }
-        }
-        let circuit_twin =
-            super::super::adapter::Adapter::<Pasta, UnitRight, R, HEADER_SIZE>::new(UnitRight);
+        let circuit_publishing = super::super::adapter::Adapter::<
+            Pasta,
+            Rerandomize<Single, crate::header::Publishing<Single>, true>,
+            R,
+            HEADER_SIZE,
+        >::new(Rerandomize::new());
+        let circuit_published = super::super::adapter::Adapter::<
+            Pasta,
+            Rerandomize<crate::header::Publishing<Single>, crate::header::Published<Single>, true>,
+            R,
+            HEADER_SIZE,
+        >::new(Rerandomize::new());
 
         let mut builder: TestRegistryBuilder<'_, _, R> = TestRegistryBuilder::new();
         let single_h = builder.register_circuit(circuit_single).unwrap();
         let pair_h = builder.register_circuit(circuit_pair).unwrap();
         let unit_h = builder.register_circuit(circuit_unit).unwrap();
-        let twin_h = builder.register_circuit(circuit_twin).unwrap();
+        let publishing_h = builder.register_circuit(circuit_publishing).unwrap();
+        let published_h = builder.register_circuit(circuit_published).unwrap();
         let registry = builder.finalize().unwrap();
 
         let x = Fp::from(5u64);
@@ -257,10 +243,7 @@ mod tests {
 
         assert_eq!(registry.xy(single_h, x, y), registry.xy(pair_h, x, y));
         assert_eq!(registry.xy(single_h, x, y), registry.xy(unit_h, x, y));
-        assert_eq!(
-            registry.xy(unit_h, x, y),
-            registry.xy(twin_h, x, y),
-            "Rerandomize must share its left/output wire set and use a standard unit right header"
-        );
+        assert_eq!(registry.xy(unit_h, x, y), registry.xy(publishing_h, x, y));
+        assert_eq!(registry.xy(unit_h, x, y), registry.xy(published_h, x, y));
     }
 }

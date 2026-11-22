@@ -1,7 +1,7 @@
 //! Headers are succinct representations of data used to represent the current
 //! state of a computation.
 
-use core::any::Any;
+use core::{any::Any, marker::PhantomData};
 
 use ragu_core::{
     Result,
@@ -46,7 +46,13 @@ pub(crate) const NUM_INTERNAL_SUFFIXES: u8 = 3;
 enum HeaderSuffix {
     Internal(usize),
     Application(usize),
+    Publishing(u64),
+    Published(u64),
 }
+
+/// Reserve two suffix ranges for the two publication fuses. Existing
+/// application suffixes keep their encodings.
+pub(crate) const PUBLICATION_OFFSET: u64 = 1 << 62;
 
 /// The unique suffix for a [`Header`].
 ///
@@ -63,13 +69,12 @@ impl Suffix {
     ///
     /// # Panics
     ///
-    /// Panics if `value` is large enough that offsetting it past the internal
-    /// suffixes would overflow and alias a reserved internal suffix.
+    /// Panics if `value` would overlap a reserved publication suffix range.
     #[must_use]
     pub const fn new(value: usize) -> Self {
         assert!(
-            value <= usize::MAX - NUM_INTERNAL_SUFFIXES as usize,
-            "application header suffix would overflow onto a reserved internal suffix"
+            (value as u64) < PUBLICATION_OFFSET - NUM_INTERNAL_SUFFIXES as u64,
+            "application header suffix overlaps the publication suffix ranges"
         );
 
         Suffix {
@@ -82,8 +87,36 @@ impl Suffix {
     pub(crate) const fn get(&self) -> u64 {
         match self.suffix {
             HeaderSuffix::Internal(i) => i as u64,
-            HeaderSuffix::Application(i) => (i + NUM_INTERNAL_SUFFIXES as usize) as u64,
+            HeaderSuffix::Application(i) => i as u64 + NUM_INTERNAL_SUFFIXES as u64,
+            HeaderSuffix::Publishing(original) => original + PUBLICATION_OFFSET,
+            HeaderSuffix::Published(original) => original + 2 * PUBLICATION_OFFSET,
         }
+    }
+
+    /// The next suffix in the publication sequence. The first and second
+    /// rerandomization fuses use distinct suffixes so verification can tell
+    /// that both occurred.
+    pub(crate) const fn next_publication(self) -> Self {
+        match self.suffix {
+            HeaderSuffix::Internal(_) | HeaderSuffix::Application(_) => Suffix {
+                suffix: HeaderSuffix::Publishing(self.get()),
+            },
+            HeaderSuffix::Publishing(original) => Suffix {
+                suffix: HeaderSuffix::Published(original),
+            },
+            HeaderSuffix::Published(_) => panic!("proof has already been published"),
+        }
+    }
+
+    pub(crate) const fn is_publication(self) -> bool {
+        matches!(
+            self.suffix,
+            HeaderSuffix::Publishing(_) | HeaderSuffix::Published(_)
+        )
+    }
+
+    pub(crate) const fn is_published(self) -> bool {
+        matches!(self.suffix, HeaderSuffix::Published(_))
     }
 
     /// Creates a new internal-defined [`Header`] suffix. Only called internally
@@ -176,6 +209,45 @@ pub trait Header<F: Field>: Send + Sync + Any {
     ) -> Result<Bound<'dr, D, Self::Output>>;
 }
 
+/// The public header data of `H`, with online polynomial slots replaced by
+/// padding after the library's two publication fuses. Its reserved suffix
+/// distinguishes it from `H`, so an application step cannot treat the padded
+/// proof as still carrying `H`'s polynomial oracles.
+pub struct Published<H>(PhantomData<H>);
+
+/// The first publication fuse's output. This is never published.
+pub(crate) struct Publishing<H>(PhantomData<H>);
+
+impl<F: Field, H: Header<F>> Header<F> for Publishing<H> {
+    const SUFFIX: Suffix = H::SUFFIX.next_publication();
+    type OnlinePolyCommit = (Padding, Padding);
+    type Data = H::Data;
+    type Output = H::Output;
+
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        H::encode(dr, allocator, witness)
+    }
+}
+
+impl<F: Field, H: Header<F>> Header<F> for Published<H> {
+    const SUFFIX: Suffix = H::SUFFIX.next_publication().next_publication();
+    type OnlinePolyCommit = (Padding, Padding);
+    type Data = H::Data;
+    type Output = H::Output;
+
+    fn encode<'dr, D: Driver<'dr, F = F>, A: Allocator<'dr, D>>(
+        dr: &mut D,
+        allocator: &mut A,
+        witness: DriverValue<D, Self::Data>,
+    ) -> Result<Bound<'dr, D, Self::Output>> {
+        H::encode(dr, allocator, witness)
+    }
+}
+
 /// Header that encodes no data.
 ///
 /// This is an ordinary header that happens to carry nothing. The internal
@@ -231,30 +303,30 @@ mod tests {
 
     #[test]
     fn test_suffix_map() {
-        const MAX_APPLICATION_SUFFIX: Suffix =
-            Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize);
+        let max_value =
+            (PUBLICATION_OFFSET - NUM_INTERNAL_SUFFIXES as u64 - 1).min(usize::MAX as u64) as usize;
+        let max_application_suffix = Suffix::new(max_value);
 
         assert_eq!(Suffix::internal(0).get(), 0);
         assert_eq!(Suffix::internal(1).get(), 1);
         assert_eq!(Suffix::internal(2).get(), 2);
         assert_eq!(Suffix::new(0).get(), 3);
         assert_eq!(Suffix::new(1).get(), 4);
-        assert_eq!(MAX_APPLICATION_SUFFIX.get(), usize::MAX as u64);
+        assert_eq!(max_application_suffix.get(), max_value as u64 + 3);
+        assert_eq!(
+            Suffix::new(0).next_publication().get(),
+            PUBLICATION_OFFSET + 3
+        );
+        assert_eq!(
+            Suffix::new(0).next_publication().next_publication().get(),
+            2 * PUBLICATION_OFFSET + 3
+        );
     }
 
+    #[cfg(target_pointer_width = "64")]
     #[test]
-    #[should_panic(
-        expected = "application header suffix would overflow onto a reserved internal suffix"
-    )]
-    fn application_suffix_cannot_wrap_onto_a_reserved_suffix() {
-        let _ = Suffix::new(usize::MAX - NUM_INTERNAL_SUFFIXES as usize + 1);
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "application header suffix would overflow onto a reserved internal suffix"
-    )]
-    fn test_suffix_rejects_usize_max() {
-        let _ = Suffix::new(usize::MAX);
+    #[should_panic(expected = "application header suffix overlaps the publication suffix ranges")]
+    fn application_suffix_cannot_use_publication_range() {
+        let _ = Suffix::new((PUBLICATION_OFFSET - NUM_INTERNAL_SUFFIXES as u64) as usize);
     }
 }

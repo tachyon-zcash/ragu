@@ -105,6 +105,22 @@ impl<'dr, D: Driver<'dr>, H: Header<D::F>, const HEADER_SIZE: usize>
         Ok(())
     }
 
+    /// Reuses a uniform header's data wires and advances only its suffix.
+    /// The publication rerandomization step binds the offset to a Boolean
+    /// mode, so it can preserve a header or advance it one publication phase.
+    pub(crate) fn with_suffix_offset<O: Header<D::F>>(
+        &self,
+        dr: &mut D,
+        offset: &Element<'dr, D>,
+    ) -> Encoded<'dr, D, O, HEADER_SIZE> {
+        let EncodedInner::Uniform(elements) = &self.0 else {
+            unreachable!("publication rerandomization requires uniform headers")
+        };
+        let mut elements = elements.clone();
+        elements[HEADER_SIZE - 1] = elements[HEADER_SIZE - 1].add(dr, offset);
+        Encoded(EncodedInner::Uniform(elements))
+    }
+
     /// Creates a new encoded header by converting the header data into its
     /// gadget form.
     ///
