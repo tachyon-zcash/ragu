@@ -56,7 +56,7 @@ use ragu_core::{
     pasta::{EpAffine, Fp, Pasta},
 };
 use ragu_pcd::{
-    Application, ApplicationBuilder, Pcd, Proof,
+    Application, ApplicationBuilder, CompressedProof, Pcd, Proof,
     header::{Header, NUM_ONLINE_FP_POLYS, OnlinePoly, Padding, Suffix},
     step::{Encoded, HeaderInput, Index, Oracles, Prepared, Step},
 };
@@ -963,6 +963,44 @@ fn sets_prove_and_verify() -> Result<()> {
         unit(&app)?,
     )?;
     check(&app, &again, [padding(), padding()], 7);
+    Ok(())
+}
+
+/// The membership step consumes a set polynomial and leaves both output
+/// slots padded. The published proof retains only their padding commitments.
+#[test]
+#[ignore = "proves at production rank; run in the PR job"]
+fn padded_publication() -> Result<()> {
+    let app = app();
+    let mut rng = StdRng::seed_from_u64(0x9ad);
+    let (set, ()) = app.seed(&mut rng, SeedSet, tachygrams(1))?;
+    let (other_set, ()) = app.seed(&mut rng, SeedSet, tachygrams(20))?;
+    let padding_commitment = app.commit(&padding())?;
+    assert_ne!(set.commitments()[0], padding_commitment);
+    assert_ne!(set.commitments()[0], other_set.commitments()[0]);
+
+    let unit = app.bootstrap_proof().clone().carry::<()>(());
+    let (padded, ()) = app.fuse(&mut rng, ProveMember, Fp::ONE, set, unit)?;
+    let rerandomized = app.rerandomize(padded, &mut rng)?;
+    let published = app.compress(&rerandomized, &mut rng)?;
+    let unit = app.bootstrap_proof().clone().carry::<()>(());
+    let (other_padded, ()) = app.fuse(&mut rng, ProveMember, Fp::from(20), other_set, unit)?;
+    let other_rerandomized = app.rerandomize(other_padded, &mut rng)?;
+    let other_published = app.compress(&other_rerandomized, &mut rng)?;
+    let bytes = published.proof().to_bytes().unwrap();
+    let received = CompressedProof::<C>::from_bytes(&bytes)
+        .unwrap()
+        .carry::<()>(());
+    assert!(app.verify_compressed(&received)?);
+    assert_eq!(
+        received.online_commitments(),
+        [padding_commitment; NUM_ONLINE_FP_POLYS]
+    );
+    assert!(app.verify_compressed(&other_published)?);
+    assert_eq!(
+        received.online_commitments(),
+        other_published.online_commitments()
+    );
     Ok(())
 }
 
