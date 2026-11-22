@@ -58,8 +58,8 @@
 //! The second layer has cross values against the folded groups $g$, which
 //! the first layer, seeing only the sums, does not determine. Full linear
 //! reach needs the pairs $(a_k, b_k)$ to be linearly independent. Neither
-//! side alone is: the $a$ sides of a final mask's claim
-//! are a Horner list of polynomials that other claims hold, and the $b$
+//! side suffices alone: the $a$ sides of a final mask's claim form a Horner
+//! list of polynomials that other claims hold, and the $b$
 //! sides of the masks satisfy identities among themselves, which is why the
 //! groups hold the whole claim and not half of it. A test checks the pairs
 //! of a rerandomization's second pass for an honestly produced input; that
@@ -951,14 +951,11 @@ mod tests {
         assert_eq!(symmetric, claims.len() + 1);
     }
 
-    /// The rank a rerandomization's second pass needs. Its proof shows $A$
-    /// and $B$, so the randomizer is not free: it moves against the first
-    /// claim, the child's accumulator, whose sides are what the observer
-    /// does not know. The quotient coefficients then move through both,
-    /// and the proof also shows the targets of that claim and of the
-    /// randomizer's. They still take every value, with the two targets
-    /// beside them: `accumulator_rows` says so, and the differences of the
-    /// fold itself agree.
+    /// Checks local rank for one second-pass fold. Its shown $A$ and $B$ tie
+    /// the randomizer to the first claim, the child's accumulator. The
+    /// Jacobian in `accumulator_rows` and sampled finite variations agree on
+    /// the rank of the quotient coefficients and two displayed targets.
+    /// This does not establish their joint output distribution.
     #[test]
     fn the_accumulator_claim_leaves_every_quotient_reached() {
         type Poly = sparse::Polynomial<Fp, TestRank>;
@@ -976,8 +973,7 @@ mod tests {
         // `quotients` folds the first layer at 1009.
         let (mu, mu_prime) = (Fp::from(1009), Fp::from(31));
         let groups = <P as Parameters>::NumGroups::len();
-        // The two displayed targets obey the fold identity and add one
-        // local direction beside the claim-dependent quotient directions.
+        // The targets obey the fold identity and add one local direction.
         let expected = claims.len() + groups - 1 + 1;
 
         let (a, b): (Vec<Poly>, Vec<Poly>) = claims.iter().cloned().unzip();

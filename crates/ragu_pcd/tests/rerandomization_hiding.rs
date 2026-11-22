@@ -620,7 +620,8 @@ fn the_second_pass_randomizers_reach_every_quotient() {
             assert_eq!(reach.rank, reach.coefficients);
             // The last occupied group has empty nodes. Its quotient fixes
             // the randomizer target's variation; with the folded A and B
-            // fixed, the fold identity also ties the first child's target
+            // fixed at the tested non-node challenges, the fold identity
+            // also ties the first child's target
             // to the quotients. The first claim adds one local direction,
             // not two independent target directions.
             assert_eq!(reach.accumulator, reach.coefficients + 1);

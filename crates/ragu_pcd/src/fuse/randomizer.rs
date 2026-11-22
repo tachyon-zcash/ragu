@@ -68,8 +68,9 @@
 //!   the first pass's uniform $A$ and $B$ move the quotient coefficients
 //!   (see [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)).
 //!   A test checks the local rank at fixed challenges for a few inputs;
-//!   the displayed first-pass $c$ and $c_r$ are tied to the quotients by
-//!   the fold identity, rather than adding independent random outputs.
+//!   at non-node challenges the displayed first-pass $c$ and $c_r$ are
+//!   tied to the quotients by the fold identity, rather than adding
+//!   independent random outputs.
 //!   Neither this rank check nor the separate masking arguments establishes
 //!   the joint output distribution. It has also not been shown that no
 //!   valid input can make the claims' pairs dependent.
