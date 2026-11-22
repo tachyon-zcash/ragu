@@ -330,17 +330,22 @@ its fields describe.
 
 ### Publishing with Padding
 
-Whether a published proof carries application online polynomials is an
-application policy. A proof's own online polynomials are part of the state it
-carries. Rerandomizing it preserves them, and compression publishes their
-deterministic commitments.
-To keep the input's polynomials out of the published proof's online slots,
-`Application::fuse` a final step that can query them but outputs a
-`(Padding, Padding)` header.
-Then call `Application::rerandomize` and `Application::compress`. The recipient
-calls `Application::verify_compressed` and, to enforce padding, compares the
-proof's online commitments with the commitment to the constant one. Hiding of
-the other fields and the compression transcript remains unproved.
+The encoded header and the proof's online polynomials are separate. The
+application decides which online state it can publish. A full rerandomized
+proof exposes the original coefficients through `Pcd::polynomials()`.
+Compression publishes their deterministic commitments through
+`CompressedPcd::online_commitments()`. For example, a recipient can compare
+commitments for candidate sets even when the encoded header gives only the
+set size.
+
+To keep application polynomials and their commitments out of the published
+proof's output slots, use `Application::fuse` on a final step whose output
+header declares `(Padding, Padding)`. That step can still query its input
+slots. Rerandomize the padded proof, then compress it for publication.
+A recipient enforcing padding calls `Application::verify_compressed` and
+checks both online commitments against the commitment to the constant one.
+Joint hiding of the other proof fields and compression transcript remains
+unproved.
 
 ## Working with Headers
 

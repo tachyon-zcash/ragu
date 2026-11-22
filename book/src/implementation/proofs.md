@@ -209,14 +209,14 @@ The `rerandomize` method produces a fresh proof that verifies identically:
 let fresh_pcd = app.rerandomize(pcd, &mut rng)?;
 ```
 
-For the standard profile, it is built so that the fresh proof shows nothing
-of the proof it was made from beyond the header, the data it carries and its
-online polynomials, even to someone who made the input and sees the output in
-full. The method's
-documentation outlines the argument and lists what the caller must ensure.
-The argument has not been written out as a proof and has not been audited.
-Proofs in general are still not zero-knowledge: a proof shows what its own
-step read of its children.
+The full output exposes the input's online polynomial coefficients, and
+compression exposes their deterministic commitments. The application chooses
+whether to publish that state or [publish with padding][padding]. For the
+standard profile, the goal is to hide which valid input was used given the
+same encoded header, online polynomials and shared bootstrap. Joint hiding
+of the output fields remains unproved.
+
+[padding]: ../guide/writing_circuits.md#publishing-with-padding
 
 Internally, rerandomization fuses the input twice through a dedicated
 rerandomization step, each time with the application's bootstrap proof as the
@@ -225,14 +225,19 @@ and every trace and stage polynomial has three free coefficients, except
 three stages that hold only values a parent shows anyway. One pass
 would leave the input's commitments in the output as stage values. After the
 second pass the output holds the first pass's commitments, which are fresh.
-The full uncompressed output also contains the right child's commitments.
-If a wallet supplies a bootstrap proof unique to it through `with_bootstrap`,
-those commitments can link its rerandomized outputs. Defaults that differ by
-software version can instead identify a cohort. To avoid this tag, an
-application should distribute one verified bootstrap proof per
-compatible configuration, pin its serialized bytes or digest in shared
-configuration, and require every wallet to load that proof. `with_bootstrap`
-checks neither its validity nor whether it is shared by other wallets.
+
+The right child is the bootstrap proof. The uncompressed output contains
+its commitments, and the compressed instance retains its native and nested
+`x` and `y` transcript challenges. A wallet-specific bootstrap can therefore
+link outputs in either form. Defaults that differ by software version can
+identify a cohort. To avoid a wallet-specific tag today, applications can
+distribute one verified bootstrap proof per compatible configuration and
+check its serialized bytes or digest against a shared pin before installing
+it with `with_bootstrap`. The application is responsible for verification
+and pinning.
+
+**TODO** Define how compatible wallets provision, pin and verify a shared
+bootstrap proof across platforms and releases.
 
 ## Unified Accumulator Structure
 

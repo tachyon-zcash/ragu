@@ -44,6 +44,8 @@ falsehood. It is not that end-to-end proof.
 
 Zero knowledge is a separate property that the protocol does not currently
 provide. Uncompressed proofs contain witness polynomials, and compressed proofs
-reveal evaluations of them. Rerandomization is built to hide the link between
-its input and its output. The argument for that is outside the ladder and has
-not been audited.
+reveal evaluations of them. In the standard profile, [rerandomization] aims
+to hide which valid input was used given the published application data and
+a shared bootstrap proof. Joint hiding of the output fields remains unproved.
+
+[rerandomization]: ../../implementation/proofs.md#rerandomization

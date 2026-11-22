@@ -130,19 +130,20 @@ it: a compressed proof can be verified on its own but cannot be fused further.
 A second application can continue from it only by
 [decompressing](../protocol/recursion/decompression.md) it, through a profile
 that is unaudited and behind an unstable feature. Like an uncompressed proof, a
-compressed proof does not yet provide zero knowledge (see below). Due to the
-extra cost, compression should be reserved for the boundaries of application
-logic, such as when a succinct proof must be communicated to a third party.
+compressed proof does not yet provide zero knowledge. Due to the extra cost,
+compression should be reserved for the boundaries of application logic, such
+as when a succinct proof must be communicated to a third party.
 
-In its uncompressed form, a PCD can be passed through [`rerandomize`] to produce
-a fresh proof of the same certified data. For the standard profile, the method
-is built so that the fresh proof shows nothing else of the proof it was made
-from but its online polynomials: it fuses the proof twice with a public proof,
-and every fuse folds and batches randomizers of its own. The argument for that has not been audited. Proofs in general are still
-not zero-knowledge: a proof exposes its children's commitments. To compress a
-proof that must stay private, rerandomize it first: the compressed proof is
-computed from the rerandomized proof, so it shows no more of the original than
-the rerandomized proof does.
+[`rerandomize`] produces a fresh proof of the same certified data and preserves
+the input's online polynomials. The full output exposes their coefficients, and
+compression exposes their deterministic commitments. These are separate from
+the encoded header. Applications decide whether to publish that online state
+or use a [final step with padding][publication].
+
+For the standard profile, the goal is to hide which input proof was used
+given the published application data and a shared bootstrap proof. The
+construction uses two fuses with fresh randomizers. Joint hiding of the
+output fields remains unproved.
 
 [`Header`]: ragu_pcd::header::Header
 [`Data`]: ragu_pcd::header::Header::Data
@@ -156,3 +157,4 @@ the rerandomized proof does.
 [`fuse`]: ragu_pcd::Application::fuse
 [cryptographic commitments]: https://en.wikipedia.org/wiki/Commitment_scheme
 [`rerandomize`]: ragu_pcd::Application::rerandomize
+[publication]: ../guide/writing_circuits.md#publishing-with-padding
