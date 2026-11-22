@@ -132,14 +132,18 @@ private `Dummy` input header is the base-case sentinel. Ordinary steps,
 including those with unit inputs, cannot declare `Dummy` and therefore always
 enforce their child claims.
 
-The proof is fixed by the application's configuration, so an application can
-store the one `Application::bootstrap_proof` returns and supply it to later
-applications of the same configuration with `with_bootstrap`, whose
-finalization then skips the fuse. The supplied proof is checked for shape and
-for coming from the bootstrap step, not for validity: a proof from another
-configuration is installed, and every proof built on it then fails
-verification, so a stored proof must be keyed by what fixes it. Like every
-uncompressed proof it is not zero-knowledge: for a profile with an extension
+The bootstrap statement is fixed by the application's configuration. An
+application can store the proof returned by `Application::bootstrap_proof`
+and supply it to later applications of the same configuration with
+`with_bootstrap`; their finalization then skips the fuse. By default,
+`finalize` uses a fixed `StdRng` seed. The same build and configuration reproduce
+the bootstrap proof, but `StdRng` may vary across versions or platforms. The
+supplied proof is checked for shape and for coming from the bootstrap step,
+not for validity: a proof from another configuration is installed, and every
+proof built on it then fails verification, so a stored proof must be keyed by
+what fixes it. Verify a supplied proof through `compress` and
+`verify_compressed` before using the application. Like every uncompressed
+proof it is not zero-knowledge: for a profile with an extension
 it holds the extension's polynomials over the prover context, so store it
 only if that context holds nothing confidential. The bootstrap proofs of the
 built-in profiles reveal nothing: the standard profile has no extension, and
@@ -221,6 +225,14 @@ and every trace and stage polynomial has three free coefficients, except
 three stages that hold only values a parent shows anyway. One pass
 would leave the input's commitments in the output as stage values. After the
 second pass the output holds the first pass's commitments, which are fresh.
+The full uncompressed output also contains the right child's commitments.
+If a wallet supplies a bootstrap proof unique to it through `with_bootstrap`,
+those commitments can link its rerandomized outputs. Defaults that differ by
+software version can instead identify a cohort. To avoid this tag, an
+application should distribute one verified bootstrap proof per
+compatible configuration, pin its serialized bytes or digest in shared
+configuration, and require every wallet to load that proof. `with_bootstrap`
+checks neither its validity nor whether it is shared by other wallets.
 
 ## Unified Accumulator Structure
 

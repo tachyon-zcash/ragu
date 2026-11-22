@@ -249,6 +249,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// instance with [`Proof::to_bytes`]. Finalization installs it instead of
     /// running the bootstrap fuse.
     ///
+    /// In the standard profile, [`Application::rerandomize`] uses this proof
+    /// as a public right child. A proof unique to one wallet makes its
+    /// commitments a stable tag in full uncompressed rerandomized outputs.
+    /// To avoid that tag, an application must distribute one verified proof
+    /// for each compatible configuration and require every wallet to match
+    /// its bytes or digest against a value pinned in shared configuration.
+    /// This method cannot check that other wallets use the same proof.
+    ///
     /// The proof is checked for this profile's shape and for being a proof of
     /// the bootstrap step, not for validity. No supplied proof can make
     /// anything verify that otherwise would not. Every
@@ -257,6 +265,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// and padding polynomial slots, whatever its own application claim,
     /// which no one enforces. But a supplied proof that does not verify
     /// makes every proof built on it fail verification.
+    /// Verify it separately through [`Application::compress`] and
+    /// [`Application::verify_compressed`] before producing proofs.
     /// Key a stored proof by everything that fixes it (see
     /// [`Application::bootstrap_proof`]) so that a changed application never
     /// loads a stale one.
@@ -596,10 +606,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // Bootstrap the recursion once, up front, so that `seed` never pays
         // for it lazily, unless the application was given the proof. The proof
         // carries no secrets — it attests nothing and is consumed as a public
-        // child by every seed — so a fixed seed is fine. Its bytes are stable
-        // for a given `rand` version but must not be relied on across versions
-        // (`StdRng` is not portable), so never pin them: a stored proof stays
-        // valid, but one built later need not match it.
+        // child by every seed — so a fixed seed is fine. The same build and
+        // application configuration reproduce the proof, but `StdRng` may
+        // vary across versions or platforms. A deployment needing common
+        // bytes across compatible builds should share a stored proof rather
+        // than assume regeneration matches.
         if app.bootstrap.is_none() {
             let mut rng = StdRng::seed_from_u64(0);
             let (pcd, ()) = app.fuse(
@@ -784,13 +795,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// nothing, and its own witness is empty: the bootstrap step skips its
     /// children's claims and outputs the data-less unit header.
     ///
-    /// The proof is fixed by the application's configuration: its registries
-    /// and public parameters, its profile, rank and header size, the circuits
-    /// of the Ragu version in use, and for a profile with an extension the
-    /// prover context at finalization. Store it, for instance with
-    /// [`Proof::to_bytes`], and supply it to later applications of the same
-    /// configuration with [`ApplicationBuilder::with_bootstrap`], so that
-    /// their finalization skips the bootstrap fuse.
+    /// The default proof depends on the application's configuration: its
+    /// registries and public parameters, its profile, rank and header size,
+    /// the circuits of the Ragu version in use, the `StdRng` implementation,
+    /// and for a profile with an extension the prover context at finalization.
+    /// Store it with [`Proof::to_bytes`] and supply it to later applications
+    /// of the same configuration with [`ApplicationBuilder::with_bootstrap`],
+    /// so their finalization skips the bootstrap fuse.
     ///
     /// Like every uncompressed proof, this one is not zero-knowledge: for a
     /// profile with an extension it holds the extension's polynomials,
@@ -836,13 +847,17 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// internal `fuse::randomizer` module accounts for each value the output
     /// shows.
     ///
-    /// The right child is public, and it is the same for every caller whose
-    /// application builds the same bootstrap proof, which depends on the
-    /// application's configuration and on the Ragu and `rand` versions. A
-    /// right child of the caller's own would appear in every output and link
-    /// them to one another. An application whose users must not be told
-    /// apart should therefore install one bootstrap proof for all of them,
-    /// with [`ApplicationBuilder::with_bootstrap`].
+    /// The default bootstrap is generated with a fixed seed, so the same build
+    /// and application configuration reproduce the proof. `StdRng` may vary
+    /// across versions or platforms, and [`ApplicationBuilder::with_bootstrap`]
+    /// can install a different valid proof. The full uncompressed output's
+    /// bridge preamble contains the right child's commitments. A proof unique
+    /// to one wallet can therefore link its outputs; proofs shared only by a
+    /// software version can identify a cohort. To avoid this tag, an
+    /// application should distribute one verified proof per compatible
+    /// configuration, pin its bytes or digest in shared configuration, and
+    /// have every wallet load that proof with
+    /// [`ApplicationBuilder::with_bootstrap`].
     ///
     /// # What the caller must ensure
     ///
