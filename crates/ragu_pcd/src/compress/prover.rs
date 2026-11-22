@@ -21,7 +21,7 @@ use crate::{
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
     profile::{Profile, ProfiledCycle, Standard, online::mesh_terminal::Coordinates},
     proof::commitments_match,
-    step::Step,
+    step::{Step, internal::rerandomize::Rerandomize},
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the
@@ -76,7 +76,13 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
         S::Output: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
     {
         let (padded, _) = self.fuse(rng, step, witness, left, right)?;
-        let rerandomized = self.rerandomize_once(padded, rng)?;
+        let (rerandomized, ()) = self.fuse(
+            rng,
+            Rerandomize::new(),
+            (),
+            padded,
+            self.bootstrap_proof().clone().carry(()),
+        )?;
         self.compress(&rerandomized, rng)
     }
 

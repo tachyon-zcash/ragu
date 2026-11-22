@@ -873,21 +873,20 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         pcd: Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<C, R, H>> {
-        let once = self.rerandomize_once(pcd, rng)?;
-        self.rerandomize_once(once, rng)
-    }
-
-    // The step preserves the left child's header and online polynomials.
-    pub(crate) fn rerandomize_once<RNG: CryptoRng, H: Header<C::CircuitField>>(
-        &self,
-        pcd: Pcd<C, R, H>,
-        rng: &mut RNG,
-    ) -> Result<Pcd<C, R, H>> {
-        self.fuse(
+        // The step returns the left input's data as its output's, so the
+        // header and its data pass through both fuses unchanged.
+        let (once, ()) = self.fuse(
             rng,
             step::internal::rerandomize::Rerandomize::new(),
             (),
             pcd,
+            self.bootstrap_pcd(),
+        )?;
+        self.fuse(
+            rng,
+            step::internal::rerandomize::Rerandomize::new(),
+            (),
+            once,
             self.bootstrap_pcd(),
         )
         .map(|(pcd, ())| pcd)
