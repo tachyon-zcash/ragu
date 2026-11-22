@@ -16,10 +16,10 @@ use super::{
 };
 use crate::{
     Application, Pcd, RAGU_TAG, SelectableBackend,
-    header::Header,
+    header::{Header, NUM_ONLINE_FP_POLYS, Padding},
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
-    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
+    profile::{Profile, ProfiledCycle, Standard, online::mesh_terminal::Coordinates},
     proof::commitments_match,
 };
 
@@ -43,6 +43,53 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
 impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
+    /// Rerandomizes a Standard-profile proof with padding in both online
+    /// polynomial slots, then compresses it.
+    ///
+    /// To publish a result derived from a proof with online polynomials,
+    /// first fuse it through an application [`Step`](crate::step::Step)
+    /// that produces the desired public data under a header with two
+    /// [`Padding`] slots. Pass that step's output here. Both commitments
+    /// in the compressed proof's own online slots then commit to the
+    /// constant one.
+    ///
+    /// The caller must supply a valid proof and an unpredictable RNG, as
+    /// for [`rerandomize`](Self::rerandomize). Verify the compressed result
+    /// with [`verify_compressed`](Self::verify_compressed) before using it.
+    /// Hiding of the other proof fields and the compression transcript
+    /// remains unproved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidWitness`] if the input's online polynomials
+    /// or their commitments differ from padding. Propagates errors from
+    /// rerandomizing and compressing the proof.
+    pub fn rerandomize_and_compress<RNG: CryptoRng, H>(
+        &self,
+        pcd: Pcd<C, R, H>,
+        rng: &mut RNG,
+    ) -> Result<CompressedPcd<C, H>>
+    where
+        C: ProfiledCycle<Profile = Standard>,
+        H: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
+    {
+        let one = C::CircuitField::ONE;
+        if pcd
+            .proof()
+            .online_polynomials()
+            .iter()
+            .any(|poly| poly.iter_stored_coeffs().ne([(0, &one)]))
+            || pcd.commitments() != [self.commit(&[one])?; NUM_ONLINE_FP_POLYS]
+        {
+            return Err(Error::InvalidWitness(
+                "rerandomized compression requires padding in both online slots".into(),
+            ));
+        }
+
+        let rerandomized = self.rerandomize(pcd, rng)?;
+        self.compress(&rerandomized, rng)
+    }
+
     /// Compresses `pcd` into a [`CompressedPcd`] over the same data.
     ///
     /// The result carries the proof's instance and, on each curve, the
@@ -60,6 +107,8 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// only when reusing `pcd` as a child: the compressed proof carries the
     /// commitments and not the polynomials, and
     /// [`verify_compressed`](Self::verify_compressed) is sound without it.
+    /// For a Standard-profile result that should carry only padding in its
+    /// online slots, see [`rerandomize_and_compress`](Self::rerandomize_and_compress).
     ///
     /// # Errors
     ///
