@@ -7,8 +7,9 @@
 //! for the input's among them, and they check part of what the second pass
 //! relies on: that every polynomial of the first pass's proof is dense,
 //! carries its three free coefficients or holds only what the proof shows
-//! anyway, and that the second pass's fold randomizer moves every quotient
-//! coefficient, also when its shown $A$ and $B$ tie it to the first pass's.
+//! anyway, and that the second pass's fold randomizer moves the
+//! claim-dependent quotient directions at the sampled inputs, also when
+//! its shown $A$ and $B$ tie it to the first pass's.
 //! The rest of the argument, in the documentation of the `fuse::randomizer`
 //! module, is not tested here.
 //!
@@ -560,11 +561,11 @@ impl Drop for Watch {
     }
 }
 
-/// The second pass's fold randomizers move every quotient coefficient of
-/// its folds: its children, the first pass's proof and the bootstrap proof,
-/// give claims whose two sides are linearly independent as pairs. They do
-/// so with the randomizers tied to the first pass's $A$ and $B$, as the
-/// second pass's shown $A$ and $B$ tie them, the targets beside them.
+/// The second pass's fold randomizers move the claim-dependent quotient
+/// directions for this input. The local rank is also checked with the
+/// randomizers tied to the first pass's $A$ and $B$ by the second pass's
+/// shown $A$ and $B$. This checks a Jacobian at fixed challenges; it does
+/// not show that the joint output distribution hides every valid input.
 #[test]
 fn the_second_pass_randomizers_reach_every_quotient() {
     support::with_app(|app| {
@@ -585,7 +586,12 @@ fn the_second_pass_randomizers_reach_every_quotient() {
         );
         for reach in reaches {
             assert_eq!(reach.rank, reach.coefficients);
-            assert_eq!(reach.accumulator, reach.coefficients + 2);
+            // The last occupied group has empty nodes. Its quotient fixes
+            // the randomizer target's variation; with the folded A and B
+            // fixed, the fold identity also ties the first child's target
+            // to the quotients. The first claim adds one local direction,
+            // not two independent target directions.
+            assert_eq!(reach.accumulator, reach.coefficients + 1);
         }
     });
 }
@@ -624,7 +630,7 @@ impl Chosen {
     }
 }
 
-/// Every quotient coefficient of a fuse's two folds is reached.
+/// The sampled folds' claim-dependent quotient directions are reached.
 fn assert_reached(reaches: Vec<observed::Reach>) {
     assert_eq!(
         reaches.iter().map(|r| r.coefficients).collect::<Vec<_>>(),
@@ -632,7 +638,7 @@ fn assert_reached(reaches: Vec<observed::Reach>) {
     );
     for reach in reaches {
         assert_eq!(reach.rank, reach.coefficients);
-        assert_eq!(reach.accumulator, reach.coefficients + 2);
+        assert_eq!(reach.accumulator, reach.coefficients + 1);
     }
 }
 

@@ -330,8 +330,10 @@ its fields describe.
 
 ### Publishing with Padding
 
-A proof's own online polynomials are part of the state it carries. Rerandomizing
-it preserves them, and compression publishes their deterministic commitments.
+Whether a published proof carries application online polynomials is an
+application policy. A proof's own online polynomials are part of the state it
+carries. Rerandomizing it preserves them, and compression publishes their
+deterministic commitments.
 To keep the input's polynomials out of the published proof's online slots,
 `Application::fuse` a final step that can query them but outputs a
 `(Padding, Padding)` header.

@@ -48,15 +48,17 @@
 //!   such group holds one claim fewer;
 //! - the last group holds the claim $(a_r, 0; 0)$ and nothing else.
 //!
-//! Both claims hold for any two polynomials. In a group of $m$
-//! nodes the quotient is the image, under a bijection, of the $m - 1$ values
+//! Both claims hold for any two polynomials. In a group of $m$ nodes, with
+//! the diagonal targets including $c_r$ fixed, the quotient is an affine
+//! bijective image of the $m - 1$ cross values
 //! $\operatorname{revdot}(a_r, b_k) + \operatorname{revdot}(a_k, b_r)$ over
 //! the group's other claims $k$: the products $\ell_r \ell_k / Z$ are a
-//! basis of the polynomials with $m - 1$ coefficients. The second layer's
-//! quotient is likewise the image of $\operatorname{revdot}(a_r, b'\_g)$ over
-//! the folded groups $g$, which the first layer, seeing only the sums, does
-//! not determine. That needs the pairs $(a_k, b_k)$ to be linearly
-//! independent. Neither side alone is: the $a$ sides of a final mask's claim
+//! basis of the polynomials with $m - 1$ coefficients. Without conditioning
+//! on $c_r$, the quotient also contains a term quadratic in $(a_r,b_r)$.
+//! The second layer has cross values against the folded groups $g$, which
+//! the first layer, seeing only the sums, does not determine. Full linear
+//! reach needs the pairs $(a_k, b_k)$ to be linearly independent. Neither
+//! side alone is: the $a$ sides of a final mask's claim
 //! are a Horner list of polynomials that other claims hold, and the $b$
 //! sides of the masks satisfy identities among themselves, which is why the
 //! groups hold the whole claim and not half of it. A test checks the pairs
@@ -246,9 +248,11 @@ pub fn fold_outer<T: Foldable<F>, F: Field, P: Parameters>(
     combine(&source, &weights(challenge, P::NumGroups::len()))
 }
 
-/// The rows of a linear map whose rank the hiding argument of a
-/// rerandomization's second pass needs: what the fold shows, as functions of
-/// the first claim's two sides, with the folded $A$ and $B$ held fixed.
+/// The Jacobian rows of what the fold shows as the first claim's two sides
+/// vary, with the folded $A$ and $B$ held fixed. They measure local
+/// first-order movement; the quotient's quadratic terms in the perturbation
+/// are absent. Their rank alone does not establish a joint hiding
+/// distribution for a rerandomization's second pass.
 ///
 /// The first claim of `a` and `b` is the child's own accumulator, whose two
 /// sides the observer does not know. A proof shows $A$ and $B$, which ties
@@ -972,7 +976,9 @@ mod tests {
         // `quotients` folds the first layer at 1009.
         let (mu, mu_prime) = (Fp::from(1009), Fp::from(31));
         let groups = <P as Parameters>::NumGroups::len();
-        let expected = claims.len() + groups - 1 + 2;
+        // The two displayed targets obey the fold identity and add one
+        // local direction beside the claim-dependent quotient directions.
+        let expected = claims.len() + groups - 1 + 1;
 
         let (a, b): (Vec<Poly>, Vec<Poly>) = claims.iter().cloned().unzip();
         let rows = accumulator_rows::<_, _, P>(&a, &b, (&ra, &rb), mu, mu_prime);

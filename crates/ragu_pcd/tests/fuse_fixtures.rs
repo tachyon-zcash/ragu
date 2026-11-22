@@ -218,7 +218,7 @@ impl Header<Fp> for Value {
     }
 }
 
-/// Hashes both child headers and a salt into a [`Value`].
+/// Hashes both child headers and a public fixture input into a [`Value`].
 struct HashStep<L, H, const I: usize>(PhantomData<(L, H)>);
 
 impl<L, H, const I: usize> HashStep<L, H, I> {
@@ -260,7 +260,7 @@ where
         let allocator = &mut Standard::new();
         let left = Encoded::new(dr, allocator, left)?;
         let right = Encoded::new(dr, allocator, right)?;
-        let salt = Element::alloc(dr, allocator, witness)?;
+        let fixture_input = Element::alloc(dr, allocator, witness)?;
         let mut sponge = Sponge::new(dr, Cy::circuit_poseidon(crate::pasta::baked()));
         let mut inputs = Vec::new();
         left.clone().write(dr, &mut inputs)?;
@@ -268,18 +268,19 @@ where
         for input in inputs {
             sponge.absorb(dr, &input)?;
         }
-        sponge.absorb(dr, &salt)?;
+        sponge.absorb(dr, &fixture_input)?;
         let output = sponge.squeeze(dr)?;
         let data = output.value().map(|v| *v);
         Ok(((left, right, Encoded::from_gadget(output)), data, D::unit()))
     }
 }
 
-/// A seed: hashes two base-case children and a salt.
+/// A seed: hashes two base-case children and a public fixture input.
 type Seed = HashStep<(), (), 0>;
-/// Hashes two [`Value`] children and a salt.
+/// Hashes two [`Value`] children and a public fixture input.
 type Merge = HashStep<Value, Value, 1>;
-/// Hashes a base-case left child, a [`Value`] right child and a salt.
+/// Hashes a base-case left child, a [`Value`] right child and a public
+/// fixture input.
 type UnitLeft = HashStep<(), Value, 2>;
 /// Registered so the application has the support suite's shape; no
 /// scenario fuses with it.
@@ -1324,9 +1325,9 @@ fn check<C: FixtureCycle, H: FixtureHeader>(
     failures.extend(compare_lines(&label, &lines, &committed));
 }
 
-fn seed_scenario<C: FixtureCycle>(app: &App<C>, tape: &mut Tape, salt: u64) -> TestPcd<C> {
+fn seed_scenario<C: FixtureCycle>(app: &App<C>, tape: &mut Tape, fixture_input: u64) -> TestPcd<C> {
     let (pcd, ()) = app
-        .seed(tape, Seed::new(), Fp::from(salt))
+        .seed(tape, Seed::new(), Fp::from(fixture_input))
         .expect("seeding must succeed");
     pcd
 }
@@ -1334,12 +1335,12 @@ fn seed_scenario<C: FixtureCycle>(app: &App<C>, tape: &mut Tape, salt: u64) -> T
 fn merge_scenario<C: FixtureCycle>(
     app: &App<C>,
     tape: &mut Tape,
-    salt: u64,
+    fixture_input: u64,
     left: TestPcd<C>,
     right: TestPcd<C>,
 ) -> TestPcd<C> {
     let (pcd, ()) = app
-        .fuse(tape, Merge::new(), Fp::from(salt), left, right)
+        .fuse(tape, Merge::new(), Fp::from(fixture_input), left, right)
         .expect("fusing two nodes must succeed");
     pcd
 }

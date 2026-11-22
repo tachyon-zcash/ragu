@@ -63,19 +63,16 @@
 //!   inner error stage in the same way.
 //! - The quotient coefficients of the second pass's fold, and the target
 //!   $c_r = \operatorname{revdot}(a_r, b_r)$ of its randomizer's claim.
-//!   With the second pass's $A$ and $B$ fixed, they are functions of the
-//!   first pass's polynomials, and the fold places its randomizer's claims
-//!   so that the quotient coefficients take every value as the first
-//!   pass's folded $A$ and $B$ vary (see
-//!   [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)). Those
-//!   two polynomials are uniform, and the first pass's proof is shown to no
-//!   one. With the first pass's $c$ shown, $c_r$ is one more affine
-//!   function of them. Taking every value needs the claims' pairs to be
-//!   linearly independent, which a test checks for a proof made from an
-//!   honestly produced input. An input reaches those claims only through
-//!   the first pass's polynomials, whose free coefficients and randomizers
-//!   are drawn after it is fixed, but it has not been shown that no input
-//!   can be chosen to make the pairs dependent.
+//!   With the second pass's $A$ and $B$ fixed, these depend on the first
+//!   pass's polynomials. The fold places its randomizer's claims so that
+//!   the first pass's uniform $A$ and $B$ move the quotient coefficients
+//!   (see [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)).
+//!   A test checks the local rank at fixed challenges for a few inputs;
+//!   the displayed first-pass $c$ and $c_r$ are tied to the quotients by
+//!   the fold identity, rather than adding independent random outputs.
+//!   Neither this rank check nor the separate masking arguments establishes
+//!   the joint output distribution. It has also not been shown that no
+//!   valid input can make the claims' pairs dependent.
 //! - The commitments of the second pass's quotient polynomials $f$ and
 //!   $f_n$, which batch the openings that pass checks. Each folds in the
 //!   quotient of the first pass's $p$ by $X - u$, at that proof's own $u$:
@@ -206,18 +203,20 @@ pub(crate) mod observed {
     /// fold.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct Reach {
-        /// The rank of the quotient coefficients as a function of the
-        /// randomizer.
+        /// The rank of the quotient coefficients' linear movement as a
+        /// function of the randomizer at fixed other claims and challenges.
         pub(crate) rank: usize,
-        /// The coefficients that depend on the claims: one per claim in
-        /// the first layer, and one per group that holds a claim in the
-        /// second.
+        /// The claim-dependent quotient directions counted by this check:
+        /// one per claim in the first layer, and one per occupied group in
+        /// the second. Padded groups and the target $c_r$ impose further
+        /// algebraic relations among stored coefficients.
         pub(crate) coefficients: usize,
-        /// The rank of the quotient coefficients and of the two targets the
-        /// proof shows, as functions of the first claim's two sides with
-        /// the folded $A$ and $B$ held fixed, the randomizer moving against
-        /// them (see [`fold_revdot::accumulator_rows`]). Nothing cancels
-        /// when it is two more than [`coefficients`](Self::coefficients).
+        /// The rank of the first-order movement of the quotient coefficients
+        /// and the two displayed targets, as the first claim and randomizer
+        /// move against each other with folded $A$ and $B$ fixed (see
+        /// [`fold_revdot::accumulator_rows`]). The targets obey the fold
+        /// identity, so this rank does not measure independent uniform
+        /// outputs or establish their hiding distribution.
         pub(crate) accumulator: usize,
     }
 
