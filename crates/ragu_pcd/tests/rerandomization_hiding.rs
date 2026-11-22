@@ -4,14 +4,17 @@
 //! through the rerandomization step leaves the input's commitments and
 //! challenges in its output. `Application::rerandomize` runs two passes.
 //! These tests take a proof apart into the field elements it holds and look
-//! for the input's among them, and they check what the second pass relies on:
-//! that every polynomial of the first pass's proof is dense, carries its
-//! three free coefficients or holds only what the proof shows anyway, and
-//! that the second pass's fold randomizer moves every quotient coefficient.
+//! for the input's among them, and they check part of what the second pass
+//! relies on: that every polynomial of the first pass's proof is dense,
+//! carries its three free coefficients or holds only what the proof shows
+//! anyway, and that the second pass's fold randomizer moves every quotient
+//! coefficient, also when its shown $A$ and $B$ tie it to the first pass's.
+//! The rest of the argument, in the documentation of the `fuse::randomizer`
+//! module, is not tested here.
 //!
 //! These are checks of the mechanism. None of them tests a distribution.
 
-use alloc::{collections::BTreeSet, vec::Vec};
+use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 
 use ragu_circuits::polynomials::{Rank, sparse};
 use ragu_core::pasta::{EpAffine, EqAffine, Fp, Fq};
@@ -512,8 +515,9 @@ fn two_passes_leave_none_of_the_inputs_values() {
 
 /// Every polynomial of either pass's proof is dense, carries its three
 /// free coefficients or holds only what the proof shows anyway. The second
-/// pass exposes each of the first pass's polynomials as a commitment and
-/// two evaluations, which is what three free coefficients hide.
+/// pass exposes each of the first pass's polynomials on its own as a
+/// commitment and two evaluations, which is what three free coefficients
+/// hide.
 #[test]
 fn each_pass_hides_its_polynomials() {
     support::with_app(|app| {
@@ -558,7 +562,9 @@ impl Drop for Watch {
 
 /// The second pass's fold randomizers move every quotient coefficient of
 /// its folds: its children, the first pass's proof and the bootstrap proof,
-/// give claims whose two sides are linearly independent as pairs.
+/// give claims whose two sides are linearly independent as pairs. They do
+/// so with the randomizers tied to the first pass's $A$ and $B$, as the
+/// second pass's shown $A$ and $B$ tie them, the targets beside them.
 #[test]
 fn the_second_pass_randomizers_reach_every_quotient() {
     support::with_app(|app| {
@@ -579,6 +585,100 @@ fn the_second_pass_randomizers_reach_every_quotient() {
         );
         for reach in reaches {
             assert_eq!(reach.rank, reach.coefficients);
+            assert_eq!(reach.accumulator, reach.coefficients + 2);
         }
+    });
+}
+
+/// What a chosen input could put in the stages of the first pass that hold
+/// its values, beside the free coefficients the rerandomizer draws.
+#[derive(Clone, Copy, Debug)]
+enum Chosen {
+    /// Nothing: every coefficient but the free ones is zero.
+    Nothing,
+    /// The bootstrap proof's own stage, whose bonding claim the second pass
+    /// folds together with the first pass's.
+    Bootstrap,
+}
+
+impl Chosen {
+    /// `own` with every coefficient but its free ones replaced.
+    fn apply<F: Field>(
+        self,
+        own: &sparse::Polynomial<F, R>,
+        bootstrap: &sparse::Polynomial<F, R>,
+    ) -> sparse::Polynomial<F, R> {
+        let n = R::n();
+        let free = [2 * n - 1, n, 3 * n];
+        sparse::Polynomial::from_coeffs(
+            own.iter_coeffs()
+                .zip(bootstrap.iter_coeffs())
+                .enumerate()
+                .map(|(i, (own, bootstrap))| match self {
+                    _ if free.contains(&i) => own,
+                    Chosen::Nothing => F::ZERO,
+                    Chosen::Bootstrap => bootstrap,
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Every quotient coefficient of a fuse's two folds is reached.
+fn assert_reached(reaches: Vec<observed::Reach>) {
+    assert_eq!(
+        reaches.iter().map(|r| r.coefficients).collect::<Vec<_>>(),
+        [95 + 14, 83 + 11]
+    );
+    for reach in reaches {
+        assert_eq!(reach.rank, reach.coefficients);
+        assert_eq!(reach.accumulator, reach.coefficients + 2);
+    }
+}
+
+/// The first pass's own randomizers reach every quotient coefficient of its
+/// folds, so the quotient coefficients its inner error stages hold are free
+/// for the second pass's folded $B$ to rest on. And the second pass's reach
+/// does not depend on what an input puts in the stages of the first pass
+/// that hold the input's values: its preamble, the two points stages holding
+/// the input's nested commitments and its preamble bridge. It stays full
+/// when those hold nothing but their free coefficients, or the bootstrap
+/// proof's contents, and for an input seeded straight from the bootstrap.
+#[test]
+fn chosen_stage_contents_leave_every_quotient_reached() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(0x7e12_a9d4);
+        let input = input(app, &mut rng);
+
+        let _watch = Watch;
+        observed::watch(true);
+        let once = pass(app, &mut rng, input);
+        assert_reached(observed::reaches());
+
+        let bootstrap = app.bootstrap_proof();
+        for chosen in [Chosen::Nothing, Chosen::Bootstrap] {
+            let (mut proof, data) = once.clone().into_parts();
+            proof.native_preamble_rx =
+                chosen.apply(&proof.native_preamble_rx, &bootstrap.native_preamble_rx);
+            proof.native_points_binding_rx = chosen.apply(
+                &proof.native_points_binding_rx,
+                &bootstrap.native_points_binding_rx,
+            );
+            proof.native_points_preamble_rx = chosen.apply(
+                &proof.native_points_preamble_rx,
+                &bootstrap.native_points_preamble_rx,
+            );
+            proof.bridge_preamble_rx =
+                Arc::new(chosen.apply(&proof.bridge_preamble_rx, &bootstrap.bridge_preamble_rx));
+            observed::watch(true);
+            pass(app, &mut rng, proof.carry(data));
+            assert_reached(observed::reaches());
+        }
+
+        let seeded = app.seed(&mut rng, Seed::new(), Fp::from(11)).unwrap().0;
+        let once = pass(app, &mut rng, seeded);
+        observed::watch(true);
+        pass(app, &mut rng, once);
+        assert_reached(observed::reaches());
     });
 }

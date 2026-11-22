@@ -154,9 +154,10 @@ code to do.
 
 ## The Blind Gate {#blind-gate}
 
-A fuse shows three values of every trace that it takes from a child: the
-commitment, which one of its [stages](stage_contents.md) holds, and the
-evaluations at $xz$ and at $u$ that its [batched opening](batch.md) claims.
+A fuse shows three values of every trace that it takes from a child on its
+own: the commitment, which one of its [stages](stage_contents.md) holds, and
+the evaluations at $xz$ and at $u$ that its [batched opening](batch.md)
+claims.
 Those values should not determine anything else about the trace. Every trace
 therefore has three coefficients that no constraint reads, as many as the
 values shown, and the prover draws them uniformly at random.
@@ -175,10 +176,12 @@ all three are uniformly random, so are the commitment and the two evaluations,
 whatever the other coefficients are.[^free-three]
 
 The free coefficients protect a polynomial only in what a later fuse shows of
-it. A proof stores its own polynomials in full, and its stages hold the
-commitments and challenges of its children as they are. The free coefficients
-are there for
-[`Application::rerandomize`](ragu_pcd::Application::rerandomize).
+it on its own. That fuse also shows sums over a child's traces, through its
+folded $B$. A proof stores its own polynomials in full, and its stages hold
+the commitments and challenges of its children as they are. The free
+coefficients are there for
+[`Application::rerandomize`](ragu_pcd::Application::rerandomize), which also
+relies on the randomizers every fuse folds and batches.
 
 [^free-three]: The two evaluations fix the three coefficients up to a line,
     provided that the two points are distinct and nonzero. Along that line the

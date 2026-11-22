@@ -65,7 +65,8 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// polynomials. To compress a proof that must stay private, compress
     /// the output of [`rerandomize`](Self::rerandomize) on it instead. The
     /// result is computed from that output, so it shows no more of the
-    /// original proof than the output does.
+    /// original proof than the output does. Rerandomization hides its input
+    /// only under the standard profile.
     ///
     /// # Errors
     ///

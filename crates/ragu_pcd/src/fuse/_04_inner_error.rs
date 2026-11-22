@@ -126,6 +126,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         super::randomizer::observed::reach::<_, R, native::RevdotParameters<C::Profile>>(
             &native_claims.a,
             &native_claims.b,
+            (&native_source.randomizer.a, &native_source.randomizer.b),
         );
         // The fold randomizer's claims join the grid, so that the quotients
         // below reveal nothing of the other claims' polynomials.
@@ -207,6 +208,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         super::randomizer::observed::reach::<_, R, nested::RevdotParameters<C::Profile>>(
             &nested_claims.a,
             &nested_claims.b,
+            (&randomizer.a, &randomizer.b),
         );
         // The nested fold randomizer's claims join the grid as the native
         // ones do.

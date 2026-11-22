@@ -826,33 +826,23 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// The input is fused twice through the internal rerandomization step,
     /// each time with the application's bootstrap proof as the right child.
+    /// A fuse stores what it reads of its children as stage values, so one
+    /// pass would show the input's commitments in the clear. After the
+    /// second pass the output holds the first pass's commitments, which are
+    /// fresh, and values computed from the first pass's polynomials, which
+    /// randomness the rerandomizer draws hides: the free coefficients of
+    /// every trace and stage (see [`Blind`](ragu_circuits::Blind)) and the
+    /// randomizers every fuse folds and batches. The documentation of the
+    /// internal `fuse::randomizer` module accounts for each value the output
+    /// shows.
     ///
-    /// A fuse stores what it reads of its children as stage values: their
-    /// commitments, their challenges and their accumulators' values. One
-    /// pass would therefore show the input's commitments in the clear. After
-    /// the second pass the output holds only the first pass's commitments,
-    /// which are fresh, and three kinds of value computed from the first
-    /// pass's polynomials:
-    ///
-    /// - A commitment and two evaluations of each polynomial the first
-    ///   pass's proof stores. The three free coefficients of a trace or a
-    ///   stage hide the rest of it (see [`Blind`](ragu_circuits::Blind)),
-    ///   and the first pass's folded $A$ and $B$ and batched $p$ are
-    ///   uniform in every coefficient, by the first pass's randomizers.
-    /// - The second pass's folded $A$ and $B$ and batched $p$, in full,
-    ///   which the second pass's randomizers make uniform.
-    /// - The quotient coefficients of the second pass's fold. With the
-    ///   second pass's $A$ and $B$ fixed, they are functions of the first
-    ///   pass's polynomials, and the fold places its randomizer's claims so
-    ///   that they take every value as the first pass's folded $A$ and $B$
-    ///   vary (see `internal::fold_revdot`). Those two polynomials are
-    ///   uniform, and the first pass's proof is shown to no one.
-    ///
-    /// The right child is the same public proof for every caller. A right
-    /// child of the caller's own would appear in every output and link them
-    /// to one another. An application whose users must not be told apart
-    /// should therefore install one bootstrap proof for all of them, with
-    /// [`ApplicationBuilder::with_bootstrap`].
+    /// The right child is public, and it is the same for every caller whose
+    /// application builds the same bootstrap proof, which depends on the
+    /// application's configuration and on the Ragu and `rand` versions. A
+    /// right child of the caller's own would appear in every output and link
+    /// them to one another. An application whose users must not be told
+    /// apart should therefore install one bootstrap proof for all of them,
+    /// with [`ApplicationBuilder::with_bootstrap`].
     ///
     /// # What the caller must ensure
     ///
@@ -869,9 +859,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// - The header's data and its online polynomials are what the output
     ///   may reveal. The output carries both unchanged.
     ///
-    /// This holds for the standard profile. A profile with an extension
-    /// stores polynomials and values of its own in a proof, which this
-    /// method does not account for.
+    /// This holds for the standard profile only. Other profiles store
+    /// polynomials and values of their own in a proof, which this method
+    /// does not account for.
     ///
     /// Compression is not hiding. To send a compressed proof, compress the
     /// output, not `pcd`: the compressed proof is computed from the output,

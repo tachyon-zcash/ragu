@@ -56,11 +56,12 @@
 //! quotient is likewise the image of $\operatorname{revdot}(a_r, b'\_g)$ over
 //! the folded groups $g$, which the first layer, seeing only the sums, does
 //! not determine. That needs the pairs $(a_k, b_k)$ to be linearly
-//! independent, which claims about two different children are. Neither side
-//! alone is: the $a$ sides of a final mask's claim are a Horner list of
-//! polynomials that other claims hold, and the $b$ sides of the masks
-//! satisfy identities among themselves, which is why the groups hold the
-//! whole claim and not half of it.
+//! independent. Neither side alone is: the $a$ sides of a final mask's claim
+//! are a Horner list of polynomials that other claims hold, and the $b$
+//! sides of the masks satisfy identities among themselves, which is why the
+//! groups hold the whole claim and not half of it. A test checks the pairs
+//! of a rerandomization's second pass for an honestly produced input; that
+//! no input can be chosen to make them dependent is not shown.
 //!
 //! A proof also stores the folded $A$ and $B$ in full. Given the other
 //! claims' polynomials, $A$ and $B$ determine $a_r$ and $b_r$, and with
@@ -243,6 +244,133 @@ pub fn fold_outer<T: Foldable<F>, F: Field, P: Parameters>(
     challenge: F,
 ) -> T {
     combine(&source, &weights(challenge, P::NumGroups::len()))
+}
+
+/// The rows of a linear map whose rank the hiding argument of a
+/// rerandomization's second pass needs: what the fold shows, as functions of
+/// the first claim's two sides, with the folded $A$ and $B$ held fixed.
+///
+/// The first claim of `a` and `b` is the child's own accumulator, whose two
+/// sides the observer does not know. A proof shows $A$ and $B$, which ties
+/// the randomizer `randomizer` to that claim: moving its sides by
+/// $(\delta_a, \delta_b)$ moves $a_r$ and $b_r$ by $-\kappa_a \delta_a$ and
+/// $-\kappa_b \delta_b$, each $\kappa$ the claim's weight over the
+/// randomizer's at `mu` and `mu_prime`. Besides the randomizer's own reach,
+/// the quotients then also move through the claim's products with the
+/// others in its group.
+///
+/// A row is a linear form in $(\delta_a, \delta_b)$: the coefficients of the
+/// polynomial it pairs with $\delta_a$ by revdot, then of the one it pairs
+/// with $\delta_b$. There is one row for each first-layer quotient at each
+/// of `GroupSize - 1` points off its nodes, one for the second layer's at
+/// each of `NumGroups - 1` points off its nodes, its first layer folded at
+/// `mu`, and one each for the targets of the claim and of the randomizer,
+/// which the proof shows too.
+#[cfg(test)]
+pub(crate) fn accumulator_rows<F: Field, R: Rank, P: Parameters>(
+    a: &[impl Borrow<sparse::Polynomial<F, R>>],
+    b: &[impl Borrow<sparse::Polynomial<F, R>>],
+    randomizer: (&sparse::Polynomial<F, R>, &sparse::Polynomial<F, R>),
+    mu: F,
+    mu_prime: F,
+) -> Vec<Vec<F>> {
+    type Poly<F, R> = sparse::Polynomial<F, R>;
+    let (m, n) = (P::GroupSize::len(), P::NumGroups::len());
+    let (ra, rb) = randomizer;
+    let sum = |values: &[F]| values.iter().fold(F::ZERO, |acc, value| acc + *value);
+    let grid_a: Vec<Poly<F, R>> = randomized::<_, P>(
+        a.iter().map(|poly| poly.borrow().clone()),
+        Poly::default(),
+        ra.clone(),
+        ra.clone(),
+    )
+    .collect();
+    let grid_b: Vec<Poly<F, R>> = randomized::<_, P>(
+        b.iter().map(|poly| poly.borrow().clone()),
+        Poly::default(),
+        rb.clone(),
+        Poly::default(),
+    )
+    .collect();
+
+    // How far each slot's sides move with the claim's: the claim's own
+    // slot, and against it every slot of the randomizer's.
+    let (inner, outer) = (weights(mu, m), weights(mu_prime, n));
+    let own = inner[0] * outer[0];
+    let full = inner[m - 1] * sum(&outer[..n - 1]);
+    let ka = own
+        * (full + inner[0] * outer[n - 1])
+            .invert()
+            .expect("a nonzero weight");
+    let kb = own * full.invert().expect("a nonzero weight");
+    let alpha: Vec<F> = randomized::<_, P>([F::ONE], F::ZERO, -ka, -ka).collect();
+    let beta: Vec<F> = randomized::<_, P>([F::ONE], F::ZERO, -kb, F::ZERO).collect();
+
+    // A quotient at a point off the nodes is
+    // (revdot(A(t), B(t)) - sum_i l_i(t) revdot(a_i, b_i)) / Z(t); its move
+    // pairs delta_a with (sum_i alpha_i l_i) B(t) - sum_i alpha_i l_i b_i,
+    // over Z(t), and delta_b likewise.
+    let part = |sides: &[Poly<F, R>], moves: &[F], l: &[F], z: F| {
+        let moved: Vec<F> = moves.iter().zip(l).map(|(m, l)| *m * *l).collect();
+        let mut form = combine::<Poly<F, R>, F>(sides, l);
+        form.scale(sum(&moved));
+        let mut own = combine::<Poly<F, R>, F>(sides, &moved);
+        own.scale(-F::ONE);
+        form.add_assign(&own);
+        form.scale(z.invert().expect("a point off the nodes"));
+        form
+    };
+    let row = |on_a: Poly<F, R>, on_b: Poly<F, R>| -> Vec<F> {
+        on_a.iter_coeffs().chain(on_b.iter_coeffs()).collect()
+    };
+    let vanishing =
+        |t: F, nodes: usize| (0..nodes).fold(F::ONE, |acc, i| acc * (t - F::from(i as u64)));
+
+    let mut rows = Vec::new();
+    for g in 0..n {
+        let group = g * m..(g + 1) * m;
+        for k in 0..m - 1 {
+            let t = F::from((m + k) as u64);
+            let (l, z) = (weights(t, m), vanishing(t, m));
+            rows.push(row(
+                part(&grid_b[group.clone()], &alpha[group.clone()], &l, z),
+                part(&grid_a[group.clone()], &beta[group.clone()], &l, z),
+            ));
+        }
+    }
+
+    let fold = |grid: &[Poly<F, R>]| -> Vec<Poly<F, R>> {
+        grid.chunks(m).map(|group| combine(group, &inner)).collect()
+    };
+    let folded_moves = |moves: &[F]| -> Vec<F> {
+        moves
+            .chunks(m)
+            .map(|group| {
+                group
+                    .iter()
+                    .zip(&inner)
+                    .fold(F::ZERO, |acc, (m, l)| acc + *m * *l)
+            })
+            .collect()
+    };
+    let (folded_a, folded_b) = (fold(&grid_a), fold(&grid_b));
+    let (folded_alpha, folded_beta) = (folded_moves(&alpha), folded_moves(&beta));
+    for k in 0..n - 1 {
+        let t = F::from((n + k) as u64);
+        let (l, z) = (weights(t, n), vanishing(t, n));
+        rows.push(row(
+            part(&folded_b, &folded_alpha, &l, z),
+            part(&folded_a, &folded_beta, &l, z),
+        ));
+    }
+
+    // The two targets: c = revdot(a_0, b_0) and c_r = revdot(a_r, b_r).
+    rows.push(row(b[0].borrow().clone(), a[0].borrow().clone()));
+    let (mut on_a, mut on_b) = (rb.clone(), ra.clone());
+    on_a.scale(-ka);
+    on_b.scale(-kb);
+    rows.push(row(on_a, on_b));
+    rows
 }
 
 fn multiply<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
@@ -704,6 +832,21 @@ mod tests {
             Vec<sparse::Polynomial<Fp, TestRank>>,
         ),
     ) -> usize {
+        variation_rank(|ra, rb| {
+            let (a, b) = layout(ra, rb);
+            quotients(&a, &b)
+        })
+    }
+
+    /// The rank of what `observe` returns as a function of two polynomials,
+    /// by differences along every coefficient of each: what it returns must
+    /// be affine in either polynomial once the other is fixed.
+    fn variation_rank(
+        observe: impl Fn(
+            &sparse::Polynomial<Fp, TestRank>,
+            &sparse::Polynomial<Fp, TestRank>,
+        ) -> Vec<Fp>,
+    ) -> usize {
         let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(7);
         let dense = |rng: &mut rand::rngs::StdRng| -> Vec<Fp> {
             (0..TestRank::num_coeffs())
@@ -712,11 +855,10 @@ mod tests {
         };
         let (ra, rb) = (dense(&mut rng), dense(&mut rng));
         let at = |ra: &[Fp], rb: &[Fp]| {
-            let (a, b) = layout(
+            observe(
                 &sparse::Polynomial::from_coeffs(ra.to_vec()),
                 &sparse::Polynomial::from_coeffs(rb.to_vec()),
-            );
-            quotients(&a, &b)
+            )
         };
         let base = at(&ra, &rb);
         let mut columns = Vec::new();
@@ -803,6 +945,74 @@ mod tests {
             )
         });
         assert_eq!(symmetric, claims.len() + 1);
+    }
+
+    /// The rank a rerandomization's second pass needs. Its proof shows $A$
+    /// and $B$, so the randomizer is not free: it moves against the first
+    /// claim, the child's accumulator, whose sides are what the observer
+    /// does not know. The quotient coefficients then move through both,
+    /// and the proof also shows the targets of that claim and of the
+    /// randomizer's. They still take every value, with the two targets
+    /// beside them: `accumulator_rows` says so, and the differences of the
+    /// fold itself agree.
+    #[test]
+    fn the_accumulator_claim_leaves_every_quotient_reached() {
+        type Poly = sparse::Polynomial<Fp, TestRank>;
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(13);
+        let mut dense = || {
+            Poly::from_coeffs(
+                (0..TestRank::num_coeffs())
+                    .map(|_| Fp::random(|bytes| rand::Rng::fill_bytes(&mut rng, bytes)))
+                    .collect(),
+            )
+        };
+        // Twelve claims, the first the accumulator, and the randomizer.
+        let claims: Vec<(Poly, Poly)> = (0..12).map(|_| (dense(), dense())).collect();
+        let (ra, rb) = (dense(), dense());
+        // `quotients` folds the first layer at 1009.
+        let (mu, mu_prime) = (Fp::from(1009), Fp::from(31));
+        let groups = <P as Parameters>::NumGroups::len();
+        let expected = claims.len() + groups - 1 + 2;
+
+        let (a, b): (Vec<Poly>, Vec<Poly>) = claims.iter().cloned().unzip();
+        let rows = accumulator_rows::<_, _, P>(&a, &b, (&ra, &rb), mu, mu_prime);
+        assert_eq!(rank(rows), expected);
+
+        let (inner, outer) = (weights(mu, 7), weights(mu_prime, groups));
+        let own = inner[0] * outer[0];
+        let full = inner[6] * (outer[0] + outer[1]);
+        let ka = own * (full + inner[0] * outer[2]).invert().unwrap();
+        let kb = own * full.invert().unwrap();
+        // `base - k (moved - from)`: the randomizer once the claim's side
+        // has moved from `from` to `moved`.
+        let tied = |base: &Poly, k: Fp, from: &Poly, moved: &Poly| {
+            let mut side = from.clone();
+            side.scale(-Fp::ONE);
+            side.add_assign(moved);
+            side.scale(-k);
+            side.add_assign(base);
+            side
+        };
+        let zero = Poly::default();
+        let observed = variation_rank(|x, y| {
+            let (sa, sb) = (
+                tied(&ra, ka, &claims[0].0, x),
+                tied(&rb, kb, &claims[0].1, y),
+            );
+            let mut grid = claims.clone();
+            grid[0] = (x.clone(), y.clone());
+            let (a, b): (Vec<Poly>, Vec<Poly>) = randomized::<_, P>(
+                grid,
+                (zero.clone(), zero.clone()),
+                (sa.clone(), sb.clone()),
+                (sa.clone(), zero.clone()),
+            )
+            .unzip();
+            let mut shown = quotients(&a, &b);
+            shown.extend([x.revdot(y), sa.revdot(&sb)]);
+            shown
+        });
+        assert_eq!(observed, expected);
     }
 
     #[test]

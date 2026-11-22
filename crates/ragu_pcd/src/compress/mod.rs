@@ -62,7 +62,8 @@
 //! [`Application::rerandomize`](crate::Application::rerandomize) before it
 //! is compressed. The compressed proof is computed from the rerandomized
 //! one, so it shows no more of the proof that was rerandomized than the
-//! rerandomized proof does.
+//! rerandomized proof does. Rerandomization hides its input only under the
+//! standard profile.
 //!
 //! [`ENDOSCALAR_BITS`]: ragu_primitives::ENDOSCALAR_BITS
 

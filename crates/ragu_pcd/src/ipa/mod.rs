@@ -4,14 +4,18 @@
 //! Pedersen blinds halo2 puts on `S`, `L` and `R` with its generator `W`. An
 //! opening proves knowledge of `p` with `P = <p, G>` and `p(x) = v`.
 //!
-//! The opening is therefore not hiding, and compression, its one use, does
-//! not need it to be. Blinding it would not make a compressed proof hiding,
-//! since the proof carries evaluations of the compressed proof's polynomials
-//! outside the opening. A proof that must stay private is passed through
-//! [`Application::rerandomize`](crate::Application::rerandomize) before
+//! The opening's messages show nothing of `p` beyond `P` and `v`: the random
+//! masking polynomial `s` below makes the coefficients the argument folds
+//! uniform. `P` itself has no blind, so the commitment is not hiding, and
+//! compression, the opening's one use in this crate, does not need it to
+//! be. Blinding `S`, `L` and `R` would not make a compressed proof hiding,
+//! since the proof carries evaluations of the polynomials of the proof it
+//! compresses outside the opening. A proof that must stay private is passed
+//! through [`Application::rerandomize`](crate::Application::rerandomize) before
 //! [`Application::compress`](crate::Application::compress) instead. The
 //! compressed proof is computed from the rerandomized one, so it shows no
 //! more of the proof that was rerandomized than the rerandomized proof does.
+//! Rerandomization hides its input only under the standard profile.
 //!
 //! Unblinded round commitments can be the identity for valid openings, which
 //! [`CycleTranscript`] rejects. Only one case is certain: with two

@@ -10,9 +10,11 @@ use udon::field::Field;
 ///
 /// No circuit and no stage uses the blind gate, and every mask leaves these
 /// three wires out, so a trace or a stage polynomial may hold any values
-/// there. A parent proof exposes a child's polynomial three times, as a
-/// commitment and as two evaluations, so three uniformly random coefficients
-/// hide the rest of the polynomial from whoever sees those values.
+/// there. A parent proof exposes each of a child's polynomials on its own
+/// three times, as a commitment and as two evaluations, so three uniformly
+/// random coefficients hide the rest of it from whoever sees only those
+/// values. A parent's folded polynomials also show sums of them, which the
+/// free coefficients alone do not account for.
 /// [`random`](Self::random) draws all three.
 ///
 /// A field element converts into the `Blind` that holds it as `alpha` and
