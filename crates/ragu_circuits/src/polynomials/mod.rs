@@ -41,6 +41,16 @@ pub trait Rank:
         Self::RANK - 2
     }
 
+    /// Returns the index of the blind gate, $n - 1$.
+    ///
+    /// No circuit and no stage may use this gate, so a circuit has at most
+    /// $n - 1$ gates, the SYSTEM gate included. Its $a$ and $d$ wires are
+    /// free in every trace and stage polynomial; see
+    /// [`Blind`](crate::Blind).
+    fn blind_gate() -> usize {
+        Self::n() - 1
+    }
+
     /// Computes the coefficients of
     /// $$t(X, z) = -\sum_{i=0}^{n - 1} X^{4n - 1 - i} (z^{2n - 1 - i} + z^{2n + i})$$
     /// for some $z \in \mathbb{F}$.

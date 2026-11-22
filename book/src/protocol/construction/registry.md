@@ -27,6 +27,19 @@ $j$ as a string of $32$ bits. Bit reversal gives each index the point of
 smallest order that no earlier index has taken, so the point of an index does
 not depend on the size of the domain.
 
+A fuse commits a restriction such as $m(W, x, y)$ as it commits any other
+polynomial, with $4n$ coefficients, and the degree of $m$ in $W$ is less than
+the size of $D$. The domain must therefore fit in the coefficients of one
+polynomial:
+
+$$
+L \le 4n, \qquad |D| \le 4n.
+$$
+
+Since $4n$ is a power of two, the first bound gives the second.
+[`RegistryBuilder::finalize`](ragu_circuits::registry::RegistryBuilder::finalize)
+rejects a registry with more than $4n$ entries.
+
 ## Registry Polynomial {#registry-polynomial}
 
 Let $\ell^D_j(W)$ be the Lagrange basis polynomial of $D$ that is one at
@@ -36,20 +49,20 @@ its values on $D$:
 
 $$
 m(\omega_j, X, Y) = s_j(X, Y) \quad (j < L), \qquad
-m(\omega, X, Y) = \color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}
+m(\omega, X, Y) = \textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1}
 \quad \text{at every other } \omega \in D.
 $$
 
 Every $s_j$ carries the [registry constraint](wiring.md#system-gate)
-$\color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}$, so the polynomial at a point with
-nothing registered is a wiring polynomial with that constraint and no other. The
-basis polynomials of $D$ sum to one, which makes the constraint a term of $m$
-with no factor of $W$:
+$\textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1}$, so the polynomial at a point
+with nothing registered is a wiring polynomial with that constraint and no
+other. The basis polynomials of $D$ sum to one, which makes the constraint a
+term of $m$ with no factor of $W$:
 
 $$
 m(W, X, Y) = \sum_{j=0}^{L-1} \ell^D_j(W)
-  \left( s_j(X, Y) - \color{#7e22ce}{\kappa} \cdot (XY)^{4n-1} \right)
-  + \color{#7e22ce}{\kappa} \cdot (XY)^{4n-1}.
+  \left( s_j(X, Y) - \textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1} \right)
+  + \textcolor{#7e22ce}{\kappa} \cdot (XY)^{4n-1}.
 $$
 
 ## Kinds of Registered Polynomial {#registry-kinds}

@@ -114,6 +114,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Application::rerandomize` fuses its input twice through the
+  rerandomization step, each time with the application's bootstrap proof as
+  the right child, and no longer keeps a seeded unit proof of its own for
+  that. Under the Standard profile, its output is built to show nothing of
+  the input beyond its header, the data it carries and its online
+  polynomials. The method's documentation outlines the argument, which has
+  not been audited, and what the caller must ensure. Applications whose
+  users must not be told apart install one bootstrap proof for all of them
+  with `ApplicationBuilder::with_bootstrap`.
+- Every fuse draws three randomizers per side and three free coefficients
+  for every trace and stage it commits (`ragu_circuits::Blind`), so a proof's
+  folded `A` and `B` and batched `p` are uniformly random, and a commitment
+  to one of its polynomials and two evaluations of it do not determine the
+  rest. The exceptions are the challenge and bridge-hash stages and the `ab`
+  bridge, which hold only values a parent shows anyway, and a profile's
+  online and extension stages, which keep a single random coefficient. The
+  fold lays the randomizer's claim out in every group and its half-claim in
+  a last group of its own. A proof still shows its children's
+  commitments, challenges and headers. The Standard profile's walks grow by
+  two steps each (25 to 27, 29 to 31) and its fold from 91 to 95 native and
+  79 to 83 nested claims. The proof and compressed-proof schemas move to
+  version 4.
+- For the Standard profile, the largest `HEADER_SIZE` the wallet rank fits
+  drops from 201 to 195 elements, since every circuit holds one gate fewer
+  and the stages the challenge binders load carry the randomizers' values.
 - Compressed proofs from earlier versions do not verify, in every profile.
   Compression challenges are endoscalar lifts of the transcript's squeezes,
   143 bits wide as the fuse's challenges are, so that a circuit over the

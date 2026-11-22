@@ -12,6 +12,7 @@
 //! points stage committed before $x$ (see `_06_ab`).
 
 use ragu_circuits::{
+    Blind,
     polynomials::{Rank, sparse},
     registry::RegistryAt,
     staging::StageExt,
@@ -19,10 +20,10 @@ use ragu_circuits::{
 use ragu_core::{Cycle, Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
-use udon::field::Field;
 
-use super::claims::{
-    NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource,
+use super::{
+    claims::{NativeFuseBuilder, NativeFuseProofSource, NestedFuseBuilder, NestedFuseProofSource},
+    randomizer::{NestedRandomizer, Randomizers},
 };
 use crate::{
     Application,
@@ -59,6 +60,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         z: &Element<'dr, D>,
         native_source: &NativeFuseProofSource<'rx, C, R>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
+        randomizers: &'rx Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::inner_error::Witness<C, native::RevdotParameters<C::Profile>>,
@@ -73,10 +75,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
     {
         let (native_inner_error_witness, native_claims, registry_wy) =
             self.compute_native_inner_error(rng, native_registry, y, z, native_source, builder)?;
-        let (nested_inner_error_terms, nested_claims, nested_registry_wy) =
-            self.compute_nested_inner_error(nested_registry, y, z, nested_source)?;
-        let nested_inner_error_witness =
-            self.compute_bridge_inner_error(rng, &registry_wy, nested_inner_error_terms, builder)?;
+        let (nested_inner_error_terms, nested_claims, nested_registry_wy) = self
+            .compute_nested_inner_error(
+                nested_registry,
+                y,
+                z,
+                nested_source,
+                &randomizers.nested,
+            )?;
+        let nested_inner_error_witness = self.compute_bridge_inner_error(
+            rng,
+            &registry_wy,
+            nested_inner_error_terms,
+            randomizers.nested.c,
+            builder,
+        )?;
         Ok((
             native_inner_error_witness,
             native_claims,
@@ -109,6 +122,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let mut native_claims =
             NativeFuseBuilder::<C::CircuitField, R, B>::new(&self.native_registry, y, z);
         native::claims::build::<C::Profile, _, _>(native_source, &mut native_claims)?;
+        #[cfg(test)]
+        super::randomizer::observed::reach::<_, R, native::RevdotParameters<C::Profile>>(
+            &native_claims.a,
+            &native_claims.b,
+            (&native_source.randomizer.a, &native_source.randomizer.b),
+        );
+        // The fold randomizer's claims join the grid, so that the quotients
+        // below reveal nothing of the other claims' polynomials.
+        native_claims.randomize::<native::RevdotParameters<C::Profile>>(
+            native_source.randomizer_a(),
+            &native_source.randomizer.b,
+        );
 
         let native_inner_error_witness =
             native::stages::inner_error::Witness::<C, native::RevdotParameters<C::Profile>> {
@@ -118,16 +143,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                     R,
                     native::RevdotParameters<C::Profile>,
                 >(&native_claims.a, &native_claims.b),
+                randomizer_c: native_source.randomizer.c,
             };
         let native_rx = native::stages::inner_error::Stage::<
             C,
             R,
             HEADER_SIZE,
             native::RevdotParameters<C::Profile>,
-        >::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &native_inner_error_witness,
-        )?;
+        >::rx(Blind::random(rng), &native_inner_error_witness)?;
 
         builder.set_native_inner_error_rx(native_rx);
 
@@ -157,6 +180,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         native_y: &Element<'dr, D>,
         native_z: &Element<'dr, D>,
         nested_source: &NestedFuseProofSource<'rx, C, R>,
+        randomizer: &'rx NestedRandomizer<C, R>,
     ) -> Result<(
         FixedVec<
             FixedVec<
@@ -180,6 +204,18 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_z,
         );
         nested::claims::build::<C::Profile, _, _>(nested_source, &mut nested_claims)?;
+        #[cfg(test)]
+        super::randomizer::observed::reach::<_, R, nested::RevdotParameters<C::Profile>>(
+            &nested_claims.a,
+            &nested_claims.b,
+            (&randomizer.a, &randomizer.b),
+        );
+        // The nested fold randomizer's claims join the grid as the native
+        // ones do.
+        nested_claims.randomize::<nested::RevdotParameters<C::Profile>>(
+            alloc::borrow::Cow::Borrowed(&randomizer.a),
+            &randomizer.b,
+        );
 
         let error_terms = fold_revdot::inner_error_terms_with_backend::<
             B,
@@ -212,15 +248,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             >,
             <nested::RevdotParameters<C::Profile> as Parameters>::NumGroups,
         >,
+        randomizer_c: C::ScalarField,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::inner_error::Witness<C::HostCurve, C::Profile>> {
         let nested_inner_error_witness = nested::stages::inner_error::Witness {
             native_inner_error: builder.native_inner_error_commitment(),
             registry_wy: registry_wy.commitment,
             error_terms,
+            randomizer_c,
         };
         let bridge_rx = nested::stages::inner_error::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &nested_inner_error_witness,
         )?;
         let bridge_commitment =

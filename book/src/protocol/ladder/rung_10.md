@@ -26,6 +26,10 @@ is a nonzero polynomial in $\beta$ of degree at most $J$, and the claim
 $p(u) = v$ is true only if $\beta$ is one of its roots. [Rung 11](rung_11.md)
 explains why $\beta$ is drawn from a smaller set than the challenges before it.
 
+The implementation folds one more polynomial into $p$, a
+[batch randomizer](../construction/batch.md#batch-randomizer) that no claim
+names. It is one more $h_j$ with its own $e_j$, and the argument is unchanged.
+
 This is the third claim of the accumulator. The children's opening claims were
 among the $L$ inputs, so every opening owed anywhere in the subtree has been
 reduced to this one. The scalar half, the computation of $v$, runs in the

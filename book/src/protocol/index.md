@@ -46,6 +46,19 @@ compatibility with the
 elliptic curves (used for signing in hardware wallets, for example) as
 deployed in Orchard.
 
+## Reading Routes {#reading-routes}
+
+Several chapters of this part describe the same protocol, each for a different
+question.
+
+| Question | Chapter |
+|---|---|
+| Why does the protocol have these components? | [The Refinement Ladder](ladder/index.md) starts from a verifier that checks everything and makes one change per rung. |
+| What happens during a fuse? | The [Fuse PIOP](iop.md) follows one fuse round by round, and its [contract](iop.md#iop-contract) says what a fuse establishes. |
+| What is the exact representation, order or circuit contract? | [Construction](construction/index.md) is the reference that the other chapters link. |
+| What is assumed, and what is left open? | [Assumptions of the Argument](ladder/assumptions.md) lists both. |
+| How does a root proof reach a verifier, or an aggregator? | [Compression](recursion/compression.md) and [Decompression](recursion/decompression.md). |
+
 ## ECDLP-based Protocol
 
 Tachyon will need _small_ recursive proof sizes for deployment in Zcash,

@@ -30,21 +30,22 @@ following hold.
 6. Each stored registry restriction agrees with its registry at a random point:
    the stored native restriction, evaluated at $\tau_w$, equals
    $m(\tau_w, x, y)$, and the stored nested restriction, evaluated at
-   $\tau_{q,w}$, equals $m_q(\tau_{q,w}, x_q, y_q)$.
+   $\tau_{q,w}$, equals $m_q(\tau_{q,w}, x_q, y_q)$. This is the
+   [identity](batch.md#registry-candidates) that every fuse leaves owed.
 
 7. $r_q[\texttt{ChallengeStage}]$ equals, coefficient by coefficient, the stage
    polynomial with $\v{a}_0 = 0$ over
    $(w_q, y_q, z_q, \mu_q, \mu'_q, x_q, \alpha_q, u_q)$, the sign $\sigma$
    and $\beta_q$. The sign is $+1$ when `circuit_id` is the index of
    `Bootstrap` and $-1$ otherwise.
-8. For the $52$ pairs $(\phi_i, \Phi_i)$ of a native polynomial and its stored
+8. For the $54$ pairs $(\phi_i, \Phi_i)$ of a native polynomial and its stored
    commitment,
 
-   $$\sum_{i=0}^{51} \tau_r^{51-i} \cdot \Phi_i = \Big[ \sum_{i=0}^{51} \tau_r^{51-i} \, \phi_i \Big].$$
+   $$\sum_{i=0}^{53} \tau_r^{53-i} \cdot \Phi_i = \Big[ \sum_{i=0}^{53} \tau_r^{53-i} \, \phi_i \Big].$$
 
-   The polynomials are the $46$ rx polynomials, $A$, $B$, $m(W, x, y)$, $p$,
+   The polynomials are the $48$ rx polynomials, $A$, $B$, $m(W, x, y)$, $p$,
    $o_0$ and $o_1$.
-9. The same holds with $\tau_{q,r}$ for the $47$ nested pairs: the $43$ rx
+9. The same holds with $\tau_{q,r}$ for the $49$ nested pairs: the $45$ rx
    polynomials, $A_q$, $B_q$, $m_q(W, x_q, y_q)$ and $p_q$.
 10. The values `a` and `b` read from $r[\texttt{PointsAb}]$ and `registry_xy`
     read from $r[\texttt{PointsF}]$ are the coordinates of $[A_q]$, $[B_q]$ and
@@ -69,19 +70,19 @@ that is bounded as follows.
   the field of the side.
 - A bonding claim over a list of $L$ polynomials, one of which violates a
   constraint, holds with probability at most
-  [$(4n - 2 + L)/|\F|$](claims.md#claims). The longest list has $26$ entries on
-  the native side and $29$ on the nested side.
+  [$(4n - 2 + L)/|\F|$](claims.md#claims). The longest list has $28$ entries on
+  the native side and $31$ on the nested side.
 - A stored restriction that is not that of the registry passes check 6 with
   probability at most $(4n - 1)/|\F|$, since the two differ by a polynomial of
   degree at most $4n - 1$.
 - A stored commitment that is not the commitment of its polynomial passes
-  check 8 with probability at most $51/|\F_p|$, and check 9 with probability
-  at most $46/|\F_q|$.[^rlc]
+  check 8 with probability at most $53/|\F_p|$, and check 9 with probability
+  at most $48/|\F_q|$.[^rlc]
 
 [^rlc]: By the linearity of the commitment, check 8 says that
-    $\sum_i \tau_r^{51-i} \cdot (\Phi_i - [\phi_i])$ is the identity. The group
+    $\sum_i \tau_r^{53-i} \cdot (\Phi_i - [\phi_i])$ is the identity. The group
     has prime order, so this is a polynomial in $\tau_r$ of degree at most
-    $51$, and it is nonzero when some $\Phi_i$ differs from $[\phi_i]$.
+    $53$, and it is nonzero when some $\Phi_i$ differs from $[\phi_i]$.
 
 ## Claims of a Single Proof {#single-proof}
 
@@ -89,18 +90,19 @@ The single-proof lists are the [claim lists](claims.md) with one proof in place
 of two children. A sum on an $a$ side is unchanged, and a Horner list has one
 entry per named polynomial instead of two.
 
-The native list has $51$ claims: the $35$ internal circuits and $16$ of the
+The native list has $53$ claims: the $37$ internal circuits and $16$ of the
 $18$ bondings. It has no claim for the step circuit and none for the two
 bonding polynomials of the application stage. The proof's own fuse folded those
-three claims, and the proof does not hold their polynomials. The native raw
-claim is omitted as well, because its target $c$ is derived from the
-polynomials that it would test. The targets are computed from $\pi$, with $U$
-assembled from the stored commitments, the stored challenges,
+three claims, and the proof does not hold their polynomials. The same is true
+of the fuse's [randomizer claims](claims.md#randomizer) on both sides. The
+native raw claim is omitted as well, because its target $c$ is derived from
+the polynomials that it would test. The targets are computed from $\pi$, with
+$U$ assembled from the stored commitments, the stored challenges,
 `nested_challenges_partial` and the derived $c$ and $v$.
 
-The target of `hashes_1` is [$k_{\text{bridge}}(\tau_y)$](proof.md#native-unified)
-over $U$, the output header that the decider was given, and the domain point
-of `circuit_id`:
+The target of `hashes_1` is
+[$k_{\text{bridge}}(\tau_y)$](proof.md#native-unified) over $U$, the output
+header that the decider was given, and the domain point of `circuit_id`:
 
 $$\text{Horner}_{\tau_y}[U_1, \dots, U_{39}, \text{hdr}(\delta), \omega_{\text{id}}, 0, 1].$$
 
@@ -117,7 +119,7 @@ Check 2 keeps the index that the decider reads, here and in the
 [stage values](#stage-values), inside the domain in which the root's `hashes_1`
 placed its own copy.
 
-The nested list has $47$ claims: the raw claim, the $29$ endoscaling steps,
+The nested list has $49$ claims: the raw claim, the $31$ endoscaling steps,
 `Collapse`, `ComputeV` and the $15$ bondings. The raw claim is included and
 holds by construction. The target of `Collapse` and `ComputeV` is
 $k_q(\tau_{q,y})$ over the proof's own
@@ -157,8 +159,9 @@ The walks and the opened values are constrained by the fuse's own circuits, and
 checks 4 and 5 establish that those circuits are satisfied. The walks constrain
 the commitments $P$ and $P_q$, and checks 8 and 9 hold $p$ and $p_q$ to them.
 
-The decider does not examine the children's claims or the claim of the root's
-step circuit. They were folded into $(A, B)$ and $(A_q, B_q)$. The `collapse`
+The decider does not examine the children's claims, the claim of the root's
+step circuit or the claims of the root's randomizers. They were folded into
+$(A, B)$ and $(A_q, B_q)$. The `collapse`
 and `Collapse` claims of checks 4 and 5 bind the derived $c$ and $c_q$ to the
 fold of the targets, and the `compute_v` and `ComputeV` claims, with the root's
 batched openings, bind the folded polynomials to the

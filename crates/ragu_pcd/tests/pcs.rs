@@ -22,6 +22,7 @@ use ragu_core::{
 use ragu_primitives::vec::Len;
 use udon::field::Field;
 
+use super::randomizer::{NestedRandomizer, observed};
 use crate::{
     Pcd,
     header::Header,
@@ -91,6 +92,7 @@ fn check_batch<H: Header<Fp>>(
     parent_pcd: &Pcd<C, R, H>,
     left_pcd: &Pcd<C, R, H>,
     right_pcd: &Pcd<C, R, H>,
+    randomizer: &NestedRandomizer<C, R>,
     inputs: &support::Inputs,
 ) -> Result<()> {
     let (parent, left, right) = (parent_pcd.proof(), left_pcd.proof(), right_pcd.proof());
@@ -127,6 +129,10 @@ fn check_batch<H: Header<Fp>>(
         registry_xy: parent.nested_registry_xy_poly(),
         a: &parent.nested_a_poly,
         b: &parent.nested_b_poly,
+        // The parent's fuse drew these and did not keep them.
+        randomizer_a: &randomizer.a,
+        randomizer_b: &randomizer.b,
+        mask: &randomizer.mask,
         // The standard profile has no online Fq polynomial.
         online_fq: &[],
     };
@@ -140,7 +146,13 @@ fn check_batch<H: Header<Fp>>(
         a: commit(batch.a),
         b: commit(batch.b),
         registry_xy: commit(batch.registry_xy),
+        randomizer_a: commit(batch.randomizer_a),
+        randomizer_b: commit(batch.randomizer_b),
+        mask: commit(batch.mask),
     };
+    assert_eq!(current.randomizer_a, randomizer.a_commitment);
+    assert_eq!(current.randomizer_b, randomizer.b_commitment);
+    assert_eq!(current.mask, randomizer.mask_commitment);
 
     // Name occurrences, not just polynomials: wx0, wx1, wy and xy each
     // occur at several different points, with different alpha weights.
@@ -163,6 +175,8 @@ fn check_batch<H: Header<Fp>>(
         ("right.b@x", &right.nested_b_poly, ch.x),
         ("a@xz", batch.a, xz),
         ("b@x", batch.b, ch.x),
+        ("randomizer_a@xz", batch.randomizer_a, xz),
+        ("randomizer_b@x", batch.randomizer_b, ch.x),
     ]
     .into_iter()
     .map(|(tag, poly, point)| (tag.into(), poly, point))
@@ -216,6 +230,9 @@ fn check_batch<H: Header<Fp>>(
         ("a", batch.a, current.a),
         ("b", batch.b, current.b),
         ("xy", batch.registry_xy, current.registry_xy),
+        ("randomizer_a", batch.randomizer_a, current.randomizer_a),
+        ("randomizer_b", batch.randomizer_b, current.randomizer_b),
+        ("mask", batch.mask, current.mask),
     ] {
         evaluated.push((format!("current.{tag}"), poly, commitment));
     }
@@ -350,7 +367,10 @@ mod folding {
     use udon::field::Field;
 
     use super::{
-        super::{_05_outer_error::NestedFuseEmulator, claims::NestedFuseProofSource},
+        super::{
+            _05_outer_error::NestedFuseEmulator, claims::NestedFuseProofSource,
+            randomizer::NestedRandomizer,
+        },
         stage_values, support,
     };
     use crate::{
@@ -466,13 +486,16 @@ mod folding {
         parent: &Proof<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        randomizer: &NestedRandomizer<C, R>,
     ) -> Result<()> {
+        use ragu_primitives::vec::Len;
+
         let y = nested::challenge::<C>(parent.y())?;
         let z = nested::challenge::<C>(parent.z())?;
         let mu = nested::challenge::<C>(parent.mu())?;
         let mu_prime = nested::challenge::<C>(parent.mu_prime())?;
 
-        let (nested_claims, children) = child_claims(app, left, right, y, z)?;
+        let (mut nested_claims, children) = child_claims(app, left, right, y, z)?;
 
         // Two raw claims, one circuit claim per endoscaling step and per
         // instance circuit per child, and one bonding claim per bonding kind
@@ -491,6 +514,47 @@ mod folding {
             .enumerate()
         {
             assert_eq!(a.revdot(b), ky, "nested claim {i} does not hold");
+        }
+
+        // The parent folded its randomizer with those claims: the whole
+        // claim at the last node of every group but the last, and its a
+        // side against zero alone in the last group. Lay the grid out here
+        // from that description, apart from the production layout.
+        let groups = <P as fold_revdot::Parameters>::NumGroups::len();
+        let size = <P as fold_revdot::Parameters>::GroupSize::len();
+        assert_eq!(randomizer.c, randomizer.a.revdot(&randomizer.b));
+        let zero = sparse::Polynomial::<Fq, R>::default();
+        let lay_out = |real: &[Cow<'_, sparse::Polynomial<Fq, R>>],
+                       full: &sparse::Polynomial<Fq, R>,
+                       half: &sparse::Polynomial<Fq, R>| {
+            assert!(real.len() <= (groups - 1) * (size - 1));
+            let mut grid = Vec::with_capacity(groups * size);
+            for group in real.chunks(size - 1) {
+                grid.extend(group.iter().map(|poly| poly.as_ref().clone()));
+                grid.resize(grid.len().next_multiple_of(size) - 1, zero.clone());
+                grid.push(full.clone());
+            }
+            while grid.len() < (groups - 1) * size {
+                grid.resize(grid.len() + size - 1, zero.clone());
+                grid.push(full.clone());
+            }
+            grid.push(half.clone());
+            grid.resize(groups * size, zero.clone());
+            grid
+        };
+        let grid_a = lay_out(&nested_claims.a, &randomizer.a, &randomizer.a);
+        let grid_b = lay_out(&nested_claims.b, &randomizer.b, &zero);
+        nested_claims.randomize::<P>(Cow::Borrowed(&randomizer.a), &randomizer.b);
+        assert_eq!(nested_claims.a.len(), grid_a.len());
+        for (i, ((a, b), (expected_a, expected_b))) in nested_claims
+            .a
+            .iter()
+            .zip(nested_claims.b.iter())
+            .zip(grid_a.iter().zip(grid_b.iter()))
+            .enumerate()
+        {
+            assert!(a.iter_coeffs().eq(expected_a.iter_coeffs()), "grid a {i}");
+            assert!(b.iter_coeffs().eq(expected_b.iter_coeffs()), "grid b {i}");
         }
 
         // 2. The accumulator is the two-layer fold of those claims.
@@ -527,7 +591,8 @@ mod folding {
         );
 
         // The inner stage starts with two curve points (four coordinates),
-        // followed by the error terms in group-major order.
+        // followed by the error terms in group-major order and then the
+        // randomizer's target.
         let inner_values = stage_values::<
             nested::stages::inner_error::Stage<
                 <C as Cycle>::HostCurve,
@@ -535,11 +600,17 @@ mod folding {
                 <C as ProfiledCycle>::Profile,
             >,
         >(&parent.bridge_inner_error_rx);
+        let (stored_inner_errors, stored_c) = inner_values[4..].split_at(inner_values.len() - 5);
         assert!(
-            inner_values[4..]
+            stored_inner_errors
                 .iter()
                 .eq(inner_errors.iter().flat_map(|group| group.iter())),
             "the inner bridge does not store the fold's error terms"
+        );
+        assert_eq!(
+            stored_c,
+            &[randomizer.c],
+            "the inner bridge does not store the randomizer's target"
         );
 
         // The outer stage starts with one curve point, followed by the outer
@@ -606,6 +677,7 @@ mod folding {
                 ),
             ),
             |dr, witness| {
+                let randomizer_c = Element::constant(dr, randomizer.c);
                 let (errors, layers, kys) = witness.cast();
                 let (inner_errors, outer_errors) = errors.cast();
                 let (mu, mu_prime) = layers.cast();
@@ -636,12 +708,22 @@ mod folding {
                 );
                 let mut ky = nested::claims::ky_values::<crate::profile::Standard, _>(&ky_source);
 
+                // The targets over the grid: each group's claims', then the
+                // randomizer's, and zeros in the last group.
                 let layer1 = ClaimFolder::new(&mu);
                 let collapsed = FixedVec::try_from_fn(|i| {
                     let errors = FixedVec::try_from_fn(|j| {
                         Element::alloc(dr, allocator, inner_errors.as_ref().map(|et| et[i][j]))
                     })?;
-                    let ky = FixedVec::from_fn(|_| ky.next().unwrap());
+                    let ky = FixedVec::from_fn(|j| {
+                        if i + 1 == groups {
+                            Element::zero(dr)
+                        } else if j + 1 == size {
+                            randomizer_c.clone()
+                        } else {
+                            ky.next().unwrap()
+                        }
+                    });
                     layer1.fold_inner::<P>(dr, &errors, &ky)
                 })?;
 
@@ -670,12 +752,16 @@ proptest! {
     #[ignore = "recursion regression suite: run by the scheduled heavy-tests workflow"]
     fn nested_batch_opens_what_it_claims(inputs in support::inputs()) {
         support::with_app(|app| {
+            // The parent's fuse is the last one each helper runs, so the
+            // randomizers this thread last drew are the parent's.
             let (parent, left, right) = support::fused(app, &inputs)?;
-            check_batch(app, &parent, &left, &right, &inputs)?;
-            folding::check(app, parent.proof(), left.proof(), right.proof())?;
+            let randomizer = observed::last::<C, R>().nested;
+            check_batch(app, &parent, &left, &right, &randomizer, &inputs)?;
+            folding::check(app, parent.proof(), left.proof(), right.proof(), &randomizer)?;
             let (parent, left, right) = support::unit_fused(app, &inputs)?;
-            check_batch(app, &parent, &left, &right, &inputs)?;
-            folding::check(app, parent.proof(), left.proof(), right.proof())?;
+            let randomizer = observed::last::<C, R>().nested;
+            check_batch(app, &parent, &left, &right, &randomizer, &inputs)?;
+            folding::check(app, parent.proof(), left.proof(), right.proof(), &randomizer)?;
             check_dummy(app);
             Ok::<_, ragu_core::Error>(())
         }).unwrap();

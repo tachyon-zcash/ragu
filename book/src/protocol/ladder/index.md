@@ -14,9 +14,9 @@ as a ladder. [Rung 0](rung_00.md) is a verifier that checks everything directly.
 Each later rung makes one change and records what is owed afterwards. The top of
 the ladder is the protocol implemented in the `ragu_pcd` crate. The
 [Construction](../construction/index.md) section specifies it as far as the
-decider of [rung 15](rung_15.md), and
-[Compression](../recursion/compression.md) gives the protocol of
-[rung 16](rung_16.md).
+decider of [rung 15](rung_15.md), the [Fuse PIOP](../iop.md) follows one fuse
+round by round, and [Compression](../recursion/compression.md) gives the
+protocol of [rung 16](rung_16.md).
 
 Each rung has the same four parts:
 

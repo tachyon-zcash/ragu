@@ -101,7 +101,7 @@ mod decompress_statement_tests;
 mod profile_corruption_tests;
 
 use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
-use core::{any::TypeId, cell::OnceCell, marker::PhantomData};
+use core::{any::TypeId, marker::PhantomData};
 
 pub use compress::{CompressedPcd, CompressedProof};
 use header::Header;
@@ -249,6 +249,14 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// instance with [`Proof::to_bytes`]. Finalization installs it instead of
     /// running the bootstrap fuse.
     ///
+    /// In the standard profile, [`Application::rerandomize`] uses this proof
+    /// as a public right child. A proof unique to one wallet makes its
+    /// commitments a stable tag in full uncompressed rerandomized outputs.
+    /// To avoid that tag, an application must distribute one verified proof
+    /// for each compatible configuration and require every wallet to match
+    /// its bytes or digest against a value pinned in shared configuration.
+    /// This method cannot check that other wallets use the same proof.
+    ///
     /// The proof is checked for this profile's shape and for being a proof of
     /// the bootstrap step, not for validity. No supplied proof can make
     /// anything verify that otherwise would not. Every
@@ -257,6 +265,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// and padding polynomial slots, whatever its own application claim,
     /// which no one enforces. But a supplied proof that does not verify
     /// makes every proof built on it fail verification.
+    /// Verify it separately through [`Application::compress`] and
+    /// [`Application::verify_compressed`] before producing proofs.
     /// Key a stored proof by everything that fixes it (see
     /// [`Application::bootstrap_proof`]) so that a changed application never
     /// loads a stale one.
@@ -354,10 +364,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         );
 
         let stage_size = self.stage_size.max(S::NUM_STAGED);
-        // Leave room after the SYSTEM gate and the stage.
+        // Leave room after the SYSTEM gate and the stage, before the blind
+        // gate.
         if 1usize
             .checked_add(staging::stage_gates(stage_size))
-            .is_none_or(|end| end >= R::n())
+            .is_none_or(|end| end >= R::blind_gate())
         {
             return Err(Error::Initialization(
                 "the application stage does not fit the rank's gates".into(),
@@ -446,7 +457,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             let stage_size = self.stage_size.max(<Decompress as Step<C>>::NUM_STAGED);
             if 1usize
                 .checked_add(staging::stage_gates(stage_size))
-                .is_none_or(|end| end >= R::n())
+                .is_none_or(|end| end >= R::blind_gate())
             {
                 return Err(Error::Initialization(
                     "the application stage does not fit the rank's gates".into(),
@@ -588,7 +599,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
             output_headers: self.output_headers,
             stage_size: self.stage_size,
             bootstrap: self.bootstrap.map(|proof| *proof),
-            seeded_trivial: OnceCell::new(),
             context,
             _marker: PhantomData,
         };
@@ -596,10 +606,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         // Bootstrap the recursion once, up front, so that `seed` never pays
         // for it lazily, unless the application was given the proof. The proof
         // carries no secrets — it attests nothing and is consumed as a public
-        // child by every seed — so a fixed seed is fine. Its bytes are stable
-        // for a given `rand` version but must not be relied on across versions
-        // (`StdRng` is not portable), so never pin them: a stored proof stays
-        // valid, but one built later need not match it.
+        // child by every seed — so a fixed seed is fine. The same build and
+        // application configuration reproduce the proof, but `StdRng` may
+        // vary across versions or platforms. A deployment needing common
+        // bytes across compatible builds should share a stored proof rather
+        // than assume regeneration matches.
         if app.bootstrap.is_none() {
             let mut rng = StdRng::seed_from_u64(0);
             let (pcd, ()) = app.fuse(
@@ -728,9 +739,6 @@ pub struct Application<
     /// doing so runs [`fuse`](Self::fuse) on the otherwise complete
     /// `Application`.
     bootstrap: Option<Proof<C, R>>,
-    /// A valid `Pcd<()>` used as the right child during rerandomization.
-    /// Lazily derived from the bootstrap proof and then reused.
-    seeded_trivial: OnceCell<Proof<C, R>>,
     _marker: PhantomData<([(); HEADER_SIZE], B)>,
 }
 
@@ -787,13 +795,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// nothing, and its own witness is empty: the bootstrap step skips its
     /// children's claims and outputs the data-less unit header.
     ///
-    /// The proof is fixed by the application's configuration: its registries
-    /// and public parameters, its profile, rank and header size, the circuits
-    /// of the Ragu version in use, and for a profile with an extension the
-    /// prover context at finalization. Store it, for instance with
-    /// [`Proof::to_bytes`], and supply it to later applications of the same
-    /// configuration with [`ApplicationBuilder::with_bootstrap`], so that
-    /// their finalization skips the bootstrap fuse.
+    /// The default proof depends on the application's configuration: its
+    /// registries and public parameters, its profile, rank and header size,
+    /// the circuits of the Ragu version in use, the `StdRng` implementation,
+    /// and for a profile with an extension the prover context at finalization.
+    /// Store it with [`Proof::to_bytes`] and supply it to later applications
+    /// of the same configuration with [`ApplicationBuilder::with_bootstrap`],
+    /// so their finalization skips the bootstrap fuse.
     ///
     /// Like every uncompressed proof, this one is not zero-knowledge: for a
     /// profile with an extension it holds the extension's polynomials,
@@ -814,61 +822,87 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.bootstrap_proof().clone().carry(())
     }
 
-    /// Returns the cached valid `Pcd<()>` used as the neutral right child of
-    /// rerandomization.
-    ///
-    /// The proof is lazily created by folding the bootstrap proof with itself
-    /// through the unit instantiation of the rerandomization step. Subsequent
-    /// calls reuse the same proof.
-    fn seeded_trivial_pcd<RNG: CryptoRng>(&self, rng: &mut RNG) -> Result<Pcd<C, R, ()>> {
-        let proof = match self.seeded_trivial.get() {
-            Some(proof) => proof,
-            None => {
-                let (pcd, ()) = self.fuse(
-                    rng,
-                    step::internal::rerandomize::Rerandomize::new(),
-                    (),
-                    self.bootstrap_pcd(),
-                    self.bootstrap_pcd(),
-                )?;
-                self.seeded_trivial.get_or_init(|| pcd.into_parts().0)
-            }
-        };
-        Ok(proof.clone().carry(()))
-    }
-
     /// Rerandomize proof-carrying data.
     ///
-    /// This will internally fold the [`Pcd`] with a cached seeded `Pcd<()>`
-    /// using an internal rerandomization step, producing a
-    /// fresh proof that is valid for the same [`Header`] and carries the same
-    /// data. `Application::verify_uncompressed` produces the same result on
-    /// the provided `pcd` as it would on the output of this method.
+    /// The output is a proof for the same [`Header`], carrying the same data
+    /// and the same online polynomials. It is built so that its distribution
+    /// depends on nothing else about `pcd`: whoever produced `pcd` and later
+    /// sees the output, in full, should learn that it is a rerandomization
+    /// of some proof for that header and no more. The argument for that is
+    /// outlined below. It has not been written out as a proof, and it has
+    /// not been audited. With a valid bootstrap proof,
+    /// `Application::verify_uncompressed` gives the same result for `pcd`
+    /// and for any returned proof.
     ///
-    /// The intent is that the output be unlinkable to the input. Today that is
-    /// not achieved at all: the output embeds the input's commitments and stage
-    /// polynomials in the clear (as its left-child data), and its folded
-    /// accumulator is a deterministic function of the input proof, cached
-    /// seeded proof, and public challenges. Achieving witness-hiding of the
-    /// accumulator needs a fold-level randomizer; unlinkability of an
-    /// uncompressed proof additionally needs the child data hidden (compression,
-    /// or a second randomized pass). Both are future work, tracked separately.
+    /// # How
+    ///
+    /// The input is fused twice through the internal rerandomization step,
+    /// each time with the application's bootstrap proof as the right child.
+    /// A fuse stores what it reads of its children as stage values, so one
+    /// pass would show the input's commitments in the clear. After the
+    /// second pass the output holds the first pass's commitments, which are
+    /// fresh, and values computed from the first pass's polynomials, which
+    /// randomness the rerandomizer draws hides: the free coefficients of
+    /// every trace and stage (see [`Blind`](ragu_circuits::Blind)) and the
+    /// randomizers every fuse folds and batches. The documentation of the
+    /// internal `fuse::randomizer` module accounts for each value the output
+    /// shows.
+    ///
+    /// The default bootstrap is generated with a fixed seed, so the same build
+    /// and application configuration reproduce the proof. `StdRng` may vary
+    /// across versions or platforms, and [`ApplicationBuilder::with_bootstrap`]
+    /// can install a different valid proof. The full uncompressed output's
+    /// bridge preamble contains the right child's commitments. A proof unique
+    /// to one wallet can therefore link its outputs; proofs shared only by a
+    /// software version can identify a cohort. To avoid this tag, an
+    /// application should distribute one verified proof per compatible
+    /// configuration, pin its bytes or digest in shared configuration, and
+    /// have every wallet load that proof with
+    /// [`ApplicationBuilder::with_bootstrap`].
+    ///
+    /// # What the caller must ensure
+    ///
+    /// - `pcd` verifies. For a proof that does not, this returns an error
+    ///   or yields a proof that also fails verification. A receiver accepts a
+    ///   proof as described in the [crate documentation](crate) before it
+    ///   rerandomizes it.
+    /// - The application's bootstrap proof verifies. The one that
+    ///   [`ApplicationBuilder::finalize`] builds does. One supplied with
+    ///   [`ApplicationBuilder::with_bootstrap`] is not checked for validity,
+    ///   and if it does not verify, this returns an error or yields a proof
+    ///   that also fails verification.
+    /// - `rng` is a cryptographically secure source that the producer of
+    ///   `pcd` cannot predict.
+    /// - The header's data and its online polynomials are what the output
+    ///   may reveal. The output carries both unchanged.
+    ///
+    /// This holds for the standard profile only. Other profiles store
+    /// polynomials and values of their own in a proof, which this method
+    /// does not account for.
+    ///
+    /// Compression is not hiding. To send a compressed proof, compress the
+    /// output, not `pcd`: the compressed proof is computed from the output,
+    /// so it shows no more of `pcd` than the output does.
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: Pcd<C, R, H>,
         rng: &mut RNG,
     ) -> Result<Pcd<C, R, H>> {
-        let seeded_trivial = self.seeded_trivial_pcd(rng)?;
-
-        // The Rerandomize step's witness() returns the left input's data as
-        // output data, preserving it through rerandomization. Its right child
-        // is the valid, cached seeded unit proof.
-        self.fuse(
+        // The step returns the left input's data as its output's, so the
+        // header and its data pass through both fuses unchanged.
+        let (once, ()) = self.fuse(
             rng,
             step::internal::rerandomize::Rerandomize::new(),
             (),
             pcd,
-            seeded_trivial,
+            self.bootstrap_pcd(),
+        )?;
+        self.fuse(
+            rng,
+            step::internal::rerandomize::Rerandomize::new(),
+            (),
+            once,
+            self.bootstrap_pcd(),
         )
         .map(|(pcd, ())| pcd)
     }

@@ -52,7 +52,7 @@ where
 // the preamble, query and eval stages, and with the step's own output header
 // and online openings in the preamble beside the children's bridge hashes
 // the last binder fills the gate budget here.
-pub const HEADER_SIZE: usize = 201;
+pub const HEADER_SIZE: usize = 195;
 
 // Number of trivial application circuits to register before testing internal
 // circuits. Internal circuit construction depends on the resulting registry
@@ -230,20 +230,23 @@ fn test_internal_circuit_constraint_counts() {
         }};
     }
 
-    check_constraints!(Hashes1Circuit,              mul = 1807, lin = 3053);
-    check_constraints!(Hashes2Circuit,              mul = 1881, lin = 2991);
-    check_constraints!(CollapseCircuit,             mul = 1573, lin = 2518);
-    check_constraints!(ComputeVCircuit,             mul = 1933, lin = 2888);
-    check_constraints!(BindChallengesCircuit(0),    mul = 2032, lin = 3061);
-    check_constraints!(BindChallengesCircuit(1),    mul = 2037, lin = 3071);
-    check_constraints!(BindChallengesCircuit(2),    mul = 2037, lin = 3071);
-    check_constraints!(BindChallengesCircuit(3),    mul = 2048, lin = 3093);
-    check_constraints!(BindBetaCircuit,             mul = 1897, lin = 3125);
-    check_constraints!(BindEndoscalarCircuit,       mul = 940,  lin = 1760);
-    // Every native endoscaling step walks four points and lays out the same.
-    for step in 0..native::NUM_ENDOSCALING_STEPS as u32 {
-        check_constraints!(EndoscalingStep(step),   mul = 1995, lin = 3502);
+    check_constraints!(Hashes1Circuit,              mul = 1787, lin = 3023);
+    check_constraints!(Hashes2Circuit,              mul = 1873, lin = 2991);
+    check_constraints!(CollapseCircuit,             mul = 1603, lin = 2567);
+    check_constraints!(ComputeVCircuit,             mul = 1981, lin = 2986);
+    check_constraints!(BindChallengesCircuit(0),    mul = 2031, lin = 3061);
+    check_constraints!(BindChallengesCircuit(1),    mul = 2036, lin = 3071);
+    check_constraints!(BindChallengesCircuit(2),    mul = 2036, lin = 3071);
+    check_constraints!(BindChallengesCircuit(3),    mul = 2047, lin = 3093);
+    check_constraints!(BindBetaCircuit,             mul = 1888, lin = 3125);
+    check_constraints!(BindEndoscalarCircuit,       mul = 970,  lin = 1809);
+    // Every native endoscaling step but the last walks four points and has
+    // the same layout; the last walks the 107 inputs' remaining three.
+    let last = native::NUM_ENDOSCALING_STEPS as u32 - 1;
+    for step in 0..last {
+        check_constraints!(EndoscalingStep(step),   mul = 2004, lin = 3502);
     }
+    check_constraints!(EndoscalingStep(last),       mul = 1567, lin = 2628);
 }
 
 #[rustfmt::skip]
@@ -257,16 +260,16 @@ fn test_internal_stage_parameters() {
     }
 
     check_stage!(PointsBinding, skip = 1, num = 28);
-    check_stage!(Preamble, skip = 29, num = 348);
-    check_stage!(OuterError, skip = 377, num = 19);
-    check_stage!(InnerError, skip = 396, num = 42);
-    check_stage!(Query, skip = 377, num = 79);
-    check_stage!(Eval, skip = 456, num = 60);
-    check_stage!(PointsPreamble, skip = 29, num = 66);
-    check_stage!(PointsRegistryWx, skip = 95, num = 2);
-    check_stage!(PointsAb, skip = 97, num = 3);
-    check_stage!(PointsF, skip = 100, num = 2);
-    check_stage!(PointsWalk, skip = 102, num = 144);
+    check_stage!(Preamble, skip = 29, num = 339);
+    check_stage!(OuterError, skip = 368, num = 20);
+    check_stage!(InnerError, skip = 388, num = 53);
+    check_stage!(Query, skip = 368, num = 83);
+    check_stage!(Eval, skip = 451, num = 64);
+    check_stage!(PointsPreamble, skip = 29, num = 70);
+    check_stage!(PointsRegistryWx, skip = 99, num = 4);
+    check_stage!(PointsAb, skip = 103, num = 3);
+    check_stage!(PointsF, skip = 106, num = 3);
+    check_stage!(PointsWalk, skip = 109, num = 146);
 }
 
 /// Every native internal circuit's claim in [`native::claims`] composes its
@@ -703,19 +706,19 @@ fn nested_circuits() -> impl Iterator<Item = nested::InternalCircuitIndex> {
 #[test]
 fn test_nested_circuit_constraint_counts() {
     // Every nested endoscaling step but the last walks four points and has
-    // the same layout; the last walks the 103 inputs' remaining three.
+    // the same layout; the last walks the 121 inputs' remaining one.
     let steps = crate::internal::endoscalar::num_steps(
         nested::ENDOSCALINGS_PER_STEP,
         nested::NUM_ENDOSCALING_POINTS,
     );
     let mut expected = alloc::vec::Vec::new();
     for step in 0..steps - 1 {
-        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2014, 3501)));
+        expected.push((nested::InternalCircuitIndex::EndoscalingStep(step as u32), (2023, 3501)));
     }
-    expected.push((nested::InternalCircuitIndex::EndoscalingStep(steps as u32 - 1), (1140, 1753)));
-    expected.push((nested::InternalCircuitIndex::Collapse, (1580, 2465)));
-    expected.push((nested::InternalCircuitIndex::ComputeV, (1496, 1869)));
-    expected.push((nested::InternalCircuitIndex::Loading,  (561,  231)));
+    expected.push((nested::InternalCircuitIndex::EndoscalingStep(steps as u32 - 1), (712, 879)));
+    expected.push((nested::InternalCircuitIndex::Collapse, (1714, 2664)));
+    expected.push((nested::InternalCircuitIndex::ComputeV, (1588, 1973)));
+    expected.push((nested::InternalCircuitIndex::Loading,  (601,  245)));
 
     let actual: alloc::vec::Vec<_> = nested_circuits()
         .map(|variant| (variant, nested_circuit_counts(variant)))
@@ -738,16 +741,16 @@ fn test_nested_stage_parameters() {
 
     check_stage!(endoscalar::EndoscalarStage, skip = 1, num = 119);
     check_stage!(stages::bridge_hash::Stage<EqAffine>, skip = 120, num = 1);
-    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 121, num = 144);
-    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 265, num = 114);
-    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 379, num = 5);
-    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 384, num = 37);
-    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 421, num = 11);
-    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 432, num = 3);
-    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 435, num = 73);
-    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 508, num = 2);
-    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 510, num = 51);
-    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 561, num = 10);
+    check_stage!(nested::PointsStage<EqAffine, crate::profile::Standard>, skip = 121, num = 153);
+    check_stage!(stages::preamble::Stage<EqAffine, R, crate::profile::Standard>, skip = 274, num = 118);
+    check_stage!(stages::s_prime::Stage<EqAffine, R, crate::profile::Standard>, skip = 392, num = 7);
+    check_stage!(stages::inner_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 399, num = 51);
+    check_stage!(stages::outer_error::Stage<EqAffine, R, crate::profile::Standard>, skip = 450, num = 13);
+    check_stage!(stages::ab::Stage<EqAffine, R, crate::profile::Standard>, skip = 463, num = 3);
+    check_stage!(stages::query::Stage<EqAffine, R, crate::profile::Standard>, skip = 466, num = 77);
+    check_stage!(stages::f::Stage<EqAffine, R, crate::profile::Standard>, skip = 543, num = 3);
+    check_stage!(stages::eval::Stage<EqAffine, R, crate::profile::Standard>, skip = 546, num = 55);
+    check_stage!(stages::challenges::Stage<EqAffine, R, crate::profile::Standard>, skip = 601, num = 10);
 }
 
 /// Helper test to print the nested circuits' current counts and the nested
@@ -915,7 +918,7 @@ fn test_native_registry_tag() {
         .unwrap();
 
     let expected = Fp::new(udon::fp_hex!(
-        "0x270606aaa3749357080e78b7d3682e2ead60771e134629dfdb030e0775730798"
+        "0x2dcf8370467aac17ee4c7a3f5b3370784fe6ba30d3e06dd6c05c28ec1c987741"
     ));
 
     assert_eq!(
@@ -937,7 +940,7 @@ fn test_nested_registry_tag() {
         .unwrap();
 
     let expected = Fq::new(udon::fq_hex!(
-        "0x3039a727dec322e73d6d0cbbe9ec88e1ff1e38975900d0cc049a4f583a0f6532"
+        "0x0755793fce2a98d2239d3cf039f261fcc65d52b2681ad1f36dd4e78e90ca38ca"
     ));
 
     assert_eq!(
@@ -1496,15 +1499,24 @@ fn test_extension_hooks_register_without_a_prover() {
     );
 }
 
-/// A thirteenth native extension circuit overflows the gate budget, since
-/// the fuse's own circuits grow with every polynomial a proof carries;
-/// twelve still fit.
+/// A sixth native extension circuit overflows the gate budget, since the
+/// fuse's own circuits grow with every polynomial a proof carries; five
+/// still fit. Both at a small header, where the challenge binders leave
+/// room.
 #[test]
 fn test_extension_overflowing_the_fuse_is_rejected() {
-    use crate::profile::{Profiled, testing::Hooked};
+    use alloc::string::ToString;
 
-    type C = Profiled<Pasta, Hooked<13>>;
-    let result = ApplicationBuilder::<C, R, HEADER_SIZE>::new().finalize(crate::pasta::baked());
+    use crate::profile::{NO_NATIVE_EXTENSION_PROVER, Profiled, testing::Hooked};
+
+    let params = crate::pasta::baked();
+    let fitting = ApplicationBuilder::<Profiled<Pasta, Hooked<5>>, R, 4>::new().finalize(params);
+    assert!(
+        matches!(fitting, Err(Error::Initialization(source))
+            if source.to_string() == NO_NATIVE_EXTENSION_PROVER),
+        "five extension circuits should fit"
+    );
+    let result = ApplicationBuilder::<Profiled<Pasta, Hooked<6>>, R, 4>::new().finalize(params);
     assert!(
         matches!(result, Err(Error::GateBoundExceeded { .. })),
         "the fuse should exceed its gate budget before any prover runs"
@@ -1521,31 +1533,31 @@ fn test_header_capacity_at_finalize() {
     use crate::profile::{Profiled, testing::Decompressing};
 
     let params = crate::pasta::baked();
-    let standard = ApplicationBuilder::<Pasta, R, 201>::new().finalize(params);
+    let standard = ApplicationBuilder::<Pasta, R, 195>::new().finalize(params);
     assert!(
         standard.is_ok(),
-        "201 fields must fit: {:?}",
+        "195 fields must fit: {:?}",
         standard.err()
     );
-    let oversized = ApplicationBuilder::<Pasta, R, 202>::new().finalize(params);
+    let oversized = ApplicationBuilder::<Pasta, R, 196>::new().finalize(params);
     assert!(matches!(
         oversized,
-        Err(Error::GateBoundExceeded { limit: 2048 })
+        Err(Error::GateBoundExceeded { limit: 2047 })
     ));
 
     type Extended = Profiled<Pasta, Decompressing>;
     let extended =
-        ApplicationBuilder::<Extended, R, 163>::new().finalize_with(params, Default::default());
+        ApplicationBuilder::<Extended, R, 156>::new().finalize_with(params, Default::default());
     assert!(
         extended.is_ok(),
-        "163 fields must fit: {:?}",
+        "156 fields must fit: {:?}",
         extended.err()
     );
     let oversized =
-        ApplicationBuilder::<Extended, R, 164>::new().finalize_with(params, Default::default());
+        ApplicationBuilder::<Extended, R, 157>::new().finalize_with(params, Default::default());
     assert!(matches!(
         oversized,
-        Err(Error::GateBoundExceeded { limit: 2048 })
+        Err(Error::GateBoundExceeded { limit: 2047 })
     ));
 }
 
@@ -1556,12 +1568,12 @@ fn test_fold_groups_follow_the_profile() {
     use ragu_primitives::vec::Len;
 
     use crate::{
-        internal::fold_revdot::Parameters,
+        internal::fold_revdot::capacity,
         profile::{Standard, testing::Wider},
     };
 
-    assert_eq!(native::num_claims::<Standard>(), 91);
-    assert_eq!(nested::num_claims::<Standard>(), 79);
+    assert_eq!(native::num_claims::<Standard>(), 95);
+    assert_eq!(nested::num_claims::<Standard>(), 83);
     assert_eq!(
         native::NumFoldGroups::<Standard>::len(),
         native::NUM_FOLD_GROUPS
@@ -1571,9 +1583,6 @@ fn test_fold_groups_follow_the_profile() {
         nested::NUM_FOLD_GROUPS
     );
 
-    fn capacity<FP: Parameters>() -> usize {
-        FP::NumGroups::len() * FP::GroupSize::len()
-    }
     assert!(capacity::<native::RevdotParameters<Standard>>() >= native::num_claims::<Standard>());
     assert!(capacity::<nested::RevdotParameters<Standard>>() >= nested::num_claims::<Standard>());
 
@@ -1713,7 +1722,7 @@ fn test_aggregator_fuse_fits_the_budget() {
 
     use crate::profile::{Aggregator, Profiled};
 
-    let budget = AggregatorRank::n();
+    let budget = AggregatorRank::blind_gate();
     let mut over = alloc::vec::Vec::new();
     {
         type C = Profiled<Pasta, Aggregator<4>>;

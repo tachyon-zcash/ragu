@@ -465,7 +465,7 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
     /// the floor plan for the specified circuit.
     ///
     /// Calls [`assemble_with_alpha`](Self::assemble_with_alpha) with a
-    /// random value sampled from `rng`.
+    /// [`Blind`](crate::Blind) sampled from `rng`.
     ///
     /// # Errors
     ///
@@ -476,17 +476,19 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         circuit: CircuitIndex,
         rng: &mut impl rand::CryptoRng,
     ) -> Result<sparse::Polynomial<F, R>> {
-        self.assemble_with_alpha(trace, circuit, F::random(|bytes| rng.fill_bytes(bytes)))
+        self.assemble_with_alpha(trace, circuit, crate::Blind::random(rng))
     }
 
     /// Like [`assemble`](Self::assemble), but accepts an explicit
-    /// `alpha` instead of sampling one from an RNG.
+    /// [`Blind`](crate::Blind) instead of sampling one from an RNG. A field
+    /// element is taken as `alpha`, with the blind gate left zero.
     ///
     /// `alpha` is written to `a[0]` of the assembled polynomial to
     /// prevent point-at-infinity commitments. The trace itself is never
     /// all-zero (the ONE wire at `d[0] = 1` ensures this), but the
     /// predictable ONE slot can cancel in linear combinations of traces;
-    /// a random `alpha` at `a[0]` keeps derived polynomials non-zero.
+    /// a random `alpha` at `a[0]` keeps derived polynomials non-zero. The
+    /// blind's other two values are written to the blind gate.
     ///
     /// `circuit` indexes the registered circuits directly (for the floor plan)
     /// and **panics** if it is not a registered index. Unlike the
@@ -501,9 +503,9 @@ impl<F: Field, R: Rank> Registry<'_, F, R> {
         &self,
         trace: &crate::trace::Trace<F>,
         circuit: CircuitIndex,
-        alpha: F,
+        alpha: impl Into<crate::Blind<F>>,
     ) -> Result<sparse::Polynomial<F, R>> {
-        trace.assemble(&self.floor_plans[usize::from(circuit)], alpha)
+        trace.assemble(&self.floor_plans[usize::from(circuit)], alpha.into())
     }
 
     /// Returns the registry tag value.

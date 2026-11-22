@@ -673,9 +673,12 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
     claims::build::<Pf, _, _>(&source, &mut processor)?;
 
     let (ax_sources, bx_sources) = processor.build();
+    // The fold randomizer's claims join the grid as the prover laid them
+    // out: $a_r$ on every $a$ side, $b_r$ on every $b$ side but the last
+    // group's.
     let folder = EvaluationFolder::<_, P>::new(dr, mu, mu_prime)?;
-    let ax = folder.fold(dr, &ax_sources)?;
-    let bx = folder.fold(dr, &bx_sources)?;
+    let ax = folder.fold_a(dr, &ax_sources, &query.randomizer_a_at_xz)?;
+    let bx = folder.fold_b(dr, &bx_sources, &query.randomizer_b_at_x)?;
     Ok((ax, bx))
 }
 
@@ -696,7 +699,8 @@ fn compute_axbx<'dr, D: Driver<'dr>, Pf: Profile, P: Parameters>(
 ///    $m(\text{circuit\_id}, x, y)$ at the step's own circuit id
 /// 4. **$a(xz),\, b(x)$ polynomial queries** — $a$ at $xz$, $b$ at $x$,
 ///    including verifier-computed values for each child and the current
-///    accumulator, then the step's own application rx at $xz$
+///    accumulator, then the step's own application rx at $xz$ and its fold
+///    randomizers at $xz$ and at $x$
 /// 5. **Stage/circuit `rx` evaluations** — each $r\_i$ queried at $xz$ for each
 ///    child. The same $r\_i(xz)$ evaluations feed into both the $A(xz)$
 ///    recomputation (undilated) and $B(x)$ ($Z$-dilated).
@@ -797,6 +801,16 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: ProfiledCycle<CircuitField = D::F>, 
             &eval.application_stage,
             &query.application_stage_at_xz,
             &d.challenges.xz,
+        ),
+        StaticFQuery::RandomizerAAtXz => (
+            &eval.randomizer_a,
+            &query.randomizer_a_at_xz,
+            &d.challenges.xz,
+        ),
+        StaticFQuery::RandomizerBAtX => (
+            &eval.randomizer_b,
+            &query.randomizer_b_at_x,
+            &d.challenges.x,
         ),
     })
     // Stage and circuit rx evaluations at xz for each child proof.

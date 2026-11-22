@@ -91,7 +91,15 @@ $$
 $$
 
 so that $k(Y) = \text{Horner}_Y[\v{k}_\ell, \dots, \v{k}_1, 1]$ and the first
-entry of a list has the highest power.
+entry of a list has the highest power. A circuit that writes the outputs $2$
+and then $3$, for example, has
+
+$$
+k(Y) = \text{Horner}_Y[2, 3, 1] = 2 Y^2 + 3 Y + 1.
+$$
+
+The outputs take descending powers in the order written, and the `ONE`
+constraint supplies the constant term.
 
 [^instance-literature]: In the literature, the public instance is often
 presented as the pair $(1, \v{x})$, combining the constant $1$ with the public
@@ -112,12 +120,14 @@ which is the first gate over wires $\v{a}_0, \v{b}_0, \v{c}_0, \v{d}_0$:
   $\color{blue}{\v{d}_0 = 1}$ anyway.
 * The $\color{#dc2626}{\v{a}_0}$ slot carries an arbitrary value
   $\color{#dc2626}{\gamma}$ for every trace, with $\v{b}_0 = 0$ chosen so the
-  gate equations remain satisfied.[^conventionally] This value is not a
-  zero-knowledge blind, and is meant to keep adversarially-determined linear
-  combinations of polynomial commitments away from the point at infinity. The
-  prover draws it uniformly at random for the trace of a circuit.
+  gate equations remain satisfied.[^conventionally] This value is meant to keep
+  adversarially-determined linear combinations of polynomial commitments away
+  from the point at infinity. It is also one of the three
+  [free coefficients](#blind-gate) of a trace. The prover draws it uniformly at
+  random for the trace of a circuit.
 
-The presence of the `SYSTEM` gate reduces the number of usable gates to $n - 1$.
+The presence of the `SYSTEM` gate reduces the number of usable gates to $n - 1$,
+and the [blind gate](#blind-gate) reduces it to $n - 2$.
 
 There is also a special constraint $\color{#7e22ce}{\kappa} \v{c}_0 = 0$
 injected in all wiring polynomials at the $Y^{4n - 1}$ position; circuits are
@@ -141,6 +151,44 @@ code to do.
     practice. However, because $\v{a}_0$ and $\v{d}_0$ are used as "free" wires
     during allocation for symmetry, this is maintained in the `SYSTEM` gate as a
     convention.
+
+## The Blind Gate {#blind-gate}
+
+A fuse shows three values of every trace that it takes from a child on its
+own: the commitment, which one of its [stages](stage_contents.md) holds, and
+the evaluations at $xz$ and at $u$ that its [batched opening](batch.md)
+claims.
+Those values should not determine anything else about the trace. Every trace
+therefore has three coefficients that no constraint reads, as many as the
+values shown, and the prover draws them uniformly at random.
+
+One of the three is the $\color{#dc2626}{\v{a}_0}$ of the `SYSTEM` gate. The
+other two are wires of the **blind gate**, which is the last gate of every
+circuit, over the wires $\v{a}_{n-1}, \v{b}_{n-1}, \v{c}_{n-1}, \v{d}_{n-1}$. A
+circuit has at most $n - 1$ gates, the `SYSTEM` gate among them, so no circuit
+allocates the blind gate, and no wiring polynomial has a weight for
+$\v{a}_{n-1}$ or $\v{d}_{n-1}$. With $\v{b}_{n-1} = \v{c}_{n-1} = 0$ the gate
+equations hold there for any values of those two wires.
+
+We call $\v{a}_0$, $\v{a}_{n-1}$ and $\v{d}_{n-1}$ the **free coefficients** of
+a trace. They are its coefficients of $X^{2n-1}$, $X^{n}$ and $X^{3n}$. When
+all three are uniformly random, so are the commitment and the two evaluations,
+whatever the other coefficients are.[^free-three]
+
+The free coefficients protect a polynomial only in what a later fuse shows of
+it on its own. That fuse also shows sums over a child's traces, through its
+folded $B$. A proof stores its own polynomials in full, and its stages hold
+the commitments and challenges of its children as they are. The free
+coefficients are there for
+[`Application::rerandomize`](ragu_pcd::Application::rerandomize), which also
+relies on the randomizers every fuse folds and batches.
+
+[^free-three]: The two evaluations fix the three coefficients up to a line,
+    provided that the two points are distinct and nonzero. Along that line the
+    commitment takes every value once, unless one combination of three
+    [generators](cycle.md#commitments) is the identity, which would be a
+    discrete log relation. The three coefficients and the three values then
+    determine each other.
 
 ## Layout for Wiring Polynomials {#layout}
 

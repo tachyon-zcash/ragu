@@ -170,7 +170,7 @@ impl<K: Copy, F: Field, R: Rank> Clone for Atom<'_, K, F, R> {
 }
 impl<K: Copy, F: Field, R: Rank> Copy for Atom<'_, K, F, R> {}
 
-use super::_01_application::NativeApplication;
+use super::{_01_application::NativeApplication, randomizer::NativeRandomizer};
 use crate::internal::Side;
 
 /// Key identifying a polynomial and its corresponding commitment within the
@@ -183,16 +183,19 @@ pub(super) enum FoldKey {
     Application,
     /// The step's own application stage.
     ApplicationStage,
+    /// The step's own fold randomizer $a_r$.
+    RandomizerA,
 }
 
 /// The two child proofs being fused, and the step's own application
-/// polynomials. Provides [`Atom`]-tagged rx values for claim building, and
-/// resolves [`FoldKey`] keys back to their commitments for the MSM in
-/// `_06_ab`.
+/// polynomials and fold randomizer. Provides [`Atom`]-tagged rx values for
+/// claim building, and resolves [`FoldKey`] keys back to their commitments
+/// for the MSM in `_06_ab`.
 pub(super) struct NativeFuseProofSource<'rx, C: Cycle, R: Rank> {
     pub(super) left: &'rx Proof<C, R>,
     pub(super) right: &'rx Proof<C, R>,
     pub(super) application: &'rx NativeApplication<C, R>,
+    pub(super) randomizer: &'rx NativeRandomizer<C, R>,
 }
 
 impl<'rx, C: Cycle, R: Rank> NativeFuseProofSource<'rx, C, R> {
@@ -204,7 +207,13 @@ impl<'rx, C: Cycle, R: Rank> NativeFuseProofSource<'rx, C, R> {
             FoldKey::Child(Side::Right, component) => self.right.native_commitment(component),
             FoldKey::Application => self.application.commitment,
             FoldKey::ApplicationStage => self.application.stage.commitment,
+            FoldKey::RandomizerA => self.randomizer.a_commitment,
         }
+    }
+
+    /// The fold randomizer's $a$ side, tagged with its commitment's key.
+    pub(super) fn randomizer_a(&self) -> TrackedPoly<'rx, FoldKey, C::CircuitField, R> {
+        TrackedPoly::single(Cow::Borrowed(&self.randomizer.a), FoldKey::RandomizerA)
     }
 }
 

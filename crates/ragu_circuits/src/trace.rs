@@ -20,7 +20,7 @@ use ragu_core::{
 use ragu_primitives::GadgetExt;
 use udon::field::Field;
 
-use super::{Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, sparse};
+use super::{Blind, Circuit, DriverScope, Rank, floor_planner::ConstraintSegment, sparse};
 use crate::WithAux;
 
 /// A contiguous group of multiplication gates.
@@ -86,8 +86,9 @@ impl<F: Field> Trace<F> {
     pub(crate) fn assemble<R: Rank>(
         &self,
         floor_plan: &[ConstraintSegment],
-        alpha: F,
+        blind: impl Into<Blind<F>>,
     ) -> Result<sparse::Polynomial<F, R>> {
+        let blind = blind.into();
         assert_eq!(
             floor_plan.len(),
             self.segments.len(),
@@ -105,8 +106,11 @@ impl<F: Field> Trace<F> {
             .map(|(i, seg)| floor_plan[i].gate_start + seg.a.len())
             .max()
             .expect("floor plan is never empty (root segment always exists)");
-        if total_gates > R::n() {
-            return Err(Error::GateBoundExceeded { limit: R::n() });
+        // The last gate is the blind gate, which no segment may reach.
+        if total_gates > R::blind_gate() {
+            return Err(Error::GateBoundExceeded {
+                limit: R::blind_gate(),
+            });
         }
 
         let mut view = sparse::View::trace();
@@ -139,8 +143,17 @@ impl<F: Field> Trace<F> {
         // Overwrite segment 0's zeroed SYSTEM gate placeholder:
         // b[0] = c[0] = 0 (already zero), d[0] = 1 (ONE wire),
         // a[0] = alpha (prevents point-at-infinity commitments).
-        view.a[0] = alpha;
+        view.a[0] = blind.alpha;
         view.d[0] = F::ONE;
+
+        // The blind gate: a and d hold the blind's values, b = c = 0, so
+        // both gate equations hold for any values there.
+        if blind.gate != [F::ZERO, F::ZERO] {
+            view.a.resize(R::n(), F::ZERO);
+            view.d.resize(R::n(), F::ZERO);
+            view.a[R::blind_gate()] = blind.gate[0];
+            view.d[R::blind_gate()] = blind.gate[1];
+        }
 
         Ok(view.build())
     }

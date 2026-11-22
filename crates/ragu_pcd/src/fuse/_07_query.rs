@@ -16,15 +16,16 @@
 
 use alloc::vec::Vec;
 
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{Blind, polynomials::Rank, staging::StageExt};
 use ragu_core::{Result, drivers::Driver, maybe::Maybe};
 use ragu_primitives::{Element, vec::FixedVec};
 use rand::CryptoRng;
-use udon::{fft::bit_reverse, field::Field};
+use udon::fft::bit_reverse;
 
 use super::{
     _01_application::NativeApplication,
     _04_inner_error::{NestedRegistryWy, RegistryWy},
+    randomizer::{NativeRandomizer, NestedRandomizer, Randomizers},
 };
 use crate::{
     Application, Proof,
@@ -52,6 +53,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         application: &NativeApplication<C, R>,
+        randomizers: &Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         native::stages::query::Witness<C>,
@@ -70,10 +72,21 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left,
             right,
             application,
+            &randomizers.native,
             builder,
         )?;
-        let nested_query =
-            self.compute_nested_query(rng, w, x, y, z, nested_registry_wy, left, right, builder)?;
+        let nested_query = self.compute_nested_query(
+            rng,
+            w,
+            x,
+            y,
+            z,
+            nested_registry_wy,
+            left,
+            right,
+            &randomizers.nested,
+            builder,
+        )?;
         Ok((query_witness, nested_query))
     }
 
@@ -88,6 +101,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         application: &NativeApplication<C, R>,
+        randomizer: &NativeRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<native::stages::query::Witness<C>>
     where
@@ -97,6 +111,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let x = *x.value().take();
         let y = *y.value().take();
         let xz = x * *z.value().take();
+        // The fold randomizers, opened as a child's a and b are.
+        let randomizer_a_at_xz = B::sparse_eval(&randomizer.a, xz);
+        let randomizer_b_at_x = B::sparse_eval(&randomizer.b, x);
 
         let registry_xy_evals = B::registry_wxy_over_domain(&self.native_registry, x, y);
         let log2_n = self.native_registry.log2_domain();
@@ -145,12 +162,14 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             registry_xy_at_circuit_id,
             application_at_xz,
             application_stage_at_xz,
+            randomizer_a_at_xz,
+            randomizer_b_at_x,
             left: left_witness,
             right: right_witness,
         };
 
         let rx = native::stages::query::Stage::<C, R, HEADER_SIZE>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &query_witness,
         )?;
 
@@ -175,6 +194,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &NestedRegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        randomizer: &NestedRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<nested::stages::query::Evaluations<C::ScalarField, C::Profile>>
     where
@@ -243,6 +263,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_query = nested::stages::query::Evaluations {
             fixed_registry,
             registry_wxy,
+            randomizer_a_at_xz: B::sparse_eval(&randomizer.a, xz),
+            randomizer_b_at_x: B::sparse_eval(&randomizer.b, x),
             left: left_witness?,
             right: right_witness?,
             online_fq,
@@ -251,7 +273,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         builder.set_nested_registry_xy_poly(registry_xy_poly);
 
         let bridge_rx = nested::stages::query::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &nested::stages::query::Witness {
                 online_points: builder.native_online_phase::<3>(),
                 online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {

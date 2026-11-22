@@ -26,7 +26,7 @@
 use alloc::vec::Vec;
 
 use ragu_circuits::{
-    CircuitExt,
+    Blind, CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
     staging,
@@ -143,12 +143,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         // The application stage, after the SYSTEM gate, with a random alpha.
         // Its values are the step's secrets. Its commitment joins the
         // preamble bridge.
-        let rx = staging::stage_rx::<_, R>(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            1,
-            self.stage_size,
-            staged,
-        )?;
+        let rx = staging::stage_rx::<_, R>(Blind::random(rng), 1, self.stage_size, staged)?;
         let commitment = B::sparse_commit_to_affine(&rx, C::host_generators(self.params));
         Ok((prepared, NativeApplicationStage { rx, commitment }))
     }

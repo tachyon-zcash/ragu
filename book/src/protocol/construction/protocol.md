@@ -1,9 +1,13 @@
 # Protocol {#protocol}
 
 A fuse is a public-coin protocol of eight rounds, made non-interactive by the
-[transcript](cycle.md#transcript).
+[transcript](cycle.md#transcript). The [Fuse PIOP](../iop.md) gives the
+messages and checks of each round in full, and the
+[fuse procedure](fuse.md#procedure) gives the prover's steps. Here they are
+reduced to a schedule.
 
-In each round the prover's message is one point of $\E_p$, the commitment of a
+In each round the prover fixes objects on both sides, and the transcript
+absorbs one point of $\E_p$ that commits to all of them: the commitment of a
 [bridge stage](stage_contents.md#nested-stages). The bridge stage holds the
 commitments of the native objects of the round. It holds the round's nested
 objects directly when they are scalars. When they are commitments, it holds the
@@ -15,20 +19,28 @@ therefore fixes both sides.
 | Round | Native Objects Fixed | Nested Objects Fixed | Absorbed | Challenge |
 |---|---|---|---|---|
 | 1 | $o_0$, $o_1$; `ApplicationStage` | every nested commitment of both children, in `PointsBinding` and `PointsPreamble`; the children's native commitments and nested instances, in `BridgePreamble` | $R_q[\texttt{BridgePreamble}]$ | $w$ |
-| 2 | the step circuit's polynomial `Application`; `Preamble`: the children's instances, output headers and indices, and the fuse's own output header, index and openings; $m(w, x^{(i)}, Y)$ | $m_q(w_q, x_q^{(i)}, Y)$, in `PointsRegistryWx` | $R_q[\texttt{BridgeSPrime}]$ | $y$, $z$ |
-| 3 | $\text{quo}_{g,k}$, in `InnerError`; $m(w, X, y)$ | $\text{quo}_{q,g,k}$, in `BridgeInnerError` | $R_q[\texttt{BridgeInnerError}]$ | $\mu$ |
+| 2 | the step circuit's polynomial `Application`; `Preamble`: the children's instances, output headers and indices, and the fuse's own output header, index and openings; $m(w, x^{(i)}, Y)$; $a_\star$, $b_\star$ | $m_q(w_q, x_q^{(i)}, Y)$, $a_{q,\star}$, $b_{q,\star}$, in `PointsRegistryWx` | $R_q[\texttt{BridgeSPrime}]$ | $y$, $z$ |
+| 3 | $\text{quo}_{g,k}$, $c_\star$, in `InnerError`; $m(w, X, y)$ | $\text{quo}_{q,g,k}$, $c_{q,\star}$, in `BridgeInnerError` | $R_q[\texttt{BridgeInnerError}]$ | $\mu$ |
 | 4 | $\text{quo}'_k$, $\text{col}_g$, the child targets and the saved transcript state, in `OuterError` | $\text{quo}'_{q,k}$, $\text{col}_{q,g}$, in `BridgeOuterError` | $R_q[\texttt{BridgeOuterError}]$ | $\mu'$ |
 | 5 | $A$, $B$ | $A_q$, $B_q$, $m_q(w_q, X, y_q)$, in `PointsAb` | $R_q[\texttt{BridgeAB}]$ | $x$ |
 | 6 | the claimed values, in `Query`; $m(W, x, y)$ | the nested claimed values, in `BridgeQuery` | $R_q[\texttt{BridgeQuery}]$ | $\alpha$ |
-| 7 | $f$ | $f_q$, $m_q(W, x_q, y_q)$, in `PointsF` | $R_q[\texttt{BridgeF}]$ | $u$ |
+| 7 | $f$, $p_\star$ | $f_q$, $m_q(W, x_q, y_q)$, $p_{q,\star}$, in `PointsF` | $R_q[\texttt{BridgeF}]$ | $u$ |
 | 8 | the evaluations at $u$ and the three partial sums of the [challenge stage](stage_contents.md#challenge-stage) commitment, in `Eval` | the evaluations at $u_q$, in `BridgeEval` | $R_q[\texttt{BridgeEval}]$ | $\text{pre\_beta}$ |
+
+A row gives three things that should be kept apart. The objects of its second
+and third columns are fixed before its challenge is drawn. The transcript
+absorbs the one point of its fourth column and nothing else. Whether an object
+is still in the proof afterwards is a separate question, which the
+[proof page](proof.md#stored-derived) answers: a fuse discards the two
+polynomials of its step circuit's trace, the restrictions in $Y$ and in $X$,
+$f$, $f_q$ and its randomizers.
 
 After the last challenge the prover sends a final message, which no challenge
 follows:
 
 - $p$ and $P$, with the nested walk that computes $P$: the `EndoscalarStage`,
-  the `PointsStage` and the $29$ `EndoscalingStep` polynomials;
-- $p_q$ and $P_q$, with the native walk: the `PointsWalk` stage and the $25$
+  the `PointsStage` and the $31$ `EndoscalingStep` polynomials;
+- $p_q$ and $P_q$, with the native walk: the `PointsWalk` stage and the $27$
   `EndoscalingStep` polynomials;
 - the `ChallengeStage`;
 - the polynomials of the ten native internal circuits other than the
@@ -37,7 +49,12 @@ follows:
 The prover computes the commitment of the `BridgeHash` stage in round 1,
 together with the point that it hashes, and the transcript does not absorb that
 commitment. Round 1 fixes the point, which `BridgePreamble` also holds, but not
-the [$\v{a}_0$ of the stage](stage_contents.md#bridge-hash).
+the [free coefficients of the stage](stage_contents.md#bridge-hash).
+
+The prover draws its [fold randomizers](claims.md#randomizer) and
+[batch randomizers](batch.md#batch-randomizer) before round 1. Their commitments
+enter the transcript with the objects that they are folded or batched with: the
+fold randomizers in round 2, and the batch randomizers in round 7.
 
 Round 2 is where the step's circuit runs. Its challenge $\zeta$ is $w$, so its
 polynomial and the `preamble` stage, which holds its output header and its
@@ -47,8 +64,8 @@ stage also holds the children's instances, which
 [$w$ already fixes](stage_contents.md#native-preamble) through the children's
 commitments.
 
-In round 8 the prover repeats its message, with a fresh $\v{a}_0$ in the `Eval`
-and `BridgeEval` stages, until the challenge is below $2^{254}$, so that
+In round 8 the prover repeats its message, with fresh free coefficients in the
+`Eval` and `BridgeEval` stages, until the challenge is below $2^{254}$, so that
 $\text{pre\_beta}$ has an endoscalar. The other eight challenges are not
 retried. If one of them is $2^{254}$ or more, the fuse fails.[^large]
 
@@ -60,13 +77,13 @@ retried. If one of them is $2^{254}$ or more, the fuse fails.[^large]
 | Challenge | Use | Follows |
 |---|---|---|
 | $w$ | the point at which the registry is restricted and the children's $m(W, x^{(i)}, y^{(i)})$ are opened; the step's $\zeta$ | every commitment of the children, and the step's own online polynomials and staged values |
-| $y$ | combines the constraints of every claim; the point at which `registry_wx` is opened | $m(w, x^{(i)}, Y)$, the step circuit's polynomial and the `preamble` stage |
+| $y$ | combines the constraints of every claim; the point at which `registry_wx` is opened | $m(w, x^{(i)}, Y)$, the step circuit's polynomial, the `preamble` stage and the fold randomizers |
 | $z$ | combines the gate equations of every circuit claim and the polynomials of every bonding claim | the same |
-| $\mu$ | first-layer fold | the first-layer quotients |
+| $\mu$ | first-layer fold | the first-layer quotients and the target $c_\star$ |
 | $\mu'$ | second-layer fold | the second-layer quotients and collapsed values |
-| $x$ | $B$ and the children's $B^{(i)}$ are opened at $x$, and $A$, $A^{(i)}$, every child rx polynomial and the two polynomials of the step circuit at $xz$; `registry_wy` is opened at $x$ | $A$, $B$ and $m(w, X, y)$ |
+| $x$ | $B$, the children's $B^{(i)}$ and $b_\star$ are opened at $x$, and $A$, $A^{(i)}$, $a_\star$, every child rx polynomial and the two polynomials of the step circuit at $xz$; `registry_wy` is opened at $x$ | $A$, $B$ and $m(w, X, y)$ |
 | $\alpha$ | combines the openings into $f$ | every claimed value and $m(W, x, y)$ |
-| $u$ | the single point at which every batched polynomial is evaluated | $f$ |
+| $u$ | the single point at which every batched polynomial is evaluated | $f$ and the batch randomizer |
 | $\text{pre\_beta}$ | its lifts $\beta$, $\beta_q$ combine the batched polynomials into $p$, $p_q$, and both walks use its endoscalar | the evaluations at $u$ and $u_q$ |
 
 The nested side uses the lift of each challenge for the same purpose. Two of its

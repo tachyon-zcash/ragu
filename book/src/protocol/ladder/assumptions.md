@@ -43,6 +43,7 @@ argument that handles recursion. The ladder explains why each merge preserves
 falsehood. It is not that end-to-end proof.
 
 Zero knowledge is a separate property that the protocol does not currently
-provide. Uncompressed proofs contain witness polynomials, compressed proofs
-reveal evaluations of them, and rerandomization does not yet hide the link
-between its input and its output.
+provide. Uncompressed proofs contain witness polynomials, and compressed proofs
+reveal evaluations of them. Rerandomization is built to hide the link between
+its input and its output. The argument for that is outside the ladder and has
+not been audited.

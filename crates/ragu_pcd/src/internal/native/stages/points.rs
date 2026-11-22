@@ -158,6 +158,12 @@ pub enum InputSource {
     AbB,
     /// The `registry_xy` point of [`FStage`].
     RegistryXy,
+    /// The step's own nested fold randomizer $a_r$, in [`RegistryWxStage`].
+    RandomizerA,
+    /// The step's own nested fold randomizer $b_r$, in [`RegistryWxStage`].
+    RandomizerB,
+    /// The step's own nested batch randomizer, in [`FStage`].
+    Mask,
     /// The step's own online Fq commitment, by index, in [`PreambleStage`].
     OnlineFq(usize),
     /// An online auxiliary in its later commitment phase, at a phase-local index.
@@ -168,8 +174,9 @@ pub enum InputSource {
 /// order [`nested::pcs::Batch::commitments`] fixes: for each child its
 /// nested rx commitments in [`nested::RxIndex::all`] order, then its $a_n$,
 /// $b_n$, `registry_xy` and $P_n$; then the current step's two
-/// `registry_wx`, `registry_wy`, $A_n$, $B_n$ and `registry_xy`; then the
-/// step's own online Fq commitments (see [`online`](crate::internal::nested::online)).
+/// `registry_wx`, `registry_wy`, $A_n$, $B_n$, `registry_xy`, its two fold
+/// randomizers and its batch randomizer; then the step's own online Fq
+/// commitments (see [`online`](crate::internal::nested::online)).
 ///
 /// # Panics
 ///
@@ -231,6 +238,9 @@ pub fn input_source<P: Profile>(i: usize) -> InputSource {
         InputSource::AbA,
         InputSource::AbB,
         InputSource::RegistryXy,
+        InputSource::RandomizerA,
+        InputSource::RandomizerB,
+        InputSource::Mask,
     ];
     match i - 2 * num_child_points {
         j if j < NUM_CURRENT_POINTS => CURRENT[j],
@@ -291,6 +301,10 @@ pub struct RegistryWxWitness<C: Affine, P: Profile> {
     pub online_points: FixedVec<C, PhaseLen<P, Nested, 1>>,
     pub registry_wx0: C,
     pub registry_wx1: C,
+    /// The step's own nested fold randomizers, fixed here with the
+    /// restrictions, before the fold's challenges.
+    pub randomizer_a: C,
+    pub randomizer_b: C,
 }
 
 /// Witness of [`AbStage`].
@@ -310,6 +324,8 @@ pub struct FWitness<C: Affine, P: Profile> {
     pub online_points: FixedVec<C, PhaseLen<P, Nested, 3>>,
     pub registry_xy: C,
     pub f: C,
+    /// The step's own nested batch randomizer, fixed here with $F_n$.
+    pub mask: C,
 }
 
 /// Witness of [`WalkStage`]: the endoscalar and the walk's outputs, one per
@@ -442,6 +458,8 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
                 ),
                 registry_wx0: current[0],
                 registry_wx1: current[1],
+                randomizer_a: current[6],
+                randomizer_b: current[7],
             },
             ab: AbWitness {
                 online_points: phase_points::<P, Nested, 2, _>(
@@ -457,6 +475,7 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
                 ),
                 registry_xy: current[5],
                 f: points[0],
+                mask: current[8],
             },
         }
     }
@@ -482,6 +501,9 @@ impl<C: Affine, P: Profile> Inputs<C, P> {
             InputSource::AbA => self.ab.a,
             InputSource::AbB => self.ab.b,
             InputSource::RegistryXy => self.f.registry_xy,
+            InputSource::RandomizerA => self.registry_wx.randomizer_a,
+            InputSource::RandomizerB => self.registry_wx.randomizer_b,
+            InputSource::Mask => self.f.mask,
             InputSource::OnlineFq(j) => self.preamble.online_fq[j],
             InputSource::Auxiliary(phase, j) => match phase {
                 Phase::BeforeW => unreachable!("early points use OnlineFq"),
@@ -579,6 +601,10 @@ pub struct RegistryWx<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub registry_wx0: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub registry_wx1: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub randomizer_a: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub randomizer_b: Point<'dr, D, C>,
 }
 
 /// Output gadget of [`AbStage`].
@@ -605,6 +631,8 @@ pub struct F<'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> {
     pub registry_xy: Point<'dr, D, C>,
     #[ragu(gadget)]
     pub f: Point<'dr, D, C>,
+    #[ragu(gadget)]
+    pub mask: Point<'dr, D, C>,
 }
 
 /// Output gadget of [`WalkStage`].
@@ -661,6 +689,9 @@ impl<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile> WalkInputs<'a,
             InputSource::AbA => &self.ab.a,
             InputSource::AbB => &self.ab.b,
             InputSource::RegistryXy => &self.f.registry_xy,
+            InputSource::RandomizerA => &self.registry_wx.randomizer_a,
+            InputSource::RandomizerB => &self.registry_wx.randomizer_b,
+            InputSource::Mask => &self.f.mask,
             InputSource::OnlineFq(j) => &self.preamble.online_fq[j],
             InputSource::Auxiliary(phase, j) => match phase {
                 Phase::BeforeW => unreachable!("early points use OnlineFq"),
@@ -782,10 +813,10 @@ impl<C: Affine, R: Rank, P: Profile> staging::Stage<C::Base, R> for PreambleStag
 }
 
 points_stage!(
-    /// The nested registry's $m_n(w_n, x_{i,n}, Y)$ commitments, committed
-    /// before $y$.
+    /// The nested registry's $m_n(w_n, x_{i,n}, Y)$ commitments and the
+    /// step's own nested fold randomizers, committed before $y$.
     RegistryWxStage, parent = PreambleStage<C, P>, witness = RegistryWxWitness, output = RegistryWx, phase = 1,
-    { registry_wx0, registry_wx1 }
+    { registry_wx0, registry_wx1, randomizer_a, randomizer_b }
 );
 
 points_stage!(
@@ -796,10 +827,11 @@ points_stage!(
 );
 
 points_stage!(
-    /// The nested registry's $m_n(W, x_n, y_n)$ commitment and the nested
-    /// quotient's $F_n$, the walk's initial point, committed before $u$.
+    /// The nested registry's $m_n(W, x_n, y_n)$ commitment, the nested
+    /// quotient's $F_n$, the walk's initial point, and the step's own nested
+    /// batch randomizer, committed before $u$.
     FStage, parent = AbStage<C, P>, witness = FWitness, output = F, phase = 3,
-    { registry_xy, f }
+    { registry_xy, f, mask }
 );
 
 /// The walk's stage: $\beta$'s bits, bound to `pre_beta` by

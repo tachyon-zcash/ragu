@@ -64,7 +64,7 @@ use crate::{
         nested::{
             self as nested_internal, RxComponent as NestedRxComponent,
             challenge as nested_challenge, claims as nested_claims,
-            stages::{ab as nested_ab, challenges as nested_challenges},
+            stages::challenges as nested_challenges,
         },
         transcript::Transcript,
     },
@@ -418,33 +418,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
                 && extract_endoscalar(proof.pre_beta()).is_ok()
         };
 
-        // The `ab` bridge stage is a function of the native a and b
-        // commitments, the native points stage holding the nested ones, and
-        // the proof's bridge alpha: rederive and compare.
-        let ab_bridge_claim = {
-            let proof = pcd.proof();
-            let expected = nested_ab::Stage::<C::HostCurve, R, C::Profile>::rx(
-                crate::proof::bridge_alpha_power(
-                    proof.bridge_alpha,
-                    nested_internal::RxIndex::BridgeAB,
-                ),
-                &nested_ab::Witness {
-                    online_points: crate::profile::online::stages::phase_points::<
-                        C::Profile,
-                        crate::profile::online::stages::Native,
-                        2,
-                        _,
-                    >(&proof.native_online_commitments),
-                    a: proof.native_commitment(RxComponent::AbA),
-                    b: proof.native_commitment(RxComponent::AbB),
-                    native_points_ab: proof
-                        .native_rx_commitment(native_internal::RxIndex::PointsAb),
-                },
-            )?;
-            proof[nested_internal::RxIndex::BridgeAB]
-                .iter_coeffs()
-                .eq(expected.iter_coeffs())
-        };
+        let ab_bridge_claim = pcd.proof().ab_bridge_matches()?;
 
         // What the query and eval stages claim of the registry, and of the
         // current step's own polynomials, held against the registry and the

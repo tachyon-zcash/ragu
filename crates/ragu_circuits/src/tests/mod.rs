@@ -196,7 +196,14 @@ fn test_simple_circuit() {
     let obj = into_wiring_object::<_, _, MyRank>(MySimpleCircuit).unwrap();
     let plan = floor_planner::floor_plan(obj.segment_records());
 
-    let assignment = trace.assemble(&plan, Fp::ZERO).unwrap();
+    // The trace satisfies its circuit for every choice of the free
+    // coefficients: alpha at the SYSTEM gate and both wires of the blind gate.
+    let blind = crate::Blind::<Fp>::random(&mut rand::rng());
+    let assignment = trace.assemble(&plan, blind).unwrap();
+    let coeffs: alloc::vec::Vec<Fp> = assignment.iter_coeffs().collect();
+    assert_eq!(coeffs[2 * MyRank::n() - 1], blind.alpha);
+    assert_eq!(coeffs[MyRank::n()], blind.gate[0]);
+    assert_eq!(coeffs[3 * MyRank::n()], blind.gate[1]);
 
     consistency_checks::<MyRank>(&*obj);
 
@@ -279,25 +286,29 @@ fn test_element() {
     assert_eq!(*result.value().take(), Fp::from(15u64));
 }
 
-/// `SquareCircuit { times: 30 }` with `TestRank` (`R<7>`, `n = 32`).
-/// Total gates: 1 (SYSTEM) + 1 (allocation) + 30 (squares) = 32 = `n()`.
+/// `SquareCircuit { times: 29 }` with `TestRank` (`R<7>`, `n = 32`).
+/// Total gates: 1 (SYSTEM) + 1 (allocation) + 29 (squares) = 31, every gate
+/// before the blind gate.
 #[test]
 fn test_gate_bound_exact() {
-    let result = into_wiring_object::<_, _, TestRank>(SquareCircuit { times: 30 });
-    assert!(result.is_ok(), "32 gates should fit exactly in n() = 32");
+    let result = into_wiring_object::<_, _, TestRank>(SquareCircuit { times: 29 });
+    assert!(
+        result.is_ok(),
+        "31 gates should fit exactly before the blind gate of n() = 32"
+    );
 }
 
-/// `SquareCircuit { times: 31 }` needs 33 gates > `n()` = 32, so it must fail
-/// with [`Error::GateBoundExceeded`].
+/// `SquareCircuit { times: 30 }` needs 32 gates, the blind gate among them,
+/// so it must fail with [`Error::GateBoundExceeded`].
 #[test]
 fn test_gate_bound_exceeded() {
-    match into_wiring_object::<_, _, TestRank>(SquareCircuit { times: 31 }) {
+    match into_wiring_object::<_, _, TestRank>(SquareCircuit { times: 30 }) {
         Err(Error::GateBoundExceeded { limit }) => {
-            assert_eq!(limit, TestRank::n());
+            assert_eq!(limit, TestRank::blind_gate());
         }
         other => panic!(
             "expected GateBoundExceeded {{ limit: {} }}, got {:?}",
-            TestRank::n(),
+            TestRank::blind_gate(),
             other.map(|_| "(ok)")
         ),
     }

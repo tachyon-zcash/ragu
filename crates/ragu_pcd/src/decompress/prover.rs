@@ -298,9 +298,12 @@ where
         type Digits<C, R, const H: usize> = DigitsStage<C, Native, WalletRank, R, H>;
         let mut stages = front_rxs::<C, Native, R, HEADER_SIZE>(prepared, rng)?;
         stages.extend([
-            Lifts::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.lifts)?,
-            Work::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.work)?,
-            Transcript::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.transcript)?,
+            Lifts::<C, R, HEADER_SIZE>::rx(random_alpha::<C::CircuitField>(rng), &prepared.lifts)?,
+            Work::<C, R, HEADER_SIZE>::rx(random_alpha::<C::CircuitField>(rng), &prepared.work)?,
+            Transcript::<C, R, HEADER_SIZE>::rx(
+                random_alpha::<C::CircuitField>(rng),
+                &prepared.transcript,
+            )?,
             Digits::<C, R, HEADER_SIZE>::rx(C::CircuitField::ZERO, &prepared.digits)?,
         ]);
         Ok(ExtensionRxs { circuits, stages })
@@ -369,7 +372,7 @@ where
         let mut stages = front_rxs::<C, Nested, R, HEADER_SIZE>(prepared, rng)?;
         stages.extend([
             Lifts::<C, R, HEADER_SIZE>::rx(zero, &prepared.lifts)?,
-            Work::<C, R, HEADER_SIZE>::rx(random_alpha(rng), &prepared.work)?,
+            Work::<C, R, HEADER_SIZE>::rx(random_alpha::<C::ScalarField>(rng), &prepared.work)?,
             Digits::<C, R, HEADER_SIZE>::rx(zero, &prepared.digits)?,
         ]);
         Ok(ExtensionRxs { circuits, stages })

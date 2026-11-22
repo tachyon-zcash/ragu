@@ -83,7 +83,8 @@ ApplicationBuilder::<Pasta, R<13>, ...>::new()
 `R<N>` sets the polynomial size to 2^N coefficients, which determines two
 constraint limits:
 
-- **Gates**: up to 2^(N−2)
+- **Gates**: up to 2^(N−2) − 1, since the last gate of a rank is
+  [reserved](../protocol/construction/wiring.md#blind-gate)
 - **Constraints**: up to 2^N
 
 Currently `R<7>`, `R<13>`, `R<14>` and `R<15>` are implemented. Three of them
@@ -92,10 +93,10 @@ trait documentation for how to add new values.
 
 | Rank | Gate Limit | Constraint Limit | Use Case |
 |------|---------------------|-------------|----------|
-| `R<7>` (`TestRank`) | 32 | 128 | Unit tests |
-| `R<13>` (`WalletRank`) | 2,048 | 8,192 | Production |
-| `R<14>` | 4,096 | 16,384 | Tests of circuits that exceed `R<13>` |
-| `R<15>` (`AggregatorRank`) | 8,192 | 32,768 | The Aggregator profile |
+| `R<7>` (`TestRank`) | 31 | 128 | Unit tests |
+| `R<13>` (`WalletRank`) | 2,047 | 8,192 | Production |
+| `R<14>` | 4,095 | 16,384 | Tests of circuits that exceed `R<13>` |
+| `R<15>` (`AggregatorRank`) | 8,191 | 32,768 | The Aggregator profile |
 
 ### Choosing the Right Rank
 
@@ -104,13 +105,13 @@ trait documentation for how to add new values.
 - Suitable for small test circuits
 
 **For production**: Use `R<13>`
-- 2,048 gates, 8,192 constraints
+- 2,047 gates, 8,192 constraints
 - Standard capacity for most applications
 
 ### What Happens if You Exceed Rank?
 
 ```rust
-Error: exceeded the maximum number of gates (2048)
+Error: exceeded the maximum number of gates (2047)
 ```
 
 **Solutions**:
@@ -197,10 +198,11 @@ ApplicationBuilder::<Pasta, R<13>, 9>::new()
 over-allocate.
 
 **Upper bound**: for the Standard profile at the wallet rank `R<13>`,
-the largest header size is 201 elements. Ragu's challenge binder circuits
+the largest header size is 195 elements. Ragu's challenge binder circuits
 load the headers of both children and the step's own beside the online
-openings, and at 201 the largest binder uses all 2048 gates. A larger header fails `finalize` with
-`Error: exceeded the maximum number of gates (2048)`.
+openings, and at 195 the largest binder uses all 2047 gates that a circuit
+may hold. A larger header fails `finalize` with
+`Error: exceeded the maximum number of gates (2047)`.
 Profiles with extensions can have a lower limit because their additional
 claims and commitments also consume gates. Check capacity with `finalize`
 for the selected profile and registered application.

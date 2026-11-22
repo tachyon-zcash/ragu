@@ -15,6 +15,11 @@ three components.
 | batched opening | $p \in \F_p[X]$ with $P \in \E_q$, opened at $u$ | $p_q \in \F_q[X]$ with $P_q \in \E_p$, opened at $u_q$ |
 | registry restriction | $m(W, x, y)$ and its commitment | $m_q(W, x_q, y_q)$ and its commitment |
 
+The third component is stored as a polynomial. The fuse that made the proof
+does not establish that it is the registry's restriction, so until a parent or
+the decider tests it, it is a [candidate](batch.md#registry-candidates) for
+that restriction.
+
 The values that the accumulator claims are derived from the polynomials and are
 not stored:
 
@@ -31,11 +36,14 @@ stage polynomials.
 
 | Side | Circuit Polynomials | Stage Polynomials |
 |---|---|---|
-| native, 46 | `Hashes1`, `Hashes2`, `Collapse`, `ComputeV`, `BindChallenges(0..3)`, `BindBeta`, `BindEndoscalar`, `EndoscalingStep(0..24)` | `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` |
-| nested, 43 | `EndoscalingStep(0..28)`, `Collapse`, `ComputeV` | `EndoscalarStage`, `PointsStage`, `BridgePreamble`, `BridgeHash`, `BridgeSPrime`, `BridgeInnerError`, `BridgeOuterError`, `BridgeAB`, `BridgeQuery`, `BridgeF`, `BridgeEval`, `ChallengeStage` |
+| native, 48 | `Hashes1`, `Hashes2`, `Collapse`, `ComputeV`, `BindChallenges(0..=3)`, `BindBeta`, `BindEndoscalar`, `EndoscalingStep(0..=26)` | `Preamble`, `InnerError`, `OuterError`, `Query`, `Eval`, `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` |
+| nested, 45 | `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV` | `EndoscalarStage`, `PointsStage`, `BridgePreamble`, `BridgeHash`, `BridgeSPrime`, `BridgeInnerError`, `BridgeOuterError`, `BridgeAB`, `BridgeQuery`, `BridgeF`, `BridgeEval`, `ChallengeStage` |
 
 Each polynomial is stored with its commitment, $R[\cdot] \in \E_q$ for a native
-one and $R_q[\cdot] \in \E_p$ for a nested one.
+one and $R_q[\cdot] \in \E_p$ for a nested one. A fuse draws the
+[free coefficients](wiring.md#blind-gate) of each uniformly at random, except
+those of the three nested stages that the
+[stage table](stage_contents.md#nested-stages) lists with fixed ones.
 
 The [step circuit](setup.md#step-circuit) is not in the frontier. Its trace
 depends on no challenge of the fuse after $w$, so the fuse folds the claim about
@@ -64,8 +72,8 @@ Every commitment in the proof is redundant with its polynomial, and the
 practice, the prover forms some of the commitments without committing.
 
 - $[A]$ is formed as a linear combination of the children's commitments and of
-  $R[\texttt{Application}]$ and $R[\texttt{ApplicationStage}]$, and $[B]$ by
-  committing $B$.
+  $R[\texttt{Application}]$, $R[\texttt{ApplicationStage}]$ and
+  $[a_\star]$, and $[B]$ by committing $B$.
 - $P$ and $P_q$ are the outputs of the two [walks](walks.md), not commitments
   computed from $p$ and $p_q$.
 
@@ -83,10 +91,11 @@ The proof does not store the quotient polynomials $f$ and $f_q$ of the
 [batched openings](batch.md#batch-structure), or the
 [restrictions](batch.md#registry-chain) `registry_wx0`, `registry_wx1` and
 `registry_wy` of either side, or the two polynomials of the step circuit's
-trace. Those exist only during the fuse.
+trace, or the fuse's [randomizers](claims.md#randomizer). Those exist only
+during the fuse.
 
-A proof is **well formed** when it holds $4$ `BindChallenges` polynomials, $25$
-native and $29$ nested `EndoscalingStep` polynomials, with as many commitments.
+A proof is **well formed** when it holds $4$ `BindChallenges` polynomials, $27$
+native and $31$ nested `EndoscalingStep` polynomials, with as many commitments.
 
 ## Native Unified Instance {#native-unified}
 

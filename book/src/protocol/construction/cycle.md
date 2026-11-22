@@ -42,10 +42,9 @@ given a point $G$ and its multiple $a \cdot G$: for generators that are
 independent and uniformly random, as the outputs of the hash are modeled to be,
 a method that finds relations also finds discrete logarithms.
 
-Commitments have no separate blinding generator. The one coefficient of a trace
-that
-carries an arbitrary value is that of $X^{2n - 1}$, the
-[$\v{a}_0$ of the `SYSTEM` gate](wiring.md#system-gate).
+Commitments have no separate blinding generator. Three coefficients of a trace
+carry arbitrary values instead, those of $X^{2n - 1}$, $X^{n}$ and $X^{3n}$,
+which are its [free coefficients](wiring.md#blind-gate).
 
 ## Endoscalars {#endoscalars}
 
@@ -179,8 +178,24 @@ $R[\texttt{Preamble}]$ and $R_q[\texttt{BridgePreamble}]$.
 | $[\phi]$ | commitment of the polynomial $\phi$ | `sparse_commit_to_affine` |
 | $\revdot{\phi}{\phi'}$ | [revdot product](arithmetization.md) | `Polynomial::revdot` |
 | $\text{Horner}_t[c_1, \dots, c_k]$ | $\sum_{j=1}^{k} c_j \, t^{k - j}$, a [list in the order written](wiring.md#public-inputs) | `Horner`, `Polynomial::fold` |
+| $a_\star$, $b_\star$, $p_\star$ | the fuse's own [fold randomizers](claims.md#randomizer) and [batch randomizer](batch.md#batch-randomizer) | `fuse::randomizer` |
+| $\widehat{m}_{xy}$, $\widehat{m}_{wy}$, $\widehat{m}^{(i)}_{wx}$ | committed [candidates](batch.md#registry-candidates) for restrictions of the registry polynomial $m$ | `registry_xy`, `registry_wy`, `registry_wx0`, `registry_wx1` |
 | $\text{endo}(\chi)$ | endoscalar of a native challenge $\chi$ | `extract_endoscalar` |
 | $\text{lift}_p$, $\text{lift}_q$ | lift of an endoscalar into $\F_p$, $\F_q$ | `lift_endoscalar` |
 
 The code uses Horner lists for $k(y)$, for folding polynomials with $z$, and for
 both batching challenges.
+
+Several lists of the section are indexed by integers. An index belongs to its
+own list, and equal integers in two lists name unrelated objects.
+
+| Index | List | Order |
+|---|---|---|
+| $i$ | the two children | left, then right |
+| registry index $j$; $\text{id}$ for a step | the wiring polynomials $s_j$ of a registry, at the points $\omega_j$ | [registries](setup.md#native-registry) |
+| rx position | the rx polynomials of one side | [`RxIndex::ALL`](setup.md#rx-order) |
+| position $k$ | the claims of a fold | [claim lists](claims.md#native-claims) |
+| group $g$, slot $j$ | the grid of a fold | [grids](claims.md#fold-groups) |
+| opening $h$ | the openings of a batch | [opening lists](batch.md#native-openings) |
+| $j$ in $\psi_j$, $\epsilon_j$ | the batched polynomials | [batched polynomials](batch.md#native-p) |
+| $k$ in $C_k$ | the points of a walk | [walks](walks.md#nested-walk) |

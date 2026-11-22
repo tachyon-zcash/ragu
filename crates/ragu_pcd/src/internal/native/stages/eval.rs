@@ -217,6 +217,21 @@ pub struct CurrentStepWitness<F> {
     /// _nested_ `query` stage.
     pub registry_xy: F,
 
+    /// Evaluation of the step's own fold randomizer $a_r$ at $u$. This
+    /// polynomial is committed in the `_03_s_prime` step of the fuse
+    /// operation, within the _nested_ `s_prime` stage.
+    pub randomizer_a: F,
+
+    /// Evaluation of the step's own fold randomizer $b_r$ at $u$, committed
+    /// with $a_r$.
+    pub randomizer_b: F,
+
+    /// Evaluation of the step's own batch randomizer at $u$. This polynomial
+    /// is committed in the `_08_f` step of the fuse operation, within the
+    /// _nested_ `f` stage. No query names it: it enters $p$ so that $p$
+    /// reveals nothing of the polynomials folded into it.
+    pub mask: F,
+
     /// Evaluations at $u$ of the step's online polynomials, in slot order
     /// (see [`online`]): the children's exported polynomials, committed in
     /// their proofs and stashed in this step's nested `preamble` stage, then
@@ -267,6 +282,9 @@ impl<C: ProfiledCycle> Witness<C> {
                 a_poly: C::CircuitField::ZERO,
                 b_poly: C::CircuitField::ZERO,
                 registry_xy: C::CircuitField::ZERO,
+                randomizer_a: C::CircuitField::ZERO,
+                randomizer_b: C::CircuitField::ZERO,
+                mask: C::CircuitField::ZERO,
                 online: [C::CircuitField::ZERO; online::NUM_ONLINE_FP_QUERIES],
             },
             partials,
@@ -346,6 +364,12 @@ pub struct Evaluations<'dr, D: Driver<'dr>, P: Profile> {
     pub b_poly: Element<'dr, D>,
     #[ragu(gadget)]
     pub registry_xy: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub randomizer_a: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub randomizer_b: Element<'dr, D>,
+    #[ragu(gadget)]
+    pub mask: Element<'dr, D>,
     /// The online polynomials at $u$, in slot order.
     #[ragu(gadget)]
     pub online: FixedVec<Element<'dr, D>, online::QueriesLen>,
@@ -382,10 +406,10 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
     type OutputKind = Kind![C::CircuitField; Output<'_, _, C>];
 
     fn values() -> usize {
-        // 2 * ChildEvaluations (rx + 4 each) + current step elements (8)
+        // 2 * ChildEvaluations (rx + 4 each) + current step elements (11)
         // + the online slots + (x, y) per binding partial
         2 * (RxIndex::num::<C::Profile>() + 4)
-            + 8
+            + 11
             + online::NUM_ONLINE_FP_QUERIES
             + 2 * (NUM_BINDERS - 1)
             + Present::<C::Profile, Nested, 2>::len()
@@ -434,6 +458,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
             allocator,
             witness.as_ref().map(|w| w.current.registry_xy),
         )?;
+        let randomizer_a = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.current.randomizer_a),
+        )?;
+        let randomizer_b = Element::alloc(
+            dr,
+            allocator,
+            witness.as_ref().map(|w| w.current.randomizer_b),
+        )?;
+        let mask = Element::alloc(dr, allocator, witness.as_ref().map(|w| w.current.mask))?;
         let online = FixedVec::try_from_fn(|i| {
             Element::alloc(dr, allocator, witness.as_ref().map(|w| w.current.online[i]))
         })?;
@@ -455,6 +490,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize> staging::Stage<C::Circ
                 a_poly,
                 b_poly,
                 registry_xy,
+                randomizer_a,
+                randomizer_b,
+                mask,
                 online,
             },
             partials,

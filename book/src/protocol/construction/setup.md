@@ -13,8 +13,8 @@ before it makes any proof.
 | $H$ | `HEADER_SIZE`, the length of an encoded header |
 | $K$ | the number of registered application steps |
 | `stage_size` | the largest number of staged values any registered step declares |
-| native [registry](registry.md), tag $\kappa$ | $55 + K$ wiring polynomials over $\F_p$ |
-| nested registry, tag $\kappa_q$ | $46$ wiring polynomials over $\F_q$ |
+| native [registry](registry.md), tag $\kappa$ | $57 + K$ wiring polynomials over $\F_p$ |
+| nested registry, tag $\kappa_q$ | $48$ wiring polynomials over $\F_q$ |
 | bootstrap proof | built at finalization; see [the base case](base_case.md) |
 
 ## Headers {#headers}
@@ -80,11 +80,12 @@ $(g, m) = (1, \lceil \texttt{stage\_size} / 2 \rceil)$. The stage has this one
 size in every step circuit of the application, and a step that stages fewer
 values leaves the rest of the stage unused.
 
-$$r[\texttt{ApplicationStage}] = \color{#dc2626}{\v{a}_0} \, X^{2n-1} + \sum_{k \text{ even}} \nu_k \, X^{2n-2-k/2} + \sum_{k \text{ odd}} \nu_k \, X^{4n-2-(k-1)/2}$$
+$$r[\texttt{ApplicationStage}] = \textcolor{#dc2626}{\v{a}_0} \, X^{2n-1} + \sum_{k \text{ even}} \nu_k \, X^{2n-2-k/2} + \sum_{k \text{ odd}} \nu_k \, X^{4n-2-(k-1)/2} + \textcolor{#dc2626}{\v{a}_{n-1}} \, X^{n} + \textcolor{#dc2626}{\v{d}_{n-1}} \, X^{3n}$$
 
-$\color{#dc2626}{\v{a}_0}$ is uniformly random. The stage mask at [native index](#native-registry) $51$
-confines this polynomial to the gates of the stage, and the final mask at index
-$52$ forces the step circuit's own polynomial to zero on those gates.
+The three [free coefficients](wiring.md#blind-gate) are uniformly random. The
+stage mask at [native index](#native-registry) $53$ confines this polynomial to
+the gates of the stage, and the final mask at index $54$ forces the step
+circuit's own polynomial to zero on those gates.
 
 ### Step Circuit {#step-circuit}
 
@@ -105,9 +106,9 @@ not check that $\eta_s$ is the slot polynomial's value at $\xi_s$; the
 Every slot therefore has exactly one opening $(\xi_s, \eta_s)$ per step.
 
 The circuit also allocates two wires $(h_x, h_y)$ for the
-[bridge hash](stage_contents.md#bridge-hash). They are the coordinates of the commitment
-of the stage that holds $O_1$, and a step that hashes its own second online
-commitment reads them.
+[bridge hash](stage_contents.md#bridge-hash). They are the coordinates of the
+commitment of the stage that holds $O_1$, and a step that hashes its own second
+online commitment reads them.
 
 The public output is $\zeta$, the six openings, the two wires of the bridge hash
 and the three headers, which is $1 + 12 + 2 + 3H = 15 + 3H$ elements, so
@@ -139,8 +140,9 @@ the following and defers the construction of the step's circuit.
 4. Each header suffix maps to one header type, and only the unit header uses a
    reserved suffix.
 5. `stage_size` is raised to the step's staged value count. One plus the gates
-   of that stage must be below $n$, the one being the
-   [`SYSTEM` gate](wiring.md#system-gate).
+   of that stage must be below $n - 1$, the one being the
+   [`SYSTEM` gate](wiring.md#system-gate) and gate $n - 1$ the
+   [blind gate](wiring.md#blind-gate).
 
 Finalizing with
 [`ApplicationBuilder::finalize_with`](ragu_pcd::ApplicationBuilder::finalize_with)
@@ -165,23 +167,30 @@ then runs in this order.
 Many lists in this section run over the [rx polynomials](cycle.md#notation) of
 one side in the order of `RxIndex::ALL`.
 
-| Position | Native `RxIndex` | Position | Nested `RxIndex` |
+| Rx Position | Native `RxIndex` | Rx Position | Nested `RxIndex` |
 |---|---|---|---|
-| 0 | `Hashes1` | 0 to 28 | `EndoscalingStep(0..28)` |
-| 1 | `Hashes2` | 29 | `Collapse` |
-| 2 | `Collapse` | 30 | `ComputeV` |
-| 3 | `ComputeV` | 31 | `EndoscalarStage` |
-| 4 to 7 | `BindChallenges(0..3)` | 32 | `PointsStage` |
-| 8 | `BindBeta` | 33 | `BridgePreamble` |
-| 9 | `BindEndoscalar` | 34 | `BridgeHash` |
-| 10 to 34 | `EndoscalingStep(0..24)` | 35 | `BridgeSPrime` |
-| 35 | `Preamble` | 36 | `BridgeInnerError` |
-| 36 | `InnerError` | 37 | `BridgeOuterError` |
-| 37 | `OuterError` | 38 | `BridgeAB` |
-| 38 | `Query` | 39 | `BridgeQuery` |
-| 39 | `Eval` | 40 | `BridgeF` |
-| 40 to 45 | `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | 41 | `BridgeEval` |
-| | | 42 | `ChallengeStage` |
+| 0 | `Hashes1` | 0 to 30 | `EndoscalingStep(0..=30)` |
+| 1 | `Hashes2` | 31 | `Collapse` |
+| 2 | `Collapse` | 32 | `ComputeV` |
+| 3 | `ComputeV` | 33 | `EndoscalarStage` |
+| 4 to 7 | `BindChallenges(0..=3)` | 34 | `PointsStage` |
+| 8 | `BindBeta` | 35 | `BridgePreamble` |
+| 9 | `BindEndoscalar` | 36 | `BridgeHash` |
+| 10 to 36 | `EndoscalingStep(0..=26)` | 37 | `BridgeSPrime` |
+| 37 | `Preamble` | 38 | `BridgeInnerError` |
+| 38 | `InnerError` | 39 | `BridgeOuterError` |
+| 39 | `OuterError` | 40 | `BridgeAB` |
+| 40 | `Query` | 41 | `BridgeQuery` |
+| 41 | `Eval` | 42 | `BridgeF` |
+| 42 to 47 | `PointsBinding`, `PointsPreamble`, `PointsRegistryWx`, `PointsAb`, `PointsF`, `PointsWalk` | 43 | `BridgeEval` |
+| | | 44 | `ChallengeStage` |
+
+A position in these orders is not a registry index. The two numberings agree on
+the native side, where the mask of each stage has the
+[index](#native-registry) that the stage's polynomial has here. They part on
+the nested side: `BridgePreamble` is at position $35$, and its mask is at index
+$36$ of the [nested registry](#nested-registry), behind the final mask of the
+`PointsStage`.
 
 A native circuit or stage appears under three names. A circuit is named after
 its module and a polynomial after its `RxIndex` variant. The registry entry of a
@@ -201,62 +210,64 @@ Each entry is a circuit or a [bonding polynomial](registry.md#registry-kinds),
 and the steps are circuits. Each [mask](staging.md#masks) belongs to the
 [stage](stage_contents.md) that it is named after.
 
-| Index | Entry | Kind |
+| Registry Index | Entry | Kind |
 |---|---|---|
 | 0 | `Hashes1Circuit` | circuit |
 | 1 | `Hashes2Circuit` | circuit |
 | 2 | `CollapseCircuit` | circuit |
 | 3 | `ComputeVCircuit` | circuit |
-| 4 to 7 | `BindChallengesCircuit(0..3)` | circuit |
+| 4 to 7 | `BindChallengesCircuit(0..=3)` | circuit |
 | 8 | `BindBetaCircuit` | circuit |
 | 9 | `BindEndoscalarCircuit` | circuit |
-| 10 to 34 | `EndoscalingStep(0..24)` | circuit |
-| 35 | `PreambleStage` | stage mask |
-| 36 | `InnerErrorStage` | stage mask |
-| 37 | `OuterErrorStage` | stage mask |
-| 38 | `QueryStage` | stage mask |
-| 39 | `EvalStage` | stage mask |
-| 40 | `PointsBindingStage` | stage mask |
-| 41 | `PointsPreambleStage` | stage mask |
-| 42 | `PointsRegistryWxStage` | stage mask |
-| 43 | `PointsAbStage` | stage mask |
-| 44 | `PointsFStage` | stage mask |
-| 45 | `PointsWalkStage` | stage mask |
-| 46 | `InnerErrorFinalStaged` | final mask |
-| 47 | `OuterErrorFinalStaged` | final mask |
-| 48 | `EvalFinalStaged` | final mask |
-| 49 | `PointsWalkFinalStaged` | final mask |
-| 50 | `PreambleFinalStaged` | final mask |
-| 51 | `ApplicationStage` | stage mask |
-| 52 | `ApplicationFinalStaged` | final mask |
-| 53 | `Rerandomize` | internal step |
-| 54 | `Bootstrap` | internal step |
-| $55 + i$ | application step $i$, for $i < K$ | application step |
+| 10 to 36 | `EndoscalingStep(0..=26)` | circuit |
+| 37 | `PreambleStage` | stage mask |
+| 38 | `InnerErrorStage` | stage mask |
+| 39 | `OuterErrorStage` | stage mask |
+| 40 | `QueryStage` | stage mask |
+| 41 | `EvalStage` | stage mask |
+| 42 | `PointsBindingStage` | stage mask |
+| 43 | `PointsPreambleStage` | stage mask |
+| 44 | `PointsRegistryWxStage` | stage mask |
+| 45 | `PointsAbStage` | stage mask |
+| 46 | `PointsFStage` | stage mask |
+| 47 | `PointsWalkStage` | stage mask |
+| 48 | `InnerErrorFinalStaged` | final mask |
+| 49 | `OuterErrorFinalStaged` | final mask |
+| 50 | `EvalFinalStaged` | final mask |
+| 51 | `PointsWalkFinalStaged` | final mask |
+| 52 | `PreambleFinalStaged` | final mask |
+| 53 | `ApplicationStage` | stage mask |
+| 54 | `ApplicationFinalStaged` | final mask |
+| 55 | `Rerandomize` | internal step |
+| 56 | `Bootstrap` | internal step |
+| $57 + i$ | application step $i$, for $i < K$ | application step |
 
-The domain has $64$ points for $K \le 9$ and $128$ points for $10 \le K \le 73$.
+The domain has $64$ points for $K \le 7$ and $128$ points for $8 \le K \le 71$.
+A registry holds [at most $4n$ polynomials](registry.md#registry-domain), so
+$57 + K \le 4n$, and an application can register at most $4n - 57$ steps.
 
 ## Nested Registry {#nested-registry}
 
-| Index | Entry | Kind |
+| Registry Index | Entry | Kind |
 |---|---|---|
-| 0 to 28 | `EndoscalingStep(0..28)` | circuit |
-| 29 | `Collapse` | circuit |
-| 30 | `ComputeV` | circuit |
-| 31 | `EndoscalarStage` | stage mask |
-| 32 | `PointsStage` | stage mask |
-| 33 | `PointsFinalStaged` | final mask |
-| 34 | `BridgePreamble` | stage mask |
-| 35 | `BridgeHash` | stage mask |
-| 36 | `BridgeSPrime` | stage mask |
-| 37 | `BridgeInnerError` | stage mask |
-| 38 | `BridgeOuterError` | stage mask |
-| 39 | `BridgeAB` | stage mask |
-| 40 | `BridgeQuery` | stage mask |
-| 41 | `BridgeF` | stage mask |
-| 42 | `BridgeEval` | stage mask |
-| 43 | `ChallengeStage` | stage mask |
-| 44 | `ChallengeFinalStaged` | final mask |
-| 45 | `Loading` | stripped circuit |
+| 0 to 30 | `EndoscalingStep(0..=30)` | circuit |
+| 31 | `Collapse` | circuit |
+| 32 | `ComputeV` | circuit |
+| 33 | `EndoscalarStage` | stage mask |
+| 34 | `PointsStage` | stage mask |
+| 35 | `PointsFinalStaged` | final mask |
+| 36 | `BridgePreamble` | stage mask |
+| 37 | `BridgeHash` | stage mask |
+| 38 | `BridgeSPrime` | stage mask |
+| 39 | `BridgeInnerError` | stage mask |
+| 40 | `BridgeOuterError` | stage mask |
+| 41 | `BridgeAB` | stage mask |
+| 42 | `BridgeQuery` | stage mask |
+| 43 | `BridgeF` | stage mask |
+| 44 | `BridgeEval` | stage mask |
+| 45 | `ChallengeStage` | stage mask |
+| 46 | `ChallengeFinalStaged` | final mask |
+| 47 | `Loading` | stripped circuit |
 
 The nested registry is the same for every application, and its domain has $64$
 points.
@@ -272,18 +283,31 @@ counts.
 
 | Quantity | Arithmetic | Value |
 |---|---|---|
-| native rx polynomials | $21 + 25$ | 46 |
-| points of the nested walk | $1 + 2 (46 + 4) + 8 + 6$ | 115 |
-| nested walk steps | $\lceil 114 / 4 \rceil$ | 29 |
-| nested rx polynomials | $29 + 14$ | 43 |
-| points of the native walk | $1 + 2 (43 + 4) + 6$ | 101 |
-| native walk steps | $\lceil 100 / 4 \rceil$ | 25 |
-| native claims, of $14 \cdot 7$ slots | $2 + 1 + 2 \cdot 35 + 18$ | 91 |
-| nested claims, of $10 \cdot 8$ slots | $2 + 2 \cdot 31 + 15$ | 79 |
-| native openings | $21 + 2 \cdot 46 + 53 + 6$ | 172 |
-| nested openings | $18 + 2 \cdot 43 + 46$ | 150 |
+| native rx polynomials | $21 + 27$ | 48 |
+| points of the nested walk | $1 + 2 (48 + 4) + 11 + 6$ | 122 |
+| nested walk steps | $\lceil 121 / 4 \rceil$ | 31 |
+| nested rx polynomials | $31 + 14$ | 45 |
+| points of the native walk | $1 + 2 (45 + 4) + 9$ | 108 |
+| native walk steps | $\lceil 107 / 4 \rceil$ | 27 |
+| native claims, of $14 \cdot 7$ places | $2 + 1 + 2 \cdot 37 + 18$ | 95 |
+| nested claims, of $11 \cdot 8$ places | $2 + 2 \cdot 33 + 15$ | 83 |
+| native openings | $23 + 2 \cdot 48 + 55 + 6$ | 180 |
+| nested openings | $20 + 2 \cdot 45 + 48$ | 158 |
 
-In the two rx counts, $25$ and $29$ are the native and nested endoscaling steps,
+In the two rx counts, $27$ and $31$ are the native and nested endoscaling steps,
 and $21$ and $14$ are the other polynomials of the [orders](#rx-order) above.
 The terms of the other sums are explained with the [walks](walks.md), the
-[claim lists](claims.md) and the [opening lists](batch.md).
+[claim lists](claims.md) and the [opening lists](batch.md). The places for
+claims are those that the [fold's grid](claims.md#randomizer) leaves beside the
+fuse's own randomizer.
+
+The walk of each side is sized by the batch of the other side. The nested walk
+has $122$ points because the native batch has $121$ polynomials beside $f$, and
+the native walk has $108$ because the nested batch has $107$.
+
+In the code these counts are constants of the `internal::native` and
+`internal::nested` modules of `ragu_pcd`. The number of native endoscaling
+steps is pinned, and a compile-time assertion holds it to the size of the
+native walk. The nested counts are derived from the native ones. The tests of
+`internal` assert the claim counts, the index orders and the stage positions of
+[Stage Contents](stage_contents.md).

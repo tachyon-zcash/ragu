@@ -39,6 +39,9 @@ mod recursive_boundary_tests;
 #[cfg(test)]
 #[path = "../../tests/recursive_propagation.rs"]
 pub(crate) mod recursive_propagation_tests;
+#[cfg(all(test, not(ragu_pcd_targeted_tests)))]
+#[path = "../../tests/rerandomization_hiding.rs"]
+mod rerandomization_hiding_tests;
 
 // Keep this beneath `proof` so the shared test helper can inspect private
 // `Proof` fields.
@@ -80,7 +83,7 @@ use alloc::{sync::Arc, vec, vec::Vec};
 pub(crate) use builder::ProofBuilder;
 use ragu_backend::Backend;
 use ragu_circuits::{
-    CircuitExt,
+    Blind, CircuitExt,
     polynomials::{Rank, sparse},
     registry::CircuitIndex,
     staging::{MultiStage, StageExt},
@@ -422,6 +425,37 @@ pub struct Proof<C: Cycle, R: Rank> {
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// Whether the stored `ab` bridge equals the stage derived from this
+    /// proof's native commitments and `bridge_alpha`, with a zero blind gate.
+    /// Call after checking the proof's shape with [`Self::well_formed`].
+    pub(crate) fn ab_bridge_matches(&self) -> Result<bool> {
+        use nested::stages::ab;
+
+        use crate::profile::online::stages::{Native, phase_points};
+
+        let expected = ab::Stage::<C::HostCurve, R, C::Profile>::rx(
+            bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
+            &ab::Witness {
+                online_points: phase_points::<C::Profile, Native, 2, _>(
+                    &self.native_online_commitments,
+                ),
+                a: self.native_commitment(RxComponent::AbA),
+                b: self.native_commitment(RxComponent::AbB),
+                native_points_ab: self.native_rx_commitment(RxIndex::PointsAb),
+            },
+        )?;
+        // Sparse blocks may retain explicit zeros, including after decoding
+        // changes the block layout. Compare only the nonzero terms.
+        let nonzero =
+            |&(_, coefficient): &(usize, &C::ScalarField)| *coefficient != C::ScalarField::ZERO;
+        Ok(self
+            .bridge_ab_rx
+            .0
+            .iter_stored_coeffs()
+            .filter(nonzero)
+            .eq(expected.iter_stored_coeffs().filter(nonzero)))
+    }
+
     /// The helper's public values, deriving challenges from the proof transcript.
     pub(crate) fn nested_online_values(&self) -> Result<Vec<C::ScalarField>> {
         crate::internal::ky::nested_online_values::<C>(&self.challenges(), &self.nested_online_fold)
@@ -932,8 +966,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         rng: &mut RNG,
         beta_endo: Uendo,
         points: &[C::HostCurve],
-        endoscalar_alpha: C::ScalarField,
-        points_alpha: C::ScalarField,
+        endoscalar_alpha: Blind<C::ScalarField>,
+        points_alpha: Blind<C::ScalarField>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(C::HostCurve, PointsWitness<C::HostCurve, C::Profile>)> {
         assert_eq!(points.len(), NumPoints::<C::Profile>::len());
@@ -1023,15 +1057,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &binding,
+            Blind::random(rng), &binding
         )?);
         builder.set_native_points_preamble_rx(<native_points::PreambleStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &preamble,
+            Blind::random(rng), &preamble
         )?);
         Ok(())
     }
@@ -1044,19 +1076,21 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         rng: &mut RNG,
         registry_wx0: C::NestedCurve,
         registry_wx1: C::NestedCurve,
+        randomizer: [C::NestedCurve; 2],
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let witness = native_points::RegistryWxWitness {
             online_points: builder.nested_online_phase::<1>(),
             registry_wx0,
             registry_wx1,
+            randomizer_a: randomizer[0],
+            randomizer_b: randomizer[1],
         };
         builder.set_native_points_registry_wx_rx(<native_points::RegistryWxStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &witness,
+            Blind::random(rng), &witness
         )?);
         Ok(())
     }
@@ -1082,32 +1116,34 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             C::CircuitField,
             R,
         >>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &witness,
         )?);
         Ok(())
     }
 
     /// Commits the native points stage holding the nested `registry_xy`
-    /// commitment and $F_n$, before $u$ is squeezed; the `f` bridge carries
-    /// its commitment.
+    /// commitment, $F_n$ and the nested batch randomizer's commitment,
+    /// before $u$ is squeezed; the `f` bridge carries its commitment.
     pub(crate) fn commit_native_points_f<RNG: rand::CryptoRng>(
         &self,
         rng: &mut RNG,
         registry_xy: C::NestedCurve,
         f: C::NestedCurve,
+        mask: C::NestedCurve,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let witness = native_points::FWitness {
             registry_xy,
             f,
+            mask,
             online_points: builder.nested_online_phase::<3>(),
         };
         builder.set_native_points_f_rx(<native_points::FStage<C::NestedCurve, C::Profile> as StageExt<
             C::CircuitField,
             R,
         >>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &witness,
         )?);
         Ok(())
@@ -1125,20 +1161,22 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &inputs.binding,
+            Blind::random(rng), &inputs.binding
         )?);
         builder.set_native_points_preamble_rx(<native_points::PreambleStage<
             C::NestedCurve,
             C::Profile,
         > as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
-            &inputs.preamble,
+            Blind::random(rng), &inputs.preamble
         )?);
         self.commit_native_points_registry_wx(
             rng,
             inputs.registry_wx.registry_wx0,
             inputs.registry_wx.registry_wx1,
+            [
+                inputs.registry_wx.randomizer_a,
+                inputs.registry_wx.randomizer_b,
+            ],
             builder,
         )?;
         self.commit_native_points_ab(
@@ -1148,7 +1186,13 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             inputs.ab.b,
             builder,
         )?;
-        self.commit_native_points_f(rng, inputs.f.registry_xy, inputs.f.f, builder)
+        self.commit_native_points_f(
+            rng,
+            inputs.f.registry_xy,
+            inputs.f.f,
+            inputs.f.mask,
+            builder,
+        )
     }
 
     /// Runs the native endoscaling over the committed inputs: walks them
@@ -1181,7 +1225,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         );
 
         let walk_rx = <WalkStage<C::NestedCurve, C::Profile> as StageExt<C::CircuitField, R>>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &walk,
         )?;
 
@@ -1439,6 +1483,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             push(nested_commitment, &ones_nested); // a
             push(nested_commitment, &ones_nested); // b
             push(registry_xy_commitment, registry_xy); // registry_xy
+            push(nested_commitment, &ones_nested); // fold randomizer a
+            push(nested_commitment, &ones_nested); // fold randomizer b
+            push(nested_commitment, &ones_nested); // batch randomizer
             for (poly, &commitment) in builder
                 .online_fq_polynomials()
                 .iter()
@@ -1502,6 +1549,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     native_preamble: host_commitment,
                     native_application: host_commitment,
                     native_points_registry_wx: builder.native_points_registry_wx_commitment(),
+                    randomizer_a: host_commitment,
+                    randomizer_b: host_commitment,
                 },
             )
             .expect("trivial s_prime rx");
@@ -1517,6 +1566,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     // A dummy proof folds nothing, so its nested fold has
                     // no error terms.
                     error_terms: FixedVec::from_fn(|_| FixedVec::from_fn(|_| C::ScalarField::ZERO)),
+                    randomizer_c: C::ScalarField::ZERO,
                 },
             )
             .expect("trivial inner_error rx");
@@ -1559,6 +1609,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                 &nested::stages::f::Witness {
                     native_f: host_commitment,
                     native_points_f: builder.native_points_f_commitment(),
+                    native_mask: host_commitment,
                 },
             )
             .expect("trivial f rx");
@@ -1625,6 +1676,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             push(host_commitment, &ones_host); // a
             push(host_commitment, &ones_host); // b
             push(registry_xy_commitment, registry_xy); // native_registry_xy
+            push(host_commitment, &ones_host); // fold randomizer a
+            push(host_commitment, &ones_host); // fold randomizer b
+            push(host_commitment, &ones_host); // batch randomizer
             // The six online slots: every one is this proof's own padding,
             // as the children of the bootstrap fuse that opens them hold it.
             for _ in 0..3 {
@@ -1645,8 +1699,8 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
                     &mut trivial_rng,
                     beta_endo,
                     &points,
-                    C::ScalarField::ONE,
-                    C::ScalarField::ONE,
+                    C::ScalarField::ONE.into(),
+                    C::ScalarField::ONE.into(),
                     &mut builder,
                 )
                 .expect("trivial endoscaling");

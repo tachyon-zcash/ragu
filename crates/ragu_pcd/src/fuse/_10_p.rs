@@ -21,7 +21,10 @@
 use alloc::vec::Vec;
 use core::ops::AddAssign;
 
-use ragu_circuits::polynomials::{Rank, sparse};
+use ragu_circuits::{
+    Blind,
+    polynomials::{Rank, sparse},
+};
 use ragu_core::{
     Cycle, Result,
     drivers::emulator::{Emulator, Wireless},
@@ -31,13 +34,13 @@ use ragu_primitives::{
     EndoscalarChallenge, Uendo, lift_endoscalar,
     vec::{FixedVec, Len},
 };
-use udon::field::Field;
 
 use super::{
     _01_application::NativeApplication,
     _03_s_prime::{NativeSPrime, NestedSPrime},
     _04_inner_error::{NestedRegistryWy, RegistryWy},
     _08_f::{NativeF, NestedF},
+    randomizer::{NativeRandomizer, NestedRandomizer, Randomizers},
 };
 use crate::{
     Application, Proof,
@@ -94,9 +97,17 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_registry_wy: &NestedRegistryWy<C, R>,
         left: &Proof<C, R>,
         right: &Proof<C, R>,
+        randomizer: &NestedRandomizer<C, R>,
         builder: &ProofBuilder<'_, C, R, B>,
     ) -> NativeInputs<C> {
-        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+        let batch = self.nested_batch(
+            builder,
+            nested_s_prime,
+            nested_registry_wy,
+            left,
+            right,
+            randomizer,
+        );
         let current = pcs::CurrentCommitments {
             registry_wx0: nested_s_prime.registry_wx0_commitment,
             registry_wx1: nested_s_prime.registry_wx1_commitment,
@@ -104,6 +115,9 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             a: builder.nested_a_commitment(),
             b: builder.nested_b_commitment(),
             registry_xy: builder.nested_registry_xy_commitment(),
+            randomizer_a: randomizer.a_commitment,
+            randomizer_b: randomizer.b_commitment,
+            mask: randomizer.mask_commitment,
         };
         let points: Vec<C::NestedCurve> = core::iter::once(nested_f.commitment)
             .chain(batch.commitments(current, builder.online_fq_commitments()))
@@ -134,6 +148,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         nested_f: &NestedF<C, R>,
+        randomizers: &Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(
         PointsWitness<C::HostCurve, C::Profile>,
@@ -155,6 +170,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             s_prime,
             registry_wy,
             f,
+            &randomizers.native,
             builder,
         )?;
         let native_points = self.native_inputs(
@@ -163,6 +179,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_registry_wy,
             left,
             right,
+            &randomizers.nested,
             builder,
         );
         let native_walk = self.compute_nested_p(
@@ -173,6 +190,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             nested_s_prime,
             nested_registry_wy,
             nested_f,
+            &randomizers.nested,
             &native_points,
             builder,
         )?;
@@ -190,6 +208,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         s_prime: &NativeSPrime<C, R>,
         registry_wy: &RegistryWy<C, R>,
         f: &NativeF<C, R>,
+        randomizer: &NativeRandomizer<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<PointsWitness<C::HostCurve, C::Profile>> {
         let mut poly = f.poly.clone();
@@ -241,6 +260,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 builder.native_registry_xy_poly(),
                 builder.native_registry_xy_commitment(),
             );
+            // The step's own randomizers: the fold's two, which the batch
+            // opens, and the batch's own, which makes $p$ uniform.
+            acc.acc(&randomizer.a, randomizer.a_commitment);
+            acc.acc(&randomizer.b, randomizer.b_commitment);
+            acc.acc(&randomizer.mask, randomizer.mask_commitment);
 
             // The online slots, in slot order, whose commitments the nested
             // `loading` circuit walks off the preamble bridge stage.
@@ -266,8 +290,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         points.push(f.commitment);
         points.extend_from_slice(&commitments);
 
-        let endoscalar_alpha = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
-        let points_alpha = C::ScalarField::random(|bytes| rng.fill_bytes(bytes));
+        let endoscalar_alpha = Blind::random(rng);
+        let points_alpha = Blind::random(rng);
         let (p_commitment, points) = self.compute_endoscaling(
             rng,
             beta_endo,
@@ -296,11 +320,19 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         nested_s_prime: &NestedSPrime<C, R>,
         nested_registry_wy: &NestedRegistryWy<C, R>,
         nested_f: &NestedF<C, R>,
+        randomizer: &NestedRandomizer<C, R>,
         native_points: &NativeInputs<C>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<NativeWalk<C>> {
         let beta: C::ScalarField = lift_endoscalar(beta_endo);
-        let batch = self.nested_batch(builder, nested_s_prime, nested_registry_wy, left, right);
+        let batch = self.nested_batch(
+            builder,
+            nested_s_prime,
+            nested_registry_wy,
+            left,
+            right,
+            randomizer,
+        );
 
         let mut poly = nested_f.poly.clone();
         for evaluated in batch.evaluated() {

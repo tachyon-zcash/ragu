@@ -1,11 +1,16 @@
 //! Rerandomization step for PCDs.
 //!
 //! This is a simple step: it takes a header-carrying proof and folds it with the
-//! application's cached seeded unit proof, producing the same header. To keep
+//! application's bootstrap proof, producing the same header. To keep
 //! the circuit identical no matter what the left header is, we use a _uniform_
 //! encoding — which makes every left/output header slot, including the suffix,
 //! a witness wire rather than a constant. The right header is the unit header
-//! carried by the cached proof.
+//! carried by the bootstrap proof.
+//!
+//! The step's circuit hides nothing by itself: its witness is the header,
+//! which the output shows. What keeps the output from revealing its input
+//! is the fuse around the step, run twice (see
+//! [`Application::rerandomize`](crate::Application::rerandomize)).
 //!
 //! The output proof's polynomials are copies of the left input proof's, which
 //! the circuit holds equal at $\zeta$ slot by slot: the parent sees only
@@ -96,8 +101,8 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
         // Uniform encoding keeps this circuit identical across left header
         // types and constrains the witnessed suffix away from `Dummy` and from
         // zero (see `Encoded::new_uniform`). The output reuses the left input's wires;
-        // the right input is the standard unit encoding carried by the cached
-        // seeded proof.
+        // the right input is the standard unit encoding carried by the
+        // bootstrap proof.
         let left_encoded = Encoded::new_uniform(dr, allocator, left.clone())?;
         let right_encoded = Encoded::new(dr, allocator, right)?;
 
@@ -110,16 +115,6 @@ impl<C: Cycle, H: Header<C::CircuitField>> Step<C> for Rerandomize<H> {
             let output = oracles.output_at(i).open(dr, &zeta)?;
             output.enforce_equal(dr, &left)?;
         }
-
-        // TODO(ebfull): It's possible that the witness for this step needs to
-        // be populated with some random data, for actual re-randomization
-        // (zero-knowledge), though it's not certain at this stage in
-        // development. Note that random wires here would only randomize this
-        // step's own application polynomial, which already takes a random
-        // alpha; the folded accumulator of the resulting proof is a
-        // deterministic function of the input proof, cached seeded proof, and
-        // public challenges, so hiding it would need a fold-level randomizer
-        // claim rather than extra witness here.
 
         // Return left's data as the output data - this preserves it!
         Ok((

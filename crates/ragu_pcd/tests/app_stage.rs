@@ -5,6 +5,7 @@ use alloc::{vec, vec::Vec};
 
 use ragu_backend::{Backend, ReferenceBackend};
 use ragu_circuits::{
+    Blind,
     polynomials::{Rank, WalletRank},
     staging,
 };
@@ -381,7 +382,8 @@ fn steps_verify_with_a_large_odd_stage() {
 }
 
 /// An honest step's stage polynomial holds exactly the step's staged
-/// values in the stage's block and nothing else.
+/// values in the stage's block, and outside it the three free coefficients
+/// alone.
 #[test]
 fn the_stage_holds_exactly_the_staged_values() {
     let app = app_with_stage::<5>();
@@ -399,13 +401,29 @@ fn the_stage_holds_exactly_the_staged_values() {
     )
     .unwrap();
     let stage = stage.expect("the step ran");
-    // The SYSTEM gate carries the prover's alpha; read it back from where
-    // an otherwise empty stage places it.
-    let probe = staging::stage_rx::<_, R>(Fp::ONE, 1, app.stage_size, &[]).unwrap();
-    let alpha_degree = probe.iter_coeffs().position(|c| c == Fp::ONE).unwrap();
-    let alpha = stage.iter_coeffs().nth(alpha_degree).unwrap();
+    // The SYSTEM gate and the blind gate carry the prover's blind; read it
+    // back from where an otherwise empty stage places each coefficient.
+    let free = |blind: Blind<Fp>| {
+        let probe = staging::stage_rx::<_, R>(blind, 1, app.stage_size, &[]).unwrap();
+        let degree = probe.iter_coeffs().position(|c| c == Fp::ONE).unwrap();
+        stage.iter_coeffs().nth(degree).unwrap()
+    };
+    let blind = Blind {
+        alpha: free(Fp::ONE.into()),
+        gate: [
+            free(Blind {
+                alpha: Fp::ZERO,
+                gate: [Fp::ONE, Fp::ZERO],
+            }),
+            free(Blind {
+                alpha: Fp::ZERO,
+                gate: [Fp::ZERO, Fp::ONE],
+            }),
+        ],
+    };
+    assert!(blind.alpha != Fp::ZERO && blind.gate.iter().all(|c| *c != Fp::ZERO));
     let expected =
-        staging::stage_rx::<_, R>(alpha, 1, app.stage_size, &[Fp::from(3), Fp::from(9)]).unwrap();
+        staging::stage_rx::<_, R>(blind, 1, app.stage_size, &[Fp::from(3), Fp::from(9)]).unwrap();
     assert_eq!(
         stage.iter_coeffs().collect::<Vec<_>>(),
         expected.iter_coeffs().collect::<Vec<_>>()
@@ -424,7 +442,8 @@ fn the_stage_commitment_binds_exactly_the_staged_values() {
     let honest = honest(&app, &mut rng);
     let delta = Fp::from(5);
     let inside = 1;
-    let outside = R::n() - 1;
+    // The last gate a mask holds: the blind gate after it is free.
+    let outside = R::blind_gate() - 1;
 
     // Moving a staged value breaks the step's binding constraint, and the
     // stage commitment the step's transcript absorbed.

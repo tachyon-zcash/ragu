@@ -132,6 +132,39 @@ where
         self.b.push(Cow::Owned(sy));
     }
 
+    /// Lays the claims built so far out over the grid of the fold `P` with
+    /// the fold randomizer's claims, whose sides are `a` and `b` (see
+    /// [`fold_revdot::randomized`](crate::internal::fold_revdot::randomized)).
+    /// Call it once, after every claim has been built.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the grid does not hold every claim.
+    pub fn randomize<P: crate::internal::fold_revdot::Parameters>(
+        &mut self,
+        a: A,
+        b: &'rx sparse::Polynomial<F, R>,
+    ) where
+        A: Clone + Default,
+    {
+        use crate::internal::fold_revdot::{capacity, randomized};
+
+        assert!(
+            self.a.len() <= capacity::<P>(),
+            "the fold's grid does not hold every claim"
+        );
+        let real = core::mem::take(&mut self.a);
+        self.a = randomized::<_, P>(real, A::default(), a.clone(), a).collect();
+        let real = core::mem::take(&mut self.b);
+        self.b = randomized::<_, P>(
+            real,
+            Cow::Owned(sparse::Polynomial::default()),
+            Cow::Borrowed(b),
+            Cow::Owned(sparse::Polynomial::default()),
+        )
+        .collect();
+    }
+
     /// Horner-fold groups of polynomials. Each group is first summed, then
     /// the sums are Horner-folded with $z$.
     ///

@@ -75,8 +75,8 @@ impl PayloadKind {
         }
     }
 }
-const PROOF_SCHEMA_VERSION: u16 = 3;
-const COMPRESSED_SCHEMA_VERSION: u16 = 3;
+const PROOF_SCHEMA_VERSION: u16 = 4;
+const COMPRESSED_SCHEMA_VERSION: u16 = 4;
 // Matches the verification semantics identified by RAGU_TAG and IPA_TAG.
 // Held at 1 until the first release: nothing is deployed, so a change to
 // the semantics before then, such as the lifted challenges and the run
@@ -341,26 +341,27 @@ mod tests {
         );
     }
 
-    // Schema v3 is the standard profile's shape under `ragu-pcd-v1`, with
-    // the online polynomials (see `internal::native::online`) in the batch
-    // and each step folding its own application claim. A change to either
-    // moves the layout or the verifier semantics and needs a new schema or
-    // protocol version, not a silent re-pin.
+    // Schema v4 is the standard profile's shape under `ragu-pcd-v1`, with
+    // the online polynomials (see `internal::native::online`) in the batch,
+    // each step folding its own application claim, and each step's
+    // randomizers (see `fuse::randomizer`) in its fold and its batch. A
+    // change to either moves the layout or the verifier semantics and needs
+    // a new schema or protocol version, not a silent re-pin.
     #[test]
-    fn schema_v3_pins_protocol_and_shape() {
+    fn schema_v4_pins_protocol_and_shape() {
         assert_eq!(crate::RAGU_TAG, b"ragu-pcd-v1");
         assert_eq!(crate::ipa::IPA_TAG, b"ragu-ipa-v1");
         assert_eq!(ragu_primitives::ENDOSCALAR_BITS, 143);
         assert_eq!(
             Shape::of::<Standard>(),
             Shape {
-                native_rx: 46,
-                nested_points: 115,
-                nested_steps: 29,
-                nested_rx: 43,
+                native_rx: 48,
+                nested_points: 122,
+                nested_steps: 31,
+                nested_rx: 45,
                 online_fq: 0,
-                native_points: 101,
-                native_steps: 25,
+                native_points: 108,
+                native_steps: 27,
                 source_polynomials: 0,
             }
         );
@@ -388,11 +389,11 @@ mod tests {
             Proof::<Pasta, WalletRank>::encoded_len(),
             28 + payload::<WalletRank>()
         );
-        // 100 instance points; 17 instance scalars; per side 6+2R points,
+        // 104 instance points; 17 instance scalars; per side 6+2R points,
         // 21 scalars; plus the circuit index and common envelope.
         assert_eq!(
             CompressedProof::<Pasta>::encoded_len::<WalletRank>(),
-            28 + 4 + (100 + 17 + 2 * (6 + 2 * 13 + 21)) * 32
+            28 + 4 + (104 + 17 + 2 * (6 + 2 * 13 + 21)) * 32
         );
     }
 

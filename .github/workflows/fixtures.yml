@@ -1,8 +1,8 @@
 name: Fixtures
 
 # Checks the golden fixtures under `crates/ragu_pcd/tests/fixtures/`. The
-# `fuse fixtures` job replays the committed randomness tapes through the
-# prover and requires the committed proofs and digests back, and checks that
+# `fuse fixtures` job runs the prover on the fixtures' seeded randomness tapes
+# and requires the committed proofs and digests back, and checks that
 # the verifier still accepts the committed compressed proofs. A red job means
 # the fuse pipeline or the verifier changed what it produces or accepts; see
 # `crates/ragu_pcd/tests/fixtures/fuse/README.md` for how to regenerate the

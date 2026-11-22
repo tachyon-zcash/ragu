@@ -19,17 +19,21 @@ the role of each.
 The native stages form a tree rooted at `points::BindingStage`, with three
 chains from the root to a leaf. On the gate axis the chains are as follows,
 where $h = \lceil (3H + 93) / 2 \rceil$ is the number of gates of the
-`preamble` stage.
+`preamble` stage. Under each stage is the [round](protocol.md#rounds) in which
+the fuse commits it.
 
 ```text
-gate  0       1..28                 29..28+h  29+h..47+h   48+h..89+h
-      SYSTEM  points::BindingStage  preamble  outer_error  inner_error
+gate   0       1..28                 29..28+h  29+h..48+h   49+h..101+h
+       SYSTEM  points::BindingStage  preamble  outer_error  inner_error
+round          1                     2         4            3
 
-gate  0       1..28                 29..28+h  29+h..107+h  108+h..167+h
-      SYSTEM  points::BindingStage  preamble  query        eval
+gate   0       1..28                 29..28+h  29+h..111+h  112+h..175+h
+       SYSTEM  points::BindingStage  preamble  query        eval
+round          1                     2         6            8
 
-gate  0       1..28                 29..94                 95..96           97..99   100..101  102..245
-      SYSTEM  points::BindingStage  points::PreambleStage  RegistryWxStage  AbStage  FStage    WalkStage
+gate   0       1..28                 29..98                 99..102          103..105  106..108  109..254
+       SYSTEM  points::BindingStage  points::PreambleStage  RegistryWxStage  AbStage   FStage    WalkStage
+round          1                     1                      2                5         7         final
 ```
 
 A circuit reserves the gates of one chain, as far as its last stage, and its own
@@ -37,27 +41,32 @@ polynomial begins at the next gate. Two stages that no chain shares, such as
 `preamble` and `points::PreambleStage`, are never reserved by the same circuit,
 so they may occupy the same gates.
 
-| Stage | Parent | Values | First Gate |
+The order of the gates is the order of the [parents](staging.md#stages), and it
+is not the order of commitment. `points::WalkStage` is committed with the final
+message, after $\text{pre\_beta}$ is drawn.
+
+| Stage | Parent Stage | Values | First Gate |
 |---|---|---|---|
 | `points::BindingStage` | none | 56 | 1 |
 | `preamble` | `points::BindingStage` | $3H + 93$ | 29 |
-| `outer_error` | `preamble` | 38 | $29 + h$ |
-| `inner_error` | `outer_error` | 84 | $48 + h$ |
-| `query` | `preamble` | 157 | $29 + h$ |
-| `eval` | `query` | 120 | $108 + h$ |
-| `points::PreambleStage` | `points::BindingStage` | 132 | 29 |
-| `points::RegistryWxStage` | `points::PreambleStage` | 4 | 95 |
-| `points::AbStage` | `points::RegistryWxStage` | 6 | 97 |
-| `points::FStage` | `points::AbStage` | 4 | 100 |
-| `points::WalkStage` | `points::FStage` | 287 | 102 |
+| `outer_error` | `preamble` | 40 | $29 + h$ |
+| `inner_error` | `outer_error` | 106 | $49 + h$ |
+| `query` | `preamble` | 165 | $29 + h$ |
+| `eval` | `query` | 127 | $112 + h$ |
+| `points::PreambleStage` | `points::BindingStage` | 140 | 29 |
+| `points::RegistryWxStage` | `points::PreambleStage` | 8 | 99 |
+| `points::AbStage` | `points::RegistryWxStage` | 6 | 103 |
+| `points::FStage` | `points::AbStage` | 6 | 106 |
+| `points::WalkStage` | `points::FStage` | 291 | 109 |
 
 In gate order, `outer_error` precedes `inner_error`, although it is committed
 later. A circuit whose last stage is `outer_error` therefore does not reserve
 the gates of `inner_error`.
 
-Every native stage polynomial has a uniformly random $\v{a}_0$. That of `eval`
-is drawn again on each attempt at $\text{pre\_beta}$, since a new value changes
-the commitment that the transcript absorbs, and with it the challenge.
+Every native stage polynomial has uniformly random
+[free coefficients](wiring.md#blind-gate). Those of `eval` are drawn again on
+each attempt at $\text{pre\_beta}$, since new values change the commitment that
+the transcript absorbs, and with it the challenge.
 
 ### `points::BindingStage` {#points-binding}
 
@@ -114,8 +123,8 @@ there no later check relies on these values.
 
 | Field | Type | Count | Value |
 |---|---|---|---|
-| `error_terms` | element | 13 | $\text{quo}'_0, \dots, \text{quo}'_{12}$, the layer-2 quotient coefficients |
-| `collapsed` | element | 14 | $\text{col}_0, \dots, \text{col}_{13}$ |
+| `error_terms` | element | 14 | $\text{quo}'_0, \dots, \text{quo}'_{13}$, the layer-2 quotient coefficients |
+| `collapsed` | element | 15 | $\text{col}_0, \dots, \text{col}_{14}$ |
 | `left`, `right` | element | 6 | per child: the `unified`, `unified_bridge` and `compute_v_bridge` [targets](claims.md#native-targets) |
 | `sponge_state` | element | 5 | the transcript state saved after absorbing $R_q[\texttt{BridgeInnerError}]$ |
 
@@ -129,82 +138,93 @@ replay is split between the two circuits.
 
 ### `inner_error` {#native-inner-error}
 
-The stage holds one field, `error_terms`: the $14 \cdot 6$ elements
-$\text{quo}_{g,k}$ for $g < 14$ and $k < 6$, which are the layer-1 quotient
-coefficients. The quotients and collapsed values are defined with the
+| Field | Type | Count | Value |
+|---|---|---|---|
+| `error_terms` | element | $15 \cdot 7$ | $\text{quo}_{g,k}$ for $g < 15$ and $k < 7$, the layer-1 quotient coefficients |
+| `randomizer_c` | element | 1 | $c_\star$, the target of the [randomizer claim](claims.md#randomizer) |
+
+The quotients and collapsed values are defined with the
 [fold](claims.md#fold).
 
 ### `query` {#native-query}
 
 | Field | Type | Count | Value |
 |---|---|---|---|
-| `fixed_registry` | element | 53 | $m(\omega_j, x, y)$ for $j = 0, \dots, 52$ |
+| `fixed_registry` | element | 55 | $m(\omega_j, x, y)$ for $j = 0, \dots, 54$ |
 | `registry_wxy` | element | 1 | $m(w, x, y)$ |
 | `registry_xy_at_circuit_id` | element | 1 | $m(\omega_{\text{id}}, x, y)$ |
 | `application_at_xz`, `application_stage_at_xz` | element | 2 | $r{[\texttt{Application}]}(xz)$, $r{[\texttt{ApplicationStage}]}(xz)$ |
-| `left.rx`, `right.rx` | element | $2 \cdot 46$ | $r^{(i)}{[\cdot]}(xz)$ in native [rx order](setup.md#rx-order) |
+| `randomizer_a_at_xz`, `randomizer_b_at_x` | element | 2 | $a_\star(xz)$, $b_\star(x)$ |
+| `left.rx`, `right.rx` | element | $2 \cdot 48$ | $r^{(i)}{[\cdot]}(xz)$ in native [rx order](setup.md#rx-order) |
 | `a_poly_at_xz` | element | 2 | $A^{(i)}(xz)$ |
 | `b_poly_at_x` | element | 2 | $B^{(i)}(x)$ |
 | `child_registry_xy_at_current_w` | element | 2 | $m(w, x^{(i)}, y^{(i)})$ |
 | `current_registry_wy_at_child_x` | element | 2 | $m(w, x^{(i)}, y)$ |
 
-The fields of each child are consecutive, with its $46$ `rx` values first: all
-$50$ values of child $0$, then all $50$ of child $1$.
+The fields of each child are consecutive, with its $48$ `rx` values first: all
+$52$ values of child $0$, then all $52$ of child $1$.
 
 ### `eval` {#native-eval}
 
-Every evaluation is at $u$. The first $114$ values are the evaluations of the
+Every evaluation is at $u$. The first $121$ values are the evaluations of the
 polynomials [folded into $p$](batch.md#native-p), in the same order.
 
 | Field | Type | Count | Value |
 |---|---|---|---|
-| `left`, `right` | element | $2 \cdot 50$ | per child: $r^{(i)}{[\cdot]}(u)$ in rx order, then $A^{(i)}(u)$, $B^{(i)}(u)$, $m(u, x^{(i)}, y^{(i)})$, $p^{(i)}(u)$ |
+| `left`, `right` | element | $2 \cdot 52$ | per child: $r^{(i)}{[\cdot]}(u)$ in rx order, then $A^{(i)}(u)$, $B^{(i)}(u)$, $m(u, x^{(i)}, y^{(i)})$, $p^{(i)}(u)$ |
 | `registry_wx0`, `registry_wx1` | element | 2 | $m(w, x^{(0)}, u)$, $m(w, x^{(1)}, u)$ |
 | `application`, `application_stage` | element | 2 | $r{[\texttt{Application}]}(u)$, $r{[\texttt{ApplicationStage}]}(u)$ |
 | `registry_wy` | element | 1 | $m(w, u, y)$ |
 | `a_poly`, `b_poly` | element | 2 | $A(u)$, $B(u)$ |
 | `registry_xy` | element | 1 | $m(u, x, y)$ |
+| `randomizer_a`, `randomizer_b` | element | 2 | $a_\star(u)$, $b_\star(u)$ |
+| `mask` | element | 1 | $p_\star(u)$ |
 | `online` | element | 6 | the six slot polynomials at $u$ |
 | `partials` | point | 3 | the partial sums of the [challenge stage](#challenge-stage) commitment |
 
 ### Points Stages {#points-stages}
 
-The [native walk](walks.md#native-walk) folds $101$ points.
+The [native walk](walks.md#native-walk) folds $108$ points.
 `points::BindingStage` holds $28$ of them, and the first four stages of the
-table below hold the other $73$. `points::WalkStage` holds the walk's endoscalar
+table below hold the other $80$. `points::WalkStage` holds the walk's endoscalar
 and its interstitials.
 
 | Stage | Field | Value |
 |---|---|---|
-| `points::PreambleStage` | `points` | per child, $33$ points: $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..28)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` |
+| `points::PreambleStage` | `points` | per child, $35$ points: $R_q^{(i)}[\cdot]$ of `EndoscalingStep(0..=30)`, `Collapse`, `ComputeV`, `EndoscalarStage`, `PointsStage` |
 | `points::RegistryWxStage` | `registry_wx0`, `registry_wx1` | $[m_q(w_q, x_q^{(0)}, Y)]$, $[m_q(w_q, x_q^{(1)}, Y)]$ |
+| | `randomizer_a`, `randomizer_b` | $[a_{q,\star}]$, $[b_{q,\star}]$ |
 | `points::AbStage` | `registry_wy`, `a`, `b` | $[m_q(w_q, X, y_q)]$, $[A_q]$, $[B_q]$ |
-| `points::FStage` | `registry_xy`, `f` | $[m_q(W, x_q, y_q)]$, $[f_q]$ |
+| `points::FStage` | `registry_xy`, `f`, `mask` | $[m_q(W, x_q, y_q)]$, $[f_q]$, $[p_{q,\star}]$ |
 | `points::WalkStage` | `endoscalar` | the $143$ bits and $94$ products of $\text{endo}(\text{pre\_beta})$ |
-| | `interstitials` | $I_{q,0}, \dots, I_{q,24}$, the walk's $25$ intermediate points |
+| | `interstitials` | $I_{q,0}, \dots, I_{q,26}$, the walk's $27$ intermediate points |
 
 ## Nested Stages {#nested-stages}
 
 The nested stages form one chain.
 
-| Stage | Values | First Gate | $\v{a}_0$ |
-|---|---|---|---|
-| `EndoscalarStage` | 237 | 1 | random |
-| `BridgeHash` | 2 | 120 | zero |
-| `PointsStage` | 288 | 121 | random |
-| `BridgePreamble` | 228 | 265 | random |
-| `BridgeSPrime` | 10 | 379 | random |
-| `BridgeInnerError` | 74 | 384 | random |
-| `BridgeOuterError` | 21 | 421 | random |
-| `BridgeAB` | 6 | 432 | $\texttt{bridge\_alpha}^2$ |
-| `BridgeQuery` | 145 | 435 | random |
-| `BridgeF` | 4 | 508 | random |
-| `BridgeEval` | 102 | 510 | random, drawn again on each attempt at $\text{pre\_beta}$ |
-| `ChallengeStage` | 20 | 561 | zero |
+| Stage | Values | First Gate | Committed In | Free Coefficients |
+|---|---|---|---|---|
+| `EndoscalarStage` | 237 | 1 | final message | random |
+| `BridgeHash` | 2 | 120 | round 1, not absorbed | zero |
+| `PointsStage` | 306 | 121 | final message | random |
+| `BridgePreamble` | 236 | 274 | round 1 | random |
+| `BridgeSPrime` | 14 | 392 | round 2 | random |
+| `BridgeInnerError` | 101 | 399 | round 3 | random |
+| `BridgeOuterError` | 25 | 450 | round 4 | random |
+| `BridgeAB` | 6 | 463 | round 5 | $\v{a}_0 = \texttt{bridge\_alpha}^2$, the blind gate zero |
+| `BridgeQuery` | 153 | 466 | round 6 | random |
+| `BridgeF` | 6 | 543 | round 7 | random |
+| `BridgeEval` | 109 | 546 | round 8 | random, drawn again on each attempt at $\text{pre\_beta}$ |
+| `ChallengeStage` | 20 | 601 | final message | zero |
 
 The parent of each stage is the stage above it in the table. The nine stages
 named `Bridge...` are the **bridge stages**. They hold native commitments, and
 the transcript absorbs the commitment of each of them except `BridgeHash`.
+
+Here too the gates do not follow the order of commitment. The two stages of the
+nested walk have the first gates of the chain and are committed last, with the
+`ChallengeStage`, after $\text{pre\_beta}$ is drawn.
 
 ### `EndoscalarStage` and `PointsStage` {#nested-points}
 
@@ -212,8 +232,8 @@ the transcript absorbs the commitment of each of them except `BridgeHash`.
 |---|---|---|
 | `EndoscalarStage` | `endoscalar` | the $143$ bits and $94$ products of $\text{endo}(\text{pre\_beta})$ |
 | `PointsStage` | `initial` | $C_0 = [f]$ |
-| | `inputs` | $C_1, \dots, C_{114}$ |
-| | `interstitials` | $I_0, \dots, I_{28}$ |
+| | `inputs` | $C_1, \dots, C_{121}$ |
+| | `interstitials` | $I_0, \dots, I_{30}$ |
 
 The points $C_k$ and $I_s$ belong to the [nested walk](walks.md#nested-walk).
 
@@ -224,8 +244,8 @@ the step's own second online polynomial, lie in $\F_q$. The `BridgeHash` stage
 gives the step a digest of $O_1$ in its own field. The stage holds $O_1$ and
 nothing else: the $x$ coordinate of $O_1$ is the wire $\v{a}_{120}$, at degree
 $2n - 121$, and its $y$ coordinate is the wire $\v{d}_{120}$, at degree
-$4n - 121$. The honest prover commits the stage with $\v{a}_0 = 0$, so that its
-commitment is a function of $O_1$ alone,
+$4n - 121$. The honest prover commits the stage with its free coefficients
+zero, so that its commitment is a function of $O_1$ alone,
 
 $$R_q[\texttt{BridgeHash}] = \v{a}_{120} \cdot G_{2n - 121} + \v{d}_{120} \cdot G_{4n - 121},$$
 
@@ -238,8 +258,8 @@ the [step circuit](setup.md#step-circuit).[^whysecond]
     with them the two generators, do not move when the walk or the preamble
     grows.
 
-The stage mask does not force $\v{a}_0$ to zero, so an accepted commitment binds
-$O_1$ without having to be this canonical one.
+The stage mask does not force the free coefficients to zero, so an accepted
+commitment binds $O_1$ without having to be this canonical one.
 
 ### `BridgePreamble` {#bridge-preamble}
 
@@ -249,7 +269,7 @@ $O_1$ without having to be this canonical one.
 | `native_points_preamble` | point | 1 | $R[\texttt{PointsPreamble}]$ |
 | `online_commitments` | point | 2 | $O_0$, $O_1$ |
 | `application_stage` | point | 1 | $R[\texttt{ApplicationStage}]$ |
-| `left`, `right` | 52 points, 5 elements each | 2 | the two children, below |
+| `left`, `right` | 54 points, 5 elements each | 2 | the two children, below |
 
 For child $i$:
 
@@ -258,14 +278,14 @@ For child $i$:
 | `hashes_1`, `hashes_2`, `collapse`, `compute_v` | point | 4 | $R^{(i)}[\cdot]$ of the circuit of that name |
 | `bind_challenges` | point | 4 | $R^{(i)}[\texttt{BindChallenges}(k)]$ |
 | `bind_beta`, `bind_endoscalar` | point | 2 | $R^{(i)}[\texttt{BindBeta}]$, $R^{(i)}[\texttt{BindEndoscalar}]$ |
-| `endoscaling_steps` | point | 25 | $R^{(i)}[\texttt{EndoscalingStep}(s)]$ |
+| `endoscaling_steps` | point | 27 | $R^{(i)}[\texttt{EndoscalingStep}(s)]$ |
 | `points_walk` | point | 1 | $R^{(i)}[\texttt{PointsWalk}]$ |
 | `stashed_preamble` to `stashed_online_commitments` | point | 16 | $E^{(i)}_0, \dots, E^{(i)}_{15}$ in the order `preamble`, `inner_error`, `outer_error`, `query`, `eval`, `ab_a`, `ab_b`, `registry_xy`, `p`, `points_binding`, `points_preamble`, `points_registry_wx`, `points_ab`, `points_f`, `online_commitments` |
 | `nested` | element | 5 | $c_q^{(i)}, v_q^{(i)}, x_q^{(i)}, y_q^{(i)}, u_q^{(i)}$ |
 
 The $16$ stashed points and the five scalars are the child's
-[nested unified instance](proof.md#nested-unified). Together, the other $36$
-points and the $16$ stashed ones are the child's $46$ native rx commitments,
+[nested unified instance](proof.md#nested-unified). Together, the other $38$
+points and the $16$ stashed ones are the child's $48$ native rx commitments,
 $[A^{(i)}]$, $[B^{(i)}]$, $[m(W, x^{(i)}, y^{(i)})]$, $P^{(i)}$, $O^{(i)}_0$ and
 $O^{(i)}_1$.
 
@@ -281,16 +301,19 @@ run.
 | | `native_preamble` | point | 1 | $R[\texttt{Preamble}]$ |
 | | `native_application` | point | 1 | $R[\texttt{Application}]$ |
 | | `native_points_registry_wx` | point | 1 | $R[\texttt{PointsRegistryWx}]$ |
+| | `randomizer_a`, `randomizer_b` | point | 2 | $[a_\star]$, $[b_\star]$ |
 | `BridgeInnerError` | `native_inner_error` | point | 1 | $R[\texttt{InnerError}]$ |
 | | `registry_wy` | point | 1 | $[m(w, X, y)]$ |
-| | `error_terms` | element | $10 \cdot 7$ | $\text{quo}_{q,g,k}$, the nested layer-1 quotient coefficients |
+| | `error_terms` | element | $12 \cdot 8$ | $\text{quo}_{q,g,k}$, the nested layer-1 quotient coefficients |
+| | `randomizer_c` | element | 1 | $c_{q,\star}$ |
 | `BridgeOuterError` | `native_outer_error` | point | 1 | $R[\texttt{OuterError}]$ |
-| | `error_terms` | element | 9 | $\text{quo}'_{q,k}$, the nested layer-2 quotient coefficients |
-| | `collapsed` | element | 10 | $\text{col}_{q,g}$ |
+| | `error_terms` | element | 11 | $\text{quo}'_{q,k}$, the nested layer-2 quotient coefficients |
+| | `collapsed` | element | 12 | $\text{col}_{q,g}$ |
 | `BridgeAB` | `a`, `b` | point | 2 | $[A]$, $[B]$ |
 | | `native_points_ab` | point | 1 | $R[\texttt{PointsAb}]$ |
 | `BridgeF` | `native_f` | point | 1 | $[f]$ |
 | | `native_points_f` | point | 1 | $R[\texttt{PointsF}]$ |
+| | `native_mask` | point | 1 | $[p_\star]$ |
 
 `BridgeSPrime` carries the two commitments that the step circuit's run
 produces: that of the circuit's own polynomial, and that of the native
@@ -303,9 +326,10 @@ challenges at which the claim of the step circuit is folded.
 |---|---|---|---|
 | `native_query` | point | 1 | $R[\texttt{Query}]$ |
 | `registry_xy` | point | 1 | $[m(W, x, y)]$ |
-| `fixed_registry` | element | 46 | $m_q(\omega_{q,j}, x_q, y_q)$ for $j = 0, \dots, 45$ |
+| `fixed_registry` | element | 48 | $m_q(\omega_{q,j}, x_q, y_q)$ for $j = 0, \dots, 47$ |
 | `registry_wxy` | element | 1 | $m_q(w_q, x_q, y_q)$ |
-| `left.rx`, `right.rx` | element | $2 \cdot 43$ | $r_q^{(i)}{[\cdot]}(x_q z_q)$ in nested rx order |
+| `randomizer_a_at_xz`, `randomizer_b_at_x` | element | 2 | $a_{q,\star}(x_q z_q)$, $b_{q,\star}(x_q)$ |
+| `left.rx`, `right.rx` | element | $2 \cdot 45$ | $r_q^{(i)}{[\cdot]}(x_q z_q)$ in nested rx order |
 | `a_poly_at_xz` | element | 2 | $A_q^{(i)}(x_q z_q)$ |
 | `b_poly_at_x` | element | 2 | $B_q^{(i)}(x_q)$ |
 | `child_registry_xy_at_current_w` | element | 2 | $m_q(w_q, x_q^{(i)}, y_q^{(i)})$ |
@@ -316,18 +340,20 @@ values first.
 
 ### `BridgeEval` {#bridge-eval}
 
-Every evaluation is at $u_q$. The $100$ values after the first field are the
+Every evaluation is at $u_q$. The $107$ values after the first field are the
 evaluations of the polynomials [folded into $p_q$](batch.md#nested-p), in the
 same order.
 
 | Field | Type | Count | Value |
 |---|---|---|---|
 | `native_eval` | point | 1 | $R[\texttt{Eval}]$ |
-| `left`, `right` | element | $2 \cdot 47$ | per child: $r_q^{(i)}{[\cdot]}(u_q)$ in rx order, then $A_q^{(i)}(u_q)$, $B_q^{(i)}(u_q)$, $m_q(u_q, x_q^{(i)}, y_q^{(i)})$, $p_q^{(i)}(u_q)$ |
+| `left`, `right` | element | $2 \cdot 49$ | per child: $r_q^{(i)}{[\cdot]}(u_q)$ in rx order, then $A_q^{(i)}(u_q)$, $B_q^{(i)}(u_q)$, $m_q(u_q, x_q^{(i)}, y_q^{(i)})$, $p_q^{(i)}(u_q)$ |
 | `registry_wx0`, `registry_wx1` | element | 2 | $m_q(w_q, x_q^{(0)}, u_q)$, $m_q(w_q, x_q^{(1)}, u_q)$ |
 | `registry_wy` | element | 1 | $m_q(w_q, u_q, y_q)$ |
 | `a_poly`, `b_poly` | element | 2 | $A_q(u_q)$, $B_q(u_q)$ |
 | `registry_xy` | element | 1 | $m_q(u_q, x_q, y_q)$ |
+| `randomizer_a`, `randomizer_b` | element | 2 | $a_{q,\star}(u_q)$, $b_{q,\star}(u_q)$ |
+| `mask` | element | 1 | $p_{q,\star}(u_q)$ |
 
 ### `ChallengeStage` {#challenge-stage-layout}
 
@@ -346,12 +372,12 @@ The nested circuits do not replay the transcript. They read their challenges
 from the `ChallengeStage`, and the native side forces that stage to hold the
 lifts of the transcript's challenges by recomputing its commitment.
 
-The stage is committed with $\v{a}_0 = 0$, so that its commitment is a function
-of its ten values alone and a native circuit can recompute it. The value at
-[position](#challenge-stage-layout) $\iota$ of the stage is the
-wire $\v{a}_{561 + \iota}$, at the coefficient of degree
-$2n - 1 - (561 + \iota) = 2n - 562 - \iota$. With $G$ the generators of $\E_p$,
-we write $\Gamma_\iota = G_{2n - 562 - \iota}$ for the generator of position
+The stage is committed with its free coefficients zero, so that its commitment
+is a function of its ten values alone and a native circuit can recompute it.
+The value at [position](#challenge-stage-layout) $\iota$ of the stage is the
+wire $\v{a}_{601 + \iota}$, at the coefficient of degree
+$2n - 1 - (601 + \iota) = 2n - 602 - \iota$. With $G$ the generators of $\E_p$,
+we write $\Gamma_\iota = G_{2n - 602 - \iota}$ for the generator of position
 $\iota$. Then, with
 $(\chi_0, \dots, \chi_7) = (w, y, z, \mu, \mu', x, \alpha, u)$,
 
@@ -369,6 +395,51 @@ $$\texttt{nested\_challenges\_partial} = \sum_{\iota=0}^{7} \chi_{\iota,q} \cdot
 
 The three partial sums are in the `eval` stage. The last sum is a slot of the
 native unified instance.
+
+The figure shows which fuse does each part. The box with a dashed border is
+the stage itself, which a fuse commits after $\text{pre\_beta}$ is drawn, when
+no challenge is left to depend on it.
+
+```mermaid
+flowchart TB
+    accTitle: Binding of the challenge stage across generations
+    accDescr: This fuse's bind_challenges circuits recompute three partial sums held in its eval stage and export nested_challenges_partial, which has the eight lifts and the sign and no term for beta. The parent holds this fuse's unified instance in its preamble stage. The parent's bind_beta adds the term for this fuse's beta and equates the sum with a point of its points binding stage. The parent's native walk folds that point into its nested batched commitment, the parent's nested batch opens this fuse's challenge stage polynomial against it, and the opened value enters this fuse's Collapse and ComputeV claims in the parent's fold. At the root, the decider or the compressed verifier rebuilds the challenge stage polynomial instead.
+    subgraph F["This fuse"]
+        CH["challenges w, y, z, mu,<br/>mu', x, alpha, u<br/>in the unified instance"]
+        EV["eval stage<br/>partial sums after<br/>2, 4 and 6 lifts"]
+        BC["bind_challenges, four circuits<br/>recompute the sums,<br/>add the sign"]
+        NP["nested_challenges_partial<br/>8 lifts and the sign,<br/>no term for beta"]
+        CS["ChallengeStage<br/>8 lifts, the sign and<br/>the lift of pre_beta"]
+        NC["Collapse and ComputeV<br/>read their challenges<br/>from ChallengeStage"]
+    end
+    subgraph P["Parent fuse"]
+        PR["preamble stage<br/>holds this fuse's<br/>unified instance"]
+        BB["bind_beta<br/>adds this fuse's beta term,<br/>equates the sum with a point<br/>of points::BindingStage"]
+        WK["native walk<br/>folds that point into<br/>the parent's P_q"]
+        NB["nested batch<br/>opens ChallengeStage's<br/>polynomial against P_q"]
+        FD["fold<br/>the opened value enters<br/>this fuse's Collapse and<br/>ComputeV claims"]
+    end
+    RT["Root, in place of a parent<br/>the decider or the compressed<br/>verifier rebuilds ChallengeStage<br/>and compares"]
+    CH --> BC
+    EV --> BC
+    BC --> NP
+    CH -.->|"lifts"| CS
+    CS --> NC
+    NP -->|"bound by the targets of<br/>this fuse's native claims"| PR
+    PR --> BB
+    BB --> WK
+    WK --> NB
+    CS --> NB
+    NB --> FD
+    NC --> FD
+    CH --> RT
+    CS --> RT
+    style CS stroke-dasharray: 6 4
+```
+
+No circuit of a fuse uses that fuse's own $\beta_q$ to bind the stage. The
+term of $\beta_q$ is added one level up, from the $\text{pre\_beta}$ that the
+parent reads in this fuse's unified instance.
 
 The stage's contents are bound by the following chain.
 
@@ -388,8 +459,9 @@ The stage's contents are bound by the following chain.
 6. The opened value enters the $a$ sides of this fuse's `Collapse` and
    `ComputeV` claims in the parent's fold.
 
-The stage has $\v{a}_0 = 0$ and the commitment scheme is binding, so those
-claims are about the polynomial that holds the transcript's lifts and the
-header's sign. The root has no parent: the [decider](decider.md) recomputes the
-root's challenge stage polynomial, with the sign that the root's `circuit_id`
-[determines](base_case.md#confinement), and compares coefficients.
+The stage's free coefficients are zero in the recomputed commitment, and the
+commitment scheme is binding, so those claims are about the polynomial that
+holds the transcript's lifts and the header's sign. The root has no parent: the
+[decider](decider.md) recomputes the root's challenge stage polynomial, with
+the sign that the root's `circuit_id` [determines](base_case.md#confinement),
+and compares coefficients.

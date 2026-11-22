@@ -202,8 +202,13 @@ impl<C: Affine, R: Rank, P: Profile> MultiStageCircuit<C::Base, R> for Circuit<C
                 EvaluationProcessor::new(dr, z.element(), &txz, &query.fixed_registry);
             claims::build::<P, _, _>(&source, &mut processor)?;
             let (ax, bx) = processor.build();
+            // The fold randomizer's claims join the grid as the prover laid
+            // them out.
             let folder = EvaluationFolder::<_, RevdotParameters<P>>::new(dr, mu, mu_prime)?;
-            (folder.fold(dr, &ax)?, folder.fold(dr, &bx)?)
+            (
+                folder.fold_a(dr, &ax, &query.randomizer_a_at_xz)?,
+                folder.fold_b(dr, &bx, &query.randomizer_b_at_x)?,
+            )
         };
 
         // f_n(u_n), from the quotients of every opening.
@@ -580,6 +585,8 @@ fn poly_queries<'a, 'dr, D: Driver<'dr>, C: Affine<Base = D::F>, P: Profile>(
         StaticFQuery::RightAbBAtX => (&eval.right.b_poly, &query.right.b_poly_at_x, &d.challenges.x),
         StaticFQuery::CurrentAAtXz => (&eval.a_poly, computed_ax, &d.challenges.xz),
         StaticFQuery::CurrentBAtX => (&eval.b_poly, computed_bx, &d.challenges.x),
+        StaticFQuery::RandomizerAAtXz => (&eval.randomizer_a, &query.randomizer_a_at_xz, &d.challenges.xz),
+        StaticFQuery::RandomizerBAtX => (&eval.randomizer_b, &query.randomizer_b_at_x, &d.challenges.x),
     })
     // Each child's rx polynomials at x_n z_n, in RxIndex::all order.
     .chain([(&eval.left, &query.left), (&eval.right, &query.right)]

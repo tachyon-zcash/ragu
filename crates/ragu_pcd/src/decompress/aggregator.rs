@@ -138,7 +138,7 @@ impl<const HEADER_SIZE: usize> Aggregator<HEADER_SIZE> {
                 digits: 1,
             },
             #[cfg(test)]
-            201 => Counts {
+            195 => Counts {
                 circuits: 34,
                 transcript: 6,
                 digits: 1,

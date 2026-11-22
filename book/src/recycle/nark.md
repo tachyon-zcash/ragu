@@ -297,9 +297,12 @@ forward. Our NARK is consistent with future recursion in its modular presentatio
 **Why no zero-knowledge?**<br> The prover sends unmasked witness vectors
 $\v{a},\v{b}$, making this NARK not zero-knowledge. This is intentional. Ragu
 intends to avoid leakage through **rerandomization** rather than requiring a
-zero-knowledge NARK. The current PCD API folds a proof with a cached seeded
-`Pcd<()>` through an internal rerandomization step; a fold-level randomizer is
-still needed to establish zero knowledge. This differs from [[BCLMS21]](https://eprint.iacr.org/2020/1618),
+zero-knowledge NARK. The PCD API fuses a proof twice through an internal
+rerandomization step, each time with the application's bootstrap proof, and
+every fuse folds randomizers of its own. The argument that the output hides its
+input is outlined in the documentation of
+[`Application::rerandomize`](ragu_pcd::Application::rerandomize), and it has
+not been audited. This differs from [[BCLMS21]](https://eprint.iacr.org/2020/1618),
 which builds zk-PCD from a split-accumulation scheme for zk-NARK.
 
 **Why verify the revdot product directly?**<br> The prover cannot simply check

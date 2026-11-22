@@ -47,10 +47,11 @@ use crate::{
 /// `native_rx` rx polynomials: `f`'s commitment, then for each child its
 /// native rx commitments, $a$, $b$, `registry_xy` and $p$, then the current
 /// step's two `registry_wx`, its application trace and application stage,
-/// `registry_wy`, $a$, $b$ and `registry_xy`, then the step's native online
-/// slots (see [`online`](super::native::online)).
+/// `registry_wy`, $a$, $b$ and `registry_xy`, its two fold randomizers and
+/// its batch randomizer, then the step's native online slots (see
+/// [`online`](super::native::online)).
 pub const fn num_endoscaling_points(native_rx: usize) -> usize {
-    1 + 2 * (native_rx + 4) + 8 + super::native::online::NUM_ONLINE_FP_QUERIES
+    1 + 2 * (native_rx + 4) + 11 + super::native::online::NUM_ONLINE_FP_QUERIES
 }
 
 /// Number of curve points accumulated during `compute_p` for nested field
@@ -175,12 +176,15 @@ pub const NUM_FIXED_RX: usize = NUM_INSTANCE_CIRCUITS + 12;
 /// loading circuit.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 3;
 
-/// The minimum groups for the nested quotient fold: ten groups of eight
-/// provide room for 80 claims. Larger profiles grow the group count.
-pub const NUM_FOLD_GROUPS: usize = 10;
+/// The minimum groups for the nested quotient fold: eleven groups with
+/// eight claims each provide room for 88 claims, and the twelfth holds the
+/// randomizer's half-claim (see
+/// [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)). Larger
+/// profiles grow the group count.
+pub const NUM_FOLD_GROUPS: usize = 12;
 
-/// The claims in a nested fold group.
-pub const FOLD_GROUP_SIZE: usize = 8;
+/// The nodes of a nested fold group: eight claims and the randomizer's.
+pub const FOLD_GROUP_SIZE: usize = 9;
 
 /// The nested revdot claims of profile `P` the fuse folds: two children's
 /// raw claims, each internal circuit's claim per child, and each bonding's
@@ -201,19 +205,24 @@ pub fn num_claims<P: Profile>() -> usize {
 
 /// Length type for the nested fold's groups in profile `P`: the standard
 /// profile's [`NUM_FOLD_GROUPS`], or as many groups of
-/// [`FOLD_GROUP_SIZE`] as the profile's
-/// [`num_claims`] need, whichever is more.
+/// [`FOLD_GROUP_SIZE`] as the profile's [`num_claims`] need beside the
+/// randomizer's (see
+/// [`fold_revdot::num_groups`](crate::internal::fold_revdot::num_groups)),
+/// whichever is more.
 pub struct NumFoldGroups<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Len for NumFoldGroups<P> {
     fn len() -> usize {
-        NUM_FOLD_GROUPS.max(num_claims::<P>().div_ceil(FOLD_GROUP_SIZE))
+        NUM_FOLD_GROUPS.max(crate::internal::fold_revdot::num_groups(
+            num_claims::<P>(),
+            FOLD_GROUP_SIZE,
+        ))
     }
 }
 
 /// Parameters for folding the children's nested revdot claims in profile
 /// `P`: [`NumFoldGroups`] groups of
-/// [`FOLD_GROUP_SIZE`].
+/// [`FOLD_GROUP_SIZE`] nodes.
 pub struct RevdotParameters<P: Profile>(PhantomData<P>);
 
 impl<P: Profile> Clone for RevdotParameters<P> {

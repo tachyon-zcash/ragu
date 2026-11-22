@@ -430,6 +430,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             self.params,
             C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
         );
+        // The step's own randomizers, as `fuse` draws them.
+        let randomizers = self.sample_randomizers(rng);
 
         let (left, left_data) = left.into_parts();
         let (right, right_data) = right.into_parts();
@@ -489,6 +491,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &left,
             &right,
             &application,
+            &randomizers,
             &mut builder,
         )?;
         let bridge_s_prime_commitment =
@@ -501,6 +504,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             left: &left,
             right: &right,
             application: &application,
+            randomizer: &randomizers.native,
         };
         let nested_source = NestedFuseProofSource {
             left: &left,
@@ -522,6 +526,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &z,
             &native_source,
             &nested_source,
+            &randomizers,
             &mut builder,
         )?;
         let bridge_inner_error_commitment =
@@ -600,6 +605,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &left,
             &right,
             &application,
+            &randomizers,
             &mut builder,
         )?;
         let bridge_query_commitment = Point::constant(&mut dr, builder.bridge_query_commitment())?;
@@ -621,6 +627,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &left,
             &right,
             &application,
+            &randomizers,
         )?;
         let bridge_f_commitment = Point::constant(&mut dr, builder.bridge_f_commitment())?;
         bridge_f_commitment.write(&mut dr, &mut transcript)?;
@@ -639,6 +646,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &registry_wy,
             &nested_s_prime,
             &nested_registry_wy,
+            &randomizers,
             &builder,
         )?;
         builder.set_nested_challenges_partial(eval_witness.partials.binding);
@@ -686,6 +694,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             &nested_s_prime,
             &nested_registry_wy,
             &nested_f,
+            &randomizers,
             &mut builder,
         )?;
 
@@ -1202,6 +1211,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
             native_preamble: builder.native_preamble_commitment(),
             native_application: application.commitment,
             native_points_registry_wx: builder.native_points_registry_wx_commitment(),
+            randomizer_a: randomizers.native.a_commitment,
+            randomizer_b: randomizers.native.b_commitment,
         };
         let nested_ab_witness = nested::stages::ab::Witness {
             online_points: builder.native_online_phase::<2>(),
@@ -1221,6 +1232,7 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         let nested_f_witness = nested::stages::f::Witness {
             native_f: native_f.commitment,
             native_points_f: builder.native_points_f_commitment(),
+            native_mask: randomizers.native.mask_commitment,
         };
         let nested_eval_witness = nested::stages::eval::Witness {
             online_stage: ragu_primitives::vec::FixedVec::from_fn(|_| {

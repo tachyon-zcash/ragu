@@ -16,10 +16,9 @@
 //! circuit fixes at $\zeta = w$ (see [`native::stages::preamble`]). The
 //! `s_prime` bridge carries its commitment.
 
-use ragu_circuits::{polynomials::Rank, staging::StageExt};
+use ragu_circuits::{Blind, polynomials::Rank, staging::StageExt};
 use ragu_core::Result;
 use rand::CryptoRng;
-use udon::field::Field;
 
 use super::_01_application::NativeApplicationStage;
 use crate::{
@@ -73,7 +72,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         )?;
 
         let rx = native::stages::preamble::Stage::<C, R, HEADER_SIZE>::rx(
-            C::CircuitField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &preamble_witness,
         )?;
 
@@ -103,7 +102,7 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
             right: nested::stages::preamble::ChildWitness::from_proof(right)?,
         };
         let bridge_rx = nested::stages::preamble::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &bridge_witness,
         )?;
         let bridge_commitment =

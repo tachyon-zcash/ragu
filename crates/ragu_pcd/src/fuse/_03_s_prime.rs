@@ -13,15 +13,16 @@
 //! carries, so they are fixed before $y$ is squeezed.
 
 use ragu_circuits::{
+    Blind,
     polynomials::{Rank, sparse},
     registry::RegistryAt,
     staging::StageExt,
 };
 use ragu_core::{Cycle, Result};
 use rand::CryptoRng;
-use udon::{curve::Affine, field::Field};
+use udon::curve::Affine;
 
-use super::_01_application::NativeApplication;
+use super::{_01_application::NativeApplication, randomizer::Randomizers};
 use crate::{Application, Proof, internal::nested, profile::ProfiledCycle, proof::ProofBuilder};
 
 /// Ephemeral native-field data for $s'(X)$, used only during the fuse step.
@@ -52,17 +53,24 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         left: &Proof<C, R>,
         right: &Proof<C, R>,
         application: &NativeApplication<C, R>,
+        randomizers: &Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<(NativeSPrime<C, R>, NestedSPrime<C, R>)> {
         let native = self.compute_native_s_prime(native_registry, left, right)?;
         let nested = self.compute_nested_s_prime(nested_registry, left, right)?;
+        // The fold randomizers are fixed here, each side's commitments in
+        // the other side's stage, before the challenges of the fold.
         self.commit_native_points_registry_wx(
             rng,
             nested.registry_wx0_commitment,
             nested.registry_wx1_commitment,
+            [
+                randomizers.nested.a_commitment,
+                randomizers.nested.b_commitment,
+            ],
             builder,
         )?;
-        self.compute_bridge_s_prime(rng, &native, application, builder)?;
+        self.compute_bridge_s_prime(rng, &native, application, randomizers, builder)?;
         Ok((native, nested))
     }
 
@@ -71,10 +79,11 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
         rng: &mut RNG,
         native: &NativeSPrime<C, R>,
         application: &NativeApplication<C, R>,
+        randomizers: &Randomizers<C, R>,
         builder: &mut ProofBuilder<'_, C, R, B>,
     ) -> Result<()> {
         let bridge_rx = nested::stages::s_prime::Stage::<C::HostCurve, R, C::Profile>::rx(
-            C::ScalarField::random(|bytes| rng.fill_bytes(bytes)),
+            Blind::random(rng),
             &nested::stages::s_prime::Witness {
                 online_points: builder.native_online_phase::<1>(),
                 registry_wx0: native.registry_wx0_commitment,
@@ -82,6 +91,8 @@ impl<C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::SelectableBa
                 native_preamble: builder.native_preamble_commitment(),
                 native_application: application.commitment,
                 native_points_registry_wx: builder.native_points_registry_wx_commitment(),
+                randomizer_a: randomizers.native.a_commitment,
+                randomizer_b: randomizers.native.b_commitment,
             },
         )?;
         let bridge_commitment =

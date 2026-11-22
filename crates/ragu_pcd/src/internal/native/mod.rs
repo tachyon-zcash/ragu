@@ -77,7 +77,7 @@ impl<P: Profile> Len for Endoscalings<P> {
 /// assertion below checks the pin is the fixed point, so a change to either
 /// batch that moves it fails to build here. The profile's shape rederives
 /// the whole cycle (see [`Shape`]).
-pub const NUM_ENDOSCALING_STEPS: usize = 25;
+pub const NUM_ENDOSCALING_STEPS: usize = 27;
 
 const _: () = assert!(
     endoscalar::num_steps(ENDOSCALINGS_PER_STEP, NUM_ENDOSCALING_POINTS) == NUM_ENDOSCALING_STEPS,
@@ -145,12 +145,15 @@ pub const NUM_FIXED_RX: usize = 17 + NUM_BINDERS;
 /// application stage's mask and final mask.
 pub const NUM_FIXED_INTERNAL: usize = NUM_FIXED_RX + 5 + 2;
 
-/// The minimum groups for the native quotient fold: fourteen groups of
-/// seven provide room for 98 claims. Larger profiles grow the group count.
-pub const NUM_FOLD_GROUPS: usize = 14;
+/// The minimum groups for the native quotient fold: fourteen groups with
+/// seven claims each provide room for 98 claims, and the fifteenth holds the
+/// randomizer's half-claim (see
+/// [`fold_revdot`](crate::internal::fold_revdot#the-randomizer)). Larger
+/// profiles grow the group count.
+pub const NUM_FOLD_GROUPS: usize = 15;
 
-/// The claims in a native fold group.
-pub const FOLD_GROUP_SIZE: usize = 7;
+/// The nodes of a native fold group: seven claims and the randomizer's.
+pub const FOLD_GROUP_SIZE: usize = 8;
 
 /// The native revdot claims of profile `P` the fuse folds: the two
 /// children's raw claims, the step's own application claim, each internal
@@ -171,17 +174,22 @@ pub fn num_claims<P: Profile>() -> usize {
 
 /// Length type for the native fold's groups in profile `P`: the standard
 /// profile's [`NUM_FOLD_GROUPS`], or as many groups of [`FOLD_GROUP_SIZE`]
-/// as the profile's [`num_claims`] need, whichever is more.
+/// as the profile's [`num_claims`] need beside the randomizer's (see
+/// [`fold_revdot::num_groups`](crate::internal::fold_revdot::num_groups)),
+/// whichever is more.
 pub struct NumFoldGroups<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Len for NumFoldGroups<P> {
     fn len() -> usize {
-        NUM_FOLD_GROUPS.max(num_claims::<P>().div_ceil(FOLD_GROUP_SIZE))
+        NUM_FOLD_GROUPS.max(crate::internal::fold_revdot::num_groups(
+            num_claims::<P>(),
+            FOLD_GROUP_SIZE,
+        ))
     }
 }
 
 /// Parameters for folding the children's native revdot claims in profile
-/// `P`: [`NumFoldGroups`] groups of [`FOLD_GROUP_SIZE`].
+/// `P`: [`NumFoldGroups`] groups of [`FOLD_GROUP_SIZE`] nodes.
 pub struct RevdotParameters<P: Profile>(core::marker::PhantomData<P>);
 
 impl<P: Profile> Clone for RevdotParameters<P> {
@@ -912,10 +920,14 @@ pub(crate) enum StaticFQuery {
     CurrentApplicationAtXz,
     /// The step's own application stage rx queried at $xz$.
     CurrentApplicationStageAtXz,
+    /// The step's own fold randomizer $a_r$ queried at $xz$.
+    RandomizerAAtXz,
+    /// The step's own fold randomizer $b_r$ queried at $x$.
+    RandomizerBAtX,
 }
 
 /// Ordered static prefix for fuse quotient polynomial queries.
-pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 21] = [
+pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 23] = [
     StaticFQuery::LeftP,
     StaticFQuery::RightP,
     StaticFQuery::LeftRegistryXyAtW,
@@ -937,6 +949,8 @@ pub(crate) const STATIC_F_QUERIES: [StaticFQuery; 21] = [
     StaticFQuery::CurrentBAtX,
     StaticFQuery::CurrentApplicationAtXz,
     StaticFQuery::CurrentApplicationStageAtXz,
+    StaticFQuery::RandomizerAAtXz,
+    StaticFQuery::RandomizerBAtX,
 ];
 
 /// Registers internal native circuits and masks into the provided registry.

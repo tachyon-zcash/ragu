@@ -61,6 +61,13 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// commitments and not the polynomials, and
     /// [`verify_compressed`](Self::verify_compressed) is sound without it.
     ///
+    /// The result is not hiding: it carries evaluations of the proof's
+    /// polynomials. To compress a proof that must stay private, compress
+    /// the output of [`rerandomize`](Self::rerandomize) on it instead. The
+    /// result is computed from that output, so it shows no more of the
+    /// original proof than the output does. Rerandomization hides its input
+    /// only under the standard profile.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidWitness`] if the proof's shape is malformed,
