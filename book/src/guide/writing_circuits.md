@@ -328,6 +328,18 @@ Under such a profile, a header that can be compressed and decompressed must
 treat its slots as padding: no step may open them expecting the polynomials
 its fields describe.
 
+### Publishing with Padding
+
+A proof's own online polynomials are part of the state it carries. Rerandomizing
+it preserves them, and compression publishes their deterministic commitments.
+To keep the input's polynomials out of the published proof's online slots,
+`Application::fuse` a final step that can query them but outputs a
+`(Padding, Padding)` header.
+Then call `Application::rerandomize` and `Application::compress`. The recipient
+calls `Application::verify_compressed` and, to enforce padding, compares the
+proof's online commitments with the commitment to the constant one. Hiding of
+the other fields and the compression transcript remains unproved.
+
 ## Working with Headers
 
 Headers define what data flows through the proof tree. Each header
