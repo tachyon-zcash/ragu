@@ -75,9 +75,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if either child proof does not have
-    /// this application's profile's shape, which the verifier rejects too,
-    /// and propagates the step's and the prover's errors otherwise.
+    /// Returns [`Error::InvalidWitness`] if either child proof has the wrong
+    /// shape for this application's profile or an inconsistent `ab` bridge
+    /// stage. Propagates the step's and the prover's errors otherwise.
     pub fn fuse<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
         rng: &mut RNG,
@@ -270,6 +270,11 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: crate::Sel
         if !left.proof().well_formed() || !right.proof().well_formed() {
             return Err(Error::InvalidWitness(
                 "a child proof does not have this profile's shape".into(),
+            ));
+        }
+        if !left.proof().ab_bridge_matches()? || !right.proof().ab_bridge_matches()? {
+            return Err(Error::InvalidWitness(
+                "a child proof has an inconsistent ab bridge stage".into(),
             ));
         }
 

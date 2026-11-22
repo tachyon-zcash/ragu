@@ -425,6 +425,37 @@ pub struct Proof<C: Cycle, R: Rank> {
 }
 
 impl<C: ProfiledCycle, R: Rank> Proof<C, R> {
+    /// Whether the stored `ab` bridge equals the stage derived from this
+    /// proof's native commitments and `bridge_alpha`, with a zero blind gate.
+    /// Call after checking the proof's shape with [`Self::well_formed`].
+    pub(crate) fn ab_bridge_matches(&self) -> Result<bool> {
+        use nested::stages::ab;
+
+        use crate::profile::online::stages::{Native, phase_points};
+
+        let expected = ab::Stage::<C::HostCurve, R, C::Profile>::rx(
+            bridge_alpha_power(self.bridge_alpha, nested::RxIndex::BridgeAB),
+            &ab::Witness {
+                online_points: phase_points::<C::Profile, Native, 2, _>(
+                    &self.native_online_commitments,
+                ),
+                a: self.native_commitment(RxComponent::AbA),
+                b: self.native_commitment(RxComponent::AbB),
+                native_points_ab: self.native_rx_commitment(RxIndex::PointsAb),
+            },
+        )?;
+        // Sparse blocks may retain explicit zeros, including after decoding
+        // changes the block layout. Compare only the nonzero terms.
+        let nonzero =
+            |&(_, coefficient): &(usize, &C::ScalarField)| *coefficient != C::ScalarField::ZERO;
+        Ok(self
+            .bridge_ab_rx
+            .0
+            .iter_stored_coeffs()
+            .filter(nonzero)
+            .eq(expected.iter_stored_coeffs().filter(nonzero)))
+    }
+
     /// The helper's public values, deriving challenges from the proof transcript.
     pub(crate) fn nested_online_values(&self) -> Result<Vec<C::ScalarField>> {
         crate::internal::ky::nested_online_values::<C>(&self.challenges(), &self.nested_online_fold)

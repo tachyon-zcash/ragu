@@ -830,8 +830,9 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// sees the output, in full, should learn that it is a rerandomization
     /// of some proof for that header and no more. The argument for that is
     /// outlined below. It has not been written out as a proof, and it has
-    /// not been audited. `Application::verify_uncompressed` produces the
-    /// same result on `pcd` as it would on the output.
+    /// not been audited. With a valid bootstrap proof,
+    /// `Application::verify_uncompressed` gives the same result for `pcd`
+    /// and for any returned proof.
     ///
     /// # How
     ///
@@ -861,14 +862,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///
     /// # What the caller must ensure
     ///
-    /// - `pcd` verifies. For a proof that does not, the output does not
-    ///   verify either, and what is wrong with it depends on what was wrong
-    ///   with the input. A receiver accepts a proof as described in the
-    ///   [crate documentation](crate) before it rerandomizes it.
+    /// - `pcd` verifies. For a proof that does not, this returns an error
+    ///   or yields a proof that also fails verification. A receiver accepts a
+    ///   proof as described in the [crate documentation](crate) before it
+    ///   rerandomizes it.
     /// - The application's bootstrap proof verifies. The one that
     ///   [`ApplicationBuilder::finalize`] builds does. One supplied with
     ///   [`ApplicationBuilder::with_bootstrap`] is not checked for validity,
-    ///   and if it does not verify, neither does the output.
+    ///   and if it does not verify, this returns an error or yields a proof
+    ///   that also fails verification.
     /// - `rng` is a cryptographically secure source that the producer of
     ///   `pcd` cannot predict.
     /// - The header's data and its online polynomials are what the output

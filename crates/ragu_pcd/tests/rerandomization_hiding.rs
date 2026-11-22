@@ -18,7 +18,10 @@
 use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 
 use ragu_circuits::polynomials::{Rank, sparse};
-use ragu_core::pasta::{EpAffine, EqAffine, Fp, Fq};
+use ragu_core::{
+    Error,
+    pasta::{EpAffine, EqAffine, Fp, Fq},
+};
 use rand::{SeedableRng, rngs::StdRng};
 use udon::{curve::Affine, field::Field};
 
@@ -548,6 +551,35 @@ fn an_invalid_input_stays_invalid() {
             let twice = app.rerandomize(invalid, &mut rng).unwrap();
             assert!(!app.verify_differential(&twice, &mut rng).unwrap());
         }
+    });
+}
+
+#[test]
+fn a_child_with_a_mismatched_bridge_alpha_is_rejected() {
+    support::with_app(|app| {
+        let mut rng = StdRng::seed_from_u64(0x7e12_a9d4);
+        let honest = input(app, &mut rng);
+        assert!(app.verify_differential(&honest, &mut rng).unwrap());
+
+        let mut proof = honest.proof().clone();
+        proof.bridge_alpha += Fq::ONE;
+        let bytes = proof.to_bytes().unwrap();
+        let invalid: TestPcd = Proof::from_bytes(&bytes).unwrap().carry(*honest.data());
+        assert!(!app.verify_differential(&invalid, &mut rng).unwrap());
+
+        for (left, right) in [
+            (invalid.clone(), honest.clone()),
+            (honest.clone(), invalid.clone()),
+        ] {
+            assert!(matches!(
+                app.fuse(&mut rng, Merge::new(), Fp::ONE, left, right),
+                Err(Error::InvalidWitness(_))
+            ));
+        }
+        assert!(matches!(
+            app.rerandomize(invalid, &mut rng),
+            Err(Error::InvalidWitness(_))
+        ));
     });
 }
 

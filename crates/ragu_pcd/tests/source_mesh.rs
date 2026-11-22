@@ -605,9 +605,14 @@ fn both_source_meshes_close_at_the_root_and_survive_ordinary_steps() -> Result<(
             let bad = proof.carry::<()>(());
             verify(&app, &bad, &mut rng, false)?;
             if slot == 19 {
-                let (next, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
-                let (next, ()) = app.fuse(&mut rng, UnitStep, (), next, child.clone())?;
-                verify(&app, &next, &mut rng, false)?;
+                let parent = app.fuse(&mut rng, UnitStep, (), child.clone(), bad);
+                if side == 0 {
+                    // The native before-x commitment is in the ab bridge.
+                    assert!(matches!(parent, Err(ragu_core::Error::InvalidWitness(_))));
+                } else {
+                    let (next, ()) = app.fuse(&mut rng, UnitStep, (), parent?.0, child.clone())?;
+                    verify(&app, &next, &mut rng, false)?;
+                }
             }
         }
         let mut proof = child.proof().clone();

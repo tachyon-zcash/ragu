@@ -881,20 +881,25 @@ fn native_auxiliaries_bind_at_every_deadline_and_survive_recursion() -> Result<(
     for phase in 0..4 {
         // Only the transcript copies are altered; the state used to build the
         // quotient, helper and actual point fold remains honest.
-        let (bad, ()) = {
+        let (bad_stage, ()) = {
             assert!(ALTER_NATIVE_PHASE.replace(Some(phase)).is_none());
             let _reset = Reset;
             app.seed(&mut rng, UnitStep, ())?
         };
-        verify_profile(&app, &bad, &mut rng, false)?;
-        let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), bad, child.clone())?;
-        verify_profile(&app, &bad_parent, &mut rng, false)?;
+        verify_profile(&app, &bad_stage, &mut rng, false)?;
         let mut proof = child.proof().clone();
         proof.native_online_commitments[phase] = -proof.native_online_commitments[phase];
         let bad = proof.carry::<()>(());
         verify_profile(&app, &bad, &mut rng, false)?;
-        let (bad_parent, ()) = app.fuse(&mut rng, UnitStep, (), child.clone(), bad)?;
-        verify_profile(&app, &bad_parent, &mut rng, false)?;
+        for (left, right) in [(bad_stage, child.clone()), (child.clone(), bad)] {
+            let parent = app.fuse(&mut rng, UnitStep, (), left, right);
+            if Phase::ALL[phase] == Phase::BeforeX {
+                // The before-x commitment is part of the canonical ab bridge.
+                assert!(matches!(parent, Err(ragu_core::Error::InvalidWitness(_))));
+            } else {
+                verify_profile(&app, &parent?.0, &mut rng, false)?;
+            }
+        }
     }
     Ok(())
 }

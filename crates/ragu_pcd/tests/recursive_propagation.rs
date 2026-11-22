@@ -833,7 +833,7 @@ mod accumulator {
     use proptest::prelude::*;
     use ragu_backend::{Backend, ReferenceBackend};
     use ragu_core::{
-        Cycle, Result,
+        Cycle, Error, Result,
         pasta::{Fp, Fq},
     };
     use ragu_testing::strategies;
@@ -940,6 +940,20 @@ mod accumulator {
                 should_accept,
                 "application headers: native={native}, nested={nested}"
             );
+            if native {
+                // The rescaled native commitments disagree with the child's
+                // stored ab bridge, so neither position can produce a parent.
+                for (left, right) in [
+                    (child.clone(), sibling.clone()),
+                    (sibling.clone(), child.clone()),
+                ] {
+                    assert!(matches!(
+                        app.fuse(&mut rng, support::Merge::new(), Fp::ONE, left, right),
+                        Err(Error::InvalidWitness(_))
+                    ));
+                }
+                continue;
+            }
             for (position, descendant) in support::descendants(app, &child, &sibling, &mut rng)? {
                 assert_eq!(
                     app.verify_differential(&descendant, inputs.verifier_rng())?,
