@@ -332,15 +332,13 @@ its fields describe.
 
 A proof's own online polynomials are part of the state it carries. Rerandomizing
 it preserves them, and compression publishes their deterministic commitments.
-To keep the input's polynomials out of the published proof's online slots, use
-a final step whose output header declares `(Padding, Padding)`. The step can
-open its input's online polynomials to prove the public result, then leave both
-output slots unused. For the Standard profile, pass the step and its inputs to
-`Application::rerandomize_and_compress`. It runs the app step as the first
-fuse, keeps the padded proof internal, then runs one more fuse and compresses
-the result. Verify it with `Application::verify_compressed`. The compressed
-proof's own online commitments commit to the constant one. Hiding of the
-other proof fields and the compression transcript remains unproved.
+To keep the input's polynomials out of the published proof's online slots,
+`Application::fuse` a final step that can query them but outputs a
+`(Padding, Padding)` header.
+Then call `Application::rerandomize` and `Application::compress`. The recipient
+calls `Application::verify_compressed` and, to enforce padding, compares the
+proof's online commitments with the commitment to the constant one. Hiding of
+the other fields and the compression transcript remains unproved.
 
 ## Working with Headers
 

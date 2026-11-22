@@ -16,12 +16,11 @@ use super::{
 };
 use crate::{
     Application, Pcd, RAGU_TAG, SelectableBackend,
-    header::{Header, Padding},
+    header::Header,
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
-    profile::{Profile, ProfiledCycle, Standard, online::mesh_terminal::Coordinates},
+    profile::{Profile, ProfiledCycle, online::mesh_terminal::Coordinates},
     proof::commitments_match,
-    step::{Step, internal::rerandomize::Rerandomize},
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the
@@ -44,48 +43,6 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
 impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Runs a final application step in the Standard profile, then
-    /// rerandomizes its padded output with one fuse and compresses it.
-    ///
-    /// The registered [`Step`] can query either child's online polynomials
-    /// to prove the public result. Its output header declares two
-    /// [`Padding`] slots, whose commitments are to the constant one.
-    /// The first fuse uses fresh randomness and its proof stays internal.
-    /// The second fuse uses the internal rerandomization step with the
-    /// application's bootstrap proof as the right child.
-    ///
-    /// The caller must supply valid child proofs and an unpredictable RNG,
-    /// as for [`rerandomize`](Self::rerandomize). Verify the compressed result
-    /// with [`verify_compressed`](Self::verify_compressed) before using it.
-    /// Hiding of the other proof fields and the compression transcript
-    /// remains unproved.
-    ///
-    /// # Errors
-    ///
-    /// Propagates errors from either fuse or compression.
-    pub fn rerandomize_and_compress<'source, RNG: CryptoRng, S: Step<C>>(
-        &self,
-        rng: &mut RNG,
-        step: S,
-        witness: S::Witness<'source>,
-        left: Pcd<C, R, S::Left>,
-        right: Pcd<C, R, S::Right>,
-    ) -> Result<CompressedPcd<C, S::Output>>
-    where
-        C: ProfiledCycle<Profile = Standard>,
-        S::Output: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
-    {
-        let (padded, _) = self.fuse(rng, step, witness, left, right)?;
-        let (rerandomized, ()) = self.fuse(
-            rng,
-            Rerandomize::new(),
-            (),
-            padded,
-            self.bootstrap_proof().clone().carry(()),
-        )?;
-        self.compress(&rerandomized, rng)
-    }
-
     /// Compresses `pcd` into a [`CompressedPcd`] over the same data.
     ///
     /// The result carries the proof's instance and, on each curve, the
@@ -103,8 +60,6 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// only when reusing `pcd` as a child: the compressed proof carries the
     /// commitments and not the polynomials, and
     /// [`verify_compressed`](Self::verify_compressed) is sound without it.
-    /// For a Standard-profile result that should carry only padding in its
-    /// online slots, see [`rerandomize_and_compress`](Self::rerandomize_and_compress).
     ///
     /// # Errors
     ///

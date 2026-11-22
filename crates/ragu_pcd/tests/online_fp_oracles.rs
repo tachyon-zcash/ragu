@@ -980,10 +980,13 @@ fn padded_publication() -> Result<()> {
     assert_ne!(set.commitments()[0], other_set.commitments()[0]);
 
     let unit = app.bootstrap_proof().clone().carry::<()>(());
-    let published = app.rerandomize_and_compress(&mut rng, ProveMember, Fp::ONE, set, unit)?;
+    let (padded, ()) = app.fuse(&mut rng, ProveMember, Fp::ONE, set, unit)?;
+    let rerandomized = app.rerandomize(padded, &mut rng)?;
+    let published = app.compress(&rerandomized, &mut rng)?;
     let unit = app.bootstrap_proof().clone().carry::<()>(());
-    let other_published =
-        app.rerandomize_and_compress(&mut rng, ProveMember, Fp::from(20), other_set, unit)?;
+    let (other_padded, ()) = app.fuse(&mut rng, ProveMember, Fp::from(20), other_set, unit)?;
+    let other_rerandomized = app.rerandomize(other_padded, &mut rng)?;
+    let other_published = app.compress(&other_rerandomized, &mut rng)?;
     let bytes = published.proof().to_bytes().unwrap();
     let received = CompressedProof::<C>::from_bytes(&bytes)
         .unwrap()
