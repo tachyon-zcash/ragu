@@ -860,6 +860,10 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///   verify either, and what is wrong with it depends on what was wrong
     ///   with the input. A receiver accepts a proof as described in the
     ///   [crate documentation](crate) before it rerandomizes it.
+    /// - The application's bootstrap proof verifies. The one that
+    ///   [`ApplicationBuilder::finalize`] builds does. One supplied with
+    ///   [`ApplicationBuilder::with_bootstrap`] is not checked for validity,
+    ///   and if it does not verify, neither does the output.
     /// - `rng` is a cryptographically secure source that the producer of
     ///   `pcd` cannot predict.
     /// - The header's data and its online polynomials are what the output
