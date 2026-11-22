@@ -250,12 +250,15 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// running the bootstrap fuse.
     ///
     /// In the standard profile, [`Application::rerandomize`] uses this proof
-    /// as a public right child. A proof unique to one wallet makes its
-    /// commitments a stable tag in full uncompressed rerandomized outputs.
-    /// To avoid that tag, an application must distribute one verified proof
-    /// for each compatible configuration and require every wallet to match
-    /// its bytes or digest against a value pinned in shared configuration.
-    /// This method cannot check that other wallets use the same proof.
+    /// as a public right child. A wallet-specific bootstrap proof can link
+    /// rerandomized outputs, including after compression. To avoid a
+    /// wallet-specific tag, applications can distribute one verified proof
+    /// per compatible configuration and have wallets match its bytes or
+    /// digest against a value pinned in shared configuration. The caller
+    /// is responsible for this check.
+    ///
+    /// **TODO** Define how compatible wallets provision, pin and verify a
+    /// shared bootstrap proof across platforms and releases.
     ///
     /// The proof is checked for this profile's shape and for being a proof of
     /// the bootstrap step, not for validity. No supplied proof can make
@@ -822,17 +825,36 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
         self.bootstrap_proof().clone().carry(())
     }
 
-    /// Rerandomize proof-carrying data.
-    ///
-    /// The output is a proof for the same [`Header`], carrying the same data
-    /// and the same online polynomials. It is built so that its distribution
-    /// depends on nothing else about `pcd`: whoever produced `pcd` and later
-    /// sees the output, in full, should learn that it is a rerandomization
-    /// of some proof for that header and no more. The argument for that is
-    /// outlined below. It has not been written out as a proof, and it has
-    /// not been audited. With a valid bootstrap proof,
+    /// Rerandomize a proof while preserving its certified data and online
+    /// polynomials. With a valid bootstrap proof,
     /// `Application::verify_uncompressed` gives the same result for `pcd`
     /// and for any returned proof.
+    ///
+    /// # Public application data
+    ///
+    /// The encoded header comes from [`Header::Data`] and is separate from
+    /// the proof's online polynomial slots. A full rerandomized proof exposes
+    /// the input's online polynomial coefficients through [`Pcd::polynomials`].
+    /// [`compress`](Self::compress) publishes their unchanged deterministic
+    /// commitments through [`CompressedPcd::online_commitments`]. A recipient
+    /// can compare them with commitments to candidate polynomials or from
+    /// the original proof.
+    ///
+    /// The application decides whether to publish those coefficients or
+    /// commitments. To publish with padding, [`fuse`](Self::fuse) a final
+    /// application step whose output header declares `(Padding, Padding)`
+    /// before rerandomizing. For compressed publication, compress the
+    /// resulting rerandomized proof. See [Publishing with Padding][padding].
+    ///
+    /// [padding]: https://tachyon.z.cash/ragu/guide/writing_circuits.html#publishing-with-padding
+    ///
+    /// # Hiding scope
+    ///
+    /// For the standard profile, fix the application, setup and bootstrap
+    /// proof. The goal is for fresh rerandomizations of valid inputs with the
+    /// same encoded header and online polynomials to be indistinguishable,
+    /// even to the party who selected the inputs. Joint hiding of the output
+    /// fields remains unproved. Other profiles carry additional proof state.
     ///
     /// # How
     ///
@@ -841,24 +863,23 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     /// A fuse stores what it reads of its children as stage values, so one
     /// pass would show the input's commitments in the clear. After the
     /// second pass the output holds the first pass's commitments, which are
-    /// fresh, and values computed from the first pass's polynomials, which
-    /// randomness the rerandomizer draws hides: the free coefficients of
-    /// every trace and stage (see [`Blind`](ragu_circuits::Blind)) and the
-    /// randomizers every fuse folds and batches. The documentation of the
-    /// internal `fuse::randomizer` module accounts for each value the output
-    /// shows.
+    /// fresh, and values computed from the first pass's polynomials. The
+    /// construction uses free coefficients (see [`Blind`](ragu_circuits::Blind))
+    /// and the randomizers each fuse folds and batches to mask those values.
+    /// The internal `fuse::randomizer` module describes the masking argument.
+    ///
+    /// # Bootstrap linkability
     ///
     /// The default bootstrap is generated with a fixed seed, so the same build
     /// and application configuration reproduce the proof. `StdRng` may vary
     /// across versions or platforms, and [`ApplicationBuilder::with_bootstrap`]
     /// can install a different valid proof. The full uncompressed output's
-    /// bridge preamble contains the right child's commitments. A proof unique
-    /// to one wallet can therefore link its outputs; proofs shared only by a
-    /// software version can identify a cohort. To avoid this tag, an
-    /// application should distribute one verified proof per compatible
-    /// configuration, pin its bytes or digest in shared configuration, and
-    /// have every wallet load that proof with
-    /// [`ApplicationBuilder::with_bootstrap`].
+    /// bridge preamble contains the right child's commitments. The compressed
+    /// instance retains that child's native and nested `x` and `y` challenges.
+    /// A wallet-specific bootstrap can therefore link outputs in either form,
+    /// and a version-specific bootstrap can identify a cohort. See
+    /// [`ApplicationBuilder::with_bootstrap`] for the shared-proof guidance
+    /// and the open provisioning TODO.
     ///
     /// # What the caller must ensure
     ///
@@ -873,16 +894,6 @@ impl<'params, C: ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectable
     ///   that also fails verification.
     /// - `rng` is a cryptographically secure source that the producer of
     ///   `pcd` cannot predict.
-    /// - The header's data and its online polynomials are what the output
-    ///   may reveal. The output carries both unchanged.
-    ///
-    /// This holds for the standard profile only. Other profiles store
-    /// polynomials and values of their own in a proof, which this method
-    /// does not account for.
-    ///
-    /// Compression is not hiding. To send a compressed proof, compress the
-    /// output, not `pcd`: the compressed proof is computed from the output,
-    /// so it shows no more of `pcd` than the output does.
     pub fn rerandomize<RNG: CryptoRng, H: Header<C::CircuitField>>(
         &self,
         pcd: Pcd<C, R, H>,

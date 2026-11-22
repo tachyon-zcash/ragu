@@ -61,12 +61,11 @@ impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: Selectab
     /// commitments and not the polynomials, and
     /// [`verify_compressed`](Self::verify_compressed) is sound without it.
     ///
-    /// The result is not hiding: it carries evaluations of the proof's
-    /// polynomials. To compress a proof that must stay private, compress
-    /// the output of [`rerandomize`](Self::rerandomize) on it instead. The
-    /// result is computed from that output, so it shows no more of the
-    /// original proof than the output does. Rerandomization hides its input
-    /// only under the standard profile.
+    /// The result publishes polynomial evaluations and the step's deterministic
+    /// [`online commitments`](CompressedPcd::online_commitments). To publish
+    /// after rerandomization, pass the output of [`rerandomize`](Self::rerandomize)
+    /// to this method. See that method's guidance on public application data
+    /// and the limits of hiding.
     ///
     /// # Errors
     ///
