@@ -16,11 +16,12 @@ use super::{
 };
 use crate::{
     Application, Pcd, RAGU_TAG, SelectableBackend,
-    header::{Header, NUM_ONLINE_FP_POLYS, Padding},
+    header::{Header, Padding},
     internal::{ky, native, nested},
     ipa::{self, CycleTranscript, IpaCycle, IpaProof, IpaTranscript, Params},
     profile::{Profile, ProfiledCycle, Standard, online::mesh_terminal::Coordinates},
     proof::commitments_match,
+    step::Step,
 };
 
 /// Batches `openings` over `polys` and opens the batched claim through the
@@ -43,50 +44,39 @@ fn open<P: Affine, R: Rank, B: SelectableBackend>(
 impl<C: IpaCycle + ProfiledCycle, R: Rank, const HEADER_SIZE: usize, B: SelectableBackend>
     Application<'_, C, R, HEADER_SIZE, B>
 {
-    /// Rerandomizes a Standard-profile proof with padding in both online
-    /// polynomial slots, then compresses it.
+    /// Runs a final application step in the Standard profile, then
+    /// rerandomizes its padded output with one fuse and compresses it.
     ///
-    /// To publish a result derived from a proof with online polynomials,
-    /// first fuse it through an application [`Step`](crate::step::Step)
-    /// that produces the desired public data under a header with two
-    /// [`Padding`] slots. Pass that step's output here. Both commitments
-    /// in the compressed proof's own online slots then commit to the
-    /// constant one.
+    /// The registered [`Step`] can query either child's online polynomials
+    /// to prove the public result. Its output header declares two
+    /// [`Padding`] slots, whose commitments are to the constant one.
+    /// The first fuse uses fresh randomness and its proof stays internal.
+    /// The second fuse uses the internal rerandomization step with the
+    /// application's bootstrap proof as the right child.
     ///
-    /// The caller must supply a valid proof and an unpredictable RNG, as
-    /// for [`rerandomize`](Self::rerandomize). Verify the compressed result
+    /// The caller must supply valid child proofs and an unpredictable RNG,
+    /// as for [`rerandomize`](Self::rerandomize). Verify the compressed result
     /// with [`verify_compressed`](Self::verify_compressed) before using it.
     /// Hiding of the other proof fields and the compression transcript
     /// remains unproved.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidWitness`] if the input's online polynomials
-    /// or their commitments differ from padding. Propagates errors from
-    /// rerandomizing and compressing the proof.
-    pub fn rerandomize_and_compress<RNG: CryptoRng, H>(
+    /// Propagates errors from either fuse or compression.
+    pub fn rerandomize_and_compress<'source, RNG: CryptoRng, S: Step<C>>(
         &self,
-        pcd: Pcd<C, R, H>,
         rng: &mut RNG,
-    ) -> Result<CompressedPcd<C, H>>
+        step: S,
+        witness: S::Witness<'source>,
+        left: Pcd<C, R, S::Left>,
+        right: Pcd<C, R, S::Right>,
+    ) -> Result<CompressedPcd<C, S::Output>>
     where
         C: ProfiledCycle<Profile = Standard>,
-        H: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
+        S::Output: Header<C::CircuitField, OnlinePolyCommit = (Padding, Padding)>,
     {
-        let one = C::CircuitField::ONE;
-        if pcd
-            .proof()
-            .online_polynomials()
-            .iter()
-            .any(|poly| poly.iter_stored_coeffs().ne([(0, &one)]))
-            || pcd.commitments() != [self.commit(&[one])?; NUM_ONLINE_FP_POLYS]
-        {
-            return Err(Error::InvalidWitness(
-                "rerandomized compression requires padding in both online slots".into(),
-            ));
-        }
-
-        let rerandomized = self.rerandomize(pcd, rng)?;
+        let (padded, _) = self.fuse(rng, step, witness, left, right)?;
+        let rerandomized = self.rerandomize_once(padded, rng)?;
         self.compress(&rerandomized, rng)
     }
 

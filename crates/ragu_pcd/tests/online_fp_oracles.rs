@@ -974,19 +974,16 @@ fn padded_publication() -> Result<()> {
     let app = app();
     let mut rng = StdRng::seed_from_u64(0x9ad);
     let (set, ()) = app.seed(&mut rng, SeedSet, tachygrams(1))?;
+    let (other_set, ()) = app.seed(&mut rng, SeedSet, tachygrams(20))?;
     let padding_commitment = app.commit(&padding())?;
     assert_ne!(set.commitments()[0], padding_commitment);
+    assert_ne!(set.commitments()[0], other_set.commitments()[0]);
 
-    // Attaching a padding header to an input proof cannot substitute for
-    // producing a proof with padding in its slots.
-    let mislabeled = set.proof().clone().carry::<()>(());
-    assert!(matches!(
-        app.rerandomize_and_compress(mislabeled, &mut rng),
-        Err(Error::InvalidWitness(_))
-    ));
-
-    let (member, ()) = app.fuse(&mut rng, ProveMember, Fp::ONE, set, unit(&app)?)?;
-    let published = app.rerandomize_and_compress(member, &mut rng)?;
+    let unit = app.bootstrap_proof().clone().carry::<()>(());
+    let published = app.rerandomize_and_compress(&mut rng, ProveMember, Fp::ONE, set, unit)?;
+    let unit = app.bootstrap_proof().clone().carry::<()>(());
+    let other_published =
+        app.rerandomize_and_compress(&mut rng, ProveMember, Fp::from(20), other_set, unit)?;
     let bytes = published.proof().to_bytes().unwrap();
     let received = CompressedProof::<C>::from_bytes(&bytes)
         .unwrap()
@@ -995,6 +992,11 @@ fn padded_publication() -> Result<()> {
     assert_eq!(
         received.online_commitments(),
         [padding_commitment; NUM_ONLINE_FP_POLYS]
+    );
+    assert!(app.verify_compressed(&other_published)?);
+    assert_eq!(
+        received.online_commitments(),
+        other_published.online_commitments()
     );
     Ok(())
 }

@@ -335,11 +335,12 @@ it preserves them, and compression publishes their deterministic commitments.
 To keep the input's polynomials out of the published proof's online slots, use
 a final step whose output header declares `(Padding, Padding)`. The step can
 open its input's online polynomials to prove the public result, then leave both
-output slots unused. For the Standard profile, call
-`Application::rerandomize_and_compress` on that output and verify the result
-with `Application::verify_compressed`. The compressed proof's own online
-commitments then commit to the constant one. Hiding of the other proof fields
-and the compression transcript remains unproved.
+output slots unused. For the Standard profile, pass the step and its inputs to
+`Application::rerandomize_and_compress`. It runs the app step as the first
+fuse, keeps the padded proof internal, then runs one more fuse and compresses
+the result. Verify it with `Application::verify_compressed`. The compressed
+proof's own online commitments commit to the constant one. Hiding of the
+other proof fields and the compression transcript remains unproved.
 
 ## Working with Headers
 
